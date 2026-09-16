@@ -362,6 +362,71 @@ No security-tool drag, no overloaded abbreviation, no trademark holder.
 
 ---
 
+### D-18 Versioned extraction cache
+
+**Decision.** Extracted text is cached per blob and stamped with
+`ExtractorVersions.Current`. A bump re-extracts on next index, and the version is part of
+the chunking fingerprint so the fresh text is actually re-chunked.
+
+**Why.** Caching extraction is clearly right — a 437-page PDF costs ~1.8 s and its bytes
+never change. But an unversioned cache is *permanent*, and that turns every extractor bug
+into a permanent one: a library ingested before a fix keeps the broken text, and no reindex
+repairs it, because reindexing re-chunks the cached text rather than re-reading the file.
+The version is what lets a fix reach documents that were ingested before it, without anyone
+re-uploading anything.
+
+A single global version re-extracts PDFs when only the EPUB path changed. That is a bounded
+one-off cost on upgrade, and it is cheaper than the per-extractor bookkeeping needed to
+avoid it.
+
+The chunker carries its own version in the same fingerprint, for the same reason one stage
+later: an algorithm change that produces different chunks from identical input is invisible
+to a hash of the input.
+
+**Rejected.** Per-extractor versions (more machinery than the saving is worth); timestamp
+comparison against assembly build date (fires on every rebuild, including ones that change
+nothing); no versioning (the status quo, which hid a bug that removed ~95% of a book from
+the index while reporting success).
+
+---
+
+### D-19 The chunker guarantees its budget
+
+**Decision.** No chunk exceeds `chunk_size × 4` characters. A single line longer than the
+whole budget is split at word boundaries, each piece keeping that line's number.
+
+**Why.** The chunker's original rule — never split within a line — buys exact
+`start_line`/`end_line` on every chunk, which is what makes a result openable in an editor.
+That is worth keeping, and it was worth relaxing in exactly one case, because an
+over-budget chunk is not *rejected* by the embedding model. It is silently truncated. The
+text past the context window is reported as indexed and is nowhere, and nothing in the
+system can detect it.
+
+A guarantee that only holds for well-behaved input is not a guarantee. It is enforced by a
+property test across chunk sizes, including input with no spaces at all.
+
+**Rejected.** Rejecting over-long lines (loses content); truncating them (loses content and
+lies about it); trusting extractors not to produce them (they did — see [D-18](#d-18-versioned-extraction-cache)).
+
+---
+
+### D-20 Jobs are ordered by when they were queued
+
+**Decision.** `IndexJob` carries a non-nullable `QueuedUtc`, and every "latest job" query
+orders by it.
+
+**Why.** Ordering on `StartedUtc` with nulls treated as newest looks right — queued work
+should be at the top — but a job that *failed before starting* also has a null
+`StartedUtc`. Two long-dead failures sat permanently above the job that was running, so
+anything reading the first entry to find "the current job" got a stale answer with complete
+confidence. The `/api/jobs` list and `index_status` both did; so did a watcher written
+against them, which reported an index as failed while it was running perfectly.
+
+A nullable column used as an ordering key is a bug waiting for the right null. A queued
+timestamp is also just honest data: the UI can now say how long a job has been waiting.
+
+---
+
 ## What was carried over from McpToolbox
 
 | Component | Treatment |

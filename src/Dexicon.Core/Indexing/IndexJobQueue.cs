@@ -44,6 +44,7 @@ public sealed class IndexJobQueue(CatalogDbContext db, ILogger<IndexJobQueue> lo
             CorpusId = corpusId,
             Kind = kind,
             State = JobState.Queued,
+            QueuedUtc = DateTime.UtcNow,
         };
 
         db.Jobs.Add(job);

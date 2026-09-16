@@ -30,6 +30,20 @@ public static class CodeChunker
     /// </summary>
     public const int CharsPerToken = 4;
 
+    /// <summary>
+    /// Bumped whenever chunking OUTPUT changes for the same input and settings. Part of
+    /// the chunking fingerprint, so a corpus re-chunks itself after an algorithm change.
+    ///
+    /// Without it, the fingerprint says "same bytes, same settings, nothing to do" and a
+    /// corpus keeps chunks from a chunker that no longer exists — indefinitely, because an
+    /// incremental refresh's whole purpose is to skip unchanged files. The same reasoning
+    /// as the extractor version, applied one stage later in the pipeline.
+    ///
+    /// 2: size decides WHEN to split and a boundary decides WHERE (chunk size used to be
+    ///    dead configuration); a line longer than the whole budget is now split.
+    /// </summary>
+    public const int Version = 2;
+
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(500);
 
     public static IReadOnlyList<TextChunk> Chunk(
@@ -100,8 +114,25 @@ public static class CodeChunker
 
             var lineChars = line.Length + 1;
 
-            // A single line over the whole budget still becomes its own chunk rather
-            // than being dropped — minified files are ugly, not invisible.
+            // A single line that alone exceeds the budget. This used to be emitted whole,
+            // on the reasoning that a minified file is ugly but not invisible — which was
+            // wrong, because the embedding model truncates at its context limit WITHOUT
+            // SAYING SO. An EPUB whose extractor emitted one line per chapter produced 18
+            // chunks averaging 32,000 characters: the book reported itself as indexed
+            // while roughly 95% of it existed nowhere in the index.
+            //
+            // So the line is split. Every piece keeps this line's number, which is honest
+            // — they are all on it — and a search hit still opens at the right place.
+            if (chars == 0 && lineChars > maxChars)
+            {
+                foreach (var piece in SplitOversizeLine(line, maxChars, overlapChars))
+                    yield return Build(piece, i, i, lastHeading, symbolPattern);
+
+                start = i + 1;
+                lastBoundary = -1;
+                continue;
+            }
+
             if (chars > 0 && chars + lineChars > maxChars)
             {
                 var splitAt = lastBoundary > start ? lastBoundary : i;
@@ -125,6 +156,40 @@ public static class CodeChunker
             var tail = Join(lines, start, lines.Length);
             if (tail.Trim().Length > 0)
                 yield return Build(tail, start, lines.Length - 1, lastHeading, symbolPattern);
+        }
+    }
+
+    /// <summary>
+    /// Cuts one over-long line into budget-sized pieces, preferring a word boundary near
+    /// the end of each. The only case where the chunker splits within a line; it exists
+    /// so that "indexed" cannot mean "the first 8,000 characters were indexed".
+    /// </summary>
+    private static IEnumerable<string> SplitOversizeLine(string line, int maxChars, int overlapChars)
+    {
+        // Back up at most an eighth of the budget looking for a space: far enough to
+        // avoid cutting mid-word, not so far that a line without spaces (a minified
+        // bundle, a base64 blob) loses a meaningful slice of every piece.
+        var maxBackup = Math.Max(1, maxChars / 8);
+        var pos = 0;
+
+        while (pos < line.Length)
+        {
+            var end = Math.Min(pos + maxChars, line.Length);
+
+            if (end < line.Length)
+            {
+                var space = line.LastIndexOf(' ', end - 1, Math.Min(end - pos, maxBackup));
+                if (space > pos) end = space + 1;
+            }
+
+            var piece = line[pos..end].Trim();
+            if (piece.Length > 0) yield return piece;
+
+            if (end >= line.Length) yield break;
+
+            // Overlap, same as between chunks — but never at the cost of progress.
+            var next = end - overlapChars;
+            pos = next > pos ? next : end;
         }
     }
 

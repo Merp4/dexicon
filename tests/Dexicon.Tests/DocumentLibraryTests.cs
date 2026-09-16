@@ -193,4 +193,50 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         text!.Text.ShouldContain("Some prose.");
         text.Extractor.ShouldBe("PlainText");
     }
+
+    [Fact]
+    public async Task AFreshlyAttachedDocumentIsPending_NotIndexed()
+    {
+        // Regression: FileStatus.Indexed was the enum's zero value, so an attachment was
+        // born claiming to be indexed. The library then showed every just-uploaded
+        // document as "indexed", next to a chunk count of 0 — and a corpus whose
+        // indexing job was interrupted looked finished.
+        var corpus = AddCorpus("books", 512, 64);
+        var stored = await _documents.StoreAsync(TextStream("some prose to chunk"), "book.md");
+
+        var file = await _documents.AttachAsync(corpus, stored.Sha256, "book.md");
+
+        file.Status.ShouldBe(FileStatus.Pending);
+        file.ChunkCount.ShouldBe(0);
+        file.ContentHash.ShouldBeNull();
+    }
+
+    [Fact]
+    public void PendingIsTheDefaultFileStatus()
+    {
+        // The property this rests on: the safe state must be the one you get by
+        // forgetting to set it.
+        default(FileStatus).ShouldBe(FileStatus.Pending);
+    }
+
+    [Fact]
+    public async Task RenamingAnAttachmentMakesItPendingAgain()
+    {
+        // A rename invalidates the chunks, which are keyed by file path. Leaving the
+        // status at Indexed would claim chunks exist under a name nothing wrote.
+        var corpus = AddCorpus("books", 512, 64);
+        var stored = await _documents.StoreAsync(TextStream("some prose to chunk"), "book.md");
+
+        var file = await _documents.AttachAsync(corpus, stored.Sha256, "book.md");
+        file.Status = FileStatus.Indexed;
+        file.ContentHash = "whatever-the-last-index-wrote";
+        file.ChunkCount = 3;
+        await _db.SaveChangesAsync();
+
+        var renamed = await _documents.AttachAsync(corpus, stored.Sha256, "better-name.md");
+
+        renamed.Id.ShouldBe(file.Id, "a rename is a rename, not a second attachment");
+        renamed.Status.ShouldBe(FileStatus.Pending);
+        renamed.ContentHash.ShouldBeNull();
+    }
 }

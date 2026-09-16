@@ -159,6 +159,7 @@ public sealed class DocumentService(
                 Title = extracted.Title,
                 ExtractedChars = extracted.Text.Length,
                 Extractor = extractor?.GetType().Name ?? "PlainText",
+                ExtractorVersion = ExtractorVersions.Current,
                 ExtractedUtc = DateTime.UtcNow,
                 EmptyReason = emptyReason,
             };
@@ -174,6 +175,7 @@ public sealed class DocumentService(
                 Text = string.Empty,
                 ExtractedChars = 0,
                 Extractor = extractor?.GetType().Name ?? "PlainText",
+                ExtractorVersion = ExtractorVersions.Current,
                 ExtractedUtc = DateTime.UtcNow,
                 EmptyReason = ex.Message,
             };
@@ -211,6 +213,7 @@ public sealed class DocumentService(
                 // Cleared here; the caller's reindex writes them back under the new name.
                 byBlob.RelativePath = fileName;
                 byBlob.ContentHash = null;
+                byBlob.Status = FileStatus.Pending;
             }
             byBlob.SizeBytes = blob.SizeBytes;
             byBlob.StatusDetail = null;
@@ -228,7 +231,7 @@ public sealed class DocumentService(
             existing.BlobSha256 = sha256;
             existing.ContentHash = null;
             existing.SizeBytes = blob.SizeBytes;
-            existing.Status = FileStatus.Indexed;
+            existing.Status = FileStatus.Pending;
             existing.StatusDetail = null;
             await db.SaveChangesAsync(ct);
             return existing;
@@ -242,7 +245,7 @@ public sealed class DocumentService(
             BlobSha256 = sha256,
             SizeBytes = blob.SizeBytes,
             MediaType = blob.MediaType,
-            Status = FileStatus.Indexed,
+            Status = FileStatus.Pending,
             ContentHash = null,      // null = not yet indexed, so the next pass picks it up
         };
 
@@ -287,6 +290,53 @@ public sealed class DocumentService(
 
     public Task<BlobText?> TextFor(string sha256, CancellationToken ct = default) =>
         db.BlobTexts.AsNoTracking().FirstOrDefaultAsync(t => t.Sha256 == sha256, ct);
+
+    /// <summary>
+    /// The cached text for a blob, re-extracting first if it was produced by an older
+    /// extractor. Called on the indexing path, so an extractor fix reaches a library that
+    /// was ingested before it without anyone re-uploading anything.
+    /// </summary>
+    public async Task<BlobText?> CurrentTextFor(string sha256, string fileName, CancellationToken ct = default)
+    {
+        // Check the version alone before loading anything. Extracted text runs to
+        // hundreds of thousands of characters, and the usual answer is "already current"
+        // — no reason to materialise and change-track a book to learn that.
+        var version = await db.BlobTexts.AsNoTracking()
+            .Where(t => t.Sha256 == sha256)
+            .Select(t => (int?)t.ExtractorVersion)
+            .FirstOrDefaultAsync(ct);
+
+        if (version is null) return null;
+        if (version >= ExtractorVersions.Current) return await TextFor(sha256, ct);
+
+        // Stale: this one is tracked, because it is about to be rewritten.
+        var cached = await db.BlobTexts.FirstAsync(t => t.Sha256 == sha256, ct);
+
+        if (!File.Exists(PathFor(sha256)))
+        {
+            // The bytes are gone, so the old text is all there is. Better stale than none.
+            log.LogWarning("Cannot re-extract {Sha} — the blob is missing; keeping v{Version} text",
+                sha256[..12], cached.ExtractorVersion);
+            return cached;
+        }
+
+        var fresh = await ExtractAsync(sha256, fileName, ct);
+        log.LogInformation(
+            "Re-extracted {Sha} with extractor v{Version}: {Before:N0} -> {After:N0} chars",
+            sha256[..12], ExtractorVersions.Current, cached.ExtractedChars, fresh.ExtractedChars);
+
+        cached.Text = fresh.Text;
+        cached.UnitsJson = fresh.UnitsJson;
+        cached.Title = fresh.Title;
+        cached.ExtractedChars = fresh.ExtractedChars;
+        cached.Extractor = fresh.Extractor;
+        cached.ExtractorVersion = fresh.ExtractorVersion;
+        cached.ExtractedUtc = fresh.ExtractedUtc;
+        cached.EmptyReason = fresh.EmptyReason;
+        await db.SaveChangesAsync(ct);
+
+        return cached;
+    }
 
     public static IReadOnlyList<ExtractedUnit> UnitsFrom(BlobText? text) =>
         string.IsNullOrEmpty(text?.UnitsJson)

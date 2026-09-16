@@ -76,11 +76,11 @@ no others.
 |---|---|---|---|---|---|
 | Plain text | `.txt`, `.log`, code | — | — | line | Encoding-detected |
 | Markdown | `.md`, `.markdown` | Markdig | BSD-2 | line + heading | Headings become `section` |
-| HTML | `.html`, `.htm` | AngleSharp | MIT | line | `script`/`style` stripped; `<title>` kept |
+| HTML | `.html`, `.htm` | AngleSharp | MIT | line | One line per block element; `script`/`style` skipped; `<title>` kept |
 | PDF | `.pdf` | PdfPig | Apache-2.0 | **page** | Text layer only — no OCR |
 | DOCX | `.docx` | DocumentFormat.OpenXml | MIT | paragraph | Headings become `section` |
 | PPTX | `.pptx` | DocumentFormat.OpenXml | MIT | **slide** | Slide notes included |
-| EPUB | `.epub` | VersOne.Epub | MIT | **chapter** | Reading order from `content.opf` |
+| EPUB | `.epub` | VersOne.Epub | MIT | **chapter** | Reading order from `content.opf`; chapter HTML walked block by block |
 | JSON/YAML/TOML | `.json`, `.yaml`, `.yml`, `.toml` | — | — | line | Treated as text; structure-aware chunking is not attempted |
 
 Every loader returns `(text, metadata, unitMarkers)`. Failures are per-file and recorded:
@@ -90,6 +90,51 @@ Every loader returns `(text, metadata, unitMarkers)`. Failures are per-file and 
   not reported as a success and not silently missing.
 - **Encrypted / DRM** → `status: failed` with the reason.
 - **Malformed archive (EPUB/OOXML)** → `status: failed` with the reason.
+
+### Block structure is content
+
+HTML-derived formats (HTML, EPUB) are walked block by block, emitting one line per `<p>`,
+heading, list item or table cell. The obvious implementation — AngleSharp's `TextContent` —
+concatenates every descendant text node with no separators, and it was what Dexicon shipped
+first.
+
+It failed in a way nothing could detect. The chunker splits on line boundaries, so a chapter
+on one line cannot be split: a 578,000-character EPUB became 18 chunks averaging 32,000
+characters each, every one of them far past the embedding model's context window. Ollama
+truncates silently, so roughly 95% of that book existed in no index anywhere — while the
+file, the job and the corpus all reported success.
+
+Newlines here are not cosmetic. They are what makes text chunkable, and what makes a line
+number in a search result mean anything.
+
+### Extraction is cached, and the cache is versioned
+
+Extraction is cached per blob in `blob_texts`: a 437-page PDF costs ~1.8 s to extract and
+its bytes never change, so re-extracting on every reindex would be waste.
+
+But the *code* changes. `ExtractorVersions.Current` is stamped on every cached extraction
+and bumped whenever extraction output changes; text from an older version is re-extracted
+the next time it is indexed. The version is also part of the chunking fingerprint, so the
+re-extracted text is actually re-chunked rather than skipped as unchanged.
+
+Without this the cache is permanent: a library ingested before a fix keeps the broken text
+forever, and no reindex repairs it, because reindexing re-chunks the *cached text* rather
+than re-reading the file.
+
+| Extractor version | Change |
+|---|---|
+| 1 | Initial extractors |
+| 2 | HTML and EPUB keep block structure — one block per line |
+
+The chunker carries its own version for the same reason, one stage later: without it the
+fingerprint says "same bytes, same settings, nothing to do" and a corpus keeps chunks from
+an algorithm that no longer exists — indefinitely, because skipping unchanged files is
+exactly what an incremental refresh is for.
+
+| Chunker version | Change |
+|---|---|
+| 1 | Initial chunker |
+| 2 | Size decides *when* to split; a line over the whole budget is split |
 
 ### A note on OCR
 
@@ -128,6 +173,18 @@ which learned them the hard way):
 Boundary modes: `none` | `blank-line` | `language-aware` | `custom` (operator regex, compiled
 with a 500 ms timeout; an invalid or timing-out regex fails the job with a clear error and
 never silently falls back).
+
+### No chunk exceeds the budget, ever
+
+The chunker prefers not to split within a line, so that every chunk carries exact
+`start_line`/`end_line` and a hit is directly openable in an editor. One case overrides
+that: a single line longer than the whole budget is split at word boundaries, with each
+piece keeping that line's number.
+
+This is a hard guarantee rather than a convention, because the failure mode is invisible —
+an over-budget chunk is not rejected by the embedding model, it is silently truncated, and
+the missing text is reported as indexed. A property test asserts the bound across chunk
+sizes, including on input with no spaces at all (a minified bundle, a base64 blob).
 
 ### Size decides *when* to split; a boundary decides *where*
 
@@ -231,6 +288,17 @@ Two properties this buys:
 
 - A refresh over an unchanged tree makes **zero** embedding calls.
 - A failed file is retried next time, because its hash was never recorded.
+
+The hash above is the **chunking fingerprint**, not the content hash alone:
+
+```
+sha256(blob | chunk_size | chunk_overlap | boundary_mode | embedding_model
+       | extractor_version | chunker_version)
+```
+
+Everything that determines what ends up in Qdrant is in it. Two corpora chunking the same
+blob differently get different fingerprints and independent chunk sets, which is what makes
+per-corpus chunking work at all.
 
 Scheduling: on demand (UI button, `index_refresh` MCP tool), plus an optional interval per
 corpus, default off. There is no filesystem watcher — polling with content hashes is more
