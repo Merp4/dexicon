@@ -205,10 +205,20 @@ Two things that trip people up with any client:
 
 It merges into an existing config rather than replacing it, backs the file up first, and
 prints what it wrote — minus the token. `-WhatIf` shows the change without making it.
+`-Project` is the directory to write into for project scope, defaulting to the current one
+rather than the Dexicon checkout.
 
 It will not invent a token: pass `-Token`, or let it read the one in `.env`
 (`DEXICON_BOOTSTRAP_TOKEN`) when you have set one. There is no path where the installer
 puts a credential somewhere you did not ask it to.
+
+`-List` shows every client, where its config lives, and whether Dexicon is already in it.
+Two entries in that list it will not write, and says so rather than writing something
+ignored: **Cline**, whose servers live in extension storage, and **VS Code at user scope**,
+which shares a `settings.json` with every other preference. Both take the JSON above by hand.
+
+Needs PowerShell 7 (`pwsh`). On Windows PowerShell 5.1 it refuses by version rather than
+failing with a syntax error.
 
 ## A skill for the agent
 
