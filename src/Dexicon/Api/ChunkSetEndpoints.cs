@@ -39,7 +39,7 @@ public static class ChunkSetEndpoints
         });
 
         g.MapPost("/", async (string nameOrId, CreateChunkSetRequest body, RequestContext rc,
-            ScopeResolver scopes, CatalogDbContext db, IVectorStore vectors, IEmbeddingProvider embedder,
+            ScopeResolver scopes, CatalogDbContext db, IVectorStore vectors, IEmbeddingService embedder,
             IndexJobQueue queue, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
@@ -72,10 +72,17 @@ public static class ChunkSetEndpoints
             if (string.IsNullOrWhiteSpace(model))
                 return Results.Problem(title: "An embedding model is required", statusCode: 400);
 
+            var provider = (body.EmbeddingProvider ?? template?.EmbeddingProvider ?? "ollama").Trim();
+            var target = new EmbeddingTarget(provider, model);
+
             int dims;
             try
             {
-                dims = await embedder.ProbeDimensionsAsync(model, ct);
+                dims = await embedder.ProbeDimensionsAsync(target, ct);
+            }
+            catch (UnknownEmbeddingProviderException ex)
+            {
+                return Results.Problem(title: "Unknown embedding provider", detail: ex.Message, statusCode: 400);
             }
             catch (EmbeddingUnavailableException ex)
             {
@@ -84,7 +91,7 @@ public static class ChunkSetEndpoints
                 // results rather than as this message.
                 return Results.Problem(
                     title: "Embedding model unavailable",
-                    detail: $"Could not probe '{model}': {ex.Message}. The chunk set was not created.",
+                    detail: $"Could not probe '{target}': {ex.Message}. The chunk set was not created.",
                     statusCode: 503);
             }
 
@@ -94,9 +101,10 @@ public static class ChunkSetEndpoints
                 CorpusId = corpus.Id,
                 Name = name,
                 Description = body.Description,
+                EmbeddingProvider = provider,
                 EmbeddingModel = model,
                 EmbeddingDimensions = dims,
-                CollectionName = vectors.CollectionNameFor(model, dims),
+                CollectionName = vectors.CollectionNameFor(target, dims),
                 ChunkSize = body.ChunkSize ?? template?.ChunkSize ?? 768,
                 ChunkOverlap = body.ChunkOverlap ?? template?.ChunkOverlap ?? 100,
                 BoundaryMode = body.BoundaryMode ?? template?.BoundaryMode ?? "language-aware",

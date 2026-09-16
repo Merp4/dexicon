@@ -478,6 +478,13 @@ and a good one where models come from configuration — here the configuration i
 row that changes while the process runs); a factory with a per-model cache (the same
 lifetime problem with more machinery, for a value that is one field on a request).
 
+**Since revised.** The seam is now `Microsoft.Extensions.AI`'s `IEmbeddingGenerator`, which
+makes OpenAI and Azure OpenAI a registration rather than a rewrite. The decision above
+survives the change intact, because `EmbeddingGenerationOptions.ModelId` carries the model
+per call: generators are cached per PROVIDER — a connection and a credential — and the
+model stays an argument. Adopting the abstraction the obvious way, one generator per
+configured model, would have reinstated exactly the bug this decision exists to prevent.
+
 ---
 
 ### D-23 Unit boundaries force a split
@@ -530,6 +537,34 @@ That makes prefixes the next thing to measure rather than the next thing to assu
 a per-model convention, so it needs a per-model mapping and a re-run of the same harness —
 which now exists, which is most of what this exercise bought.
 
+
+### D-24 Model limits are measured, not assumed
+
+**Decision.** `POST /api/embedding-models/probe` measures a model's real input limit by
+embedding throwaway filler and bisecting on whether the tail still affects the vector.
+Nothing is indexed.
+
+**Why.** Dexicon had no idea what any model would accept, and the cost of guessing was a
+book. An EPUB produced chunks averaging 32,000 characters, the model truncated every one
+of them, ~95% of the content was in no index anywhere, and every layer reported success —
+because a truncating model returns a perfectly good vector for the part it read. No
+assertion could have caught it, because nothing was wrong with any individual result.
+
+Truncation is silent but not invisible. Changing only the END of an input and watching
+whether the vector moves answers "did the model read this far", and bisection turns that
+into a limit. Roughly two dozen short calls, no documentation to trust, no vendor claim to
+take on faith — and it works identically for a provider whose limits are not published.
+
+Measured here: `nomic-embed-text` and `embeddinggemma` both accept ~11,776 characters of
+prose and truncate silently. Neither errors, which is the worse of the two behaviours and
+worth knowing.
+
+**Rejected.** A table of known models (goes stale, and says nothing about a model someone
+pulled yesterday); trusting documented context windows (they are in tokens, the chunker
+works in characters, and the ratio depends on the text); doing nothing and keeping the
+conservative default (which is what allowed the original bug).
+
+---
 
 ## What was carried over from McpToolbox
 

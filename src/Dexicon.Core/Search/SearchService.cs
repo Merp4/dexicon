@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Embedding;
+using Dexicon.Core.Indexing;
 using Dexicon.Core.Vectors;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -38,7 +39,7 @@ public sealed record SearchResult
 public sealed class SearchService(
     ScopeResolver scopes,
     IVectorStore vectors,
-    IEmbeddingProvider embedder,
+    IEmbeddingService embedder,
     IMemoryCache cache,
     ILogger<SearchService> log)
 {
@@ -77,7 +78,7 @@ public sealed class SearchService(
             {
                 try
                 {
-                    dense = await EmbedQueryAsync(request.Query, group.First().Set.EmbeddingModel, ct);
+                    dense = await EmbedQueryAsync(request.Query, group.First().Set.Target(), ct);
                     if (dense.Length != dims)
                         throw new EmbeddingDimensionMismatchException(group.Key, dims, dense.Length);
                 }
@@ -152,12 +153,12 @@ public sealed class SearchService(
     /// query alone would serve the first model's vector to the second collection — a
     /// comparison between two unrelated vector spaces, which returns confident nonsense.
     /// </summary>
-    private async Task<float[]> EmbedQueryAsync(string query, string model, CancellationToken ct)
+    private async Task<float[]> EmbedQueryAsync(string query, EmbeddingTarget target, CancellationToken ct)
     {
-        var key = $"qemb::{model}::{query}";
+        var key = $"qemb::{target}::{query}";
         if (cache.TryGetValue(key, out float[]? cached) && cached is not null) return cached;
 
-        var vector = (await embedder.EmbedAsync(model, [query], ct))[0];
+        var vector = (await embedder.EmbedAsync(target, [query], ct))[0];
         cache.Set(key, vector, QueryEmbeddingTtl);
         return vector;
     }

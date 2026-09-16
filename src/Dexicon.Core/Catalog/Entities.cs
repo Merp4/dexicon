@@ -93,6 +93,13 @@ public sealed class ChunkSet
     public string? Description { get; set; }
 
     /// <summary>
+    /// Which configured backend embeds this set — <c>ollama</c>, <c>openai</c>, an Azure
+    /// deployment. The NAME of a provider, resolved against configuration at use; the
+    /// credentials for it never touch the catalogue.
+    /// </summary>
+    public string EmbeddingProvider { get; set; } = "ollama";
+
+    /// <summary>
     /// The vector space. Pinned per set: changing a set's model in place would strand its
     /// existing vectors in a collection nothing addresses any more, so the model is
     /// changed by building a NEW set and promoting it.

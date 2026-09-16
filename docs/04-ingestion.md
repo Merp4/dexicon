@@ -218,6 +218,65 @@ Promoting a half-built set is precisely the outage that building it separately p
 It is also the honest home for "the same document, chunked two ways". That worked before
 only by duplicating the corpus, which duplicated its grants and its sources along with it.
 
+### Embedding providers
+
+A chunk set names a **provider** and a **model**. Ollama is configured by default and
+needs nothing; OpenAI and Azure OpenAI are opt-in:
+
+```
+DEXICON__EMBEDDING__PROVIDERS__openai__KIND=OpenAI
+DEXICON__EMBEDDING__PROVIDERS__openai__APIKEYENVVAR=OPENAI_API_KEY
+DEXICON__EMBEDDING__PROVIDERS__openai__MODELS__0=text-embedding-3-small
+OPENAI_API_KEY=…
+```
+
+The configuration names **the environment variable** holding the key, not the key.
+Configuration files get committed; environment variables do not. The catalogue records
+only which provider a set uses — a database row that carries an API key is a row you
+cannot back up casually, and Dexicon's backup instructions say to copy the catalogue.
+
+A provider that is configured but missing its credential is reported as such in the
+Models screen and in `/api/embedding-providers`, rather than looking identical to a
+working one until someone picks it and an index fails an hour later.
+
+The model travels as a **per-call argument**, never bound into a client at startup. Chunk
+sets choose models at runtime, so anything resolved from configuration at boot — keyed DI
+included — cannot see a set created five minutes ago. See
+[D-22](decisions.md#d-22-the-embedding-model-is-a-per-call-argument).
+
+The collection name carries the provider too — `dexicon__ollama__nomic-embed-text__768` —
+because two providers can serve a model of the same name and those are not the same
+vectors.
+
+Listing, pulling and deleting models is separate from embedding, and only local providers
+support it. You cannot pull a model into OpenAI; its catalogue is a fixed list, configured
+rather than discovered.
+
+### Knowing a model's limits, without indexing anything
+
+`POST /api/embedding-models/probe` measures what a model will actually accept:
+
+```json
+{ "dimensions": 768, "maxInputChars": 11776, "truncatesSilently": true,
+  "recommendedChunkTokens": 1962, "embedCalls": 24 }
+```
+
+This exists because of a failure nothing could detect. An EPUB produced chunks averaging
+32,000 characters; the model silently truncated every one of them, roughly 95% of the book
+was in no index anywhere, and the file, the job and the corpus all reported success. A
+truncating model returns a perfectly good vector for the part it read.
+
+Truncation is silent but **empirically visible**: embed a text, then embed the same text
+with distinctive content appended. If the tail was read, the vector moves. If it did not,
+the vector is unchanged. Bisecting on that finds the real limit in about two dozen short
+calls, with no documentation to trust and nothing indexed.
+
+Measured on this stack, both `nomic-embed-text` and `embeddinggemma` accept about 11,776
+characters of English prose — 2,048 tokens — and **truncate silently** beyond it. Neither
+errors. The recommendation is two thirds of the measured figure, because the measurement
+is in characters and the model counts tokens: code, minified output and CJK reach the same
+token limit in far fewer characters.
+
 ### Meaning, not just budget
 
 Chunk size exists because of the embedding model's context window. Everything else here

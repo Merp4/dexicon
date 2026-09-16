@@ -82,6 +82,8 @@ export interface ChunkSet {
   id: string;
   name: string;
   description?: string;
+  /** Which configured backend embeds this set — ollama, openai, an Azure deployment. */
+  embeddingProvider: string;
   embeddingModel: string;
   embeddingDimensions: number;
   collectionName: string;
@@ -108,6 +110,30 @@ export interface EmbeddingModelInfo {
   dimensions?: number;
   /** True when a chunk set embeds with it — deleting it is refused while this holds. */
   inUse: boolean;
+}
+
+export interface EmbeddingProviderInfo {
+  name: string;
+  kind: string;
+  /** Whether models can be pulled and deleted, or only chosen from a fixed list. */
+  managed: boolean;
+  /** Usable right now. False means configured but missing a credential. */
+  configured: boolean;
+  detail?: string;
+}
+
+/** What a model will actually accept, measured rather than assumed. */
+export interface ModelCapabilities {
+  provider: string;
+  model: string;
+  dimensions: number;
+  maxInputChars?: number;
+  truncatesSilently: boolean;
+  recommendedChunkChars: number;
+  recommendedChunkTokens: number;
+  embedCalls: number;
+  tookMs: number;
+  summary: string;
 }
 
 export interface ModelPullEvent {
@@ -301,11 +327,25 @@ export const api = {
       { method: 'DELETE' },
     ),
 
-  listEmbeddingModels: () =>
-    request<{ configured: string; models: EmbeddingModelInfo[]; note?: string }>('/api/embedding-models'),
+  listEmbeddingProviders: () =>
+    request<{ default: string; providers: EmbeddingProviderInfo[] }>('/api/embedding-providers'),
 
-  deleteEmbeddingModel: (model: string) =>
-    request<void>(`/api/embedding-models/${encodeURIComponent(model)}`, { method: 'DELETE' }),
+  listEmbeddingModels: (provider?: string) =>
+    request<{ provider: string; managed: boolean; configured: string; models: EmbeddingModelInfo[]; note?: string }>(
+      provider ? `/api/embedding-models?provider=${encodeURIComponent(provider)}` : '/api/embedding-models',
+    ),
+
+  probeEmbeddingModel: (model: string, provider?: string) =>
+    request<ModelCapabilities>('/api/embedding-models/probe', {
+      method: 'POST',
+      body: JSON.stringify({ model, provider }),
+    }),
+
+  deleteEmbeddingModel: (model: string, provider?: string) =>
+    request<void>(
+      `/api/embedding-models/${encodeURIComponent(model)}${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`,
+      { method: 'DELETE' },
+    ),
 
   browse: (path?: string) =>
     request<WorkspaceListing>(`/api/workspaces${path ? `?path=${encodeURIComponent(path)}` : ''}`),

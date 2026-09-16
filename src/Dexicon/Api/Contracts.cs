@@ -9,6 +9,7 @@ namespace Dexicon.Api;
 public sealed record CreateCorpusRequest(
     string Name,
     string? Description,
+    string? EmbeddingProvider,
     string? EmbeddingModel,
     int? ChunkSize,
     int? ChunkOverlap,
@@ -29,6 +30,7 @@ public sealed record UpdateCorpusRequest(
 public sealed record CreateChunkSetRequest(
     string Name,
     string? Description,
+    string? EmbeddingProvider,
     string? EmbeddingModel,
     int? ChunkSize,
     int? ChunkOverlap,
@@ -58,6 +60,7 @@ public sealed record ChunkSetSummary(
     string Id,
     string Name,
     string? Description,
+    string EmbeddingProvider,
     string EmbeddingModel,
     int EmbeddingDimensions,
     string CollectionName,
@@ -77,10 +80,16 @@ public sealed record ChunkSetSummary(
     DateTime CreatedUtc,
     DateTime? LastIndexedUtc);
 
-public sealed record PullModelRequest(string Model);
+public sealed record PullModelRequest(string Model, string? Provider);
 
-/// <summary>One embedding model Ollama has pulled and can serve.</summary>
+/// <summary>Measure a model's real input limit without indexing anything.</summary>
+public sealed record ProbeModelRequest(string Model, string? Provider);
+
+/// <summary>One embedding model a provider can serve.</summary>
 public sealed record EmbeddingModelInfo(string Name, long SizeBytes, int? Dimensions, bool InUse);
+
+/// <summary>A configured backend, and whether its models can be pulled and deleted.</summary>
+public sealed record EmbeddingProviderInfo(string Name, string Kind, bool Managed, bool Configured, string? Detail);
 
 public sealed record AddSourceRequest(string WorkspacePath, bool? UseGitignore, int? MaxFileBytes,
     IReadOnlyList<string>? IncludeGlobs, IReadOnlyList<string>? ExcludeGlobs);
@@ -152,7 +161,7 @@ public static class Mapping
 
     public static ChunkSetSummary ToSummary(this ChunkSet s,
         int fileCount, int chunkCount, int pendingCount, int failedCount) =>
-        new(s.Id, s.Name, s.Description, s.EmbeddingModel, s.EmbeddingDimensions, s.CollectionName,
+        new(s.Id, s.Name, s.Description, s.EmbeddingProvider, s.EmbeddingModel, s.EmbeddingDimensions, s.CollectionName,
             s.ChunkSize, s.ChunkOverlap, s.BoundaryMode, s.CustomBoundaryPattern,
             s.UnitAware, s.SentenceAware, s.HeadingContext, s.IsDefault,
             s.State.ToString().ToLowerInvariant(),

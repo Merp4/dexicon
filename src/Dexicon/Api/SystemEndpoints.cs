@@ -298,52 +298,123 @@ public static class SystemEndpoints
                 : Results.Json(new { status = "not-ready", qdrant, catalogue }, statusCode: 503);
         }).WithTags("Health");
 
-        app.MapGet("/api/embedding-models", async (RequestContext rc, IEmbeddingProvider embedder,
-            CatalogDbContext db, IOptions<DexiconOptions> opts, CancellationToken ct) =>
+        app.MapGet("/api/embedding-providers", (RequestContext rc, IEmbeddingGeneratorFactory factory,
+            IModelCatalog catalog, IOptions<DexiconOptions> opts) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
+
+            var providers = factory.ProviderNames.Select(name =>
+            {
+                var options = factory.Options(name);
+                var managed = catalog.IsManaged(name);
+
+                // "Configured" means usable, not merely present. A provider whose API key
+                // is missing looks identical in a list until someone picks it and the
+                // failure surfaces at index time, an hour later and three steps away.
+                var needsKey = options.Kind is EmbeddingProviderKind.OpenAI or EmbeddingProviderKind.AzureOpenAI;
+                var hasKey = !needsKey
+                             || !string.IsNullOrWhiteSpace(options.ApiKey)
+                             || (options.ApiKeyEnvVar is { Length: > 0 } v
+                                 && !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(v)));
+
+                var detail = hasKey
+                    ? null
+                    : $"No API key. Set {options.ApiKeyEnvVar ?? "an API key"} in the environment.";
+
+                return new EmbeddingProviderInfo(
+                    name, options.Kind.ToString().ToLowerInvariant(), managed, hasKey, detail);
+            }).ToList();
+
+            return Results.Ok(new { @default = opts.Value.Embedding.Provider, providers });
+        }).WithTags("System");
+
+        app.MapGet("/api/embedding-models", async (string? provider, RequestContext rc,
+            IModelCatalog catalog, IEmbeddingGeneratorFactory factory, CatalogDbContext db,
+            IOptions<DexiconOptions> opts, CancellationToken ct) =>
+        {
+            if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
+
+            var name = string.IsNullOrWhiteSpace(provider) ? opts.Value.Embedding.Provider : provider;
 
             IReadOnlyList<AvailableModel> models;
             try
             {
-                models = await embedder.ListModelsAsync(ct);
+                models = await catalog.ListAsync(name, ct);
+            }
+            catch (UnknownEmbeddingProviderException ex)
+            {
+                return Results.Problem(title: "Unknown embedding provider", detail: ex.Message, statusCode: 400);
             }
             catch (EmbeddingUnavailableException ex)
             {
-                return Results.Problem(
-                    title: "Embedding service unavailable",
-                    detail: ex.Message,
-                    statusCode: 503);
+                return Results.Problem(title: "Provider unavailable", detail: ex.Message, statusCode: 503);
             }
 
-            // Which models are already in use, so the UI can warn before someone deletes
-            // the last set on one -- and so a model that is pulled but unused is visibly
-            // available rather than looking the same as one that is load-bearing.
-            var inUse = (await db.ChunkSets.Select(s => s.EmbeddingModel).Distinct().ToListAsync(ct))
-                .Select(ModelNames.Normalise).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            // Which are in use, so the UI can warn before someone removes one that four
+            // corpora depend on. Matched on provider AND model: the same model name under
+            // two providers is two different vector spaces.
+            var inUse = (await db.ChunkSets
+                    .Select(s => new { s.EmbeddingProvider, s.EmbeddingModel })
+                    .Distinct().ToListAsync(ct))
+                .Where(s => string.Equals(s.EmbeddingProvider, name, StringComparison.OrdinalIgnoreCase))
+                .Select(s => ModelNames.Normalise(s.EmbeddingModel))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            // Ollama serves chat models from the same endpoint and they cannot embed.
-            // Offering them would turn a bad pick into a 503 much later, at index time.
-            var embedding = models
-                .Where(m => ModelNames.LooksLikeAnEmbeddingModel(m.Name, m.Family))
+            var managed = catalog.IsManaged(name);
+
+            // Ollama serves chat models from the same endpoint and they cannot embed, so
+            // offering them would turn a bad pick into a 503 at index time. A hosted
+            // provider's list is curated already, so nothing to filter.
+            var listed = models
+                .Where(m => !managed || ModelNames.LooksLikeAnEmbeddingModel(m.Name, m.Family))
                 .Select(m => new EmbeddingModelInfo(
-                    m.Name, m.SizeBytes, m.Dimensions,
-                    inUse.Contains(ModelNames.Normalise(m.Name))))
+                    m.Name, m.SizeBytes, m.Dimensions, inUse.Contains(ModelNames.Normalise(m.Name))))
                 .ToList();
 
             return Results.Ok(new
             {
+                provider = name,
+                managed,
                 configured = opts.Value.Embedding.Model,
-                models = embedding,
-                // Said plainly: an empty list otherwise reads as "Ollama is broken".
-                note = embedding.Count == 0
-                    ? "No embedding models are pulled. Run: docker compose exec dexicon-ollama ollama pull nomic-embed-text"
+                models = listed,
+                // Said plainly: an empty list otherwise reads as "the provider is broken".
+                note = listed.Count == 0
+                    ? managed
+                        ? $"No embedding models are pulled. Pull one, or run: docker compose exec dexicon-ollama ollama pull {opts.Value.Embedding.Model}"
+                        : $"Provider '{name}' has no models configured. Add them under Dexicon:Embedding:Providers:{name}:Models."
                     : null,
             });
         }).WithTags("System");
 
+        app.MapPost("/api/embedding-models/probe", async (ProbeModelRequest body, RequestContext rc,
+            ModelProbe probe, IOptions<DexiconOptions> opts, CancellationToken ct) =>
+        {
+            if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
+
+            if (string.IsNullOrWhiteSpace(body.Model))
+                return Results.Problem(title: "A model name is required", statusCode: 400);
+
+            var target = new EmbeddingTarget(
+                string.IsNullOrWhiteSpace(body.Provider) ? opts.Value.Embedding.Provider : body.Provider.Trim(),
+                body.Model.Trim());
+
+            try
+            {
+                return Results.Ok(await probe.RunAsync(target, ct));
+            }
+            catch (UnknownEmbeddingProviderException ex)
+            {
+                return Results.Problem(title: "Unknown embedding provider", detail: ex.Message, statusCode: 400);
+            }
+            catch (EmbeddingUnavailableException ex)
+            {
+                return Results.Problem(title: "Provider unavailable", detail: ex.Message, statusCode: 503);
+            }
+        }).WithTags("System");
+
         app.MapPost("/api/embedding-models/pull", async (PullModelRequest body, HttpContext http,
-            RequestContext rc, IEmbeddingProvider embedder, ILoggerFactory logs, CancellationToken ct) =>
+            RequestContext rc, IModelCatalog catalog, IOptions<DexiconOptions> opts,
+            ILoggerFactory logs, CancellationToken ct) =>
         {
             // Admin, not ingest: this downloads gigabytes onto a shared volume.
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
@@ -352,8 +423,8 @@ public static class SystemEndpoints
                 return Results.Problem(title: "A model name is required", statusCode: 400);
 
             var model = body.Model.Trim();
+            var provider = string.IsNullOrWhiteSpace(body.Provider) ? opts.Value.Embedding.Provider : body.Provider.Trim();
             var log = logs.CreateLogger("Dexicon.ModelPull");
-            log.LogInformation("Pulling embedding model {Model}", model);
 
             // Server-sent events, because a pull takes minutes and a progress bar that
             // only moves when it finishes is not a progress bar. Same transport the
@@ -363,11 +434,12 @@ public static class SystemEndpoints
 
             try
             {
-                await foreach (var progress in embedder.PullModelAsync(model, ct))
+                await foreach (var progress in catalog.PullAsync(provider, model, ct))
                 {
                     var json = JsonSerializer.Serialize(new
                     {
                         model,
+                        provider,
                         progress.Status,
                         progress.Completed,
                         progress.Total,
@@ -379,7 +451,7 @@ public static class SystemEndpoints
                     await http.Response.Body.FlushAsync(ct);
                 }
 
-                log.LogInformation("Pulled embedding model {Model}", model);
+                log.LogInformation("Pulled {Model} into provider {Provider}", model, provider);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -387,32 +459,34 @@ public static class SystemEndpoints
                 // resumes next time, so there is nothing to clean up.
                 log.LogInformation("Pull of {Model} was cancelled by the client", model);
             }
-            catch (EmbeddingUnavailableException ex)
+            catch (Exception ex) when (ex is EmbeddingUnavailableException
+                                          or UnknownEmbeddingProviderException
+                                          or InvalidOperationException)
             {
                 log.LogWarning(ex, "Pull of {Model} failed", model);
-                var json = JsonSerializer.Serialize(new { model, error = ex.Message }, JsonOptions.Web);
+                var json = JsonSerializer.Serialize(new { model, provider, error = ex.Message }, JsonOptions.Web);
                 await http.Response.WriteAsync($"data: {json}\n\n", CancellationToken.None);
             }
 
             return Results.Empty;
         }).WithTags("System");
 
-        app.MapDelete("/api/embedding-models/{model}", async (string model, RequestContext rc,
-            IEmbeddingProvider embedder, CatalogDbContext db, IOptions<DexiconOptions> opts,
-            CancellationToken ct) =>
+        app.MapDelete("/api/embedding-models/{model}", async (string model, string? provider, RequestContext rc,
+            IModelCatalog catalog, CatalogDbContext db, IOptions<DexiconOptions> opts, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
 
+            var name = string.IsNullOrWhiteSpace(provider) ? opts.Value.Embedding.Provider : provider;
+
             // Refuse while anything depends on it. Deleting a model out from under a chunk
-            // set does not fail loudly -- the set keeps its vectors and its collection, and
+            // set does not fail loudly — the set keeps its vectors and its collection, and
             // breaks only at the next index or the next semantic query, by which point the
             // cause is several steps away.
-            // Compared on the normalised name, so deleting "nomic-embed-text:latest"
-            // still sees the sets that recorded it as "nomic-embed-text".
             var usedBy = (await db.ChunkSets
-                    .Select(s => new { s.Name, Corpus = s.Corpus!.Name, s.EmbeddingModel })
+                    .Select(s => new { s.Name, Corpus = s.Corpus!.Name, s.EmbeddingProvider, s.EmbeddingModel })
                     .ToListAsync(ct))
-                .Where(s => ModelNames.SameModel(s.EmbeddingModel, model))
+                .Where(s => string.Equals(s.EmbeddingProvider, name, StringComparison.OrdinalIgnoreCase)
+                            && ModelNames.SameModel(s.EmbeddingModel, model))
                 .ToList();
 
             if (usedBy.Count > 0)
@@ -423,17 +497,22 @@ public static class SystemEndpoints
                             ". Migrate those chunk sets to another model first.",
                     statusCode: 409);
 
-            if (ModelNames.SameModel(model, opts.Value.Embedding.Model))
+            if (ModelNames.SameModel(model, opts.Value.Embedding.Model)
+                && string.Equals(name, opts.Value.Embedding.Provider, StringComparison.OrdinalIgnoreCase))
                 return Results.Problem(
                     title: "Model is the configured default",
                     detail: $"'{model}' is DEXICON__EMBEDDING__MODEL, so new corpora would be created " +
-                            "against a model that is no longer pulled. Change the configuration first.",
+                            "against a model that is no longer available. Change the configuration first.",
                     statusCode: 409);
 
             try
             {
-                await embedder.DeleteModelAsync(model, ct);
+                await catalog.DeleteAsync(name, model, ct);
                 return Results.NoContent();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Problem(title: "Provider does not manage models", detail: ex.Message, statusCode: 400);
             }
             catch (EmbeddingUnavailableException ex)
             {
@@ -441,16 +520,21 @@ public static class SystemEndpoints
             }
         }).WithTags("System");
 
-        app.MapGet("/healthz", async (RequestContext rc, IVectorStore vectors, IEmbeddingProvider embedder,
+        app.MapGet("/healthz", async (RequestContext rc, IVectorStore vectors, IEmbeddingService embedder,
             CatalogDbContext db, IOptions<DexiconOptions> opts, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
 
             var qdrant = await vectors.PingAsync(ct);
+            var target = new EmbeddingTarget(opts.Value.Embedding.Provider, opts.Value.Embedding.Model);
+
+            // KnownDimensions never calls out. Only a cold cache pays for a round-trip,
+            // which matters because this is polled every fifteen seconds per open tab.
             string? embeddingError = null;
-            var dims = embedder.Dimensions;
-            try { if (dims == 0) dims = await embedder.ProbeDimensionsAsync(opts.Value.Embedding.Model, ct); }
-            catch (EmbeddingUnavailableException ex) { embeddingError = ex.Message; }
+            var dims = embedder.KnownDimensions(target);
+            try { if (dims == 0) dims = await embedder.ProbeDimensionsAsync(target, ct); }
+            catch (Exception ex) when (ex is EmbeddingUnavailableException or UnknownEmbeddingProviderException)
+            { embeddingError = ex.Message; }
 
             var activeJob = await db.Jobs.Where(j => j.State == JobState.Running)
                 .OrderByDescending(j => j.StartedUtc).FirstOrDefaultAsync(ct);
@@ -459,11 +543,14 @@ public static class SystemEndpoints
             {
                 status = qdrant ? "ok" : "degraded",
                 qdrant = new { reachable = qdrant, endpoint = opts.Value.Qdrant.Endpoint },
+                // Still called "ollama" on the wire: it is what the UI reads, and renaming
+                // a health field to "embedding" would break every dashboard for a word.
                 ollama = new
                 {
                     reachable = embeddingError is null,
                     endpoint = opts.Value.Ollama.Endpoint,
-                    model = opts.Value.Embedding.Model,
+                    provider = target.Provider,
+                    model = target.Model,
                     dimensions = dims,
                     error = embeddingError,
                 },

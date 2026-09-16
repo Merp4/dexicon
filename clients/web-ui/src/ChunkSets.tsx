@@ -1,5 +1,14 @@
 import { useEffect, useState } from 'react';
-import { api, getToken, type ChunkSet, type Corpus, type EmbeddingModelInfo, type ModelPullEvent } from './api';
+import {
+  api,
+  getToken,
+  type ChunkSet,
+  type Corpus,
+  type EmbeddingModelInfo,
+  type EmbeddingProviderInfo,
+  type ModelCapabilities,
+  type ModelPullEvent,
+} from './api';
 import { Badge, CopyButton, ErrorBanner, Field, Modal, Spinner, formatBytes, localTime, relativeTime, stateTone } from './ui';
 
 /**
@@ -67,7 +76,8 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
                 )}
 
                 <div className="dim" style={{ fontSize: '0.78rem', marginTop: '0.35rem' }}>
-                  <span className="mono">{set.embeddingModel}</span> ({set.embeddingDimensions}d) ·{' '}
+                  <span className="mono">{set.embeddingProvider}/{set.embeddingModel}</span>{' '}
+                  ({set.embeddingDimensions}d) ·{' '}
                   {set.chunkSize} tokens / {set.chunkOverlap} overlap · {set.boundaryMode}
                   {set.unitAware && ' · unit-aware'}
                   {set.sentenceAware && ' · sentence-aware'}
@@ -164,6 +174,7 @@ function ChunkSetModal({
 
   const [name, setName] = useState(existing?.name ?? '');
   const [description, setDescription] = useState(existing?.description ?? '');
+  const [provider, setProvider] = useState(template?.embeddingProvider ?? 'ollama');
   const [model, setModel] = useState(template?.embeddingModel ?? '');
   const [chunkSize, setChunkSize] = useState(template?.chunkSize ?? 768);
   const [chunkOverlap, setChunkOverlap] = useState(template?.chunkOverlap ?? 100);
@@ -173,15 +184,21 @@ function ChunkSetModal({
   const [sentenceAware, setSentenceAware] = useState(template?.sentenceAware ?? false);
   const [headingContext, setHeadingContext] = useState(template?.headingContext ?? false);
 
+  const [providers, setProviders] = useState<EmbeddingProviderInfo[]>([]);
   const [models, setModels] = useState<EmbeddingModelInfo[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
-    // Best effort: a picker is nicer than a text box, but Ollama being unreachable must
-    // not stop someone editing chunk settings that have nothing to do with it.
-    api.listEmbeddingModels().then((r) => setModels(r.models)).catch(() => setModels([]));
+    api.listEmbeddingProviders().then((r) => setProviders(r.providers)).catch(() => setProviders([]));
   }, []);
+
+  useEffect(() => {
+    // Best effort, and per provider: a picker is nicer than a text box, but a backend
+    // being unreachable must not stop someone editing chunk settings that have nothing
+    // to do with it.
+    api.listEmbeddingModels(provider).then((r) => setModels(r.models)).catch(() => setModels([]));
+  }, [provider]);
 
   const save = async () => {
     setSaving(true);
@@ -202,6 +219,7 @@ function ChunkSetModal({
         await api.createChunkSet(corpus.name, {
           name,
           description,
+          embeddingProvider: provider,
           embeddingModel: model,
           chunkSize,
           chunkOverlap,
@@ -219,7 +237,10 @@ function ChunkSetModal({
     }
   };
 
-  const changesModel = !existing && model !== template?.embeddingModel;
+  const changesModel =
+    !existing && (model !== template?.embeddingModel || provider !== template?.embeddingProvider);
+
+  const chosenProvider = providers.find((p) => p.name === provider);
 
   return (
     <Modal title={existing ? `Edit ${corpus.name}:${existing.name}` : 'Add a chunk set'} onClose={onClose} width={620}>
@@ -234,6 +255,24 @@ function ChunkSetModal({
       <Field label="Description" hint="Optional — what this way of reading the corpus is for.">
         <input value={description} onChange={(e) => setDescription(e.target.value)} />
       </Field>
+
+      {!existing && providers.length > 0 && (
+        <Field label="Provider" hint="Which backend embeds this set. Credentials come from configuration, never from here.">
+          <select value={provider} onChange={(e) => setProvider(e.target.value)}>
+            {providers.map((p) => (
+              <option key={p.name} value={p.name} disabled={!p.configured}>
+                {p.name} ({p.kind}){p.configured ? '' : ' — not configured'}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
+
+      {!existing && chosenProvider?.detail && (
+        <p style={{ color: 'var(--warn)', fontSize: '0.78rem', marginTop: '-0.5rem' }}>
+          {chosenProvider.detail}
+        </p>
+      )}
 
       {!existing && (
         <Field
@@ -257,8 +296,8 @@ function ChunkSetModal({
 
       {existing && (
         <p className="dim" style={{ fontSize: '0.78rem', marginTop: 0 }}>
-          Model <span className="mono">{existing.embeddingModel}</span> is fixed for this set. To move to another
-          model, add a set on it and promote once it has built.
+          <span className="mono">{existing.embeddingProvider}/{existing.embeddingModel}</span> is fixed for this
+          set. To move to another model or provider, add a set on it and promote once it has built.
         </p>
       )}
 
@@ -373,7 +412,10 @@ function Toggle({
  * removed — and the reason is shown here rather than discovered by trying.
  */
 export function ModelsView() {
+  const [providers, setProviders] = useState<EmbeddingProviderInfo[]>([]);
+  const [provider, setProvider] = useState<string>('');
   const [models, setModels] = useState<EmbeddingModelInfo[]>([]);
+  const [managed, setManaged] = useState(true);
   const [configured, setConfigured] = useState('');
   const [note, setNote] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
@@ -382,23 +424,39 @@ export function ModelsView() {
   const [pullName, setPullName] = useState('');
   const [pull, setPull] = useState<ModelPullEvent | null>(null);
 
-  const refresh = async () => {
+  const [probing, setProbing] = useState<string | null>(null);
+  const [probed, setProbed] = useState<Record<string, ModelCapabilities>>({});
+
+  useEffect(() => {
+    api
+      .listEmbeddingProviders()
+      .then((r) => {
+        setProviders(r.providers);
+        setProvider((current) => current || r.default);
+      })
+      .catch((e) => setError(e));
+  }, []);
+
+  const refresh = async (name = provider) => {
+    if (!name) return;
     try {
-      const r = await api.listEmbeddingModels();
+      const r = await api.listEmbeddingModels(name);
       setModels(r.models);
+      setManaged(r.managed);
       setConfigured(r.configured);
       setNote(r.note);
       setError(null);
     } catch (e) {
       setError(e);
+      setModels([]);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    void refresh();
-  }, []);
+    if (provider) void refresh(provider);
+  }, [provider]);
 
   const startPull = async () => {
     const model = pullName.trim();
@@ -413,7 +471,7 @@ export function ModelsView() {
       const response = await fetch('/api/embedding-models/pull', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken() ?? ''}` },
-        body: JSON.stringify({ model }),
+        body: JSON.stringify({ model, provider }),
       });
 
       if (!response.ok || !response.body) throw new Error(`Pull failed: ${response.status}`);
@@ -448,69 +506,117 @@ export function ModelsView() {
     }
   };
 
-  const remove = async (model: string) => {
-    if (!confirm(`Delete ${model} from Ollama? Its files are removed from the shared volume.`)) return;
+  const probe = async (model: string) => {
+    setProbing(model);
+    setError(null);
     try {
-      await api.deleteEmbeddingModel(model);
+      const capabilities = await api.probeEmbeddingModel(model, provider);
+      setProbed((all) => ({ ...all, [model]: capabilities }));
+    } catch (e) {
+      setError(e);
+    } finally {
+      setProbing(null);
+    }
+  };
+
+  const remove = async (model: string) => {
+    if (!confirm(`Delete ${model} from ${provider}? Its files are removed from the shared volume.`)) return;
+    try {
+      await api.deleteEmbeddingModel(model, provider);
       await refresh();
     } catch (e) {
       setError(e);
     }
   };
 
+  const current = providers.find((p) => p.name === provider);
+
   return (
     <div style={{ display: 'grid', gap: '1rem' }}>
       <div>
         <h1 style={{ margin: 0, fontSize: '1.15rem' }}>Embedding models</h1>
         <p className="dim" style={{ margin: '0.3rem 0 0', fontSize: '0.85rem' }}>
-          What this Dexicon's Ollama has pulled. A chunk set picks one of these, and its dimensionality decides
-          which Qdrant collection the set lives in.
+          A chunk set picks a provider and a model. The model's dimensionality decides which Qdrant collection the
+          set lives in, so changing it means a new set rather than an edit.
         </p>
       </div>
 
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
 
-      <div className="card" style={{ padding: '0.9rem 1rem' }}>
-        <Field
-          label="Pull a model"
-          hint="An Ollama model name, e.g. mxbai-embed-large or embeddinggemma. Several hundred megabytes to a few gigabytes."
-        >
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <input
-              value={pullName}
-              onChange={(e) => setPullName(e.target.value)}
-              placeholder="mxbai-embed-large"
-              disabled={pull !== null}
-              onKeyDown={(e) => e.key === 'Enter' && void startPull()}
-            />
-            <button className="btn primary" disabled={pull !== null || !pullName.trim()} onClick={() => void startPull()}>
-              {pull ? <Spinner /> : 'Pull'}
+      {providers.length > 1 && (
+        <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+          {providers.map((p) => (
+            <button
+              key={p.name}
+              className="btn"
+              style={
+                p.name === provider
+                  ? { borderColor: 'var(--accent)', color: 'var(--accent)' }
+                  : undefined
+              }
+              title={p.detail ?? `${p.kind}${p.managed ? ', models can be pulled' : ', fixed catalogue'}`}
+              onClick={() => setProvider(p.name)}
+            >
+              {p.name}
+              {!p.configured && ' ⚠'}
             </button>
-          </div>
-        </Field>
+          ))}
+        </div>
+      )}
 
-        {pull && (
-          <div style={{ marginTop: '0.4rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem' }}>
-              <span className="mono">{pull.model}</span>
-              <span className="dim">
-                {pull.status}
-                {pull.total ? ` · ${formatBytes(pull.completed ?? 0)} / ${formatBytes(pull.total)}` : ''}
-              </span>
-            </div>
-            <div style={{ height: 6, background: 'var(--border)', borderRadius: 3, marginTop: 4, overflow: 'hidden' }}>
-              <div
-                style={{
-                  width: `${pull.percent ?? 0}%`,
-                  height: '100%',
-                  background: pull.done ? 'var(--ok)' : 'var(--accent)',
-                  transition: 'width 200ms linear',
-                }}
+      {current?.detail && (
+        <div className="card" style={{ padding: '0.7rem 0.9rem', borderColor: 'var(--warn)' }}>
+          <span style={{ color: 'var(--warn)', fontSize: '0.85rem' }}>{current.detail}</span>
+          <p className="dim" style={{ margin: '0.3rem 0 0', fontSize: '0.78rem' }}>
+            Credentials come from the environment, never from the catalogue — a chunk set records which provider to
+            use, not how to authenticate to it.
+          </p>
+        </div>
+      )}
+
+      {managed && (
+        <div className="card" style={{ padding: '0.9rem 1rem' }}>
+          <Field
+            label="Pull a model"
+            hint="An Ollama model name, e.g. mxbai-embed-large. Several hundred megabytes to a few gigabytes."
+          >
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <input
+                value={pullName}
+                onChange={(e) => setPullName(e.target.value)}
+                placeholder="mxbai-embed-large"
+                disabled={pull !== null}
+                onKeyDown={(e) => e.key === 'Enter' && void startPull()}
               />
+              <button className="btn primary" disabled={pull !== null || !pullName.trim()} onClick={() => void startPull()}>
+                {pull ? <Spinner /> : 'Pull'}
+              </button>
             </div>
-          </div>
-        )}
-      </div>
+          </Field>
+
+          {pull && (
+            <div style={{ marginTop: '0.4rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem' }}>
+                <span className="mono">{pull.model}</span>
+                <span className="dim">
+                  {pull.status}
+                  {pull.total ? ` · ${formatBytes(pull.completed ?? 0)} / ${formatBytes(pull.total)}` : ''}
+                </span>
+              </div>
+              <div style={{ height: 6, background: 'var(--border)', borderRadius: 3, marginTop: 4, overflow: 'hidden' }}>
+                <div
+                  style={{
+                    width: `${pull.percent ?? 0}%`,
+                    height: '100%',
+                    background: pull.done ? 'var(--ok)' : 'var(--accent)',
+                    transition: 'width 200ms linear',
+                  }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {loading ? (
         <p className="dim">Loading…</p>
@@ -520,42 +626,82 @@ export function ModelsView() {
             <p style={{ margin: 0, padding: '0.8rem 1rem', fontSize: '0.83rem', color: 'var(--warn)' }}>{note}</p>
           )}
 
-          {models.map((m) => (
-            <div
-              key={m.name}
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                gap: '1rem',
-                padding: '0.7rem 1rem',
-                borderTop: '1px solid var(--border)',
-              }}
-            >
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span className="mono" style={{ fontWeight: 600 }}>{m.name}</span>
-                  {m.inUse && <Badge tone="accent">in use</Badge>}
-                  {m.name.replace(/:latest$/, '') === configured.replace(/:latest$/, '') && (
-                    <Badge tone="ok">default for new corpora</Badge>
-                  )}
-                </div>
-                <div className="dim" style={{ fontSize: '0.78rem', marginTop: '0.2rem' }}>
-                  {formatBytes(m.sizeBytes)}
-                  {m.dimensions ? ` · ${m.dimensions} dimensions` : ' · dimensions unknown until first use'}
-                </div>
-              </div>
+          {models.map((m) => {
+            const caps = probed[m.name];
+            return (
+              <div key={m.name} style={{ padding: '0.7rem 1rem', borderTop: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <span className="mono" style={{ fontWeight: 600 }}>{m.name}</span>
+                      {m.inUse && <Badge tone="accent">in use</Badge>}
+                      {m.name.replace(/:latest$/, '') === configured.replace(/:latest$/, '') && (
+                        <Badge tone="ok">default for new corpora</Badge>
+                      )}
+                    </div>
+                    <div className="dim" style={{ fontSize: '0.78rem', marginTop: '0.2rem' }}>
+                      {m.sizeBytes > 0 ? formatBytes(m.sizeBytes) : provider}
+                      {m.dimensions ? ` · ${m.dimensions} dimensions` : ' · dimensions unknown until first use'}
+                    </div>
+                  </div>
 
-              <button
-                className="btn"
-                disabled={m.inUse}
-                title={m.inUse ? 'A chunk set embeds with this model. Migrate it first.' : 'Remove from Ollama'}
-                onClick={() => void remove(m.name)}
-              >
-                Delete
-              </button>
-            </div>
-          ))}
+                  <div style={{ display: 'flex', gap: '0.35rem' }}>
+                    <button
+                      className="btn"
+                      disabled={probing !== null}
+                      title="Measure what this model actually accepts, without indexing anything"
+                      onClick={() => void probe(m.name)}
+                    >
+                      {probing === m.name ? <Spinner /> : 'Test limits'}
+                    </button>
+
+                    {managed && (
+                      <button
+                        className="btn"
+                        disabled={m.inUse}
+                        title={m.inUse ? 'A chunk set embeds with this model. Migrate it first.' : 'Remove from Ollama'}
+                        onClick={() => void remove(m.name)}
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {caps && (
+                  <div
+                    className="card"
+                    style={{
+                      marginTop: '0.6rem',
+                      padding: '0.6rem 0.8rem',
+                      fontSize: '0.8rem',
+                      borderColor: caps.truncatesSilently
+                        ? 'color-mix(in oklab, var(--warn) 45%, transparent)'
+                        : undefined,
+                    }}
+                  >
+                    <div style={{ display: 'flex', gap: '1.2rem', flexWrap: 'wrap' }}>
+                      <span>
+                        <strong>{caps.dimensions}</strong> dimensions
+                      </span>
+                      <span>
+                        accepts{' '}
+                        <strong>{caps.maxInputChars ? caps.maxInputChars.toLocaleString() : 'unbounded'}</strong> chars
+                      </span>
+                      <span>
+                        suggested chunk size <strong>{caps.recommendedChunkTokens.toLocaleString()}</strong> tokens
+                      </span>
+                      {caps.truncatesSilently && <Badge tone="warn">truncates silently</Badge>}
+                    </div>
+                    <p className="dim" style={{ margin: '0.4rem 0 0' }}>{caps.summary}</p>
+                    <p className="dim" style={{ margin: '0.3rem 0 0', fontSize: '0.74rem' }}>
+                      {caps.embedCalls} embed calls, {(caps.tookMs / 1000).toFixed(1)}s — nothing was indexed.
+                    </p>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

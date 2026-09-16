@@ -36,7 +36,7 @@ public static class CorpusEndpoints
         });
 
         g.MapPost("/", async (CreateCorpusRequest body, RequestContext rc, CatalogDbContext db,
-            IVectorStore vectors, IEmbeddingProvider embedder, IOptions<DexiconOptions> opts,
+            IVectorStore vectors, IEmbeddingService embedder, IOptions<DexiconOptions> opts,
             CorpusIndexer indexer, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
@@ -55,10 +55,20 @@ public static class CorpusEndpoints
                 ? opts.Value.Embedding.Model
                 : body.EmbeddingModel.Trim();
 
+            var provider = string.IsNullOrWhiteSpace(body.EmbeddingProvider)
+                ? opts.Value.Embedding.Provider
+                : body.EmbeddingProvider.Trim();
+
+            var target = new EmbeddingTarget(provider, model);
+
             int dims;
             try
             {
-                dims = await embedder.ProbeDimensionsAsync(model, ct);
+                dims = await embedder.ProbeDimensionsAsync(target, ct);
+            }
+            catch (UnknownEmbeddingProviderException ex)
+            {
+                return Results.Problem(title: "Unknown embedding provider", detail: ex.Message, statusCode: 400);
             }
             catch (EmbeddingUnavailableException ex)
             {
@@ -66,7 +76,7 @@ public static class CorpusEndpoints
                 // count is unusable and the failure surfaces much later, as bad results.
                 return Results.Problem(
                     title: "Embedding model unavailable",
-                    detail: $"Could not probe '{model}': {ex.Message}. The corpus was not created.",
+                    detail: $"Could not probe '{target}': {ex.Message}. The corpus was not created.",
                     statusCode: 503);
             }
 
@@ -91,9 +101,10 @@ public static class CorpusEndpoints
                 Id = Ulid.NewUlid().ToString(),
                 CorpusId = corpus.Id,
                 Name = "default",
+                EmbeddingProvider = provider,
                 EmbeddingModel = model,
                 EmbeddingDimensions = dims,
-                CollectionName = vectors.CollectionNameFor(model, dims),
+                CollectionName = vectors.CollectionNameFor(target, dims),
                 ChunkSize = body.ChunkSize ?? indexing.ChunkSize,
                 ChunkOverlap = body.ChunkOverlap ?? indexing.ChunkOverlap,
                 BoundaryMode = body.BoundaryMode ?? indexing.BoundaryMode,

@@ -94,6 +94,7 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).HasMaxLength(40);
             e.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            e.Property(x => x.EmbeddingProvider).HasMaxLength(60).IsRequired();
             e.Property(x => x.EmbeddingModel).HasMaxLength(200).IsRequired();
             e.Property(x => x.CollectionName).HasMaxLength(300).IsRequired();
             e.Property(x => x.BoundaryMode).HasMaxLength(40).IsRequired();
