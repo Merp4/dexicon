@@ -686,6 +686,55 @@ to `major.0.0.0` so a patch release cannot break assembly binding. Reading that 
 product version reports `0.0.0` for any 0.x project, which is exactly what happened. The
 informational version is the one to read.
 
+### Q3, fourth measurement — the full sweep (2026-09-17)
+
+81 configurations: three models × three chunk sizes × three boundary modes × three search
+modes, over the `docs/` corpus, 55 queries. `scripts/bench/sweep.py`, written up in
+[benchmarks.md](benchmarks.md). The first three measurements each varied one thing by hand
+and reused twelve queries; this varies everything and reuses none of them.
+
+**What changed as a result:**
+
+- **Hybrid is earned as the default search mode.** Best mean for every model, and the
+  highest floor — semantic takes the single best configuration and also the worst.
+- **`language-aware` is NOT earned for documents.** It is last of three boundary modes on
+  a corpus that is entirely markdown, whose real boundaries are blank lines. It stays the
+  default, because it was written for code and the sweep has not been run over a code
+  corpus, and a default changed on the wrong evidence is worse than one left alone.
+- **`nomic-embed-text` stays.** `embeddinggemma` leads by 0.025 mean MRR, consistent with
+  the three earlier runs, and still inside the noise of 55 queries. Changing it forces a
+  reindex of every corpus; that needs better evidence than "probably".
+
+**And the sweep found something the question was not asking.** `mxbai-embed-large` accepts
+2,816 characters. The default chunk size of 768 tokens produces 3,072. Two thirds of that
+model's rows measure silent truncation rather than retrieval — and its steady decline
+across chunk sizes is what truncation looks like from the outside. A default that quietly
+breaks a model the UI offers in a dropdown is a worse problem than which model is 2% better,
+and it is the one worth acting on. See [D-27](#d-27-chunk-budget).
+
+### D-27 A chunk budget is characters, and the ratio is measured {#d-27-chunk-budget}
+
+**Decision.** Chunk size stays a character budget. The chunker converts tokens to
+characters once and counts characters; no tokenizer runs in the chunking path. What
+changes is that the conversion ratio is now MEASURED per model rather than assumed to be 4.
+
+**Why not a real tokenizer.** Exactness would mean a vocabulary per model, versioned, for
+models pulled at runtime that may not exist yet. The only tokenizer guaranteed correct for
+an arbitrary model is the one inside it, and asking it costs a round trip — per chunk, tens
+of thousands of times per index. Counting characters is free.
+
+**Why measuring is not the same as assuming.** Ollama returns `prompt_eval_count` on an
+embed call, so the model's own tokenizer can be asked once and the answer kept. Measured
+here: `nomic-embed-text` 2.82 characters per token, `embeddinggemma` 3.80,
+`mxbai-embed-large` 2.82. Two of the three are nowhere near 4, so a "768 token" chunk was
+really about 1,090 tokens — and the number the UI showed was wrong by 40% in the direction
+that truncates.
+
+**Consequence.** The probe reports the ratio and the Models screen shows it. The chunker
+still divides by 4: using the measured ratio there changes every chunk boundary and
+invalidates every index, so it is a migration rather than a fix, and belongs behind its own
+decision.
+
 ---
 
 ## What was carried over from McpToolbox
@@ -708,6 +757,6 @@ informational version is the one to read.
 |---|---|---|---|
 | ~~Q1~~ | ~~Licence — Apache-2.0 or MIT?~~ | — | **Resolved** — Apache-2.0, see [D-14](#d-14-licence) |
 | ~~Q2~~ | ~~Repository name and GHCR namespace~~ | — | **Resolved** — see [D-17](#d-17-name) |
-| Q3 | Default embedding model — `nomic-embed-text` or `embeddinggemma`? | M3 | **First numbers in, see below.** Keep `nomic-embed-text`; nothing yet says switch |
+| Q3 | Default embedding model — `nomic-embed-text` or `embeddinggemma`? | M3 | **Swept, see [benchmarks](benchmarks.md).** Keep `nomic-embed-text`: gemma leads by 0.025 mean MRR over 55 queries, which is suggestive and not worth a forced reindex |
 | Q4 | Should `index_refresh` require the `ingest` scope, or be admin-only? | M2 | `ingest` — an agent noticing a stale index and refreshing it is the point |
 | Q5 | Git history indexing in v1? | M2 scope freeze | No. M5, and only on request |
