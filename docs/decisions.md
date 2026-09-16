@@ -497,6 +497,40 @@ page-aligned chunking means, it is off by default, and the caller asked for it.
 
 ---
 
+### Q3, first measurement
+
+`scripts/retrieval-bench.py` runs one query set against two chunk sets and reports where
+the expected file ranked. Chunk sets are what make this honest: identical chunking over
+identical documents, differing in the model and nothing else. Both sets held 108 chunks.
+
+12 queries over this repository's own docs, hybrid mode:
+
+| | hit@1 | hit@3 | hit@5 | MRR |
+|---|---|---|---|---|
+| `nomic-embed-text` | 9/12 | 10/12 | 12/12 | 0.829 |
+| `embeddinggemma` | 6/12 | 9/12 | 10/12 | 0.632 |
+
+`nomic-embed-text` wins on this sample, and missed nothing inside the top 5 where
+`embeddinggemma` missed two queries entirely.
+
+**This does not settle Q3, for three reasons, and the third is the interesting one.**
+
+Twelve queries is a smoke test. They were hand-written by someone who knew the corpus, so
+they are biased towards questions the corpus can answer. And hybrid mode means the sparse
+half contributes identically to both, which compresses the gap — a pure-semantic run would
+separate them further.
+
+The third: **Dexicon sends raw text to the embedding model, with no task prefix.** Both
+models document one — `search_query:` / `search_document:` for `nomic-embed-text`, a
+task-shaped prefix for `embeddinggemma` — and a model that expects one and does not get it
+underperforms. So the fair reading is not "gemma is worse" but "with no prefixes, nomic is
+more forgiving", and the result says as much about Dexicon as about either model.
+
+That makes prefixes the next thing to measure rather than the next thing to assume. It is
+a per-model convention, so it needs a per-model mapping and a re-run of the same harness —
+which now exists, which is most of what this exercise bought.
+
+
 ## What was carried over from McpToolbox
 
 | Component | Treatment |
@@ -517,6 +551,6 @@ page-aligned chunking means, it is off by default, and the caller asked for it.
 |---|---|---|---|
 | ~~Q1~~ | ~~Licence — Apache-2.0 or MIT?~~ | — | **Resolved** — Apache-2.0, see [D-14](#d-14-licence) |
 | ~~Q2~~ | ~~Repository name and GHCR namespace~~ | — | **Resolved** — see [D-17](#d-17-name) |
-| Q3 | Default embedding model — `nomic-embed-text` for size, or `embeddinggemma` for measured code quality? | M3 decides with numbers | Ship `nomic-embed-text`, switch if M3 says so |
+| Q3 | Default embedding model — `nomic-embed-text` or `embeddinggemma`? | M3 | **First numbers in, see below.** Keep `nomic-embed-text`; nothing yet says switch |
 | Q4 | Should `index_refresh` require the `ingest` scope, or be admin-only? | M2 | `ingest` — an agent noticing a stale index and refreshing it is the point |
 | Q5 | Git history indexing in v1? | M2 scope freeze | No. M5, and only on request |
