@@ -28,7 +28,7 @@ builder.Services.Configure<DexiconOptions>(builder.Configuration.GetSection(Dexi
 var options = builder.Configuration.GetSection(DexiconOptions.SectionName).Get<DexiconOptions>() ?? new DexiconOptions();
 
 // ── Logging ──────────────────────────────────────────────────────────────────
-var logLevel = builder.Configuration["Dexicon:Log:Level"] switch
+var logLevel = options.Log.Level switch
 {
     "Trace" or "Verbose" => LogEventLevel.Verbose,
     "Debug" => LogEventLevel.Debug,

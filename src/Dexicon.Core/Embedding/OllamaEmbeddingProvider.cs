@@ -63,9 +63,31 @@ public sealed class OllamaEmbeddingProvider : IEmbeddingProvider
     {
         if (inputs.Count == 0) return [];
 
+        var batches = inputs.Chunk(_embedding.BatchSize).ToList();
+        var results = new float[batches.Count][][];
+
+        // MaxConcurrency is honoured HERE. It was configured, documented in
+        // .env.example and passed by compose while nothing read it — the batches ran
+        // strictly sequentially, so raising it changed nothing at all. Measured on a
+        // 437-page PDF: ~32 chunks per 18 s single-threaded on CPU Ollama.
+        var gate = new SemaphoreSlim(Math.Max(1, _embedding.MaxConcurrency));
+
+        await Task.WhenAll(batches.Select(async (batch, index) =>
+        {
+            await gate.WaitAsync(ct);
+            try
+            {
+                // Indexed, not appended: results must come back in input order, and
+                // parallel completion says nothing about order.
+                results[index] = [.. await PostEmbedAsync(_embedding.Model, batch, ct)];
+            }
+            finally { gate.Release(); }
+        }));
+
+        gate.Dispose();
+
         var all = new List<float[]>(inputs.Count);
-        foreach (var batch in inputs.Chunk(_embedding.BatchSize))
-            all.AddRange(await PostEmbedAsync(_embedding.Model, batch, ct));
+        foreach (var batch in results) all.AddRange(batch);
 
         if (_dimensions == 0 && all.Count > 0) _dimensions = all[0].Length;
         return all;

@@ -115,6 +115,9 @@ public sealed class WorkspaceWalker
 {
     public const string IgnoreFileName = ".dexiconignore";
 
+    /// <summary>Document formats get their own cap: a 300-page PDF is normal, not suspicious.</summary>
+    public const long DocumentMaxBytes = 64L * 1024 * 1024;
+
     /// <summary>
     /// Hard-coded and not configurable. Nothing good comes of embedding a .dll, and
     /// making it configurable invites someone to try.
@@ -129,6 +132,7 @@ public sealed class WorkspaceWalker
         "*.woff", "*.woff2", "*.ttf", "*.eot", "*.otf",
         "*.ico", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp", "*.webp", "*.svg",
         "*.mp3", "*.mp4", "*.avi", "*.mov", "*.wav", "*.flac",
+        // NOTE: .pdf/.docx/.pptx/.epub are deliberately NOT here — they are extracted.
         "*.db", "*.sqlite", "*.sqlite3",
         "*.safetensors", "*.gguf", "*.bin", "*.pt", "*.pth", "*.pkl", "*.npy", "*.npz",
         "*.lock", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
@@ -170,7 +174,7 @@ public sealed class WorkspaceWalker
             try { info = new FileInfo(full); }
             catch (Exception ex) { skipped.Add(new Skipped(relative, $"unreadable: {ex.Message}")); continue; }
 
-            if (info.Length > maxFileBytes)
+            if (info.Length > maxFileBytes && !Extraction.ExtractorRegistry.IsDocumentFormat(relative))
             {
                 skipped.Add(new Skipped(relative,
                     $"over the {maxFileBytes:N0} byte size cap ({info.Length:N0} bytes)"));
@@ -179,7 +183,21 @@ public sealed class WorkspaceWalker
 
             if (info.Length == 0) { skipped.Add(new Skipped(relative, "empty file")); continue; }
 
-            if (LooksBinary(full))
+            // A PDF, DOCX, PPTX or EPUB IS binary — it just happens to have text inside
+            // that we know how to get at. Sniffing it would silently drop every PDF in a
+            // repository's docs/ folder. They also routinely exceed a code-sized cap, so
+            // they get their own, larger one.
+            var isDocument = Extraction.ExtractorRegistry.IsDocumentFormat(relative);
+            if (isDocument)
+            {
+                if (info.Length > DocumentMaxBytes)
+                {
+                    skipped.Add(new Skipped(relative,
+                        $"document over the {DocumentMaxBytes:N0} byte cap ({info.Length:N0} bytes)"));
+                    continue;
+                }
+            }
+            else if (LooksBinary(full))
             {
                 skipped.Add(new Skipped(relative, "binary content (NUL byte in the first 8 KB)"));
                 continue;
