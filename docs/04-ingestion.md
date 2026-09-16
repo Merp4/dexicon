@@ -1,0 +1,207 @@
+# 04 — Ingestion
+
+## Sources
+
+Two kinds, same pipeline after discovery.
+
+### `workspace` — recursive folder index
+
+A path under `/workspaces`, bind-mounted read-only from the host. This is the code-search
+case: point Dexicon at a repository and it indexes the tree.
+
+Discovery walks the tree and applies, **in order**:
+
+1. **Always-exclude** — binaries, media, archives, build output, VCS internals. Hard-coded,
+   not configurable, because nothing good comes of embedding a `.dll`:
+   `.git/`, `**/node_modules/**`, `**/bin/**`, `**/obj/**`, `**/.vs/**`, `**/.idea/**`,
+   `**/target/**`, `**/dist/**`, `**/__pycache__/**`, and by extension:
+   `exe dll pdb so dylib o obj a lib zip tar gz 7z rar jar woff woff2 ttf eot
+   ico png jpg jpeg gif bmp webp svg mp3 mp4 avi mov wav db sqlite sqlite3
+   safetensors gguf bin pt pth pkl npy npz`
+2. **`.gitignore`** — honoured by default, full gitignore glob semantics, nested files
+   respected. Disable per source with `use_gitignore: false`.
+3. **`.dexiconignore`** — same syntax, for things that are checked in but not worth
+   indexing (lock files, generated clients, vendored trees). Separate from `.gitignore` so
+   you never have to change VCS behaviour to change index behaviour.
+4. **Per-source `exclude_globs`**, then **`include_globs`** as an override.
+5. **Size cap** — `max_file_bytes`, default 256 KB. A file over the cap is recorded as
+   `skipped` with the reason, never silently dropped.
+6. **Binary sniff** — a NUL byte in the first 8 KB means binary, regardless of extension.
+
+Text extraction on a workspace source is `File.ReadAllText` with encoding detection (BOM,
+then UTF-8, then Latin-1 fallback). Document formats (PDF, DOCX, …) found inside a
+workspace tree **are** extracted with their loaders — a repo with reference PDFs in `docs/`
+gets them indexed.
+
+### `upload` — files pushed through the UI or API
+
+Bytes are content-addressed into `/data/blobs/<sha256[0:2]>/<sha256>` and recorded in
+`blobs`. Two uploads of the same file store one blob. The `files` row carries the original
+filename as `relative_path`.
+
+Limits: 200 MB per file, 2 GB per request, configurable. Uploads are scanned for their real
+type by magic bytes; the declared `Content-Type` is a hint, not a decision.
+
+## Extraction
+
+| Format | Extensions | Library | Licence | Provenance unit | Notes |
+|---|---|---|---|---|---|
+| Plain text | `.txt`, `.log`, code | — | — | line | Encoding-detected |
+| Markdown | `.md`, `.markdown` | Markdig | BSD-2 | line + heading | Headings become `section` |
+| HTML | `.html`, `.htm` | AngleSharp | MIT | line | `script`/`style` stripped; `<title>` kept |
+| PDF | `.pdf` | PdfPig | Apache-2.0 | **page** | Text layer only — no OCR |
+| DOCX | `.docx` | DocumentFormat.OpenXml | MIT | paragraph | Headings become `section` |
+| PPTX | `.pptx` | DocumentFormat.OpenXml | MIT | **slide** | Slide notes included |
+| EPUB | `.epub` | VersOne.Epub | MIT | **chapter** | Reading order from `content.opf` |
+| JSON/YAML/TOML | `.json`, `.yaml`, `.yml`, `.toml` | — | — | line | Treated as text; structure-aware chunking is not attempted |
+
+Every loader returns `(text, metadata, unitMarkers)`. Failures are per-file and recorded:
+
+- **PDF with no text layer** → `status: empty`, `status_detail: "no text layer — scanned
+  PDF, OCR not supported"`, and the file is visible in the UI as ingested-but-empty. It is
+  not reported as a success and not silently missing.
+- **Encrypted / DRM** → `status: failed` with the reason.
+- **Malformed archive (EPUB/OOXML)** → `status: failed` with the reason.
+
+### A note on OCR
+
+Out of scope ([01](01-overview.md)). The seam is an `ITextExtractor` per media type, so an
+OCR extractor can be registered later without touching the pipeline. Nothing about the
+schema assumes text came from a text layer.
+
+## Chunking
+
+Two strategies, selected by content kind, both producing chunks with provenance.
+
+### Code and plain text — line-accumulating, language-aware
+
+Accumulates whole lines up to `chunk_size` tokens with `chunk_overlap` carried into the
+next chunk, so every chunk has an exact `start_line`/`end_line`. Never splits a line.
+
+With `boundary_mode: language-aware`, the file is first split at member boundaries by
+language, then each segment is size-chunked. This keeps a method with its signature instead
+of slicing it at an arbitrary token count. Patterns per language (carried from McpToolbox,
+which learned them the hard way):
+
+| Language | Boundary |
+|---|---|
+| C# | `^\s*(public|private|protected|internal|static|abstract|sealed|override|virtual|async)\s` |
+| TypeScript / JavaScript | `^(export )?(default )?(async )?(function|class|const|let|var|interface|type|enum)\b` |
+| Python | `^(async def |def |class )` |
+| Go | `^(func |type |var |const )` |
+| Rust | `^(pub )?(fn|struct|impl|trait|enum|mod|type)\b` |
+| Java / Kotlin | access-modifier anchor at line start |
+| SQL | `^(CREATE|ALTER|DROP|SELECT|INSERT|UPDATE|DELETE|MERGE|WITH)\b` |
+| CSS / SCSS / LESS | rule opener `^[.#\[\w@:][^{]*\{` |
+| Markdown | ATX headings |
+| HTML, Razor, Vue, Svelte | **blank line** — these are template *source*, not documents; splitting them on `<h1>` produces nonsense |
+| everything else | blank line |
+
+Boundary modes: `none` | `blank-line` | `language-aware` | `custom` (operator regex, compiled
+with a 500 ms timeout; an invalid or timing-out regex fails the job with a clear error and
+never silently falls back).
+
+### Documents — unit-aware overlapping
+
+Splits at the format's natural unit first (page, slide, chapter, heading), then
+size-chunks within the unit. `page` / `section` are carried into the payload so a citation
+can say *"p. 34"* rather than *"chunk 87"*.
+
+### Defaults
+
+| Setting | Default | Reasoning |
+|---|---|---|
+| `chunk_size` | 768 tokens | Fits comfortably in every candidate embedding model's window; big enough to hold a method with context. |
+| `chunk_overlap` | 100 tokens | ~13%. Enough to survive a boundary landing mid-thought. |
+| `boundary_mode` | `language-aware` | The reason to run this over grep is chunks that mean something. |
+
+Token counts are approximated at 4 characters per token. Exact tokenization would mean
+shipping the model's tokenizer per model; the approximation costs a few percent of window
+and removes a whole dependency. Chunk size is a target, not a contract.
+
+### Symbol extraction
+
+A lightweight per-language regex pass pulls declared names (types, functions, methods) in
+the chunk into `symbols[]`, indexed as a keyword. This makes `symbol:TokenService` filtering
+cheap. It is **not** a parser and makes no claim to be one — it will miss things, and the
+docs say so rather than implying call-graph fidelity.
+
+## Embedding
+
+- Provider: Ollama, over `Microsoft.Extensions.AI` abstractions (`IEmbeddingGenerator`), so
+  another provider is a registration, not a rewrite.
+- Batched: up to 32 chunks per request, bounded by `MaxConcurrentEmbeddings` (default 4).
+- Per-request timeout 2 minutes; 2 retries with jitter.
+- **Capped exponential backoff** on repeated failure: 5s → 10s → 20s … → 320s cap. While
+  backed off, the job reports `degraded` with the failure count and next retry time.
+- A single chunk that fails after retries skips its **file** (not the scan), records the
+  reason, and flags the job degraded. The file's hash is deliberately not written, so the
+  next scan retries it. One oversized chunk must never be able to starve the rest of a
+  repository — this is a bug that actually happened upstream and cost ten hours of a stuck
+  index.
+
+### Model choice
+
+Pinned per corpus at creation. Candidates, all available through Ollama:
+
+| Model | Dims | Size | Use for |
+|---|---|---|---|
+| `nomic-embed-text` | 768 | ~300 MB | Default. Fast, small, good general text. |
+| `embeddinggemma` | 768 | ~620 MB | Best small-model code retrieval measured to date. Preferred for code corpora once verified locally. |
+| `qwen3-embedding:0.6b` | 1024 | ~1.5 GB | Strongest general quality per VRAM; 32k context; multilingual. |
+| `bge-m3` | 1024 | ~2.2 GB | Long documents (8k context). |
+
+The default ships as `nomic-embed-text` because it is the smallest thing that works on any
+machine. The UI surfaces the trade-off at corpus creation, and M3 of the
+[roadmap](11-roadmap.md) benchmarks them on a real repository rather than trusting the
+table above.
+
+## Sparse encoding
+
+Computed in-process, no model: lowercase, split on non-alphanumerics, additionally split
+`camelCase` / `PascalCase` / `snake_case` / `kebab-case` into their parts **while keeping
+the original token**, drop stopwords, then emit `{ term_hash: term_frequency }`.
+
+The identifier splitting matters for code: a query for "token refresh" should reach
+`TokenService.RefreshAsync`. Qdrant applies the IDF component itself because the sparse
+vector index is declared `modifier: idf`, so Dexicon never has to maintain corpus
+statistics. Term hashing is a stable 32-bit hash of the term; collisions are rare enough to
+be noise and the alternative is a vocabulary to version.
+
+## Incremental refresh
+
+```
+for each discovered file:
+    hash = sha256(content)
+    if catalog.hash == hash      -> skip          (unchanged)
+    if catalog.hash != hash      -> delete chunks by (corpus_id, file_path), re-chunk, re-embed
+    if not in catalog            -> chunk, embed
+after the walk:
+    for each catalog file not seen -> delete its chunks and its row
+    write hashes only for files that fully succeeded
+```
+
+Two properties this buys:
+
+- A refresh over an unchanged tree makes **zero** embedding calls.
+- A failed file is retried next time, because its hash was never recorded.
+
+Scheduling: on demand (UI button, `index_refresh` MCP tool), plus an optional interval per
+corpus, default off. There is no filesystem watcher — polling with content hashes is more
+reliable over bind mounts, particularly on Windows hosts and WSL2, and is not an area where
+cleverness pays.
+
+## Job semantics
+
+One job runs at a time per instance, in a bounded in-process queue. Queuing a refresh for a
+corpus that already has one queued is a no-op returning the existing job id, not a second
+job.
+
+Job kinds: `full` (everything, ignoring hashes), `refresh` (incremental, the default),
+`rebuild` (new embedding model — writes into the new collection, drops the old points only
+on success), `delete`.
+
+Progress events are emitted per file and coalesced to at most 4/second onto
+`GET /api/events` (SSE). The UI shows phase, counts, current file, and — because it is the
+question people actually have — the estimate of remaining time derived from the trailing
+rate.

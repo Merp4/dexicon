@@ -1,0 +1,264 @@
+# 09 — Deployment
+
+## Getting started
+
+```bash
+git clone https://github.com/Merp4/dexicon && cd dexicon
+cp .env.example .env          # edit WORKSPACE_ROOT to point at your code
+docker compose up -d
+docker compose logs dexicon | grep "bootstrap token"
+```
+
+Open http://localhost:8477, paste the bootstrap token, add a corpus pointing at a folder
+under `/workspaces`, wait for the first index, then wire up your agent:
+
+```bash
+claude mcp add --transport http dexicon http://localhost:8477/mcp \
+  --header "Authorization: Bearer dex_..."
+```
+
+Nothing else. If a first run needs more steps than that, the first run is the bug.
+
+## Compose
+
+`docker-compose.yml` — the whole deployment.
+
+```yaml
+name: dexicon          # sets the network (dexicon_default), volume, and container prefixes
+
+services:
+  dexicon:
+    image: ghcr.io/${DEXICON_OWNER:-merp4}/dexicon:${DEXICON_TAG:-latest}
+    build: { context: ., dockerfile: Dockerfile }
+    restart: unless-stopped
+    ports:
+      # The ONLY published port in the stack, and loopback-bound by default.
+      - "${DEXICON_BIND:-127.0.0.1}:${DEXICON_PORT:-8477}:8477"
+    environment:
+      # Service names are namespaced so these resolve unambiguously even if this
+      # stack is ever attached to a shared network. See "Routing" below.
+      DEXICON__QDRANT__ENDPOINT:   http://dexicon-qdrant:6334
+      DEXICON__OLLAMA__ENDPOINT:   http://dexicon-ollama:11434
+      DEXICON__EMBEDDING__MODEL:   ${DEXICON_EMBEDDING_MODEL:-nomic-embed-text}
+      DEXICON__BOOTSTRAP__TENANT:  ${DEXICON_BOOTSTRAP_TENANT:-default}
+      DEXICON__BOOTSTRAP__TOKEN:   ${DEXICON_BOOTSTRAP_TOKEN:-}   # blank = generate and log once
+    volumes:
+      - dexicon_data:/data
+      - ${WORKSPACE_ROOT:-./workspaces}:/workspaces:ro
+    depends_on:
+      dexicon-qdrant: { condition: service_healthy }
+      dexicon-ollama: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "/app/healthcheck"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    read_only: true
+    tmpfs: [ /tmp ]
+    security_opt: [ "no-new-privileges:true" ]
+    cap_drop: [ ALL ]
+
+  dexicon-qdrant:
+    image: qdrant/qdrant:${QDRANT_TAG:-v1.16.1}     # pinned, not :latest
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT__SERVICE__GRPC_PORT: "6334"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    # no ports: — container-network only. Never publish; see "Exposure".
+
+  dexicon-ollama:
+    image: ollama/ollama:${OLLAMA_TAG:-0.32.14}
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+      - ./scripts/provision-models.sh:/provision.sh:ro
+    entrypoint: ["/bin/sh", "/provision.sh"]   # pulls the embedding model, then serves
+    environment:
+      OLLAMA_HOST: 0.0.0.0
+      DEXICON_EMBEDDING_MODEL: ${DEXICON_EMBEDDING_MODEL:-nomic-embed-text}
+    healthcheck:
+      # Readiness means the MODEL is present, not merely that the daemon answers.
+      # Without this, Dexicon starts indexing against a model still downloading and
+      # spends its first minutes in embedding backoff, which reads as a bug.
+      test: ["CMD-SHELL", "ollama list | grep -q \"$${DEXICON_EMBEDDING_MODEL%%:*}\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 40          # first run pulls the model; allow ~10 minutes
+      start_period: 30s
+    # no ports: — container-network only.
+
+volumes:          # left unnamed: Compose prefixes them with the project name, so two
+  dexicon_data: {}   # checkouts never fight over the same volume
+  qdrant_data:  {}
+  ollama_data:  {}
+```
+
+### Overlays
+
+| File | Purpose |
+|---|---|
+| `docker-compose.gpu.yml` | Adds `deploy.resources.reservations.devices` for NVIDIA to `dexicon-ollama`. Opt-in: `docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d`. |
+| `docker-compose.debug.yml` | Publishes Qdrant on **16333** and Ollama on **21434** — deliberately *not* their standard ports, so it cannot collide with a stock Qdrant or Ollama already running on the host. Loopback-bound. Never part of the default up. |
+| `docker-compose.external.yml` | Drops both dependency services and points the endpoints at instances you already run. |
+
+The base file stays boring and complete. Overlays carry everything that is a choice.
+
+## Exposure
+
+**`dexicon` is the only service that publishes a port, and it binds to `127.0.0.1` by
+default.** Qdrant and Ollama have no `ports:` mapping at all — they are reachable only on
+the project's own bridge network.
+
+This is not fastidiousness. Qdrant's stock configuration has **no authentication**, so a
+published 6333 is an open read/write door to every tenant's content, and no amount of
+application-layer tenancy ([07](07-tenancy-auth.md)) survives it. `QDRANT_API_KEY` is
+supported and recommended for anything beyond one trusted machine.
+
+It also avoids a collision that will otherwise happen on any developer machine: 6333, 6334
+and 11434 are the standard ports for Qdrant and Ollama, and anyone likely to want Dexicon
+is likely to already be running one of them. Two stacks both claiming 11434 fail at
+`docker compose up` with a port-in-use error; worse, if the other stack started first, the
+port silently belongs to it. Publishing nothing makes the question moot. The debug overlay
+uses non-standard host ports for the same reason.
+
+The default host port is **8477** rather than 8080, on the same principle — 8080 is the
+most contended port on any development machine, and the failure mode is a confusing one.
+
+## Routing — making sure the endpoint hits *our* container
+
+The dependency services are named `dexicon-qdrant` and `dexicon-ollama`, not `qdrant` and
+`ollama`, and the endpoints use those names.
+
+Within a single Compose project this is belt-and-braces: service DNS is scoped to the
+project's own network, so bare `qdrant` would resolve correctly. It stops being
+belt-and-braces the moment the stack touches a shared network — joining an `external:`
+network to reuse a GPU Ollama is the obvious reason, and it is a thing people do. On a
+shared network a generic service name can resolve to somebody else's container, and the
+failure is quiet: embeddings succeed, come from a different model, and land in a collection
+whose dimensions no longer mean what the catalogue says they mean.
+
+Three properties keep that from mattering:
+
+1. **Namespaced service names.** `dexicon-ollama` is unambiguous on any network.
+2. **Namespaced Qdrant collections.** Everything Dexicon creates is prefixed `dexicon__`
+   ([03](03-data-model.md)), so even pointing at a Qdrant shared with another product
+   cannot collide — McpToolbox's `mcp_workspace_*` collections and Dexicon's sit side by
+   side untouched.
+3. **Startup assertion.** On boot Dexicon calls both endpoints and logs what answered:
+   Qdrant version and collection count, Ollama version and resident models. If the
+   embedding model reported by Ollama is not the one configured, it refuses to start rather
+   than indexing against the wrong model. An endpoint that resolves is not the same as an
+   endpoint that resolves to the right thing.
+
+### Reusing an Ollama you already run
+
+`docker-compose.external.yml` drops `dexicon-ollama` and points at an existing instance —
+worth it when you already have models pulled and a GPU configured, since the in-stack
+Ollama otherwise re-downloads them into its own volume.
+
+```yaml
+services:
+  dexicon:
+    environment:
+      DEXICON__OLLAMA__ENDPOINT: ${DEXICON_OLLAMA_ENDPOINT:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # required on Linux; a no-op elsewhere
+    depends_on: !reset []                      # nothing local to wait for
+```
+
+Pointing at another Compose stack's Ollama instead — `http://mcptoolbox-infra-ollama:11434`
+— additionally needs that stack's network declared `external: true` here. Use the
+container's real name, never a bare service alias, for the reason above.
+
+## Configuration
+
+Environment variables, double-underscore hierarchy (standard ASP.NET Core binding).
+Everything has a working default except `WORKSPACE_ROOT`.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DEXICON_PORT` | `8477` | Host port. Deliberately not 8080. |
+| `DEXICON_BIND` | `127.0.0.1` | Bind address. Set to `0.0.0.0` only to reach it from another machine. |
+| `WORKSPACE_ROOT` | `./workspaces` | Host directory bind-mounted read-only at `/workspaces`. |
+| `DEXICON__QDRANT__ENDPOINT` | `http://dexicon-qdrant:6334` | gRPC endpoint. Namespaced service name — see "Routing". |
+| `QDRANT_API_KEY` | *(empty)* | Set for anything not on a single trusted machine. |
+| `DEXICON__OLLAMA__ENDPOINT` | `http://dexicon-ollama:11434` | Namespaced service name — see "Routing". |
+| `DEXICON__EMBEDDING__MODEL` | `nomic-embed-text` | Default for new corpora. |
+| `DEXICON__EMBEDDING__MAXCONCURRENCY` | `4` | Parallel embedding requests. |
+| `DEXICON__INDEXING__MAXFILEBYTES` | `262144` | Default per-source size cap. |
+| `DEXICON__INDEXING__REFRESHMINUTES` | `0` | `0` = manual only. |
+| `DEXICON__UPLOAD__MAXFILEBYTES` | `209715200` | 200 MB. |
+| `DEXICON__BOOTSTRAP__TENANT` | `default` | Created on first run. |
+| `DEXICON__BOOTSTRAP__TOKEN` | *(empty)* | Blank generates one and logs it once. |
+| `DEXICON__LOG__LEVEL` | `Information` | |
+
+No secret has a default value, and no secret is ever read from `appsettings.json`.
+See [10](10-security-secrets.md).
+
+## Image
+
+Multi-stage, two builders:
+
+```dockerfile
+FROM node:22-alpine AS ui
+# npm ci && npm run build -> /ui/dist
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS build
+# dotnet publish -c Release
+
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine AS runtime
+RUN addgroup -g 10001 dexicon && adduser -u 10001 -G dexicon -s /bin/false -D dexicon
+COPY --from=build /app/publish .
+COPY --from=ui    /ui/dist ./wwwroot
+USER dexicon:dexicon
+EXPOSE 8477
+ENTRYPOINT ["dotnet", "Dexicon.dll"]
+```
+
+Hardening, matching the compose file:
+
+- Non-root UID 10001.
+- `read_only: true` rootfs; `/tmp` is tmpfs; `/data` is the only writable mount.
+- `cap_drop: ALL`, `no-new-privileges`.
+- `/workspaces` mounted **read-only**. Dexicon reads your source; it must be structurally
+  incapable of writing to it.
+- Base images pinned by tag in the repo and by digest in the release pipeline.
+- Published multi-arch (`linux/amd64`, `linux/arm64`) so it runs on Apple silicon.
+
+## Health
+
+| Endpoint | Meaning |
+|---|---|
+| `/healthz/live` | The process is up. Used by the container healthcheck. |
+| `/healthz/ready` | Qdrant reachable **and** the catalog is migrated. Ollama being down does **not** make the service unready — keyword search still works, and taking the whole service down because embeddings are unavailable would be a worse outage than the one being reported. |
+| `/healthz` | Full detail: versions, collection count, embedding model residency, last embedding latency, active job. Requires a token. |
+
+## Backup and recovery
+
+- **`dexicon_data`** — the catalogue and uploaded blobs. This is the one that matters: it
+  is the only thing that is not reconstructible. `docker compose stop dexicon`, copy the
+  volume, restart. SQLite in WAL mode; the stop is what makes the copy consistent.
+- **`qdrant_data`** — reconstructible by reindexing. Back it up to save time, not data.
+- **`ollama_data`** — model weights. Re-downloadable.
+
+A `scripts/backup.sh` does the above and is tested by restoring into a clean compose
+project in CI, because a backup procedure that has never been restored is a hypothesis.
+
+## Sizing
+
+| Deployment | RAM | Disk | Notes |
+|---|---|---|---|
+| One repo, CPU-only | 4 GB | 5 GB | `nomic-embed-text` on CPU: roughly 40–80 chunks/s. |
+| Several repos + docs, CPU | 8 GB | 20 GB | |
+| Large monorepo, GPU | 8 GB + 4 GB VRAM | 30 GB | GPU embedding is 5–10× faster; the win is on first index, not on search. |
+
+First index of a 50 000-file repository on CPU is tens of minutes. The UI says so, with a
+running estimate, rather than appearing hung.
