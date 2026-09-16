@@ -26,7 +26,7 @@ const corpora = [{ id: 'c1', name: 'docs' }, { id: 'c2', name: 'api-repo' }] as 
 function result(over: Partial<SearchResult> = {}): SearchResult {
   return {
     query: 'chunk sets',
-    mode: 'hybrid',
+    mode: 'Hybrid',
     degraded: false,
     degradedReason: null,
     scope: [{ id: 'c1', name: 'docs', state: 'Ready' }],
@@ -122,7 +122,7 @@ describe('telling a bad index from a bad scope', () => {
     // Keyword results that look like hybrid results are a lie by omission: the absence of
     // a semantic match is not the absence of the content.
     search.mockResolvedValue(
-      result({ mode: 'keyword', degraded: true, degradedReason: 'Embeddings unavailable.' }),
+      result({ mode: 'Keyword', degraded: true, degradedReason: 'Embeddings unavailable.' }),
     );
 
     const user = await searchFor('chunk sets');
