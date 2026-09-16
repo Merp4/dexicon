@@ -41,13 +41,63 @@ public sealed class OllamaOptions
 
 public sealed class EmbeddingOptions
 {
-    /// <summary>Default model for new corpora. Pinned per corpus at creation.</summary>
+    /// <summary>Default model for new chunk sets.</summary>
     public string Model { get; init; } = "nomic-embed-text";
+
+    /// <summary>Which configured provider new chunk sets use by default.</summary>
+    public string Provider { get; init; } = "ollama";
 
     public int MaxConcurrency { get; init; } = 4;
 
     /// <summary>Chunks per embedding request.</summary>
     public int BatchSize { get; init; } = 32;
+
+    /// <summary>
+    /// The embedding backends this deployment can reach, keyed by the name a chunk set
+    /// records. Ollama is configured by default and needs nothing; the rest are opt-in.
+    /// </summary>
+    public Dictionary<string, EmbeddingProviderOptions> Providers { get; init; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["ollama"] = new() { Kind = EmbeddingProviderKind.Ollama },
+    };
+}
+
+public enum EmbeddingProviderKind { Ollama = 0, OpenAI = 1, AzureOpenAI = 2 }
+
+/// <summary>
+/// One embedding backend. A chunk set records the provider NAME and the model; the
+/// credentials live here, in configuration, and never in the catalogue — a database row
+/// that carries an API key is a database row you cannot back up casually.
+/// </summary>
+public sealed class EmbeddingProviderOptions
+{
+    public EmbeddingProviderKind Kind { get; init; }
+
+    /// <summary>Ollama and Azure. Ignored for OpenAI, which has one.</summary>
+    public string? Endpoint { get; init; }
+
+    /// <summary>
+    /// The NAME of the environment variable holding the API key — not the key.
+    ///
+    /// Configuration files get committed; environment variables do not. Naming the
+    /// variable keeps appsettings.json safe to check in while the secret stays in the
+    /// environment, which is the same split .env has used since the first commit.
+    /// </summary>
+    public string? ApiKeyEnvVar { get; init; }
+
+    /// <summary>
+    /// Read directly, for deployments that inject configuration from a secret store and
+    /// have no environment to name. Left null by anything that can use
+    /// <see cref="ApiKeyEnvVar"/>, and never logged.
+    /// </summary>
+    public string? ApiKey { get; init; }
+
+    /// <summary>
+    /// Models to offer in the UI for providers that cannot be asked. Ollama reports what
+    /// it has pulled; OpenAI's model list is long and mostly not embeddings, so a short
+    /// curated list beats a filtered dump — free text still works.
+    /// </summary>
+    public List<string> Models { get; init; } = [];
 }
 
 public sealed class IndexingOptions

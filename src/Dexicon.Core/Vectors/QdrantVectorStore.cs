@@ -20,7 +20,12 @@ namespace Dexicon.Core.Vectors;
 
 public interface IVectorStore
 {
-    string CollectionNameFor(string model, int dimensions);
+    /// <summary>
+    /// The collection a target's vectors live in. Encodes provider, model AND
+    /// dimensionality, so a mismatch is structurally impossible rather than merely
+    /// checked: a set pinned to a model can only ever address that model's collection.
+    /// </summary>
+    string CollectionNameFor(EmbeddingTarget target, int dimensions);
     Task EnsureCollectionAsync(string collection, int dimensions, CancellationToken ct = default);
     Task UpsertAsync(string collection, IReadOnlyList<Chunk> chunks, IReadOnlyList<float[]> vectors, CancellationToken ct = default);
     Task DeleteFileChunksAsync(string collection, string chunkSetId, string filePath, CancellationToken ct = default);
@@ -84,13 +89,18 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
         _ensureLock.Dispose();
     }
 
-    public string CollectionNameFor(string model, int dimensions)
+    public string CollectionNameFor(EmbeddingTarget target, int dimensions) =>
+        // The provider is in the name because two providers can serve a model of the same
+        // name — and those are different vectors. Leaving it out would have let an OpenAI
+        // set and a local set share a collection and silently pollute each other's space.
+        $"dexicon__{Slug(target.Provider)}__{Slug(target.Model)}__{dimensions}";
+
+    private static string Slug(string value)
     {
-        var slug = new StringBuilder(model.Length);
-        foreach (var ch in model.ToLowerInvariant())
-            slug.Append(char.IsAsciiLetterOrDigit(ch) ? ch : '-');
-        var collapsed = string.Join('-', slug.ToString().Split('-', StringSplitOptions.RemoveEmptyEntries));
-        return $"dexicon__{collapsed}__{dimensions}";
+        var chars = new StringBuilder(value.Length);
+        foreach (var ch in value.ToLowerInvariant())
+            chars.Append(char.IsAsciiLetterOrDigit(ch) ? ch : '-');
+        return string.Join('-', chars.ToString().Split('-', StringSplitOptions.RemoveEmptyEntries));
     }
 
     public async Task<bool> PingAsync(CancellationToken ct = default)

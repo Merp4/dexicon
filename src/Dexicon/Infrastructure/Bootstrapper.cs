@@ -118,12 +118,13 @@ public static class Bootstrapper
         else
             log.LogError("Qdrant NOT reachable at {Endpoint}. Search will fail until it is.", options.Qdrant.Endpoint);
 
-        var embedder = sp.GetRequiredService<IEmbeddingProvider>();
+        var embedder = sp.GetRequiredService<IEmbeddingService>();
+        var target = new EmbeddingTarget(options.Embedding.Provider, options.Embedding.Model);
         try
         {
-            var dims = await embedder.ProbeDimensionsAsync(options.Embedding.Model);
-            log.LogInformation("Ollama reachable at {Endpoint}, model {Model} ({Dims}d)",
-                options.Ollama.Endpoint, options.Embedding.Model, dims);
+            var dims = await embedder.ProbeDimensionsAsync(target);
+            log.LogInformation("Embedding provider '{Provider}' reachable, model {Model} ({Dims}d)",
+                target.Provider, target.Model, dims);
         }
         catch (Exception ex)
         {

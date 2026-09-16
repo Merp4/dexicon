@@ -41,7 +41,7 @@ public sealed record IndexProgress(
 public sealed class CorpusIndexer(
     CatalogDbContext db,
     IVectorStore vectors,
-    IEmbeddingProvider embedder,
+    IEmbeddingService embedder,
     DocumentService documents,
     IOptions<DexiconOptions> options,
     ILogger<CorpusIndexer> log)
@@ -316,7 +316,7 @@ public sealed class CorpusIndexer(
             // TextToEmbed, not Content: a set with heading context embeds each chunk under
             // its heading trail while storing the chunk verbatim.
             var embeddings = await embedder.EmbedAsync(
-                set.EmbeddingModel, batch.Select(c => c.TextToEmbed).ToList(), ct);
+                set.Target(), batch.Select(c => c.TextToEmbed).ToList(), ct);
 
             job.Phase = "upsert";
             await vectors.UpsertAsync(set.CollectionName, batch, embeddings, ct);

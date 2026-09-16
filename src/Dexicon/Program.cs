@@ -68,7 +68,12 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 builder.Services.AddDbContext<CatalogDbContext>(o =>
     o.UseSqlite($"Data Source={options.Storage.CatalogPath};Cache=Shared"));
 
-builder.Services.AddHttpClient<IEmbeddingProvider, OllamaEmbeddingProvider>();
+// Singleton: a generator holds a connection and a credential, and the model is a
+// per-call argument, so there is nothing per-request about it.
+builder.Services.AddSingleton<IEmbeddingGeneratorFactory, EmbeddingGeneratorFactory>();
+builder.Services.AddScoped<IEmbeddingService, EmbeddingService>();
+builder.Services.AddScoped<IModelCatalog, ModelCatalog>();
+builder.Services.AddScoped<ModelProbe>();
 builder.Services.AddSingleton<IVectorStore, QdrantVectorStore>();
 builder.Services.AddSingleton<IndexProgressBroadcaster>();
 builder.Services.AddSingleton<IMemoryCacheEvictor, MemoryCacheEvictor>();
