@@ -38,7 +38,7 @@ public static class CorpusEndpoints
 
         g.MapPost("/", async (CreateCorpusRequest body, RequestContext rc, CatalogDbContext db,
             IVectorStore vectors, IEmbeddingService embedder, IOptions<DexiconOptions> opts,
-            CorpusIndexer indexer, CancellationToken ct) =>
+            CorpusIndexer indexer, IndexJobQueue queue, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             var tenant = rc.RequireTenant();
@@ -136,6 +136,13 @@ public static class CorpusEndpoints
             await db.SaveChangesAsync(ct);
             await vectors.EnsureCollectionAsync(corpus.ChunkSets[0].CollectionName, dims, ct);
 
+            // Naming a folder is asking for it to be indexed. Without this the corpus is
+            // created EMPTY and reports itself ready, and the only sign is a file count of
+            // zero that reads like "this folder had nothing in it" — the first thing a new
+            // user does, silently doing nothing, until someone thinks to press Refresh.
+            if (corpus.Sources.Count > 0)
+                await queue.EnqueueAsync(corpus.Id, JobKind.Full, ct: ct);
+
             return Results.Created($"/api/corpora/{corpus.Id}", await Summarise(db, corpus, tenant, ct));
         }).Produces<CorpusSummary>();
 
@@ -187,7 +194,7 @@ public static class CorpusEndpoints
 
         g.MapPost("/{nameOrId}/sources", async (string nameOrId, AddSourceRequest body, RequestContext rc,
             ScopeResolver scopes, CatalogDbContext db, CorpusIndexer indexer, IOptions<DexiconOptions> opts,
-            CancellationToken ct) =>
+            IndexJobQueue queue, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             var corpus = await scopes.ResolveWritableAsync(rc.RequireTenant(), nameOrId, ct);
@@ -213,8 +220,14 @@ public static class CorpusEndpoints
 
             db.Sources.Add(source);
             await db.SaveChangesAsync(ct);
-            return Results.Ok(source.ToSummary());
-        }).Produces<SourceSummary>();
+
+            // Same reason as creation: adding a folder is asking for it to be read. A
+            // Refresh rather than a Full, because the corpus's other sources are already
+            // indexed and re-embedding them costs real money on a hosted provider.
+            var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
+
+            return Results.Ok(new SourceAdded(source.ToSummary(), job.ToSummary()));
+        }).Produces<SourceAdded>();
 
         g.MapPost("/{nameOrId}/reindex", async (string nameOrId, bool? full, RequestContext rc,
             ScopeResolver scopes, IndexJobQueue queue, CancellationToken ct) =>

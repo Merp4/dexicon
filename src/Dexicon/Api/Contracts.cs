@@ -239,6 +239,12 @@ public sealed record IndexedFileText(
     bool Truncated,
     string Text);
 
+/// <summary>
+/// A source, and the job now reading it. The job is returned rather than left implicit so
+/// a caller can follow the work it just caused instead of polling and hoping.
+/// </summary>
+public sealed record SourceAdded(SourceSummary Source, JobSummary IndexJob);
+
 public sealed record FileSummary(
     string Id, string RelativePath, string Status, string? StatusDetail,
     string? Language, long SizeBytes, int ChunkCount, DateTime? IndexedUtc);
