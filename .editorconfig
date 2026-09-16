@@ -105,3 +105,8 @@ generated_code = true
 dotnet_analyzer_diagnostic.severity = none
 dotnet_diagnostic.IDE0161.severity = none
 dotnet_diagnostic.CA1861.severity = none
+
+[tests/**/*.cs]
+# xunit's IAsyncLifetime owns the disposal contract for a fixture; CA1001 does not
+# know that and asks for a second, conflicting one.
+dotnet_diagnostic.CA1001.severity = none

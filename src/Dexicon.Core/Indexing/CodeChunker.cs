@@ -51,6 +51,7 @@ public static class CodeChunker
 
         var boundaries = ResolveBoundaries(boundaryMode, language, customBoundaryPattern, lines);
         var symbolPattern = LanguageMap.SymbolPattern(language);
+        var isMarkdown = string.Equals(language, "markdown", StringComparison.Ordinal);
 
         var chunks = new List<TextChunk>();
         var index = 0;
@@ -59,7 +60,7 @@ public static class CodeChunker
         foreach (var segmentEnd in boundaries.Append(lines.Length))
         {
             if (segmentEnd <= segmentStart) continue;
-            foreach (var c in ChunkSegment(lines, segmentStart, segmentEnd, maxChars, overlapChars, symbolPattern))
+            foreach (var c in ChunkSegment(lines, segmentStart, segmentEnd, maxChars, overlapChars, symbolPattern, isMarkdown))
                 chunks.Add(c with { Index = index++ });
             segmentStart = segmentEnd;
         }
@@ -68,17 +69,22 @@ public static class CodeChunker
     }
 
     private static IEnumerable<TextChunk> ChunkSegment(string[] lines, int from, int to,
-        int maxChars, int overlapChars, string? symbolPattern)
+        int maxChars, int overlapChars, string? symbolPattern, bool isMarkdown)
     {
         var buffer = new StringBuilder();
         var bufferStart = from;
         var lastHeading = (string?)null;
+        var inFence = false;
 
         for (var i = from; i < to; i++)
         {
             var line = lines[i];
-            if (line.AsSpan().TrimStart().StartsWith("#") && line.Contains("# ", StringComparison.Ordinal))
-                lastHeading = line.Trim().TrimStart('#').Trim();
+
+            if (isMarkdown)
+            {
+                if (IsFenceDelimiter(line)) inFence = !inFence;
+                else if (!inFence && TryReadHeading(line, out var heading)) lastHeading = heading;
+            }
 
             // A single line longer than the whole budget still becomes its own chunk
             // rather than being dropped — minified files are ugly, not invisible.
@@ -115,6 +121,50 @@ public static class CodeChunker
 
         newStart = first;
         return first >= splitAt ? string.Empty : string.Join('\n', lines[first..splitAt]);
+    }
+
+    /// <summary>
+    /// A fenced block opener or closer: ``` or ~~~, optionally indented up to three
+    /// spaces, optionally followed by an info string.
+    /// </summary>
+    internal static bool IsFenceDelimiter(string line)
+    {
+        var span = line.AsSpan();
+        var indent = 0;
+        while (indent < span.Length && span[indent] == ' ' && indent < 4) indent++;
+        span = span[indent..];
+        return span.StartsWith("```", StringComparison.Ordinal) || span.StartsWith("~~~", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// An ATX heading: one to six '#' at the start of the line (up to three spaces of
+    /// indent), then whitespace, then text.
+    ///
+    /// The naive version of this — "starts with # and contains '# '" — fired on YAML
+    /// comments inside fenced code blocks and labelled a docs chunk with
+    /// "spends its first minutes in embedding backoff" as its section. A section that
+    /// is confidently wrong is worse than no section, because a reader trusts it.
+    /// </summary>
+    internal static bool TryReadHeading(string line, out string heading)
+    {
+        heading = string.Empty;
+        var span = line.AsSpan();
+
+        var indent = 0;
+        while (indent < span.Length && span[indent] == ' ') indent++;
+        if (indent > 3) return false;
+        span = span[indent..];
+
+        var hashes = 0;
+        while (hashes < span.Length && span[hashes] == '#') hashes++;
+        if (hashes is 0 or > 6) return false;
+        if (hashes >= span.Length || !char.IsWhiteSpace(span[hashes])) return false;
+
+        var text = span[hashes..].Trim().TrimEnd('#').Trim();
+        if (text.IsEmpty) return false;
+
+        heading = text.ToString();
+        return true;
     }
 
     private static TextChunk Build(string content, int startLine, int endLine, string? section, string? symbolPattern) =>

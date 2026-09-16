@@ -81,7 +81,13 @@ public sealed class TokenService(CatalogDbContext db, TimeProvider clock)
         var id = rest[..sep];
         var secret = rest[(sep + 1)..];
 
-        var row = await db.Tokens.Include(t => t.Tenant).FirstOrDefaultAsync(t => t.Id == id, ct);
+        // AsNoTracking is load-bearing, not an optimisation. RevokeAsync and TouchAsync
+        // use ExecuteUpdateAsync, which writes straight to the database and does NOT
+        // update the change tracker. A tracked read therefore returns the stale entity,
+        // with RevokedUtc still null — so a revoked token kept authenticating for the
+        // lifetime of the DbContext. Caught by Token_RevokedAndExpired_StopVerifying.
+        var row = await db.Tokens.AsNoTracking().Include(t => t.Tenant)
+            .FirstOrDefaultAsync(t => t.Id == id, ct);
         if (row is null) return null;
         if (!row.IsActive(clock.GetUtcNow().UtcDateTime)) return null;
         if (row.Tenant is null || row.Tenant.Disabled) return null;

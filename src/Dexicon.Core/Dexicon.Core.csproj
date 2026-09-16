@@ -23,4 +23,11 @@
     <PackageReference Include="VersOne.Epub" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- SparseEncoder.Hash and CodeChunker.TryReadHeading are internal contracts that
+         still need pinning: a change to either silently invalidates every index or
+         mislabels every section. Tested without widening the public API. -->
+    <InternalsVisibleTo Include="Dexicon.Tests" />
+  </ItemGroup>
+
 </Project>
