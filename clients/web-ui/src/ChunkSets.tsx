@@ -9,7 +9,10 @@ import {
   type ModelCapabilities,
   type ModelPullEvent,
 } from './api';
-import { Badge, CopyButton, ErrorBanner, Field, Modal, Spinner, formatBytes, localTime, relativeTime, stateTone } from './ui';
+import {
+  Badge, Button, CopyButton, ErrorBanner, Field, Input, Modal, Select, Spinner,
+  formatBytes, localTime, relativeTime, stateTone,
+} from './ui';
 
 /**
  * Chunk sets for one corpus.
@@ -19,6 +22,10 @@ import { Badge, CopyButton, ErrorBanner, Field, Modal, Spinner, formatBytes, loc
  * when it is complete. So "Add" is an ordinary button and "Promote" is the one that
  * announces what it is about to change.
  */
+/** `nomic-embed-text` and `nomic-embed-text:latest` are the same model; only :latest is implicit. */
+const bareName = (m: string) => m.replace(/:latest$/i, '');
+const sameModel = (a: string, b: string) => bareName(a).toLowerCase() === bareName(b).toLowerCase();
+
 export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChanged: () => void }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<ChunkSet | null>(null);
@@ -47,7 +54,7 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
             each is a model and a chunking; search reaches the default one
           </span>
         </div>
-        <button className="btn" onClick={() => setAdding(true)}>+ Add set</button>
+        <Button onClick={() => setAdding(true)}>+ Add set</Button>
       </div>
 
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
@@ -94,11 +101,11 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
 
               <div style={{ display: 'flex', gap: '0.35rem', flexShrink: 0 }}>
                 <CopyButton text={`${corpus.name}:${set.name}`} label="Copy name" />
-                <button className="btn" onClick={() => setEditing(set)}>Edit</button>
+                <Button onClick={() => setEditing(set)}>Edit</Button>
 
                 {!set.isDefault && (
-                  <button
-                    className="btn"
+                  <Button
+                    
                     disabled={busy === set.id || set.pendingCount > 0}
                     // Disabled rather than hidden while work is outstanding: the reason is
                     // the point, and a button that vanishes teaches nothing.
@@ -110,12 +117,12 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
                     onClick={() => act(set.id, () => api.promoteChunkSet(corpus.name, set.name))}
                   >
                     {busy === set.id ? <Spinner /> : 'Promote'}
-                  </button>
+                  </Button>
                 )}
 
                 {!set.isDefault && corpus.chunkSets.length > 1 && (
-                  <button
-                    className="btn"
+                  <Button
+                    
                     disabled={busy === set.id}
                     onClick={() => {
                       if (!confirm(`Delete chunk set "${set.name}" and its ${set.chunkCount.toLocaleString()} chunks?`))
@@ -124,7 +131,7 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
                     }}
                   >
                     Delete
-                  </button>
+                  </Button>
                 )}
               </div>
             </div>
@@ -248,23 +255,23 @@ function ChunkSetModal({
 
       {!existing && (
         <Field label="Name" hint="Addressed from search as corpus:name. No colons.">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="fine" autoFocus />
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="fine" autoFocus />
         </Field>
       )}
 
       <Field label="Description" hint="Optional — what this way of reading the corpus is for.">
-        <input value={description} onChange={(e) => setDescription(e.target.value)} />
+        <Input value={description} onChange={(e) => setDescription(e.target.value)} />
       </Field>
 
       {!existing && providers.length > 0 && (
         <Field label="Provider" hint="Which backend embeds this set. Credentials come from configuration, never from here.">
-          <select value={provider} onChange={(e) => setProvider(e.target.value)}>
+          <Select value={provider} onChange={(e) => setProvider(e.target.value)}>
             {providers.map((p) => (
               <option key={p.name} value={p.name} disabled={!p.configured}>
                 {p.name} ({p.kind}){p.configured ? '' : ' — not configured'}
               </option>
             ))}
-          </select>
+          </Select>
         </Field>
       )}
 
@@ -280,16 +287,16 @@ function ChunkSetModal({
           hint="Pinned once the set exists: a different model is a different vector space, so changing it means a new set."
         >
           {models.length > 0 ? (
-            <select value={model} onChange={(e) => setModel(e.target.value)}>
-              {!models.some((m) => m.name === model) && <option value={model}>{model}</option>}
+            <Select value={model} onChange={(e) => setModel(e.target.value)}>
+              {!models.some((m) => sameModel(m.name, model)) && <option value={model}>{model}</option>}
               {models.map((m) => (
                 <option key={m.name} value={m.name}>
                   {m.name} ({formatBytes(m.sizeBytes)}){m.inUse ? ' · in use' : ''}
                 </option>
               ))}
-            </select>
+            </Select>
           ) : (
-            <input value={model} onChange={(e) => setModel(e.target.value)} />
+            <Input value={model} onChange={(e) => setModel(e.target.value)} />
           )}
         </Field>
       )}
@@ -303,7 +310,7 @@ function ChunkSetModal({
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
         <Field label="Chunk size (tokens)" hint="64–8192. Roughly four characters each.">
-          <input
+          <Input
             type="number"
             value={chunkSize}
             min={64}
@@ -312,7 +319,7 @@ function ChunkSetModal({
           />
         </Field>
         <Field label="Overlap (tokens)" hint="Must be smaller than the chunk size.">
-          <input
+          <Input
             type="number"
             value={chunkOverlap}
             min={0}
@@ -322,17 +329,17 @@ function ChunkSetModal({
       </div>
 
       <Field label="Boundary mode" hint="Size decides when to split; the boundary decides where.">
-        <select value={boundaryMode} onChange={(e) => setBoundaryMode(e.target.value)}>
+        <Select value={boundaryMode} onChange={(e) => setBoundaryMode(e.target.value)}>
           <option value="language-aware">language-aware — member and declaration boundaries</option>
           <option value="blank-line">blank-line — paragraphs</option>
           <option value="none">none — size only</option>
           <option value="custom">custom — your own regex</option>
-        </select>
+        </Select>
       </Field>
 
       {boundaryMode === 'custom' && (
         <Field label="Boundary pattern" hint="A .NET regex, matched per line. Rejected here if it will not compile.">
-          <input className="mono" value={pattern} onChange={(e) => setPattern(e.target.value)} placeholder="^## " />
+          <Input className="mono" value={pattern} onChange={(e) => setPattern(e.target.value)} placeholder="^## " />
         </Field>
       )}
 
@@ -368,14 +375,14 @@ function ChunkSetModal({
               : 'Builds in the background. Search keeps using the default set until you promote this one.'}
         </span>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button className="btn" onClick={onClose}>Cancel</button>
-          <button
-            className="btn primary"
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="primary"
             disabled={saving || (!existing && name.trim().length === 0)}
             onClick={() => void save()}
           >
             {saving ? <Spinner /> : existing ? 'Save and re-chunk' : 'Add set'}
-          </button>
+          </Button>
         </div>
       </div>
     </Modal>
@@ -547,9 +554,8 @@ export function ModelsView() {
       {providers.length > 1 && (
         <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
           {providers.map((p) => (
-            <button
+            <Button
               key={p.name}
-              className="btn"
               style={
                 p.name === provider
                   ? { borderColor: 'var(--accent)', color: 'var(--accent)' }
@@ -560,7 +566,7 @@ export function ModelsView() {
             >
               {p.name}
               {!p.configured && ' ⚠'}
-            </button>
+            </Button>
           ))}
         </div>
       )}
@@ -582,16 +588,16 @@ export function ModelsView() {
             hint="An Ollama model name, e.g. mxbai-embed-large. Several hundred megabytes to a few gigabytes."
           >
             <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <input
+              <Input
                 value={pullName}
                 onChange={(e) => setPullName(e.target.value)}
                 placeholder="mxbai-embed-large"
                 disabled={pull !== null}
                 onKeyDown={(e) => e.key === 'Enter' && void startPull()}
               />
-              <button className="btn primary" disabled={pull !== null || !pullName.trim()} onClick={() => void startPull()}>
+              <Button variant="primary" disabled={pull !== null || !pullName.trim()} onClick={() => void startPull()}>
                 {pull ? <Spinner /> : 'Pull'}
-              </button>
+              </Button>
             </div>
           </Field>
 
@@ -676,32 +682,32 @@ export function ModelsView() {
                   </div>
 
                   <div style={{ display: 'flex', gap: '0.35rem' }}>
-                    <button
-                      className="btn"
+                    <Button
+                      
                       title="How text is wrapped before it is embedded"
                       onClick={() => setEditingProfile(m)}
                     >
                       Framing
-                    </button>
+                    </Button>
 
-                    <button
-                      className="btn"
+                    <Button
+                      
                       disabled={probing !== null}
                       title="Measure what this model actually accepts, without indexing anything"
                       onClick={() => void probe(m.name)}
                     >
                       {probing === m.name ? <Spinner /> : 'Test limits'}
-                    </button>
+                    </Button>
 
                     {managed && (
-                      <button
-                        className="btn"
+                      <Button
+                        
                         disabled={m.inUse}
                         title={m.inUse ? 'A chunk set embeds with this model. Migrate it first.' : 'Remove from Ollama'}
                         onClick={() => void remove(m.name)}
                       >
                         Delete
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>
@@ -810,7 +816,7 @@ function FramingModal({
             {result.map((s) => <li key={s}>{s}</li>)}
           </ul>
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button className="btn primary" onClick={onSaved}>Done</button>
+            <Button variant="primary" onClick={onSaved}>Done</Button>
           </div>
         </div>
       ) : (
@@ -823,7 +829,7 @@ function FramingModal({
           </p>
 
           <Field label="Indexed text" hint="Applied to every chunk as it is indexed.">
-            <input
+            <Input
               className="mono"
               value={documentTemplate}
               onChange={(e) => setDocumentTemplate(e.target.value)}
@@ -832,7 +838,7 @@ function FramingModal({
           </Field>
 
           <Field label="Search queries" hint="Applied to the query before it is embedded.">
-            <input
+            <Input
               className="mono"
               value={queryTemplate}
               onChange={(e) => setQueryTemplate(e.target.value)}
@@ -841,7 +847,7 @@ function FramingModal({
           </Field>
 
           <Field label="Notes" hint="Optional — where these values came from.">
-            <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="from the model card" />
+            <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="from the model card" />
           </Field>
 
           {!valid && (
@@ -858,10 +864,10 @@ function FramingModal({
           )}
 
           <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
-            <button className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn primary" disabled={saving || !valid} onClick={() => void save()}>
+            <Button onClick={onClose}>Cancel</Button>
+            <Button variant="primary" disabled={saving || !valid} onClick={() => void save()}>
               {saving ? <Spinner /> : 'Save'}
-            </button>
+            </Button>
           </div>
         </>
       )}
