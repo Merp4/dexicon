@@ -452,7 +452,7 @@ export function ModelsView() {
       setModels(r.models);
       setManaged(r.managed);
       setConfigured(r.configured);
-      setNote(r.note);
+      setNote(r.note ?? undefined);
       setError(null);
     } catch (e) {
       setError(e);

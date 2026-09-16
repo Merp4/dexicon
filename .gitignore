@@ -72,3 +72,8 @@ tmp/
 # a file that fights the build.
 src/Dexicon/wwwroot/*
 !src/Dexicon/wwwroot/.gitkeep
+
+# Generated from Dexicon.json by `npm run generate`. Reproducible from the OpenAPI
+# document, which IS tracked — so the diff that matters (the contract) is reviewable
+# without 1,000 lines of generated TypeScript in every pull request.
+clients/web-ui/src/generated/
