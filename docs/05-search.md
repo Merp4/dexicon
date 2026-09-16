@@ -58,6 +58,39 @@ could set from evidence. See [D-06](decisions.md#d-06-rrf-fusion-server-side).
 **Prefetch limit is 4× the requested limit** (capped at 200). Fusion needs enough candidates
 from each retriever to have something to fuse.
 
+### Verified in the M0 spike (2026-09-16)
+
+The REST shape above is the wire format. From .NET it is one call — `Qdrant.Client` 1.19.0
+exposes fusion as a first-class `Query`, so the ambiguity this document used to flag
+(`{"fusion": "rrf"}` vs `{"rrf": {}}`) never reaches our code:
+
+```csharp
+var hits = await client.QueryAsync(
+    collection,
+    query: Fusion.Rrf,                       // implicitly converts to Query
+    prefetch:
+    [
+        new PrefetchQuery { Query = denseVector,        Using = "dense",  Limit = 40, Filter = scope },
+        new PrefetchQuery { Query = (values, indices),  Using = "sparse", Limit = 40, Filter = scope },
+    ],
+    filter: scope,
+    limit: 10,
+    payloadSelector: true);
+```
+
+The fusion is genuinely server-side and genuinely rank-based. Qdrant uses **RRF with k=2**,
+so an item at rank `r₀` and `r₁` in the two prefetches scores `1/(2+r₀) + 1/(2+r₁)`.
+Measured output on a seven-document corpus — a document top of both lists scores exactly
+`1.0`, which no cosine similarity produces:
+
+```
+ 1.00000  docs/auth.md                 (rank 0 dense, rank 0 sparse)
+ 0.66667  src/Auth/TokenService.cs     (rank 1 dense, rank 1 sparse)
+ 0.25000  src/Auth/LoginController.cs  (rank 2 dense, absent from sparse)
+```
+
+Every returned score matched the formula to within 1e-4.
+
 ### Mode behaviour
 
 | Mode | Behaviour |

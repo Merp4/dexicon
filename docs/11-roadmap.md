@@ -6,7 +6,35 @@ thing works when you use it.
 
 ---
 
-## M0 — Spike: prove the unknowns (2–3 days)
+## M0 — Spike: prove the unknowns ✅ **COMPLETE (2026-09-16)**
+
+**Outcome: all four assumptions hold. Three documents were corrected, and one real defect
+was caught before it could ship.**
+
+| # | Verdict | What was actually measured |
+|---|---|---|
+| 1 | ✅ **Confirmed** | `Qdrant.Client` 1.19.0 exposes fusion as a first-class `Query` (`Fusion.Rrf`) with `PrefetchQuery` — one call, server-side. The `{"fusion":"rrf"}` vs `{"rrf":{}}` ambiguity never reaches our code. Qdrant uses **RRF k=2**; every returned score matched `1/(2+r₀)+1/(2+r₁)` to 1e-4. [05](05-search.md) updated. |
+| 2 | ✅ **Confirmed** | Sparse `modifier: idf` ranks correctly from client-supplied term frequencies. A rare term isolated its one document at score 13.39. **No corpus statistics need maintaining in Dexicon** — the expensive fallback in D-07 is not needed. |
+| 3 | ⚠️ **Confirmed with a correction** | Stateless streamable HTTP works; no `Mcp-Session-Id` is ever emitted; static bearer auth rejects with 401 ahead of the handler; **Claude Code 2.1.248 connects and reports `✔ Connected`**. But `initialize` **rejects `2026-07-28`** — SDK 2.2.0 negotiates up to `2025-11-25`, because 2026-07-28 removed the handshake and its clients do not call `initialize` at all. Handshake-free `tools/list` and `tools/call` both verified working cold. [06](06-mcp-surface.md) rewritten. |
+| 4 | ✅ **Confirmed** | Collection reports `m=0, payload_m=16` server-side. At **50,007 points across 20 corpora**, filtered 1.5 ms vs unfiltered 3.1 ms — **2.0× slower unfiltered**. Isolation verified: a query embedded from another corpus's most distinctive content returned zero of its points. [03](03-data-model.md) updated with the numbers and the caveat that 2× is a deterrent, not a safety mechanism. |
+
+**Defect caught:** `QDRANT__SERVICE__API_KEY` set to an empty string does not disable
+Qdrant auth — it **enables** it with an unmatchable key, 401-ing everything including the
+dashboard. `${QDRANT_API_KEY:-}` with a blank `.env` reproduced it on the first run. Fixed
+with a YAML anchor carrying a non-empty default, shared by server and client so they cannot
+drift; `.env.example` now ships the line commented out rather than blank.
+See [09](09-deployment.md).
+
+**Method note.** The first version of assumption 1 asserted that a specific document should
+rank first, and "failed" when a different — better — document won. That was a bad oracle:
+it tested retrieval quality, which is M3's job, instead of testing the capability. Rewritten
+to assert the RRF formula itself. Likewise the first latency test ran against seven points,
+where brute force beats any index and the result was meaningless; rerun at 50k.
+
+---
+
+<details>
+<summary>The original assumptions, as written before the spike ran</summary>
 
 Four assumptions this design rests on that have not been verified against running software.
 If any is false, the design changes, and better now than in M2.
@@ -20,6 +48,8 @@ If any is false, the design changes, and better now than in M2.
 
 **Done when:** a throwaway repository demonstrates all four, and each finding is written
 back into the affected document. The spike code is deleted.
+
+</details>
 
 ---
 

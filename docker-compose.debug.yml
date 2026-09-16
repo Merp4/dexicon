@@ -1,0 +1,25 @@
+# Dexicon — debug overlay. NEVER part of the default `docker compose up`.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.debug.yml up -d
+#
+# Publishes the dependency services so host tooling can reach them — the M0 spike,
+# the Qdrant dashboard, `ollama` CLI calls from the host.
+#
+# The host ports here are DELIBERATELY NOT the standard ones. Qdrant's 6333/6334 and
+# Ollama's 11434 are very likely already taken on any machine that wants Dexicon, and
+# a second stack claiming them either fails to start or silently loses the port to
+# whoever started first. Everything is loopback-bound.
+#
+#   Qdrant HTTP / dashboard   http://127.0.0.1:16333/dashboard
+#   Qdrant gRPC                     127.0.0.1:16334
+#   Ollama HTTP               http://127.0.0.1:21434
+
+services:
+  dexicon-qdrant:
+    ports:
+      - "127.0.0.1:16333:6333"
+      - "127.0.0.1:16334:6334"
+
+  dexicon-ollama:
+    ports:
+      - "127.0.0.1:21434:11434"

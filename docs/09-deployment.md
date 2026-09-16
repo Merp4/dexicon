@@ -134,6 +134,33 @@ uses non-standard host ports for the same reason.
 The default host port is **8477** rather than 8080, on the same principle — 8080 is the
 most contended port on any development machine, and the failure mode is a confusing one.
 
+### The Qdrant API key must never be blank
+
+Found in the M0 spike, and it would have broken every first run.
+
+**Qdrant enables authentication on the *presence* of `QDRANT__SERVICE__API_KEY`, not on it
+having a value.** Setting it to an empty string — the natural result of
+`${QDRANT_API_KEY:-}` with a blank `.env` — turns auth **on** with a key nothing can
+present, and every request gets a 401, including Qdrant's own dashboard:
+
+```
+$ curl http://127.0.0.1:16333/collections
+401 Unauthorized — "Must provide an API key or an Authorization bearer token"
+```
+
+`docker-compose.yml` therefore defines the key once as a YAML anchor with a non-empty
+development default, referenced by both the server and Dexicon's client so the two cannot
+drift:
+
+```yaml
+x-qdrant-api-key: &qdrant-api-key ${QDRANT_API_KEY:-dexicon-local-dev-key}
+```
+
+`.env.example` ships the `QDRANT_API_KEY` line **commented out** rather than blank, for the
+same reason. Override it with a real key — `openssl rand -base64 32` — for anything beyond
+one trusted machine. The default is not a secret and is not treated as one; it is defence
+in depth behind a port that is never published.
+
 ## Routing — making sure the endpoint hits *our* container
 
 The dependency services are named `dexicon-qdrant` and `dexicon-ollama`, not `qdrant` and

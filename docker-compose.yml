@@ -1,0 +1,110 @@
+# Dexicon — the whole deployment.
+#
+# Self-contained by design: Dexicon brings its own Qdrant and its own Ollama, and
+# neither publishes a host port. The only port that reaches the host is Dexicon's
+# own, and that binds to loopback. See docs/09-deployment.md.
+#
+#   docker compose up -d                 # the stack
+#   docker compose logs dexicon          # bootstrap token, printed once on first run
+#
+# Overlays (never part of the default up):
+#   -f docker-compose.gpu.yml            # NVIDIA for the embedding model
+#   -f docker-compose.debug.yml          # publish deps on NON-standard host ports
+
+name: dexicon
+
+# Qdrant's API key, defined once and referenced by both the server and the client
+# so they cannot drift apart.
+#
+# It must NEVER be empty. Setting QDRANT__SERVICE__API_KEY to an empty string does
+# not disable authentication — Qdrant 1.16 enables auth on the variable's PRESENCE
+# and then rejects every request with 401, including its own dashboard. Found the
+# hard way in the M0 spike; the default below exists so a blank .env cannot
+# reproduce it.
+x-qdrant-api-key: &qdrant-api-key ${QDRANT_API_KEY:-dexicon-local-dev-key}
+
+services:
+  dexicon:
+    image: ghcr.io/${DEXICON_OWNER:-merp4}/dexicon:${DEXICON_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      # The ONLY published port in the stack, loopback-bound by default.
+      - "${DEXICON_BIND:-127.0.0.1}:${DEXICON_PORT:-8477}:8477"
+    environment:
+      # Namespaced service names: these resolve unambiguously even if this stack is
+      # ever attached to a shared network. docs/09-deployment.md "Routing".
+      DEXICON__QDRANT__ENDPOINT: http://dexicon-qdrant:6334
+      DEXICON__QDRANT__APIKEY: *qdrant-api-key
+      DEXICON__OLLAMA__ENDPOINT: http://dexicon-ollama:11434
+      DEXICON__EMBEDDING__MODEL: ${DEXICON_EMBEDDING_MODEL:-nomic-embed-text}
+      DEXICON__EMBEDDING__MAXCONCURRENCY: ${DEXICON_EMBEDDING_MAXCONCURRENCY:-4}
+      DEXICON__INDEXING__MAXFILEBYTES: ${DEXICON_INDEXING_MAXFILEBYTES:-262144}
+      DEXICON__INDEXING__REFRESHMINUTES: ${DEXICON_INDEXING_REFRESHMINUTES:-0}
+      DEXICON__UPLOAD__MAXFILEBYTES: ${DEXICON_UPLOAD_MAXFILEBYTES:-209715200}
+      DEXICON__BOOTSTRAP__TENANT: ${DEXICON_BOOTSTRAP_TENANT:-default}
+      DEXICON__BOOTSTRAP__TOKEN: ${DEXICON_BOOTSTRAP_TOKEN:-}
+      DEXICON__LOG__LEVEL: ${DEXICON_LOG_LEVEL:-Information}
+    volumes:
+      - dexicon_data:/data
+      - ${WORKSPACE_ROOT:-./workspaces}:/workspaces:ro
+    depends_on:
+      dexicon-qdrant: { condition: service_healthy }
+      dexicon-ollama: { condition: service_healthy }
+    healthcheck:
+      # busybox wget, present in the alpine runtime image. Deliberately not curl
+      # (not installed) and not a custom /app/healthcheck binary (nothing builds one).
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8477/healthz/live || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
+  dexicon-qdrant:
+    image: qdrant/qdrant:${QDRANT_TAG:-v1.16.3}
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__API_KEY: *qdrant-api-key
+      QDRANT__SERVICE__GRPC_PORT: "6334"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    # no ports: — container-network only. Never publish; docs/09-deployment.md.
+
+  dexicon-ollama:
+    image: ollama/ollama:${OLLAMA_TAG:-0.32.14}
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+      - ./scripts/provision-models.sh:/provision.sh:ro
+    entrypoint: ["/bin/sh", "/provision.sh"]
+    environment:
+      OLLAMA_HOST: 0.0.0.0
+      DEXICON_EMBEDDING_MODEL: ${DEXICON_EMBEDDING_MODEL:-nomic-embed-text}
+    healthcheck:
+      # Readiness means the MODEL is present, not merely that the daemon answers.
+      # Without this, Dexicon starts indexing against a model still downloading and
+      # spends its first minutes in embedding backoff, which reads as a bug.
+      test: ["CMD-SHELL", "ollama list | grep -q \"${DEXICON_EMBEDDING_MODEL:-nomic-embed-text}\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 40 # first run pulls the model; allow ~10 minutes
+      start_period: 30s
+    # no ports: — container-network only.
+
+volumes:
+  # Unnamed on purpose: Compose prefixes them with the project name, so two
+  # checkouts never fight over the same volume.
+  dexicon_data: {}
+  qdrant_data: {}
+  ollama_data: {}
