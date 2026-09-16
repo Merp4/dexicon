@@ -12,9 +12,10 @@ import {
   type SearchResult,
 } from './api';
 import { Badge, CopyButton, Empty, ErrorBanner, Field, Modal, Spinner, formatBytes, localTime, relativeTime, stateTone } from './ui';
-import { ChunkingModal, DocumentsView } from './Documents';
+import { DocumentsView } from './Documents';
+import { ChunkSetsPanel, ModelsView } from './ChunkSets';
 
-type View = 'search' | 'corpora' | 'documents' | 'jobs' | 'access' | 'settings';
+type View = 'search' | 'corpora' | 'documents' | 'jobs' | 'models' | 'access' | 'settings';
 
 /**
  * The UI exists to answer four questions and to do nothing else:
@@ -138,6 +139,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     { id: 'corpora', label: 'Corpora' },
     { id: 'documents', label: 'Documents' },
     { id: 'jobs', label: 'Jobs' },
+    { id: 'models', label: 'Models' },
     { id: 'access', label: 'Access' },
     { id: 'settings', label: 'Settings' },
   ];
@@ -198,6 +200,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
         )}
         {view === 'jobs' && <JobsView corpora={corpora} live={live} onError={setError} />}
         {view === 'access' && <AccessView onError={setError} />}
+        {view === 'models' && <ModelsView />}
         {view === 'settings' && <SettingsView health={health} />}
       </main>
     </div>
@@ -478,7 +481,11 @@ function CorporaView({
                   <span>{c.chunkCount.toLocaleString()} chunks</span>
                   {c.skippedCount > 0 && <span>{c.skippedCount.toLocaleString()} skipped</span>}
                   {c.failedCount > 0 && <span style={{ color: 'var(--danger)' }}>{c.failedCount.toLocaleString()} failed</span>}
-                  <span className="mono">{c.embeddingModel}</span>
+                  {/* The default set is what this corpus answers to unqualified. */}
+                  <span className="mono">
+                    {c.chunkSets.find((s) => s.isDefault)?.embeddingModel ?? c.chunkSets[0]?.embeddingModel ?? '—'}
+                  </span>
+                  {c.chunkSets.length > 1 && <span>{c.chunkSets.length} chunk sets</span>}
                 </div>
 
                 {running && <ProgressBar job={job} />}
@@ -576,7 +583,7 @@ function CorpusDetail({
   const [files, setFiles] = useState<IndexedFile[]>([]);
   const [filter, setFilter] = useState<string>('');
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [editingChunking, setEditingChunking] = useState(false);
+
 
   const load = useCallback(async () => {
     try {
@@ -620,21 +627,11 @@ function CorpusDetail({
 
       <div className="card" style={{ padding: '0.9rem', display: 'grid', gap: '0.45rem', fontSize: '0.85rem' }}>
         <Row label="Sources">{corpus.sources.map((s) => s.rootPath ?? s.kind).join(', ') || '—'}</Row>
-        <Row label="Embedding">
-          <span className="mono">{corpus.embeddingModel}</span> · {corpus.embeddingDimensions}d
-          <span className="dim"> (pinned at creation; changing it is a rebuild)</span>
-        </Row>
-        <Row label="Chunking">
-          {corpus.chunkSize} tokens, {corpus.chunkOverlap} overlap, {corpus.boundaryMode}
-          {corpus.owned && (
-            <button
-              className="btn"
-              style={{ marginLeft: '0.5rem', padding: '0.1rem 0.45rem', fontSize: '0.75rem' }}
-              onClick={() => setEditingChunking(true)}
-            >
-              Change
-            </button>
-          )}
+        <Row label="Searched as">
+          <span className="mono">{corpus.name}</span>
+          <span className="dim">
+            {' '}— the default set below. Name another with <span className="mono">corpus:set</span>.
+          </span>
         </Row>
         <Row label="Visibility">
           {corpus.visibility}
@@ -688,14 +685,11 @@ function CorpusDetail({
         )}
       </div>
 
-      {editingChunking && (
-        <ChunkingModal
-          corpus={corpus}
-          onClose={() => setEditingChunking(false)}
-          onSaved={async () => { setEditingChunking(false); await load(); await onRefresh(); }}
-          onError={onError}
-        />
-      )}
+
+
+      <div className="card" style={{ padding: '0.9rem' }}>
+        <ChunkSetsPanel corpus={corpus} onChanged={async () => { await load(); await onRefresh(); }} />
+      </div>
 
       {confirmDelete && (
         <DeleteCorpusModal

@@ -427,6 +427,76 @@ timestamp is also just honest data: the UI can now say how long a job has been w
 
 ---
 
+### D-21 Chunk sets, not corpus-level chunking
+
+**Decision.** The embedding model and chunk settings belong to a `ChunkSet`, a child of a
+corpus. A corpus owns content, sources and visibility; a set owns a vector space and a
+strategy, and a corpus may carry several. Sets are addressed as `corpus:set`.
+
+**Why.** The model was the one setting a corpus could never change, because a collection's
+name encodes the model and its dimensionality — so changing it means writing into a
+different vector space. A re-embed of a three-book corpus measured at roughly twenty
+minutes on CPU Ollama, and doing that in place means twenty minutes of half-populated
+results. With sets, the replacement is built alongside the live one and promoted when it is
+complete: promotion is one `UPDATE` and the only moment search changes.
+
+It also makes "the same document, chunked two ways" honest. That worked before only by
+duplicating the corpus, which duplicated its grants and its sources with it.
+
+`corpus:set` rather than a new parameter keeps the MCP surface at five tools ([D-11](#d-11-five-mcp-tools)),
+and an unqualified name still means what it always did.
+
+**Rejected.** In-place re-embed (a fifth of the work, but a corpus is degraded for the
+duration of every model change); per-document models (different vector spaces cannot be
+fused, and a corpus would have to fan out across collections and merge incomparable
+scores); keeping chunk settings on the corpus and adding only a model field (the same
+problem one field later).
+
+**Cost, accepted.** A workspace tree is walked once per set. Real but bounded, and most
+corpora carry one set; sharing a walk would mean holding the whole discovery in memory,
+which a large monorepo makes the worse trade.
+
+---
+
+### D-22 The embedding model is a per-call argument
+
+**Decision.** `IEmbeddingProvider.EmbedAsync` takes the model name. Nothing binds a client
+to a model at registration.
+
+**Why.** Chunk sets choose their model at runtime, in the UI, and store it in the
+catalogue. Anything resolved from configuration at startup — keyed DI included — cannot see
+a set created after the process began, and would either fail to resolve or quietly serve a
+different model than the one asked for. Ollama takes the model in the request body, so
+there is nothing to bind in the first place.
+
+This also closed a live bug: `EmbedAsync` read the globally configured model and ignored
+its caller, so a set pinned to `mxbai-embed-large` would have filled an `mxbai` collection
+with `nomic` vectors. Nothing errors. The results are simply wrong.
+
+**Rejected.** Keyed singletons per configured model (the pattern a sibling project uses,
+and a good one where models come from configuration — here the configuration is a database
+row that changes while the process runs); a factory with a per-model cache (the same
+lifetime problem with more machinery, for a value that is one field on a request).
+
+---
+
+### D-23 Unit boundaries force a split
+
+**Decision.** With `unitAware`, a page, chapter or slide boundary ends the current chunk
+regardless of how little is in it, and no overlap is carried across it.
+
+**Why.** Everywhere else the rule is "size decides when, a boundary decides where"
+([D-19](#d-19-the-chunker-guarantees-its-budget) and the section above it), which is right
+for prose and useless here. A chapter shorter than the budget would simply be swallowed
+into the next one, so asking for chapter-aligned chunks would produce chunks spanning three
+chapters — the exact straddling the setting exists to prevent. Carrying overlap across the
+boundary would reintroduce it by the back door.
+
+The cost is that a document of very short pages yields short chunks. That is what
+page-aligned chunking means, it is off by default, and the caller asked for it.
+
+---
+
 ## What was carried over from McpToolbox
 
 | Component | Treatment |
