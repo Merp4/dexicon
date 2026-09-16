@@ -50,11 +50,17 @@ jobs:
         working-directory: clients/web-ui
         run: npm ci
 
-      # tsc separately from the build: Vite does not type-check, so a build that succeeds
-      # says nothing about whether the types hold.
+      # `tsc -b`, NOT `tsc --noEmit`. The root tsconfig is a solution file — `files: []`
+      # plus a project reference — so `tsc --noEmit` compiles nothing and exits 0 on code
+      # that does not type-check at all. This step passed for every commit it ever ran on,
+      # including ones with genuine type errors in src/.
       - name: Type-check UI
         working-directory: clients/web-ui
-        run: npx tsc --noEmit
+        run: npm run typecheck
+
+      - name: Test UI
+        working-directory: clients/web-ui
+        run: npm test
 
       - name: Build UI
         working-directory: clients/web-ui

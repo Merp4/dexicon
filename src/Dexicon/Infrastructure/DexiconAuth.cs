@@ -47,13 +47,21 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
 
     private static readonly string[] AnonymousPrefixes = ["/assets/"];
 
+    /// <summary>
+    /// Whether a path is served without a token. Public because the OpenAPI document has
+    /// to describe the same rule: keeping a second list over there is how a document ends
+    /// up documenting a version of the rule that no longer exists.
+    /// </summary>
+    public static bool IsAnonymous(string path) =>
+        path == "/"
+        || AnonymousExact.Contains(path, StringComparer.OrdinalIgnoreCase)
+        || AnonymousPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+
     public async Task InvokeAsync(HttpContext ctx, TokenService tokens, RequestContext request)
     {
         var path = ctx.Request.Path.Value ?? "/";
 
-        if (path == "/"
-            || AnonymousExact.Contains(path, StringComparer.OrdinalIgnoreCase)
-            || AnonymousPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
+        if (IsAnonymous(path))
         {
             await next(ctx);
             return;
