@@ -271,7 +271,7 @@ Hardening, matching the compose file:
 
 | Tag | Means | Use it for |
 |---|---|---|
-| `0.1.0` | That release, forever | Deployments |
+| `0.1.1` | That release, forever | Deployments |
 | `0.1` | Newest patch of that minor | Deployments that accept patches |
 | `latest` | Newest release | Trying it out |
 | `edge` | Tip of `main` | Following development |
@@ -284,7 +284,7 @@ promise a compatibility that does not exist.
 if it should not change even for a re-push:
 
 ```bash
-DEXICON_TAG=0.1.0 docker compose up -d
+DEXICON_TAG=0.1.1 docker compose up -d
 ```
 
 The version in the tag is the version in the image: the release build stamps the git tag
@@ -293,7 +293,7 @@ with it, and publishing fails if they do not. Each image carries a provenance at
 recording the commit and the workflow that produced it:
 
 ```bash
-gh attestation verify oci://ghcr.io/<owner>/dexicon:0.1.0 --owner <owner>
+gh attestation verify oci://ghcr.io/<owner>/dexicon:0.1.1 --owner <owner>
 ```
 
 ## Health

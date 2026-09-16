@@ -20,7 +20,7 @@
          (`/p:Version=1.2.3`). It is not decoration: it is what the OpenAPI document
          and the MCP server report as their version, and an unset one reported 1.0.0
          for a project that has never had a 1.0. -->
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
 
     <Product>Dexicon</Product>
     <Company>Dexicon</Company>
