@@ -99,6 +99,21 @@ builder.Services.AddOpenApi(o => o.AddDocumentTransformer((doc, _, _) =>
     ];
 
     return Task.CompletedTask;
+})
+.AddOperationTransformer((operation, context, _) =>
+{
+    // The document-wide requirement above is right for almost everything, and wrong for
+    // the container probes — which is what Docker's HEALTHCHECK calls, without a token.
+    // An empty `security` on an operation means "this one needs none", and the list comes
+    // from the middleware that actually enforces it rather than a copy that can drift.
+    var path = "/" + (context.Description.RelativePath ?? string.Empty).TrimEnd('/');
+
+    if (DexiconAuthMiddleware.IsAnonymous(path))
+    {
+        operation.Security = [];
+    }
+
+    return Task.CompletedTask;
 }));
 builder.Services.AddExceptionHandler<ScopeExceptionHandler>();
 builder.Services.ConfigureHttpJsonOptions(o =>
@@ -206,7 +221,13 @@ else
         "text/html"));
 }
 
-await Bootstrapper.InitialiseAsync(app);
+// Skipped when `dotnet build` is only reading the OpenAPI document out of this app —
+// see Bootstrapper.IsBuildTimeToolRun. A build must not migrate a database or mint a
+// token.
+if (!Bootstrapper.IsBuildTimeToolRun)
+{
+    await Bootstrapper.InitialiseAsync(app);
+}
 
 // Report the addresses the server ACTUALLY bound, after it has bound them. Logging
 // a guess beforehand is how "listening on 8477" ends up in the log of a process that

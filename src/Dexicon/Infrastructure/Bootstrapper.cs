@@ -1,3 +1,4 @@
+using System.Reflection;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
@@ -15,6 +16,26 @@ namespace Dexicon.Infrastructure;
 /// </summary>
 public static class Bootstrapper
 {
+    /// <summary>
+    /// True when a build-time tool has loaded this entry point to inspect the app rather
+    /// than to serve it.
+    /// </summary>
+    /// <remarks>
+    /// `dotnet build` generates the OpenAPI document by loading this assembly and calling
+    /// Main, and it runs it all the way into <c>app.RunAsync()</c> before intercepting —
+    /// so there is no host lifecycle hook early enough to hide behind, and the check has
+    /// to be explicit. Without it a BUILD performs first-run setup: creates directories,
+    /// migrates a database, contacts Qdrant and Ollama, and mints a bootstrap token. On CI
+    /// that failed outright ("Access to the path '/data' is denied") and turned every
+    /// build red; where it had not failed it was doing all of that silently.
+    ///
+    /// The entry assembly is the tool's, because Main is invoked by reflection. Both names
+    /// are matched: the dll ships as dotnet-getdocument.dll but its assembly name is
+    /// GetDocument.Insider.
+    /// </remarks>
+    public static bool IsBuildTimeToolRun =>
+        Assembly.GetEntryAssembly()?.GetName().Name is "GetDocument.Insider" or "dotnet-getdocument";
+
     public static async Task InitialiseAsync(WebApplication app)
     {
         using var scope = app.Services.CreateScope();
