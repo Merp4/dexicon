@@ -53,7 +53,24 @@ back into the affected document. The spike code is deleted.
 
 ---
 
-## M1 — Walking skeleton (1 week)
+## M1 — Walking skeleton ✅ **COMPLETE (2026-09-16)**
+
+**Done when:** *open the file at the line and find the matched text there.* Verified: a
+corpus over `docs/` indexed 12 files into 148 chunks, and a hybrid search for
+*"how does tenant isolation get enforced"* returned `07-tenancy-auth.md:22-40` — which is
+exactly where `### Tenant` sits in the file.
+
+Two defects were found by running it rather than by reading it, and both are the kind that
+only surface in use:
+
+- **`/healthz` was unreachable.** The auth middleware prefix-matched the whole `/healthz`
+  family as anonymous, so the detailed endpoint skipped the middleware, arrived with no
+  principal, and then failed its own scope check. Only the two probes are anonymous now.
+- **Progress sat at `done=0` for 24 seconds** on a 12-file corpus, because it flushed every
+  25 files. Indistinguishable from a hung job.
+
+<details>
+<summary>The original M1 scope</summary>
 
 The narrowest path that is genuinely end to end.
 
@@ -71,9 +88,34 @@ The narrowest path that is genuinely end to end.
 get chunks back with correct `file:line`. Verified by opening the file at the line and
 finding the matched text there.
 
+</details>
+
 ---
 
-## M2 — The product (2–3 weeks)
+## M2 — The product — **largely complete (2026-09-16)**
+
+| Area | State |
+|---|---|
+| **MCP** | ✅ All five tools live. `tools/list` and `tools/call` verified working with no handshake; Claude Code 2.1.248 connected and searched. |
+| **Tenancy** | ✅ Tokens, scopes, scope resolution, corpus visibility, all three enforcement layers — and the isolation test, shipped in the same commit as the enforcement. |
+| **Hybrid search** | ✅ Server-side RRF, sparse encoding with identifier splitting, filters, audible degradation. |
+| **Ingestion** | ✅ Language-aware chunking, PDF/DOCX/PPTX/EPUB/HTML extraction with page provenance, incremental refresh, per-file status, backoff. ⛔ **Uploads not built** — workspace sources only. |
+| **Jobs** | ✅ Queue, phases, SSE progress, `degraded` as a distinct state, orphan reconciliation on restart. |
+| **UI** | ✅ Search, Corpora, Jobs, Access, Settings. Verified in a browser end to end. |
+| **Tests** | ✅ 62 passing, including a guard for the "configured but unread" defect class. |
+
+**Not done, and named rather than glossed:** file **upload** ingestion (the API and blob
+store are specified and the catalogue has the table, but no endpoint exists yet — a corpus
+can only take a workspace path); `get_context` de-overlapping is implemented but untested
+against a real multi-chunk file; the MCP `dexicon://` **resources** are specified in
+[06](06-mcp-surface.md) but not implemented.
+
+**Still open from the original definition of done:** *a second person clones, runs
+`docker compose up`, indexes their own repository, connects their agent, and uses it
+without asking a question.* That has not been attempted, so M2 is not closed.
+
+<details>
+<summary>The original M2 scope</summary>
 
 - **MCP**: all five tools, resources, streamable HTTP, error contracts ([06](06-mcp-surface.md)).
   Verified by connecting Claude Code and using it for real work for a day.
@@ -91,6 +133,7 @@ finding the matched text there.
 repository through the UI, connects their agent, and uses it — **without asking a
 question.** Every question asked is a defect, logged and fixed before the milestone closes.
 
+</details>
 ---
 
 ## M3 — Make the defaults earned (1 week)
