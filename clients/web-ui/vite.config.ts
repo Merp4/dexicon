@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
@@ -9,6 +10,16 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     sourcemap: false,
+  },
+  test: {
+    // jsdom rather than a real browser: these tests assert what the component renders,
+    // not how a browser paints it. A headless browser would be the right tool for
+    // "is this actually visible", and is a different, slower kind of test.
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.ts'],
+    // Generated code is not ours to cover.
+    coverage: { exclude: ['src/generated/**', '**/*.config.ts'] },
   },
   server: {
     port: 5180,
