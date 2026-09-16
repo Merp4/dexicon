@@ -944,6 +944,29 @@ function CreateTokenModal({ onClose, onCreated, onError }: { onClose: () => void
 function SettingsView({ health }: { health: Health | null }) {
   const [theme, setTheme] = useState<string>(() => document.documentElement.dataset.theme ?? 'auto');
 
+  // The dots in the header are a 15-second poll and keep their last known value on a
+  // failure, which is right for a status light and wrong for "is it working NOW". This
+  // asks, once, and reports what came back — including how long it took, because a
+  // dependency that answers in eight seconds is a different problem from one that does
+  // not answer at all.
+  const [checking, setChecking] = useState(false);
+  const [checked, setChecked] = useState<{ health: Health; tookMs: number } | null>(null);
+  const [checkError, setCheckError] = useState<unknown>(null);
+
+  const checkConnectivity = async () => {
+    setChecking(true);
+    setCheckError(null);
+    const started = performance.now();
+    try {
+      setChecked({ health: await api.health(), tookMs: Math.round(performance.now() - started) });
+    } catch (e) {
+      setCheckError(e);
+      setChecked(null);
+    } finally {
+      setChecking(false);
+    }
+  };
+
   useEffect(() => {
     if (theme === 'auto') delete document.documentElement.dataset.theme;
     else document.documentElement.dataset.theme = theme;
@@ -974,6 +997,41 @@ function SettingsView({ health }: { health: Health | null }) {
           <Row label="Ollama"><span className="mono">{health?.ollama.endpoint ?? '—'}</span> <Badge tone={health?.ollama.reachable ? 'ok' : 'danger'}>{health?.ollama.reachable ? 'reachable' : 'unreachable'}</Badge></Row>
           <Row label="Model"><span className="mono">{health?.ollama.model ?? '—'}</span> · {health?.ollama.dimensions ?? 0}d</Row>
           <Row label="Corpora">{health?.corpora ?? 0}</Row>
+        </div>
+
+        <div style={{ marginTop: '0.8rem' }}>
+          <button className="btn" disabled={checking} onClick={() => void checkConnectivity()}>
+            {checking ? <Spinner /> : 'Check connectivity'}
+          </button>
+
+          <ErrorBanner error={checkError} onDismiss={() => setCheckError(null)} />
+
+          {checked && (
+            <div style={{ marginTop: '0.6rem', fontSize: '0.83rem', display: 'grid', gap: '0.3rem' }}>
+              <Row label="Checked">
+                {localTime(new Date().toISOString())} · {checked.tookMs} ms
+              </Row>
+              <Row label="Qdrant">
+                <Badge tone={checked.health.qdrant.reachable ? 'ok' : 'danger'}>
+                  {checked.health.qdrant.reachable ? 'answered' : 'no answer'}
+                </Badge>
+              </Row>
+              <Row label="Embeddings">
+                <Badge tone={checked.health.ollama.reachable ? 'ok' : 'danger'}>
+                  {checked.health.ollama.reachable ? 'answered' : 'no answer'}
+                </Badge>{' '}
+                {checked.health.ollama.error && (
+                  <span className="dim" style={{ fontSize: '0.78rem' }}>{checked.health.ollama.error}</span>
+                )}
+              </Row>
+              {!checked.health.ollama.reachable && (
+                <p className="dim" style={{ margin: 0, fontSize: '0.78rem' }}>
+                  Search still works in <strong>keyword</strong> mode without embeddings, and says so in the
+                  response. Indexing will retry and report the files it could not embed.
+                </p>
+              )}
+            </div>
+          )}
         </div>
         <p className="dim" style={{ fontSize: '0.78rem', margin: '0.7rem 0 0' }}>
           These come from the environment (DEXICON__QDRANT__ENDPOINT, DEXICON__OLLAMA__ENDPOINT) and are shown read-only.
