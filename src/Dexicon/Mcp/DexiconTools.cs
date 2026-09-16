@@ -69,8 +69,12 @@ public sealed class DexiconTools
     /// <summary>
     /// Formatted for a model to read, not for a machine to parse. Most clients show
     /// this text verbatim, so it leads with what matters: where the match is.
+    ///
+    /// Internal rather than private for the same reason as <see cref="Stitch"/> — this is
+    /// the agent-facing surface of the whole product, and it can be checked without
+    /// standing up an MCP server.
     /// </summary>
-    private static string Render(SearchResult result)
+    internal static string Render(SearchResult result)
     {
         var sb = new StringBuilder();
         var scope = string.Join(", ", result.Scope.Select(s => s.Name));
@@ -98,6 +102,13 @@ public sealed class DexiconTools
         foreach (var hit in result.Hits)
         {
             sb.Append($"\n{i++}. {hit.Location}");
+
+            // A hit in a PDF or an EPUB is cited by its unit — `book.epub#chapter=7` —
+            // which is right for a citation and useless as an argument to get_context,
+            // whose handle is a line. Without this an agent could find a passage in a
+            // book and then have nothing to pass in order to read on from it.
+            if (hit.Page is not null) sb.Append($"  · lines {hit.StartLine}-{hit.EndLine}");
+
             if (hit.Section is { Length: > 0 }) sb.Append($"  · {hit.Section}");
             if (result.Scope.Count > 1) sb.Append($"  [{hit.CorpusName}]");
             sb.Append('\n');
@@ -154,16 +165,18 @@ public sealed class DexiconTools
     }
 
     [McpServerTool(Name = "get_context")]
-    [Description("Return the indexed lines surrounding a location, stitched together. Use after search_index when a hit needs its surroundings.")]
+    [Description("Return the indexed lines surrounding a location, stitched together. Use after search_index when a hit needs its surroundings — including to read on past the end of a hit, by centring further down the file.")]
     public static async Task<string> GetContextAsync(
         RequestContext rc,
         ScopeResolver scopes,
         IVectorStore vectors,
         [Description("Corpus name, as given by list_corpora.")] string corpus,
         [Description("File path exactly as returned by search_index.")] string filePath,
-        [Description("Line number to centre on.")] int aroundLine,
+        [Description("Line number to centre on, as search_index reports it for the hit.")] int aroundLine,
         [Description("Lines of context before.")] int before = 30,
         [Description("Lines of context after.")] int after = 30,
+        [Description("Prefix each line with its number. On by default: quoting or editing a passage needs the line, and counting down from the header is where that goes wrong.")]
+        bool lineNumbers = true,
         CancellationToken ct = default)
     {
         Require(rc, Scopes.Search);
@@ -202,7 +215,7 @@ public sealed class DexiconTools
                   $"{aroundLine}; it spans lines {chunks.Min(c => c.StartLine)}-{chunks.Max(c => c.EndLine)}.");
 
         var header = $"{filePath}:{pieces[0].StartLine}-{pieces[^1].EndLine} (corpus: {corpus})\n\n";
-        return header + Stitch(pieces.Select(p => (p.StartLine, p.EndLine, p.Content)));
+        return header + Stitch(pieces.Select(p => (p.StartLine, p.EndLine, p.Content)), lineNumbers);
     }
 
     /// <summary>
@@ -211,7 +224,15 @@ public sealed class DexiconTools
     /// off-by-one here decides whether a model reads duplicated or missing lines.
     /// </summary>
     /// <param name="pieces">Chunks of one file, in file order (by chunk index).</param>
-    internal static string Stitch(IEnumerable<(int StartLine, int EndLine, string Content)> pieces)
+    /// <param name="lineNumbers">
+    /// Prefix each line with its number in the file. The passage is what a model reads
+    /// before quoting or editing it, and counting lines down from a header is exactly the
+    /// arithmetic it gets wrong. Gap markers stay unnumbered: the lines they stand for are
+    /// the ones that are not there.
+    /// </param>
+    internal static string Stitch(
+        IEnumerable<(int StartLine, int EndLine, string Content)> pieces,
+        bool lineNumbers = false)
     {
         var sb = new StringBuilder();
         var emittedThrough = 0;
@@ -245,7 +266,14 @@ public sealed class DexiconTools
             // in characters, not lines, so the shared span is derived from the line
             // numbers rather than assumed from the setting.
             var skip = Math.Max(0, emittedThrough - p.StartLine + 1);
-            foreach (var line in p.Content.Split('\n').Skip(skip)) sb.Append(line).Append('\n');
+            var lineNo = p.StartLine + skip;
+
+            foreach (var line in p.Content.Split('\n').Skip(skip))
+            {
+                if (lineNumbers) sb.Append(lineNo).Append(": ");
+                sb.Append(line).Append('\n');
+                lineNo++;
+            }
 
             emittedThrough = Math.Max(emittedThrough, p.EndLine);
             lastRange = (p.StartLine, p.EndLine);

@@ -118,9 +118,28 @@ the `corpus:set` ones, so its description says so explicitly.
 
 ### `get_context`
 
-`(corpus, file_path, around_line, before = 30, after = 30)` — neighbouring indexed lines,
-stitched from stored chunks. For when a search hit needs its surroundings and the agent
-cannot open the file itself.
+`(corpus, file_path, around_line, before = 30, after = 30, line_numbers = true)` —
+neighbouring indexed lines, stitched from stored chunks. For when a search hit needs its
+surroundings and the agent cannot open the file itself.
+
+This is also how an agent **reads on**. Chunks overlap and tile the file, so calling it
+again further down the file walks forwards through a document — a search hit in a book,
+then the next few pages of it, without the agent ever holding the file. It reads by
+filter, not by relevance: an early version keyword-searched for the path, which let
+ranking decide which of a file's chunks came back, and asking for the lines around line
+2,625 of a book returned nothing at all.
+
+`around_line` is a LINE, and a hit in a PDF or an EPUB is cited by its unit —
+`moby-dick.epub#chapter=7`. So `search_index` prints the line span alongside that
+citation, because otherwise an agent could find a passage in a book and have nothing to
+pass in order to continue from it.
+
+`line_numbers` prefixes each line with its number in the file, on by default. The passage
+is what a model reads before quoting or editing, and the alternative is counting lines
+down from the header — over a passage that has had overlap removed from it, which is
+exactly the sum it gets wrong. Gap markers stay unnumbered: the lines they stand for are
+the ones that are not there. The `dexicon://` file resource leaves numbering off, because
+a file read back should be the file rather than a listing of it.
 
 ### `index_refresh`
 
