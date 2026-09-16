@@ -187,6 +187,38 @@ export function Modal({
   );
 }
 
+/**
+ * Form primitives that carry their own styling.
+ *
+ * These exist because the alternative does not work. `.input` and `.btn-primary` were
+ * opt-in classes on bare elements, and a whole modal shipped with every field invisible
+ * and every primary button rendering as a secondary one — nothing failed, the screen was
+ * simply wrong, and no test or type could have caught it.
+ *
+ * A component you cannot construct without its styling removes the entire class of
+ * mistake. Same reasoning a component library would give; this is the two-line version.
+ */
+export function Input({ className = '', ...rest }: React.InputHTMLAttributes<HTMLInputElement>) {
+  return <input className={`input ${className}`.trim()} {...rest} />;
+}
+
+export function Select({ className = '', children, ...rest }: React.SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <select className={`input ${className}`.trim()} {...rest}>
+      {children}
+    </select>
+  );
+}
+
+export function Button({
+  variant = 'default',
+  className = '',
+  ...rest
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'default' | 'primary' | 'danger' }) {
+  const variantClass = variant === 'default' ? '' : `btn-${variant}`;
+  return <button className={`btn ${variantClass} ${className}`.trim()} {...rest} />;
+}
+
 export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <label style={{ display: 'block', marginBottom: '0.85rem' }}>
