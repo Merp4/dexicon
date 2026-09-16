@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 
 namespace Dexicon.Api;
 
-public sealed record AttachDocumentRequest(string Sha256, string? FileName);
+public sealed record AttachDocumentRequest(string Sha256, string? FileName = null);
 
 public sealed record UploadedDocumentResponse(
     string Sha256, string FileName, long SizeBytes, string? Title,
