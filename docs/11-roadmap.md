@@ -99,16 +99,27 @@ finding the matched text there.
 | **MCP** | ✅ All five tools live. `tools/list` and `tools/call` verified working with no handshake; Claude Code 2.1.248 connected and searched. |
 | **Tenancy** | ✅ Tokens, scopes, scope resolution, corpus visibility, all three enforcement layers — and the isolation test, shipped in the same commit as the enforcement. |
 | **Hybrid search** | ✅ Server-side RRF, sparse encoding with identifier splitting, filters, audible degradation. |
-| **Ingestion** | ✅ Language-aware chunking, PDF/DOCX/PPTX/EPUB/HTML extraction with page provenance, incremental refresh, per-file status, backoff. ⛔ **Uploads not built** — workspace sources only. |
+| **Ingestion** | ✅ Language-aware chunking, PDF/DOCX/PPTX/EPUB/HTML extraction with page provenance, incremental refresh, per-file status, backoff. ✅ **Uploads**, with a content-addressed blob store and cached extraction — so one document can be attached to several corpora and chunked differently in each. |
+| **Documents** | ✅ Library view, drag-and-drop upload, attach-to-another-corpus, extracted-text inspection, per-corpus chunking editor. |
 | **Jobs** | ✅ Queue, phases, SSE progress, `degraded` as a distinct state, orphan reconciliation on restart. |
 | **UI** | ✅ Search, Corpora, Jobs, Access, Settings. Verified in a browser end to end. |
 | **Tests** | ✅ 62 passing, including a guard for the "configured but unread" defect class. |
 
-**Not done, and named rather than glossed:** file **upload** ingestion (the API and blob
-store are specified and the catalogue has the table, but no endpoint exists yet — a corpus
-can only take a workspace path); `get_context` de-overlapping is implemented but untested
-against a real multi-chunk file; the MCP `dexicon://` **resources** are specified in
-[06](06-mcp-surface.md) but not implemented.
+**Not done, and named rather than glossed:** `get_context` de-overlapping is implemented but
+untested against a real multi-chunk file; the MCP `dexicon://` **resources** are specified in
+[06](06-mcp-surface.md) but not implemented; uploaded documents are not exposed to MCP as a
+distinct concept, so an agent sees them as ordinary files in a corpus (which is arguably
+correct, but it is an assumption nobody has tested).
+
+**Two defects this milestone found by running it, both invisible to a reader:**
+
+- **`chunk_size` did nothing.** The chunker split at every boundary, so two corpora
+  configured 768 and 256 tokens produced byte-identical output at a 252-character mean.
+  Every prose corpus indexed before the fix was affected. See
+  [04](04-ingestion.md#size-decides-when-to-split-a-boundary-decides-where).
+- **`MaxConcurrency` did nothing.** Configured, documented and passed by compose, read by
+  nothing — embedding batches ran strictly sequentially. The generalised guard that now
+  catches this class immediately found a second instance (`Bootstrap.Token`).
 
 **Still open from the original definition of done:** *a second person clones, runs
 `docker compose up`, indexes their own repository, connects their agent, and uses it
