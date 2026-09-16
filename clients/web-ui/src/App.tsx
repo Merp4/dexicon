@@ -277,7 +277,7 @@ function HealthDots({ health, connected, stale }: { health: Health | null; conne
 
 // ── Search ──────────────────────────────────────────────────────────────────
 
-function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (e: unknown) => void }) {
+export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (e: unknown) => void }) {
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<'hybrid' | 'semantic' | 'keyword'>('hybrid');
   const [scope, setScope] = useState<string[]>([]);
