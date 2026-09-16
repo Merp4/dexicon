@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
+using Microsoft.OpenApi;
 using Serilog;
 using Serilog.Events;
 
@@ -71,6 +72,32 @@ builder.Services.AddOpenApi(o => o.AddDocumentTransformer((doc, _, _) =>
         Description = "Semantic indexing and search. Every endpoint requires a bearer token; "
                     + "the tenant comes from the token, or from X-Dexicon-Tenant where the token allows it.",
     };
+
+    // The prose above said this; the document did not. A generated client reads the
+    // document, not the description, and only attaches credentials to operations that
+    // declare a security requirement — so with none declared, the web UI's own client
+    // sent every request anonymously and the server answered "Missing credentials",
+    // which the UI reported to people as a bad token.
+    doc.Components ??= new();
+    doc.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
+    doc.Components.SecuritySchemes["bearer"] = new OpenApiSecurityScheme
+    {
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        Description = "A Dexicon API token: `Authorization: Bearer dex_…`.",
+    };
+
+    // Applied to the whole document rather than per operation: the few anonymous
+    // endpoints are the health probes, and claiming they need a token is a far smaller
+    // error than claiming the rest do not.
+    doc.Security =
+    [
+        new OpenApiSecurityRequirement
+        {
+            [new OpenApiSecuritySchemeReference("bearer", doc)] = [],
+        },
+    ];
+
     return Task.CompletedTask;
 }));
 builder.Services.AddExceptionHandler<ScopeExceptionHandler>();
