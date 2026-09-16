@@ -2,12 +2,34 @@
 #
 #   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 #
-# Requires the NVIDIA Container Toolkit on the host. GPU embedding is roughly
-# 5-10x faster than CPU, and the win lands on the FIRST INDEX of a large corpus,
-# not on search — a search embeds one short query.
+# Requires the NVIDIA Container Toolkit on the host. Check it works at all with:
 #
-# Set DEXICON_GPU_DEVICE_IDS in .env to pin a specific card, e.g. "1", or to
-# "all" for every visible GPU.
+#   docker run --rm --gpus all nvidia/cuda:12.6.2-base-ubuntu24.04 nvidia-smi
+#
+# GPU embedding is roughly 5-10x faster than CPU, and the win lands on the FIRST INDEX
+# of a large corpus, not on search — a search embeds one short query. Nothing warns you
+# when you are on CPU, so if indexing feels slow, this file is the first thing to check:
+# `docker inspect dexicon-dexicon-ollama-1 --format '{{json .HostConfig.DeviceRequests}}'`
+# says null when the overlay is not applied.
+#
+# ONE card, named. `device_ids` takes a list of ids — `all` is not one of them, which is
+# how the first version of this file came to fail validation for every value including
+# its own default, and never ran. To request every GPU instead, replace `device_ids`
+# with `count: all`; to name several, add their ids to the list by hand. An embedding
+# model loads onto a single GPU anyway, so a second card buys this workload nothing and
+# takes it away from whatever else is running.
+#
+#   DEXICON_GPU_DEVICE_IDS=1   # in .env — which card, as `nvidia-smi -L` numbers them
+#
+# Two numbering caveats, both observed on this stack rather than read somewhere:
+#
+#  - Docker Desktop on Windows does NOT isolate the request. The container still sees
+#    every GPU, so the id is a preference rather than a fence. On Linux with the toolkit
+#    it is a fence.
+#  - Ollama numbers its own devices fastest-first, so its CUDA0 is not necessarily
+#    nvidia-smi's index 0. Check where a model actually landed with `nvidia-smi` on the
+#    host (memory.used) and `ollama ps` in the container, which reports `100% GPU` when
+#    it is fully offloaded and says so plainly when it is not.
 
 services:
   dexicon-ollama:
@@ -16,5 +38,5 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ${DEXICON_GPU_DEVICE_IDS:-all}
               capabilities: [gpu]
+              device_ids: ["${DEXICON_GPU_DEVICE_IDS:-0}"]
