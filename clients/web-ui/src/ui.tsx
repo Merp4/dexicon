@@ -57,24 +57,41 @@ export function Button({
   return <ShadButton variant={variantMap[variant]} size={size} {...rest} />;
 }
 
-/** One of a row of choices, the current one wearing the accent. */
+/**
+ * One of a row of choices, the current one wearing the accent.
+ *
+ * `active` is only how it LOOKS. How it is announced depends on what kind of choice the
+ * caller says it is: a radio group says `aria-checked`, navigation says `aria-current`,
+ * and only a genuine toggle says `aria-pressed`. Forcing `aria-pressed` on all three put
+ * invalid ARIA on the radios and made a screen reader call every nav item a toggle
+ * button, so it is set only when the caller has claimed neither of the others.
+ *
+ * Note the `dark:` repeats below. shadcn's outline variant carries `dark:bg-input/30` and
+ * `dark:border-input`, and a dark-variant utility is emitted after the plain ones — so a
+ * plain `bg-*` here loses to it in dark mode and the override silently does nothing.
+ * Anything overriding this component's background or border needs its dark twin.
+ */
 export function Chip({
-  // Defaulted, not left undefined: an unpressed chip that omits `aria-pressed` does not
-  // read as a choice at all, so the group stops being a group.
   active = false,
+  flat = false,
   className,
+  role,
+  'aria-current': current,
   ...rest
-}: React.ComponentProps<typeof Button> & { active?: boolean }) {
+}: React.ComponentProps<typeof Button> & { active?: boolean; flat?: boolean }) {
+  const isToggle = role === undefined && current === undefined;
+
   return (
     <Button
-      aria-pressed={active}
+      role={role}
+      aria-current={current}
+      // Defaulted rather than left off: an unpressed toggle that omits `aria-pressed`
+      // does not read as a choice at all, so the group stops being a group.
+      aria-pressed={isToggle ? active : undefined}
       className={cn(
-        active &&
-          // The `dark:` repeat is not redundant. shadcn's outline variant carries
-          // `dark:bg-input/30`, and a dark-variant utility is emitted after the plain
-          // ones, so without a dark-variant of our own the accent background loses to
-          // the generic input tint in dark mode and only the text colour survives.
-          'border-[color-mix(in_oklab,var(--accent)_35%,transparent)] bg-[var(--accent-soft)] text-[var(--accent)] dark:bg-[var(--accent-soft)]',
+        active
+          ? 'border-[color-mix(in_oklab,var(--accent)_35%,transparent)] bg-[var(--accent-soft)] text-[var(--accent)] dark:bg-[var(--accent-soft)]'
+          : flat && 'border-transparent bg-transparent dark:border-transparent dark:bg-transparent',
         className,
       )}
       {...rest}

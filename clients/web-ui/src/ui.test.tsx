@@ -103,6 +103,62 @@ describe('Chip', () => {
     expect(screen.getByRole('button', { name: 'dark' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: 'light' })).toHaveAttribute('aria-pressed', 'false');
   });
+
+  it('does not call a radio a toggle button', () => {
+    // `aria-pressed` is not allowed on `role="radio"`, and the search mode chips shipped
+    // with both. A chip's `active` is how it looks; the caller says what it means.
+    render(
+      <div role="radiogroup" aria-label="Search mode">
+        <Chip role="radio" active aria-checked>
+          hybrid
+        </Chip>
+      </div>,
+    );
+    const radio = screen.getByRole('radio', { name: 'hybrid' });
+    expect(radio).toHaveAttribute('aria-checked', 'true');
+    expect(radio).not.toHaveAttribute('aria-pressed');
+  });
+
+  it('does not call a navigation item a toggle button', () => {
+    // A nav item is not pressed, it is where you are. `aria-current` says that; announcing
+    // it as a toggle button as well is noise on every item in the bar.
+    render(
+      <nav>
+        <Chip active aria-current="page">
+          Corpora
+        </Chip>
+        <Chip aria-current={false}>Jobs</Chip>
+      </nav>,
+    );
+
+    const current = screen.getByRole('button', { name: 'Corpora' });
+    expect(current).toHaveAttribute('aria-current', 'page');
+    expect(current).not.toHaveAttribute('aria-pressed');
+
+    // The ones you are not on matter too: leave aria-current off them and the chip falls
+    // back to toggle semantics, announcing every other destination as an unpressed button.
+    expect(screen.getByRole('button', { name: 'Jobs' })).not.toHaveAttribute('aria-pressed');
+  });
+
+  it('carries a dark twin for every background it overrides', () => {
+    // shadcn's outline variant sets `dark:bg-input/30`, and dark-variant utilities are
+    // emitted last — so a plain `bg-*` override silently does nothing in dark mode. This
+    // is the trap that left the current nav item looking like all the others.
+    render(
+      <>
+        <Chip active>on</Chip>
+        <Chip flat>off</Chip>
+      </>,
+    );
+
+    for (const name of ['on', 'off']) {
+      const classes = [...screen.getByRole('button', { name }).classList];
+      const plain = classes.filter((c) => c.startsWith('bg-'));
+      for (const c of plain) {
+        expect(classes).toContain(`dark:${c}`);
+      }
+    }
+  });
 });
 
 describe('Field', () => {
