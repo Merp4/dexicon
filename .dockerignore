@@ -1,0 +1,34 @@
+# Keep the build context small and deterministic. Without this the context
+# includes node_modules, every bin/obj, the local catalogue and the .git history
+# — slow to send, and it lets host state leak into an image that is supposed to
+# be reproducible from source.
+
+.git/
+.github/
+.vs/
+.idea/
+
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+**/.vite/
+**/*.tsbuildinfo
+
+# Local runtime state and secrets — must never reach an image.
+.env
+.env.*
+!.env.example
+secrets/
+.dexicon/
+data/
+workspaces/
+
+docs/
+tests/
+*.md
+!README.md
+
+docker-compose*.yml
+Dockerfile
+.dockerignore
