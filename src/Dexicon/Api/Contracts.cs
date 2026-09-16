@@ -135,6 +135,12 @@ public sealed record ReadinessResponse(string Status, bool Qdrant, bool Catalogu
 
 public sealed record WorkspaceListing(string Root, string Path, IReadOnlyList<WorkspaceEntry> Entries);
 
+public sealed record UploadFailure(string File, string Error);
+
+public sealed record UploadResponse(
+    string Corpus, IReadOnlyList<UploadedDocumentResponse> Stored,
+    IReadOnlyList<UploadFailure> Failed, JobSummary Job);
+
 public sealed record ModelProfileSaved(
     string Provider, string Model, IReadOnlyList<string> Reindexing, string? Note);
 

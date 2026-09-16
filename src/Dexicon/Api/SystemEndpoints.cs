@@ -61,7 +61,7 @@ public static class SystemEndpoints
                 .Take(Math.Clamp(limit ?? 50, 1, 200)).ToListAsync(ct);
 
             return Results.Ok(jobs.Select(j => j.ToSummary()));
-        });
+        }).Produces<IReadOnlyList<JobSummary>>();
 
         g.MapGet("/{id}", async (string id, RequestContext rc, ScopeResolver scopes, CatalogDbContext db,
             CancellationToken ct) =>
@@ -74,7 +74,7 @@ public static class SystemEndpoints
             if (!visible.Exists(c => c.Id == job.CorpusId)) return Results.NotFound();
 
             return Results.Ok(job.ToSummary());
-        });
+        }).Produces<JobSummary>();
     }
 
     /// <summary>
@@ -184,7 +184,7 @@ public static class SystemEndpoints
             var tenants = await db.Tenants.OrderBy(t => t.Id).ToListAsync(ct);
             return Results.Ok(tenants.Select(t =>
                 new TenantSummary(t.Id, t.DisplayName, t.CreatedUtc, t.Disabled)));
-        });
+        }).Produces<IReadOnlyList<TenantSummary>>();
 
         g.MapPost("/", async (CreateTenantRequest body, RequestContext rc, CatalogDbContext db,
             CancellationToken ct) =>
@@ -237,7 +237,7 @@ public static class SystemEndpoints
             var rows = await db.Tokens.Where(x => x.TenantId == tenant)
                 .OrderByDescending(x => x.CreatedUtc).ToListAsync(ct);
             return Results.Ok(rows.Select(x => x.ToSummary()));
-        });
+        }).Produces<IReadOnlyList<TokenSummary>>();
 
         t.MapPost("/", async (CreateTokenRequest body, RequestContext rc, TokenService tokens,
             IOptions<DexiconOptions> opts, CancellationToken ct) =>
@@ -265,7 +265,7 @@ public static class SystemEndpoints
                 $"  --header \"Authorization: Bearer {issued.Presented}\"";
 
             return Results.Ok(new CreatedTokenResponse(row.ToSummary(), issued.Presented, command));
-        });
+        }).Produces<CreatedTokenResponse>();
 
         t.MapDelete("/{id}", async (string id, RequestContext rc, TokenService tokens, IMemoryCacheEvictor evictor,
             CancellationToken ct) =>

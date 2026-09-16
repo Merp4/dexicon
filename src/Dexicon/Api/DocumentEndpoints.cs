@@ -57,7 +57,7 @@ public static class DocumentEndpoints
                 return Results.Problem(title: "No files in the request", statusCode: 400);
 
             var stored = new List<UploadedDocumentResponse>();
-            var failures = new List<object>();
+            var failures = new List<UploadFailure>();
 
             foreach (var file in form.Files)
             {
@@ -74,28 +74,23 @@ public static class DocumentEndpoints
                 catch (ArgumentException ex)
                 {
                     // One bad file in a batch must not lose the good ones.
-                    failures.Add(new { file = file.FileName, error = ex.Message });
+                    failures.Add(new UploadFailure(file.FileName, ex.Message));
                 }
             }
 
             if (stored.Count == 0)
                 return Results.Problem(
                     title: "No files could be stored",
-                    detail: string.Join("; ", failures.Select(f => f.ToString())),
+                    detail: string.Join("; ", failures.Select(f => $"{f.File}: {f.Error}")),
                     statusCode: 400);
 
             // Chunking and embedding happen in the indexer, not on the request thread:
             // a 400-page PDF outlasts any sensible HTTP timeout.
             var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
 
-            return Results.Accepted($"/api/jobs/{job.Id}", new
-            {
-                corpus = corpus.Name,
-                stored,
-                failed = failures,
-                job = job.ToSummary(),
-            });
-        }).DisableAntiforgery();
+            return Results.Accepted($"/api/jobs/{job.Id}",
+                new UploadResponse(corpus.Name, stored, failures, job.ToSummary()));
+        }).Produces<UploadResponse>().DisableAntiforgery();
 
         // ── Attach an already-stored document to another corpus ─────────────
         g.MapPost("/corpora/{nameOrId}/documents/attach", async (
