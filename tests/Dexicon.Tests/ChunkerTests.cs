@@ -112,6 +112,96 @@ public class ChunkerTests
         chunks[0].Section.ShouldBe("Deployment");
     }
 
+    // ── Size decides WHEN to split; a boundary decides WHERE ─────────────────
+    //
+    // The regression these guard: the chunker used to split at EVERY boundary, which
+    // made chunkSize dead configuration in every mode but `none`. Two corpora set to
+    // 768 and 256 tokens produced byte-identical output — 48 chunks each, at a 252
+    // character mean against budgets of 3072 and 1024.
+
+    [Fact]
+    public void Chunk_ChunkSize_ChangesOutput_EvenWithABoundaryMode()
+    {
+        var prose = string.Join("\n\n",
+            Enumerable.Range(1, 120).Select(i => $"Paragraph {i}. " + string.Join(' ', Enumerable.Repeat("word", 30))));
+
+        var coarse = CodeChunker.Chunk("doc.md", prose, chunkSizeTokens: 768, overlapTokens: 100, boundaryMode: "blank-line");
+        var fine = CodeChunker.Chunk("doc.md", prose, chunkSizeTokens: 256, overlapTokens: 40, boundaryMode: "blank-line");
+
+        coarse.ShouldNotBeEmpty();
+        fine.Count.ShouldBeGreaterThan(
+            coarse.Count,
+            "a smaller chunk size must produce more chunks — otherwise the setting does nothing");
+    }
+
+    [Fact]
+    public void Chunk_FillsTowardTheBudget_RatherThanEmittingOneChunkPerParagraph()
+    {
+        var prose = string.Join("\n\n",
+            Enumerable.Range(1, 200).Select(i => $"Paragraph {i}. " + string.Join(' ', Enumerable.Repeat("word", 25))));
+
+        const int tokens = 768;
+        var chunks = CodeChunker.Chunk("doc.md", prose, chunkSizeTokens: tokens, overlapTokens: 100, boundaryMode: "blank-line");
+        var budget = tokens * CodeChunker.CharsPerToken;
+
+        var mean = chunks.Average(c => c.Content.Length);
+
+        // Not a tight bound — the point is it must not collapse to paragraph-sized
+        // chunks again. Half the budget is comfortably above the 252 chars observed.
+        mean.ShouldBeGreaterThan(budget * 0.4,
+            $"chunks averaged {mean:F0} chars against a {budget} budget — the boundary is forcing splits again");
+
+        foreach (var c in chunks)
+            c.Content.Length.ShouldBeLessThanOrEqualTo(budget + 200, "no chunk should blow past the budget");
+    }
+
+    [Fact]
+    public void Chunk_BoundaryMode_StillDecidesWhereTheSplitLands()
+    {
+        // Filling to the budget must not mean splitting mid-paragraph: the split should
+        // land on a blank line whenever the buffer contains one.
+        var prose = string.Join("\n\n",
+            Enumerable.Range(1, 60).Select(i => $"Para {i} " + string.Join(' ', Enumerable.Repeat("token", 40))));
+
+        var chunks = CodeChunker.Chunk("doc.md", prose, chunkSizeTokens: 200, overlapTokens: 0, boundaryMode: "blank-line");
+
+        chunks.Count.ShouldBeGreaterThan(1);
+
+        // The property that actually matters: every chunk BEGINS at a paragraph start.
+        // (Asserting on the ending was a bad oracle — a chunk that ends correctly at a
+        // paragraph boundary necessarily ends with that paragraph's last words.)
+        foreach (var c in chunks)
+            // A split that landed mid-paragraph would start with "token", not "Para".
+            c.Content.TrimStart().ShouldStartWith("Para ");
+    }
+
+    [Fact]
+    public void Chunk_LineNumbersStayExact_AfterFillingAndBackingUp()
+    {
+        var lines = Enumerable.Range(1, 300).Select(i => i % 7 == 0 ? "" : $"line {i} content here");
+        var content = string.Join('\n', lines);
+        var source = content.Split('\n');
+
+        var chunks = CodeChunker.Chunk("doc.md", content, chunkSizeTokens: 120, overlapTokens: 20, boundaryMode: "blank-line");
+
+        foreach (var chunk in chunks)
+        {
+            var first = chunk.Content.Split('\n')[0];
+            source[chunk.StartLine - 1].ShouldBe(first);
+        }
+    }
+
+    [Fact]
+    public void Chunk_TerminatesOnPathologicalInput()
+    {
+        // The rewind-for-overlap loop must always make forward progress. A file of
+        // single characters with a large overlap is the case that would hang it.
+        var content = string.Join('\n', Enumerable.Repeat("x", 500));
+        var chunks = CodeChunker.Chunk("a.txt", content, chunkSizeTokens: 8, overlapTokens: 7, boundaryMode: "none");
+        chunks.ShouldNotBeEmpty();
+        chunks.Count.ShouldBeLessThan(2000);
+    }
+
     [Fact]
     public void Chunk_LanguageAware_SplitsCSharpAtMemberBoundaries()
     {

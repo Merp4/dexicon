@@ -49,34 +49,44 @@ public static class CodeChunker
         var maxChars = chunkSizeTokens * CharsPerToken;
         var overlapChars = overlapTokens * CharsPerToken;
 
-        var boundaries = ResolveBoundaries(boundaryMode, language, customBoundaryPattern, lines);
+        var boundaries = ResolveBoundaries(boundaryMode, language, customBoundaryPattern, lines).ToHashSet();
         var symbolPattern = LanguageMap.SymbolPattern(language);
         var isMarkdown = string.Equals(language, "markdown", StringComparison.Ordinal);
 
         var chunks = new List<TextChunk>();
         var index = 0;
-        var segmentStart = 0;
 
-        foreach (var segmentEnd in boundaries.Append(lines.Length))
-        {
-            if (segmentEnd <= segmentStart) continue;
-            foreach (var c in ChunkSegment(lines, segmentStart, segmentEnd, maxChars, overlapChars, symbolPattern, isMarkdown))
-                chunks.Add(c with { Index = index++ });
-            segmentStart = segmentEnd;
-        }
+        foreach (var c in ChunkLines(lines, boundaries, maxChars, overlapChars, symbolPattern, isMarkdown))
+            chunks.Add(c with { Index = index++ });
 
         return chunks;
     }
 
-    private static IEnumerable<TextChunk> ChunkSegment(string[] lines, int from, int to,
+    /// <summary>
+    /// Size decides WHEN to split; a boundary decides WHERE.
+    ///
+    /// This used to split at every boundary, which made <c>chunkSize</c> dead
+    /// configuration in every mode but <c>none</c>: blank-line mode on prose produced
+    /// one chunk per paragraph, measured at a 252-character mean against a 3072
+    /// character budget, and two corpora configured 768 and 256 produced byte-identical
+    /// output. Chunks that small retrieve badly — there is not enough context in a
+    /// paragraph to embed usefully.
+    ///
+    /// Now the accumulator fills to the budget and then backs up to the most recent
+    /// boundary inside the buffer, so a chunk holds as many whole members or paragraphs
+    /// as fit and still never ends mid-thought. Falls back to splitting at the current
+    /// line when the buffer contains no boundary at all.
+    /// </summary>
+    private static IEnumerable<TextChunk> ChunkLines(string[] lines, HashSet<int> boundaries,
         int maxChars, int overlapChars, string? symbolPattern, bool isMarkdown)
     {
-        var buffer = new StringBuilder();
-        var bufferStart = from;
+        var start = 0;
+        var chars = 0;
+        var lastBoundary = -1;
         var lastHeading = (string?)null;
         var inFence = false;
 
-        for (var i = from; i < to; i++)
+        for (var i = 0; i < lines.Length; i++)
         {
             var line = lines[i];
 
@@ -86,42 +96,60 @@ public static class CodeChunker
                 else if (!inFence && TryReadHeading(line, out var heading)) lastHeading = heading;
             }
 
-            // A single line longer than the whole budget still becomes its own chunk
-            // rather than being dropped — minified files are ugly, not invisible.
-            if (buffer.Length > 0 && buffer.Length + line.Length + 1 > maxChars)
-            {
-                yield return Build(buffer.ToString(), bufferStart, i - 1, lastHeading, symbolPattern);
+            if (boundaries.Contains(i) && i > start) lastBoundary = i;
 
-                var carried = CarryOverlap(lines, i, bufferStart, overlapChars, out var newStart);
-                buffer.Clear();
-                buffer.Append(carried);
-                bufferStart = newStart;
+            var lineChars = line.Length + 1;
+
+            // A single line over the whole budget still becomes its own chunk rather
+            // than being dropped — minified files are ugly, not invisible.
+            if (chars > 0 && chars + lineChars > maxChars)
+            {
+                var splitAt = lastBoundary > start ? lastBoundary : i;
+
+                yield return Build(Join(lines, start, splitAt), start, splitAt - 1, lastHeading, symbolPattern);
+
+                // Overlap is carried by rewinding the start, not by copying text, so
+                // line numbers stay exact.
+                start = RewindForOverlap(lines, splitAt, start, overlapChars);
+                lastBoundary = -1;
+                chars = 0;
+                i = start - 1;      // re-accumulate from the new start
+                continue;
             }
 
-            if (buffer.Length > 0) buffer.Append('\n');
-            buffer.Append(line);
+            chars += lineChars;
         }
 
-        if (buffer.Length > 0 && buffer.ToString().Trim().Length > 0)
-            yield return Build(buffer.ToString(), bufferStart, to - 1, lastHeading, symbolPattern);
+        if (start < lines.Length)
+        {
+            var tail = Join(lines, start, lines.Length);
+            if (tail.Trim().Length > 0)
+                yield return Build(tail, start, lines.Length - 1, lastHeading, symbolPattern);
+        }
     }
 
-    /// <summary>Walk back from the split point until the overlap budget is spent.</summary>
-    private static string CarryOverlap(string[] lines, int splitAt, int bufferStart, int overlapChars, out int newStart)
+    private static string Join(string[] lines, int from, int toExclusive) =>
+        string.Join('\n', lines[from..toExclusive]);
+
+    /// <summary>Move the next chunk's start back far enough to spend the overlap budget.</summary>
+    private static int RewindForOverlap(string[] lines, int splitAt, int previousStart, int overlapChars)
     {
-        if (overlapChars <= 0) { newStart = splitAt; return string.Empty; }
+        if (overlapChars <= 0) return splitAt;
 
         var taken = 0;
         var first = splitAt;
-        while (first > bufferStart && taken + lines[first - 1].Length + 1 <= overlapChars)
+        while (first > previousStart + 1 && taken + lines[first - 1].Length + 1 <= overlapChars)
         {
             first--;
             taken += lines[first].Length + 1;
         }
 
-        newStart = first;
-        return first >= splitAt ? string.Empty : string.Join('\n', lines[first..splitAt]);
+        // Never rewind to where we started, or the loop makes no progress.
+        return Math.Max(first, previousStart + 1);
     }
+
+
+    /// <summary>Walk back from the split point until the overlap budget is spent.</summary>
 
     /// <summary>
     /// A fenced block opener or closer: ``` or ~~~, optionally indented up to three

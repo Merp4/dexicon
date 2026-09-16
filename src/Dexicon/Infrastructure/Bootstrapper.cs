@@ -120,9 +120,27 @@ public static class Bootstrapper
         IServiceProvider sp, CatalogDbContext db, ILogger log, DexiconOptions options)
     {
         var tenantId = options.Bootstrap.Tenant.Trim().ToLowerInvariant();
+        var tokens = sp.GetRequiredService<TokenService>();
+
+        // A pinned bootstrap token, for scripted setup and CI — and the escape hatch
+        // when someone loses the one-time printed value. Without this the only recovery
+        // from a lost token is deleting the catalogue, which also deletes every corpus.
+        //
+        // .env.example has documented this since the first commit; nothing implemented
+        // it, so setting DEXICON__BOOTSTRAP__TOKEN did precisely nothing.
+        if (options.Bootstrap.Token is { Length: > 0 } pinned)
+        {
+            if (await tokens.VerifyAsync(pinned) is not null) return;
+
+            await tokens.AdoptAsync(tenantId, "bootstrap (pinned)", Scopes.All, pinned);
+            log.LogWarning(
+                "Adopted the bootstrap token from DEXICON__BOOTSTRAP__TOKEN. It is a SECRET: " +
+                "it lives in your .env, which is gitignored and must never be committed.");
+            return;
+        }
+
         if (await db.Tokens.AnyAsync(t => t.TenantId == tenantId && t.RevokedUtc == null)) return;
 
-        var tokens = sp.GetRequiredService<TokenService>();
         var (_, issued) = await tokens.CreateAsync(tenantId, "bootstrap", Scopes.All, expiresUtc: null);
 
         // A log line is an acceptable delivery channel for a value that is about to be

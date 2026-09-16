@@ -19,7 +19,13 @@ public sealed record CreateCorpusRequest(
 public sealed record UpdateCorpusRequest(
     string? Description,
     string? Visibility,
-    IReadOnlyList<string>? GrantTenantIds);
+    IReadOnlyList<string>? GrantTenantIds,
+    // Changing any of these re-chunks the whole corpus. The embedding model is
+    // deliberately absent: that is a different vector space, so it is a rebuild into a
+    // different collection rather than an edit.
+    int? ChunkSize,
+    int? ChunkOverlap,
+    string? BoundaryMode);
 
 public sealed record AddSourceRequest(string WorkspacePath, bool? UseGitignore, int? MaxFileBytes,
     IReadOnlyList<string>? IncludeGlobs, IReadOnlyList<string>? ExcludeGlobs);

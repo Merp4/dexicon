@@ -16,6 +16,7 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
     public DbSet<Source> Sources => Set<Source>();
     public DbSet<IndexedFile> Files => Set<IndexedFile>();
     public DbSet<Blob> Blobs => Set<Blob>();
+    public DbSet<BlobText> BlobTexts => Set<BlobText>();
     public DbSet<IndexJob> Jobs => Set<IndexJob>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -93,6 +94,12 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
                 .HasForeignKey(x => x.SourceId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(x => new { x.SourceId, x.RelativePath }).IsUnique();
             e.HasIndex(x => new { x.SourceId, x.Status });
+            e.Property(x => x.BlobSha256).HasMaxLength(64);
+            // Restrict, not Cascade: deleting a blob that corpora still reference would
+            // silently empty them. A blob is only removable once nothing attaches it.
+            e.HasOne(x => x.Blob).WithMany()
+                .HasForeignKey(x => x.BlobSha256).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => x.BlobSha256);
         });
 
         modelBuilder.Entity<Blob>(e =>
@@ -101,6 +108,19 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             e.HasKey(x => x.Sha256);
             e.Property(x => x.Sha256).HasMaxLength(64);
             e.Property(x => x.MediaType).HasMaxLength(200);
+            e.Property(x => x.OriginalFileName).HasMaxLength(500);
+            e.HasOne(x => x.Text).WithOne(t => t.Blob)
+                .HasForeignKey<BlobText>(t => t.Sha256).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<BlobText>(e =>
+        {
+            e.ToTable("blob_texts");
+            e.HasKey(x => x.Sha256);
+            e.Property(x => x.Sha256).HasMaxLength(64);
+            e.Property(x => x.Extractor).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Title).HasMaxLength(500);
+            e.Property(x => x.EmptyReason).HasMaxLength(500);
         });
 
         modelBuilder.Entity<IndexJob>(e =>
