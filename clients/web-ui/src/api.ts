@@ -7,6 +7,13 @@
  * `embeddingModel`, fields the server had moved onto a chunk set. Nothing failed — the UI
  * simply read `undefined` and rendered it.
  *
+ * Request bodies are typed from the generated request types too, not just responses.
+ * They were `Record<string, unknown>` with a cast for a while, because the document
+ * marked every field of every body as required — positional record parameters with no
+ * default are `required` in the schema — so the generated types demanded fields the API
+ * does not. The contracts carry defaults now, so the document says what is actually
+ * optional and a misspelt or mistyped field is a compile error again.
+ *
  * What is still hand-written, and why:
  *   - the `api` facade below, so call sites read as `api.listCorpora()` rather than
  *     `getApiCorpora({ throwOnError: true })`, and so a URL shape change stays here
@@ -48,7 +55,20 @@ import {
   postApiTokens,
   putApiEmbeddingModelsProfile,
 } from './generated';
-import type { JobSummary } from './generated';
+import type {
+  AddSourceRequest,
+  AttachDocumentRequest,
+  CreateChunkSetRequest,
+  CreateCorpusRequest,
+  CreateTenantRequest,
+  CreateTokenRequest,
+  JobSummary,
+  ProbeModelRequest,
+  SaveModelProfileRequest,
+  SearchApiRequest,
+  UpdateChunkSetRequest,
+  UpdateCorpusRequest,
+} from './generated';
 import { client } from './generated/client.gen';
 import { getToken } from './token';
 
@@ -188,24 +208,22 @@ interface Envelope<T> {
 export const api = {
   health: () => call(() => getHealthz()),
 
-  search: (body: Record<string, unknown>) =>
-    call(() => postApiSearch({ body: body as never })),
+  search: (body: SearchApiRequest) => call(() => postApiSearch({ body })),
 
   listCorpora: () => call(() => getApiCorpora()),
 
   getCorpus: (nameOrId: string) => call(() => getApiCorporaByNameOrId({ path: { nameOrId } })),
 
-  createCorpus: (body: Record<string, unknown>) =>
-    call(() => postApiCorpora({ body: body as never })),
+  createCorpus: (body: CreateCorpusRequest) => call(() => postApiCorpora({ body })),
 
-  updateCorpus: (nameOrId: string, body: Record<string, unknown>) =>
-    call(() => patchApiCorporaByNameOrId({ path: { nameOrId }, body: body as never })),
+  updateCorpus: (nameOrId: string, body: UpdateCorpusRequest) =>
+    call(() => patchApiCorporaByNameOrId({ path: { nameOrId }, body })),
 
   deleteCorpus: (nameOrId: string) =>
     call(() => deleteApiCorporaByNameOrId({ path: { nameOrId } })),
 
-  addSource: (nameOrId: string, body: Record<string, unknown>) =>
-    call(() => postApiCorporaByNameOrIdSources({ path: { nameOrId }, body: body as never })),
+  addSource: (nameOrId: string, body: AddSourceRequest) =>
+    call(() => postApiCorporaByNameOrIdSources({ path: { nameOrId }, body })),
 
   reindex: (nameOrId: string, full = false) =>
     call(() => postApiCorporaByNameOrIdReindex({ path: { nameOrId }, query: { full } })),
@@ -220,14 +238,14 @@ export const api = {
   listChunkSets: (corpus: string) =>
     call(() => getApiCorporaByNameOrIdChunkSets({ path: { nameOrId: corpus } })),
 
-  createChunkSet: (corpus: string, body: Record<string, unknown>) =>
-    call(() => postApiCorporaByNameOrIdChunkSets({ path: { nameOrId: corpus }, body: body as never })),
+  createChunkSet: (corpus: string, body: CreateChunkSetRequest) =>
+    call(() => postApiCorporaByNameOrIdChunkSets({ path: { nameOrId: corpus }, body })),
 
-  updateChunkSet: (corpus: string, set: string, body: Record<string, unknown>) =>
+  updateChunkSet: (corpus: string, set: string, body: UpdateChunkSetRequest) =>
     call(() =>
       patchApiCorporaByNameOrIdChunkSetsBySetName({
         path: { nameOrId: corpus, setName: set },
-        body: body as never,
+        body,
       }),
     ),
 
@@ -249,15 +267,10 @@ export const api = {
     call(() => getApiEmbeddingModels({ query: provider ? { provider } : {} })),
 
   probeEmbeddingModel: (model: string, provider?: string) =>
-    call(() => postApiEmbeddingModelsProbe({ body: { model, provider } as never })),
+    call(() => postApiEmbeddingModelsProbe({ body: { model, provider } satisfies ProbeModelRequest })),
 
-  saveModelProfile: (body: {
-    provider?: string;
-    model: string;
-    documentTemplate: string;
-    queryTemplate: string;
-    notes?: string;
-  }) => call(() => putApiEmbeddingModelsProfile({ body: body as never })),
+  saveModelProfile: (body: SaveModelProfileRequest) =>
+    call(() => putApiEmbeddingModelsProfile({ body })),
 
   deleteEmbeddingModel: (model: string, provider?: string) =>
     call(() =>
@@ -275,7 +288,7 @@ export const api = {
     call(() =>
       postApiCorporaByNameOrIdDocumentsAttach({
         path: { nameOrId: corpus },
-        body: { sha256, fileName } as never,
+        body: { sha256, fileName } satisfies AttachDocumentRequest,
       }),
     ),
 
@@ -311,7 +324,7 @@ export const api = {
   listTokens: () => call(() => getApiTokens()),
 
   createToken: (name: string, scopes: string[], expiresInDays?: number) =>
-    call(() => postApiTokens({ body: { name, scopes, expiresInDays } as never })),
+    call(() => postApiTokens({ body: { name, scopes, expiresInDays } satisfies CreateTokenRequest })),
 
   revokeToken: (id: string) => call(() => deleteApiTokensById({ path: { id } })),
 
@@ -321,7 +334,7 @@ export const api = {
   listTenants: () => call(() => getApiTenants()),
 
   createTenant: (id: string, displayName?: string) =>
-    call(() => postApiTenants({ body: { id, displayName } as never })),
+    call(() => postApiTenants({ body: { id, displayName } satisfies CreateTenantRequest })),
 };
 
 function authHeaders(): HeadersInit {

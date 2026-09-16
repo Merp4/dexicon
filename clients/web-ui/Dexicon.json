@@ -1076,11 +1076,7 @@
     "schemas": {
       "AddSourceRequest": {
         "required": [
-          "workspacePath",
-          "useGitignore",
-          "maxFileBytes",
-          "includeGlobs",
-          "excludeGlobs"
+          "workspacePath"
         ],
         "type": "object",
         "properties": {
@@ -1122,8 +1118,7 @@
       },
       "AttachDocumentRequest": {
         "required": [
-          "sha256",
-          "fileName"
+          "sha256"
         ],
         "type": "object",
         "properties": {
@@ -1443,18 +1438,7 @@
       },
       "CreateChunkSetRequest": {
         "required": [
-          "name",
-          "description",
-          "embeddingProvider",
-          "embeddingModel",
-          "chunkSize",
-          "chunkOverlap",
-          "boundaryMode",
-          "customBoundaryPattern",
-          "unitAware",
-          "sentenceAware",
-          "headingContext",
-          "makeDefault"
+          "name"
         ],
         "type": "object",
         "properties": {
@@ -1533,15 +1517,7 @@
       },
       "CreateCorpusRequest": {
         "required": [
-          "name",
-          "description",
-          "embeddingProvider",
-          "embeddingModel",
-          "chunkSize",
-          "chunkOverlap",
-          "boundaryMode",
-          "visibility",
-          "workspacePath"
+          "name"
         ],
         "type": "object",
         "properties": {
@@ -1602,8 +1578,7 @@
       },
       "CreateTenantRequest": {
         "required": [
-          "id",
-          "displayName"
+          "id"
         ],
         "type": "object",
         "properties": {
@@ -1620,9 +1595,7 @@
       },
       "CreateTokenRequest": {
         "required": [
-          "name",
-          "scopes",
-          "expiresInDays"
+          "name"
         ],
         "type": "object",
         "properties": {
@@ -2303,8 +2276,7 @@
       },
       "ProbeModelRequest": {
         "required": [
-          "model",
-          "provider"
+          "model"
         ],
         "type": "object",
         "properties": {
@@ -2321,8 +2293,7 @@
       },
       "PullModelRequest": {
         "required": [
-          "model",
-          "provider"
+          "model"
         ],
         "type": "object",
         "properties": {
@@ -2339,20 +2310,12 @@
       },
       "SaveModelProfileRequest": {
         "required": [
-          "provider",
           "model",
           "documentTemplate",
-          "queryTemplate",
-          "notes"
+          "queryTemplate"
         ],
         "type": "object",
         "properties": {
-          "provider": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
           "model": {
             "type": "string"
           },
@@ -2361,6 +2324,12 @@
           },
           "queryTemplate": {
             "type": "string"
+          },
+          "provider": {
+            "type": [
+              "null",
+              "string"
+            ]
           },
           "notes": {
             "type": [
@@ -2391,13 +2360,7 @@
       },
       "SearchApiRequest": {
         "required": [
-          "query",
-          "corpus",
-          "mode",
-          "limit",
-          "pathPrefix",
-          "language",
-          "symbol"
+          "query"
         ],
         "type": "object",
         "properties": {
@@ -2681,16 +2644,6 @@
         }
       },
       "UpdateChunkSetRequest": {
-        "required": [
-          "description",
-          "chunkSize",
-          "chunkOverlap",
-          "boundaryMode",
-          "customBoundaryPattern",
-          "unitAware",
-          "sentenceAware",
-          "headingContext"
-        ],
         "type": "object",
         "properties": {
           "description": {
@@ -2746,11 +2699,6 @@
         }
       },
       "UpdateCorpusRequest": {
-        "required": [
-          "description",
-          "visibility",
-          "grantTenantIds"
-        ],
         "type": "object",
         "properties": {
           "description": {

@@ -8,19 +8,19 @@ namespace Dexicon.Api;
 
 public sealed record CreateCorpusRequest(
     string Name,
-    string? Description,
-    string? EmbeddingProvider,
-    string? EmbeddingModel,
-    int? ChunkSize,
-    int? ChunkOverlap,
-    string? BoundaryMode,
-    string? Visibility,
-    string? WorkspacePath);
+    string? Description = null,
+    string? EmbeddingProvider = null,
+    string? EmbeddingModel = null,
+    int? ChunkSize = null,
+    int? ChunkOverlap = null,
+    string? BoundaryMode = null,
+    string? Visibility = null,
+    string? WorkspacePath = null);
 
 public sealed record UpdateCorpusRequest(
-    string? Description,
-    string? Visibility,
-    IReadOnlyList<string>? GrantTenantIds);
+    string? Description = null,
+    string? Visibility = null,
+    IReadOnlyList<string>? GrantTenantIds = null);
 
 /// <summary>
 /// A new way of cutting and embedding a corpus's existing content. Omitted fields are
@@ -29,32 +29,32 @@ public sealed record UpdateCorpusRequest(
 /// </summary>
 public sealed record CreateChunkSetRequest(
     string Name,
-    string? Description,
-    string? EmbeddingProvider,
-    string? EmbeddingModel,
-    int? ChunkSize,
-    int? ChunkOverlap,
-    string? BoundaryMode,
-    string? CustomBoundaryPattern,
-    bool? UnitAware,
-    bool? SentenceAware,
-    bool? HeadingContext,
+    string? Description = null,
+    string? EmbeddingProvider = null,
+    string? EmbeddingModel = null,
+    int? ChunkSize = null,
+    int? ChunkOverlap = null,
+    string? BoundaryMode = null,
+    string? CustomBoundaryPattern = null,
+    bool? UnitAware = null,
+    bool? SentenceAware = null,
+    bool? HeadingContext = null,
     /// <summary>Promote immediately instead of backfilling first. Rarely what you want.</summary>
-    bool? MakeDefault);
+    bool? MakeDefault = null);
 
 /// <summary>
 /// Everything here re-chunks the set. The embedding model is absent by design: it is a
 /// different vector space, so it is a NEW set and a promotion, not an edit.
 /// </summary>
 public sealed record UpdateChunkSetRequest(
-    string? Description,
-    int? ChunkSize,
-    int? ChunkOverlap,
-    string? BoundaryMode,
-    string? CustomBoundaryPattern,
-    bool? UnitAware,
-    bool? SentenceAware,
-    bool? HeadingContext);
+    string? Description = null,
+    int? ChunkSize = null,
+    int? ChunkOverlap = null,
+    string? BoundaryMode = null,
+    string? CustomBoundaryPattern = null,
+    bool? UnitAware = null,
+    bool? SentenceAware = null,
+    bool? HeadingContext = null);
 
 public sealed record ChunkSetSummary(
     string Id,
@@ -80,7 +80,7 @@ public sealed record ChunkSetSummary(
     DateTime CreatedUtc,
     DateTime? LastIndexedUtc);
 
-public sealed record PullModelRequest(string Model, string? Provider);
+public sealed record PullModelRequest(string Model, string? Provider = null);
 
 // ── Response shapes ──────────────────────────────────────────────────────────
 //
@@ -150,7 +150,7 @@ public sealed record ModelProfileSaved(
     string Provider, string Model, IReadOnlyList<string> Reindexing, string? Note);
 
 /// <summary>Measure a model's real input limit without indexing anything.</summary>
-public sealed record ProbeModelRequest(string Model, string? Provider);
+public sealed record ProbeModelRequest(string Model, string? Provider = null);
 
 /// <summary>One embedding model a provider can serve.</summary>
 public sealed record EmbeddingModelInfo(
@@ -163,13 +163,20 @@ public sealed record EmbeddingModelInfo(
 /// <c>{text}</c> alone means "embed it raw", which is correct for some models.
 /// </summary>
 public sealed record SaveModelProfileRequest(
-    string? Provider, string Model, string DocumentTemplate, string QueryTemplate, string? Notes);
+    string Model,
+    string DocumentTemplate,
+    string QueryTemplate,
+    // Required first, optional after: C# demands that order, and the two that are genuinely
+    // optional are the provider (defaults to the configured one) and a note about where
+    // the templates came from.
+    string? Provider = null,
+    string? Notes = null);
 
 /// <summary>A configured backend, and whether its models can be pulled and deleted.</summary>
 public sealed record EmbeddingProviderInfo(string Name, string Kind, bool Managed, bool Configured, string? Detail);
 
-public sealed record AddSourceRequest(string WorkspacePath, bool? UseGitignore, int? MaxFileBytes,
-    IReadOnlyList<string>? IncludeGlobs, IReadOnlyList<string>? ExcludeGlobs);
+public sealed record AddSourceRequest(string WorkspacePath, bool? UseGitignore = null, int? MaxFileBytes = null,
+    IReadOnlyList<string>? IncludeGlobs = null, IReadOnlyList<string>? ExcludeGlobs = null);
 
 public sealed record CorpusSummary(
     string Id,
@@ -203,16 +210,16 @@ public sealed record JobSummary(
 
 public sealed record SearchApiRequest(
     string Query,
-    IReadOnlyList<string>? Corpus,
-    string? Mode,
-    int? Limit,
-    string? PathPrefix,
-    string? Language,
-    string? Symbol);
+    IReadOnlyList<string>? Corpus = null,
+    string? Mode = null,
+    int? Limit = null,
+    string? PathPrefix = null,
+    string? Language = null,
+    string? Symbol = null);
 
-public sealed record CreateTenantRequest(string Id, string? DisplayName);
+public sealed record CreateTenantRequest(string Id, string? DisplayName = null);
 
-public sealed record CreateTokenRequest(string Name, IReadOnlyList<string>? Scopes, int? ExpiresInDays);
+public sealed record CreateTokenRequest(string Name, IReadOnlyList<string>? Scopes = null, int? ExpiresInDays = null);
 
 public sealed record TokenSummary(
     string Id, string Name, string TenantId, string Scopes,
