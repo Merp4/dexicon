@@ -99,6 +99,29 @@ export function Chip({
   );
 }
 
+/**
+ * A whole card that is one click target.
+ *
+ * A button, not a div with an onClick: it is reachable by Tab, activates on Enter and
+ * Space, and announces itself as something that can be pressed. The last bare element in
+ * the app was this one, styled by an opt-in class — which is the pattern that shipped a
+ * modal with every field invisible.
+ */
+export function CardButton({ className, ...rest }: React.ComponentProps<'button'>) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        'w-full cursor-pointer rounded-lg border border-border bg-card p-3.5 text-left',
+        'transition-colors hover:border-[color-mix(in_oklab,var(--accent)_35%,transparent)] hover:bg-muted',
+        'focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none',
+        className,
+      )}
+      {...rest}
+    />
+  );
+}
+
 // ── Fields ──────────────────────────────────────────────────────────────────
 
 /**
@@ -187,6 +210,11 @@ export function Select({
 }
 
 export { SelectItem } from '@/components/ui/select';
+
+// Re-exported rather than imported straight from the library by call sites: this file is
+// the one place the app's vocabulary is defined, and a screen reaching past it is how two
+// import paths for the same control start.
+export { Checkbox } from '@/components/ui/checkbox';
 
 // ── Badges ──────────────────────────────────────────────────────────────────
 

@@ -13,7 +13,8 @@ import {
   Badge, Button, CopyButton, ErrorBanner, Field, Input, Modal, Select, SelectItem,
   Spinner, formatBytes, localTime, relativeTime, stateTone,
 } from './ui';
-import { Checkbox } from '@/components/ui/checkbox';
+import { Checkbox } from './ui';
+import { cn } from 'cn';
 
 /**
  * Chunk sets for one corpus.
@@ -48,10 +49,10 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
+      <div className="flex justify-between items-center mb-2.5">
         <div>
-          <strong style={{ fontSize: '0.9rem' }}>Chunk sets</strong>
-          <span className="dim" style={{ fontSize: '0.78rem', marginLeft: '0.5rem' }}>
+          <strong className="text-sm">Chunk sets</strong>
+          <span className="dim text-xs ml-2">
             each is a model and a chunking; search reaches the default one
           </span>
         </div>
@@ -60,13 +61,13 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
 
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
 
-      <div style={{ display: 'grid', gap: '0.5rem' }}>
+      <div className="grid gap-2">
         {corpus.chunkSets.map((set) => (
-          <div key={set.id} className="card" style={{ padding: '0.7rem 0.9rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'start' }}>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  <span className="mono" style={{ fontWeight: 600 }}>
+          <div key={set.id} className="card py-3 px-3.5">
+            <div className="flex justify-between gap-4 items-start">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="mono font-semibold">
                     {corpus.name}:{set.name}
                   </span>
                   {set.isDefault && <Badge tone="accent">default</Badge>}
@@ -80,10 +81,10 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
                 </div>
 
                 {set.description && (
-                  <p className="dim" style={{ margin: '0.3rem 0 0', fontSize: '0.8rem' }}>{set.description}</p>
+                  <p className="dim mt-1 mx-0 mb-0 text-xs">{set.description}</p>
                 )}
 
-                <div className="dim" style={{ fontSize: '0.78rem', marginTop: '0.35rem' }}>
+                <div className="dim text-xs mt-1.5">
                   <span className="mono">{set.embeddingProvider}/{set.embeddingModel}</span>{' '}
                   ({set.embeddingDimensions}d) ·{' '}
                   {set.chunkSize} tokens / {set.chunkOverlap} overlap · {set.boundaryMode}
@@ -92,7 +93,7 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
                   {set.headingContext && ' · heading context'}
                 </div>
 
-                <div className="dim" style={{ fontSize: '0.78rem', marginTop: '0.2rem' }}>
+                <div className="dim text-xs mt-1">
                   {set.fileCount.toLocaleString()} files · {set.chunkCount.toLocaleString()} chunks ·{' '}
                   <span title={set.lastIndexedUtc ? localTime(set.lastIndexedUtc) : undefined}>
                     {set.lastIndexedUtc ? `indexed ${relativeTime(set.lastIndexedUtc)}` : 'never indexed'}
@@ -100,7 +101,7 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
                 </div>
               </div>
 
-              <div style={{ display: 'flex', gap: '0.35rem', flexShrink: 0 }}>
+              <div className="flex gap-1.5 shrink-0">
                 <CopyButton text={`${corpus.name}:${set.name}`} label="Copy name" />
                 <Button onClick={() => setEditing(set)}>Edit</Button>
 
@@ -286,7 +287,7 @@ function ChunkSetModal({
       )}
 
       {!existing && chosenProvider?.detail && (
-        <p style={{ color: 'var(--warn)', fontSize: '0.78rem', marginTop: '-0.5rem' }}>
+        <p className="text-[var(--warn)] text-xs -mt-2">
           {chosenProvider.detail}
         </p>
       )}
@@ -314,13 +315,13 @@ function ChunkSetModal({
       )}
 
       {existing && (
-        <p className="dim" style={{ fontSize: '0.78rem', marginTop: 0 }}>
+        <p className="dim text-xs mt-0">
           <span className="mono">{existing.embeddingProvider}/{existing.embeddingModel}</span> is fixed for this
           set. To move to another model or provider, add a set on it and promote once it has built.
         </p>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+      <div className="grid grid-cols-2 gap-3">
         <Field label="Chunk size (tokens)" hint="64–8192. Roughly four characters each.">
           <Input
             type="number"
@@ -355,8 +356,8 @@ function ChunkSetModal({
         </Field>
       )}
 
-      <fieldset style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '0.7rem 0.9rem' }}>
-        <legend style={{ fontSize: '0.8rem', fontWeight: 600, padding: '0 0.3rem' }}>Meaning</legend>
+      <fieldset className="border border-border rounded-lg py-3 px-3.5">
+        <legend className="text-xs font-semibold py-0 px-1">Meaning</legend>
 
         <Toggle
           checked={headingContext}
@@ -378,15 +379,15 @@ function ChunkSetModal({
         />
       </fieldset>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem' }}>
-        <span className="dim" style={{ fontSize: '0.78rem', maxWidth: 380 }}>
+      <div className="flex justify-between items-center mt-4">
+        <span className="dim text-xs max-w-[380px]">
           {existing
             ? 'Saving re-chunks and re-embeds this set. Other sets are untouched.'
             : changesModel
               ? 'Builds alongside the current default. Search is unaffected until you promote it.'
               : 'Builds in the background. Search keeps using the default set until you promote this one.'}
         </span>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div className="flex gap-2">
           <Button onClick={onClose}>Cancel</Button>
           <Button
             variant="primary"
@@ -555,10 +556,10 @@ export function ModelsView() {
   const current = providers.find((p) => p.name === provider);
 
   return (
-    <div style={{ display: 'grid', gap: '1rem' }}>
+    <div className="grid gap-4">
       <div>
-        <h1 style={{ margin: 0, fontSize: '1.15rem' }}>Embedding models</h1>
-        <p className="dim" style={{ margin: '0.3rem 0 0', fontSize: '0.85rem' }}>
+        <h1 className="m-0 text-lg">Embedding models</h1>
+        <p className="dim mt-1 mx-0 mb-0 text-sm">
           A chunk set picks a provider and a model. The model's dimensionality decides which Qdrant collection the
           set lives in, so changing it means a new set rather than an edit.
         </p>
@@ -567,7 +568,7 @@ export function ModelsView() {
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
 
       {providers.length > 1 && (
-        <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+        <div className="flex gap-1.5 flex-wrap">
           {providers.map((p) => (
             <Button
               key={p.name}
@@ -587,9 +588,9 @@ export function ModelsView() {
       )}
 
       {current?.detail && (
-        <div className="card" style={{ padding: '0.7rem 0.9rem', borderColor: 'var(--warn)' }}>
-          <span style={{ color: 'var(--warn)', fontSize: '0.85rem' }}>{current.detail}</span>
-          <p className="dim" style={{ margin: '0.3rem 0 0', fontSize: '0.78rem' }}>
+        <div className="card py-3 px-3.5 border-[var(--warn)]">
+          <span className="text-[var(--warn)] text-sm">{current.detail}</span>
+          <p className="dim mt-1 mx-0 mb-0 text-xs">
             Credentials come from the environment, never from the catalogue — a chunk set records which provider to
             use, not how to authenticate to it.
           </p>
@@ -597,12 +598,12 @@ export function ModelsView() {
       )}
 
       {managed && (
-        <div className="card" style={{ padding: '0.9rem 1rem' }}>
+        <div className="card py-3.5 px-4">
           <Field
             label="Pull a model"
             hint="An Ollama model name, e.g. mxbai-embed-large. Several hundred megabytes to a few gigabytes."
           >
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <div className="flex gap-2">
               <Input
                 value={pullName}
                 onChange={(e) => setPullName(e.target.value)}
@@ -617,22 +618,23 @@ export function ModelsView() {
           </Field>
 
           {pull && (
-            <div style={{ marginTop: '0.4rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem' }}>
+            <div className="mt-1.5">
+              <div className="flex justify-between text-xs">
                 <span className="mono">{pull.model}</span>
                 <span className="dim">
                   {pull.status}
                   {pull.total ? ` · ${formatBytes(pull.completed ?? 0)} / ${formatBytes(pull.total)}` : ''}
                 </span>
               </div>
-              <div style={{ height: 6, background: 'var(--border)', borderRadius: 3, marginTop: 4, overflow: 'hidden' }}>
+              <div className="h-1.5 bg-[var(--border)] rounded-sm mt-1 overflow-hidden">
                 <div
-                  style={{
-                    width: `${pull.percent ?? 0}%`,
-                    height: '100%',
-                    background: pull.done ? 'var(--ok)' : 'var(--accent)',
-                    transition: 'width 200ms linear',
-                  }}
+                  className={cn(
+                    'h-full transition-[width] duration-200 ease-linear',
+                    pull.done ? 'bg-[var(--ok)]' : 'bg-[var(--accent)]',
+                  )}
+                  // The one thing that genuinely belongs inline: a live percentage cannot
+                  // be a class without generating a class per percent.
+                  style={{ width: `${pull.percent ?? 0}%` }}
                 />
               </div>
             </div>
@@ -655,25 +657,25 @@ export function ModelsView() {
       {loading ? (
         <p className="dim">Loading…</p>
       ) : (
-        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div className="card p-0 overflow-hidden">
           {note && (
-            <p style={{ margin: 0, padding: '0.8rem 1rem', fontSize: '0.83rem', color: 'var(--warn)' }}>{note}</p>
+            <p className="m-0 py-3 px-4 text-sm text-[var(--warn)]">{note}</p>
           )}
 
           {models.map((m) => {
             const caps = probed[m.name];
             return (
-              <div key={m.name} style={{ padding: '0.7rem 1rem', borderTop: '1px solid var(--border)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+              <div key={m.name} className="py-3 px-4 border-t border-border">
+                <div className="flex justify-between items-center gap-4">
                   <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                      <span className="mono" style={{ fontWeight: 600 }}>{m.name}</span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="mono font-semibold">{m.name}</span>
                       {m.inUse && <Badge tone="accent">in use</Badge>}
                       {m.name.replace(/:latest$/, '') === configured.replace(/:latest$/, '') && (
                         <Badge tone="ok">default for new corpora</Badge>
                       )}
                     </div>
-                    <div className="dim" style={{ fontSize: '0.78rem', marginTop: '0.2rem' }}>
+                    <div className="dim text-xs mt-1">
                       {m.sizeBytes > 0 ? formatBytes(m.sizeBytes) : provider}
                       {m.dimensions ? ` · ${m.dimensions} dimensions` : ' · dimensions unknown until first use'}
                     </div>
@@ -681,9 +683,9 @@ export function ModelsView() {
                     {/* Framing is the setting nobody thinks to ask about and the one that
                         silently costs recall, so it is stated on every row rather than
                         hidden behind the editor. */}
-                    <div style={{ fontSize: '0.78rem', marginTop: '0.3rem' }}>
+                    <div className="text-xs mt-1">
                       {m.templateOrigin === 'none' ? (
-                        <span style={{ color: 'var(--warn)' }}>
+                        <span className="text-[var(--warn)]">
                           embedded raw — no task framing for this model
                         </span>
                       ) : (
@@ -696,7 +698,7 @@ export function ModelsView() {
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', gap: '0.35rem' }}>
+                  <div className="flex gap-1.5">
                     <Button
                       title="How text is wrapped before it is embedded"
                       onClick={() => setEditingProfile(m)}
@@ -726,17 +728,15 @@ export function ModelsView() {
 
                 {caps && (
                   <div
-                    className="card"
-                    style={{
-                      marginTop: '0.6rem',
-                      padding: '0.6rem 0.8rem',
-                      fontSize: '0.8rem',
-                      borderColor: caps.truncatesSilently
-                        ? 'color-mix(in oklab, var(--warn) 45%, transparent)'
-                        : undefined,
-                    }}
+                    className={cn(
+                      'card mt-2.5 px-3 py-2.5 text-xs',
+                      // Silent truncation is the whole reason to run a probe: a model that
+                      // drops the end of every chunk without saying so.
+                      caps.truncatesSilently &&
+                        'border-[color-mix(in_oklab,var(--warn)_45%,transparent)]',
+                    )}
                   >
-                    <div style={{ display: 'flex', gap: '1.2rem', flexWrap: 'wrap' }}>
+                    <div className="flex gap-5 flex-wrap">
                       <span>
                         <strong>{caps.dimensions}</strong> dimensions
                       </span>
@@ -749,8 +749,8 @@ export function ModelsView() {
                       </span>
                       {caps.truncatesSilently && <Badge tone="warn">truncates silently</Badge>}
                     </div>
-                    <p className="dim" style={{ margin: '0.4rem 0 0' }}>{caps.summary}</p>
-                    <p className="dim" style={{ margin: '0.3rem 0 0', fontSize: '0.74rem' }}>
+                    <p className="dim mt-1.5 mx-0 mb-0">{caps.summary}</p>
+                    <p className="dim mt-1 mx-0 mb-0 text-xs">
                       {caps.embedCalls} embed calls, {(caps.tookMs / 1000).toFixed(1)}s — nothing was indexed.
                     </p>
                   </div>
@@ -820,20 +820,20 @@ function FramingModal({
 
       {result ? (
         <div>
-          <p style={{ fontSize: '0.88rem' }}>
+          <p className="text-sm">
             Saved. {result.length} chunk set{result.length === 1 ? '' : 's'} are re-indexing, because
             framing changes the vectors and both sides of a search have to agree:
           </p>
-          <ul className="mono" style={{ fontSize: '0.82rem' }}>
+          <ul className="mono text-sm">
             {result.map((s) => <li key={s}>{s}</li>)}
           </ul>
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <div className="flex justify-end">
             <Button variant="primary" onClick={onSaved}>Done</Button>
           </div>
         </div>
       ) : (
         <>
-          <p className="dim" style={{ fontSize: '0.82rem', marginTop: 0 }}>
+          <p className="dim text-sm mt-0">
             {model.templateOrigin === 'none' && 'This model has no framing: text is embedded exactly as it is. '}
             {model.templateOrigin === 'builtin' && 'Currently using a built-in default. Saving overrides it. '}
             {model.templateOrigin === 'configured' && 'Configured here. '}
@@ -863,19 +863,19 @@ function FramingModal({
           </Field>
 
           {!valid && (
-            <p style={{ color: 'var(--warn)', fontSize: '0.8rem' }}>
+            <p className="text-[var(--warn)] text-xs">
               Both templates must contain <span className="mono">{'{text}'}</span>. Without it every input embeds
               as the same constant string.
             </p>
           )}
 
           {model.inUse && (
-            <p className="dim" style={{ fontSize: '0.8rem' }}>
+            <p className="dim text-xs">
               This model is in use. Saving re-indexes every chunk set on it.
             </p>
           )}
 
-          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+          <div className="flex gap-2 justify-end mt-4">
             <Button onClick={onClose}>Cancel</Button>
             <Button variant="primary" disabled={saving || !valid} onClick={() => void save()}>
               {saving ? <Spinner /> : 'Save'}
