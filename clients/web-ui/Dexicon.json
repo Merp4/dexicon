@@ -442,7 +442,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SourceSummary"
+                  "$ref": "#/components/schemas/SourceAdded"
                 }
               }
             }
@@ -2612,6 +2612,21 @@
               "null",
               "string"
             ]
+          }
+        }
+      },
+      "SourceAdded": {
+        "required": [
+          "source",
+          "indexJob"
+        ],
+        "type": "object",
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/SourceSummary"
+          },
+          "indexJob": {
+            "$ref": "#/components/schemas/JobSummary"
           }
         }
       },
