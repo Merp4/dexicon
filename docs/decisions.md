@@ -520,22 +520,38 @@ identical documents, differing in the model and nothing else. Both sets held 108
 `nomic-embed-text` wins on this sample, and missed nothing inside the top 5 where
 `embeddinggemma` missed two queries entirely.
 
-**This does not settle Q3, for three reasons, and the third is the interesting one.**
+That run had a confound, and naming it turned out to matter more than the numbers:
+**Dexicon was sending raw text to the embedding model, with no task framing.** Both models
+document one, and a model that expects framing and does not get it underperforms.
 
-Twelve queries is a smoke test. They were hand-written by someone who knew the corpus, so
-they are biased towards questions the corpus can answer. And hybrid mode means the sparse
-half contributes identically to both, which compresses the gap — a pure-semantic run would
-separate them further.
+### Q3, second measurement — with task framing
 
-The third: **Dexicon sends raw text to the embedding model, with no task prefix.** Both
-models document one — `search_query:` / `search_document:` for `nomic-embed-text`, a
-task-shaped prefix for `embeddinggemma` — and a model that expects one and does not get it
-underperforms. So the fair reading is not "gemma is worse" but "with no prefixes, nomic is
-more forgiving", and the result says as much about Dexicon as about either model.
+Model profiles now apply each model's documented framing, so the same harness was re-run
+on the same twelve queries and the same 114 chunks per set:
 
-That makes prefixes the next thing to measure rather than the next thing to assume. It is
-a per-model convention, so it needs a per-model mapping and a re-run of the same harness —
-which now exists, which is most of what this exercise bought.
+| | hit@1 | hit@3 | hit@5 | MRR |
+|---|---|---|---|---|
+| `nomic-embed-text`, raw | 9/12 | 10/12 | 12/12 | 0.829 |
+| `nomic-embed-text`, framed | 8/12 | 10/12 | 11/12 | 0.739 |
+| `embeddinggemma`, raw | 6/12 | 9/12 | 10/12 | 0.632 |
+| `embeddinggemma`, framed | 8/12 | 11/12 | 12/12 | **0.799** |
+
+**`embeddinggemma` improved substantially — 0.632 to 0.799 — which is what the confound
+predicted.** It was being handicapped by an input format it was never trained on.
+
+`nomic-embed-text` moved the other way, from 0.829 to 0.739. That difference is two
+queries out of twelve, which is inside the noise of a sample this small, and it would be
+wrong to read it as framing harming it.
+
+**Q3 is still open, and now for a better reason.** The first run suggested a clear winner;
+correcting the confound made the two models roughly equivalent, with gemma marginally
+ahead. That the ranking flipped when one variable was fixed is the strongest evidence yet
+that twelve queries cannot settle this. A real answer needs a query set built from
+questions people actually asked, large enough that one lucky retrieval does not move the
+result.
+
+What the exercise did settle: task framing is not cosmetic, and Dexicon was getting it
+wrong for every model.
 
 
 ### D-24 Model limits are measured, not assumed
