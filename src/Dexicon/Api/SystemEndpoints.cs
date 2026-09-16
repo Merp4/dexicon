@@ -36,7 +36,7 @@ public static class SystemEndpoints
             }, ct);
 
             return Results.Ok(result);
-        }).WithTags("Search");
+        }).Produces<Dexicon.Core.Search.SearchResult>().WithTags("Search");
     }
 
     public static void MapJobEndpoints(this IEndpointRouteBuilder app)
@@ -167,13 +167,11 @@ public static class SystemEndpoints
                 entries.Add(new WorkspaceEntry(name, Path.GetRelativePath(root, dir).Replace('\\', '/'), true, children));
             }
 
-            return Results.Ok(new
-            {
-                root = opts.Value.Indexing.WorkspaceRoot,
-                path = Path.GetRelativePath(root, full).Replace('\\', '/'),
-                entries,
-            });
-        }).WithTags("Workspaces");
+            return Results.Ok(new WorkspaceListing(
+                opts.Value.Indexing.WorkspaceRoot,
+                Path.GetRelativePath(root, full).Replace('\\', '/'),
+                entries));
+        }).Produces<WorkspaceListing>().WithTags("Workspaces");
     }
 
     public static void MapAdminEndpoints(this IEndpointRouteBuilder app)
@@ -184,7 +182,8 @@ public static class SystemEndpoints
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             var tenants = await db.Tenants.OrderBy(t => t.Id).ToListAsync(ct);
-            return Results.Ok(tenants.Select(t => new { t.Id, t.DisplayName, t.CreatedUtc, t.Disabled }));
+            return Results.Ok(tenants.Select(t =>
+                new TenantSummary(t.Id, t.DisplayName, t.CreatedUtc, t.Disabled)));
         });
 
         g.MapPost("/", async (CreateTenantRequest body, RequestContext rc, CatalogDbContext db,
@@ -326,8 +325,8 @@ public static class SystemEndpoints
                     name, options.Kind.ToString().ToLowerInvariant(), managed, hasKey, detail);
             }).ToList();
 
-            return Results.Ok(new { @default = opts.Value.Embedding.Provider, providers });
-        }).WithTags("System");
+            return Results.Ok(new EmbeddingProviderList(opts.Value.Embedding.Provider, providers));
+        }).Produces<EmbeddingProviderList>().WithTags("System");
 
         app.MapGet("/api/embedding-models", async (string? provider, RequestContext rc,
             IModelCatalog catalog, IEmbeddingGeneratorFactory factory, CatalogDbContext db,
@@ -381,20 +380,15 @@ public static class SystemEndpoints
                     templates.Document, templates.Query, templates.Origin.ToString().ToLowerInvariant()));
             }
 
-            return Results.Ok(new
-            {
-                provider = name,
-                managed,
-                configured = opts.Value.Embedding.Model,
-                models = listed,
+            return Results.Ok(new EmbeddingModelList(
+                name, managed, opts.Value.Embedding.Model, listed,
                 // Said plainly: an empty list otherwise reads as "the provider is broken".
-                note = listed.Count == 0
+                listed.Count == 0
                     ? managed
                         ? $"No embedding models are pulled. Pull one, or run: docker compose exec dexicon-ollama ollama pull {opts.Value.Embedding.Model}"
                         : $"Provider '{name}' has no models configured. Add them under Dexicon:Embedding:Providers:{name}:Models."
-                    : null,
-            });
-        }).WithTags("System");
+                    : null));
+        }).Produces<EmbeddingModelList>().WithTags("System");
 
         app.MapPut("/api/embedding-models/profile", async (SaveModelProfileRequest body, RequestContext rc,
             CatalogDbContext db, IMemoryCache cache, IndexJobQueue queue,
@@ -462,16 +456,12 @@ public static class SystemEndpoints
                 queued.Add($"{set.Corpus}:{set.Name}");
             }
 
-            return Results.Ok(new
-            {
-                provider,
-                model,
-                reindexing = queued,
-                note = queued.Count == 0
+            return Results.Ok(new ModelProfileSaved(
+                provider, model, queued,
+                queued.Count == 0
                     ? null
-                    : $"{queued.Count} chunk set(s) are re-indexing: framing changes the vectors.",
-            });
-        }).WithTags("System");
+                    : $"{queued.Count} chunk set(s) are re-indexing: framing changes the vectors."));
+        }).Produces<ModelProfileSaved>().WithTags("System");
 
         app.MapPost("/api/embedding-models/probe", async (ProbeModelRequest body, RequestContext rc,
             ModelProbe probe, IOptions<DexiconOptions> opts, CancellationToken ct) =>
@@ -497,7 +487,7 @@ public static class SystemEndpoints
             {
                 return Results.Problem(title: "Provider unavailable", detail: ex.Message, statusCode: 503);
             }
-        }).WithTags("System");
+        }).Produces<Dexicon.Core.Embedding.ModelCapabilities>().WithTags("System");
 
         app.MapPost("/api/embedding-models/pull", async (PullModelRequest body, HttpContext http,
             RequestContext rc, IModelCatalog catalog, IOptions<DexiconOptions> opts,
@@ -626,25 +616,15 @@ public static class SystemEndpoints
             var activeJob = await db.Jobs.Where(j => j.State == JobState.Running)
                 .OrderByDescending(j => j.StartedUtc).FirstOrDefaultAsync(ct);
 
-            return Results.Ok(new
-            {
-                status = qdrant ? "ok" : "degraded",
-                qdrant = new { reachable = qdrant, endpoint = opts.Value.Qdrant.Endpoint },
-                // Still called "ollama" on the wire: it is what the UI reads, and renaming
-                // a health field to "embedding" would break every dashboard for a word.
-                ollama = new
-                {
-                    reachable = embeddingError is null,
-                    endpoint = opts.Value.Ollama.Endpoint,
-                    provider = target.Provider,
-                    model = target.Model,
-                    dimensions = dims,
-                    error = embeddingError,
-                },
-                corpora = await db.Corpora.CountAsync(ct),
-                activeJob = activeJob?.ToSummary(),
-            });
-        }).WithTags("Health");
+            return Results.Ok(new HealthResponse(
+                qdrant ? "ok" : "degraded",
+                new HealthDependency(qdrant, opts.Value.Qdrant.Endpoint),
+                new EmbeddingHealth(
+                    embeddingError is null, opts.Value.Ollama.Endpoint,
+                    target.Provider, target.Model, dims, embeddingError),
+                await db.Corpora.CountAsync(ct),
+                activeJob?.ToSummary()));
+        }).Produces<HealthResponse>().WithTags("Health");
     }
 }
 

@@ -58,6 +58,21 @@ builder.Host.UseSerilog();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddMemoryCache();
 builder.Services.AddProblemDetails();
+
+// Describes the REST surface so the web client's types can be generated from it rather
+// than hand-maintained. api.ts had already drifted from the C# contracts more than once —
+// chunk sets landed and the Corpus interface still carried fields the server had dropped.
+builder.Services.AddOpenApi(o => o.AddDocumentTransformer((doc, _, _) =>
+{
+    doc.Info = new()
+    {
+        Title = "Dexicon",
+        Version = ThisAssembly.Version,
+        Description = "Semantic indexing and search. Every endpoint requires a bearer token; "
+                    + "the tenant comes from the token, or from X-Dexicon-Tenant where the token allows it.",
+    };
+    return Task.CompletedTask;
+}));
 builder.Services.AddExceptionHandler<ScopeExceptionHandler>();
 builder.Services.ConfigureHttpJsonOptions(o =>
 {

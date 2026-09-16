@@ -12,11 +12,23 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Microsoft.Extensions.ApiDescription.Server">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
     <PackageReference Include="ModelContextProtocol.AspNetCore" />
     <PackageReference Include="Serilog.AspNetCore" />
   </ItemGroup>
 
   <PropertyGroup>
+    <!-- The OpenAPI document is written to disk at build time rather than served from a
+         running instance. The TypeScript client is generated from that file, so it cannot
+         drift from a spec nobody produced, generation works offline, and the API surface
+         is not exposed anonymously just to describe itself. -->
+    <OpenApiGenerateDocuments>true</OpenApiGenerateDocuments>
+    <OpenApiGenerateDocumentsOnBuild>true</OpenApiGenerateDocumentsOnBuild>
+    <OpenApiDocumentsDirectory>$(MSBuildProjectDirectory)/../../clients/web-ui</OpenApiDocumentsDirectory>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>

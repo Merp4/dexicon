@@ -114,23 +114,13 @@ public static class DocumentEndpoints
             var file = await documents.AttachAsync(corpus, body.Sha256, name, ct);
             var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
 
-            return Results.Accepted($"/api/jobs/{job.Id}", new
-            {
-                corpus = corpus.Name,
-                fileId = file.Id,
-                fileName = name,
+            return Results.Accepted($"/api/jobs/{job.Id}", new DocumentAttached(
+                corpus.Name, file.Id, name,
                 // Every set, because attaching queues the document into all of them.
-                chunking = corpus.ChunkSets.Select(s => new
-                {
-                    set = s.Name,
-                    s.ChunkSize,
-                    s.ChunkOverlap,
-                    s.BoundaryMode,
-                    s.EmbeddingModel,
-                }),
-                job = job.ToSummary(),
-            });
-        });
+                [.. corpus.ChunkSets.Select(s => new AttachedChunking(
+                    s.Name, s.ChunkSize, s.ChunkOverlap, s.BoundaryMode, s.EmbeddingModel))],
+                job.ToSummary()));
+        }).Produces<DocumentAttached>();
 
         // ── Detach (the blob survives; other corpora may still use it) ──────
         g.MapDelete("/corpora/{nameOrId}/documents/{fileId}", async (
@@ -207,7 +197,7 @@ public static class DocumentEndpoints
             .ToList();
 
             return Results.Ok(library);
-        });
+        }).Produces<IReadOnlyList<LibraryDocument>>();
 
         // ── Raw text, so "what did the extractor actually see?" is answerable ─
         g.MapGet("/documents/{sha256}/text", async (string sha256, RequestContext rc, ScopeResolver scopes,
@@ -227,17 +217,11 @@ public static class DocumentEndpoints
             var text = await db.BlobTexts.AsNoTracking().FirstOrDefaultAsync(t => t.Sha256 == sha256, ct);
             if (text is null) return Results.NotFound();
 
-            return Results.Ok(new
-            {
-                text.Sha256,
-                text.Title,
-                text.Extractor,
-                text.ExtractedChars,
-                text.EmptyReason,
-                text.ExtractedUtc,
-                preview = text.Text.Length > 20_000 ? text.Text[..20_000] + "\n…(truncated)" : text.Text,
-            });
-        });
+            return Results.Ok(new ExtractedTextResponse(
+                text.Sha256, text.Title, text.Extractor, text.ExtractedChars,
+                text.ExtractedUtc, text.EmptyReason,
+                text.Text.Length > 20_000 ? text.Text[..20_000] + "\n…(truncated)" : text.Text));
+        }).Produces<ExtractedTextResponse>();
     }
 }
 
