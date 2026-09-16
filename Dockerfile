@@ -30,7 +30,7 @@ WORKDIR /build
 # Stamped into the assembly, and from there into the OpenAPI document and the version the
 # MCP server reports. The release workflow passes the git tag; the default matches
 # Directory.Build.props so a local `docker build` is not silently different.
-ARG VERSION=0.1.0
+ARG VERSION=0.1.1
 
 # Central package management first, again for layer caching.
 COPY Directory.Build.props Directory.Packages.props ./
