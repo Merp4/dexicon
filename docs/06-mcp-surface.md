@@ -114,12 +114,23 @@ unreachable since 14:02`.
 Corpora are exposed as MCP resources so clients with a resource picker can browse them:
 
 ```
-dexicon://corpus/{name}              -> a JSON summary: sources, counts, model, state
-dexicon://corpus/{name}/file/{path}  -> reconstructed text of one indexed file
+dexicon://corpus/{name}               -> a JSON summary: sources, counts, model, state
+dexicon://corpus/{name}/file/{+path}  -> reconstructed text of one indexed file
 ```
 
-Resource reads carry `ttlMs` (60 s for summaries, 300 s for file text). Listing respects
-the same scope resolution as search; a corpus you cannot see does not appear.
+Resources are for **browsing**; tools are for asking questions. A client with a resource
+picker can attach "this corpus" or "that file" to a conversation without the model having
+to guess a search query first.
+
+Both go through the same scope resolution as search, deliberately. A corpus a tenant
+cannot search must not become readable merely because it was reached by URI instead: the
+tenant boundary is the whole security model, and a second way in is a second way to get it
+wrong.
+
+File text is reconstructed **from the index**, not read from disk. An uploaded PDF has no
+file to read, and the original would in any case differ from what was indexed — what a
+reader wants here is what search can actually find. Overlapping chunks are de-overlapped,
+and any gap is marked rather than closed silently.
 
 ## Prompts
 
