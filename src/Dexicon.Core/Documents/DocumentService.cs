@@ -193,13 +193,38 @@ public sealed class DocumentService(
 
         var source = await UploadSourceFor(corpus, ct);
 
+        // ONE BLOB, ONE ATTACHMENT PER CORPUS. Look up by blob first, not by name.
+        //
+        // Matching on name alone let the same document attach twice to one corpus under
+        // two spellings — observed when the same PDF was uploaded once with a mangled
+        // filename and once correctly. Two attachments of identical bytes means the
+        // content is chunked and embedded twice, and every search over that corpus
+        // returns each hit twice. A rename is a rename, not a second document.
+        var byBlob = await db.Files.FirstOrDefaultAsync(
+            f => f.SourceId == source.Id && f.BlobSha256 == sha256, ct);
+
+        if (byBlob is not null)
+        {
+            if (!string.Equals(byBlob.RelativePath, fileName, StringComparison.Ordinal))
+            {
+                // Renaming invalidates the old chunks, which are keyed by file_path.
+                // Cleared here; the caller's reindex writes them back under the new name.
+                byBlob.RelativePath = fileName;
+                byBlob.ContentHash = null;
+            }
+            byBlob.SizeBytes = blob.SizeBytes;
+            byBlob.StatusDetail = null;
+            await db.SaveChangesAsync(ct);
+            return byBlob;
+        }
+
         var existing = await db.Files.FirstOrDefaultAsync(
             f => f.SourceId == source.Id && f.RelativePath == fileName, ct);
 
         if (existing is not null)
         {
-            // Re-attaching under the same name replaces: the hash changes, so the
-            // incremental pass sees it as changed and re-chunks it.
+            // Same name, different bytes: a replacement. The fingerprint changes, so
+            // the incremental pass sees it as changed and re-chunks it.
             existing.BlobSha256 = sha256;
             existing.ContentHash = null;
             existing.SizeBytes = blob.SizeBytes;

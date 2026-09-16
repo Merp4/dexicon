@@ -36,11 +36,39 @@ gets them indexed.
 ### `upload` — files pushed through the UI or API
 
 Bytes are content-addressed into `/data/blobs/<sha256[0:2]>/<sha256>` and recorded in
-`blobs`. Two uploads of the same file store one blob. The `files` row carries the original
-filename as `relative_path`.
+`blobs`. Two uploads of the same file store one blob.
 
-Limits: 200 MB per file, 2 GB per request, configurable. Uploads are scanned for their real
-type by magic bytes; the declared `Content-Type` is a hint, not a decision.
+**Extraction is cached against the blob hash, and chunking is not.** That split is the
+whole design, and it is what makes the same document cheap to hold several ways:
+
+```
+  bytes         content-addressed          uploaded twice -> one blob
+  extraction    cached per blob hash       deterministic, expensive, done once ever
+  chunking      a property of the CORPUS   cheap, and the thing people vary
+```
+
+So:
+
+- Uploading the same PDF twice stores one copy and reuses the extraction. Measured on a
+  1.5 MB, ~400-page PDF: **1.823 s** the first time, **0.119 s** the second.
+- **Attaching one document to two corpora with different chunk settings produces two
+  independent chunk sets**, without re-uploading or re-opening the file. A 12,238-character
+  document at `768/100` gives 5 chunks; the same document at `256/40` gives 19.
+- Changing a corpus's chunk settings re-chunks and re-embeds from cached text. Only
+  embedding is repeated, and embedding is the slow part.
+
+A corpus gets at most one upload source, created on first attachment. Detaching removes
+that corpus's chunks only — the blob survives, because another corpus may still hold it.
+
+Limits: 200 MB per file (`DEXICON__UPLOAD__MAXFILEBYTES`). Uploads are buffered to a temp
+file rather than memory, because the hash is only known once the whole stream is read and a
+200 MB upload should not be a 200 MB allocation.
+
+**Staleness is a chunking fingerprint**, not a content hash: `sha256(blob | chunkSize |
+chunkOverlap | boundaryMode | model)`. With a bare content hash, changing a corpus's chunk
+size left every file looking unchanged, so a refresh re-chunked nothing and the new setting
+silently did not apply. The fingerprint makes exactly the right set of files look stale, and
+no others.
 
 ## Extraction
 
@@ -100,6 +128,24 @@ which learned them the hard way):
 Boundary modes: `none` | `blank-line` | `language-aware` | `custom` (operator regex, compiled
 with a 500 ms timeout; an invalid or timing-out regex fails the job with a clear error and
 never silently falls back).
+
+### Size decides *when* to split; a boundary decides *where*
+
+This is worth stating precisely, because the first implementation got it backwards and the
+bug was invisible.
+
+The chunker fills to the size budget, then **backs up to the most recent boundary inside
+the buffer**. A chunk therefore holds as many whole members or paragraphs as fit, and still
+never ends mid-thought. If the buffer contains no boundary at all, it splits where it is.
+
+The original version split at *every* boundary. That made `chunk_size` dead configuration
+in every mode but `none`: blank-line mode on prose emitted one chunk per paragraph —
+measured at a **252-character mean against a 3,072-character budget** — and two corpora
+configured 768 and 256 tokens produced byte-identical output. Chunks that small retrieve
+badly; there is not enough context in a paragraph to embed usefully.
+
+Five regression tests pin the corrected behaviour, the load-bearing one being that a
+smaller `chunk_size` must produce more chunks.
 
 ### Documents — unit-aware overlapping
 

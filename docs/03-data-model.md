@@ -16,10 +16,25 @@ catalogue is authoritative and Qdrant is a derived view that can be rebuilt from
 | Concept | Definition |
 |---|---|
 | **Tenant** | The isolation boundary. A slug (`^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$`). Every request resolves to exactly one. |
-| **Corpus** | A named, searchable body of content owned by one tenant. The unit of visibility, of reindexing, and of search scope. |
+| **Corpus** | A named, searchable body of content owned by one tenant. The unit of visibility, of reindexing, and of search scope — **and of chunk settings**. |
 | **Source** | Where a corpus gets its content: a `workspace` mount path, or `upload` (files pushed through the UI/API). A corpus has one or more. |
-| **File** | One extracted artefact within a source, identified by its path relative to the source root. |
+| **Blob** | An uploaded document's bytes, content-addressed by SHA-256. Carries no name. |
+| **File** | One *attachment* within a source: a path, plus (for uploads) the blob it points at. Several corpora may attach the same blob. |
 | **Chunk** | One embedded span of a file. The unit stored in Qdrant and returned by search. |
+
+**The split that matters.** Bytes, extracted text and chunking are three separate
+things, deliberately:
+
+```
+  blobs        the bytes            content-addressed, stored once
+  blob_texts   the extracted text   cached per blob, extracted once ever
+  files        an attachment        one per (corpus, document)
+  corpora      the chunk settings   what actually varies
+```
+
+One document can therefore live in several corpora, each chunked its own way, with the
+expensive half — storage and extraction — paid exactly once. See
+[04](04-ingestion.md#upload--files-pushed-through-the-ui-or-api).
 
 A corpus is the right grain for visibility because it is the thing a human names
 ("the API repo", "the RFC library") and the thing an agent scopes a query to.
@@ -91,7 +106,14 @@ CREATE TABLE files (
   id              TEXT PRIMARY KEY,
   source_id       TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
   relative_path   TEXT NOT NULL,            -- forward slashes, always
+  -- NOT a bare content hash: a CHUNKING FINGERPRINT over
+  -- (content | chunk_size | chunk_overlap | boundary_mode | model). With a content
+  -- hash alone, changing a corpus's chunk size left every file looking unchanged,
+  -- so a refresh re-chunked nothing and the new setting silently did not apply.
   content_hash    TEXT,                     -- NULL until successfully indexed
+  -- Upload-sourced files only: the blob this is an attachment OF. Several corpora
+  -- can point at one blob and chunk it differently — the point of the split.
+  blob_sha256     TEXT REFERENCES blobs(sha256),
   size_bytes      INTEGER NOT NULL,
   media_type      TEXT,
   language        TEXT,
@@ -105,11 +127,32 @@ CREATE TABLE files (
 CREATE INDEX ix_files_status ON files(source_id, status);
 
 -- Blob store for uploads. Content lives at /data/blobs/<sha256[0:2]>/<sha256>.
+-- Carries no name: the same PDF can be attached to different corpora under
+-- different names, so the name belongs to the attachment, not the bytes.
 CREATE TABLE blobs (
-  sha256       TEXT PRIMARY KEY,
-  size_bytes   INTEGER NOT NULL,
-  media_type   TEXT,
-  created_utc  TEXT NOT NULL
+  sha256             TEXT PRIMARY KEY,
+  size_bytes         INTEGER NOT NULL,
+  media_type         TEXT,
+  original_file_name TEXT,               -- display only
+  created_utc        TEXT NOT NULL
+);
+
+-- Extracted text, cached against the bytes. THE table that makes re-chunking cheap
+-- and lets one document be chunked differently per corpus.
+--
+-- Extraction is deterministic in the bytes and expensive (1.5 s of layout analysis
+-- for a 437-page PDF); chunking is cheap and corpus-specific. Splitting them means
+-- changing a chunk size, or attaching a document to a second corpus, never re-opens
+-- the file.
+CREATE TABLE blob_texts (
+  sha256          TEXT PRIMARY KEY REFERENCES blobs(sha256) ON DELETE CASCADE,
+  text            TEXT NOT NULL,
+  units_json      TEXT,                  -- page/slide/chapter offsets, for provenance
+  title           TEXT,                  -- from the document's own metadata
+  extracted_chars INTEGER NOT NULL,
+  extractor       TEXT NOT NULL,         -- so a loader upgrade can invalidate the cache
+  extracted_utc   TEXT NOT NULL,
+  empty_reason    TEXT                   -- readable but yielded nothing: a scanned PDF
 );
 
 -- Operations ----------------------------------------------------------------

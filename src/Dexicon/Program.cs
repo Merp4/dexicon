@@ -110,8 +110,38 @@ app.MapWorkspaceEndpoints();
 app.MapAdminEndpoints();
 app.MapMcp("/mcp");
 
-// SPA fallback — any unmatched non-API path is the client-side router's problem.
-app.MapFallbackToFile("index.html");
+// SPA fallback. The built UI is not in source control (see .gitignore): the container
+// image builds it, and `dev.ps1 ui` builds it locally. When it is absent — a bare
+// `dotnet run` on a fresh clone — say so in words rather than 404ing, and say how to
+// get it.
+var spaIndex = Path.Combine(app.Environment.WebRootPath ?? "wwwroot", "index.html");
+
+if (File.Exists(spaIndex))
+{
+    app.MapFallbackToFile("index.html");
+}
+else
+{
+    app.MapFallback(() => Results.Content(
+        """
+        <!doctype html>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Dexicon</title>
+        <style>
+          body{font-family:system-ui,sans-serif;max-width:34rem;margin:15vh auto;padding:0 1rem;
+               color:#1c1c1e;background:#fbfbfd;line-height:1.55}
+          @media (prefers-color-scheme:dark){body{color:#e9e9ec;background:#17181c}}
+          code{background:color-mix(in oklab,currentColor 12%,transparent);padding:.12rem .35rem;border-radius:4px}
+        </style>
+        <h1>Dexicon</h1>
+        <p>The API and MCP endpoint are running. The web UI has not been built into this instance.</p>
+        <p>Build it with <code>./scripts/dev.ps1 ui</code>, or use the container image, which builds
+           it at image build time.</p>
+        <p>MCP endpoint <code>/mcp</code> &middot; health <code>/healthz/live</code></p>
+        """,
+        "text/html"));
+}
 
 await Bootstrapper.InitialiseAsync(app);
 

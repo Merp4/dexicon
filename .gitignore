@@ -63,6 +63,12 @@ tmp/
 # ── SPA build output ──────────────────────────────────────────────────────────
 # The Dockerfile builds clients/web-ui and copies dist/ into wwwroot. Committing
 # the built bundle means shipping whatever was on someone's laptop, and it goes
-# stale the moment the source changes. index.html is kept as a placeholder so a
-# bare `dotnet run` serves something explanatory rather than a 404.
-src/Dexicon/wwwroot/assets/
+# stale the moment the source changes.
+#
+# The WHOLE directory is ignored, not just assets/: `dev.ps1 ui` copies dist/*,
+# which includes index.html, so a tracked placeholder there was silently
+# clobbered and re-committed on every UI build. The server serves an explanatory
+# page from code when the directory is empty, which is the same outcome without
+# a file that fights the build.
+src/Dexicon/wwwroot/*
+!src/Dexicon/wwwroot/.gitkeep
