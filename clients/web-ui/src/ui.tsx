@@ -69,7 +69,12 @@ export function Chip({
     <Button
       aria-pressed={active}
       className={cn(
-        active && 'border-[color-mix(in_oklab,var(--accent)_35%,transparent)] bg-[var(--accent-soft)] text-[var(--accent)]',
+        active &&
+          // The `dark:` repeat is not redundant. shadcn's outline variant carries
+          // `dark:bg-input/30`, and a dark-variant utility is emitted after the plain
+          // ones, so without a dark-variant of our own the accent background loses to
+          // the generic input tint in dark mode and only the text colour survives.
+          'border-[color-mix(in_oklab,var(--accent)_35%,transparent)] bg-[var(--accent-soft)] text-[var(--accent)] dark:bg-[var(--accent-soft)]',
         className,
       )}
       {...rest}
