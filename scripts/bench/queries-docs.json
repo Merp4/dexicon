@@ -1,0 +1,74 @@
+{
+  "corpus": "docs",
+  "note": "Each query must have ONE file that answers it. A question whose answer is genuinely spread across three files measures the query set, not the model — so `why` records what makes the target unambiguous, and is there to be argued with.",
+  "queries": [
+    { "query": "what problem does this project set out to solve", "file": "01-overview.md", "why": "The problem statement exists in exactly one place." },
+    { "query": "who is this built for", "file": "01-overview.md", "why": "'Who it is for' is a section here and nowhere else." },
+    { "query": "what is explicitly out of scope", "file": "01-overview.md", "why": "Non-goals are listed here; other docs describe what IS done." },
+
+    { "query": "what runs inside the container and as what process", "file": "02-architecture.md", "why": "Process layout is an architecture concern; deployment covers the compose topology instead." },
+    { "query": "what happens on the hot path when a search arrives", "file": "02-architecture.md", "why": "Request flows are here; 05 describes retrieval semantics, not the flow." },
+    { "query": "what is deliberately absent from the architecture", "file": "02-architecture.md", "why": "A named section, distinct from 01's scope." },
+    { "query": "how does the system behave when a dependency is down", "file": "02-architecture.md", "why": "'Failure behaviour' is an architecture section." },
+
+    { "query": "what is the Qdrant tenant key and why was it chosen", "file": "03-data-model.md", "why": "Collection config and multitenancy live only here." },
+    { "query": "what fields are on a stored point payload", "file": "03-data-model.md", "why": "Payload shape is a data-model concern." },
+    { "query": "how are collections named", "file": "03-data-model.md", "why": "A naming subsection here." },
+    { "query": "what are the identifier conventions for ids", "file": "03-data-model.md", "why": "Named section, nowhere else." },
+    { "query": "what happens to vectors when a corpus is deleted", "file": "03-data-model.md", "why": "Lifecycle and cascades." },
+
+    { "query": "how does an incremental refresh decide a file is unchanged", "file": "04-ingestion.md", "why": "The staleness fingerprint is an ingestion concern." },
+    { "query": "how is a line longer than the whole chunk budget handled", "file": "04-ingestion.md", "why": "'No chunk exceeds the budget, ever'." },
+    { "query": "what is task framing and why does a model need it", "file": "04-ingestion.md", "why": "Task framing is documented here only." },
+    { "query": "why is extraction cached and what invalidates it", "file": "04-ingestion.md", "why": "'Extraction is cached, and the cache is versioned'." },
+    { "query": "can one corpus be chunked several ways at once", "file": "04-ingestion.md", "why": "Chunk sets are introduced here." },
+    { "query": "is OCR supported for scanned PDFs", "file": "04-ingestion.md", "why": "'A note on OCR'." },
+
+    { "query": "how are dense and sparse results fused into one ranking", "file": "05-search.md", "why": "Fusion is retrieval, documented here." },
+    { "query": "what does search do when embeddings are unavailable", "file": "05-search.md", "why": "'Degradation' is a search section; 02 covers failure at the architecture level, so this is the weaker pair in the set." },
+    { "query": "what does a search result actually contain", "file": "05-search.md", "why": "'Result contract'." },
+    { "query": "how do I get more context around a hit", "file": "05-search.md", "why": "'Retrieving more context'." },
+    { "query": "how will retrieval quality be judged", "file": "05-search.md", "why": "'Quality, and how it will be judged'." },
+
+    { "query": "which MCP revision removed the initialize handshake", "file": "06-mcp-surface.md", "why": "Protocol version handling." },
+    { "query": "what tools does an agent get", "file": "06-mcp-surface.md", "why": "The tool list." },
+    { "query": "how do I address a particular chunk set from a search", "file": "06-mcp-surface.md", "why": "'Naming a corpus — and a chunk set'." },
+    { "query": "what resources can a client browse", "file": "06-mcp-surface.md", "why": "The dexicon:// resources." },
+    { "query": "what does an error look like over MCP", "file": "06-mcp-surface.md", "why": "'Errors' section." },
+
+    { "query": "how does one tenant get read access to another tenant's corpus", "file": "07-tenancy-auth.md", "why": "Corpus visibility." },
+    { "query": "where does the tenant come from on a request", "file": "07-tenancy-auth.md", "why": "The tenant header and token." },
+    { "query": "what stops a query reaching another tenant's vectors", "file": "07-tenancy-auth.md", "why": "'Enforcement' and the test that proves it." },
+    { "query": "what is deferred from the auth model and why", "file": "07-tenancy-auth.md", "why": "A named section." },
+
+    { "query": "what do the two dependency status dots in the header show", "file": "08-ui.md", "why": "Shell chrome, UI only." },
+    { "query": "how does the UI show indexing progress as it happens", "file": "08-ui.md", "why": "'Live updates'." },
+    { "query": "what does the UI do about accessibility", "file": "08-ui.md", "why": "Named section." },
+    { "query": "which screens exist in the web interface", "file": "08-ui.md", "why": "'Views'." },
+
+    { "query": "why is Qdrant not published on a host port", "file": "09-deployment.md", "why": "Exposure is a deployment concern." },
+    { "query": "how do I back up the index and rehearse a restore", "file": "09-deployment.md", "why": "'Backup and recovery'." },
+    { "query": "how much disk and memory should I expect to need", "file": "09-deployment.md", "why": "'Sizing'." },
+    { "query": "what do the published image tags mean", "file": "09-deployment.md", "why": "'Image tags'." },
+    { "query": "can I point it at an Ollama I already run", "file": "09-deployment.md", "why": "A named subsection." },
+
+    { "query": "how are API tokens stored and verified", "file": "10-security-secrets.md", "why": "Handling of specific secrets." },
+    { "query": "what stops a secret being committed", "file": "10-security-secrets.md", "why": "Guards, and .gitignore from the first commit." },
+    { "query": "what is the stated threat model", "file": "10-security-secrets.md", "why": "'Threat model, stated honestly'." },
+    { "query": "how is untrusted input from indexed files handled", "file": "10-security-secrets.md", "why": "'Input handling'." },
+
+    { "query": "what are the delivery milestones", "file": "11-roadmap.md", "why": "Milestones live only here." },
+    { "query": "what is still owed before this is open-source ready", "file": "11-roadmap.md", "why": "M4's definition of done." },
+
+    { "query": "how do I connect Claude Code to this", "file": "12-clients.md", "why": "Per-client setup." },
+    { "query": "which clients need a stdio bridge instead of HTTP", "file": "12-clients.md", "why": "'The two that need a bridge'." },
+    { "query": "is there a script that sets up the MCP config for me", "file": "12-clients.md", "why": "'Installer'." },
+
+    { "query": "which open source licence was chosen and why", "file": "decisions.md", "why": "D-14, and the rejected alternative." },
+    { "query": "why was client side semantic weighting dropped", "file": "decisions.md", "why": "A recorded rejection." },
+    { "query": "where does the version number come from", "file": "decisions.md", "why": "D-26." },
+
+    { "query": "the container starts but search returns nothing", "file": "troubleshooting.md", "why": "Written as a symptom, which is how this file is organised." },
+    { "query": "my scanned PDF is not searchable", "file": "troubleshooting.md", "why": "A symptom entry; 04 explains the cause, so this pair tests symptom-to-remedy rather than concept lookup." }
+  ]
+}
