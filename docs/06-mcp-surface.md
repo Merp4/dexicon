@@ -186,6 +186,30 @@ An unsupported version is refused with the supported list, as above, rather than
 best-effort guessing. The negotiated revision is logged per request, because "which
 revision did that client actually get" is the first question when a client misbehaves.
 
+### A 2026-07-28 request, exactly
+
+The revision is strict about its own envelope, and the server enforces all of it. Every
+piece below is required, and leaving any one out is a `-32602` or `-32020` naming the
+missing part — worth having written down, because assembling this by hand is otherwise
+several rounds of guessing:
+
+```bash
+curl -X POST http://127.0.0.1:8477/mcp   -H 'Authorization: Bearer dex_…'   -H 'Content-Type: application/json'   -H 'Accept: application/json, text/event-stream'   -H 'MCP-Protocol-Version: 2026-07-28'   -H 'Mcp-Method: resources/read'   -H 'Mcp-Name: dexicon://corpus/books'   -d '{
+    "jsonrpc": "2.0", "id": 1, "method": "resources/read",
+    "params": {
+      "uri": "dexicon://corpus/books",
+      "_meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {}
+      }
+    }
+  }'
+```
+
+`Mcp-Name` must match the body — the name for a tool call, the URI for a resource read —
+and a mismatch is refused rather than resolved in favour of either. The response is an SSE
+frame: one `data:` line carrying the JSON-RPC result.
+
 **End-to-end**: Claude Code 2.1.248 connects over
 `claude mcp add --transport http … --header "Authorization: Bearer …"` and reports
 `✔ Connected`. Static bearer auth is enforced ahead of the MCP handler — an unauthenticated

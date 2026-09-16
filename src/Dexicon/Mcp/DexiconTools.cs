@@ -5,6 +5,7 @@ using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Indexing;
 using Dexicon.Core.Search;
+using Dexicon.Core.Vectors;
 using Dexicon.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using ModelContextProtocol;
@@ -144,7 +145,7 @@ public sealed class DexiconTools
     public static async Task<string> GetContextAsync(
         RequestContext rc,
         ScopeResolver scopes,
-        SearchService search,
+        IVectorStore vectors,
         [Description("Corpus name, as given by list_corpora.")] string corpus,
         [Description("File path exactly as returned by search_index.")] string filePath,
         [Description("Line number to centre on.")] int aroundLine,
@@ -154,37 +155,37 @@ public sealed class DexiconTools
     {
         Require(rc, Scopes.Search);
 
-        SearchResult result;
+        Corpus target;
         try
         {
-            // Retrieve this file's chunks by asking the index for them directly, rather
-            // than reading the file: works for uploads, which have no file on disk.
-            result = await search.SearchAsync(rc.RequireTenant(), new SearchRequest
-            {
-                Query = filePath,
-                Corpus = [corpus],
-                Mode = SearchMode.Keyword,
-                Limit = 50,
-                PathPrefix = filePath,
-            }, ct);
+            var scope = await scopes.ResolveReadableAsync(rc.RequireTenant(), [corpus], ct);
+            target = scope.Corpora[0];
         }
         catch (ScopeResolutionException ex) { throw new McpException(ex.Message); }
+
+        // Read from the INDEX rather than from disk, so this works for uploads, which have
+        // no file to read — but by FILTER, not by search.
+        //
+        // This used to run a keyword search for the path and keep the top 50 hits, which
+        // let relevance decide which of a file's chunks came back. Asking for the lines
+        // around line 2,625 of a book returned nothing at all, because the chunks holding
+        // those lines did not rank for their own filename. Fetching a known span is a
+        // lookup; ranking has no business in it.
+        var chunks = await vectors.GetFileChunksAsync(target.CollectionName, target.Id, filePath, ct);
 
         var lo = Math.Max(1, aroundLine - before);
         var hi = aroundLine + after;
 
-        var pieces = result.Hits
-            .Where(h => string.Equals(h.FilePath, filePath, StringComparison.Ordinal))
+        var pieces = chunks
             .Where(h => h.EndLine >= lo && h.StartLine <= hi)
-            // ChunkIndex breaks the tie: slices of one over-long line all report the same
-            // start line, and search returns them ranked by score, not in file order.
-            .OrderBy(h => h.StartLine).ThenBy(h => h.ChunkIndex)
             .ToList();
 
         if (pieces.Count == 0)
-            throw new McpException(
-                $"No indexed content for '{filePath}' in corpus '{corpus}' around line {aroundLine}. " +
-                "Check the path is exactly as search_index returned it.");
+            throw new McpException(chunks.Count == 0
+                ? $"No indexed file '{filePath}' in corpus '{corpus}'. " +
+                  "Check the path is exactly as search_index returned it."
+                : $"'{filePath}' is indexed in corpus '{corpus}' but has no content around line " +
+                  $"{aroundLine}; it spans lines {chunks.Min(c => c.StartLine)}-{chunks.Max(c => c.EndLine)}.");
 
         var header = $"{filePath}:{pieces[0].StartLine}-{pieces[^1].EndLine} (corpus: {corpus})\n\n";
         return header + Stitch(pieces.Select(p => (p.StartLine, p.EndLine, p.Content)));
@@ -195,7 +196,7 @@ public sealed class DexiconTools
     /// Internal rather than inlined so it can be tested without an MCP server: the
     /// off-by-one here decides whether a model reads duplicated or missing lines.
     /// </summary>
-    /// <param name="pieces">Chunks of one file, ordered by start line.</param>
+    /// <param name="pieces">Chunks of one file, in file order (by chunk index).</param>
     internal static string Stitch(IEnumerable<(int StartLine, int EndLine, string Content)> pieces)
     {
         var sb = new StringBuilder();
@@ -218,9 +219,11 @@ public sealed class DexiconTools
             // Wholly inside what has already been emitted.
             if (p.EndLine <= emittedThrough) continue;
 
-            // Chunks are adjacent only when search returned the whole run. A gap means it
-            // did not, and butting the two ends together would hand a model code that
-            // reads as contiguous and is not — the kind of wrong it cannot detect. Say so.
+            // Chunks from one pass tile the file, so a gap here means the index really is
+            // missing those lines. Butting the two ends together would hand a model code
+            // that reads as contiguous and is not — the kind of wrong it cannot detect —
+            // so it is disclosed instead. This fired on chunks left behind by an older
+            // chunker, which is how that staleness was found at all.
             if (emittedThrough > 0 && p.StartLine > emittedThrough + 1)
                 sb.Append($"\n… lines {emittedThrough + 1}-{p.StartLine - 1} not indexed …\n\n");
 

@@ -31,6 +31,11 @@ public interface IVectorStore
     /// Every chunk of one file, in file order. A FILTER, not a search: reconstructing a
     /// file is a lookup, and letting relevance decide which parts of it come back returns
     /// a plausible-looking file with holes in it.
+    ///
+    /// Returns the whole file even when the caller wants a window of it. A range condition
+    /// on start_line would narrow the scroll, but it needs a payload index to be worth
+    /// anything, and one file's chunks are bounded and partition-local already. Worth
+    /// revisiting if a profile ever says so; not worth guessing at now.
     /// </summary>
     Task<IReadOnlyList<SearchHit>> GetFileChunksAsync(string collection, string corpusId, string filePath,
         CancellationToken ct = default);
