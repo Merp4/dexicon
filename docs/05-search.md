@@ -115,14 +115,18 @@ Three deliberate choices:
 
 ## Retrieving more context
 
-Search returns chunks. Two follow-ups exist because the chunk is sometimes not enough:
+Search returns chunks. Two ways to get more, and only one of them is a tool:
 
-- **`get_context(corpus, file_path, around_line, before, after)`** — returns the neighbouring
-  lines from the stored chunks for that file, stitched and de-overlapped. Works for uploads
-  with no file on disk.
-- **`get_file(corpus, file_path)`** — the reconstructed text of one indexed file, capped at
-  a configurable size. For workspace corpora an agent can usually read the real file
-  faster; this exists for uploads and for agents without filesystem access to that path.
+- **`get_context(corpus, file_path, around_line, before, after)`** — an MCP tool
+  ([06](06-mcp-surface.md)). Returns the neighbouring lines from the stored chunks for that
+  file, stitched and de-overlapped. Works for uploads with no file on disk.
+- **`dexicon://corpus/{name}/file/{path}`** — an MCP *resource*, not a tool. The
+  reconstructed text of one indexed file, capped at a configurable size.
+
+Whole-file retrieval is a resource rather than a sixth tool deliberately. It is a read of a
+named thing, which is what resources are for, and D-11 treats the tool count as a budget
+every agent pays on every turn. For workspace corpora an agent can usually read the real
+file faster anyway; this path exists for uploads and for agents without filesystem access.
 
 ## Performance
 

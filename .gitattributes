@@ -1,0 +1,56 @@
+# Dexicon — .gitattributes
+#
+# Normalise line endings in the repository to LF, regardless of the platform a
+# contributor is on. Without this, a Windows checkout commits CRLF, a Linux
+# checkout commits LF, and every cross-platform edit produces a whole-file diff.
+# It lands early because retrofitting normalisation rewrites every file at once.
+
+# Default: let git decide what is text, store it as LF.
+* text=auto eol=lf
+
+# ── Explicitly text ───────────────────────────────────────────────────────────
+*.md        text eol=lf
+*.cs        text eol=lf
+*.csproj    text eol=lf
+*.props     text eol=lf
+*.targets   text eol=lf
+*.sln       text eol=lf -merge
+*.json      text eol=lf
+*.jsonc     text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.ts        text eol=lf
+*.tsx       text eol=lf
+*.js        text eol=lf
+*.css       text eol=lf
+*.html      text eol=lf
+*.sql       text eol=lf
+*.sh        text eol=lf
+Dockerfile* text eol=lf
+.env.example text eol=lf
+.gitignore  text eol=lf
+.gitattributes text eol=lf
+
+# Scripts that Windows executes must keep CRLF.
+*.ps1       text eol=crlf
+*.cmd       text eol=crlf
+*.bat       text eol=crlf
+
+# ── Explicitly binary ─────────────────────────────────────────────────────────
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.webp      binary
+*.ico       binary
+*.pdf       binary
+*.zip       binary
+*.gz        binary
+*.woff      binary
+*.woff2     binary
+*.ttf       binary
+
+# ── Generated: collapse in diffs and exclude from language stats ───────────────
+package-lock.json  linguist-generated=true -diff
+*.g.cs             linguist-generated=true -diff
+src/**/api/schema.d.ts linguist-generated=true -diff

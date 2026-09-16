@@ -49,7 +49,9 @@ services:
       dexicon-qdrant: { condition: service_healthy }
       dexicon-ollama: { condition: service_healthy }
     healthcheck:
-      test: ["CMD", "/app/healthcheck"]
+      # busybox wget, present in the alpine runtime image. Deliberately not curl
+      # (not installed) and not a custom /app/healthcheck binary (nothing builds one).
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8477/healthz/live || exit 1"]
       interval: 15s
       timeout: 3s
       retries: 5
