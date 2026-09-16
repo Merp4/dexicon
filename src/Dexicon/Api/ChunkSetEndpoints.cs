@@ -36,7 +36,7 @@ public static class ChunkSetEndpoints
 
             var summary = await CorpusEndpoints.Summarise(db, scope.Targets[0].Corpus, tenant, ct);
             return Results.Ok(summary.ChunkSets);
-        });
+        }).Produces<IReadOnlyList<ChunkSetSummary>>();
 
         g.MapPost("/", async (string nameOrId, CreateChunkSetRequest body, RequestContext rc,
             ScopeResolver scopes, CatalogDbContext db, IVectorStore vectors, IEmbeddingService embedder,
@@ -133,12 +133,9 @@ public static class ChunkSetEndpoints
             // set, and the jobs list should say which of those is happening.
             var job = await queue.EnqueueAsync(corpus.Id, JobKind.Rebuild, set.Id, ct);
 
-            return Results.Accepted($"/api/corpora/{corpus.Name}/chunk-sets/{set.Name}", new
-            {
-                chunkSet = set.ToSummary(0, 0, 0, 0),
-                backfillJob = job.ToSummary(),
-            });
-        });
+            return Results.Accepted($"/api/corpora/{corpus.Name}/chunk-sets/{set.Name}",
+                new ChunkSetCreated(set.ToSummary(0, 0, 0, 0), job.ToSummary()));
+        }).Produces<ChunkSetCreated>();
 
         g.MapPatch("/{setName}", async (string nameOrId, string setName, UpdateChunkSetRequest body,
             RequestContext rc, ScopeResolver scopes, CatalogDbContext db, IndexJobQueue queue,
@@ -183,8 +180,8 @@ public static class ChunkSetEndpoints
             if (rechunk)
                 queued = (await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, set.Id, ct)).ToSummary();
 
-            return Results.Ok(new { chunkSet = set.ToSummary(0, 0, 0, 0), rechunkJob = queued });
-        });
+            return Results.Ok(new ChunkSetUpdated(set.ToSummary(0, 0, 0, 0), queued));
+        }).Produces<ChunkSetUpdated>();
 
         g.MapPost("/{setName}/promote", async (string nameOrId, string setName, RequestContext rc,
             ScopeResolver scopes, CatalogDbContext db, CancellationToken ct) =>
@@ -217,8 +214,8 @@ public static class ChunkSetEndpoints
             set.IsDefault = true;
             await db.SaveChangesAsync(ct);
 
-            return Results.Ok(new { promoted = set.Name, corpus = corpus.Name });
-        });
+            return Results.Ok(new ChunkSetPromoted(set.Name, corpus.Name));
+        }).Produces<ChunkSetPromoted>();
 
         g.MapDelete("/{setName}", async (string nameOrId, string setName, RequestContext rc,
             ScopeResolver scopes, CatalogDbContext db, IVectorStore vectors, CancellationToken ct) =>

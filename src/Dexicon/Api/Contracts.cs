@@ -82,6 +82,62 @@ public sealed record ChunkSetSummary(
 
 public sealed record PullModelRequest(string Model, string? Provider);
 
+// ── Response shapes ──────────────────────────────────────────────────────────
+//
+// These were anonymous objects. A minimal API returning `Results.Ok(new { … })`
+// describes nothing in the OpenAPI document, so the generated TypeScript client typed
+// every one of them as `unknown` — which defeats most of the point of generating it.
+// Named records make the contract explicit on both sides of the wire.
+
+public sealed record ChunkSetCreated(ChunkSetSummary ChunkSet, JobSummary BackfillJob);
+
+public sealed record ChunkSetUpdated(ChunkSetSummary ChunkSet, JobSummary? RechunkJob);
+
+public sealed record ChunkSetPromoted(string Promoted, string Corpus);
+
+public sealed record CorpusUpdated(CorpusSummary Corpus);
+
+public sealed record FileListResponse(int Total, string ChunkSet, IReadOnlyList<FileSummary> Files);
+
+/// <summary>What a document was chunked as, in one corpus, by one set.</summary>
+public sealed record AttachedChunking(
+    string Set, int ChunkSize, int ChunkOverlap, string BoundaryMode, string EmbeddingModel);
+
+public sealed record DocumentAttached(
+    string Corpus, string FileId, string FileName,
+    IReadOnlyList<AttachedChunking> Chunking, JobSummary Job);
+
+public sealed record ExtractedTextResponse(
+    string Sha256, string? Title, string Extractor, int ExtractedChars,
+    DateTime ExtractedUtc, string? EmptyReason, string Text);
+
+public sealed record EmbeddingModelList(
+    string Provider, bool Managed, string Configured,
+    IReadOnlyList<EmbeddingModelInfo> Models, string? Note);
+
+public sealed record EmbeddingProviderList(string Default, IReadOnlyList<EmbeddingProviderInfo> Providers);
+
+public sealed record TenantSummary(string Id, string DisplayName, DateTime CreatedUtc, bool Disabled);
+
+public sealed record HealthDependency(bool Reachable, string Endpoint);
+
+/// <summary>
+/// Still called "ollama" on the wire. Renaming a health field to "embedding" would break
+/// every dashboard reading it, for a word.
+/// </summary>
+public sealed record EmbeddingHealth(
+    bool Reachable, string Endpoint, string Provider, string Model, int Dimensions, string? Error);
+
+public sealed record HealthResponse(
+    string Status, HealthDependency Qdrant, EmbeddingHealth Ollama, int Corpora, JobSummary? ActiveJob);
+
+public sealed record ReadinessResponse(string Status, bool Qdrant, bool Catalogue);
+
+public sealed record WorkspaceListing(string Root, string Path, IReadOnlyList<WorkspaceEntry> Entries);
+
+public sealed record ModelProfileSaved(
+    string Provider, string Model, IReadOnlyList<string> Reindexing, string? Note);
+
 /// <summary>Measure a model's real input limit without indexing anything.</summary>
 public sealed record ProbeModelRequest(string Model, string? Provider);
 

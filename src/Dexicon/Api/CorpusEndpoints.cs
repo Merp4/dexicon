@@ -24,7 +24,7 @@ public static class CorpusEndpoints
             var summaries = new List<CorpusSummary>(visible.Count);
             foreach (var c in visible) summaries.Add(await Summarise(db, c, tenant, ct));
             return Results.Ok(summaries);
-        });
+        }).Produces<IReadOnlyList<CorpusSummary>>();
 
         g.MapGet("/{nameOrId}", async (string nameOrId, RequestContext rc, ScopeResolver scopes,
             CatalogDbContext db, CancellationToken ct) =>
@@ -33,7 +33,7 @@ public static class CorpusEndpoints
             var tenant = rc.RequireTenant();
             var scope = await scopes.ResolveReadableAsync(tenant, [nameOrId], ct);
             return Results.Ok(await Summarise(db, scope.Corpora[0], tenant, ct));
-        });
+        }).Produces<CorpusSummary>();
 
         g.MapPost("/", async (CreateCorpusRequest body, RequestContext rc, CatalogDbContext db,
             IVectorStore vectors, IEmbeddingService embedder, IOptions<DexiconOptions> opts,
@@ -136,7 +136,7 @@ public static class CorpusEndpoints
             await vectors.EnsureCollectionAsync(corpus.ChunkSets[0].CollectionName, dims, ct);
 
             return Results.Created($"/api/corpora/{corpus.Id}", await Summarise(db, corpus, tenant, ct));
-        });
+        }).Produces<CorpusSummary>();
 
         g.MapPatch("/{nameOrId}", async (string nameOrId, UpdateCorpusRequest body, RequestContext rc,
             ScopeResolver scopes, CatalogDbContext db, CancellationToken ct) =>
@@ -162,8 +162,8 @@ public static class CorpusEndpoints
             }
 
             await db.SaveChangesAsync(ct);
-            return Results.Ok(new { corpus = await Summarise(db, corpus, tenant, ct) });
-        });
+            return Results.Ok(new CorpusUpdated(await Summarise(db, corpus, tenant, ct)));
+        }).Produces<CorpusUpdated>();
 
         g.MapDelete("/{nameOrId}", async (string nameOrId, RequestContext rc, ScopeResolver scopes,
             CatalogDbContext db, IVectorStore vectors, CancellationToken ct) =>
@@ -213,7 +213,7 @@ public static class CorpusEndpoints
             db.Sources.Add(source);
             await db.SaveChangesAsync(ct);
             return Results.Ok(source.ToSummary());
-        });
+        }).Produces<SourceSummary>();
 
         g.MapPost("/{nameOrId}/reindex", async (string nameOrId, bool? full, RequestContext rc,
             ScopeResolver scopes, IndexJobQueue queue, CancellationToken ct) =>
@@ -222,7 +222,7 @@ public static class CorpusEndpoints
             var corpus = await scopes.ResolveWritableAsync(rc.RequireTenant(), nameOrId, ct);
             var job = await queue.EnqueueAsync(corpus.Id, full == true ? JobKind.Full : JobKind.Refresh, ct: ct);
             return Results.Accepted($"/api/jobs/{job.Id}", job.ToSummary());
-        });
+        }).Produces<JobSummary>();
 
         g.MapGet("/{nameOrId}/files", async (string nameOrId, string? status, int? limit, int? offset,
             RequestContext rc, ScopeResolver scopes, CatalogDbContext db, CancellationToken ct) =>
@@ -254,13 +254,9 @@ public static class CorpusEndpoints
                 .Skip(offset ?? 0).Take(Math.Clamp(limit ?? 100, 1, 1000))
                 .ToListAsync(ct);
 
-            return Results.Ok(new
-            {
-                total,
-                chunkSet = target.Set.Name,
-                files = rows.Select(x => x.File.ToSummary(x.State)),
-            });
-        });
+            return Results.Ok(new FileListResponse(
+                total, target.Set.Name, [.. rows.Select(x => x.File.ToSummary(x.State))]));
+        }).Produces<FileListResponse>();
     }
 
     internal static async Task<CorpusSummary> Summarise(CatalogDbContext db, Corpus c, string viewerTenant,
