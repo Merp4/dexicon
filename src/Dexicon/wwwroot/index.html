@@ -1,15 +1,22 @@
 <!doctype html>
-<html lang="en" class="h-full">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="light dark" />
     <title>Dexicon</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>" />
-    <script type="module" crossorigin src="/assets/index-B64h_vUG.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-Cz-byUNe.css">
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 34rem; margin: 15vh auto; padding: 0 1rem;
+             color: #1c1c1e; background: #fbfbfd; line-height: 1.55; }
+      @media (prefers-color-scheme: dark) { body { color: #e9e9ec; background: #17181c; } }
+      code { background: color-mix(in oklab, currentColor 12%, transparent); padding: .12rem .35rem; border-radius: 4px; }
+    </style>
   </head>
-  <body class="h-full">
-    <div id="root" class="h-full"></div>
+  <body>
+    <h1>Dexicon</h1>
+    <p>The API and MCP endpoint are running. The web UI is not built into this instance.</p>
+    <p>Build it with <code>npm --prefix clients/web-ui run build</code> and copy
+       <code>clients/web-ui/dist</code> into <code>wwwroot</code>, or run
+       <code>./scripts/dev.ps1 ui</code>. The container image does this at build time.</p>
+    <p>MCP endpoint: <code>/mcp</code> · Health: <code>/healthz/live</code></p>
   </body>
 </html>
