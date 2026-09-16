@@ -3,7 +3,7 @@
   "info": {
     "title": "Dexicon",
     "description": "Semantic indexing and search. Every endpoint requires a bearer token; the tenant comes from the token, or from X-Dexicon-Tenant where the token allows it.",
-    "version": "1.0.0"
+    "version": "0.1.0"
   },
   "paths": {
     "/healthz/live": {

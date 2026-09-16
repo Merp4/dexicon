@@ -259,8 +259,42 @@ Hardening, matching the compose file:
 - `cap_drop: ALL`, `no-new-privileges`.
 - `/workspaces` mounted **read-only**. Dexicon reads your source; it must be structurally
   incapable of writing to it.
-- Base images pinned by tag in the repo and by digest in the release pipeline.
-- Published multi-arch (`linux/amd64`, `linux/arm64`) so it runs on Apple silicon.
+- Base images pinned by tag.
+- Published multi-arch (`linux/amd64`, `linux/arm64`) so it runs on Apple silicon. Both
+  builder stages run on the build platform and emit architecture-independent IL
+  (`UseAppHost=false`), so the arm64 image costs one small runtime layer rather than a
+  full emulated SDK build.
+
+## Image tags
+
+`.github/workflows/release.yml` publishes to `ghcr.io/<owner>/dexicon`.
+
+| Tag | Means | Use it for |
+|---|---|---|
+| `0.1.0` | That release, forever | Deployments |
+| `0.1` | Newest patch of that minor | Deployments that accept patches |
+| `latest` | Newest release | Trying it out |
+| `edge` | Tip of `main` | Following development |
+| `sha-abc1234` | One commit | Reproducing a report |
+
+No bare major tag. Before 1.0 the minor IS the breaking change, so a `0` tag would
+promise a compatibility that does not exist.
+
+`latest` and `edge` move. A deployment pins `DEXICON_TAG` to a version, or to a digest
+if it should not change even for a re-push:
+
+```bash
+DEXICON_TAG=0.1.0 docker compose up -d
+```
+
+The version in the tag is the version in the image: the release build stamps the git tag
+into the assembly, so the OpenAPI document and the version the MCP server reports agree
+with it, and publishing fails if they do not. Each image carries a provenance attestation
+recording the commit and the workflow that produced it:
+
+```bash
+gh attestation verify oci://ghcr.io/<owner>/dexicon:0.1.0 --owner <owner>
+```
 
 ## Health
 

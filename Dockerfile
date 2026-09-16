@@ -8,7 +8,7 @@
 # Dexicon reads your source; it must be structurally incapable of writing to it.
 
 # ── UI ────────────────────────────────────────────────────────────────────────
-FROM node:22-alpine AS ui
+FROM --platform=$BUILDPLATFORM node:22-alpine AS ui
 WORKDIR /ui
 
 # Dependencies first, so a source-only change does not re-run npm ci.
@@ -19,8 +19,18 @@ COPY clients/web-ui/ ./
 RUN npm run build
 
 # ── Server ────────────────────────────────────────────────────────────────────
-FROM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS build
+# `--platform=$BUILDPLATFORM`: this stage runs natively on the builder even when the
+# target is arm64. It can, because `UseAppHost=false` publishes framework-dependent IL
+# with no native host — the output is the same bytes for every architecture, and only the
+# runtime stage below is per-platform. Emulating an SDK to produce identical output would
+# cost minutes a build for nothing.
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS build
 WORKDIR /build
+
+# Stamped into the assembly, and from there into the OpenAPI document and the version the
+# MCP server reports. The release workflow passes the git tag; the default matches
+# Directory.Build.props so a local `docker build` is not silently different.
+ARG VERSION=0.1.0
 
 # Central package management first, again for layer caching.
 COPY Directory.Build.props Directory.Packages.props ./
@@ -34,7 +44,8 @@ RUN dotnet publish src/Dexicon/Dexicon.csproj \
     -c Release \
     -o /app/publish \
     --no-restore \
-    /p:UseAppHost=false
+    /p:UseAppHost=false \
+    /p:Version=${VERSION}
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine AS runtime

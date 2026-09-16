@@ -46,6 +46,18 @@ jobs:
       - name: Test
         run: dotnet test --no-build --configuration Release --logger "console;verbosity=normal"
 
+      # The build writes clients/web-ui/Dexicon.json, and the UI's TypeScript client is
+      # generated from that file — including inside the Docker image, which copies the
+      # COMMITTED one. So a contract change with an uncommitted document produces an
+      # image whose UI is typed against the previous API, and nothing else notices.
+      - name: The committed OpenAPI document matches the code
+        run: |
+          if ! git diff --quiet -- clients/web-ui/Dexicon.json; then
+            echo "::error::clients/web-ui/Dexicon.json is stale. Run a build and commit it."
+            git diff -- clients/web-ui/Dexicon.json
+            exit 1
+          fi
+
       - name: Install UI dependencies
         working-directory: clients/web-ui
         run: npm ci
@@ -119,6 +131,10 @@ jobs:
   image:
     name: Container image
     runs-on: ubuntu-latest
+    # Pull requests only. On main and on a tag the release workflow builds the same image,
+    # verifies it the same way and then publishes it, so doing it here too would be the
+    # same minutes spent twice.
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
 
