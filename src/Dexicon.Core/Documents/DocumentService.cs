@@ -1,0 +1,296 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Dexicon.Core.Catalog;
+using Dexicon.Core.Configuration;
+using Dexicon.Core.Extraction;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+namespace Dexicon.Core.Documents;
+
+public sealed record StoredDocument(
+    string Sha256,
+    long SizeBytes,
+    string FileName,
+    string? Title,
+    int ExtractedChars,
+    bool AlreadyExisted,
+    string? EmptyReason);
+
+/// <summary>
+/// Uploaded documents, stored once and chunked many times.
+///
+/// The separation that matters: BYTES are content-addressed and EXTRACTION is cached
+/// against them, because both are deterministic and extraction is expensive. CHUNKING
+/// is a property of the corpus, because it is cheap and it is the thing people actually
+/// want to vary.
+///
+/// That gives three things for free:
+///   - uploading the same PDF twice stores one blob and extracts once
+///   - attaching one document to two corpora with different chunk sizes produces two
+///     independent chunk sets without re-opening the file
+///   - changing a corpus's chunk settings re-chunks and re-embeds from cached text
+///
+/// See docs/04-ingestion.md.
+/// </summary>
+public sealed class DocumentService(
+    CatalogDbContext db,
+    IOptions<DexiconOptions> options,
+    ILogger<DocumentService> log)
+{
+    private readonly StorageOptions _storage = options.Value.Storage;
+    private readonly UploadOptions _upload = options.Value.Upload;
+
+    /// <summary>Where a blob's bytes live: /data/blobs/ab/abcdef… — two hex chars of fan-out.</summary>
+    public string PathFor(string sha256) =>
+        Path.Combine(_storage.BlobRoot, sha256[..2], sha256);
+
+    /// <summary>
+    /// Store bytes, extract text once, and return what happened. Does NOT attach the
+    /// document to anything — attachment is a separate, per-corpus act.
+    /// </summary>
+    public async Task<StoredDocument> StoreAsync(Stream content, string fileName, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+            throw new ArgumentException("A file name is required.", nameof(fileName));
+
+        // Buffer to a temp file rather than memory: a 200 MB upload should not be a
+        // 200 MB allocation, and the hash is only known after the whole stream is read.
+        Directory.CreateDirectory(_storage.BlobRoot);
+        var temp = Path.Combine(_storage.BlobRoot, $".incoming-{Guid.NewGuid():N}");
+
+        string sha;
+        long size;
+        try
+        {
+            await using (var fs = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                             bufferSize: 81920, useAsync: true))
+            {
+                await content.CopyToAsync(fs, ct);
+                size = fs.Length;
+            }
+
+            if (size == 0) throw new ArgumentException($"'{fileName}' is empty.", nameof(content));
+            if (size > _upload.MaxFileBytes)
+                throw new ArgumentException(
+                    $"'{fileName}' is {size:N0} bytes, over the {_upload.MaxFileBytes:N0} byte limit.", nameof(content));
+
+            await using (var fs = File.OpenRead(temp))
+                sha = Convert.ToHexStringLower(await SHA256.HashDataAsync(fs, ct));
+
+            var final = PathFor(sha);
+            Directory.CreateDirectory(Path.GetDirectoryName(final)!);
+
+            if (File.Exists(final)) File.Delete(temp);
+            else File.Move(temp, final);
+        }
+        catch
+        {
+            if (File.Exists(temp)) File.Delete(temp);
+            throw;
+        }
+
+        var existing = await db.Blobs.Include(b => b.Text).FirstOrDefaultAsync(b => b.Sha256 == sha, ct);
+        if (existing is not null)
+        {
+            log.LogInformation("Upload '{File}' is an existing blob {Sha} — stored once, extraction reused",
+                fileName, sha[..12]);
+            return new StoredDocument(sha, existing.SizeBytes, fileName, existing.Text?.Title,
+                existing.Text?.ExtractedChars ?? 0, AlreadyExisted: true, existing.Text?.EmptyReason);
+        }
+
+        var blob = new Blob
+        {
+            Sha256 = sha,
+            SizeBytes = size,
+            MediaType = MediaTypeFor(fileName),
+            OriginalFileName = fileName,
+            CreatedUtc = DateTime.UtcNow,
+        };
+        db.Blobs.Add(blob);
+
+        var text = await ExtractAsync(sha, fileName, ct);
+        db.BlobTexts.Add(text);
+        await db.SaveChangesAsync(ct);
+
+        log.LogInformation("Stored '{File}' as {Sha} ({Size:N0} bytes, {Chars:N0} chars extracted)",
+            fileName, sha[..12], size, text.ExtractedChars);
+
+        return new StoredDocument(sha, size, fileName, text.Title, text.ExtractedChars,
+            AlreadyExisted: false, text.EmptyReason);
+    }
+
+    private async Task<BlobText> ExtractAsync(string sha, string fileName, CancellationToken ct)
+    {
+        var extractor = ExtractorRegistry.For(fileName);
+        var path = PathFor(sha);
+
+        try
+        {
+            ExtractedText extracted;
+            if (extractor is null)
+            {
+                // Not a document format: treat as plain text, the same as a code file.
+                var raw = await File.ReadAllBytesAsync(path, ct);
+                extracted = new ExtractedText(DecodeText(raw), []);
+            }
+            else
+            {
+                await using var stream = File.OpenRead(path);
+                extracted = extractor.Extract(stream, fileName);
+            }
+
+            // "Produced no text" is not a failure, and saying WHY is the difference
+            // between a user finding their scanned PDF in the UI and concluding the
+            // upload silently vanished.
+            var emptyReason = extracted.Text.Trim().Length > 0
+                ? null
+                : extractor is PdfTextExtractor
+                    ? "no text layer — this is a scanned PDF, and OCR is not supported"
+                    : "no extractable text content";
+
+            return new BlobText
+            {
+                Sha256 = sha,
+                Text = extracted.Text,
+                UnitsJson = extracted.Units.Count > 0 ? JsonSerializer.Serialize(extracted.Units) : null,
+                Title = extracted.Title,
+                ExtractedChars = extracted.Text.Length,
+                Extractor = extractor?.GetType().Name ?? "PlainText",
+                ExtractedUtc = DateTime.UtcNow,
+                EmptyReason = emptyReason,
+            };
+        }
+        catch (ExtractionFailedException ex)
+        {
+            // Recorded rather than thrown away: the blob exists, so the UI can show it
+            // as failed with a reason instead of the upload appearing to have worked.
+            log.LogWarning(ex, "Extraction failed for uploaded '{File}'", fileName);
+            return new BlobText
+            {
+                Sha256 = sha,
+                Text = string.Empty,
+                ExtractedChars = 0,
+                Extractor = extractor?.GetType().Name ?? "PlainText",
+                ExtractedUtc = DateTime.UtcNow,
+                EmptyReason = ex.Message,
+            };
+        }
+    }
+
+    /// <summary>
+    /// Attach a stored document to a corpus. The SAME blob may be attached to any number
+    /// of corpora; each chunks it with its own settings, producing independent chunk
+    /// sets that never see each other.
+    /// </summary>
+    public async Task<IndexedFile> AttachAsync(Corpus corpus, string sha256, string fileName,
+        CancellationToken ct = default)
+    {
+        var blob = await db.Blobs.FirstOrDefaultAsync(b => b.Sha256 == sha256, ct)
+            ?? throw new InvalidOperationException($"No stored document with hash {sha256}.");
+
+        var source = await UploadSourceFor(corpus, ct);
+
+        var existing = await db.Files.FirstOrDefaultAsync(
+            f => f.SourceId == source.Id && f.RelativePath == fileName, ct);
+
+        if (existing is not null)
+        {
+            // Re-attaching under the same name replaces: the hash changes, so the
+            // incremental pass sees it as changed and re-chunks it.
+            existing.BlobSha256 = sha256;
+            existing.ContentHash = null;
+            existing.SizeBytes = blob.SizeBytes;
+            existing.Status = FileStatus.Indexed;
+            existing.StatusDetail = null;
+            await db.SaveChangesAsync(ct);
+            return existing;
+        }
+
+        var file = new IndexedFile
+        {
+            Id = Ulid.NewUlid().ToString(),
+            SourceId = source.Id,
+            RelativePath = fileName,
+            BlobSha256 = sha256,
+            SizeBytes = blob.SizeBytes,
+            MediaType = blob.MediaType,
+            Status = FileStatus.Indexed,
+            ContentHash = null,      // null = not yet indexed, so the next pass picks it up
+        };
+
+        db.Files.Add(file);
+        await db.SaveChangesAsync(ct);
+        return file;
+    }
+
+    /// <summary>Every corpus gets at most one upload source, created on first attachment.</summary>
+    private async Task<Source> UploadSourceFor(Corpus corpus, CancellationToken ct)
+    {
+        var source = await db.Sources.FirstOrDefaultAsync(
+            s => s.CorpusId == corpus.Id && s.Kind == SourceKind.Upload, ct);
+
+        if (source is not null) return source;
+
+        source = new Source
+        {
+            Id = Ulid.NewUlid().ToString(),
+            CorpusId = corpus.Id,
+            Kind = SourceKind.Upload,
+            UseGitignore = false,
+            MaxFileBytes = int.MaxValue,
+            CreatedUtc = DateTime.UtcNow,
+        };
+        db.Sources.Add(source);
+        await db.SaveChangesAsync(ct);
+        return source;
+    }
+
+    /// <summary>Detach from one corpus. The blob survives — other corpora may still use it.</summary>
+    public async Task<bool> DetachAsync(string corpusId, string fileId, CancellationToken ct = default)
+    {
+        var file = await db.Files.Include(f => f.Source)
+            .FirstOrDefaultAsync(f => f.Id == fileId && f.Source!.CorpusId == corpusId, ct);
+
+        if (file is null) return false;
+        db.Files.Remove(file);
+        await db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    public Task<BlobText?> TextFor(string sha256, CancellationToken ct = default) =>
+        db.BlobTexts.AsNoTracking().FirstOrDefaultAsync(t => t.Sha256 == sha256, ct);
+
+    public static IReadOnlyList<ExtractedUnit> UnitsFrom(BlobText? text) =>
+        string.IsNullOrEmpty(text?.UnitsJson)
+            ? []
+            : JsonSerializer.Deserialize<List<ExtractedUnit>>(text.UnitsJson) ?? [];
+
+    private static string DecodeText(byte[] bytes)
+    {
+        try
+        {
+            return new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(
+                bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF
+                    ? bytes.AsSpan(3) : bytes);
+        }
+        catch (DecoderFallbackException)
+        {
+            return Encoding.Latin1.GetString(bytes);
+        }
+    }
+
+    private static string MediaTypeFor(string fileName) => Path.GetExtension(fileName).ToLowerInvariant() switch
+    {
+        ".pdf" => "application/pdf",
+        ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".epub" => "application/epub+zip",
+        ".html" or ".htm" => "text/html",
+        ".md" => "text/markdown",
+        ".json" => "application/json",
+        _ => "text/plain",
+    };
+}

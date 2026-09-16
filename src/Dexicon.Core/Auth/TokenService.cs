@@ -100,6 +100,60 @@ public sealed class TokenService(CatalogDbContext db, TimeProvider clock)
                       .ToHashSet(StringComparer.Ordinal));
     }
 
+    /// <summary>
+    /// Store a token whose secret the operator chose, rather than one we generated.
+    /// Used only for <c>DEXICON__BOOTSTRAP__TOKEN</c> — scripted setup, and recovery
+    /// when the one-time printed value is lost.
+    ///
+    /// The value must still be a well-formed <c>dex_&lt;id&gt;_&lt;secret&gt;</c>, so the
+    /// same parser serves both paths and an operator cannot accidentally create a token
+    /// the verifier will never recognise.
+    /// </summary>
+    public async Task<ApiToken> AdoptAsync(string tenantId, string name, IEnumerable<string> scopes,
+        string presented, CancellationToken ct = default)
+    {
+        if (!presented.StartsWith(Prefix, StringComparison.Ordinal))
+            throw new ArgumentException($"A bootstrap token must start with '{Prefix}'.", nameof(presented));
+
+        var rest = presented[Prefix.Length..];
+        var sep = rest.IndexOf('_', StringComparison.Ordinal);
+        if (sep <= 0 || sep == rest.Length - 1)
+            throw new ArgumentException($"Expected the form {Prefix}<id>_<secret>.", nameof(presented));
+
+        var id = rest[..sep];
+        var secret = rest[(sep + 1)..];
+        var salt = RandomNumberGenerator.GetBytes(SaltBytes);
+
+        var existing = await db.Tokens.FirstOrDefaultAsync(t => t.Id == id, ct);
+        if (existing is not null)
+        {
+            // Re-adopting the same id rotates its hash and un-revokes it, which is
+            // exactly what "I lost access, put this value back" should do.
+            existing.TokenHash = Hash(secret, salt);
+            existing.TokenSalt = salt;
+            existing.TenantId = tenantId;
+            existing.RevokedUtc = null;
+            existing.ExpiresUtc = null;
+            await db.SaveChangesAsync(ct);
+            return existing;
+        }
+
+        var row = new ApiToken
+        {
+            Id = id,
+            Name = name,
+            TokenHash = Hash(secret, salt),
+            TokenSalt = salt,
+            TenantId = tenantId,
+            Scopes = string.Join(',', scopes.Select(s => s.Trim().ToLowerInvariant()).Distinct(StringComparer.Ordinal)),
+            CreatedUtc = clock.GetUtcNow().UtcDateTime,
+        };
+
+        db.Tokens.Add(row);
+        await db.SaveChangesAsync(ct);
+        return row;
+    }
+
     public async Task TouchAsync(string tokenId, CancellationToken ct = default)
     {
         await db.Tokens.Where(t => t.Id == tokenId)

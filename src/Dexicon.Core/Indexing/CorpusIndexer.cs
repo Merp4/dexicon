@@ -68,10 +68,18 @@ public sealed class CorpusIndexer(
 
             foreach (var source in corpus.Sources)
             {
-                if (source.Kind != SourceKind.Workspace) continue;   // uploads land in M2
-                await IndexWorkspaceSourceAsync(corpus, source, job, progress,
-                    full: job.Kind is JobKind.Full or JobKind.Rebuild,
-                    onEmbeddingFailure: () => embeddingFailed = true, ct);
+                var full = job.Kind is JobKind.Full or JobKind.Rebuild;
+
+                if (source.Kind == SourceKind.Workspace)
+                {
+                    await IndexWorkspaceSourceAsync(corpus, source, job, progress, full,
+                        onEmbeddingFailure: () => embeddingFailed = true, ct);
+                }
+                else
+                {
+                    await IndexUploadSourceAsync(corpus, source, job, progress, full,
+                        onEmbeddingFailure: () => embeddingFailed = true, ct);
+                }
             }
 
             job.Phase = "reconcile";
@@ -110,6 +118,193 @@ public sealed class CorpusIndexer(
 
         return job;
     }
+
+    /// <summary>
+    /// Index uploaded documents. The bytes are never re-read and the PDF is never
+    /// re-opened: extraction was cached against the blob hash at upload time, so this
+    /// only chunks and embeds. That is what makes the same document cheap to hold in
+    /// several corpora with different chunk settings, and cheap to re-chunk when those
+    /// settings change.
+    /// </summary>
+    private async Task IndexUploadSourceAsync(Corpus corpus, Source source, IndexJob job,
+        IProgress<IndexProgress>? progress, bool full, Action onEmbeddingFailure, CancellationToken ct)
+    {
+        var attachments = await db.Files
+            .Where(f => f.SourceId == source.Id && f.BlobSha256 != null)
+            .ToListAsync(ct);
+
+        job.FilesTotal += attachments.Count;
+        job.Phase = "extract";
+        await db.SaveChangesAsync(ct);
+        Report(progress, job, null);
+
+        var sinceFlush = System.Diagnostics.Stopwatch.StartNew();
+
+        foreach (var file in attachments)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            try
+            {
+                var cached = await db.BlobTexts.AsNoTracking()
+                    .FirstOrDefaultAsync(t => t.Sha256 == file.BlobSha256, ct);
+
+                if (cached is null)
+                {
+                    file.Status = FileStatus.Failed;
+                    file.StatusDetail = "the stored document has no extracted text — re-upload it";
+                    file.ContentHash = null;
+                    job.FilesFailed++;
+                    continue;
+                }
+
+                if (cached.EmptyReason is { Length: > 0 } || cached.Text.Trim().Length == 0)
+                {
+                    file.Status = FileStatus.Empty;
+                    file.StatusDetail = cached.EmptyReason ?? "no extractable text content";
+                    file.ChunkCount = 0;
+                    file.ExtractedChars = 0;
+                    // Hash IS recorded: an empty extraction is a settled outcome, not a
+                    // failure to retry. Re-uploading the file is what changes it.
+                    file.ContentHash = ChunkingFingerprint(corpus, cached.Sha256);
+                    file.IndexedUtc = DateTime.UtcNow;
+                    job.FilesSkipped++;
+                    continue;
+                }
+
+                // The fingerprint mixes the blob hash WITH the corpus's chunk settings,
+                // so changing chunk size or boundary mode makes every attachment look
+                // changed and re-chunks it — without touching the bytes.
+                var fingerprint = ChunkingFingerprint(corpus, cached.Sha256);
+                if (!full && file.ContentHash == fingerprint && file.Status == FileStatus.Indexed)
+                {
+                    job.FilesSkipped++;
+                    continue;
+                }
+
+                await vectors.DeleteFileChunksAsync(corpus.CollectionName, corpus.Id, file.RelativePath, ct);
+
+                var units = Documents.DocumentService.UnitsFrom(cached);
+                var extracted = new ExtractedText(cached.Text, units, cached.Title);
+                var language = LanguageMap.Detect(file.RelativePath);
+
+                // Documents are chunked as prose: a C# member-boundary regex finds
+                // nothing useful in extracted PDF text.
+                var pieces = CodeChunker.Chunk(file.RelativePath, cached.Text,
+                    corpus.ChunkSize, corpus.ChunkOverlap, "blank-line");
+
+                var chunks = pieces.Select(p => new Chunk
+                {
+                    CorpusId = corpus.Id,
+                    TenantId = corpus.TenantId,
+                    SourceId = source.Id,
+                    FilePath = file.RelativePath,
+                    FileHash = fingerprint,
+                    MediaType = file.MediaType,
+                    Language = language,
+                    StartLine = p.StartLine,
+                    EndLine = p.EndLine,
+                    Section = p.Section ?? UnitLabelFor(extracted, p.StartLine, cached.Text),
+                    Page = UnitNumberFor(extracted, p.StartLine, cached.Text),
+                    Symbols = p.Symbols,
+                    ChunkIndex = p.Index,
+                    Content = p.Content,
+                }).ToList();
+
+                await EmbedAndUpsertAsync(corpus, chunks, file.RelativePath, job, progress, sinceFlush, ct);
+
+                file.Status = FileStatus.Indexed;
+                file.StatusDetail = null;
+                file.ContentHash = fingerprint;
+                file.Language = language;
+                file.ChunkCount = chunks.Count;
+                file.ExtractedChars = cached.ExtractedChars;
+                file.IndexedUtc = DateTime.UtcNow;
+                job.FilesDone++;
+            }
+            catch (EmbeddingUnavailableException ex)
+            {
+                log.LogWarning(ex, "Embedding failed for uploaded {File}; skipping it and continuing", file.RelativePath);
+                file.Status = FileStatus.Failed;
+                file.StatusDetail = $"embedding failed: {ex.Message}";
+                file.ContentHash = null;
+                job.FilesFailed++;
+                onEmbeddingFailure();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                log.LogWarning(ex, "Failed to index uploaded {File}", file.RelativePath);
+                file.Status = FileStatus.Failed;
+                file.StatusDetail = ex.Message;
+                file.ContentHash = null;
+                job.FilesFailed++;
+            }
+
+            if (sinceFlush.ElapsedMilliseconds >= 1000)
+            {
+                await db.SaveChangesAsync(ct);
+                Report(progress, job, file.RelativePath);
+                sinceFlush.Restart();
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
+        log.LogInformation("Upload source: {Indexed} indexed, {Skipped} skipped, {Failed} failed",
+            job.FilesDone, job.FilesSkipped, job.FilesFailed);
+    }
+
+    /// <summary>
+    /// Embed and upsert a file's chunks in batches, reporting progress between them.
+    ///
+    /// Batched rather than one call per file, because a 437-page PDF is ONE file
+    /// producing thousands of chunks: per-file progress left the UI on "0 done" for
+    /// minutes with no way to tell a slow job from a hung one. It also caps peak memory
+    /// at one batch of vectors instead of all of them. Shared by both source kinds.
+    /// </summary>
+    private async Task EmbedAndUpsertAsync(Corpus corpus, List<Chunk> chunks, string label,
+        IndexJob job, IProgress<IndexProgress>? progress, System.Diagnostics.Stopwatch sinceFlush,
+        CancellationToken ct)
+    {
+        // Hand the provider MaxConcurrency batches at a time so it can run them in
+        // parallel, while still reporting progress at that granularity.
+        var batchSize = Math.Max(1, _embedding.BatchSize) * Math.Max(1, _embedding.MaxConcurrency);
+
+        for (var offset = 0; offset < chunks.Count; offset += batchSize)
+        {
+            ct.ThrowIfCancellationRequested();
+            var batch = chunks.GetRange(offset, Math.Min(batchSize, chunks.Count - offset));
+            var through = offset + batch.Count;
+
+            job.Phase = "embed";
+            Report(progress, job, $"{label} - chunk {through}/{chunks.Count}");
+
+            var embeddings = await embedder.EmbedAsync(batch.Select(c => c.Content).ToList(), ct);
+
+            job.Phase = "upsert";
+            await vectors.UpsertAsync(corpus.CollectionName, batch, embeddings, ct);
+
+            job.ChunksWritten += batch.Count;
+            Report(progress, job, $"{label} - chunk {through}/{chunks.Count}");
+
+            // SSE alone is not enough: /api/jobs reads the catalogue, so without a
+            // persist here a single-file corpus shows zero progress to anyone polling.
+            // Throttled, because SaveChanges per batch is not free.
+            if (sinceFlush.ElapsedMilliseconds >= 1000)
+            {
+                await db.SaveChangesAsync(ct);
+                sinceFlush.Restart();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Identity of "this blob, chunked THIS way". Two corpora holding the same document
+    /// with different settings produce different fingerprints, so neither can mistake
+    /// the other's work for its own, and changing a setting invalidates exactly the
+    /// attachments it should.
+    /// </summary>
+    internal static string ChunkingFingerprint(Corpus corpus, string blobSha) =>
+        HashContent($"{blobSha}|{corpus.ChunkSize}|{corpus.ChunkOverlap}|{corpus.BoundaryMode}|{corpus.EmbeddingModel}");
 
     private async Task IndexWorkspaceSourceAsync(Corpus corpus, Source source, IndexJob job,
         IProgress<IndexProgress>? progress, bool full, Action onEmbeddingFailure, CancellationToken ct)
@@ -172,7 +367,13 @@ public sealed class CorpusIndexer(
                 }
 
                 var content = extracted.Text;
-                var hash = HashContent(content);
+
+                // The stored hash is the CHUNKING FINGERPRINT, not the raw content hash.
+                // With a content hash alone, changing a corpus's chunk size left every
+                // file looking unchanged, so a refresh re-chunked nothing and the new
+                // setting silently did not apply. Mixing the settings in makes exactly
+                // the right set of files look stale — and no others.
+                var hash = ChunkingFingerprint(corpus, HashContent(content));
 
                 if (!full && known.TryGetValue(candidate.RelativePath, out var existing)
                           && existing.ContentHash == hash && existing.Status == FileStatus.Indexed)
@@ -257,35 +458,7 @@ public sealed class CorpusIndexer(
                 // the phase still reading "extract" because it was set but never reported
                 // before the long call. Batching also caps peak memory at one batch of
                 // vectors instead of all of them.
-                // Hand the provider MaxConcurrency batches at a time so it can run them
-                // in parallel, while still reporting progress at that granularity.
-                var batchSize = Math.Max(1, _embedding.BatchSize) * Math.Max(1, _embedding.MaxConcurrency);
-                for (var offset = 0; offset < chunks.Count; offset += batchSize)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    var batch = chunks.GetRange(offset, Math.Min(batchSize, chunks.Count - offset));
-                    var through = offset + batch.Count;
-
-                    job.Phase = "embed";
-                    Report(progress, job, $"{candidate.RelativePath} — chunk {through}/{chunks.Count}");
-
-                    var embeddings = await embedder.EmbedAsync(batch.Select(c => c.Content).ToList(), ct);
-
-                    job.Phase = "upsert";
-                    await vectors.UpsertAsync(corpus.CollectionName, batch, embeddings, ct);
-
-                    job.ChunksWritten += batch.Count;
-                    Report(progress, job, $"{candidate.RelativePath} — chunk {through}/{chunks.Count}");
-
-                    // SSE alone is not enough: /api/jobs reads the catalogue, so without
-                    // a persist here a single-file corpus shows zero progress to anyone
-                    // polling. Throttled, because SaveChanges per batch is not free.
-                    if (sinceFlush.ElapsedMilliseconds >= 1000)
-                    {
-                        await db.SaveChangesAsync(ct);
-                        sinceFlush.Restart();
-                    }
-                }
+                await EmbedAndUpsertAsync(corpus, chunks, candidate.RelativePath, job, progress, sinceFlush, ct);
 
                 Upsert(known, source.Id, candidate.RelativePath, f =>
                 {

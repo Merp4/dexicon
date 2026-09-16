@@ -39,6 +39,14 @@ public sealed class ConfigurationIsReadTests
             .Select(File.ReadAllText)
             .ToList();
 
+        // The options files themselves, for the sibling-reference case.
+        var configSources = Directory
+            .EnumerateFiles(Path.Combine(root, "src"), "*Options.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                     && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Select(File.ReadAllText)
+            .ToList();
+
         var unread = new List<string>();
 
         foreach (var type in OptionTypes())
@@ -48,14 +56,22 @@ public sealed class ConfigurationIsReadTests
                 // A nested options object is "read" by virtue of its own properties.
                 if (OptionTypes().Contains(prop.PropertyType)) continue;
 
-                // Count whole-word occurrences across the tree. The declaration itself
-                // contributes exactly one, so anything above that is a genuine read.
-                // Matching ".Name" alone was too strict: a computed property in the
-                // same class refers to its sibling bare, as
-                // `Path.Combine(DataPath, CatalogFileName)`.
-                var word = new Regex($@"\b{Regex.Escape(prop.Name)}\b");
-                var occurrences = sources.Sum(s => word.Count(s));
-                if (occurrences <= 1) unread.Add($"{type.Name}.{prop.Name}");
+                // A read is either a MEMBER ACCESS (`options.Bootstrap.Token`) anywhere,
+                // or a bare sibling reference inside the options file itself
+                // (`Path.Combine(DataPath, CatalogFileName)` in a computed property).
+                //
+                // The earlier version counted bare whole-word matches everywhere, which
+                // is far too loose: `BootstrapOptions.Token` looked "read" because the
+                // word Token appears in TokenService, Scopes and a dozen other places —
+                // and it was in fact read by nothing at all. A guard that cannot catch
+                // what it claims to is worse than no guard, because it reads as cover.
+                var memberAccess = new Regex($@"\.{Regex.Escape(prop.Name)}\b");
+                var bareWord = new Regex($@"\b{Regex.Escape(prop.Name)}\b");
+
+                var read = sources.Exists(s => memberAccess.IsMatch(s))
+                           || configSources.Sum(s => bareWord.Count(s)) > 1;
+
+                if (!read) unread.Add($"{type.Name}.{prop.Name}");
             }
         }
 

@@ -115,11 +115,48 @@ public static class CorpusEndpoints
         });
 
         g.MapPatch("/{nameOrId}", async (string nameOrId, UpdateCorpusRequest body, RequestContext rc,
-            ScopeResolver scopes, CatalogDbContext db, CancellationToken ct) =>
+            ScopeResolver scopes, CatalogDbContext db, IndexJobQueue queue, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             var tenant = rc.RequireTenant();
             var corpus = await scopes.ResolveWritableAsync(tenant, nameOrId, ct);
+
+            // Chunk settings are the interesting edit: they change how every document in
+            // this corpus is sliced, so they invalidate the whole index and are applied
+            // by re-chunking rather than by hoping someone remembers to reindex.
+            var rechunk = false;
+
+            if (body.ChunkSize is { } size)
+            {
+                if (size is < 64 or > 8192)
+                    return Results.Problem(title: "chunkSize must be between 64 and 8192 tokens", statusCode: 400);
+                rechunk |= size != corpus.ChunkSize;
+                corpus.ChunkSize = size;
+            }
+
+            if (body.ChunkOverlap is { } overlap)
+            {
+                if (overlap < 0) return Results.Problem(title: "chunkOverlap cannot be negative", statusCode: 400);
+                rechunk |= overlap != corpus.ChunkOverlap;
+                corpus.ChunkOverlap = overlap;
+            }
+
+            if (corpus.ChunkOverlap >= corpus.ChunkSize)
+                return Results.Problem(
+                    title: "chunkOverlap must be smaller than chunkSize",
+                    detail: $"Asked for overlap {corpus.ChunkOverlap} with size {corpus.ChunkSize}.",
+                    statusCode: 400);
+
+            if (body.BoundaryMode is { Length: > 0 } mode)
+            {
+                if (mode is not ("none" or "blank-line" or "language-aware"))
+                    return Results.Problem(
+                        title: "Unknown boundary mode",
+                        detail: $"'{mode}'. Expected none, blank-line or language-aware.",
+                        statusCode: 400);
+                rechunk |= !string.Equals(mode, corpus.BoundaryMode, StringComparison.Ordinal);
+                corpus.BoundaryMode = mode;
+            }
 
             if (body.Description is not null) corpus.Description = body.Description;
             if (body.Visibility is not null)
@@ -135,7 +172,14 @@ public static class CorpusEndpoints
             }
 
             await db.SaveChangesAsync(ct);
-            return Results.Ok(await Summarise(db, corpus, tenant, ct));
+
+            // Queued, not done inline: re-embedding a large corpus outlasts any request.
+            // The staleness fingerprint mixes the chunk settings in, so a plain refresh
+            // is enough — every file now looks changed, and nothing else does.
+            JobSummary? queued = null;
+            if (rechunk) queued = (await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct)).ToSummary();
+
+            return Results.Ok(new { corpus = await Summarise(db, corpus, tenant, ct), rechunkJob = queued });
         });
 
         g.MapDelete("/{nameOrId}", async (string nameOrId, RequestContext rc, ScopeResolver scopes,

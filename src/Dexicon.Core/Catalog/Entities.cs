@@ -115,6 +115,14 @@ public sealed class IndexedFile
     /// <summary>Null until the file has been indexed successfully — that is what makes a failure retry.</summary>
     public string? ContentHash { get; set; }
 
+    /// <summary>
+    /// Set for upload-sourced files: the content-addressed blob this is an attachment
+    /// of. Several corpora can point at the same blob and chunk it differently; that is
+    /// the whole point of keeping bytes and chunking apart.
+    /// </summary>
+    public string? BlobSha256 { get; set; }
+    public Blob? Blob { get; set; }
+
     public long SizeBytes { get; set; }
     public string? MediaType { get; set; }
     public string? Language { get; set; }
@@ -128,12 +136,54 @@ public sealed class IndexedFile
     public DateTime? IndexedUtc { get; set; }
 }
 
+/// <summary>
+/// An uploaded document's bytes, content-addressed. Two uploads of the same file are
+/// one blob, and the blob carries no name — the same PDF can be attached to different
+/// corpora under different names, so the name belongs to the attachment.
+/// </summary>
 public sealed class Blob
 {
     public required string Sha256 { get; set; }
     public long SizeBytes { get; set; }
     public string? MediaType { get; set; }
+
+    /// <summary>The name it was first uploaded under. Display only; the attachment owns the real name.</summary>
+    public string? OriginalFileName { get; set; }
+
     public DateTime CreatedUtc { get; set; }
+
+    public BlobText? Text { get; set; }
+}
+
+/// <summary>
+/// Extracted text for a blob, cached. This is what makes re-chunking cheap and what
+/// lets the SAME document be chunked differently per corpus.
+///
+/// Extraction is deterministic in the bytes and expensive — a 437-page PDF costs about
+/// 1.5 s of layout analysis. Chunking is cheap and corpus-specific. Splitting them means
+/// changing a corpus's chunk size, or attaching a document to a second corpus with
+/// different settings, re-chunks and re-embeds without ever re-opening the PDF.
+/// </summary>
+public sealed class BlobText
+{
+    public required string Sha256 { get; set; }
+    public Blob? Blob { get; set; }
+
+    public required string Text { get; set; }
+
+    /// <summary>JSON array of extraction units — page/slide/chapter offsets for provenance.</summary>
+    public string? UnitsJson { get; set; }
+
+    public string? Title { get; set; }
+    public int ExtractedChars { get; set; }
+
+    /// <summary>Which extractor produced this, so a loader upgrade can invalidate the cache.</summary>
+    public required string Extractor { get; set; }
+
+    public DateTime ExtractedUtc { get; set; }
+
+    /// <summary>Set when the format was readable but yielded nothing — a scanned PDF.</summary>
+    public string? EmptyReason { get; set; }
 }
 
 public enum JobKind { Full = 0, Refresh = 1, Rebuild = 2, Delete = 3 }
