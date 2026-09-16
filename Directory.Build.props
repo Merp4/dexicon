@@ -16,12 +16,6 @@
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
 
-    <!-- The development default, overridden by the release build with the git tag
-         (`/p:Version=1.2.3`). It is not decoration: it is what the OpenAPI document
-         and the MCP server report as their version, and an unset one reported 1.0.0
-         for a project that has never had a 1.0. -->
-    <Version>0.1.1</Version>
-
     <Product>Dexicon</Product>
     <Company>Dexicon</Company>
     <Copyright>Copyright 2026 Martyn Mcvay</Copyright>
@@ -31,6 +25,36 @@
     <!-- Deterministic builds in CI so the same source produces the same bytes. -->
     <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
+
+  <!-- ── Version ──────────────────────────────────────────────────────────────
+       Derived from the nearest `v*` git tag by MinVer, not written down anywhere.
+
+       A number in a file has to be bumped by somebody, and between the release and
+       the bump it is wrong: a build from source reported a version older than the
+       newest release, and that number is not decoration — it is what the OpenAPI
+       document carries and what the MCP server tells every client it is. The tag is
+       the only thing that already knows, so it is the only thing asked.
+
+       There is no bump commit to forget, and no second copy to drift. On the tag
+       `v0.1.1` this is `0.1.1`; a commit after it is `0.1.2-alpha.0.N`, which is
+       honest about being neither the last release nor the next one.
+
+       MinVer needs history and tags, so CI checks out with fetch-depth: 0. The
+       image build cannot use it at all — .dockerignore excludes .git, because
+       copying it in would invalidate the layer cache on every commit — so the
+       Dockerfile takes the version as a build argument instead, and sets
+       MinVerSkip. -->
+  <PropertyGroup>
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+    <!-- Untagged commits are alpha of the NEXT patch, rather than of the released
+         one, so a development build can never be mistaken for a release. -->
+    <MinVerAutoIncrement>patch</MinVerAutoIncrement>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Build-time only: it computes a number and contributes nothing to the output. -->
+    <PackageReference Include="MinVer" PrivateAssets="all" />
+  </ItemGroup>
 
   <!-- Test projects are held to the same warning bar but need xunit's analyzers. -->
   <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('.Tests'))">

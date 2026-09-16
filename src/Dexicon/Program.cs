@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json.Serialization;
 using Dexicon.Api;
 using Dexicon.Core.Auth;
@@ -68,7 +69,7 @@ builder.Services.AddOpenApi(o => o.AddDocumentTransformer((doc, _, _) =>
     doc.Info = new()
     {
         Title = "Dexicon",
-        Version = ThisAssembly.Version,
+        Version = ThisAssembly.ApiVersion,
         Description = "Semantic indexing and search. Every endpoint requires a bearer token; "
                     + "the tenant comes from the token, or from X-Dexicon-Tenant where the token allows it.",
     };
@@ -316,8 +317,47 @@ internal sealed class ScheduledRefreshService(
 
 internal static class ThisAssembly
 {
-    public static string Version =>
-        typeof(ThisAssembly).Assembly.GetName().Version?.ToString(3) ?? "0.1.0";
+    /// <summary>
+    /// What this build is: <c>0.1.1</c> on a release, <c>0.1.2-alpha.0.7</c> seven commits
+    /// after one. Derived from the nearest git tag at build time — see Directory.Build.props.
+    /// </summary>
+    /// <remarks>
+    /// The INFORMATIONAL version, not <c>Assembly.GetName().Version</c>. MinVer pins that
+    /// one to <c>major.0.0.0</c> on purpose, so a patch release cannot break assembly
+    /// binding — which means that for a 0.x project it is <c>0.0.0.0</c>, and reading it
+    /// reported <c>0.0.0</c> for every build. The <c>+sha</c> a deterministic build appends
+    /// is dropped: it is provenance, and the image already carries it as a `sha-` tag.
+    /// </remarks>
+    public static string Version { get; } = Read();
+
+    /// <summary>
+    /// The version of the API SURFACE, which is what an OpenAPI document versions.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately coarse, and deliberately not <see cref="Version"/>. The document is
+    /// generated at build time and COMMITTED, because the image builds the web client from
+    /// it — so a version carrying the commit height would make that file differ on every
+    /// commit, and the check that it matches the code would become noise everyone learns
+    /// to ignore. A patch does not change the contract; a minor does.
+    /// </remarks>
+    public static string ApiVersion { get; } = MajorMinor(Version);
+
+    private static string Read()
+    {
+        var informational = typeof(ThisAssembly).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+
+        if (string.IsNullOrEmpty(informational)) return "0.0.0";
+
+        var build = informational.IndexOf('+', StringComparison.Ordinal);
+        return build < 0 ? informational : informational[..build];
+    }
+
+    private static string MajorMinor(string version)
+    {
+        var parts = version.Split('.');
+        return parts.Length < 2 ? version : $"{parts[0]}.{parts[1]}";
+    }
 }
 
 /// <summary>Exposed so the integration tests can build the same host.</summary>

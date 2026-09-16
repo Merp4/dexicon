@@ -287,9 +287,12 @@ if it should not change even for a re-push:
 DEXICON_TAG=0.1.1 docker compose up -d
 ```
 
-The version in the tag is the version in the image: the release build stamps the git tag
-into the assembly, so the OpenAPI document and the version the MCP server reports agree
-with it, and publishing fails if they do not. Each image carries a provenance attestation
+The version in the tag is the version in the image, because the tag is where the version
+comes from at all (D-26). MinVer derives it from the nearest `v*` tag; nothing is written
+down, so nothing can be stale. The image build is the one place that cannot do this —
+`.dockerignore` excludes `.git` — so the workflow passes the tag in and then checks what
+the built image actually contains, and refuses to publish a mismatch. An image built by
+hand with no argument reports `0.0.0-dev` rather than impersonating a release. Each image carries a provenance attestation
 recording the commit and the workflow that produced it:
 
 ```bash

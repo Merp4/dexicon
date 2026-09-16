@@ -610,7 +610,7 @@ conservative default (which is what allowed the original bug).
 
 ---
 
-### D-24 Task framing is data, not code
+### D-25 Task framing is data, not code
 
 **Decision.** Each embedding model's task templates are stored per `(provider, model)` and
 editable at runtime. Resolution is: a saved row, then a built-in suggestion for a
@@ -646,6 +646,45 @@ instead, which cannot be omitted).
 re-indexes every chunk set on that model. Correct — documents embedded one way and queries
 framed another is exactly the silent mismatch this exists to prevent — but it means the
 editor says how many sets it is about to re-index.
+
+---
+
+### D-26 The version comes from the git tag, not from a file
+
+**Decision.** MinVer derives the version from the nearest `v*` tag at build time. No
+`<Version>` is written down anywhere.
+
+**Why.** A number in a file has to be bumped by somebody, and between cutting a release
+and remembering to bump it, the number is wrong. That happened here within an hour: a
+build from source reported 0.1.0 while 0.1.1 was the newest release. It is not
+decoration — it is what the OpenAPI document carries and what the MCP server tells every
+client it is, so a stale one is a small lie told to every consumer.
+
+Deriving it also dissolves the question of which commit to tag. There is no bump commit,
+so the tag goes on the commit being released, and the tag is the only thing that has to
+be right.
+
+**Consequence.** Three, all of them real:
+
+- A build needs history and tags. CI checks out with `fetch-depth: 0`; a shallow clone
+  versions itself `0.0.0-alpha.0.N` rather than failing, which is honest about not
+  knowing.
+- The container image cannot do this. `.dockerignore` excludes `.git`, because copying
+  history into the build context would invalidate the layer cache on every commit — so
+  the Dockerfile takes `VERSION` as a build argument, which the release workflow supplies
+  from the tag and then verifies against what the built image actually contains. A hand
+  build with no argument reports `0.0.0-dev`: an image built outside the pipeline should
+  say so rather than impersonate a release.
+- The OpenAPI document carries the MAJOR.MINOR only. That document is generated at build
+  time and committed, because the image builds the web client from it; a version carrying
+  the commit height would make the file differ on every commit and turn CI's
+  is-it-current check into noise everyone learns to ignore. A patch does not change the
+  contract.
+
+One trap worth stating, because it is silent: MinVer deliberately pins `AssemblyVersion`
+to `major.0.0.0` so a patch release cannot break assembly binding. Reading that as the
+product version reports `0.0.0` for any 0.x project, which is exactly what happened. The
+informational version is the one to read.
 
 ---
 
