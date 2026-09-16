@@ -1,0 +1,54 @@
+name: Bug report
+description: Something behaves differently from what it says it does
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, it is worth a look at
+        [docs/troubleshooting.md](https://github.com/Merp4/dexicon/blob/main/docs/troubleshooting.md) —
+        it covers the failures that actually happen in the first hour.
+
+        **Security problems do not go here.** Use the process in
+        [SECURITY.md](https://github.com/Merp4/dexicon/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what happened, and what you expected instead.
+    validations: { required: true }
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        `docker compose logs dexicon` around the failure. Secrets are already redacted,
+        but do check before pasting.
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Image tag or commit.
+    validations: { required: true }
+
+  - type: dropdown
+    id: how
+    attributes:
+      label: How are you running it
+      options:
+        - docker compose (the supported path)
+        - dev.ps1 against containerised dependencies
+        - something else
+    validations: { required: true }
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: |
+        Often the useful part. Which embedding provider and model, whether the corpus is a
+        workspace or uploads, roughly how big, GPU or CPU.

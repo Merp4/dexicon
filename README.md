@@ -48,6 +48,13 @@ implementation starts.
 | [10 — Security & secrets](docs/10-security-secrets.md) | Secret handling from commit one, container hardening, CI |
 | [11 — Roadmap](docs/11-roadmap.md) | Milestones M0–M5 with definitions of done |
 | [Decisions](docs/decisions.md) | Every load-bearing choice, its rationale, and what was rejected |
+| [Troubleshooting](docs/troubleshooting.md) | The failures that actually happen in the first hour |
+
+## Contributing
+
+[CONTRIBUTING.md](CONTRIBUTING.md) covers getting it running, what a good change looks like,
+and the handful of things this project will push back on. Security problems go through
+[SECURITY.md](SECURITY.md), not the issue tracker.
 
 ## Provenance
 

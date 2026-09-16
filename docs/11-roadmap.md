@@ -102,16 +102,23 @@ finding the matched text there.
 | **Ingestion** | ✅ Language-aware chunking, PDF/DOCX/PPTX/EPUB/HTML extraction with page provenance, incremental refresh, per-file status, backoff. ✅ **Uploads**, with a content-addressed blob store and cached extraction — so one document can be attached to several corpora and chunked differently in each. |
 | **Documents** | ✅ Library view, drag-and-drop upload, attach-to-another-corpus, extracted-text inspection, per-corpus chunking editor. |
 | **Jobs** | ✅ Queue, phases, SSE progress, `degraded` as a distinct state, orphan reconciliation on restart. |
-| **UI** | ✅ Search, Corpora, Jobs, Access, Settings. Verified in a browser end to end. |
-| **Tests** | ✅ 62 passing, including a guard for the "configured but unread" defect class. |
+| **UI** | ✅ Search, Corpora, Documents, Jobs, Models, Access, Settings. |
+| **Chunk sets** | ✅ A corpus carries several chunkings over the same documents, addressed as `corpus:set`. Changing embedding model is add-set → backfill → promote, so search never sees a partial index ([D-21](decisions.md)). |
+| **Providers** | ✅ Ollama, OpenAI and Azure OpenAI through `IEmbeddingGenerator`, model chosen per call. Model list/pull/delete, and a probe that measures a model's real input limit without indexing anything ([D-24](decisions.md)). |
+| **Tests** | ✅ 163 passing, including guards for the "configured but unread" defect class and for chunk-then-stitch round-tripping. |
+| **CI** | ✅ Build, test, type-check, gitleaks over full history, vulnerable-dependency checks, and an image build that starts the container. |
 
-**Not done, and named rather than glossed:** `get_context` de-overlapping is implemented but
-untested against a real multi-chunk file; the MCP `dexicon://` **resources** are specified in
-[06](06-mcp-surface.md) but not implemented; uploaded documents are not exposed to MCP as a
-distinct concept, so an agent sees them as ordinary files in a corpus (which is arguably
-correct, but it is an assumption nobody has tested).
+**Since closed:** `get_context` de-overlapping is now tested, including a chunk-then-stitch
+round-trip property, and verified against this repository's own docs — twelve files
+reconstruct byte-identically. The MCP `dexicon://` resources are implemented. `get_context`
+and the file resource both read by FILTER rather than by search, after an earlier version
+let relevance decide which parts of a file came back.
 
-**Two defects this milestone found by running it, both invisible to a reader:**
+**Still not done, named rather than glossed:** uploaded documents are not exposed to MCP as
+a distinct concept, so an agent sees them as ordinary files in a corpus — arguably correct,
+but still an assumption nobody has tested.
+
+**Defects this milestone found by running it, all invisible to a reader:**
 
 - **`chunk_size` did nothing.** The chunker split at every boundary, so two corpora
   configured 768 and 256 tokens produced byte-identical output at a 252-character mean.
@@ -119,7 +126,19 @@ correct, but it is an assumption nobody has tested).
   [04](04-ingestion.md#size-decides-when-to-split-a-boundary-decides-where).
 - **`MaxConcurrency` did nothing.** Configured, documented and passed by compose, read by
   nothing — embedding batches ran strictly sequentially. The generalised guard that now
-  catches this class immediately found a second instance (`Bootstrap.Token`).
+  catches this class immediately found a second instance (`Bootstrap.Token`), and later a
+  third when `OllamaOptions.Timeout` was orphaned by a refactor.
+- **An EPUB lost ~95% of its content and reported success.** The extractor emitted one line
+  per chapter, the chunker splits on lines, so a 578,000-character book became 18 chunks of
+  ~32,000 characters each — every one silently truncated by the embedding model. Nothing in
+  the system could detect it, which is why there is now a probe that measures a model's real
+  limit ([D-24](decisions.md)).
+- **The embedding model was ignored.** `EmbedAsync` read the globally configured model
+  rather than the one its caller asked for, so a chunk set pinned to another model would
+  have filled its collection with the wrong vectors. No error; just wrong results.
+- **Jobs were ordered by a nullable column.** A job that failed *before* starting has a null
+  `StartedUtc`, so dead failures sat permanently above the running job and anything reading
+  the first entry got a stale answer with complete confidence.
 
 **Still open from the original definition of done:** *a second person clones, runs
 `docker compose up`, indexes their own repository, connects their agent, and uses it
@@ -147,10 +166,22 @@ question.** Every question asked is a defect, logged and fixed before the milest
 </details>
 ---
 
-## M3 — Make the defaults earned (1 week)
+## M3 — Make the defaults earned (1 week) — **started**
 
 Every number in [04](04-ingestion.md) is currently a reasonable guess. This milestone
 replaces the ones that matter with measurements.
+
+**Done so far.** `scripts/retrieval-bench.py` runs a query set against two chunk sets and
+reports where the expected file ranked — a comparison chunk sets make honest, because the
+two can hold identical chunking over identical documents with one variable changed. A model
+probe measures each model's real input ceiling rather than trusting a documented one.
+
+Two runs, twelve queries, recorded in [decisions.md](decisions.md): the first put
+`nomic-embed-text` clearly ahead, and fixing one confound — Dexicon was sending raw text to
+models that expect task framing — moved `embeddinggemma` from 0.632 to 0.799 MRR and
+flipped the ranking. **A result that reverses when one variable is corrected is the
+strongest evidence yet that twelve hand-written queries cannot settle this**, which is
+precisely what the full milestone is for.
 
 - Build a fixed evaluation set: 40–60 `(query, expected file)` pairs over a real repository
   and a real document set, committed to the repo.
@@ -163,18 +194,25 @@ replaces the ones that matter with measurements.
 **Done when:** `docs/benchmarks.md` exists with reproducible numbers, the defaults cite it,
 and anyone proposing a reranker has a baseline to beat.
 
+**Also open here:** the probe measures ~1,962 tokens as the safe ceiling for both local
+models while the default chunk size is 768. Raising it is a retrieval-quality decision, not
+a safety one, and belongs in this milestone's sweep rather than as a guess.
+
 ---
 
-## M4 — Open-source ready (3–4 days)
+## M4 — Open-source ready — **partly done**
 
-- `README` with a screenshot, a 60-second quickstart, and an honest capability list —
-  including what it does not do.
-- `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, issue and PR templates.
-- Multi-arch images published to GHCR on tag, with an SBOM and digest-pinned bases.
-- `docs/troubleshooting.md` covering the real first-hour failures: scanned PDFs, Ollama not
-  resident, mount path not visible in the picker, agent connected but seeing no corpora.
-- Full-history secret scan, dependency and licence review.
-- A restore rehearsal: back up, destroy the volumes, restore, confirm search still works.
+- ✅ `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, issue and PR templates.
+- ✅ `docs/troubleshooting.md` covering the real first-hour failures.
+- ✅ Full-history secret scan in CI, with rules for the `dex_` token format and provider
+  API keys. Dependency vulnerability checks for NuGet and npm.
+- ✅ A restore rehearsal — and it was *run*, not just written: volumes destroyed, restored
+  from the tarballs, catalogue intact and **search returning results** afterwards. Liveness
+  alone would have passed a broken restore, because a catalogue with no vectors comes up
+  perfectly healthy and answers every query with nothing.
+- ⬜ `README` screenshot and a 60-second quickstart.
+- ⬜ Multi-arch images published to GHCR on tag, with an SBOM and digest-pinned bases.
+- ⬜ Licence review of the dependency tree.
 
 **Done when:** the repository is public and the quickstart has been followed on a clean
 machine by someone who did not write it.
@@ -193,7 +231,7 @@ answer to "what about…" is "yes, here, later" rather than an argument.
 | Reranking | A measured recall gap M3 shows hybrid cannot close. |
 | Structure-aware chunking for JSON/YAML | Config-heavy repos returning poor results. |
 | Watch mode / push-based reindex | Polling proving too slow in practice, with a number. |
-| Additional embedding providers | Someone needing a non-Ollama local runtime. |
+| ~~Additional embedding providers~~ | **Done.** OpenAI and Azure OpenAI ship; adding another is a registration. |
 | Persisted audit table | A deployment that needs an audit trail outliving container logs. |
 
 ---
