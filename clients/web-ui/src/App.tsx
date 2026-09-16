@@ -88,6 +88,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const [corpora, setCorpora] = useState<Corpus[]>([]);
   const [live, setLive] = useState<Record<string, Job & { currentFile?: string }>>({});
   const [connected, setConnected] = useState(true);
+  const [healthStale, setHealthStale] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -104,8 +105,14 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     const tick = async () => {
       try {
         setHealth(await api.health());
+        setHealthStale(false);
       } catch (e) {
-        if (e instanceof ApiError && e.status === 401) onSignOut();
+        if (e instanceof ApiError && e.status === 401) { onSignOut(); return; }
+        // A failed poll is NOT an outage. /healthz can be slow while indexing
+        // saturates Ollama, and blanking the state would paint both dots red during
+        // perfectly normal work — a false alarm is as bad as a missed one. Keep the
+        // last known state and say that it is stale.
+        setHealthStale(true);
       }
     };
     void tick();
@@ -168,7 +175,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           ))}
         </nav>
 
-        <HealthDots health={health} connected={connected} />
+        <HealthDots health={health} connected={connected} stale={healthStale} />
         <button className="btn" onClick={onSignOut}>Sign out</button>
       </header>
 
@@ -197,23 +204,26 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   );
 }
 
-function HealthDots({ health, connected }: { health: Health | null; connected: boolean }) {
+function HealthDots({ health, connected, stale }: { health: Health | null; connected: boolean; stale: boolean }) {
   const [open, setOpen] = useState(false);
   // A dev tool that hides whether its dependencies are healthy wastes an hour of
-  // someone's day per incident.
-  const dot = (ok: boolean) => ({
+  // someone's day per incident. One that cries wolf wastes just as much, so an
+  // unknown state is grey, never red.
+  const dot = (ok: boolean | undefined) => ({
     width: 8,
     height: 8,
     borderRadius: '50%',
-    background: ok ? 'var(--ok)' : 'var(--danger)',
+    background: ok === undefined ? 'var(--text-dim)' : ok ? 'var(--ok)' : 'var(--danger)',
+    opacity: stale ? 0.55 : 1,
     display: 'inline-block',
   });
 
   return (
     <div style={{ position: 'relative' }}>
       <button className="btn" onClick={() => setOpen((v) => !v)} aria-expanded={open} title="Dependency health">
-        <span style={dot(health?.qdrant.reachable ?? false)} /> qdrant
-        <span style={{ ...dot(health?.ollama.reachable ?? false), marginLeft: 6 }} /> ollama
+        <span style={dot(health?.qdrant.reachable)} /> qdrant
+        <span style={{ ...dot(health?.ollama.reachable), marginLeft: 6 }} /> ollama
+        {stale && <span className="dim" style={{ marginLeft: 6, fontSize: '0.75rem' }}>· checking</span>}
         {!connected && <span className="dim" style={{ marginLeft: 6, fontSize: '0.75rem' }}>· reconnecting</span>}
       </button>
 
@@ -764,7 +774,13 @@ function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: Record<
               <Badge>{j.kind}</Badge>
               <span style={{ flex: 1 }} />
               <span className="dim" style={{ fontSize: '0.78rem' }}>
-                {j.finishedUtc ? `finished ${relativeTime(j.finishedUtc)}` : j.startedUtc ? `started ${relativeTime(j.startedUtc)}` : 'queued'}
+                {j.finishedUtc
+                  ? `finished ${relativeTime(j.finishedUtc)}`
+                  : j.startedUtc
+                    ? `started ${relativeTime(j.startedUtc)}`
+                    // A job waiting behind a long one says how long it has waited. "queued"
+                    // alone cannot distinguish a fresh enqueue from one stuck for an hour.
+                    : `queued ${relativeTime(j.queuedUtc)}`}
               </span>
             </div>
 

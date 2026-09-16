@@ -22,6 +22,7 @@
   token    print the bootstrap token from the log
   reset    stop, delete the local catalogue and Qdrant collections, start fresh
   ui       build the SPA and copy it into wwwroot (the container does this at image build)
+  test     stop the app, run the test suite, and put the app back as it was
 
 .EXAMPLE
   ./scripts/dev.ps1 restart
@@ -29,7 +30,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Position = 0)]
-  [ValidateSet('up', 'restart', 'stop', 'down', 'logs', 'token', 'reset', 'ui')]
+  [ValidateSet('up', 'restart', 'stop', 'down', 'logs', 'token', 'reset', 'ui', 'test')]
   [string]$Command = 'restart'
 )
 
@@ -72,6 +73,23 @@ function Start-Dexicon {
   Get-Content $errFile -Tail 25 -ErrorAction SilentlyContinue
 }
 
+function Test-Dexicon {
+  # The test project references the host, so `dotnet test` rebuilds it -- and that fails
+  # with MSB3027 while the detached dev instance holds its own DLLs. Rather than leave
+  # that as folklore, the script stops the app, tests, and restarts it only if it was
+  # running when you started.
+  $wasRunning = [bool](Get-Process -Name Dexicon -ErrorAction SilentlyContinue)
+  Stop-Dexicon
+  Push-Location $root
+  try {
+    dotnet test --nologo -v q 2>&1 |
+      Select-String -Pattern ': error|error CS|\[FAIL\]|^\s+(Error Message|Assert|Shouldly)|Failed!|Passed!'
+    $failed = $LASTEXITCODE -ne 0
+  } finally { Pop-Location }
+  if ($wasRunning) { Start-Dexicon }
+  if ($failed) { throw 'tests failed' }
+}
+
 function Build-Dexicon {
   Push-Location $root
   try {
@@ -108,6 +126,7 @@ switch ($Command) {
   'up' { Start-Dependencies; Build-Dexicon; Stop-Dexicon; Start-Dexicon }
   'restart' { Stop-Dexicon; Build-Dexicon; Start-Dexicon }
   'stop' { Stop-Dexicon }
+  'test' { Test-Dexicon }
   'down' {
     Stop-Dexicon
     Push-Location $root
