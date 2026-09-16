@@ -12,8 +12,9 @@ import type { ChunkSet, Corpus, EmbeddingModelInfo } from './api';
  * dropdown listed the same model twice. Types were clean, the build was clean, 163 server
  * tests passed. It was found by someone looking at a screenshot.
  *
- * jsdom computes no layout, so none of this asserts "visible" — it asserts the mechanism
- * that made it invisible. That is most of the value for none of the cost of a real browser.
+ * jsdom computes no layout, so none of this asserts "visible" — it asserts that each
+ * control is the component library's, wearing the variant asked for, which is the thing
+ * that was actually wrong.
  */
 
 // The panel asks the server which models exist. Mocked: this is a test of what the
@@ -105,54 +106,86 @@ beforeEach(() => {
   listEmbeddingProviders.mockResolvedValue({ default: 'ollama', providers: [] });
 });
 
-/** Opens the add modal and waits for the model list to arrive, so no state lands late. */
+/** Opens the add modal and waits for the model list, so no state lands after the test. */
 async function openAddModal(sets: ChunkSet[] = [chunkSet()]) {
   const user = userEvent.setup();
   render(<ChunkSetsPanel corpus={corpus(sets)} onChanged={vi.fn()} />);
 
   await user.click(screen.getByRole('button', { name: /add set/i }));
   const dialog = await screen.findByRole('dialog');
-
-  // The model field starts as a free-text Input and becomes a Select once the list loads.
-  await waitFor(() =>
-    expect(within(dialog).getByLabelText(/Embedding model/).tagName).toBe('SELECT'),
-  );
+  await waitFor(() => expect(listEmbeddingModels).toHaveBeenCalled());
 
   return { dialog, user };
 }
 
+/** The options behind a closed select, which only exist once it is opened. */
+async function optionsOf(user: ReturnType<typeof userEvent.setup>, trigger: HTMLElement) {
+  await user.click(trigger);
+  const listbox = await screen.findByRole('listbox');
+  return within(listbox).getAllByRole('option').map((o) => o.textContent ?? '');
+}
+
 describe('the Add a chunk set form', () => {
-  it('renders every field as a real, styled control', async () => {
+  it('renders every field as a real control', async () => {
     const { dialog } = await openAddModal();
 
-    for (const label of [/^Name/, /Chunk size/, /Overlap/, /Boundary mode/, /Embedding model/]) {
-      expect(within(dialog).getByLabelText(label)).toHaveClass('input');
+    for (const label of ['Name', 'Chunk size (tokens)', 'Overlap (tokens)']) {
+      expect(within(dialog).getByLabelText(label)).toHaveAttribute('data-slot', 'input');
+    }
+    for (const label of ['Boundary mode', 'Embedding model']) {
+      expect(within(dialog).getByLabelText(label)).toHaveAttribute(
+        'data-slot',
+        'select-trigger',
+      );
     }
   });
 
-  it('makes the confirming button a primary one', async () => {
+  it('offers each field hint as a description rather than as its name', async () => {
+    const { dialog } = await openAddModal();
+
+    expect(within(dialog).getByLabelText('Overlap (tokens)')).toHaveAccessibleDescription(
+      'Must be smaller than the chunk size.',
+    );
+  });
+
+  it('makes the confirming button the primary one', async () => {
     const { dialog } = await openAddModal();
 
     // "Add set" and "Cancel" rendered identically, because the class was `btn primary`
     // and the stylesheet defines `btn-primary`.
-    expect(within(dialog).getByRole('button', { name: 'Add set' })).toHaveClass('btn-primary');
-    expect(within(dialog).getByRole('button', { name: 'Cancel' })).not.toHaveClass('btn-primary');
+    const confirm = within(dialog).getByRole('button', { name: 'Add set' });
+    const cancel = within(dialog).getByRole('button', { name: 'Cancel' });
+
+    expect(confirm).toHaveAttribute('data-variant', 'default');
+    expect(cancel.dataset.variant).not.toBe(confirm.dataset.variant);
   });
 
   it('lists each embedding model once', async () => {
     // A chunk set stores `nomic-embed-text`; the provider lists `nomic-embed-text:latest`.
     // The "stored value is not in the list" fallback compared them raw, so the model the
-    // set already used appeared twice in the dropdown.
+    // set already used appeared twice.
+    const { dialog, user } = await openAddModal();
+
+    const values = await optionsOf(user, within(dialog).getByLabelText('Embedding model'));
+
+    expect(values).toEqual([
+      'nomic-embed-text:latest (261.3 MB) · in use',
+      'embeddinggemma:latest (261.3 MB) · in use',
+    ]);
+  });
+
+  it('inherits the model of the set search currently uses', async () => {
+    // A new set is almost always "the same, but chunked differently". Starting blank
+    // makes the common case the most typing.
     const { dialog } = await openAddModal();
 
-    const options = [...within(dialog).getByLabelText(/Embedding model/).querySelectorAll('option')];
-    const names = options.map((o) => o.getAttribute('value')?.replace(/:latest$/, ''));
-
-    expect(names).toEqual(['nomic-embed-text', 'embeddinggemma']);
+    expect(within(dialog).getByLabelText('Embedding model')).toHaveTextContent(
+      'nomic-embed-text',
+    );
   });
 
   it('will not add a set without a name', async () => {
-    // The name is how search addresses the set. There is no sensible default for it.
+    // The name is how search addresses the set; there is no sensible default for it.
     const { dialog } = await openAddModal();
     expect(within(dialog).getByRole('button', { name: 'Add set' })).toBeDisabled();
   });
@@ -169,9 +202,13 @@ describe('the Add a chunk set form', () => {
 
     expect(within(dialog).queryByLabelText(/Boundary pattern/)).not.toBeInTheDocument();
 
-    await user.selectOptions(within(dialog).getByLabelText(/Boundary mode/), 'custom');
+    await user.click(within(dialog).getByLabelText('Boundary mode'));
+    await user.click(await screen.findByRole('option', { name: /custom/ }));
 
-    expect(within(dialog).getByLabelText(/Boundary pattern/)).toHaveClass('input');
+    expect(within(dialog).getByLabelText('Boundary pattern')).toHaveAttribute(
+      'data-slot',
+      'input',
+    );
   });
 });
 

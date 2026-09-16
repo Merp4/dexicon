@@ -11,10 +11,6 @@ try {
   /* blocked storage: fall back to prefers-color-scheme */
 }
 
-const style = document.createElement('style');
-style.textContent = '@keyframes dexicon-spin { to { transform: rotate(360deg) } }';
-document.head.appendChild(style);
-
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />

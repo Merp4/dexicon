@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import {
   api,
   getToken,
@@ -10,9 +10,10 @@ import {
   type ModelPullEvent,
 } from './api';
 import {
-  Badge, Button, CopyButton, ErrorBanner, Field, Input, Modal, Select, Spinner,
-  formatBytes, localTime, relativeTime, stateTone,
+  Badge, Button, CopyButton, ErrorBanner, Field, Input, Modal, Select, SelectItem,
+  Spinner, formatBytes, localTime, relativeTime, stateTone,
 } from './ui';
+import { Checkbox } from '@/components/ui/checkbox';
 
 /**
  * Chunk sets for one corpus.
@@ -105,7 +106,6 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
 
                 {!set.isDefault && (
                   <Button
-                    
                     disabled={busy === set.id || set.pendingCount > 0}
                     // Disabled rather than hidden while work is outstanding: the reason is
                     // the point, and a button that vanishes teaches nothing.
@@ -122,7 +122,6 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
 
                 {!set.isDefault && corpus.chunkSets.length > 1 && (
                   <Button
-                    
                     disabled={busy === set.id}
                     onClick={() => {
                       if (!confirm(`Delete chunk set "${set.name}" and its ${set.chunkCount.toLocaleString()} chunks?`))
@@ -204,7 +203,16 @@ function ChunkSetModal({
     // Best effort, and per provider: a picker is nicer than a text box, but a backend
     // being unreachable must not stop someone editing chunk settings that have nothing
     // to do with it.
-    api.listEmbeddingModels(provider).then((r) => setModels(r.models)).catch(() => setModels([]));
+    api
+      .listEmbeddingModels(provider)
+      .then((r) => {
+        setModels(r.models);
+        // The catalogue stores `nomic-embed-text`; the provider lists the same model as
+        // `nomic-embed-text:latest`. Adopt the provider's spelling, or the picker holds a
+        // value that is none of its own options and shows nothing at all.
+        setModel((current) => r.models.find((m) => sameModel(m.name, current))?.name ?? current);
+      })
+      .catch(() => setModels([]));
   }, [provider]);
 
   const save = async () => {
@@ -245,7 +253,9 @@ function ChunkSetModal({
   };
 
   const changesModel =
-    !existing && (model !== template?.embeddingModel || provider !== template?.embeddingProvider);
+    !existing &&
+    (!sameModel(model, template?.embeddingModel ?? '') ||
+      provider !== template?.embeddingProvider);
 
   const chosenProvider = providers.find((p) => p.name === provider);
 
@@ -265,11 +275,11 @@ function ChunkSetModal({
 
       {!existing && providers.length > 0 && (
         <Field label="Provider" hint="Which backend embeds this set. Credentials come from configuration, never from here.">
-          <Select value={provider} onChange={(e) => setProvider(e.target.value)}>
+          <Select value={provider} onValueChange={setProvider}>
             {providers.map((p) => (
-              <option key={p.name} value={p.name} disabled={!p.configured}>
+              <SelectItem key={p.name} value={p.name} disabled={!p.configured}>
                 {p.name} ({p.kind}){p.configured ? '' : ' — not configured'}
-              </option>
+              </SelectItem>
             ))}
           </Select>
         </Field>
@@ -287,12 +297,14 @@ function ChunkSetModal({
           hint="Pinned once the set exists: a different model is a different vector space, so changing it means a new set."
         >
           {models.length > 0 ? (
-            <Select value={model} onChange={(e) => setModel(e.target.value)}>
-              {!models.some((m) => sameModel(m.name, model)) && <option value={model}>{model}</option>}
+            <Select value={model} onValueChange={setModel} placeholder="Choose a model">
+              {model && !models.some((m) => sameModel(m.name, model)) && (
+                <SelectItem value={model}>{model}</SelectItem>
+              )}
               {models.map((m) => (
-                <option key={m.name} value={m.name}>
+                <SelectItem key={m.name} value={m.name}>
                   {m.name} ({formatBytes(m.sizeBytes)}){m.inUse ? ' · in use' : ''}
-                </option>
+                </SelectItem>
               ))}
             </Select>
           ) : (
@@ -329,11 +341,11 @@ function ChunkSetModal({
       </div>
 
       <Field label="Boundary mode" hint="Size decides when to split; the boundary decides where.">
-        <Select value={boundaryMode} onChange={(e) => setBoundaryMode(e.target.value)}>
-          <option value="language-aware">language-aware — member and declaration boundaries</option>
-          <option value="blank-line">blank-line — paragraphs</option>
-          <option value="none">none — size only</option>
-          <option value="custom">custom — your own regex</option>
+        <Select value={boundaryMode} onValueChange={setBoundaryMode}>
+          <SelectItem value="language-aware">language-aware — member and declaration boundaries</SelectItem>
+          <SelectItem value="blank-line">blank-line — paragraphs</SelectItem>
+          <SelectItem value="none">none — size only</SelectItem>
+          <SelectItem value="custom">custom — your own regex</SelectItem>
         </Select>
       </Field>
 
@@ -400,14 +412,17 @@ function Toggle({
   label: string;
   hint: string;
 }) {
+  const id = useId();
   return (
-    <label style={{ display: 'block', marginBottom: '0.6rem', cursor: 'pointer' }}>
-      <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-        <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{label}</span>
-      </span>
-      <span className="dim" style={{ display: 'block', fontSize: '0.75rem', marginLeft: '1.6rem' }}>{hint}</span>
-    </label>
+    <div className="mb-2.5 flex gap-2.5">
+      <Checkbox id={id} checked={checked} onCheckedChange={(v) => onChange(v === true)} className="mt-0.5" />
+      <div className="grid gap-0.5">
+        <label htmlFor={id} className="cursor-pointer text-sm font-semibold leading-none">
+          {label}
+        </label>
+        <span className="text-xs text-muted-foreground">{hint}</span>
+      </div>
+    </div>
   );
 }
 
@@ -683,7 +698,6 @@ export function ModelsView() {
 
                   <div style={{ display: 'flex', gap: '0.35rem' }}>
                     <Button
-                      
                       title="How text is wrapped before it is embedded"
                       onClick={() => setEditingProfile(m)}
                     >
@@ -691,7 +705,6 @@ export function ModelsView() {
                     </Button>
 
                     <Button
-                      
                       disabled={probing !== null}
                       title="Measure what this model actually accepts, without indexing anything"
                       onClick={() => void probe(m.name)}
@@ -701,7 +714,6 @@ export function ModelsView() {
 
                     {managed && (
                       <Button
-                        
                         disabled={m.inUse}
                         title={m.inUse ? 'A chunk set embeds with this model. Migrate it first.' : 'Remove from Ollama'}
                         onClick={() => void remove(m.name)}

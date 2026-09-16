@@ -1,4 +1,5 @@
 @import 'tailwindcss';
+@import 'tw-animate-css';
 
 /* Dexicon's palette. Tokens on :root, redefined for dark mode, so every surface
    stays consistent and nothing hardcodes a colour. */
@@ -19,6 +20,7 @@
   --ok: oklch(58% 0.14 155);
   --warn: oklch(68% 0.15 75);
   --danger: oklch(58% 0.19 25);
+  --on-accent: oklch(100% 0 0);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -34,6 +36,7 @@
     --ok: oklch(72% 0.15 155);
     --warn: oklch(78% 0.15 75);
     --danger: oklch(68% 0.18 25);
+    --on-accent: oklch(17% 0.008 260);
   }
 }
 
@@ -49,6 +52,76 @@
   --ok: oklch(72% 0.15 155);
   --warn: oklch(78% 0.15 75);
   --danger: oklch(68% 0.18 25);
+  --on-accent: oklch(17% 0.008 260);
+}
+
+/* ── shadcn's vocabulary, spoken in Dexicon's palette ──────────────────────────
+ *
+ * shadcn components are written against `bg-card`, `text-muted-foreground`,
+ * `border-input` and so on. Rather than paste a second palette beside the one above
+ * and keep two sets of colours in step by hand, the names are MAPPED onto the tokens
+ * already defined — so `npx shadcn add <component>` produces something that is already
+ * Dexicon-coloured, in light and dark, with nothing to reconcile.
+ *
+ * `inline` matters: it keeps the `var()` indirection instead of resolving at build
+ * time, which is what lets the dark-mode overrides above reach these too.
+ *
+ * Note shadcn's `accent` means "subtle hover surface", not a brand colour. Dexicon's
+ * `--accent` is the brand blue and is `primary` here. That is why the blue is NOT
+ * mapped to `--color-accent`: nothing redefines `--accent`, so `var(--accent)` in the
+ * app's own styles still means what it always meant.
+ */
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+
+  --color-card: var(--surface);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--text);
+
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--on-accent);
+
+  --color-secondary: var(--surface-2);
+  --color-secondary-foreground: var(--text);
+
+  --color-muted: var(--surface-2);
+  --color-muted-foreground: var(--text-dim);
+
+  /* shadcn's "accent" — the hover surface, not the brand. */
+  --color-accent: var(--surface-2);
+  --color-accent-foreground: var(--text);
+
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: var(--on-accent);
+
+  --color-success: var(--ok);
+  --color-warning: var(--warn);
+
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--accent);
+
+  --radius-sm: 5px;
+  --radius-md: 7px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+}
+
+/* The app has always done dark mode by redefining the tokens, so most components need
+   no `dark:` at all. Some shadcn ones use it anyway, so the variant is taught the two
+   conditions already used above: the OS preference unless overridden, or an explicit
+   choice. */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme='light']), :root:not([data-theme='light']) *) {
+      @slot;
+    }
+  }
+  &:where(:root[data-theme='dark'], :root[data-theme='dark'] *) {
+    @slot;
+  }
 }
 
 body {
@@ -67,62 +140,14 @@ body {
 }
 
 @layer components {
+  /* What is left of the hand-written layer. Buttons, inputs, badges and the focus ring
+     moved to `src/components/ui`, where they cannot be left off by accident. These three
+     are not components — they are the two typographic roles the app uses everywhere, and
+     the surface a panel sits on. */
   .card {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 10px;
-  }
-
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.4rem 0.75rem;
-    border-radius: 7px;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--text);
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 120ms ease, border-color 120ms ease;
-  }
-  .btn:hover:not(:disabled) { background: var(--surface-2); }
-  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  .btn-primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: white;
-  }
-  .btn-primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); }
-
-  .btn-danger { color: var(--danger); border-color: var(--border); }
-  .btn-danger:hover:not(:disabled) { background: color-mix(in oklab, var(--danger) 12%, transparent); }
-
-  .input {
-    width: 100%;
-    padding: 0.45rem 0.65rem;
-    border-radius: 7px;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--text);
-    font-size: 0.875rem;
-  }
-  .input::placeholder { color: var(--text-dim); }
-
-  .badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-    padding: 0.12rem 0.45rem;
-    border-radius: 999px;
-    font-size: 0.72rem;
-    font-weight: 600;
-    border: 1px solid var(--border);
-    background: var(--surface-2);
-    color: var(--text-dim);
-    white-space: nowrap;
   }
 
   .dim { color: var(--text-dim); }
