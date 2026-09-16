@@ -150,7 +150,7 @@ Three deliberate choices:
 
 Search returns chunks. Two ways to get more, and only one of them is a tool:
 
-- **`get_context(corpus, file_path, around_line, before, after)`** — an MCP tool
+- **`get_context(corpus, file_path, around_line, before, after, line_numbers)`** — an MCP tool
   ([06](06-mcp-surface.md)). Returns the neighbouring lines from the stored chunks for that
   file, stitched and de-overlapped. Works for uploads with no file on disk.
 - **`dexicon://corpus/{name}/file/{path}`** — an MCP *resource*, not a tool. The
