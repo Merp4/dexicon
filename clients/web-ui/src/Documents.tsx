@@ -4,6 +4,7 @@ import {
   Badge, Button, CopyButton, Empty, Field, Modal, Select, SelectItem, Spinner,
   formatBytes, localTime, relativeTime, stateTone,
 } from './ui';
+import { cn } from 'cn';
 
 /**
  * The document library.
@@ -80,11 +81,11 @@ export function DocumentsView({
   );
 
   return (
-    <div style={{ display: 'grid', gap: '1rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
-        <h1 style={{ margin: 0, fontSize: '1.15rem' }}>Documents</h1>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-          <label className="dim" style={{ fontSize: '0.8rem' }} htmlFor="upload-target">Upload into</label>
+    <div className="grid gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h1 className="m-0 text-lg">Documents</h1>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-muted-foreground" htmlFor="upload-target">Upload into</label>
           <Select
             id="upload-target"
             className="w-auto"
@@ -113,15 +114,12 @@ export function DocumentsView({
           setDragging(false);
           void upload(Array.from(e.dataTransfer.files));
         }}
-        className="card"
-        style={{
-          padding: '1.6rem',
-          textAlign: 'center',
-          borderStyle: 'dashed',
-          borderColor: dragging ? 'var(--accent)' : 'var(--border)',
-          background: dragging ? 'var(--accent-soft)' : undefined,
-          transition: 'background 120ms ease, border-color 120ms ease',
-        }}
+        // A dashed border and a colour change are the whole affordance: nothing else on
+        // the page says "you may drop a file here".
+        className={cn(
+          'card border-dashed p-7 text-center transition-colors',
+          dragging && 'border-[var(--accent)] bg-[var(--accent-soft)]',
+        )}
       >
         <input
           ref={fileInput}
@@ -133,10 +131,10 @@ export function DocumentsView({
             e.target.value = '';
           }}
         />
-        <p style={{ margin: '0 0 0.6rem', fontWeight: 600 }}>
+        <p className="mt-0 mb-2.5 flex items-center justify-center gap-2 font-semibold">
           {busy ? <><Spinner /> Uploading…</> : 'Drop files here'}
         </p>
-        <p className="dim" style={{ margin: '0 0 0.9rem', fontSize: '0.82rem' }}>
+        <p className="mt-0 mb-3.5 text-sm text-muted-foreground">
           PDF, DOCX, PPTX, EPUB, HTML, Markdown and plain text. Extraction happens once per
           file; chunking happens per corpus.
         </p>
@@ -153,44 +151,42 @@ export function DocumentsView({
           hint="Upload a PDF or a doc above. The same file can then be attached to several corpora, each chunked its own way."
         />
       ) : (
-        <div style={{ display: 'grid', gap: '0.7rem' }}>
+        <div className="grid gap-3">
           {docs.map((d) => (
-            <article key={d.sha256} className="card" style={{ padding: '0.9rem' }}>
-              <header style={{ display: 'flex', gap: '0.55rem', alignItems: 'baseline', flexWrap: 'wrap' }}>
+            <article key={d.sha256} className="card p-3.5">
+              <header className="flex flex-wrap items-baseline gap-2">
                 <strong>{d.title || d.originalFileName || d.sha256.slice(0, 12)}</strong>
                 {d.title && d.originalFileName && (
-                  <span className="dim mono" style={{ fontSize: '0.78rem' }}>{d.originalFileName}</span>
+                  <span className="mono text-xs text-muted-foreground">{d.originalFileName}</span>
                 )}
-                <span style={{ flex: 1 }} />
-                <span className="dim" style={{ fontSize: '0.78rem' }} title={localTime(d.createdUtc)}>
+                <span className="flex-1" />
+                <span className="text-xs text-muted-foreground" title={localTime(d.createdUtc)}>
                   {formatBytes(d.sizeBytes)} · {d.extractedChars.toLocaleString()} chars · {relativeTime(d.createdUtc)}
                 </span>
               </header>
 
               {d.emptyReason && (
-                <p style={{ margin: '0.5rem 0 0', fontSize: '0.8rem', color: 'var(--warn)' }}>
+                <p className="mt-2 mb-0 text-sm text-[var(--warn)]">
                   {/* Where "why isn't my scanned PDF searchable" gets answered. */}
                   ⚠ {d.emptyReason}
                 </p>
               )}
 
               {/* The comparison that makes the model legible. */}
-              <div style={{ marginTop: '0.7rem', display: 'grid', gap: '0.3rem' }}>
+              <div className="mt-3 grid gap-1">
                 {d.attachments.map((a) => (
                   <div
                     key={a.fileId}
-                    style={{
-                      display: 'flex', gap: '0.55rem', alignItems: 'center', flexWrap: 'wrap',
-                      padding: '0.35rem 0.55rem', borderRadius: 7, background: 'var(--surface-2)', fontSize: '0.8rem',
-                    }}
+                    className="flex flex-wrap items-center gap-2 rounded-md bg-muted px-2 py-1.5 text-sm"
                   >
-                    <strong style={{ minWidth: 130 }}>{a.corpusName}</strong>
+                    <strong className="min-w-[130px]">{a.corpusName}</strong>
                     <Badge tone={stateTone(a.status)}>{a.status}</Badge>
                     <span className="mono">{a.chunkCount} chunks</span>
-                    <span className="dim">from {a.chunkSize}/{a.chunkOverlap} {a.boundaryMode}</span>
-                    <span style={{ flex: 1 }} />
-                    <Button variant="danger"
-                      style={{ padding: '0.1rem 0.45rem', fontSize: '0.72rem' }}
+                    <span className="text-muted-foreground">from {a.chunkSize}/{a.chunkOverlap} {a.boundaryMode}</span>
+                    <span className="flex-1" />
+                    <Button
+                      variant="danger"
+                      size="xs"
                       onClick={async () => {
                         try {
                           await api.detachDocument(a.corpusName, a.fileId);
@@ -205,7 +201,7 @@ export function DocumentsView({
                 ))}
               </div>
 
-              <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.7rem', flexWrap: 'wrap' }}>
+              <div className="mt-3 flex flex-wrap gap-1.5">
                 <Button onClick={() => setAttaching(d)} disabled={writable.length === 0}>
                   Attach to another corpus…
                 </Button>
@@ -254,14 +250,14 @@ function AttachModal({
 
   return (
     <Modal title="Attach to another corpus" onClose={onClose}>
-      <p style={{ marginTop: 0, fontSize: '0.86rem' }}>
+      <p className="mt-0 text-sm">
         The bytes are already stored and the text already extracted. Attaching re-chunks
         that cached text with the target corpus's settings — nothing is re-uploaded and
         the file is never re-opened.
       </p>
 
       {available.length === 0 ? (
-        <p className="dim" style={{ fontSize: '0.85rem' }}>
+        <p className="text-sm text-muted-foreground">
           This document is already attached to every corpus you can write to.
         </p>
       ) : (
@@ -275,7 +271,7 @@ function AttachModal({
           </Field>
 
           {chosen && (
-            <p className="dim" style={{ fontSize: '0.8rem', marginTop: '-0.45rem' }}>
+            <p className="-mt-2 text-sm text-muted-foreground">
               {/* An upload is queued into EVERY set, so naming only the default would
                   understate what is about to happen. */}
               Will be chunked {chosen.chunkSets.length === 1 ? 'as' : 'by each of'}{' '}
@@ -289,9 +285,10 @@ function AttachModal({
             </p>
           )}
 
-          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+          <div className="mt-4 flex justify-end gap-2">
             <Button onClick={onClose}>Cancel</Button>
-            <Button variant="primary"
+            <Button
+              variant="primary"
               disabled={!target || busy}
               onClick={async () => {
                 setBusy(true);
@@ -333,22 +330,15 @@ function ExtractedTextModal({
         <p><Spinner /> Loading…</p>
       ) : (
         <>
-          <div className="dim" style={{ fontSize: '0.8rem', marginBottom: '0.7rem' }}>
+          <div className="mb-3 text-sm text-muted-foreground">
             <span title={localTime(text.extractedUtc)}>
               {text.extractor} · {text.extractedChars.toLocaleString()} chars · extracted {relativeTime(text.extractedUtc)}
             </span>
           </div>
           {text.emptyReason && (
-            <p style={{ color: 'var(--warn)', fontSize: '0.85rem' }}>⚠ {text.emptyReason}</p>
+            <p className="text-sm text-[var(--warn)]">⚠ {text.emptyReason}</p>
           )}
-          <pre
-            className="mono"
-            style={{
-              background: 'var(--surface-2)', padding: '0.7rem', borderRadius: 7,
-              fontSize: '0.75rem', maxHeight: '55vh', overflow: 'auto',
-              whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0,
-            }}
-          >
+          <pre className="mono m-0 max-h-[55vh] overflow-auto rounded-md bg-muted p-3 text-xs break-words whitespace-pre-wrap">
             {text.preview || '(nothing was extracted)'}
           </pre>
         </>
