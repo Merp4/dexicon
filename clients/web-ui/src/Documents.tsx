@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type Corpus, type DocumentText, type LibraryDocument } from './api';
-import { Badge, CopyButton, Empty, Field, Modal, Spinner, formatBytes, relativeTime, stateTone } from './ui';
+import { Badge, CopyButton, Empty, Field, Modal, Spinner, formatBytes, localTime, relativeTime, stateTone } from './ui';
 
 /**
  * The document library.
@@ -151,7 +151,7 @@ export function DocumentsView({
                   <span className="dim mono" style={{ fontSize: '0.78rem' }}>{d.originalFileName}</span>
                 )}
                 <span style={{ flex: 1 }} />
-                <span className="dim" style={{ fontSize: '0.78rem' }}>
+                <span className="dim" style={{ fontSize: '0.78rem' }} title={localTime(d.createdUtc)}>
                   {formatBytes(d.sizeBytes)} · {d.extractedChars.toLocaleString()} chars · {relativeTime(d.createdUtc)}
                 </span>
               </header>
@@ -317,7 +317,9 @@ function ExtractedTextModal({
       ) : (
         <>
           <div className="dim" style={{ fontSize: '0.8rem', marginBottom: '0.7rem' }}>
-            {text.extractor} · {text.extractedChars.toLocaleString()} chars · extracted {relativeTime(text.extractedUtc)}
+            <span title={localTime(text.extractedUtc)}>
+              {text.extractor} · {text.extractedChars.toLocaleString()} chars · extracted {relativeTime(text.extractedUtc)}
+            </span>
           </div>
           {text.emptyReason && (
             <p style={{ color: 'var(--warn)', fontSize: '0.85rem' }}>⚠ {text.emptyReason}</p>

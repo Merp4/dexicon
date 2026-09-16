@@ -11,7 +11,7 @@ import {
   type Job,
   type SearchResult,
 } from './api';
-import { Badge, CopyButton, Empty, ErrorBanner, Field, Modal, Spinner, formatBytes, relativeTime, stateTone } from './ui';
+import { Badge, CopyButton, Empty, ErrorBanner, Field, Modal, Spinner, formatBytes, localTime, relativeTime, stateTone } from './ui';
 import { ChunkingModal, DocumentsView } from './Documents';
 
 type View = 'search' | 'corpora' | 'documents' | 'jobs' | 'access' | 'settings';
@@ -458,7 +458,7 @@ function CorporaView({
                   {c.visibility === 'shared' && <Badge tone="accent">shared</Badge>}
                   {!c.owned && <Badge>read-only</Badge>}
                   <span style={{ flex: 1 }} />
-                  <span className="dim" style={{ fontSize: '0.78rem' }}>indexed {relativeTime(c.lastIndexedUtc)}</span>
+                  <span className="dim" style={{ fontSize: '0.78rem' }} title={localTime(c.lastIndexedUtc)}>indexed {relativeTime(c.lastIndexedUtc)}</span>
                 </div>
 
                 {c.description && <p className="dim" style={{ margin: '0.35rem 0 0', fontSize: '0.83rem' }}>{c.description}</p>}
@@ -825,7 +825,7 @@ function AccessView({ onError }: { onError: (e: unknown) => void }) {
                 {t.revokedUtc && <Badge tone="danger">revoked</Badge>}
                 {t.expiresUtc && new Date(t.expiresUtc) < new Date() && <Badge tone="warn">expired</Badge>}
                 <span style={{ flex: 1 }} />
-                <span className="dim" style={{ fontSize: '0.75rem' }}>used {relativeTime(t.lastUsedUtc)}</span>
+                <span className="dim" style={{ fontSize: '0.78rem' }} title={localTime(t.lastUsedUtc)}>used {relativeTime(t.lastUsedUtc)}</span>
                 {!t.revokedUtc && (
                   <button className="btn btn-danger" onClick={async () => { try { await api.revokeToken(t.id); await load(); } catch (e) { onError(e); } }}>
                     Revoke
@@ -848,7 +848,7 @@ function AccessView({ onError }: { onError: (e: unknown) => void }) {
               <code className="mono" style={{ fontSize: '0.85rem' }}>{t.id}</code>
               {t.disabled && <Badge tone="danger">disabled</Badge>}
               <span style={{ flex: 1 }} />
-              <span className="dim" style={{ fontSize: '0.75rem' }}>created {relativeTime(t.createdUtc)}</span>
+              <span className="dim" style={{ fontSize: '0.78rem' }} title={localTime(t.createdUtc)}>created {relativeTime(t.createdUtc)}</span>
             </div>
           ))}
         </div>
