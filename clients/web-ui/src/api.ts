@@ -110,6 +110,11 @@ export interface EmbeddingModelInfo {
   dimensions?: number;
   /** True when a chunk set embeds with it — deleting it is refused while this holds. */
   inUse: boolean;
+  /** How text is framed for this model. `{text}` alone means embedded unchanged. */
+  documentTemplate: string;
+  queryTemplate: string;
+  /** `configured` = saved here, `builtin` = shipped default, `none` = embedded raw. */
+  templateOrigin: 'configured' | 'builtin' | 'none';
 }
 
 export interface EmbeddingProviderInfo {
@@ -340,6 +345,18 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ model, provider }),
     }),
+
+  saveModelProfile: (body: {
+    provider?: string;
+    model: string;
+    documentTemplate: string;
+    queryTemplate: string;
+    notes?: string;
+  }) =>
+    request<{ provider: string; model: string; reindexing: string[]; note?: string }>(
+      '/api/embedding-models/profile',
+      { method: 'PUT', body: JSON.stringify(body) },
+    ),
 
   deleteEmbeddingModel: (model: string, provider?: string) =>
     request<void>(

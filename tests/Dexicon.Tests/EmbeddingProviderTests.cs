@@ -30,7 +30,7 @@ public sealed class EmbeddingProviderTests
         var generator = new RecordingGenerator(dimensions: 8);
         var service = Service(generator);
 
-        await service.EmbedAsync(new EmbeddingTarget(Provider, "mxbai-embed-large"), ["hello"]);
+        await service.EmbedAsync(new EmbeddingTarget(Provider, "mxbai-embed-large"), EmbedPurpose.Raw, ["hello"]);
 
         generator.ModelsUsed.ShouldBe(["mxbai-embed-large"],
             "a set pinned to a model must embed with THAT model, not the configured default");
@@ -43,8 +43,8 @@ public sealed class EmbeddingProviderTests
         var generator = new RecordingGenerator(dimensions: 8);
         var service = Service(generator);
 
-        await service.EmbedAsync(new EmbeddingTarget(Provider, "model-a"), ["x"]);
-        await service.EmbedAsync(new EmbeddingTarget(Provider, "model-b"), ["y"]);
+        await service.EmbedAsync(new EmbeddingTarget(Provider, "model-a"), EmbedPurpose.Raw, ["x"]);
+        await service.EmbedAsync(new EmbeddingTarget(Provider, "model-b"), EmbedPurpose.Raw, ["y"]);
 
         generator.ModelsUsed.ShouldBe(["model-a", "model-b"]);
     }
@@ -57,7 +57,7 @@ public sealed class EmbeddingProviderTests
         var service = Service(new RecordingGenerator(dimensions: 8));
 
         await Should.ThrowAsync<ArgumentException>(
-            () => service.EmbedAsync(new EmbeddingTarget(Provider, ""), ["x"]));
+            () => service.EmbedAsync(new EmbeddingTarget(Provider, ""), EmbedPurpose.Raw, ["x"]));
     }
 
     // ── Dimension probing ────────────────────────────────────────────────────
@@ -118,7 +118,7 @@ public sealed class EmbeddingProviderTests
         var service = Service(new OrderRevealingGenerator(), batchSize: 1, maxConcurrency: 4);
 
         var inputs = Enumerable.Range(0, 24).Select(i => i.ToString()).ToArray();
-        var vectors = await service.EmbedAsync(new EmbeddingTarget(Provider, "m"), inputs);
+        var vectors = await service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Raw, inputs);
 
         vectors.Count.ShouldBe(inputs.Length);
         for (var i = 0; i < inputs.Length; i++)
@@ -129,7 +129,7 @@ public sealed class EmbeddingProviderTests
     public async Task NoInputsMeansNoCalls()
     {
         var generator = new RecordingGenerator(dimensions: 8);
-        (await Service(generator).EmbedAsync(new EmbeddingTarget(Provider, "m"), [])).ShouldBeEmpty();
+        (await Service(generator).EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Raw, [])).ShouldBeEmpty();
         generator.Calls.ShouldBe(0);
     }
 
@@ -144,7 +144,7 @@ public sealed class EmbeddingProviderTests
         var service = Service(new ThrowingGenerator());
 
         var ex = await Should.ThrowAsync<EmbeddingUnavailableException>(
-            () => service.EmbedAsync(new EmbeddingTarget(Provider, "m"), ["x"]));
+            () => service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Raw, ["x"]));
 
         ex.Message.ShouldContain("test/m");
     }
@@ -155,7 +155,7 @@ public sealed class EmbeddingProviderTests
         var service = Service(new RecordingGenerator(dimensions: 8));
 
         var ex = await Should.ThrowAsync<UnknownEmbeddingProviderException>(
-            () => service.EmbedAsync(new EmbeddingTarget("nope", "m"), ["x"]));
+            () => service.EmbedAsync(new EmbeddingTarget("nope", "m"), EmbedPurpose.Raw, ["x"]));
 
         ex.Message.ShouldContain("nope");
         ex.Message.ShouldContain(Provider);
@@ -187,9 +187,21 @@ public sealed class EmbeddingProviderTests
 
         return new EmbeddingService(
             new StubFactory(generator, options.Value.Embedding),
+            // These tests are about batching, ordering and dimension caching; task
+            // framing has its own tests and would only add noise to the inputs here.
+            new NoProfiles(),
             options,
             cache ?? new MemoryCache(new MemoryCacheOptions()),
             NullLogger<EmbeddingService>.Instance);
+    }
+
+    /// <summary>No task framing: text reaches the generator exactly as it was passed.</summary>
+    private sealed class NoProfiles : IModelProfiles
+    {
+        public Task<ModelTemplates> ForAsync(EmbeddingTarget target, CancellationToken ct = default) =>
+            Task.FromResult(ModelTemplates.Raw);
+
+        public ModelTemplates? Suggest(string model) => null;
     }
 
     /// <summary>Hands out one generator, and resolves provider names for real.</summary>

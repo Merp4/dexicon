@@ -71,6 +71,7 @@ builder.Services.AddDbContext<CatalogDbContext>(o =>
 // Singleton: a generator holds a connection and a credential, and the model is a
 // per-call argument, so there is nothing per-request about it.
 builder.Services.AddSingleton<IEmbeddingGeneratorFactory, EmbeddingGeneratorFactory>();
+builder.Services.AddScoped<IModelProfiles, ModelProfiles>();
 builder.Services.AddScoped<IEmbeddingService, EmbeddingService>();
 builder.Services.AddScoped<IModelCatalog, ModelCatalog>();
 builder.Services.AddScoped<ModelProbe>();

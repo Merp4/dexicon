@@ -122,8 +122,13 @@ public sealed class ModelProbeTests
             Task.FromResult(dimensions);
 
         public Task<IReadOnlyList<float[]>> EmbedAsync(
-            EmbeddingTarget target, IReadOnlyList<string> inputs, CancellationToken ct = default)
+            EmbeddingTarget target, EmbedPurpose purpose, IReadOnlyList<string> inputs,
+            CancellationToken ct = default)
         {
+            // The probe must always ask for Raw: a task template would add characters of
+            // its own and shift every measurement by the length of a prefix.
+            purpose.ShouldBe(EmbedPurpose.Raw, "the probe measures the model, not a document");
+
             var vectors = new List<float[]>();
 
             foreach (var input in inputs)

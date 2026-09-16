@@ -86,7 +86,17 @@ public sealed record PullModelRequest(string Model, string? Provider);
 public sealed record ProbeModelRequest(string Model, string? Provider);
 
 /// <summary>One embedding model a provider can serve.</summary>
-public sealed record EmbeddingModelInfo(string Name, long SizeBytes, int? Dimensions, bool InUse);
+public sealed record EmbeddingModelInfo(
+    string Name, long SizeBytes, int? Dimensions, bool InUse,
+    /// <summary>How text is framed for this model, and whether that is saved or assumed.</summary>
+    string DocumentTemplate, string QueryTemplate, string TemplateOrigin);
+
+/// <summary>
+/// Saves the task framing for one model. Templates contain <c>{text}</c>; sending
+/// <c>{text}</c> alone means "embed it raw", which is correct for some models.
+/// </summary>
+public sealed record SaveModelProfileRequest(
+    string? Provider, string Model, string DocumentTemplate, string QueryTemplate, string? Notes);
 
 /// <summary>A configured backend, and whether its models can be pulled and deleted.</summary>
 public sealed record EmbeddingProviderInfo(string Name, string Kind, bool Managed, bool Configured, string? Detail);

@@ -42,6 +42,7 @@ public sealed class CorpusIndexer(
     CatalogDbContext db,
     IVectorStore vectors,
     IEmbeddingService embedder,
+    IModelProfiles profiles,
     DocumentService documents,
     IOptions<DexiconOptions> options,
     ILogger<CorpusIndexer> log)
@@ -87,18 +88,22 @@ public sealed class CorpusIndexer(
             {
                 await vectors.EnsureCollectionAsync(set.CollectionName, set.EmbeddingDimensions, ct);
 
+                // Once per set, not once per file: the templates are the same for every
+                // file in it, and they are part of the staleness key for all of them.
+                var templates = await profiles.ForAsync(set.Target(), ct);
+
                 foreach (var source in corpus.Sources)
                 {
                     var full = job.Kind is JobKind.Full or JobKind.Rebuild;
 
                     if (source.Kind == SourceKind.Workspace)
                     {
-                        await IndexWorkspaceSourceAsync(corpus, set, source, job, progress, full,
+                        await IndexWorkspaceSourceAsync(corpus, set, templates, source, job, progress, full,
                             onEmbeddingFailure: () => embeddingFailed = true, ct);
                     }
                     else
                     {
-                        await IndexUploadSourceAsync(corpus, set, source, job, progress, full,
+                        await IndexUploadSourceAsync(corpus, set, templates, source, job, progress, full,
                             onEmbeddingFailure: () => embeddingFailed = true, ct);
                     }
                 }
@@ -153,7 +158,8 @@ public sealed class CorpusIndexer(
     /// several corpora with different chunk settings, and cheap to re-chunk when those
     /// settings change.
     /// </summary>
-    private async Task IndexUploadSourceAsync(Corpus corpus, ChunkSet set, Source source, IndexJob job,
+    private async Task IndexUploadSourceAsync(Corpus corpus, ChunkSet set, ModelTemplates templates,
+        Source source, IndexJob job,
         IProgress<IndexProgress>? progress, bool full, Action onEmbeddingFailure, CancellationToken ct)
     {
         var attachments = await db.Files
@@ -197,7 +203,7 @@ public sealed class CorpusIndexer(
                     file.ExtractedChars = 0;
                     // Hash IS recorded: an empty extraction is a settled outcome, not a
                     // failure to retry. Re-uploading the file is what changes it.
-                    state.ContentHash = ChunkingFingerprint(set, cached.Sha256);
+                    state.ContentHash = ChunkingFingerprint(set, cached.Sha256, templates);
                     state.IndexedUtc = DateTime.UtcNow;
                     job.FilesSkipped++;
                     continue;
@@ -206,7 +212,7 @@ public sealed class CorpusIndexer(
                 // The fingerprint mixes the blob hash WITH the corpus's chunk settings,
                 // so changing chunk size or boundary mode makes every attachment look
                 // changed and re-chunks it — without touching the bytes.
-                var fingerprint = ChunkingFingerprint(set, cached.Sha256);
+                var fingerprint = ChunkingFingerprint(set, cached.Sha256, templates);
                 if (!full && state.ContentHash == fingerprint && state.Status == FileStatus.Indexed)
                 {
                     job.FilesSkipped++;
@@ -316,7 +322,7 @@ public sealed class CorpusIndexer(
             // TextToEmbed, not Content: a set with heading context embeds each chunk under
             // its heading trail while storing the chunk verbatim.
             var embeddings = await embedder.EmbedAsync(
-                set.Target(), batch.Select(c => c.TextToEmbed).ToList(), ct);
+                set.Target(), EmbedPurpose.Document, batch.Select(c => c.TextToEmbed).ToList(), ct);
 
             job.Phase = "upsert";
             await vectors.UpsertAsync(set.CollectionName, batch, embeddings, ct);
@@ -348,10 +354,18 @@ public sealed class CorpusIndexer(
     /// itself — without it, improved text would be re-extracted and then skipped as
     /// "unchanged", which is the worst of both.
     /// </summary>
-    internal static string ChunkingFingerprint(ChunkSet set, string blobSha) =>
+    /// <param name="templates">
+    /// The task framing in force for this set's model. Part of the key because it changes
+    /// the vectors: text embedded as `search_document: …` is not the same point as the
+    /// same text embedded raw. Without it, editing a model profile would leave every
+    /// existing chunk in place while every new query used the new framing — the two sides
+    /// of a retrieval disagreeing, silently.
+    /// </param>
+    internal static string ChunkingFingerprint(ChunkSet set, string blobSha, ModelTemplates templates) =>
         HashContent($"{blobSha}|{set.ChunkSize}|{set.ChunkOverlap}|{set.BoundaryMode}|" +
                     $"{set.CustomBoundaryPattern}|{set.UnitAware}|{set.SentenceAware}|{set.HeadingContext}|" +
-                    $"{set.EmbeddingModel}|x{ExtractorVersions.Current}|c{CodeChunker.Version}");
+                    $"{set.EmbeddingProvider}|{set.EmbeddingModel}|t{templates.Fingerprint}|" +
+                    $"x{ExtractorVersions.Current}|c{CodeChunker.Version}");
 
     /// <summary>
     /// Get-or-create the per-set state for a batch of files, in one round trip. A file
@@ -382,7 +396,8 @@ public sealed class CorpusIndexer(
         return existing;
     }
 
-    private async Task IndexWorkspaceSourceAsync(Corpus corpus, ChunkSet set, Source source, IndexJob job,
+    private async Task IndexWorkspaceSourceAsync(Corpus corpus, ChunkSet set, ModelTemplates templates,
+        Source source, IndexJob job,
         IProgress<IndexProgress>? progress, bool full, Action onEmbeddingFailure, CancellationToken ct)
     {
         var root = ResolveWorkspacePath(source.RootPath);
@@ -455,7 +470,7 @@ public sealed class CorpusIndexer(
                 // file looking unchanged, so a refresh re-chunked nothing and the new
                 // setting silently did not apply. Mixing the settings in makes exactly
                 // the right set of files look stale — and no others.
-                var hash = ChunkingFingerprint(set, HashContent(content));
+                var hash = ChunkingFingerprint(set, HashContent(content), templates);
 
                 if (!full && states.TryGetValue(candidate.RelativePath, out var existing)
                           && existing.ContentHash == hash && existing.Status == FileStatus.Indexed)

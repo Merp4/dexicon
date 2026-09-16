@@ -14,6 +14,7 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
     public DbSet<ApiToken> Tokens => Set<ApiToken>();
     public DbSet<Corpus> Corpora => Set<Corpus>();
     public DbSet<ChunkSet> ChunkSets => Set<ChunkSet>();
+    public DbSet<EmbeddingModelProfile> ModelProfiles => Set<EmbeddingModelProfile>();
     public DbSet<FileChunkState> FileChunkStates => Set<FileChunkState>();
     public DbSet<CorpusGrant> CorpusGrants => Set<CorpusGrant>();
     public DbSet<Source> Sources => Set<Source>();
@@ -86,6 +87,19 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             // A tenant cannot have two corpora with the same name; the name is what
             // an agent passes to search_index, so it has to resolve unambiguously.
             e.HasIndex(x => new { x.TenantId, x.Name }).IsUnique();
+        });
+
+        modelBuilder.Entity<EmbeddingModelProfile>(e =>
+        {
+            e.ToTable("model_profiles");
+            // Keyed on both: two providers can serve a model of the same name, and their
+            // task framing is not necessarily the same.
+            e.HasKey(x => new { x.Provider, x.Model });
+            e.Property(x => x.Provider).HasMaxLength(40);
+            e.Property(x => x.Model).HasMaxLength(200);
+            e.Property(x => x.DocumentTemplate).HasMaxLength(1000).IsRequired();
+            e.Property(x => x.QueryTemplate).HasMaxLength(1000).IsRequired();
+            e.Property(x => x.Notes).HasMaxLength(1000);
         });
 
         modelBuilder.Entity<ChunkSet>(e =>

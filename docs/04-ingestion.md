@@ -187,6 +187,51 @@ an over-budget chunk is not rejected by the embedding model, it is silently trun
 the missing text is reported as indexed. A property test asserts the bound across chunk
 sizes, including on input with no spaces at all (a minified bundle, a base64 blob).
 
+### Task framing — what the model is told the text is for
+
+Most embedding models are trained with a task instruction wrapped around the input, and it
+is not decoration. `nomic-embed-text` wants `search_document:` on indexed text and
+`search_query:` on queries and calls them required rather than optional; EmbeddingGemma
+wants `title: none | text: …` and `task: search result | query: …`. Send raw text instead
+and nothing fails — retrieval is simply worse. One project measured EmbeddingGemma at
+recall@1 16/25 without its prefixes and 23/25 with them.
+
+Dexicon stores this per model as a **template** rather than a prefix, because Gemma's
+document form wraps the text rather than preceding it:
+
+| model | indexed text | queries |
+|---|---|---|
+| `nomic-embed-text` | `search_document: {text}` | `search_query: {text}` |
+| `embeddinggemma` | `title: none \| text: {text}` | `task: search result \| query: {text}` |
+| `bge-m3` | `{text}` | `{text}` |
+
+Resolution, in order:
+
+1. **a saved row** for this `(provider, model)` — always wins
+2. **a built-in suggestion** for a recognised name — correct out of the box
+3. **nothing** — the text goes through unchanged
+
+The order matters because models are added at **runtime**, through the Models screen. Code
+that hard-coded the framing for the models it knew about would give every model pulled
+afterwards silently wrong framing, which would quietly undo the point of being able to add
+them at all. Built-ins are a fallback, not the mechanism: any of them can be overridden by
+saving a row, and the UI states which of the three applies so "embedded raw" is visible
+rather than assumed. A model this build has never heard of is embedded raw and says so —
+inventing a prefix would be worse than none, because the model would embed the literal
+string `search_query:` as content.
+
+Framing is applied in one place, `IEmbeddingService.EmbedAsync`, with the caller passing
+`EmbedPurpose.Document` or `EmbedPurpose.Query`. Both sides of a retrieval have to agree:
+a document embedded with a prefix and a query embedded without land in a less aligned
+space, and the result is not an error but a quietly worse ranking. Passing the purpose as
+an argument makes it impossible to forget at one of the two places that embed text.
+`ModelProbe` passes `Raw`, deliberately — it measures what the model does with a given
+number of characters, and a template would shift every measurement by the length of a
+prefix.
+
+The effective template is part of the chunking fingerprint, so editing a profile
+re-indexes every chunk set on that model rather than leaving the two sides to disagree.
+
 ### Chunk sets — a corpus can be cut several ways at once
 
 Chunk size, overlap, boundary mode and the embedding model belong to a **chunk set**, not

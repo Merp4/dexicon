@@ -21,8 +21,16 @@ namespace Dexicon.Core.Embedding;
 /// </summary>
 public interface IEmbeddingService
 {
+    /// <param name="purpose">
+    /// Whether this text is being indexed or searched with. Most embedding models are
+    /// trained with a task instruction wrapped around the input and retrieve measurably
+    /// worse without it, so the framing is applied HERE rather than at the call sites —
+    /// the caller knows which it has, and nothing else does. Passing it as an argument
+    /// makes it impossible to forget at one of the two places that embed text.
+    /// </param>
     Task<IReadOnlyList<float[]>> EmbedAsync(
-        EmbeddingTarget target, IReadOnlyList<string> inputs, CancellationToken ct = default);
+        EmbeddingTarget target, EmbedPurpose purpose, IReadOnlyList<string> inputs,
+        CancellationToken ct = default);
 
     /// <summary>Ask the model its dimensionality. Cached; costs one short embed on a miss.</summary>
     Task<int> ProbeDimensionsAsync(EmbeddingTarget target, CancellationToken ct = default);
@@ -36,6 +44,7 @@ public sealed class EmbeddingUnavailableException(string message, Exception? inn
 
 public sealed class EmbeddingService(
     IEmbeddingGeneratorFactory factory,
+    IModelProfiles profiles,
     IOptions<DexiconOptions> options,
     IMemoryCache cache,
     ILogger<EmbeddingService> log) : IEmbeddingService
@@ -59,7 +68,8 @@ public sealed class EmbeddingService(
         // under indexing load and painted the dependency dots red during normal work.
         if (cache.TryGetValue(DimensionsKey(target), out int cached) && cached > 0) return cached;
 
-        var vectors = await EmbedAsync(target, ["dimension probe"], ct);
+        // Raw: a dimension probe is a measurement of the model, not a document.
+        var vectors = await EmbedAsync(target, EmbedPurpose.Raw, ["dimension probe"], ct);
         var dimensions = vectors[0].Length;
 
         cache.Set(DimensionsKey(target), dimensions, DimensionsTtl);
@@ -68,11 +78,22 @@ public sealed class EmbeddingService(
     }
 
     public async Task<IReadOnlyList<float[]>> EmbedAsync(
-        EmbeddingTarget target, IReadOnlyList<string> inputs, CancellationToken ct = default)
+        EmbeddingTarget target, EmbedPurpose purpose, IReadOnlyList<string> inputs,
+        CancellationToken ct = default)
     {
         if (inputs.Count == 0) return [];
         if (string.IsNullOrWhiteSpace(target.Model))
             throw new ArgumentException("An embedding model name is required.", nameof(target));
+
+        // Applied once, here. Both sides of a retrieval have to agree: a document embedded
+        // with `search_document:` and a query embedded raw land in a less aligned space,
+        // and the result is not an error but a quietly worse ranking.
+        if (purpose != EmbedPurpose.Raw)
+        {
+            var templates = await profiles.ForAsync(target, ct);
+            if (!templates.IsRaw)
+                inputs = [.. inputs.Select(text => templates.Apply(purpose, text))];
+        }
 
         var generator = factory.GeneratorFor(target);
         var batches = inputs.Chunk(Math.Max(1, _embedding.BatchSize)).ToList();
