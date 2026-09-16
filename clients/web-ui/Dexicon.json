@@ -266,7 +266,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JobSummary"
+                  "$ref": "#/components/schemas/WorkspaceListing"
                 }
               }
             }
@@ -742,7 +742,14 @@
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -895,7 +902,17 @@
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JobSummary"
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -917,7 +934,14 @@
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSummary"
+                }
+              }
+            }
           }
         }
       }
@@ -929,7 +953,17 @@
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TenantSummary"
+                  }
+                }
+              }
+            }
           }
         }
       },
@@ -983,7 +1017,17 @@
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TokenSummary"
+                  }
+                }
+              }
+            }
           }
         }
       },
@@ -1003,7 +1047,14 @@
         },
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedTokenResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -1671,6 +1722,25 @@
               "string"
             ],
             "format": "int32"
+          }
+        }
+      },
+      "CreatedTokenResponse": {
+        "required": [
+          "token",
+          "secret",
+          "mcpAddCommand"
+        ],
+        "type": "object",
+        "properties": {
+          "token": {
+            "$ref": "#/components/schemas/TokenSummary"
+          },
+          "secret": {
+            "type": "string"
+          },
+          "mcpAddCommand": {
+            "type": "string"
           }
         }
       },
@@ -2732,6 +2802,82 @@
           }
         }
       },
+      "TenantSummary": {
+        "required": [
+          "id",
+          "displayName",
+          "createdUtc",
+          "disabled"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "createdUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "disabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TokenSummary": {
+        "required": [
+          "id",
+          "name",
+          "tenantId",
+          "scopes",
+          "createdUtc",
+          "lastUsedUtc",
+          "expiresUtc",
+          "revokedUtc"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "tenantId": {
+            "type": "string"
+          },
+          "scopes": {
+            "type": "string"
+          },
+          "createdUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastUsedUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "expiresUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "revokedUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
       "UpdateChunkSetRequest": {
         "required": [
           "description",
@@ -2828,6 +2974,156 @@
             ],
             "items": {
               "type": "string"
+            }
+          }
+        }
+      },
+      "UploadFailure": {
+        "required": [
+          "file",
+          "error"
+        ],
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "UploadResponse": {
+        "required": [
+          "corpus",
+          "stored",
+          "failed",
+          "job"
+        ],
+        "type": "object",
+        "properties": {
+          "corpus": {
+            "type": "string"
+          },
+          "stored": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UploadedDocumentResponse"
+            }
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UploadFailure"
+            }
+          },
+          "job": {
+            "$ref": "#/components/schemas/JobSummary"
+          }
+        }
+      },
+      "UploadedDocumentResponse": {
+        "required": [
+          "sha256",
+          "fileName",
+          "sizeBytes",
+          "title",
+          "extractedChars",
+          "deduplicated",
+          "warning",
+          "fileId"
+        ],
+        "type": "object",
+        "properties": {
+          "sha256": {
+            "type": "string"
+          },
+          "fileName": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "extractedChars": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "deduplicated": {
+            "type": "boolean"
+          },
+          "warning": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "fileId": {
+            "type": "string"
+          }
+        }
+      },
+      "WorkspaceEntry": {
+        "required": [
+          "name",
+          "relativePath",
+          "isDirectory",
+          "childCount"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "relativePath": {
+            "type": "string"
+          },
+          "isDirectory": {
+            "type": "boolean"
+          },
+          "childCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "WorkspaceListing": {
+        "required": [
+          "root",
+          "path",
+          "entries"
+        ],
+        "type": "object",
+        "properties": {
+          "root": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceEntry"
             }
           }
         }
