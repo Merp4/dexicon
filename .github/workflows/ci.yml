@@ -1,0 +1,170 @@
+name: CI
+
+# Every push and every pull request. docs/11-roadmap.md put CI in M1 — "before any
+# features" — and it did not land until M2 was largely built, which is exactly the order
+# the note warned against. This is that debt paid.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A newer push supersedes an older run on the same ref. Nobody reads the result of a
+  # build for a commit that has already been replaced.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: clients/web-ui/package-lock.json
+
+      - name: Restore
+        run: dotnet restore
+
+      # Warnings are errors in this solution (Directory.Build.props), so a build that
+      # succeeds here is a build with no warnings either.
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test --no-build --configuration Release --logger "console;verbosity=normal"
+
+      - name: Install UI dependencies
+        working-directory: clients/web-ui
+        run: npm ci
+
+      # tsc separately from the build: Vite does not type-check, so a build that succeeds
+      # says nothing about whether the types hold.
+      - name: Type-check UI
+        working-directory: clients/web-ui
+        run: npx tsc --noEmit
+
+      - name: Build UI
+        working-directory: clients/web-ui
+        run: npm run build
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # FULL history. A secret removed in the last commit is still a secret, and
+          # scanning only the diff is scanning the one place it is not.
+          fetch-depth: 0
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  supply-chain:
+    name: Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: clients/web-ui/package-lock.json
+
+      - run: dotnet restore
+
+      # --include-transitive: a vulnerability two levels down is still in the image.
+      # dotnet exits 0 even when it finds something, so the output is the signal.
+      - name: .NET vulnerable packages
+        run: |
+          dotnet list package --vulnerable --include-transitive 2>&1 | tee vulnerable.txt
+          if grep -q "has the following vulnerable packages" vulnerable.txt; then
+            echo "::error::Vulnerable NuGet packages found"
+            exit 1
+          fi
+
+      - name: npm audit
+        working-directory: clients/web-ui
+        run: |
+          npm ci
+          npm audit --audit-level=high
+
+  image:
+    name: Container image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Built, not pushed. Publishing is a release concern; this only answers "does the
+      # Dockerfile still work", which is a question every PR should answer — the image is
+      # the deliverable, and a green test suite says nothing about it.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: dexicon:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The stack has to come up, not merely compile. Ollama pulls a model on first run,
+      # so only the two services that start cold are checked here; a full stack rehearsal
+      # belongs in a scheduled job, not on every PR.
+      - name: Start Qdrant and Dexicon
+        run: |
+          docker network create dexicon-ci
+          docker run -d --name qdrant --network dexicon-ci \
+            -e QDRANT__SERVICE__API_KEY=ci-key qdrant/qdrant:v1.16.3
+          docker run -d --name dexicon --network dexicon-ci -p 8477:8477 \
+            -e DEXICON__QDRANT__ENDPOINT=http://qdrant:6334 \
+            -e DEXICON__QDRANT__APIKEY=ci-key \
+            -e DEXICON__OLLAMA__ENDPOINT=http://unreachable:11434 \
+            dexicon:ci
+
+      # Liveness only. Ollama is deliberately unreachable above, so readiness would
+      # fail — and that it STILL serves /healthz/live is the point: a missing embedder
+      # degrades the service, it does not stop it starting.
+      - name: Wait for liveness
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8477/healthz/live >/dev/null 2>&1; then
+              echo "live after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Container never became live"
+          docker logs dexicon
+          exit 1
+
+      - name: Unauthenticated requests are refused
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8477/api/corpora)
+          [ "$code" = "401" ] || { echo "::error::Expected 401, got $code"; exit 1; }
+
+      - name: Logs on failure
+        if: failure()
+        run: docker logs dexicon

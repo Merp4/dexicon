@@ -278,8 +278,23 @@ Hardening, matching the compose file:
 - **`qdrant_data`** — reconstructible by reindexing. Back it up to save time, not data.
 - **`ollama_data`** — model weights. Re-downloadable.
 
-A `scripts/backup.sh` does the above and is tested by restoring into a clean compose
-project in CI, because a backup procedure that has never been restored is a hypothesis.
+`scripts/backup.sh` does the above:
+
+```bash
+./scripts/backup.sh backup   [dir]   # stops the app, archives the volumes, restarts
+./scripts/backup.sh restore  <dir>
+./scripts/backup.sh verify   [dir]   # backup, DESTROY, restore, check it comes back
+```
+
+The app is stopped for the duration. SQLite in WAL mode will happily hand you a copy
+mid-write that restores into a database missing its last transactions, and a backup you
+cannot trust is worse than none, because you stop taking the other kind.
+
+`verify` is the rehearsal, and it is destructive on purpose — a backup procedure that has
+never been restored is a hypothesis. It has been run: volumes destroyed, restored from the
+tarballs, catalogue intact and **search returning results** afterwards. Liveness alone
+would not have proved it; a restored catalogue with no vectors comes up perfectly healthy
+and answers every query with nothing.
 
 ### The migration warning on first run
 
