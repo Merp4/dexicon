@@ -220,7 +220,7 @@ public static class SystemEndpoints
             if (owned > 0)
                 return Results.Problem(
                     title: "Tenant still owns corpora",
-                    detail: $"Tenant '{id}' owns {owned} corpus/corpora. Delete or move them first.",
+                    detail: $"Tenant '{id}' owns {owned} {(owned == 1 ? "corpus" : "corpora")}. Delete or move them first.",
                     statusCode: 409);
 
             db.Tenants.Remove(tenant);

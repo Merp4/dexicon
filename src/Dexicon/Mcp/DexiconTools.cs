@@ -124,7 +124,8 @@ public sealed class DexiconTools
         if (visible.Count == 0)
             return $"No corpora are visible to tenant '{tenant}'. Create one in the Dexicon UI first.";
 
-        var sb = new StringBuilder($"{visible.Count} corpus/corpora visible to '{tenant}':\n");
+        var sb = new StringBuilder(
+            $"{visible.Count} {(visible.Count == 1 ? "corpus" : "corpora")} visible to '{tenant}':\n");
         foreach (var c in visible)
         {
             var s = await CorpusEndpoints.Summarise(db, c, tenant, ct);
