@@ -1,0 +1,349 @@
+# Decisions
+
+Every load-bearing choice, why it was made, and what was rejected. The rejected column is
+the useful one: it is what stops the same argument being had again in six months.
+
+Status: all **Proposed** until M0 ([roadmap](11-roadmap.md)) confirms the four assumptions
+it depends on.
+
+---
+
+### D-01 Single container
+
+**Decision.** UI, REST API, MCP server, and the indexer run in one process, in one
+container. Qdrant and Ollama are separate, as external dependencies.
+
+**Why.** McpToolbox splits the indexer into a sidecar because it runs inside a per-tenant
+workspace container with a genuinely different security boundary — untrusted execution on
+one side, the platform on the other. Dexicon has no such boundary: it is one operator's
+tool on one machine. Splitting would add a control API, a shared token, an internal
+network, and a new class of failure, and buy nothing.
+
+**Rejected.** Sidecar indexer (boundary does not exist here); separate UI container (a
+static bundle is 200 KB — serving it from the same host costs nothing and removes a CORS
+configuration and a reverse proxy); bundling Qdrant and Ollama into the image (breaks the
+upgrade path for both, and people already have Ollama running).
+
+**Revisit if.** Indexing load starts affecting search latency measurably. The component
+seams in [02](02-architecture.md) are drawn so the indexer can be lifted out without
+touching the API.
+
+---
+
+### D-02 .NET 10 LTS
+
+**Decision.** .NET 10 LTS, ASP.NET Core minimal APIs, C#.
+
+**Why.** Every carried-over component — the chunker, the gitignore filter, the Qdrant
+repository, the document loaders — is already C#. Rewriting them in Python to follow the
+ML ecosystem would be a rewrite of the only part that is already proven. .NET 10 is LTS
+until November 2028; .NET 11 ships 2026-11-10 as an STS release with the same end date, so
+there is nothing to gain by tracking it.
+
+**Rejected.** Python/FastAPI (better embedding ecosystem, but Dexicon calls Ollama over
+HTTP and uses none of it); Node/TypeScript (would unify with the SDK but discards the
+carried-over code); .NET 11 (STS, no benefit, ships after work starts).
+
+---
+
+### D-03 SQLite for the catalogue
+
+**Decision.** EF Core + SQLite in WAL mode at `/data/catalog.db` for tenants, corpora,
+sources, files, jobs, and tokens. Qdrant holds only chunks and vectors.
+
+**Why.** The control plane needs listing, filtering, joining, counting, and transactional
+updates — all of which Qdrant does badly and a relational store does for free. SQLite adds
+no container and no configuration. Keeping the two planes strictly separated means the
+vector store is fully reconstructible from the catalogue plus the sources.
+
+**Rejected.** Qdrant-only, with catalogue data in payloads (every list becomes a scroll,
+every count an aggregation, and there are no transactions); Postgres (a fourth container
+for a workload that peaks at thousands of rows); LiteDB or files on disk (no migration
+story, no query story).
+
+---
+
+### D-04 Corpus as the Qdrant tenant key
+
+**Decision.** `corpus_id` carries the payload index with `is_tenant: true`. `tenant_id` is
+in the payload but is a plain field.
+
+**Why.** A corpus belongs to exactly one tenant and is never split across tenants, so
+partitioning by corpus is strictly finer-grained than partitioning by tenant — and it is
+what queries actually filter on, because search is scoped to a corpus set
+([05](05-search.md)). Co-locating storage by the field the query filters on is the entire
+point of `is_tenant`.
+
+**Rejected.** `tenant_id` as the tenant key (coarser, and every query would carry a second
+filter on the field that actually selects); a collection per tenant or per corpus (Qdrant
+documents this as rarely efficient — per-collection overhead, a 1000-collection ceiling,
+and it puts collection lifecycle on the hot path of corpus creation).
+
+**Consequence worth naming.** Authorization is resolved in SQLite ([07](07-tenancy-auth.md))
+and enforced as a `corpus_id` filter. The tenant is not part of the Qdrant filter, so a bug
+in scope resolution is a leak. That is why three independent guards defend it, one of which
+is the storage layout itself.
+
+---
+
+### D-05 One collection per embedding model
+
+**Decision.** Collections are named `dexicon__{model}__{dims}`, shared by all tenants and
+all corpora using that model.
+
+**Why.** A collection has one vector size. Encoding model and dimensions in the name makes
+a dimension mismatch structurally impossible rather than a runtime check that someone
+forgets. Changing a corpus's model becomes an explicit rebuild into a different collection,
+which is what it actually is.
+
+**Rejected.** A collection per corpus (loses cross-corpus search in one query, multiplies
+collection overhead); a single collection with mixed dimensions (not possible); named
+vectors per model within one collection (works, but every point then carries every model's
+vector, or sparse point structures with awkward filtering).
+
+---
+
+### D-06 RRF fusion server-side
+
+**Decision.** Hybrid search is one Qdrant Query API call with dense and sparse prefetches
+and `fusion: rrf`. No client-side score merging, no weight parameter.
+
+**Why.** Dense cosine and BM25 scores are on incomparable scales, and the weight that
+balances them is corpus-dependent and drifts as content changes. McpToolbox carries a
+`SemanticWeight` knob defaulted to `0.8` that nobody could set from evidence. RRF reads
+rank, not magnitude: no tuning, nothing to mis-set, and one round trip instead of two.
+
+**Rejected.** Client-side weighted fusion (the carried-over approach — a tuning knob with
+no way to tune it); DBSF as the default (normalises distributions, which is defensible, but
+it is still score-based and per-query sensitive — available as configuration, not default);
+dense-only (exact identifiers and error strings are exactly what embeddings are worst at).
+
+**Depends on** M0 assumption 1. If the .NET client cannot express prefetch + fusion, this
+becomes two queries and client-side RRF — still rank-based, still no weight.
+
+---
+
+### D-07 Client-side term frequencies with `modifier: idf`
+
+**Decision.** Sparse vectors are computed in-process — tokenize, split identifiers, drop
+stopwords, emit `{term_hash: frequency}` — and the sparse index is declared
+`modifier: idf`, so Qdrant applies the IDF component itself.
+
+**Why.** It works on any self-hosted Qdrant with any client, needs no model, needs no
+corpus statistics maintained by Dexicon, and costs under a millisecond. Identifier
+splitting is what makes it useful on code: a query for "token refresh" has to reach
+`TokenService.RefreshAsync`.
+
+**Rejected.** Qdrant's server-side `qdrant/bm25` inference (cleaner if the .NET client
+supports it locally rather than only through Cloud Inference — M0 assumption 2 checks this,
+and if it holds, switching is a small change); running FastEmbed (a Python dependency for
+tokenization); no keyword retrieval at all (dense-only search on code is noticeably worse
+for exact terms).
+
+---
+
+### D-08 Store chunk content in the payload
+
+**Decision.** The full chunk text is stored in the Qdrant payload and returned by search.
+
+**Why.** A result that only says "this file, these lines" forces the caller to open the
+file — two round trips to save a kilobyte, and impossible for uploaded documents where
+there is no file to open. Roughly 1.2 KB per chunk at the default size; on a 400k-chunk
+index that is around 480 MB, against a dense-vector cost four times larger.
+
+**Rejected.** Pointers only (fails for uploads, doubles round trips); storing a truncated
+preview (the caller cannot tell whether truncation lost the answer).
+
+---
+
+### D-09 Polling with content hashes
+
+**Decision.** Reindexing walks the tree on demand or on an interval, comparing SHA-256
+content hashes. No filesystem watcher.
+
+**Why.** `FileSystemWatcher` over Docker bind mounts is unreliable — silently so, and worse
+on Windows hosts and WSL2, which is the primary environment. Content hashing is the correct
+answer regardless, because a watcher tells you a file changed, not whether its content did
+(every `git checkout` touches thousands of files whose content is identical). A refresh over
+an unchanged tree makes zero embedding calls, which is the property that matters.
+
+**Rejected.** `FileSystemWatcher` (unreliable across the mount, and still needs hashing);
+mtime comparison (wrong after checkout, clone, or restore); inotify in the host (outside the
+container boundary).
+
+---
+
+### D-10 Static tokens and a tenant header
+
+**Decision.** One credential type: a bearer token bound to a tenant, with `search` /
+`ingest` / `admin` scopes. Tenant resolved from the token, or from `X-Dexicon-Tenant` when
+the token is bound to several. No inference.
+
+**Why.** It works identically for the SPA, `curl`, and every MCP client — Claude Code's
+`--header "Authorization: Bearer …"` is the documented path for a server with a static
+token. OIDC would mean an identity provider in the compose file for a tool with three
+users.
+
+**Rejected.** OIDC/SSO (disproportionate; the token model is a clean seam if it is ever
+needed); no auth on localhost (the MCP endpoint is reachable by anything on the machine,
+and tenancy would be decorative); MCP OAuth flows (the spec supports them, but for a
+self-hosted local server they add an authorization server for no gain).
+
+**Carried from** McpToolbox ADR-005: target selection is explicit, validated, and
+least-privilege; an ambiguous target fails fast rather than being inferred.
+
+---
+
+### D-11 Five MCP tools
+
+**Decision.** `search_index`, `list_corpora`, `get_context`, `index_refresh`,
+`index_status`. Nothing else.
+
+**Why.** Every tool definition is context the agent pays for on every turn, and a large
+surface measurably degrades smaller models — McpToolbox observed a 12B model exhaust its
+generation budget against 35 tool definitions without calling any of them. Five is enough
+to find things, understand them, and know whether the index is current.
+
+**Rejected.** Per-format search tools; separate keyword and semantic tools (a `mode`
+parameter, not three tools); admin tools over MCP (tenant and token management belongs in
+the UI, where a human is present).
+
+---
+
+### D-12 Stateless streamable HTTP, MCP 2026-07-28
+
+**Decision.** `POST /mcp`, streamable HTTP, stateless, protocol revision 2026-07-28, with
+negotiation down to 2025-06-18.
+
+**Why.** It is the current revision, all Tier 1 SDKs ship it, and its stateless core — no
+handshake, no `Mcp-Session-Id` — matches Dexicon exactly: every search is self-contained
+and nothing needs server-to-client calls. The C# SDK already defaults to stateless. Legacy
+HTTP+SSE is deprecated in the spec and is not implemented.
+
+**Rejected.** stdio (one client per process, no tenancy, no sharing between agents — the
+transport Dexicon exists to replace); HTTP+SSE (deprecated); pinning to 2025-06-18 (would
+work, but starts the project one revision behind).
+
+---
+
+### D-13 React SPA, served by the API host
+
+**Decision.** React 19 + Vite + Tailwind v4, built at image build time into `wwwroot`.
+
+**Why.** Static output, no runtime dependency, no CORS, no second container, no reverse
+proxy. Typed client generated from the OpenAPI document, so a contract change breaks the
+build. It is also the stack McpToolbox's UI uses, so patterns transfer.
+
+**Rejected.** Blazor Server (a stateful circuit for a UI that is mostly forms and a search
+box); Blazor WASM (multi-megabyte payload for the same result); server-rendered Razor
+(live indexing progress wants a client-side app); a component framework like PrimeReact
+("minimal but professional" is better served by Tailwind and a few headless primitives than
+by a themed kit).
+
+---
+
+### D-14 Licence
+
+**Open — decide before the first public push.**
+
+**Apache-2.0** — explicit patent grant, contributor terms, the default for infrastructure
+projects, and compatible with every dependency in [04](04-ingestion.md). Recommended.
+
+**MIT** — shorter, more familiar, no patent grant.
+
+Either is compatible with the dependency set (Apache-2.0, MIT, BSD-2). This needs an
+owner's decision rather than a default, which is why it is listed rather than assumed.
+
+---
+
+### D-15 Read-only workspace mounts
+
+**Decision.** Source trees are bind-mounted read-only at `/workspaces`. A corpus can only
+point at a path under that mount.
+
+**Why.** Dexicon reads your code; it must be structurally incapable of writing to it. The
+path picker browses the actual mount, so a path that is not mounted cannot be typed. The
+constraint is visible rather than a runtime surprise.
+
+**Rejected.** Read-write mounts (nothing needs them); arbitrary host paths through an API
+(the container cannot see them, and pretending otherwise produces a confusing failure);
+Docker socket access to mount on demand (an enormous privilege for a convenience).
+
+---
+
+### D-16 Approximate token counting
+
+**Decision.** Chunk sizes are measured at four characters per token. No per-model
+tokenizer.
+
+**Why.** Exact tokenization means shipping and versioning a tokenizer per embedding model,
+and matching it to whatever Ollama actually loaded. The approximation costs a few percent
+of the context window on a value that is already a heuristic. Chunk size is a target, not a
+contract, and the documentation says so rather than implying precision it does not have.
+
+**Rejected.** Per-model tokenizers (dependency and drift for a rounding error);
+word counting (worse approximation, same class of error).
+
+---
+
+### D-17 Name
+
+**Decision.** **Dexicon** — `dex` (index) + `lexicon`. Repository `Merp4/dexicon`, image
+`ghcr.io/merp4/dexicon`, config prefix `DEXICON__`, tenant header `X-Dexicon-Tenant`, token
+prefix `dex_`, collections `dexicon__{model}__{dims}`, MCP resources `dexicon://`.
+
+**Why.** A lexicon is a reference work you *consult* — you arrive with a question and leave
+with an answer. That is the category this tool belongs to, and category signal turned out to
+matter more than availability, because on the evidence below almost every candidate was
+available and almost none signalled correctly.
+
+**How the candidates were judged.** Two kinds of name collision, with very different costs:
+
+- **Cross-field** — the name is used elsewhere, in a domain nobody would confuse with this
+  one. Costs search ranking. Survivable.
+- **Same-field** — the name is used by another developer or AI tool. Costs identity, and no
+  amount of SEO fixes it.
+
+Availability was checked on GitHub (repo count and top stars), npm, PyPI, NuGet, and by
+searching for live products.
+
+| Candidate | Outcome |
+|---|---|
+| **MrIndex** (working title) | Reads as *MRIndex* — MRI. Collides with the EU [HMA MrIndex portal](https://mri-production.cts-mrp.eu/) (exact casing) and an academic MRI muscle-scoring tool. Cross-field, so survivable — but it owns the search term and the `mri_` token prefix compounded it. |
+| Tessera | **Same-field**: an existing AI coding-session workspace tool, plus an ERP-AI startup. Worst outcome tested. |
+| Rubric | **Same-field**: Rubric Labs, an AI dev-tools studio. |
+| Mnemex | **Same-field**: was an MCP memory server until it was renamed in Nov 2025. Recently vacated in exactly this space — maximum confusion. |
+| Semtex | **Live US trademark** held by Explosia a.s. (registered Jan 2025), historically enforced against a drinks brand and against Madonna's production company. npm taken. Ruled out on legal grounds, before taste. |
+| Riffle, Jackdaw, Dogear, Corpex, Findex, Engram, Peruse, Corpora | Crowded — multiple existing tools or companies each. |
+| SemScan / SemScope / Semdex / Semtext | All clean, all in Semgrep's neighbourhood. **`Scan` in particular reads as security scanning** (SAST, secret scanners), which is the wrong category signal for a retrieval tool. |
+| Pericope, Corpuscope, Indexicon | Clean. Rejected on pronunciation (Pericope), instrument connotation (Corpuscope reads as a microscope — the MrIndex failure again), and length (Indexicon). |
+| **Dexicon** | 16 GitHub repos, all at 0 stars. npm, PyPI, NuGet all free. No product anywhere. Right category signal. |
+
+**Residual risk, accepted.** A faint Pokédex echo, which aids recall more than it misleads.
+No security-tool drag, no overloaded abbreviation, no trademark holder.
+
+---
+
+## What was carried over from McpToolbox
+
+| Component | Treatment |
+|---|---|
+| `WorkspaceChunker` — language-aware code chunking | **Carried**, largely intact. The per-language boundary table is hard-won; the HTML-templates-are-not-documents decision in particular. |
+| `GitignoreFilter` — gitignore + workspaceignore + size caps | **Carried.** Renamed `.workspaceignore` to `.dexiconignore`. |
+| Document loaders — PDF, DOCX, PPTX, EPUB, HTML, Markdown | **Carried**, same libraries. |
+| `QdrantWorkspaceRepository` | **Rewritten.** Collection naming, tenancy layout, and hybrid search all change (D-04, D-05, D-06). The structure and the payload design survive. |
+| Embedding backoff and per-file failure isolation | **Carried**, including the `continue`-not-`break` fix that stopped one bad file starving an entire index. |
+| ADR-004 tenancy, ADR-005 auth | **Adapted.** Explicit target selection and fail-fast resolution survive; workspaces, published endpoints, and derived sessions do not — Dexicon has corpora, not conversations. |
+| Sidecar control API and per-tenant containers | **Dropped** (D-01). |
+| `SemanticWeight` client-side fusion | **Dropped** (D-06). |
+| Session/conversation model, jobs bus, agent host | **Dropped** — out of scope ([01](01-overview.md)). |
+
+## Open questions
+
+| # | Question | Needed by | Current lean |
+|---|---|---|---|
+| Q1 | Licence — Apache-2.0 or MIT? | Before first commit | Apache-2.0 |
+| ~~Q2~~ | ~~Repository name and GHCR namespace~~ | — | **Resolved** — see [D-17](#d-17-name) |
+| Q3 | Default embedding model — `nomic-embed-text` for size, or `embeddinggemma` for measured code quality? | M3 decides with numbers | Ship `nomic-embed-text`, switch if M3 says so |
+| Q4 | Should `index_refresh` require the `ingest` scope, or be admin-only? | M2 | `ingest` — an agent noticing a stale index and refreshing it is the point |
+| Q5 | Git history indexing in v1? | M2 scope freeze | No. M5, and only on request |
