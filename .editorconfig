@@ -1,0 +1,107 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.{cs,csx}]
+indent_size = 4
+dotnet_sort_system_directives_first = true
+csharp_using_directive_placement = outside_namespace:warning
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_prefer_braces = when_multiline:silent
+dotnet_style_namespace_match_folder = true:suggestion
+
+[*.{md,yml,yaml,json,jsonc}]
+indent_size = 2
+
+[*.sh]
+end_of_line = lf
+
+[*.{ps1,cmd,bat}]
+end_of_line = crlf
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Analyzer policy
+#
+# Directory.Build.props sets TreatWarningsAsErrors. That is only tenable if the
+# rule set is curated: a build that fails on advice nobody intends to take trains
+# people to reach for a blanket suppression, and then the rules that DO matter go
+# with it. Every downgrade below is a decision with a reason, not a silencing.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[*.cs]
+
+# CA1848 — use LoggerMessage delegates instead of ILogger extension methods.
+# A real allocation win in a hot logging path. Dexicon's logging is startup,
+# per-job and per-error; the hot path (search) logs nothing per request. The cost
+# is a partial class of delegate declarations beside every log site, which buys
+# nothing measurable here and makes the code materially harder to read.
+# Revisit if per-chunk logging is ever added to the indexing loop.
+dotnet_diagnostic.CA1848.severity = none
+
+# CA1873 — argument evaluation may be expensive if logging is disabled.
+# Same reasoning, and the arguments at our log sites are strings and ints that
+# are already materialised.
+dotnet_diagnostic.CA1873.severity = none
+
+# CA1031 — do not catch general exception types.
+# The indexing loop catches broadly ON PURPOSE: a single unreadable or malformed
+# file must not abort a scan over 50,000 others. Every such catch records the
+# failure against the file and continues, which is the documented behaviour in
+# docs/04-ingestion.md. Suppressed here rather than with fifteen local pragmas.
+dotnet_diagnostic.CA1031.severity = none
+
+# CA2007 — ConfigureAwait(false). No SynchronizationContext in ASP.NET Core, so
+# this is pure noise on every await in the codebase.
+dotnet_diagnostic.CA2007.severity = none
+
+# CA1062 — validate arguments of public methods. The public surface here is
+# internal to the app, not a shipped library, and nullable reference types
+# already carry the contract.
+dotnet_diagnostic.CA1062.severity = none
+
+# CA1711 — reserved type-name suffixes (Queue, Collection, Stack, …).
+# The rule protects a library convention: a type ending in Queue should BE a
+# queue. `IndexJobQueue` is a queue of index jobs and is the clearest name for
+# it; renaming it to satisfy a convention aimed at framework authors would make
+# the code worse to read for no reader's benefit. Dexicon ships an application,
+# not a class library.
+dotnet_diagnostic.CA1711.severity = none
+
+# Rules that stay ERRORS because they catch the defects this project actually
+# cares about, listed so nobody assumes the whole CA set was waved through:
+#   CA2016 forward CancellationToken      — a job that ignores cancellation hangs a shutdown
+#   CA1305/CA1307 culture-sensitive ops   — path and identifier comparison must be ordinal
+#   CA2100 SQL injection review
+#   CA5350/CA5351 weak cryptography       — token hashing must not regress
+#   CA1822 mark members static            — catches accidental instance coupling
+dotnet_diagnostic.CA2016.severity = error
+dotnet_diagnostic.CA1305.severity = error
+dotnet_diagnostic.CA1307.severity = error
+dotnet_diagnostic.CA5350.severity = error
+dotnet_diagnostic.CA5351.severity = error
+
+[tests/**/*.cs]
+# Test names read as sentences: Method_Condition_ExpectedOutcome.
+dotnet_diagnostic.CA1707.severity = none
+# Tests construct throwaway objects and assert on them; disposal noise is not useful.
+dotnet_diagnostic.CA2000.severity = none
+dotnet_diagnostic.CA1861.severity = none
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EF Core migrations are GENERATED and are rewritten by `dotnet ef` on every
+# schema change. Holding them to hand-written style and analyzer rules means
+# editing them back after every regeneration, which guarantees they drift.
+# The schema they describe is reviewed in Catalog/CatalogDbContext.cs, which is
+# hand-written and is held to the full bar.
+# ─────────────────────────────────────────────────────────────────────────────
+[src/Dexicon.Core/Catalog/Migrations/*.cs]
+generated_code = true
+dotnet_analyzer_diagnostic.severity = none
+dotnet_diagnostic.IDE0161.severity = none
+dotnet_diagnostic.CA1861.severity = none

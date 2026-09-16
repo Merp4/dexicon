@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Dexicon.Core/Dexicon.Core.csproj" />
+    <Project Path="src/Dexicon/Dexicon.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Dexicon.Tests/Dexicon.Tests.csproj" />
+  </Folder>
+</Solution>
