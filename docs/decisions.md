@@ -244,15 +244,39 @@ by a themed kit).
 
 ### D-14 Licence
 
-**Open — decide before the first public push.**
+**Decision.** **Apache-2.0.** `LICENSE` holds the canonical text unmodified; copyright sits
+in `NOTICE`, which is the split the ASF itself uses and keeps automated licence detection
+clean.
 
-**Apache-2.0** — explicit patent grant, contributor terms, the default for infrastructure
-projects, and compatible with every dependency in [04](04-ingestion.md). Recommended.
+**Why, over MIT:**
 
-**MIT** — shorter, more familiar, no patent grant.
+- **Express patent grant (§3)**, with retaliation termination. Vector search and retrieval
+  is a space with real patent activity. MIT is silent on patents, and silence is ambiguity
+  nobody wants to test.
+- **Trademark clause (§6)** — explicitly withholds trademark rights, so a fork cannot use
+  the name established in [D-17](#d-17-name) to imply endorsement. MIT offers nothing here.
+- **Contribution terms (§5)** — contributions are under the licence by default, so no CLA
+  is needed for basic hygiene.
+- **Corporate adoption.** This is a tool people will want to run at work. Apache-2.0 clears
+  legal review without a conversation.
 
-Either is compatible with the dependency set (Apache-2.0, MIT, BSD-2). This needs an
-owner's decision rather than a default, which is why it is listed rather than assumed.
+**The cost, accepted.** Apache-2.0 is **incompatible with GPLv2** (GPLv3 is fine). Nobody
+can vendor Dexicon source into a GPLv2 project. For a self-hosted container application
+that is close to hypothetical, and it is the only axis on which MIT wins.
+
+**When MIT would have been right.** If this were a small library meant to be copied into
+other codebases. It is an application, so it is not.
+
+**Deadline, corrected.** This was originally recorded as needed *before the first commit*,
+alongside the secret-hygiene rules. That conflated two different deadlines. A licence
+governs **distribution** — it binds at first publication, not at a local commit, and the
+first three commits were made without one with no consequence. Secret hygiene is the rule
+that genuinely cannot be retrofitted, because history is what gets scanned, and that one
+did land on commit one. The roadmap and open-questions table now say *before first public
+push*.
+
+**Compatible with every dependency** in [04](04-ingestion.md#extraction) — PdfPig is
+Apache-2.0; Markdig is BSD-2; AngleSharp, VersOne.Epub and DocumentFormat.OpenXml are MIT.
 
 ---
 
@@ -342,7 +366,7 @@ No security-tool drag, no overloaded abbreviation, no trademark holder.
 
 | # | Question | Needed by | Current lean |
 |---|---|---|---|
-| Q1 | Licence — Apache-2.0 or MIT? | Before first commit | Apache-2.0 |
+| ~~Q1~~ | ~~Licence — Apache-2.0 or MIT?~~ | — | **Resolved** — Apache-2.0, see [D-14](#d-14-licence) |
 | ~~Q2~~ | ~~Repository name and GHCR namespace~~ | — | **Resolved** — see [D-17](#d-17-name) |
 | Q3 | Default embedding model — `nomic-embed-text` for size, or `embeddinggemma` for measured code quality? | M3 decides with numbers | Ship `nomic-embed-text`, switch if M3 says so |
 | Q4 | Should `index_refresh` require the `ingest` scope, or be admin-only? | M2 | `ingest` — an agent noticing a stale index and refreshing it is the point |
