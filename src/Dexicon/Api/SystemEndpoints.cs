@@ -298,6 +298,149 @@ public static class SystemEndpoints
                 : Results.Json(new { status = "not-ready", qdrant, catalogue }, statusCode: 503);
         }).WithTags("Health");
 
+        app.MapGet("/api/embedding-models", async (RequestContext rc, IEmbeddingProvider embedder,
+            CatalogDbContext db, IOptions<DexiconOptions> opts, CancellationToken ct) =>
+        {
+            if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
+
+            IReadOnlyList<AvailableModel> models;
+            try
+            {
+                models = await embedder.ListModelsAsync(ct);
+            }
+            catch (EmbeddingUnavailableException ex)
+            {
+                return Results.Problem(
+                    title: "Embedding service unavailable",
+                    detail: ex.Message,
+                    statusCode: 503);
+            }
+
+            // Which models are already in use, so the UI can warn before someone deletes
+            // the last set on one -- and so a model that is pulled but unused is visibly
+            // available rather than looking the same as one that is load-bearing.
+            var inUse = (await db.ChunkSets.Select(s => s.EmbeddingModel).Distinct().ToListAsync(ct))
+                .Select(ModelNames.Normalise).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            // Ollama serves chat models from the same endpoint and they cannot embed.
+            // Offering them would turn a bad pick into a 503 much later, at index time.
+            var embedding = models
+                .Where(m => ModelNames.LooksLikeAnEmbeddingModel(m.Name, m.Family))
+                .Select(m => new EmbeddingModelInfo(
+                    m.Name, m.SizeBytes, m.Dimensions,
+                    inUse.Contains(ModelNames.Normalise(m.Name))))
+                .ToList();
+
+            return Results.Ok(new
+            {
+                configured = opts.Value.Embedding.Model,
+                models = embedding,
+                // Said plainly: an empty list otherwise reads as "Ollama is broken".
+                note = embedding.Count == 0
+                    ? "No embedding models are pulled. Run: docker compose exec dexicon-ollama ollama pull nomic-embed-text"
+                    : null,
+            });
+        }).WithTags("System");
+
+        app.MapPost("/api/embedding-models/pull", async (PullModelRequest body, HttpContext http,
+            RequestContext rc, IEmbeddingProvider embedder, ILoggerFactory logs, CancellationToken ct) =>
+        {
+            // Admin, not ingest: this downloads gigabytes onto a shared volume.
+            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+
+            if (string.IsNullOrWhiteSpace(body.Model))
+                return Results.Problem(title: "A model name is required", statusCode: 400);
+
+            var model = body.Model.Trim();
+            var log = logs.CreateLogger("Dexicon.ModelPull");
+            log.LogInformation("Pulling embedding model {Model}", model);
+
+            // Server-sent events, because a pull takes minutes and a progress bar that
+            // only moves when it finishes is not a progress bar. Same transport the
+            // indexing UI already uses, so the client needs nothing new.
+            http.Response.Headers.ContentType = "text/event-stream";
+            http.Response.Headers.CacheControl = "no-cache";
+
+            try
+            {
+                await foreach (var progress in embedder.PullModelAsync(model, ct))
+                {
+                    var json = JsonSerializer.Serialize(new
+                    {
+                        model,
+                        progress.Status,
+                        progress.Completed,
+                        progress.Total,
+                        progress.Percent,
+                        progress.Done,
+                    }, JsonOptions.Web);
+
+                    await http.Response.WriteAsync($"data: {json}\n\n", ct);
+                    await http.Response.Body.FlushAsync(ct);
+                }
+
+                log.LogInformation("Pulled embedding model {Model}", model);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // The client navigated away. Ollama keeps the partial download and
+                // resumes next time, so there is nothing to clean up.
+                log.LogInformation("Pull of {Model} was cancelled by the client", model);
+            }
+            catch (EmbeddingUnavailableException ex)
+            {
+                log.LogWarning(ex, "Pull of {Model} failed", model);
+                var json = JsonSerializer.Serialize(new { model, error = ex.Message }, JsonOptions.Web);
+                await http.Response.WriteAsync($"data: {json}\n\n", CancellationToken.None);
+            }
+
+            return Results.Empty;
+        }).WithTags("System");
+
+        app.MapDelete("/api/embedding-models/{model}", async (string model, RequestContext rc,
+            IEmbeddingProvider embedder, CatalogDbContext db, IOptions<DexiconOptions> opts,
+            CancellationToken ct) =>
+        {
+            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+
+            // Refuse while anything depends on it. Deleting a model out from under a chunk
+            // set does not fail loudly -- the set keeps its vectors and its collection, and
+            // breaks only at the next index or the next semantic query, by which point the
+            // cause is several steps away.
+            // Compared on the normalised name, so deleting "nomic-embed-text:latest"
+            // still sees the sets that recorded it as "nomic-embed-text".
+            var usedBy = (await db.ChunkSets
+                    .Select(s => new { s.Name, Corpus = s.Corpus!.Name, s.EmbeddingModel })
+                    .ToListAsync(ct))
+                .Where(s => ModelNames.SameModel(s.EmbeddingModel, model))
+                .ToList();
+
+            if (usedBy.Count > 0)
+                return Results.Problem(
+                    title: "Model is in use",
+                    detail: $"'{model}' is the embedding model for " +
+                            string.Join(", ", usedBy.Select(u => $"{u.Corpus}:{u.Name}")) +
+                            ". Migrate those chunk sets to another model first.",
+                    statusCode: 409);
+
+            if (ModelNames.SameModel(model, opts.Value.Embedding.Model))
+                return Results.Problem(
+                    title: "Model is the configured default",
+                    detail: $"'{model}' is DEXICON__EMBEDDING__MODEL, so new corpora would be created " +
+                            "against a model that is no longer pulled. Change the configuration first.",
+                    statusCode: 409);
+
+            try
+            {
+                await embedder.DeleteModelAsync(model, ct);
+                return Results.NoContent();
+            }
+            catch (EmbeddingUnavailableException ex)
+            {
+                return Results.Problem(title: "Could not delete model", detail: ex.Message, statusCode: 503);
+            }
+        }).WithTags("System");
+
         app.MapGet("/healthz", async (RequestContext rc, IVectorStore vectors, IEmbeddingProvider embedder,
             CatalogDbContext db, IOptions<DexiconOptions> opts, CancellationToken ct) =>
         {
@@ -335,6 +478,36 @@ public static class SystemEndpoints
 public interface IMemoryCacheEvictor
 {
     void EvictPrincipals();
+}
+
+public static class ModelNames
+{
+    /// <summary>
+    /// Whether a pulled model can embed.
+    ///
+    /// A heuristic, and labelled as one: Ollama's /api/tags does not say what a model is
+    /// FOR, and asking every model to embed a probe string would mean loading each one
+    /// into memory in turn just to render a dropdown. Every embedding model in Ollama's
+    /// library carries "embed" or "embedding" in its name; the cost of being wrong is a
+    /// model missing from a list, not a broken index, because the real check still runs
+    /// when one is chosen.
+    /// </summary>
+    internal static bool LooksLikeAnEmbeddingModel(string name, string? family) =>
+        name.Contains("embed", StringComparison.OrdinalIgnoreCase)
+        || (family?.Contains("bert", StringComparison.OrdinalIgnoreCase) ?? false);
+
+    /// <summary>
+    /// Ollama reports a tagged name — "nomic-embed-text:latest" — while a chunk set
+    /// stores whatever was typed, usually "nomic-embed-text". They refer to the same
+    /// model, and comparing them raw made a model in active use look unused: the listing
+    /// said so, and the delete guard would have let it be removed out from under four
+    /// corpora. Only ":latest" is stripped; ":v1.5" is a genuinely different model.
+    /// </summary>
+    internal static string Normalise(string model) =>
+        model.EndsWith(":latest", StringComparison.OrdinalIgnoreCase) ? model[..^7] : model;
+
+    internal static bool SameModel(string a, string b) =>
+        string.Equals(Normalise(a), Normalise(b), StringComparison.OrdinalIgnoreCase);
 }
 
 public static class JsonOptions

@@ -24,11 +24,20 @@ public sealed class IndexJobQueue(CatalogDbContext db, ILogger<IndexJobQueue> lo
     /// pending is a no-op returning the existing id — two identical scans in a row is
     /// wasted work, not throughput.
     /// </summary>
-    public async Task<IndexJob> EnqueueAsync(string corpusId, JobKind kind, CancellationToken ct = default)
+    /// <param name="chunkSetId">
+    /// The one set to index, or null for every set in the corpus. Naming a set is what
+    /// lets a replacement backfill while the live set keeps serving search.
+    /// </param>
+    public async Task<IndexJob> EnqueueAsync(string corpusId, JobKind kind, string? chunkSetId = null,
+        CancellationToken ct = default)
     {
+        // Deduplicated per (corpus, SET). Matching on the corpus alone would hand back a
+        // job for a different set — so a request to backfill a new set would return the
+        // live set's refresh, report success, and build nothing.
         var existing = await db.Jobs
-            .Where(j => j.CorpusId == corpusId && (j.State == JobState.Queued || j.State == JobState.Running))
-            .OrderByDescending(j => j.StartedUtc)
+            .Where(j => j.CorpusId == corpusId && j.ChunkSetId == chunkSetId
+                        && (j.State == JobState.Queued || j.State == JobState.Running))
+            .OrderByDescending(j => j.QueuedUtc)
             .FirstOrDefaultAsync(ct);
 
         if (existing is not null)
@@ -42,6 +51,7 @@ public sealed class IndexJobQueue(CatalogDbContext db, ILogger<IndexJobQueue> lo
         {
             Id = Ulid.NewUlid().ToString(),
             CorpusId = corpusId,
+            ChunkSetId = chunkSetId,
             Kind = kind,
             State = JobState.Queued,
             QueuedUtc = DateTime.UtcNow,

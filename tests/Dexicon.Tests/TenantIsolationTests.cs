@@ -59,14 +59,26 @@ public sealed class TenantIsolationTests : IAsyncLifetime
         TenantId = tenant,
         Name = name,
         Visibility = visibility,
-        EmbeddingModel = "nomic-embed-text",
-        EmbeddingDimensions = 768,
-        CollectionName = "dexicon__nomic-embed-text__768",
-        ChunkSize = 768,
-        ChunkOverlap = 100,
-        BoundaryMode = "language-aware",
         State = CorpusState.Ready,
         CreatedUtc = DateTime.UtcNow,
+        ChunkSets =
+        {
+            new ChunkSet
+            {
+                Id = $"set-{name}",
+                CorpusId = $"id-{name}",
+                Name = "default",
+                EmbeddingModel = "nomic-embed-text",
+                EmbeddingDimensions = 768,
+                CollectionName = "dexicon__nomic-embed-text__768",
+                ChunkSize = 768,
+                ChunkOverlap = 100,
+                BoundaryMode = "language-aware",
+                IsDefault = true,
+                State = CorpusState.Ready,
+                CreatedUtc = DateTime.UtcNow,
+            },
+        },
     };
 
     // ── The headline assertion ───────────────────────────────────────────────
@@ -157,6 +169,7 @@ public sealed class TenantIsolationTests : IAsyncLifetime
             {
                 Text = SecretString,
                 CorpusIds = [],                       // the bug being guarded
+                ChunkSetIds = [],
                 CollectionName = "dexicon__nomic-embed-text__768",
             },
             denseVector: new float[768],

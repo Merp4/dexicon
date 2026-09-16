@@ -193,6 +193,9 @@ public sealed class DocumentService(
         var blob = await db.Blobs.FirstOrDefaultAsync(b => b.Sha256 == sha256, ct)
             ?? throw new InvalidOperationException($"No stored document with hash {sha256}.");
 
+        // Needed to give the new attachment a state row per set.
+        await db.Entry(corpus).Collection(c => c.ChunkSets).LoadAsync(ct);
+
         var source = await UploadSourceFor(corpus, ct);
 
         // ONE BLOB, ONE ATTACHMENT PER CORPUS. Look up by blob first, not by name.
@@ -212,11 +215,9 @@ public sealed class DocumentService(
                 // Renaming invalidates the old chunks, which are keyed by file_path.
                 // Cleared here; the caller's reindex writes them back under the new name.
                 byBlob.RelativePath = fileName;
-                byBlob.ContentHash = null;
-                byBlob.Status = FileStatus.Pending;
+                await InvalidateAsync(byBlob.Id, ct);
             }
             byBlob.SizeBytes = blob.SizeBytes;
-            byBlob.StatusDetail = null;
             await db.SaveChangesAsync(ct);
             return byBlob;
         }
@@ -229,10 +230,8 @@ public sealed class DocumentService(
             // Same name, different bytes: a replacement. The fingerprint changes, so
             // the incremental pass sees it as changed and re-chunks it.
             existing.BlobSha256 = sha256;
-            existing.ContentHash = null;
             existing.SizeBytes = blob.SizeBytes;
-            existing.Status = FileStatus.Pending;
-            existing.StatusDetail = null;
+            await InvalidateAsync(existing.Id, ct);
             await db.SaveChangesAsync(ct);
             return existing;
         }
@@ -245,13 +244,40 @@ public sealed class DocumentService(
             BlobSha256 = sha256,
             SizeBytes = blob.SizeBytes,
             MediaType = blob.MediaType,
-            Status = FileStatus.Pending,
-            ContentHash = null,      // null = not yet indexed, so the next pass picks it up
         };
 
         db.Files.Add(file);
+
+        // A row per chunk set, all Pending: a new attachment is outstanding work for
+        // every way this corpus cuts its content, not just the default one.
+        foreach (var set in corpus.ChunkSets)
+        {
+            db.FileChunkStates.Add(new FileChunkState
+            {
+                FileId = file.Id,
+                ChunkSetId = set.Id,
+                Status = FileStatus.Pending,
+            });
+        }
+
         await db.SaveChangesAsync(ct);
         return file;
+    }
+
+    /// <summary>
+    /// Mark a file as needing re-indexing in EVERY chunk set. A rename invalidates chunks
+    /// keyed by file path, and replaced bytes invalidate the chunks themselves — in both
+    /// cases for all sets at once, because they all read the same attachment.
+    /// </summary>
+    private async Task InvalidateAsync(string fileId, CancellationToken ct)
+    {
+        var states = await db.FileChunkStates.Where(s => s.FileId == fileId).ToListAsync(ct);
+        foreach (var state in states)
+        {
+            state.ContentHash = null;
+            state.Status = FileStatus.Pending;
+            state.StatusDetail = null;
+        }
     }
 
     /// <summary>Every corpus gets at most one upload source, created on first attachment.</summary>

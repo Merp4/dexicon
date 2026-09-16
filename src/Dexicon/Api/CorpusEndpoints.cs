@@ -79,15 +79,28 @@ public static class CorpusEndpoints
                 Description = body.Description,
                 Visibility = string.Equals(body.Visibility, "shared", StringComparison.OrdinalIgnoreCase)
                     ? CorpusVisibility.Shared : CorpusVisibility.Private,
+                State = CorpusState.Ready,
+                CreatedUtc = DateTime.UtcNow,
+            };
+
+            // Every corpus is born with one set. Nothing else has to special-case the
+            // "no sets yet" state, and the settings a caller passed at creation have a
+            // home that is honest about what they configure.
+            corpus.ChunkSets.Add(new ChunkSet
+            {
+                Id = Ulid.NewUlid().ToString(),
+                CorpusId = corpus.Id,
+                Name = "default",
                 EmbeddingModel = model,
                 EmbeddingDimensions = dims,
                 CollectionName = vectors.CollectionNameFor(model, dims),
                 ChunkSize = body.ChunkSize ?? indexing.ChunkSize,
                 ChunkOverlap = body.ChunkOverlap ?? indexing.ChunkOverlap,
                 BoundaryMode = body.BoundaryMode ?? indexing.BoundaryMode,
+                IsDefault = true,
                 State = CorpusState.Ready,
                 CreatedUtc = DateTime.UtcNow,
-            };
+            });
 
             if (!string.IsNullOrWhiteSpace(body.WorkspacePath))
             {
@@ -109,55 +122,21 @@ public static class CorpusEndpoints
 
             db.Corpora.Add(corpus);
             await db.SaveChangesAsync(ct);
-            await vectors.EnsureCollectionAsync(corpus.CollectionName, dims, ct);
+            await vectors.EnsureCollectionAsync(corpus.ChunkSets[0].CollectionName, dims, ct);
 
             return Results.Created($"/api/corpora/{corpus.Id}", await Summarise(db, corpus, tenant, ct));
         });
 
         g.MapPatch("/{nameOrId}", async (string nameOrId, UpdateCorpusRequest body, RequestContext rc,
-            ScopeResolver scopes, CatalogDbContext db, IndexJobQueue queue, CancellationToken ct) =>
+            ScopeResolver scopes, CatalogDbContext db, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             var tenant = rc.RequireTenant();
             var corpus = await scopes.ResolveWritableAsync(tenant, nameOrId, ct);
 
-            // Chunk settings are the interesting edit: they change how every document in
-            // this corpus is sliced, so they invalidate the whole index and are applied
-            // by re-chunking rather than by hoping someone remembers to reindex.
-            var rechunk = false;
-
-            if (body.ChunkSize is { } size)
-            {
-                if (size is < 64 or > 8192)
-                    return Results.Problem(title: "chunkSize must be between 64 and 8192 tokens", statusCode: 400);
-                rechunk |= size != corpus.ChunkSize;
-                corpus.ChunkSize = size;
-            }
-
-            if (body.ChunkOverlap is { } overlap)
-            {
-                if (overlap < 0) return Results.Problem(title: "chunkOverlap cannot be negative", statusCode: 400);
-                rechunk |= overlap != corpus.ChunkOverlap;
-                corpus.ChunkOverlap = overlap;
-            }
-
-            if (corpus.ChunkOverlap >= corpus.ChunkSize)
-                return Results.Problem(
-                    title: "chunkOverlap must be smaller than chunkSize",
-                    detail: $"Asked for overlap {corpus.ChunkOverlap} with size {corpus.ChunkSize}.",
-                    statusCode: 400);
-
-            if (body.BoundaryMode is { Length: > 0 } mode)
-            {
-                if (mode is not ("none" or "blank-line" or "language-aware"))
-                    return Results.Problem(
-                        title: "Unknown boundary mode",
-                        detail: $"'{mode}'. Expected none, blank-line or language-aware.",
-                        statusCode: 400);
-                rechunk |= !string.Equals(mode, corpus.BoundaryMode, StringComparison.Ordinal);
-                corpus.BoundaryMode = mode;
-            }
-
+            // Chunk settings are NOT here any more. They belong to a chunk set, because a
+            // corpus can carry several and "the corpus's chunk size" stopped meaning
+            // anything the moment that became true. See /api/corpora/{id}/chunk-sets.
             if (body.Description is not null) corpus.Description = body.Description;
             if (body.Visibility is not null)
                 corpus.Visibility = string.Equals(body.Visibility, "shared", StringComparison.OrdinalIgnoreCase)
@@ -167,19 +146,12 @@ public static class CorpusEndpoints
             {
                 var existing = await db.CorpusGrants.Where(x => x.CorpusId == corpus.Id).ToListAsync(ct);
                 db.CorpusGrants.RemoveRange(existing);
-                foreach (var t in body.GrantTenantIds.Distinct(StringComparer.OrdinalIgnoreCase))
-                    db.CorpusGrants.Add(new CorpusGrant { CorpusId = corpus.Id, TenantId = t });
+                foreach (var tid in body.GrantTenantIds.Distinct(StringComparer.OrdinalIgnoreCase))
+                    db.CorpusGrants.Add(new CorpusGrant { CorpusId = corpus.Id, TenantId = tid });
             }
 
             await db.SaveChangesAsync(ct);
-
-            // Queued, not done inline: re-embedding a large corpus outlasts any request.
-            // The staleness fingerprint mixes the chunk settings in, so a plain refresh
-            // is enough — every file now looks changed, and nothing else does.
-            JobSummary? queued = null;
-            if (rechunk) queued = (await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct)).ToSummary();
-
-            return Results.Ok(new { corpus = await Summarise(db, corpus, tenant, ct), rechunkJob = queued });
+            return Results.Ok(new { corpus = await Summarise(db, corpus, tenant, ct) });
         });
 
         g.MapDelete("/{nameOrId}", async (string nameOrId, RequestContext rc, ScopeResolver scopes,
@@ -188,7 +160,14 @@ public static class CorpusEndpoints
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             var corpus = await scopes.ResolveWritableAsync(rc.RequireTenant(), nameOrId, ct);
 
-            await vectors.DeleteCorpusAsync(corpus.CollectionName, corpus.Id, ct);
+            // Per collection, because a corpus mid-migration has sets in two of them and
+            // a single delete would leave one half behind with nothing left to name it.
+            var collections = await db.ChunkSets.Where(s => s.CorpusId == corpus.Id)
+                .Select(s => s.CollectionName).Distinct().ToListAsync(ct);
+
+            foreach (var collection in collections)
+                await vectors.DeleteCorpusAsync(collection, corpus.Id, ct);
+
             db.Corpora.Remove(corpus);
             await db.SaveChangesAsync(ct);
             return Results.NoContent();
@@ -230,7 +209,7 @@ public static class CorpusEndpoints
         {
             if (rc.RequireScope(Scopes.Ingest) is { } denied) return denied;
             var corpus = await scopes.ResolveWritableAsync(rc.RequireTenant(), nameOrId, ct);
-            var job = await queue.EnqueueAsync(corpus.Id, full == true ? JobKind.Full : JobKind.Refresh, ct);
+            var job = await queue.EnqueueAsync(corpus.Id, full == true ? JobKind.Full : JobKind.Refresh, ct: ct);
             return Results.Accepted($"/api/jobs/{job.Id}", job.ToSummary());
         });
 
@@ -238,21 +217,38 @@ public static class CorpusEndpoints
             RequestContext rc, ScopeResolver scopes, CatalogDbContext db, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
+            // `books:fine` selects a set here too, exactly as it does in search.
             var scope = await scopes.ResolveReadableAsync(rc.RequireTenant(), [nameOrId], ct);
-            var corpus = scope.Corpora[0];
+            var target = scope.Targets[0];
+            var corpus = target.Corpus;
 
             var sourceIds = await db.Sources.Where(s => s.CorpusId == corpus.Id).Select(s => s.Id).ToListAsync(ct);
-            var q = db.Files.Where(f => sourceIds.Contains(f.SourceId));
+
+            // Left join: a file attached before this set existed has no state row yet, and
+            // it is Pending rather than missing. Dropping it would hide exactly the files
+            // a new set still has to do.
+            var q = from f in db.Files.Where(f => sourceIds.Contains(f.SourceId))
+                    join s in db.FileChunkStates.Where(s => s.ChunkSetId == target.Set.Id)
+                        on f.Id equals s.FileId into gj
+                    from s in gj.DefaultIfEmpty()
+                    select new { File = f, State = s };
 
             if (!string.IsNullOrWhiteSpace(status) && Enum.TryParse<FileStatus>(status, true, out var parsed))
-                q = q.Where(f => f.Status == parsed);
+                q = parsed == FileStatus.Pending
+                    ? q.Where(x => x.State == null || x.State.Status == parsed)
+                    : q.Where(x => x.State != null && x.State.Status == parsed);
 
             var total = await q.CountAsync(ct);
-            var files = await q.OrderBy(f => f.RelativePath)
+            var rows = await q.OrderBy(x => x.File.RelativePath)
                 .Skip(offset ?? 0).Take(Math.Clamp(limit ?? 100, 1, 1000))
                 .ToListAsync(ct);
 
-            return Results.Ok(new { total, files = files.Select(f => f.ToSummary()) });
+            return Results.Ok(new
+            {
+                total,
+                chunkSet = target.Set.Name,
+                files = rows.Select(x => x.File.ToSummary(x.State)),
+            });
         });
     }
 
@@ -260,27 +256,53 @@ public static class CorpusEndpoints
         CancellationToken ct)
     {
         var sources = await db.Sources.Where(s => s.CorpusId == c.Id).ToListAsync(ct);
-        var sourceIds = sources.Select(s => s.Id).ToList();
+        var sets = await db.ChunkSets.Where(s => s.CorpusId == c.Id)
+            .OrderByDescending(s => s.IsDefault).ThenBy(s => s.Name).ToListAsync(ct);
 
-        // These counts are READ BACK here and by index_status. A column nothing reads
-        // is a feature that does not exist, so each one has a named reader.
-        var files = await db.Files.Where(f => sourceIds.Contains(f.SourceId))
-            .GroupBy(f => f.Status)
-            .Select(grp => new { Status = grp.Key, Count = grp.Count(), Chunks = grp.Sum(x => x.ChunkCount) })
+        var setIds = sets.Select(s => s.Id).ToList();
+
+        // Counted per set: the same file is one attachment but several chunkings, and a
+        // corpus total that summed them would double-count every document.
+        var perSet = await db.FileChunkStates
+            .Where(fs => setIds.Contains(fs.ChunkSetId))
+            .GroupBy(fs => new { fs.ChunkSetId, fs.Status })
+            .Select(grp => new
+            {
+                grp.Key.ChunkSetId,
+                grp.Key.Status,
+                Count = grp.Count(),
+                Chunks = grp.Sum(x => x.ChunkCount),
+            })
             .ToListAsync(ct);
+
+        var setSummaries = sets.Select(s =>
+        {
+            var rows = perSet.Where(r => r.ChunkSetId == s.Id).ToList();
+            return s.ToSummary(
+                fileCount: rows.Where(r => r.Status == FileStatus.Indexed).Sum(r => r.Count),
+                chunkCount: rows.Sum(r => r.Chunks),
+                pendingCount: rows.Where(r => r.Status == FileStatus.Pending).Sum(r => r.Count),
+                failedCount: rows.Where(r => r.Status == FileStatus.Failed).Sum(r => r.Count));
+        }).ToList();
+
+        // The corpus-level figures describe the DEFAULT set, because that is what a search
+        // with an unqualified name actually reaches. Summing every set would report a
+        // number no query can return.
+        var headline = setSummaries.FirstOrDefault(s => s.IsDefault) ?? setSummaries.FirstOrDefault();
+        var defaultRows = headline is null ? [] : perSet.Where(r => r.ChunkSetId == headline.Id).ToList();
 
         return new CorpusSummary(
             c.Id, c.Name, c.Description, c.TenantId,
             Owned: string.Equals(c.TenantId, viewerTenant, StringComparison.OrdinalIgnoreCase),
             c.Visibility.ToString().ToLowerInvariant(),
             c.State.ToString().ToLowerInvariant(),
-            c.EmbeddingModel, c.EmbeddingDimensions, c.ChunkSize, c.ChunkOverlap, c.BoundaryMode,
             c.CreatedUtc, c.LastIndexedUtc,
             sources.Count,
-            files.Where(f => f.Status == FileStatus.Indexed).Sum(f => f.Count),
-            files.Sum(f => f.Chunks),
-            files.Where(f => f.Status is FileStatus.Skipped or FileStatus.Empty).Sum(f => f.Count),
-            files.Where(f => f.Status == FileStatus.Failed).Sum(f => f.Count),
-            sources.Select(s => s.ToSummary()).ToList());
+            headline?.FileCount ?? 0,
+            headline?.ChunkCount ?? 0,
+            defaultRows.Where(r => r.Status is FileStatus.Skipped or FileStatus.Empty).Sum(r => r.Count),
+            headline?.FailedCount ?? 0,
+            sources.Select(s => s.ToSummary()).ToList(),
+            setSummaries);
     }
 }

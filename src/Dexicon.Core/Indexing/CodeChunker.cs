@@ -1,16 +1,52 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using Dexicon.Core.Extraction;
 
 namespace Dexicon.Core.Indexing;
 
 public sealed record TextChunk
 {
+    /// <summary>The verbatim text, exactly as it appears in the file.</summary>
     public required string Content { get; init; }
+
+    /// <summary>
+    /// What gets EMBEDDED, which is not always what gets stored. With heading context
+    /// enabled a chunk is embedded with its heading trail prepended, so its vector knows
+    /// which section it came from, while <see cref="Content"/> stays verbatim.
+    ///
+    /// Keeping them apart matters: Content is what search returns, what get_context
+    /// stitches, and what a resource read reconstructs a file from. Prepending to it
+    /// would put invented lines into a file that reconstructs byte-identically today.
+    /// </summary>
+    public string EmbedText { get; init; } = string.Empty;
+
     public int StartLine { get; init; }
     public int EndLine { get; init; }
     public string? Section { get; init; }
     public IReadOnlyList<string> Symbols { get; init; } = [];
     public int Index { get; init; }
+}
+
+/// <summary>
+/// How one chunk set cuts text. Grouped into a record rather than passed as five
+/// positional arguments, because the set of knobs grows and a call site reading
+/// <c>(768, 100, "blank-line", null, false, true, true)</c> tells a reader nothing.
+/// </summary>
+public sealed record ChunkOptions
+{
+    public int ChunkSizeTokens { get; init; } = 768;
+    public int OverlapTokens { get; init; } = 100;
+    public string BoundaryMode { get; init; } = "language-aware";
+    public string? CustomBoundaryPattern { get; init; }
+
+    /// <summary>Prefer the document's own units — page, chapter, slide — as split points.</summary>
+    public bool UnitAware { get; init; }
+
+    /// <summary>Cut at a sentence rather than a word when splitting an over-long line.</summary>
+    public bool SentenceAware { get; init; }
+
+    /// <summary>Embed each chunk with its heading trail prepended.</summary>
+    public bool HeadingContext { get; init; }
 }
 
 /// <summary>
@@ -46,34 +82,90 @@ public static class CodeChunker
 
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(500);
 
+    /// <summary>Convenience overload for the common case and for tests.</summary>
     public static IReadOnlyList<TextChunk> Chunk(
         string relativePath,
         string content,
         int chunkSizeTokens = 768,
         int overlapTokens = 100,
         string boundaryMode = "language-aware",
-        string? customBoundaryPattern = null)
+        string? customBoundaryPattern = null) =>
+        Chunk(relativePath, content, new ChunkOptions
+        {
+            ChunkSizeTokens = chunkSizeTokens,
+            OverlapTokens = overlapTokens,
+            BoundaryMode = boundaryMode,
+            CustomBoundaryPattern = customBoundaryPattern,
+        });
+
+    /// <param name="extracted">
+    /// The extraction result, when there is one. Only used for <see cref="ChunkOptions.UnitAware"/>:
+    /// its unit offsets become split points, so a chunk does not straddle two chapters.
+    /// </param>
+    public static IReadOnlyList<TextChunk> Chunk(
+        string relativePath,
+        string content,
+        ChunkOptions options,
+        ExtractedText? extracted = null)
     {
         if (string.IsNullOrWhiteSpace(content)) return [];
-        if (overlapTokens >= chunkSizeTokens)
-            throw new ArgumentException($"overlap ({overlapTokens}) must be smaller than chunk size ({chunkSizeTokens}).");
+        if (options.OverlapTokens >= options.ChunkSizeTokens)
+            throw new ArgumentException(
+                $"overlap ({options.OverlapTokens}) must be smaller than chunk size ({options.ChunkSizeTokens}).");
 
         var language = LanguageMap.Detect(relativePath);
         var lines = SplitLines(content);
-        var maxChars = chunkSizeTokens * CharsPerToken;
-        var overlapChars = overlapTokens * CharsPerToken;
+        var maxChars = options.ChunkSizeTokens * CharsPerToken;
+        var overlapChars = options.OverlapTokens * CharsPerToken;
 
-        var boundaries = ResolveBoundaries(boundaryMode, language, customBoundaryPattern, lines).ToHashSet();
+        var boundaries = ResolveBoundaries(
+            options.BoundaryMode, language, options.CustomBoundaryPattern, lines).ToHashSet();
+
+        // A document's own units are the strongest boundary it has: a chapter break means
+        // more than a blank line ever will. Added to whatever the boundary mode found
+        // rather than replacing it, so prose inside a long chapter still splits sensibly.
+        if (options.UnitAware && extracted is { Units.Count: > 0 })
+            foreach (var line in UnitBoundaryLines(extracted, content)) boundaries.Add(line);
+
         var symbolPattern = LanguageMap.SymbolPattern(language);
         var isMarkdown = string.Equals(language, "markdown", StringComparison.Ordinal);
 
         var chunks = new List<TextChunk>();
         var index = 0;
 
-        foreach (var c in ChunkLines(lines, boundaries, maxChars, overlapChars, symbolPattern, isMarkdown))
+        foreach (var c in ChunkLines(lines, boundaries, maxChars, overlapChars, symbolPattern, isMarkdown, options))
             chunks.Add(c with { Index = index++ });
 
         return chunks;
+    }
+
+    /// <summary>
+    /// The 0-based line index at which each extraction unit starts. Units carry character
+    /// offsets; the chunker works in lines, so they are converted once here rather than
+    /// per chunk.
+    /// </summary>
+    private static IEnumerable<int> UnitBoundaryLines(ExtractedText extracted, string content)
+    {
+        var offsets = extracted.Units
+            .Select(u => u.StartOffset)
+            .Where(o => o > 0 && o <= content.Length)
+            .OrderBy(o => o)
+            .ToList();
+
+        if (offsets.Count == 0) yield break;
+
+        var line = 0;
+        var next = 0;
+
+        for (var i = 0; i < content.Length && next < offsets.Count; i++)
+        {
+            while (next < offsets.Count && offsets[next] == i)
+            {
+                yield return line;
+                next++;
+            }
+            if (content[i] == '\n') line++;
+        }
     }
 
     /// <summary>
@@ -92,13 +184,18 @@ public static class CodeChunker
     /// line when the buffer contains no boundary at all.
     /// </summary>
     private static IEnumerable<TextChunk> ChunkLines(string[] lines, HashSet<int> boundaries,
-        int maxChars, int overlapChars, string? symbolPattern, bool isMarkdown)
+        int maxChars, int overlapChars, string? symbolPattern, bool isMarkdown, ChunkOptions options)
     {
         var start = 0;
         var chars = 0;
         var lastBoundary = -1;
         var lastHeading = (string?)null;
         var inFence = false;
+
+        // The heading STACK, not just the nearest heading: "Point payload" alone is
+        // ambiguous across a document, "Data model > Storage > Point payload" is not.
+        // Indexed by level so a deeper heading replaces its peers and its children.
+        var trail = new string?[7];
 
         for (var i = 0; i < lines.Length; i++)
         {
@@ -107,7 +204,12 @@ public static class CodeChunker
             if (isMarkdown)
             {
                 if (IsFenceDelimiter(line)) inFence = !inFence;
-                else if (!inFence && TryReadHeading(line, out var heading)) lastHeading = heading;
+                else if (!inFence && TryReadHeading(line, out var heading, out var level))
+                {
+                    lastHeading = heading;
+                    trail[level] = heading;
+                    for (var deeper = level + 1; deeper < trail.Length; deeper++) trail[deeper] = null;
+                }
             }
 
             if (boundaries.Contains(i) && i > start) lastBoundary = i;
@@ -125,8 +227,8 @@ public static class CodeChunker
             // — they are all on it — and a search hit still opens at the right place.
             if (chars == 0 && lineChars > maxChars)
             {
-                foreach (var piece in SplitOversizeLine(line, maxChars, overlapChars))
-                    yield return Build(piece, i, i, lastHeading, symbolPattern);
+                foreach (var piece in SplitOversizeLine(line, maxChars, overlapChars, options.SentenceAware))
+                    yield return Build(piece, i, i, lastHeading, symbolPattern, Trail(trail, options));
 
                 start = i + 1;
                 lastBoundary = -1;
@@ -137,7 +239,8 @@ public static class CodeChunker
             {
                 var splitAt = lastBoundary > start ? lastBoundary : i;
 
-                yield return Build(Join(lines, start, splitAt), start, splitAt - 1, lastHeading, symbolPattern);
+                yield return Build(Join(lines, start, splitAt), start, splitAt - 1, lastHeading, symbolPattern,
+                    Trail(trail, options));
 
                 // Overlap is carried by rewinding the start, not by copying text, so
                 // line numbers stay exact.
@@ -155,7 +258,8 @@ public static class CodeChunker
         {
             var tail = Join(lines, start, lines.Length);
             if (tail.Trim().Length > 0)
-                yield return Build(tail, start, lines.Length - 1, lastHeading, symbolPattern);
+                yield return Build(tail, start, lines.Length - 1, lastHeading, symbolPattern,
+                    Trail(trail, options));
         }
     }
 
@@ -164,9 +268,10 @@ public static class CodeChunker
     /// the end of each. The only case where the chunker splits within a line; it exists
     /// so that "indexed" cannot mean "the first 8,000 characters were indexed".
     /// </summary>
-    private static IEnumerable<string> SplitOversizeLine(string line, int maxChars, int overlapChars)
+    private static IEnumerable<string> SplitOversizeLine(
+        string line, int maxChars, int overlapChars, bool sentenceAware = false)
     {
-        // Back up at most an eighth of the budget looking for a space: far enough to
+        // Back up at most an eighth of the budget looking for a boundary: far enough to
         // avoid cutting mid-word, not so far that a line without spaces (a minified
         // bundle, a base64 blob) loses a meaningful slice of every piece.
         var maxBackup = Math.Max(1, maxChars / 8);
@@ -178,8 +283,13 @@ public static class CodeChunker
 
             if (end < line.Length)
             {
-                var space = line.LastIndexOf(' ', end - 1, Math.Min(end - pos, maxBackup));
-                if (space > pos) end = space + 1;
+                // A sentence end is a better place to cut than a word gap, because half a
+                // sentence embeds as something its author never wrote. Falls back to a
+                // word boundary when there is no sentence end within reach, which is the
+                // usual case for code and for a single very long paragraph.
+                var cut = sentenceAware ? LastSentenceEnd(line, pos, end, maxBackup) : -1;
+                if (cut < 0) cut = line.LastIndexOf(' ', end - 1, Math.Min(end - pos, maxBackup));
+                if (cut > pos) end = cut + 1;
             }
 
             var piece = line[pos..end].Trim();
@@ -191,6 +301,36 @@ public static class CodeChunker
             var next = end - overlapChars;
             pos = next > pos ? next : end;
         }
+    }
+
+    /// <summary>
+    /// The last sentence terminator within <paramref name="maxBackup"/> characters of
+    /// <paramref name="end"/>, or -1. A terminator counts only when followed by a space,
+    /// which keeps "e.g." and "3.14" from being read as the end of a thought.
+    /// </summary>
+    private static int LastSentenceEnd(string line, int pos, int end, int maxBackup)
+    {
+        var floor = Math.Max(pos, end - maxBackup);
+
+        for (var i = end - 1; i > floor; i--)
+        {
+            if (line[i] is not ('.' or '!' or '?')) continue;
+            if (i + 1 < line.Length && line[i + 1] != ' ') continue;
+            return i + 1;   // keep the terminator with the sentence it ends
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// The heading path as an embedding prefix, or null when the feature is off or there
+    /// are no headings above this point.
+    /// </summary>
+    private static string? Trail(string?[] trail, ChunkOptions options)
+    {
+        if (!options.HeadingContext) return null;
+        var parts = trail.Where(h => !string.IsNullOrEmpty(h)).ToList();
+        return parts.Count == 0 ? null : string.Join(" > ", parts);
     }
 
     private static string Join(string[] lines, int from, int toExclusive) =>
@@ -238,9 +378,13 @@ public static class CodeChunker
     /// "spends its first minutes in embedding backoff" as its section. A section that
     /// is confidently wrong is worse than no section, because a reader trusts it.
     /// </summary>
-    internal static bool TryReadHeading(string line, out string heading)
+    internal static bool TryReadHeading(string line, out string heading) =>
+        TryReadHeading(line, out heading, out _);
+
+    internal static bool TryReadHeading(string line, out string heading, out int level)
     {
         heading = string.Empty;
+        level = 0;
         var span = line.AsSpan();
 
         var indent = 0;
@@ -257,13 +401,18 @@ public static class CodeChunker
         if (text.IsEmpty) return false;
 
         heading = text.ToString();
+        level = hashes;
         return true;
     }
 
-    private static TextChunk Build(string content, int startLine, int endLine, string? section, string? symbolPattern) =>
+    private static TextChunk Build(string content, int startLine, int endLine, string? section,
+        string? symbolPattern, string? headingTrail = null) =>
         new()
         {
             Content = content,
+            // The trail goes into the EMBEDDED text only. Content stays verbatim, so a
+            // file still reconstructs byte-identically from its chunks.
+            EmbedText = headingTrail is { Length: > 0 } ? $"{headingTrail}\n\n{content}" : content,
             StartLine = startLine + 1,   // 1-based: what an editor shows
             EndLine = endLine + 1,
             Section = section,

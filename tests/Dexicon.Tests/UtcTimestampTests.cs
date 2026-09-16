@@ -57,7 +57,6 @@ public sealed class UtcTimestampTests : IAsyncLifetime
         _db.Corpora.Add(new Corpus
         {
             Id = "c", TenantId = "t", Name = "c",
-            EmbeddingModel = "m", CollectionName = "x", BoundaryMode = "none",
             CreatedUtc = DateTime.UtcNow,
             LastIndexedUtc = DateTime.UtcNow,
         });

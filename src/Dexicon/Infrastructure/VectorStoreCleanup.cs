@@ -24,7 +24,11 @@ public sealed class VectorStoreCleanup(CatalogDbContext db, IVectorStore vectors
         // Vectors first. If the catalogue row went first and this threw, the corpus
         // would keep returning search hits for a document it no longer lists — a
         // result pointing at something the UI says is not there.
-        await vectors.DeleteFileChunksAsync(corpus.CollectionName, corpus.Id, file.RelativePath, ct);
+        // Once per set: a detached document must leave every chunking of it, not just
+        // the one the caller happened to be looking at.
+        var sets = await db.ChunkSets.Where(s => s.CorpusId == corpus.Id).ToListAsync(ct);
+        foreach (var set in sets)
+            await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, file.RelativePath, ct);
 
         return await documents.DetachAsync(corpus.Id, fileId, ct);
     }

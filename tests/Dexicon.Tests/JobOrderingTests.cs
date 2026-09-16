@@ -32,7 +32,6 @@ public sealed class JobOrderingTests : IAsyncLifetime
         _db.Corpora.Add(new Corpus
         {
             Id = "c", TenantId = "t", Name = "c",
-            EmbeddingModel = "m", CollectionName = "x", BoundaryMode = "none",
             CreatedUtc = DateTime.UtcNow,
         });
         await _db.SaveChangesAsync();

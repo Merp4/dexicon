@@ -33,6 +33,41 @@ public static class Bootstrapper
         await VerifyDependenciesAsync(sp, log, options);
         await EnsureTenantAsync(db, log, options);
         await EnsureBootstrapTokenAsync(sp, db, log, options);
+        await PurgeLegacyChunksAsync(sp, db, log);
+    }
+
+    /// <summary>
+    /// One-time cleanup after the chunk-sets migration: delete points written before sets
+    /// existed. They carry no chunk_set_id, so no query can reach them, and because point
+    /// ids are now derived from the set rather than the corpus, re-indexing writes fresh
+    /// points beside them instead of overwriting them. Left alone they are permanent
+    /// garbage in the index.
+    ///
+    /// Guarded on there being something to do: once every chunk set has indexed at least
+    /// once, there is nothing from before, and this costs one cheap filtered delete.
+    /// </summary>
+    private static async Task PurgeLegacyChunksAsync(IServiceProvider sp, CatalogDbContext db, ILogger log)
+    {
+        // Guarded on work actually being outstanding. An earlier version asked whether any
+        // set had never been indexed, which the migration had already answered "no" to by
+        // copying the corpus's timestamp — so the sweep silently never ran.
+        var anyUnindexed = await db.FileChunkStates.AnyAsync(s => s.ContentHash == null);
+        if (!anyUnindexed) return;
+
+        try
+        {
+            var vectors = sp.GetRequiredService<IVectorStore>();
+            var touched = await vectors.PurgeUnsetChunksAsync();
+            if (touched > 0)
+                log.LogInformation(
+                    "Swept {Count} collection(s) for chunks written before chunk sets existed", touched);
+        }
+        catch (Exception ex)
+        {
+            // Not fatal. Qdrant may simply not be up yet, and unreachable points are a
+            // waste of space rather than a correctness problem — they match no query.
+            log.LogWarning(ex, "Could not sweep pre-chunk-set vectors; will retry on next start");
+        }
     }
 
     /// <summary>

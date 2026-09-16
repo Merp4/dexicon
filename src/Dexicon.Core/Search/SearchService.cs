@@ -54,7 +54,8 @@ public sealed class SearchService(
         if (scope.Corpora.Count == 0)
             throw new ScopeResolutionException($"Resolved scope for tenant '{tenantId}' was empty.", []);
 
-        var byId = scope.Corpora.ToDictionary(c => c.Id, StringComparer.Ordinal);
+        // Qualified, so a result from a non-default set says which set it came from.
+        var byId = scope.Targets.ToDictionary(t => t.Corpus.Id, t => t.QualifiedName, StringComparer.Ordinal);
         var sparse = SparseEncoder.Encode(request.Query);
 
         var hits = new List<SearchHit>();
@@ -67,15 +68,16 @@ public sealed class SearchService(
         // search is worse than an approximate merge that is documented as such.
         foreach (var group in scope.ByCollection)
         {
-            var corpusIds = group.Select(c => c.Id).ToList();
-            var dims = group.First().EmbeddingDimensions;
+            var corpusIds = group.Select(c => c.Id).Distinct(StringComparer.Ordinal).ToList();
+            var chunkSetIds = group.Select(c => c.Set.Id).Distinct(StringComparer.Ordinal).ToList();
+            var dims = group.First().Set.EmbeddingDimensions;
 
             float[]? dense = null;
             if (request.Mode is SearchMode.Hybrid or SearchMode.Semantic)
             {
                 try
                 {
-                    dense = await EmbedQueryAsync(request.Query, ct);
+                    dense = await EmbedQueryAsync(request.Query, group.First().Set.EmbeddingModel, ct);
                     if (dense.Length != dims)
                         throw new EmbeddingDimensionMismatchException(group.Key, dims, dense.Length);
                 }
@@ -94,6 +96,7 @@ public sealed class SearchService(
             {
                 Text = request.Query,
                 CorpusIds = corpusIds,
+                ChunkSetIds = chunkSetIds,
                 CollectionName = group.Key,
                 Mode = request.Mode,
                 Limit = request.Limit,
@@ -110,7 +113,7 @@ public sealed class SearchService(
 
             foreach (var hit in response.Hits)
             {
-                hit.CorpusName = byId.TryGetValue(hit.CorpusId, out var c) ? c.Name : hit.CorpusId;
+                hit.CorpusName = byId.TryGetValue(hit.CorpusId, out var name) ? name : hit.CorpusId;
                 hits.Add(hit);
             }
         }
@@ -119,7 +122,11 @@ public sealed class SearchService(
 
         // An agent that searches a half-built index and gets nothing concludes the code
         // does not exist. Telling it the index is incomplete costs one sentence.
-        var indexing = scope.Corpora.Where(c => c.State == CorpusState.Indexing).Select(c => c.Name).ToList();
+        // The SET's state, not the corpus's: a corpus is "indexing" while a replacement
+        // set backfills, but the set being searched is complete and its results are not.
+        var indexing = scope.Targets
+            .Where(t => t.Set.State == CorpusState.Indexing)
+            .Select(t => t.QualifiedName).ToList();
         var note = indexing.Count > 0
             ? $"Corpus {string.Join(", ", indexing.Select(n => $"'{n}'"))} is still indexing; results are incomplete."
             : null;
@@ -130,7 +137,8 @@ public sealed class SearchService(
             Mode = degraded ? SearchMode.Keyword : request.Mode,
             Degraded = degraded,
             DegradedReason = degradedReason,
-            Scope = scope.Corpora.Select(c => new SearchResult.ScopeEntry(c.Id, c.Name, c.State)).ToList(),
+            Scope = scope.Targets
+                .Select(t => new SearchResult.ScopeEntry(t.Corpus.Id, t.QualifiedName, t.Set.State)).ToList(),
             Hits = ordered,
             TookMs = sw.ElapsedMilliseconds,
             Note = note,
@@ -138,12 +146,18 @@ public sealed class SearchService(
     }
 
     /// <summary>Agents repeat queries far more than people do, so this cache earns its keep.</summary>
-    private async Task<float[]> EmbedQueryAsync(string query, CancellationToken ct)
+    /// <summary>
+    /// The query vector for one MODEL. Keyed by model as well as text: a scope spanning
+    /// two chunk sets on different models needs a vector from each, and caching on the
+    /// query alone would serve the first model's vector to the second collection — a
+    /// comparison between two unrelated vector spaces, which returns confident nonsense.
+    /// </summary>
+    private async Task<float[]> EmbedQueryAsync(string query, string model, CancellationToken ct)
     {
-        var key = $"qemb::{embedder.Model}::{query}";
+        var key = $"qemb::{model}::{query}";
         if (cache.TryGetValue(key, out float[]? cached) && cached is not null) return cached;
 
-        var vector = (await embedder.EmbedAsync([query], ct))[0];
+        var vector = (await embedder.EmbedAsync(model, [query], ct))[0];
         cache.Set(key, vector, QueryEmbeddingTtl);
         return vector;
     }

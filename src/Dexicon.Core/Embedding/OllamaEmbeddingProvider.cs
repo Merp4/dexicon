@@ -19,14 +19,65 @@ public interface IEmbeddingProvider
     /// <summary>Dimensionality, discovered on first use and cached. 0 until then.</summary>
     int Dimensions { get; }
 
+    /// <summary>
+    /// Embed with the configured default model. For anything that belongs to a chunk set,
+    /// use the overload that names the model.
+    /// </summary>
     Task<IReadOnlyList<float[]>> EmbedAsync(IReadOnlyList<string> inputs, CancellationToken ct = default);
+
+    /// <summary>
+    /// Embed with a NAMED model.
+    ///
+    /// The model is a per-call argument rather than something baked into a client at
+    /// registration, because chunk sets choose their model at runtime, in the UI, and
+    /// store it in the catalogue. Anything resolved from configuration at startup —
+    /// keyed DI included — cannot see a set created after the process began, and would
+    /// either fail to resolve or quietly serve a different model than the one asked for.
+    /// Ollama takes the model in the request body, so there is nothing to bind anyway.
+    ///
+    /// The bug this closes: EmbedAsync used to read the globally configured model and
+    /// ignore its caller, so a set pinned to mxbai-embed-large filled an mxbai collection
+    /// with nomic vectors. Nothing errors; the results are simply wrong.
+    /// </summary>
+    Task<IReadOnlyList<float[]>> EmbedAsync(string model, IReadOnlyList<string> inputs,
+        CancellationToken ct = default);
 
     /// <summary>Probe the model and learn its dimensionality. Called at startup and before a rebuild.</summary>
     Task<int> ProbeDimensionsAsync(string model, CancellationToken ct = default);
+
+    /// <summary>
+    /// The models this Ollama has actually pulled. Used by the UI so choosing a model is
+    /// a list rather than a typing exercise — a typo previously surfaced as a 503 at
+    /// corpus creation with no hint of what the legal values were.
+    /// </summary>
+    Task<IReadOnlyList<AvailableModel>> ListModelsAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Pull a model, reporting progress as it downloads. Models run to gigabytes, so this
+    /// streams rather than blocking a request for several minutes with nothing to show.
+    /// </summary>
+    IAsyncEnumerable<ModelPullProgress> PullModelAsync(string model, CancellationToken ct = default);
+
+    /// <summary>Remove a pulled model from the Ollama instance.</summary>
+    Task DeleteModelAsync(string model, CancellationToken ct = default);
 }
 
 public sealed class EmbeddingUnavailableException(string message, Exception? inner = null)
     : Exception(message, inner);
+
+/// <param name="Dimensions">
+/// Known only for models this instance has already probed. Probing every listed model to
+/// fill it in would mean an embedding round-trip per model on every page load, so it is
+/// left null and resolved when a model is actually chosen.
+/// </param>
+public sealed record AvailableModel(string Name, long SizeBytes, string? Family, int? Dimensions);
+
+/// <param name="Status">Ollama's own words — "pulling manifest", "verifying sha256digest", "success".</param>
+public sealed record ModelPullProgress(string Status, long Completed, long Total)
+{
+    public int Percent => Total > 0 ? (int)(100 * Completed / Total) : 0;
+    public bool Done => string.Equals(Status, "success", StringComparison.OrdinalIgnoreCase);
+}
 
 public sealed class OllamaEmbeddingProvider : IEmbeddingProvider
 {
@@ -91,9 +142,87 @@ public sealed class OllamaEmbeddingProvider : IEmbeddingProvider
 
     private static string DimensionsKey(string model) => $"embed-dims::{model}";
 
-    public async Task<IReadOnlyList<float[]>> EmbedAsync(IReadOnlyList<string> inputs, CancellationToken ct = default)
+    public async IAsyncEnumerable<ModelPullProgress> PullModelAsync(
+        string model, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        // No timeout. _http carries the configured Ollama timeout, which is sized for an
+        // embedding call; a multi-gigabyte download is a different order of magnitude and
+        // would be cancelled part-way through every time.
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/pull")
+        {
+            Content = JsonContent.Create(new PullRequest(model, Stream: true)),
+        };
+
+        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        response.EnsureSuccessStatusCode();
+
+        await using var stream = await response.Content.ReadAsStreamAsync(ct);
+        using var reader = new StreamReader(stream);
+
+        // NDJSON: one status object per line, not a JSON array.
+        while (await reader.ReadLineAsync(ct) is { } line)
+        {
+            if (line.Length == 0) continue;
+
+            PullStatus? status;
+            try { status = JsonSerializer.Deserialize<PullStatus>(line); }
+            catch (JsonException) { continue; }   // a partial line is not a failure
+
+            if (status?.Status is null) continue;
+            if (status.Error is { Length: > 0 } error)
+                throw new EmbeddingUnavailableException($"Ollama could not pull '{model}': {error}");
+
+            yield return new ModelPullProgress(status.Status, status.Completed, status.Total);
+        }
+    }
+
+    public async Task DeleteModelAsync(string model, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Delete, "api/delete")
+        {
+            Content = JsonContent.Create(new DeleteRequest(model)),
+        };
+
+        using var response = await _http.SendAsync(request, ct);
+        if (response.IsSuccessStatusCode) return;
+
+        var body = await response.Content.ReadAsStringAsync(ct);
+        throw new EmbeddingUnavailableException(
+            $"Ollama returned {(int)response.StatusCode} deleting '{model}': {Truncate(body, 300)}");
+    }
+
+    public async Task<IReadOnlyList<AvailableModel>> ListModelsAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var payload = await _http.GetFromJsonAsync<TagsResponse>("api/tags", ct);
+            if (payload?.Models is null) return [];
+
+            return [.. payload.Models
+                .Select(m => new AvailableModel(
+                    m.Name,
+                    m.Size,
+                    m.Details?.Family,
+                    // Free: the dimensionality of anything already probed is in the cache.
+                    _cache.TryGetValue(DimensionsKey(m.Name), out int d) ? d : null))
+                .OrderBy(m => m.Name, StringComparer.Ordinal)];
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            throw new EmbeddingUnavailableException(
+                $"Could not list models from {_ollama.Endpoint}: {ex.Message}", ex);
+        }
+    }
+
+    public Task<IReadOnlyList<float[]>> EmbedAsync(IReadOnlyList<string> inputs, CancellationToken ct = default) =>
+        EmbedAsync(_embedding.Model, inputs, ct);
+
+    public async Task<IReadOnlyList<float[]>> EmbedAsync(string model, IReadOnlyList<string> inputs,
+        CancellationToken ct = default)
     {
         if (inputs.Count == 0) return [];
+        if (string.IsNullOrWhiteSpace(model))
+            throw new ArgumentException("An embedding model name is required.", nameof(model));
 
         var batches = inputs.Chunk(_embedding.BatchSize).ToList();
         var results = new float[batches.Count][][];
@@ -111,7 +240,7 @@ public sealed class OllamaEmbeddingProvider : IEmbeddingProvider
             {
                 // Indexed, not appended: results must come back in input order, and
                 // parallel completion says nothing about order.
-                results[index] = [.. await PostEmbedAsync(_embedding.Model, batch, ct)];
+                results[index] = [.. await PostEmbedAsync(model, batch, ct)];
             }
             finally { gate.Release(); }
         }));
@@ -175,4 +304,28 @@ public sealed class OllamaEmbeddingProvider : IEmbeddingProvider
 
     private sealed record EmbedResponse(
         [property: JsonPropertyName("embeddings")] List<float[]> Embeddings);
+
+    private sealed record PullRequest(
+        [property: JsonPropertyName("model")] string Model,
+        [property: JsonPropertyName("stream")] bool Stream);
+
+    private sealed record DeleteRequest(
+        [property: JsonPropertyName("model")] string Model);
+
+    private sealed record PullStatus(
+        [property: JsonPropertyName("status")] string? Status,
+        [property: JsonPropertyName("completed")] long Completed,
+        [property: JsonPropertyName("total")] long Total,
+        [property: JsonPropertyName("error")] string? Error);
+
+    private sealed record TagsResponse(
+        [property: JsonPropertyName("models")] List<TagModel>? Models);
+
+    private sealed record TagModel(
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("size")] long Size,
+        [property: JsonPropertyName("details")] TagDetails? Details);
+
+    private sealed record TagDetails(
+        [property: JsonPropertyName("family")] string? Family);
 }
