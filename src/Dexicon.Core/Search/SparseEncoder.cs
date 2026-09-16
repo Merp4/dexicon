@@ -105,8 +105,17 @@ public static class SparseEncoder
     {
         for (var i = 1; i < s.Length; i++)
         {
+            // lower|digit -> Upper, e.g. tokenService
             if (char.IsUpper(s[i]) && !char.IsUpper(s[i - 1])) return true;
+
+            // digit boundary either way, e.g. base64Encode
             if (char.IsDigit(s[i]) != char.IsDigit(s[i - 1])) return true;
+
+            // Acronym then word: HTTPServer -> HTTP, Server. Without this the whole
+            // run of capitals looks boundary-free and the identifier never splits,
+            // so a query for "server" could not reach HTTPServer.
+            if (char.IsUpper(s[i]) && char.IsUpper(s[i - 1])
+                && i + 1 < s.Length && char.IsLower(s[i + 1])) return true;
         }
         return false;
     }
