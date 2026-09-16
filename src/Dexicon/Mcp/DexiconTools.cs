@@ -176,7 +176,9 @@ public sealed class DexiconTools
         var pieces = result.Hits
             .Where(h => string.Equals(h.FilePath, filePath, StringComparison.Ordinal))
             .Where(h => h.EndLine >= lo && h.StartLine <= hi)
-            .OrderBy(h => h.StartLine)
+            // ChunkIndex breaks the tie: slices of one over-long line all report the same
+            // start line, and search returns them ranked by score, not in file order.
+            .OrderBy(h => h.StartLine).ThenBy(h => h.ChunkIndex)
             .ToList();
 
         if (pieces.Count == 0)
@@ -184,19 +186,108 @@ public sealed class DexiconTools
                 $"No indexed content for '{filePath}' in corpus '{corpus}' around line {aroundLine}. " +
                 "Check the path is exactly as search_index returned it.");
 
-        var sb = new StringBuilder($"{filePath}:{pieces[0].StartLine}-{pieces[^1].EndLine} (corpus: {corpus})\n\n");
+        var header = $"{filePath}:{pieces[0].StartLine}-{pieces[^1].EndLine} (corpus: {corpus})\n\n";
+        return header + Stitch(pieces.Select(p => (p.StartLine, p.EndLine, p.Content)));
+    }
+
+    /// <summary>
+    /// Joins overlapping chunks of ONE file back into a single readable passage.
+    /// Internal rather than inlined so it can be tested without an MCP server: the
+    /// off-by-one here decides whether a model reads duplicated or missing lines.
+    /// </summary>
+    /// <param name="pieces">Chunks of one file, ordered by start line.</param>
+    internal static string Stitch(IEnumerable<(int StartLine, int EndLine, string Content)> pieces)
+    {
+        var sb = new StringBuilder();
         var emittedThrough = 0;
+        var lastRange = (Start: 0, End: 0);
+
         foreach (var p in pieces)
         {
-            // De-overlap: consecutive chunks share `overlap` lines by construction.
+            // Several chunks can share ONE line number: the chunker splits a line that is
+            // longer than the whole budget, and every piece honestly reports that line.
+            // Line-based de-overlapping cannot separate those — by line they are all
+            // "already emitted" — so they are stitched on their text instead. Without
+            // this, get_context on a minified file returned only its first chunk.
+            if (p.StartLine == p.EndLine && (p.StartLine, p.EndLine) == lastRange)
+            {
+                AppendWithoutRepeating(sb, p.Content);
+                continue;
+            }
+
+            // Wholly inside what has already been emitted.
             if (p.EndLine <= emittedThrough) continue;
-            var lines = p.Content.Split('\n');
+
+            // Chunks are adjacent only when search returned the whole run. A gap means it
+            // did not, and butting the two ends together would hand a model code that
+            // reads as contiguous and is not — the kind of wrong it cannot detect. Say so.
+            if (emittedThrough > 0 && p.StartLine > emittedThrough + 1)
+                sb.Append($"\n… lines {emittedThrough + 1}-{p.StartLine - 1} not indexed …\n\n");
+
+            // Drop the leading lines shared with the previous chunk. Overlap is configured
+            // in characters, not lines, so the shared span is derived from the line
+            // numbers rather than assumed from the setting.
             var skip = Math.Max(0, emittedThrough - p.StartLine + 1);
-            foreach (var line in lines.Skip(skip)) sb.Append(line).Append('\n');
-            emittedThrough = p.EndLine;
+            foreach (var line in p.Content.Split('\n').Skip(skip)) sb.Append(line).Append('\n');
+
+            emittedThrough = Math.Max(emittedThrough, p.EndLine);
+            lastRange = (p.StartLine, p.EndLine);
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Appends <paramref name="piece"/>, dropping any prefix already present at the end of
+    /// the buffer. Two slices of one line overlap by the configured amount, which this
+    /// cannot know — so it measures the repeat instead of assuming it.
+    /// </summary>
+    private static void AppendWithoutRepeating(StringBuilder sb, string piece)
+    {
+        // These slices are all one line, so the newline the previous piece ended with does
+        // not belong between them — and leaving it there would also block every match,
+        // since no chunk's text begins with the end of the last one plus a newline.
+        while (sb.Length > 0 && sb[^1] == '\n') sb.Length--;
+
+        // Bounded window: an overlap is a fraction of a chunk, and scanning the whole
+        // buffer for each piece would be quadratic on a file that is one very long line.
+        var window = Math.Min(Math.Min(sb.Length, piece.Length), 8192);
+        if (window == 0) { sb.Append(piece).Append('\n'); return; }
+
+        var tail = sb.ToString(sb.Length - window, window);
+        var overlap = LongestPrefixThatIsAlsoASuffix(piece[..window], tail);
+
+        sb.Append(piece.AsSpan(overlap)).Append('\n');
+    }
+
+    /// <summary>
+    /// The length of the longest prefix of <paramref name="prefixOf"/> that is also a
+    /// suffix of <paramref name="suffixOf"/> — the classic KMP failure function over
+    /// <c>prefixOf + sentinel + suffixOf</c>, which gets the answer in one linear pass
+    /// rather than testing every candidate length.
+    /// </summary>
+    private static int LongestPrefixThatIsAlsoASuffix(string prefixOf, string suffixOf)
+    {
+        // '￿' is a permanent noncharacter, so it cannot appear in either input and
+        // cannot let a match run across the join.
+        var n = prefixOf.Length + 1 + suffixOf.Length;
+        var failure = new int[n];
+        var k = 0;
+
+        for (var i = 1; i < n; i++)
+        {
+            var c = CharAt(i);
+            while (k > 0 && c != CharAt(k)) k = failure[k - 1];
+            if (c == CharAt(k)) k++;
+            failure[i] = k;
+        }
+
+        return failure[n - 1];
+
+        char CharAt(int i) =>
+            i < prefixOf.Length ? prefixOf[i]
+            : i == prefixOf.Length ? '￿'
+            : suffixOf[i - prefixOf.Length - 1];
     }
 
     [McpServerTool(Name = "index_refresh")]
@@ -251,8 +342,13 @@ public sealed class DexiconTools
         foreach (var c in targets)
         {
             var summary = await CorpusEndpoints.Summarise(db, c, tenant, ct);
+            // By QueuedUtc, not StartedUtc: a job that has been QUEUED but not yet started
+            // is the latest news about this corpus, and ordering on StartedUtc reported
+            // the previous job instead -- so index_status said "succeeded" to an agent
+            // whose reindex was still sitting in the queue.
             var job = await db.Jobs.Where(j => j.CorpusId == c.Id)
-                .OrderByDescending(j => j.StartedUtc).FirstOrDefaultAsync(ct);
+                .OrderByDescending(j => j.QueuedUtc).ThenByDescending(j => j.Id)
+                .FirstOrDefaultAsync(ct);
 
             sb.Append($"{c.Name}: {summary.State}\n");
             sb.Append($"  {summary.FileCount:N0} files indexed, {summary.ChunkCount:N0} chunks");

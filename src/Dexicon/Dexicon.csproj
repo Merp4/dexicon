@@ -2,6 +2,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Dexicon.Core\Dexicon.Core.csproj" />
+    <!-- Lets tests reach helpers that are implementation detail, without widening the
+         public surface just to make them reachable. Matches Dexicon.Core. -->
+    <InternalsVisibleTo Include="Dexicon.Tests" />
   </ItemGroup>
 
   <ItemGroup>

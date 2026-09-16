@@ -29,16 +29,45 @@ public sealed record SearchHit
     public string? Language { get; init; }
     public int StartLine { get; init; }
     public int EndLine { get; init; }
+
+    /// <summary>
+    /// This chunk's position in its file. The only way to order chunks that share a line
+    /// number, which happens when the chunker splits a line longer than the whole budget.
+    /// It was written to the Qdrant payload from the start and never read back.
+    /// </summary>
+    public int ChunkIndex { get; init; }
+
     public int? Page { get; init; }
     public string? Section { get; init; }
     public IReadOnlyList<string> Symbols { get; init; } = [];
     public required string Content { get; init; }
     public float Score { get; init; }
 
-    /// <summary>`file:line` — clickable in every editor, and what an agent pastes back.</summary>
+    /// <summary>
+    /// `file:line`, or `file#unit=n` for a document — clickable in every editor, and what
+    /// an agent pastes back into a conversation.
+    /// </summary>
     public string Location => Page is { } p
-        ? $"{FilePath}#page={p}"
+        ? $"{FilePath}#{UnitAnchor(FilePath)}={p}"
         : StartLine == EndLine ? $"{FilePath}:{StartLine}" : $"{FilePath}:{StartLine}-{EndLine}";
+
+    /// <summary>
+    /// The provenance unit's NAME, by format. <see cref="Page"/> holds a unit number
+    /// whatever the unit is, and rendering every one of them as "page" put "#page=14" on a
+    /// chapter of an EPUB and on slide 14 of a deck. A citation is the part of a search
+    /// result a person or a model repeats verbatim, so a confidently wrong one propagates.
+    ///
+    /// Derived from the extension rather than stored: the information is already here, and
+    /// a payload field that can drift out of step with the file it describes is worse than
+    /// none. <c>#page=</c> for PDFs is also a real convention — viewers honour it.
+    /// </summary>
+    private static string UnitAnchor(string filePath) =>
+        Path.GetExtension(filePath).ToLowerInvariant() switch
+        {
+            ".epub" => "chapter",
+            ".pptx" or ".ppt" => "slide",
+            _ => "page",
+        };
 }
 
 public sealed record SearchQuery

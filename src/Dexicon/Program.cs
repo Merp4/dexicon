@@ -90,7 +90,8 @@ builder.Services.AddHostedService<ScheduledRefreshService>();
 builder.Services
     .AddMcpServer(o => o.ServerInfo = new() { Name = "dexicon", Version = ThisAssembly.Version })
     .WithHttpTransport(o => o.Stateless = true)
-    .WithTools<DexiconTools>();
+    .WithTools<DexiconTools>()
+    .WithResources<DexiconResources>();
 
 builder.WebHost.ConfigureKestrel(k => k.AddServerHeader = false);
 

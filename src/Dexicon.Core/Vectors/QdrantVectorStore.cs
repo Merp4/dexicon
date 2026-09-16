@@ -4,6 +4,7 @@ using System.Text;
 using Dexicon.Core.Configuration;
 using Dexicon.Core.Embedding;
 using Dexicon.Core.Search;
+using Google.Protobuf.Collections;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Qdrant.Client;
@@ -25,6 +26,14 @@ public interface IVectorStore
     Task DeleteFileChunksAsync(string collection, string corpusId, string filePath, CancellationToken ct = default);
     Task DeleteCorpusAsync(string collection, string corpusId, CancellationToken ct = default);
     Task<IReadOnlyDictionary<string, string>> GetFileHashesAsync(string collection, string corpusId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Every chunk of one file, in file order. A FILTER, not a search: reconstructing a
+    /// file is a lookup, and letting relevance decide which parts of it come back returns
+    /// a plausible-looking file with holes in it.
+    /// </summary>
+    Task<IReadOnlyList<SearchHit>> GetFileChunksAsync(string collection, string corpusId, string filePath,
+        CancellationToken ct = default);
     Task<SearchResponse> SearchAsync(SearchQuery query, float[]? denseVector, SparseVector sparse, CancellationToken ct = default);
     Task<(long Points, int Dimensions)> GetStatsAsync(string collection, CancellationToken ct = default);
     Task<bool> PingAsync(CancellationToken ct = default);
@@ -247,6 +256,34 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
         return hashes;
     }
 
+    public async Task<IReadOnlyList<SearchHit>> GetFileChunksAsync(string collection, string corpusId,
+        string filePath, CancellationToken ct = default)
+    {
+        if (!await _client.CollectionExistsAsync(collection, ct)) return [];
+
+        var filter = new Filter();
+        filter.Must.Add(Keyword("corpus_id", corpusId));
+        filter.Must.Add(Keyword("kind", "chunk"));
+        filter.Must.Add(Keyword("file_path", filePath));
+
+        var hits = new List<SearchHit>();
+        PointId? offset = null;
+
+        while (true)
+        {
+            var page = await _client.ScrollAsync(collection, filter, limit: 1000, offset: offset,
+                vectorsSelector: false, cancellationToken: ct);
+
+            foreach (var p in page.Result) hits.Add(ToHit(p.Payload, 0f));
+
+            if (page.Result.Count < 1000 || page.NextPageOffset is null) break;
+            offset = page.NextPageOffset;
+        }
+
+        // Chunk index, not start line: slices of one over-long line share a line number.
+        return [.. hits.OrderBy(h => h.ChunkIndex)];
+    }
+
     public async Task<(long Points, int Dimensions)> GetStatsAsync(string collection, CancellationToken ct = default)
     {
         if (!await _client.CollectionExistsAsync(collection, ct)) return (0, 0);
@@ -329,7 +366,7 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
 
         return new SearchResponse
         {
-            Hits = points.Select(ToHit).ToList(),
+            Hits = points.Select(p => ToHit(p.Payload, p.Score)).ToList(),
             Mode = mode,
             Degraded = degradedReason is not null,
             DegradedReason = degradedReason,
@@ -364,10 +401,14 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
     private static Condition Keyword(string key, string value) =>
         new() { Field = new FieldCondition { Key = key, Match = new Match { Keyword = value } } };
 
-    private static SearchHit ToHit(ScoredPoint p)
+    /// <summary>
+    /// Payload and score separately, because chunks arrive two ways: scored, from a
+    /// search, and unscored, from a filtered scroll that reconstructs a whole file.
+    /// </summary>
+    private static SearchHit ToHit(MapField<string, Value> payload, float score)
     {
-        string? Str(string k) => p.Payload.TryGetValue(k, out var v) ? v.StringValue : null;
-        int Int(string k) => p.Payload.TryGetValue(k, out var v) ? (int)v.IntegerValue : 0;
+        string? Str(string k) => payload.TryGetValue(k, out var v) ? v.StringValue : null;
+        int Int(string k) => payload.TryGetValue(k, out var v) ? (int)v.IntegerValue : 0;
 
         return new SearchHit
         {
@@ -376,13 +417,14 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
             Language = Str("language"),
             StartLine = Int("start_line"),
             EndLine = Int("end_line"),
-            Page = p.Payload.TryGetValue("page", out var pg) ? (int)pg.IntegerValue : null,
+            ChunkIndex = Int("chunk_index"),
+            Page = payload.TryGetValue("page", out var pg) ? (int)pg.IntegerValue : null,
             Section = Str("section"),
-            Symbols = p.Payload.TryGetValue("symbols", out var sym) && sym.ListValue is not null
+            Symbols = payload.TryGetValue("symbols", out var sym) && sym.ListValue is not null
                 ? sym.ListValue.Values.Select(v => v.StringValue).ToList()
                 : [],
             Content = Str("content") ?? "",
-            Score = p.Score,
+            Score = score,
         };
     }
 }

@@ -41,7 +41,7 @@ implementation starts.
 | [03 — Data model](docs/03-data-model.md) | Qdrant collections and payloads, SQLite catalog, identifiers |
 | [04 — Ingestion](docs/04-ingestion.md) | Sources, extraction, chunking, embedding, incremental reindex |
 | [05 — Search](docs/05-search.md) | Hybrid dense + sparse retrieval, fusion, result contract |
-| [06 — MCP surface](docs/06-mcp-surface.md) | Protocol version, transport, the tool set, wire examples |
+| [06 — MCP surface](docs/06-mcp-surface.md) | Protocol version, transport, the tools, the `dexicon://` resources, wire examples |
 | [07 — Tenancy & auth](docs/07-tenancy-auth.md) | Tenant header, tokens, corpus visibility, enforcement |
 | [08 — UI](docs/08-ui.md) | Screens, interactions, live progress |
 | [09 — Deployment](docs/09-deployment.md) | Compose topology, configuration, volumes, GPU, healthchecks |
