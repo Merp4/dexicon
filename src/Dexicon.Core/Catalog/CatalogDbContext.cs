@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace Dexicon.Core.Catalog;
 
@@ -18,6 +19,35 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
     public DbSet<Blob> Blobs => Set<Blob>();
     public DbSet<BlobText> BlobTexts => Set<BlobText>();
     public DbSet<IndexJob> Jobs => Set<IndexJob>();
+
+    /// <summary>
+    /// UTC everywhere, converted exactly once, at the edge that renders it.
+    ///
+    /// SQLite has no date type, so EF stores a DateTime as text and reads it back with
+    /// <c>Kind = Unspecified</c>. System.Text.Json then serialises it WITHOUT a `Z`, and
+    /// <c>new Date("2026-09-16T17:08:11")</c> in a browser parses that as LOCAL time — so
+    /// every timestamp in the UI was silently wrong by the viewer's UTC offset, and job
+    /// times did not line up with the log.
+    ///
+    /// One convention fixes the whole class rather than each read site remembering:
+    /// values go in as UTC and come out tagged as UTC. Nothing else in the codebase
+    /// converts, and no property needs to opt in.
+    /// </summary>
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        configurationBuilder.Properties<DateTime>().HaveConversion<UtcDateTimeConverter>();
+        configurationBuilder.Properties<DateTime?>().HaveConversion<NullableUtcDateTimeConverter>();
+    }
+
+    private sealed class UtcDateTimeConverter()
+        : ValueConverter<DateTime, DateTime>(
+            v => v.Kind == DateTimeKind.Utc ? v : v.ToUniversalTime(),
+            v => DateTime.SpecifyKind(v, DateTimeKind.Utc));
+
+    private sealed class NullableUtcDateTimeConverter()
+        : ValueConverter<DateTime?, DateTime?>(
+            v => v.HasValue ? (v.Value.Kind == DateTimeKind.Utc ? v : v.Value.ToUniversalTime()) : v,
+            v => v.HasValue ? DateTime.SpecifyKind(v.Value, DateTimeKind.Utc) : v);
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

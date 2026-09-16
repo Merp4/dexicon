@@ -218,14 +218,40 @@ export function CopyButton({ text, label = 'Copy' }: { text: string; label?: str
   );
 }
 
+/**
+ * The ONLY place a local time exists.
+ *
+ * Dexicon stores, returns and logs UTC. The browser is the single edge that converts,
+ * because it is the only component that knows whose clock to use.
+ *
+ * `parseUtc` exists because the API used to serialise DateTime without a `Z` — SQLite
+ * has no date type, so EF read values back with Kind=Unspecified — and
+ * `new Date("2026-09-16T17:08:11")` parses THAT as local time. Every relative time was
+ * silently wrong by the viewer's UTC offset. The server is fixed, and this stays as a
+ * belt-and-braces parse: an ISO string with no zone is treated as UTC, never as local.
+ */
+export function parseUtc(iso: string): Date {
+  const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso);
+  return new Date(hasZone ? iso : `${iso}Z`);
+}
+
 export function relativeTime(iso?: string): string {
   if (!iso) return 'never';
-  const then = new Date(iso).getTime();
-  const secs = Math.round((Date.now() - then) / 1000);
+  const secs = Math.round((Date.now() - parseUtc(iso).getTime()) / 1000);
+  if (secs < 0) return 'just now';        // small clock skew, not the future
   if (secs < 60) return 'just now';
   if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
   if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
   return `${Math.floor(secs / 86400)}d ago`;
+}
+
+/** Absolute time in the viewer's own locale and zone — for titles and tooltips. */
+export function localTime(iso?: string): string {
+  if (!iso) return 'never';
+  return parseUtc(iso).toLocaleString(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
 }
 
 export function formatBytes(n: number): string {

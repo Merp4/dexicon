@@ -43,8 +43,13 @@ Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
     .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
     .Enrich.FromLogContext()
+    .Enrich.With<UtcTimestampEnricher>()
     .WriteTo.Console(outputTemplate:
-        "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
+        // UTC, and labelled. Rendering the log in local time while the API returns UTC
+        // makes the two impossible to line up — which cost real time once already,
+        // reading a job that "started an hour ago" when it had started three minutes
+        // before. Timestamps are UTC everywhere; only the UI localises, for its viewer.
+        "[{UtcTime:HH:mm:ss}Z {Level:u3}] {Message:lj}{NewLine}{Exception}")
     .CreateLogger();
 
 builder.Host.UseSerilog();
