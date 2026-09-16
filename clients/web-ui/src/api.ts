@@ -31,6 +31,7 @@ import {
   getApiCorpora,
   getApiCorporaByNameOrId,
   getApiCorporaByNameOrIdChunkSets,
+  getApiCorporaByNameOrIdFile,
   getApiCorporaByNameOrIdFiles,
   getApiDocuments,
   getApiDocumentsBySha256Text,
@@ -110,6 +111,7 @@ export type {
   ExtractedTextResponse as DocumentText,
   FileSummary as IndexedFile,
   HealthResponse as Health,
+  IndexedFileText,
   JobSummary as Job,
   LibraryAttachment,
   LibraryDocument,
@@ -230,6 +232,10 @@ export const api = {
 
   listFiles: (nameOrId: string, status?: string) =>
     call(() => getApiCorporaByNameOrIdFiles({ path: { nameOrId }, query: status ? { status } : {} })),
+
+  /** One indexed file, stitched back together from its chunks. */
+  fileText: (nameOrId: string, path: string) =>
+    call(() => getApiCorporaByNameOrIdFile({ path: { nameOrId }, query: { path } })),
 
   listJobs: (limit = 30) => call(() => getApiJobs({ query: { limit } })),
 

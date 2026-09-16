@@ -538,6 +538,43 @@
         }
       }
     },
+    "/api/corpora/{nameOrId}/file": {
+      "get": {
+        "tags": [
+          "Corpora"
+        ],
+        "parameters": [
+          {
+            "name": "nameOrId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexedFileText"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/corpora/{nameOrId}/chunk-sets": {
       "get": {
         "tags": [
@@ -1989,6 +2026,48 @@
                 "$ref": "#/components/schemas/JobSummary"
               }
             ]
+          }
+        }
+      },
+      "IndexedFileText": {
+        "required": [
+          "corpus",
+          "chunkSet",
+          "path",
+          "startLine",
+          "endLine",
+          "gaps",
+          "truncated",
+          "text"
+        ],
+        "type": "object",
+        "properties": {
+          "corpus": {
+            "type": "string"
+          },
+          "chunkSet": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "startLine": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "endLine": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "gaps": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "text": {
+            "type": "string"
           }
         }
       },

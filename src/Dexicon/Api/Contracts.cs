@@ -216,6 +216,29 @@ public sealed record SourceSummary(
     IReadOnlyList<string> IncludeGlobs,
     IReadOnlyList<string> ExcludeGlobs);
 
+/// <summary>
+/// One indexed file, reconstructed from the chunks of one chunk set.
+/// </summary>
+/// <remarks>
+/// Rebuilt from the INDEX rather than read from disk, for the same reason the MCP resource
+/// is: an uploaded PDF has no file to read, and the original would in any case differ from
+/// what was indexed. What comes back is what search is actually searching, which is the
+/// thing worth looking at when a result is surprising.
+///
+/// <paramref name="Gaps"/> is not decoration. Chunks from one pass tile the file, so a gap
+/// means the index really is missing those lines; the text says so inline, and this says
+/// how many times, so a caller can show it without parsing prose.
+/// </remarks>
+public sealed record IndexedFileText(
+    string Corpus,
+    string ChunkSet,
+    string Path,
+    int StartLine,
+    int EndLine,
+    int Gaps,
+    bool Truncated,
+    string Text);
+
 public sealed record FileSummary(
     string Id, string RelativePath, string Status, string? StatusDetail,
     string? Language, long SizeBytes, int ChunkCount, DateTime? IndexedUtc);

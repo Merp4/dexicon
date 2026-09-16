@@ -8,6 +8,7 @@ import {
   type Corpus,
   type Health,
   type IndexedFile,
+  type IndexedFileText,
   type Job,
   type SearchResult,
 } from './api';
@@ -285,6 +286,7 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
   const [result, setResult] = useState<SearchResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [explain, setExplain] = useState(false);
+  const [viewing, setViewing] = useState<{ corpus: string; path: string; line?: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -424,6 +426,21 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
                     {h.language && <Badge>{h.language}</Badge>}
                     {result.scope.length > 1 && h.corpusName && <Badge tone="accent">{h.corpusName}</Badge>}
                     <CopyButton text={h.location ?? ''} label="Copy path" />
+                    {/* A snippet is forty lines out of a file. Reading on from it used to
+                        mean leaving for an editor, which for an uploaded PDF is nowhere. */}
+                    {h.corpusName && (
+                      <Button
+                        className="px-2 py-0.5 text-xs"
+                        onClick={() => setViewing({
+                          corpus: h.corpusName!,
+                          path: h.filePath,
+                          line: h.startLine,
+                        })}
+                      >
+                        <FileText />
+                        Open
+                      </Button>
+                    )}
                   </header>
                   <pre className="mono m-0 max-h-[340px] overflow-x-auto rounded-md bg-muted px-3 py-2.5 text-xs break-words whitespace-pre-wrap">
                     {h.content}
@@ -433,6 +450,16 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
             </div>
           )}
         </>
+      )}
+
+      {viewing && (
+        <FileViewer
+          corpus={viewing.corpus}
+          path={viewing.path}
+          aroundLine={viewing.line}
+          onClose={() => setViewing(null)}
+          onError={onError}
+        />
       )}
 
       {!result && (
@@ -606,6 +633,7 @@ export function CorpusDetail({
   const [filter, setFilter] = useState<string>('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [addingSource, setAddingSource] = useState(false);
+  const [viewing, setViewing] = useState<{ path: string; line?: number } | null>(null);
 
 
   const load = useCallback(async () => {
@@ -735,7 +763,15 @@ export function CorpusDetail({
                   i && 'border-t border-border',
                 )}
               >
-                <code className="mono min-w-[220px] flex-1 text-xs break-all">{f.relativePath}</code>
+                {/* The row is the affordance. A file you can see listed and cannot open
+                    is the screen telling you it knows something it will not say. */}
+                <button
+                  type="button"
+                  className="mono min-w-[220px] flex-1 cursor-pointer text-left text-xs break-all underline-offset-2 hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+                  onClick={() => setViewing({ path: f.relativePath })}
+                >
+                  {f.relativePath}
+                </button>
                 <Badge tone={stateTone(f.status)}>{f.status}</Badge>
                 <span className="dim text-xs">{f.chunkCount} chunks · {formatBytes(f.sizeBytes)}</span>
                 {/* This is where "why isn't my PDF searchable" gets answered. */}
@@ -751,6 +787,16 @@ export function CorpusDetail({
       <div className="card p-3.5">
         <ChunkSetsPanel corpus={corpus} onChanged={async () => { await load(); await onRefresh(); }} />
       </div>
+
+      {viewing && (
+        <FileViewer
+          corpus={corpus.name}
+          path={viewing.path}
+          aroundLine={viewing.line}
+          onClose={() => setViewing(null)}
+          onError={onError}
+        />
+      )}
 
       {addingSource && (
         <AddSourceModal
@@ -890,6 +936,84 @@ function AddSourceModal({
           </Button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+/**
+ * One indexed file, read back.
+ *
+ * Deliberately NOT the file on disk. This is what was indexed, which is what search is
+ * actually searching — the thing worth looking at when a result is surprising, and the
+ * only thing there is to look at for an uploaded PDF, which has no file. Where the index
+ * is missing lines the text says so inline rather than closing the gap silently.
+ */
+function FileViewer({
+  corpus,
+  path,
+  aroundLine,
+  onClose,
+  onError,
+}: {
+  corpus: string;
+  path: string;
+  aroundLine?: number;
+  onClose: () => void;
+  onError: (e: unknown) => void;
+}) {
+  const [file, setFile] = useState<IndexedFileText | null>(null);
+  const highlight = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    api.fileText(corpus, path).then(setFile).catch(onError);
+  }, [corpus, path, onError]);
+
+  useEffect(() => {
+    // Opened from a search hit, so land on the hit rather than at the top of a long file.
+    highlight.current?.scrollIntoView({ block: 'center' });
+  }, [file]);
+
+  const lines = file?.text.split('\n') ?? [];
+
+  return (
+    <Modal title={path} onClose={onClose} width={980}>
+      {!file ? (
+        <p className="flex items-center gap-2"><Spinner /> Reading…</p>
+      ) : (
+        <>
+          <div className="mb-2.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className="mono">{file.corpus}:{file.chunkSet}</span>
+            <span>lines {file.startLine}–{file.endLine}</span>
+            {/* A gap means the index really is missing those lines. Saying so is the
+                difference between reading a file and reading a plausible one. */}
+            {file.gaps > 0 && (
+              <Badge tone="warn">{file.gaps} gap{file.gaps === 1 ? '' : 's'} in the index</Badge>
+            )}
+            {file.truncated && <Badge tone="warn">truncated</Badge>}
+            <span className="flex-1" />
+            <CopyButton text={file.text} label="Copy text" />
+          </div>
+
+          <pre className="mono m-0 max-h-[62vh] overflow-auto rounded-md bg-muted p-3 text-xs whitespace-pre">
+            {lines.map((line, i) => {
+              const n = file.startLine + i;
+              const isHit = aroundLine !== undefined && n === aroundLine;
+              return (
+                <span
+                  key={i}
+                  ref={isHit ? highlight : undefined}
+                  className={cn('block', isHit && 'rounded-sm bg-[var(--accent-soft)]')}
+                >
+                  <span className="mr-3 inline-block w-10 shrink-0 text-right text-muted-foreground select-none">
+                    {n}
+                  </span>
+                  {line}
+                </span>
+              );
+            })}
+          </pre>
+        </>
+      )}
     </Modal>
   );
 }

@@ -1,5 +1,6 @@
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
+using Dexicon.Mcp;
 using Dexicon.Core.Configuration;
 using Dexicon.Core.Embedding;
 using Dexicon.Core.Indexing;
@@ -257,6 +258,57 @@ public static class CorpusEndpoints
             return Results.Ok(new FileListResponse(
                 total, target.Set.Name, [.. rows.Select(x => x.File.ToSummary(x.State))]));
         }).Produces<FileListResponse>();
+
+        // ── One file, put back together ──────────────────────────────────────
+        // A path rather than a file id, and a query parameter rather than a route segment:
+        // the handle a caller already has is the path, because that is what search returns,
+        // and a relative path contains slashes.
+        g.MapGet("/{nameOrId}/file", async (string nameOrId, string path, RequestContext rc,
+            ScopeResolver scopes, IVectorStore vectors, CancellationToken ct) =>
+        {
+            if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
+            if (string.IsNullOrWhiteSpace(path)) return Results.BadRequest(new { error = "path is required" });
+
+            var scope = await scopes.ResolveReadableAsync(rc.RequireTenant(), [nameOrId], ct);
+            var target = scope.Targets[0];
+
+            // By FILTER, not by search. An early version of the MCP resource used keyword
+            // search for the path, which let relevance decide which of a file's chunks came
+            // back — a reader asking for a file got a plausible one with holes in it.
+            var chunks = await vectors.GetFileChunksAsync(
+                target.Set.CollectionName, target.Set.Id, path, ct);
+
+            if (chunks.Count == 0)
+            {
+                return Results.NotFound(new
+                {
+                    title = "Not indexed",
+                    detail = $"No indexed file '{path}' in '{target.Corpus.Name}:{target.Set.Name}'. " +
+                             "Paths are exactly as search reports them.",
+                });
+            }
+
+            var pieces = chunks.Select(c => (c.StartLine, c.EndLine, c.Content)).ToList();
+            var text = DexiconTools.Stitch(pieces, lineNumbers: false);
+
+            // The marker Stitch writes where the index is missing lines. Counted here so a
+            // caller can say "3 gaps" without reading the text for it.
+            var gaps = text.Split("… lines").Length - 1;
+
+            const int Limit = 400_000;
+            var truncated = text.Length > Limit;
+            if (truncated) text = text[..Limit] + "\n…(truncated)";
+
+            return Results.Ok(new IndexedFileText(
+                target.Corpus.Name,
+                target.Set.Name,
+                path,
+                chunks.Min(c => c.StartLine),
+                chunks.Max(c => c.EndLine),
+                gaps,
+                truncated,
+                text));
+        }).Produces<IndexedFileText>();
     }
 
     internal static async Task<CorpusSummary> Summarise(CatalogDbContext db, Corpus c, string viewerTenant,
