@@ -8,7 +8,9 @@
     "build": "openapi-ts && tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b",
-    "generate": "openapi-ts"
+    "generate": "openapi-ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "react": "^19.2.0",
@@ -17,11 +19,17 @@
   "devDependencies": {
     "@hey-api/openapi-ts": "^0.99.0",
     "@tailwindcss/vite": "^4.1.13",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "@vitest/coverage-v8": "^4.1.11",
+    "jsdom": "^29.1.1",
     "tailwindcss": "^4.1.13",
     "typescript": "^5.9.2",
-    "vite": "^7.1.0"
+    "vite": "^7.1.0",
+    "vitest": "^4.1.11"
   }
 }
