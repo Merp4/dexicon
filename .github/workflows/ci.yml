@@ -62,6 +62,14 @@ jobs:
         working-directory: clients/web-ui
         run: npm ci
 
+      # src/generated/ is gitignored — it is built from Dexicon.json, not committed — so a
+      # clean checkout has no API client and anything that compiles src/ fails on it. This
+      # has to come before the type-check and the tests, and did not have to before only
+      # because the type-check was compiling nothing.
+      - name: Generate the API client
+        working-directory: clients/web-ui
+        run: npm run generate
+
       # `tsc -b`, NOT `tsc --noEmit`. The root tsconfig is a solution file — `files: []`
       # plus a project reference — so `tsc --noEmit` compiles nothing and exits 0 on code
       # that does not type-check at all. This step passed for every commit it ever ran on,
