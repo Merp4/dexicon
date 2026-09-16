@@ -33,6 +33,9 @@ export function stateTone(state: string): Tone {
     case 'indexing':
     case 'running':
     case 'queued':
+    // Attached but not yet chunked. Shown as work outstanding, never as done —
+    // "indexed · 0 chunks" was the old lie.
+    case 'pending':
       return 'accent';
     // `degraded` is its own colour, distinct from both running and failed. A job
     // that is technically alive but achieving nothing must not look like one that

@@ -115,6 +115,7 @@ export interface Job {
   filesFailed: number;
   chunksWritten: number;
   error?: string;
+  queuedUtc: string;
   startedUtc?: string;
   finishedUtc?: string;
 }
