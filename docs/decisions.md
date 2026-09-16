@@ -553,6 +553,34 @@ result.
 What the exercise did settle: task framing is not cosmetic, and Dexicon was getting it
 wrong for every model.
 
+### Q3, third measurement — a different chunking, same conclusion
+
+The second run left one obvious question: was gemma's lead an artefact of that particular
+chunk size? So the same twelve queries were run against a second corpus configuration —
+256/40 with unit-aware, sentence-aware and heading context all enabled, 473 chunks per
+set, and the model as the only difference between the two sets.
+
+| | hit@1 | hit@3 | hit@5 | MRR |
+|---|---|---|---|---|
+| `nomic-embed-text`, framed, 256/40 | 8/12 | 10/12 | 11/12 | 0.743 |
+| `embeddinggemma`, framed, 256/40 | 10/12 | 10/12 | 12/12 | **0.871** |
+
+**Gemma is ahead again, by a wider margin — and nomic's score barely moved between the two
+chunkings (0.739 at 768/100, 0.743 at 256/40).** That consistency is what makes the
+comparison worth something: the variable that changed the ranking was the framing, not the
+chunking.
+
+`nomic-embed-text` missed one query outright that gemma found at rank 5 ("what is the
+Qdrant tenant key and why was it chosen"), and trailed on two others it answered at ranks
+3 and 4.
+
+**This still does not settle Q3, and the reason is worth being precise about.** It is an
+independent *corpus configuration*, not an independent *query set* — the same twelve
+hand-written queries were reused. So it tests whether the finding survives a chunking
+change, which it does, and says nothing about whether it survives a different distribution
+of questions, which remains the open gap. Two runs agreeing on twelve queries is two
+correlated samples, not twenty-four.
+
 
 ### D-24 Model limits are measured, not assumed
 
