@@ -161,6 +161,40 @@ export interface CreatedToken {
   mcpAddCommand: string;
 }
 
+export interface LibraryAttachment {
+  corpusId: string;
+  corpusName: string;
+  fileId: string;
+  fileName: string;
+  status: string;
+  chunkCount: number;
+  chunkSize: number;
+  chunkOverlap: number;
+  boundaryMode: string;
+}
+
+export interface LibraryDocument {
+  sha256: string;
+  originalFileName?: string;
+  sizeBytes: number;
+  mediaType?: string;
+  title?: string;
+  extractedChars: number;
+  emptyReason?: string;
+  createdUtc: string;
+  attachments: LibraryAttachment[];
+}
+
+export interface DocumentText {
+  sha256: string;
+  title?: string;
+  extractor: string;
+  extractedChars: number;
+  emptyReason?: string;
+  extractedUtc: string;
+  preview: string;
+}
+
 export interface Tenant {
   id: string;
   displayName: string;
@@ -178,7 +212,10 @@ export const api = {
   createCorpus: (body: Record<string, unknown>) =>
     request<Corpus>('/api/corpora', { method: 'POST', body: JSON.stringify(body) }),
   updateCorpus: (nameOrId: string, body: Record<string, unknown>) =>
-    request<Corpus>(`/api/corpora/${encodeURIComponent(nameOrId)}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    request<{ corpus: Corpus; rechunkJob?: Job }>(
+      `/api/corpora/${encodeURIComponent(nameOrId)}`,
+      { method: 'PATCH', body: JSON.stringify(body) },
+    ),
   deleteCorpus: (nameOrId: string) =>
     request<void>(`/api/corpora/${encodeURIComponent(nameOrId)}`, { method: 'DELETE' }),
   reindex: (nameOrId: string, full = false) =>
@@ -195,6 +232,44 @@ export const api = {
 
   browse: (path?: string) =>
     request<WorkspaceListing>(`/api/workspaces${path ? `?path=${encodeURIComponent(path)}` : ''}`),
+
+  // ── Documents ─────────────────────────────────────────────────────────────
+  listDocuments: () => request<LibraryDocument[]>('/api/documents'),
+
+  documentText: (sha256: string) => request<DocumentText>(`/api/documents/${sha256}/text`),
+
+  /** Upload into a corpus. Progress is reported by the indexer, not this call. */
+  uploadDocuments: async (corpus: string, files: File[]) => {
+    const form = new FormData();
+    for (const f of files) form.append('files', f, f.name);
+
+    const token = getToken();
+    const res = await fetch(`/api/corpora/${encodeURIComponent(corpus)}/documents`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form, // no Content-Type: the browser sets the multipart boundary
+    });
+
+    const text = await res.text();
+    const body = text ? JSON.parse(text) : undefined;
+    if (!res.ok) throw new ApiError(res.status, body?.title ?? res.statusText, body?.detail);
+    return body as {
+      corpus: string;
+      stored: { sha256: string; fileName: string; sizeBytes: number; extractedChars: number; deduplicated: boolean; warning?: string }[];
+      failed: unknown[];
+      job: Job;
+    };
+  },
+
+  /** Attach an ALREADY STORED document to another corpus, chunked that corpus's way. */
+  attachDocument: (corpus: string, sha256: string, fileName?: string) =>
+    request<{ corpus: string; fileId: string; fileName: string; chunking: { chunkSize: number; chunkOverlap: number; boundaryMode: string }; job: Job }>(
+      `/api/corpora/${encodeURIComponent(corpus)}/documents/attach`,
+      { method: 'POST', body: JSON.stringify({ sha256, fileName }) },
+    ),
+
+  detachDocument: (corpus: string, fileId: string) =>
+    request<void>(`/api/corpora/${encodeURIComponent(corpus)}/documents/${fileId}`, { method: 'DELETE' }),
 
   listTenants: () => request<Tenant[]>('/api/tenants'),
   createTenant: (id: string, displayName?: string) =>

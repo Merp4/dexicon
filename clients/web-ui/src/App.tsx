@@ -12,8 +12,9 @@ import {
   type SearchResult,
 } from './api';
 import { Badge, CopyButton, Empty, ErrorBanner, Field, Modal, Spinner, formatBytes, relativeTime, stateTone } from './ui';
+import { ChunkingModal, DocumentsView } from './Documents';
 
-type View = 'search' | 'corpora' | 'jobs' | 'access' | 'settings';
+type View = 'search' | 'corpora' | 'documents' | 'jobs' | 'access' | 'settings';
 
 /**
  * The UI exists to answer four questions and to do nothing else:
@@ -128,6 +129,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const nav: { id: View; label: string }[] = [
     { id: 'search', label: 'Search' },
     { id: 'corpora', label: 'Corpora' },
+    { id: 'documents', label: 'Documents' },
     { id: 'jobs', label: 'Jobs' },
     { id: 'access', label: 'Access' },
     { id: 'settings', label: 'Settings' },
@@ -183,6 +185,9 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
         )}
         {view === 'corpora' && selected && (
           <CorpusDetail name={selected} live={live} onBack={() => setSelected(null)} onRefresh={refreshCorpora} onError={setError} />
+        )}
+        {view === 'documents' && (
+          <DocumentsView corpora={corpora} onError={setError} onRefresh={refreshCorpora} />
         )}
         {view === 'jobs' && <JobsView corpora={corpora} live={live} onError={setError} />}
         {view === 'access' && <AccessView onError={setError} />}
@@ -561,6 +566,7 @@ function CorpusDetail({
   const [files, setFiles] = useState<IndexedFile[]>([]);
   const [filter, setFilter] = useState<string>('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editingChunking, setEditingChunking] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -608,7 +614,18 @@ function CorpusDetail({
           <span className="mono">{corpus.embeddingModel}</span> · {corpus.embeddingDimensions}d
           <span className="dim"> (pinned at creation; changing it is a rebuild)</span>
         </Row>
-        <Row label="Chunking">{corpus.chunkSize} tokens, {corpus.chunkOverlap} overlap, {corpus.boundaryMode}</Row>
+        <Row label="Chunking">
+          {corpus.chunkSize} tokens, {corpus.chunkOverlap} overlap, {corpus.boundaryMode}
+          {corpus.owned && (
+            <button
+              className="btn"
+              style={{ marginLeft: '0.5rem', padding: '0.1rem 0.45rem', fontSize: '0.75rem' }}
+              onClick={() => setEditingChunking(true)}
+            >
+              Change
+            </button>
+          )}
+        </Row>
         <Row label="Visibility">
           {corpus.visibility}
           {corpus.owned && (
@@ -660,6 +677,15 @@ function CorpusDetail({
           </div>
         )}
       </div>
+
+      {editingChunking && (
+        <ChunkingModal
+          corpus={corpus}
+          onClose={() => setEditingChunking(false)}
+          onSaved={async () => { setEditingChunking(false); await load(); await onRefresh(); }}
+          onError={onError}
+        />
+      )}
 
       {confirmDelete && (
         <DeleteCorpusModal
