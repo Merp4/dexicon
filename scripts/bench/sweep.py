@@ -91,17 +91,23 @@ def models():
     return [m["name"] for m in listing["models"]]
 
 
-def wait_for_idle(label, timeout=900):
-    """Block until no job is running. Indexing is asynchronous and a set queried while it
-    is still filling scores its own incompleteness."""
+def wait_for_chunks(label, set_name, timeout=900):
+    """Block until the set actually holds chunks.
+
+    NOT "until no job is running". That was the first version, and it returned instantly
+    every time — partly a race with the job appearing, and partly because the corpus was
+    never indexing at all. Every configuration then scored MRR 0.000 against an empty
+    index and looked like a finding. Waiting on the THING YOU NEED rather than on a
+    proxy for it cannot be fooled the same way.
+    """
     started = time.time()
     while time.time() - started < timeout:
-        jobs = call("GET", "/api/jobs?limit=5")
-        running = [j for j in jobs if j["state"] in ("Queued", "Running")]
-        if not running:
+        sets = call("GET", f"/api/corpora/{BENCH_CORPUS}/chunk-sets")
+        me = next((s for s in sets if s["name"] == set_name), None)
+        if me and me["chunkCount"] > 0 and me["pendingCount"] == 0:
             return time.time() - started
         time.sleep(2)
-    raise SystemExit(f"{label}: still indexing after {timeout}s")
+    raise SystemExit(f"{label}: no chunks after {timeout}s — is the corpus indexing at all?")
 
 
 def score(target, queries, mode):
@@ -177,7 +183,7 @@ def main():
         "boundaryMode": first_boundary,
         "workspacePath": WORKSPACE_PATH,
     })
-    wait_for_idle("initial index")
+    wait_for_chunks("initial index", "default")
 
     # The corpus's own set is the first combination; rename nothing, just record it.
     sets = call("GET", f"/api/corpora/{BENCH_CORPUS}/chunk-sets")
@@ -196,11 +202,16 @@ def main():
                 "chunkOverlap": max(1, size // 8),
                 "boundaryMode": boundary,
             })
-            took = wait_for_idle(name)
+            took = wait_for_chunks(name, name)
             print(f"           indexed in {took:.0f}s", flush=True)
             built.append(((model, size, boundary), name))
 
+        sets = {s["name"]: s for s in call("GET", f"/api/corpora/{BENCH_CORPUS}/chunk-sets")}
         for (model, size, boundary), name in built:
+            chunks = sets.get(name, {}).get("chunkCount", 0)
+            if chunks == 0:
+                raise SystemExit(f"{name} holds no chunks; refusing to score an empty index")
+
             for mode in SEARCH_MODES:
                 ranks = score(f"{BENCH_CORPUS}:{name}", queries, mode)
                 row = {

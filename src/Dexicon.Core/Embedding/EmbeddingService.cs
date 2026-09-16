@@ -28,6 +28,23 @@ public interface IEmbeddingService
     /// the caller knows which it has, and nothing else does. Passing it as an argument
     /// makes it impossible to forget at one of the two places that embed text.
     /// </param>
+    /// <summary>
+    /// How many tokens the model actually made of <paramref name="text"/>, or null when
+    /// the provider does not say.
+    /// </summary>
+    /// <remarks>
+    /// This is the model's OWN tokenizer, not an estimate and not a tokenizer we ship.
+    /// Shipping one means a vocabulary per model, versioned, for models that are pulled at
+    /// runtime and may not exist yet — so the only tokenizer that can be right for an
+    /// arbitrary model is the one inside it. Ollama returns `prompt_eval_count` on an
+    /// embed call; providers that report nothing get null, and callers fall back to an
+    /// estimate rather than pretending.
+    ///
+    /// Far too slow to call per chunk. It exists to CALIBRATE: measure the
+    /// characters-per-token ratio once per model, then let the chunker count characters.
+    /// </remarks>
+    Task<int?> CountTokensAsync(EmbeddingTarget target, string text, CancellationToken ct = default);
+
     Task<IReadOnlyList<float[]>> EmbedAsync(
         EmbeddingTarget target, EmbedPurpose purpose, IReadOnlyList<string> inputs,
         CancellationToken ct = default);
@@ -75,6 +92,28 @@ public sealed class EmbeddingService(
         cache.Set(DimensionsKey(target), dimensions, DimensionsTtl);
         log.LogInformation("{Target} produces {Dimensions}-dimension vectors", target, dimensions);
         return dimensions;
+    }
+
+    public async Task<int?> CountTokensAsync(
+        EmbeddingTarget target, string text, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(text)) return 0;
+
+        var generator = factory.GeneratorFor(target);
+        var options = new EmbeddingGenerationOptions { ModelId = target.Model };
+
+        try
+        {
+            var embeddings = await generator.GenerateAsync([text], options, ct);
+            // Deliberately not retried. A token count is a measurement, and a measurement
+            // that cannot be taken is absent rather than urgent.
+            return (int?)embeddings.Usage?.InputTokenCount;
+        }
+        catch (Exception ex)
+        {
+            log.LogDebug(ex, "Could not count tokens with {Target}", target);
+            return null;
+        }
     }
 
     public async Task<IReadOnlyList<float[]>> EmbedAsync(

@@ -19,6 +19,18 @@ namespace Dexicon.Core.Embedding;
 /// <param name="RecommendedChunkChars">
 /// A chunk budget with headroom under the measured limit, in characters.
 /// </param>
+/// <param name="CharsPerToken">
+/// How many characters of ordinary text this model makes one token of, MEASURED with the
+/// model's own tokenizer rather than assumed.
+///
+/// The chunker has always used a flat 4. That is a fair average for English prose and
+/// wrong in the direction that hurts for dense code, minified output and CJK, which reach
+/// the same token limit in far fewer characters — so a "768 token" chunk of minified
+/// JavaScript can be two or three times that, and the model truncates it silently.
+///
+/// Null when the provider does not report token counts, in which case callers keep the
+/// estimate rather than inventing a measurement.
+/// </param>
 public sealed record ModelCapabilities(
     string Provider,
     string Model,
@@ -27,6 +39,7 @@ public sealed record ModelCapabilities(
     bool TruncatesSilently,
     int RecommendedChunkChars,
     int RecommendedChunkTokens,
+    double? CharsPerToken,
     int EmbedCalls,
     long TookMs,
     string Summary);
@@ -77,6 +90,10 @@ public sealed class ModelProbe(IEmbeddingService embeddings, ILogger<ModelProbe>
 
         var dimensions = (await Embed("dimension probe")).Length;
 
+        // Measured before the bisection, so both exits report it and neither has to
+        // remember to.
+        var charsPerToken = await MeasureCharsPerTokenAsync(target, ct);
+
         // Does the tail of a long input reach the model at all? If it does at the ceiling,
         // there is no limit worth reporting and no search to run.
         var (reachesTail, _) = await TailIsRead(Embed, CeilingChars);
@@ -85,7 +102,8 @@ public sealed class ModelProbe(IEmbeddingService embeddings, ILogger<ModelProbe>
             var recommendedChars = CeilingChars / 2;
             return Done(target, dimensions, null, false, recommendedChars, calls, started,
                 $"Accepted {CeilingChars:N0} characters with the end still affecting the vector. " +
-                "No practical limit found; chunk size is a retrieval choice here, not a constraint.");
+                "No practical limit found; chunk size is a retrieval choice here, not a constraint.",
+                charsPerToken);
         }
 
         // It truncated somewhere. Find where, by bisection on "is the tail still read".
@@ -121,7 +139,8 @@ public sealed class ModelProbe(IEmbeddingService embeddings, ILogger<ModelProbe>
                   Density
                 : $"Accepts about {low:N0} characters of prose and SILENTLY TRUNCATES beyond that — it " +
                   "returns a vector for the part it read, so an over-long chunk is indexed as its opening " +
-                  $"and the rest is nowhere. Keep the chunk budget under the recommendation. {Density}");
+                  $"and the rest is nowhere. Keep the chunk budget under the recommendation. {Density}",
+            charsPerToken);
     }
 
     /// <summary>
@@ -200,9 +219,59 @@ public sealed class ModelProbe(IEmbeddingService embeddings, ILogger<ModelProbe>
 
     private static ModelCapabilities Done(
         EmbeddingTarget target, int dimensions, int? limit, bool truncates, int budgetChars,
-        int calls, System.Diagnostics.Stopwatch started, string summary) =>
+        int calls, System.Diagnostics.Stopwatch started, string summary,
+        double? charsPerToken = null) =>
         new(target.Provider, target.Model, dimensions, limit, truncates,
             budgetChars,
-            budgetChars / Indexing.CodeChunker.CharsPerToken,
+            // Tokens, by the MEASURED ratio when there is one. Dividing by a flat 4 is how
+            // a recommendation in "tokens" came to mean characters/4 regardless of what
+            // the model does with them.
+            (int)(budgetChars / (charsPerToken ?? Indexing.CodeChunker.CharsPerToken)),
+            charsPerToken,
             calls, started.ElapsedMilliseconds, summary);
+
+    /// <summary>
+    /// Characters per token, measured with the model's own tokenizer.
+    /// </summary>
+    /// <remarks>
+    /// Three samples, because one number cannot describe every kind of text and an average
+    /// over prose alone is the flattering case. Prose is roughly four characters a token;
+    /// dense code is nearer three; CJK can be one or less. Averaging them gives a ratio
+    /// that is wrong for each and much less wrong than 4 for a mixed corpus.
+    ///
+    /// Null when the provider reports no token counts. A caller that cannot measure keeps
+    /// the estimate rather than inventing a measurement.
+    /// </remarks>
+    private async Task<double?> MeasureCharsPerTokenAsync(EmbeddingTarget target, CancellationToken ct)
+    {
+        string[] samples =
+        [
+            // Ordinary English prose.
+            "The indexer reads a folder, extracts text from each file it understands, and "
+            + "splits that text into chunks small enough for the embedding model to read "
+            + "in one go. Nothing leaves the machine unless a hosted provider is chosen.",
+
+            // Dense code, which tokenizes far worse than prose.
+            "public async Task<IReadOnlyList<float[]>> EmbedAsync(EmbeddingTarget target, "
+            + "EmbedPurpose purpose, IReadOnlyList<string> inputs, CancellationToken ct = "
+            + "default) { if (inputs.Count == 0) return []; var gen = factory.GeneratorFor(target); }",
+
+            // Punctuation-heavy structured text.
+            "{\"query\":{\"fusion\":\"rrf\"},\"filter\":{\"must\":[{\"key\":\"corpus_id\","
+            + "\"match\":{\"any\":[\"01JD…\",\"01JE…\"]}}]},\"limit\":40,\"with_payload\":true}",
+        ];
+
+        double totalChars = 0, totalTokens = 0;
+
+        foreach (var sample in samples)
+        {
+            var tokens = await embeddings.CountTokensAsync(target, sample, ct);
+            if (tokens is null or 0) return null;   // the provider does not say; do not guess
+
+            totalChars += sample.Length;
+            totalTokens += tokens.Value;
+        }
+
+        return Math.Round(totalChars / totalTokens, 2);
+    }
 }

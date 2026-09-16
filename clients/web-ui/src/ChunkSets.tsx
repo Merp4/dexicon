@@ -747,6 +747,18 @@ export function ModelsView() {
                       <span>
                         suggested chunk size <strong>{caps.recommendedChunkTokens.toLocaleString()}</strong> tokens
                       </span>
+                      {/* The number that makes the one above mean anything. The chunker
+                          budgets in characters at a flat 4 per token; this is what this
+                          model actually does, so a gap between them is the size of the
+                          error in every "tokens" figure on this screen. */}
+                      {caps.charsPerToken != null && (
+                        <span>
+                          measured <strong>{caps.charsPerToken}</strong> chars/token
+                          {Math.abs(caps.charsPerToken - 4) >= 0.5 && (
+                            <span className="dim"> · the chunker assumes 4</span>
+                          )}
+                        </span>
+                      )}
                       {caps.truncatesSilently && <Badge tone="warn">truncates silently</Badge>}
                     </div>
                     <p className="dim mt-1.5 mx-0 mb-0">{caps.summary}</p>
