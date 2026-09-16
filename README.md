@@ -33,9 +33,10 @@ visible to whom, and what the indexer is currently doing.
 `0.1.1`. Indexing, hybrid search, chunk sets, the MCP surface, the web UI and the
 container all exist and are covered by tests.
 
-What that does not yet mean: nobody has run it but its author. The defaults — which
-embedding model, which chunk size — are reasonable rather than measured, and
-[the roadmap](docs/11-roadmap.md) says what is still owed.
+What that does not yet mean: nobody has run it but its author. The defaults are now
+[measured](docs/benchmarks.md) rather than guessed — across 81 retrieval configurations —
+but on one corpus of one content type, and [the roadmap](docs/11-roadmap.md) says what is
+still owed.
 
 ## Quickstart
 
@@ -87,6 +88,7 @@ choose them.
 | [10 — Security & secrets](docs/10-security-secrets.md) | Secret handling from commit one, container hardening, CI |
 | [11 — Roadmap](docs/11-roadmap.md) | Milestones M0–M5 with definitions of done |
 | [Decisions](docs/decisions.md) | Every load-bearing choice, its rationale, and what was rejected |
+| [Benchmarks](docs/benchmarks.md) | 81 retrieval configurations swept, and which defaults that earns |
 | [12 — Connecting an agent](docs/12-clients.md) | Per-client MCP setup: Claude Code, Cursor, VS Code, Windsurf, Cline, Claude Desktop, Zed |
 | [Troubleshooting](docs/troubleshooting.md) | The failures that actually happen in the first hour |
 
