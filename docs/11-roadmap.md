@@ -116,8 +116,10 @@ answer to "what about…" is "yes, here, later" rather than an argument.
 
 ## Sequencing notes
 
-- **Infrastructure before features.** CI, gitleaks, `.env.example`, and the licence land in
-  M1 before any feature. Retrofitting secret hygiene onto a public history is not possible.
+- **Infrastructure before features.** CI, gitleaks, and `.env.example` land in M1 before any
+  feature. Retrofitting secret hygiene onto a public history is not possible — which is why
+  `.gitignore` was commit one. The licence binds at **first public push**, not at the first
+  commit; it is already in the tree (Apache-2.0, [D-14](decisions.md#d-14-licence)).
 - **The isolation test is not a QA task.** It ships with the enforcement code in M2 or the
   enforcement is not done.
 - **M3 is not optional polish.** Shipping guessed defaults and calling them tuned is the

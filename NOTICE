@@ -1,0 +1,9 @@
+Dexicon
+Copyright 2026 Martyn Mcvay
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Dexicon derives from work in McpToolbox by the same author — specifically the
+workspace indexer, the Qdrant repository, the language-aware code chunker, and
+the document loaders. See docs/decisions.md for what was carried over, changed,
+or dropped.

@@ -60,4 +60,6 @@ carried over, what was changed, and why.
 
 ## Licence
 
-To be chosen before the first public push — see [Decisions, D-14](docs/decisions.md#d-14-licence).
+[Apache-2.0](LICENSE). Copyright 2026 Martyn Mcvay — see [NOTICE](NOTICE).
+Chosen for the express patent grant and the trademark clause; the reasoning and the
+rejected alternative are in [Decisions, D-14](docs/decisions.md#d-14-licence).
