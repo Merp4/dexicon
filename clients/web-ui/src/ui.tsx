@@ -1,27 +1,205 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useId, useState, type ReactNode } from 'react';
+import { cva, type VariantProps } from 'class-variance-authority';
+import { cn } from 'cn';
+import { Check, Copy, Loader2, X } from 'lucide-react';
 
-// Small shared primitives. Deliberately hand-rolled rather than a component kit:
-// "minimal but professional" is better served by a handful of pieces we control
-// than by theming someone else's.
+import { Button as ShadButton } from '@/components/ui/button';
+import { Input as ShadInput } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Select as SelectRoot,
+  SelectContent,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
-export function Badge({ tone = 'neutral', children }: { tone?: Tone; children: ReactNode }) {
+/**
+ * The app's vocabulary, spoken in shadcn components.
+ *
+ * `src/components/ui/*` is shadcn's own code, left exactly as its CLI writes it so that
+ * `shadcn add` and `shadcn diff` keep working. This file is the layer between that and
+ * Dexicon: it keeps the names the app already uses — `Modal`, `Field`, a `Badge` with a
+ * tone, a `Button` whose confirming variant is called `primary` — so adopting a component
+ * library did not mean rewriting every call site into someone else's nouns.
+ *
+ * It also keeps the property these primitives were written for: a component you cannot
+ * construct WITHOUT its styling. `.input` and `.btn-primary` used to be opt-in classes on
+ * bare elements, and a whole modal shipped with every field invisible and every primary
+ * button rendering as a secondary one. Nothing failed; the screen was simply wrong.
+ */
+
+// ── Buttons ─────────────────────────────────────────────────────────────────
+
+/**
+ * Dexicon has three kinds of button; shadcn has six.
+ *
+ * The app's unnamed default is a secondary action, which is shadcn's `outline`, and
+ * `primary` is the one confirming action on a screen, which is shadcn's `default`.
+ * Mapping here rather than renaming every call site keeps `primary` meaning what it
+ * means to us.
+ */
+const variantMap = {
+  default: 'outline',
+  primary: 'default',
+  danger: 'destructive',
+  ghost: 'ghost',
+  secondary: 'secondary',
+} as const;
+
+export function Button({
+  variant = 'default',
+  size = 'sm',
+  ...rest
+}: Omit<React.ComponentProps<typeof ShadButton>, 'variant'> & {
+  variant?: keyof typeof variantMap;
+}) {
+  return <ShadButton variant={variantMap[variant]} size={size} {...rest} />;
+}
+
+/** One of a row of choices, the current one wearing the accent. */
+export function Chip({
+  // Defaulted, not left undefined: an unpressed chip that omits `aria-pressed` does not
+  // read as a choice at all, so the group stops being a group.
+  active = false,
+  className,
+  ...rest
+}: React.ComponentProps<typeof Button> & { active?: boolean }) {
   return (
-    <span className="badge" style={toneStyle(tone)}>
-      {children}
-    </span>
+    <Button
+      aria-pressed={active}
+      className={cn(
+        active && 'border-[color-mix(in_oklab,var(--accent)_35%,transparent)] bg-[var(--accent-soft)] text-[var(--accent)]',
+        className,
+      )}
+      {...rest}
+    />
   );
 }
 
+// ── Fields ──────────────────────────────────────────────────────────────────
+
+/**
+ * A field's generated ids, so that its label and hint reach the control.
+ *
+ * The label used to WRAP the control, which associates the two but also folds the hint
+ * into the label: a screen reader announced "Chunk size (tokens) 64–8192. Roughly four
+ * characters each." as the field's NAME. An explicit `htmlFor` plus `aria-describedby`
+ * says the label as the name and the hint as the description, which is what each is.
+ */
+const FieldContext = createContext<{ id: string; hintId?: string } | null>(null);
+
+/** The id and description a control adopts when it sits inside a Field. */
+function useField(id?: string) {
+  const field = useContext(FieldContext);
+  return { id: id ?? field?.id, 'aria-describedby': field?.hintId };
+}
+
+export function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: ReactNode;
+}) {
+  const id = useId();
+  const hintId = `${id}-hint`;
+
+  return (
+    <FieldContext.Provider value={{ id, hintId: hint ? hintId : undefined }}>
+      <div className="mb-3.5 grid gap-1.5">
+        <Label htmlFor={id} className="text-xs font-semibold">
+          {label}
+        </Label>
+        {children}
+        {hint && (
+          <p id={hintId} className="text-xs text-muted-foreground">
+            {hint}
+          </p>
+        )}
+      </div>
+    </FieldContext.Provider>
+  );
+}
+
+export function Input({ id, ...rest }: React.ComponentProps<typeof ShadInput>) {
+  return <ShadInput {...useField(id)} {...rest} />;
+}
+
+/**
+ * A select in a popover of our own rather than the operating system's.
+ *
+ * The native control paints a menu the page has no say over: it ignored the app's dark
+ * mode and drew over whatever sat beside it. This one is an ordinary portalled element,
+ * so it is themed, scrollable and positioned like everything else on the screen.
+ */
+export function Select({
+  value,
+  onValueChange,
+  placeholder,
+  disabled,
+  className,
+  children,
+  id,
+  'aria-label': ariaLabel,
+}: {
+  value: string;
+  onValueChange: (value: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+  className?: string;
+  children: ReactNode;
+  id?: string;
+  'aria-label'?: string;
+}) {
+  return (
+    <SelectRoot value={value} onValueChange={onValueChange} disabled={disabled}>
+      <SelectTrigger {...useField(id)} aria-label={ariaLabel} className={cn('w-full', className)}>
+        <SelectValue placeholder={placeholder} />
+      </SelectTrigger>
+      <SelectContent>{children}</SelectContent>
+    </SelectRoot>
+  );
+}
+
+export { SelectItem } from '@/components/ui/select';
+
+// ── Badges ──────────────────────────────────────────────────────────────────
+
 export type Tone = 'neutral' | 'ok' | 'warn' | 'danger' | 'accent';
 
-function toneStyle(tone: Tone): React.CSSProperties {
-  if (tone === 'neutral') return {};
-  const c = `var(--${tone === 'accent' ? 'accent' : tone})`;
-  return {
-    color: c,
-    borderColor: `color-mix(in oklab, ${c} 40%, transparent)`,
-    background: `color-mix(in oklab, ${c} 12%, transparent)`,
-  };
+/**
+ * Tones are the app's five meanings, not shadcn's four looks.
+ *
+ * `color-mix` rather than a fixed pair per tone: one token drives the text, the border
+ * and the fill together, so a palette change cannot leave a badge half-updated.
+ */
+const badgeVariants = cva(
+  'inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[0.72rem] font-semibold [&_svg]:size-3 [&_svg]:shrink-0',
+  {
+    variants: {
+      tone: {
+        neutral: 'border-border bg-muted text-muted-foreground',
+        ok: 'border-[color-mix(in_oklab,var(--ok)_40%,transparent)] bg-[color-mix(in_oklab,var(--ok)_12%,transparent)] text-[var(--ok)]',
+        warn: 'border-[color-mix(in_oklab,var(--warn)_40%,transparent)] bg-[color-mix(in_oklab,var(--warn)_12%,transparent)] text-[var(--warn)]',
+        danger:
+          'border-[color-mix(in_oklab,var(--danger)_40%,transparent)] bg-[color-mix(in_oklab,var(--danger)_12%,transparent)] text-[var(--danger)]',
+        accent:
+          'border-[color-mix(in_oklab,var(--accent)_40%,transparent)] bg-[color-mix(in_oklab,var(--accent)_12%,transparent)] text-[var(--accent)]',
+      },
+    },
+    defaultVariants: { tone: 'neutral' },
+  },
+);
+
+export function Badge({
+  tone,
+  className,
+  children,
+}: VariantProps<typeof badgeVariants> & { className?: string; children: ReactNode }) {
+  return <span className={cn(badgeVariants({ tone }), className)}>{children}</span>;
 }
 
 export function stateTone(state: string): Tone {
@@ -53,62 +231,61 @@ export function stateTone(state: string): Tone {
   }
 }
 
-export function Spinner() {
-  return (
-    <span
-      aria-hidden
-      style={{
-        display: 'inline-block',
-        width: '0.85em',
-        height: '0.85em',
-        border: '2px solid color-mix(in oklab, var(--text-dim) 35%, transparent)',
-        borderTopColor: 'var(--accent)',
-        borderRadius: '50%',
-        animation: 'dexicon-spin 700ms linear infinite',
-      }}
-    />
-  );
+// ── Feedback ────────────────────────────────────────────────────────────────
+
+export function Spinner({ className }: { className?: string }) {
+  return <Loader2 aria-hidden className={cn('size-3.5 animate-spin', className)} />;
 }
 
 export function ErrorBanner({ error, onDismiss }: { error: unknown; onDismiss?: () => void }) {
   if (!error) return null;
   const message = error instanceof Error ? error.message : String(error);
+
   return (
     <div
       role="alert"
-      className="card"
-      style={{
-        padding: '0.7rem 0.9rem',
-        borderColor: 'color-mix(in oklab, var(--danger) 45%, transparent)',
-        background: 'color-mix(in oklab, var(--danger) 8%, transparent)',
-        display: 'flex',
-        justifyContent: 'space-between',
-        gap: '1rem',
-        alignItems: 'start',
-      }}
+      className="mb-3 flex items-start justify-between gap-4 rounded-lg border border-[color-mix(in_oklab,var(--danger)_45%,transparent)] bg-[color-mix(in_oklab,var(--danger)_8%,transparent)] px-3.5 py-2.5"
     >
       {/* The server's own message, verbatim. "Something went wrong" helps nobody. */}
-      <span style={{ fontSize: '0.875rem' }}>{message}</span>
+      <span className="text-sm">{message}</span>
       {onDismiss && (
-        <button className="btn" onClick={onDismiss} aria-label="Dismiss error">
-          ✕
-        </button>
+        <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>
+          <X />
+        </Button>
       )}
     </div>
   );
 }
 
-export function Empty({ title, hint, action }: { title: string; hint?: string; action?: ReactNode }) {
+export function Empty({
+  title,
+  hint,
+  action,
+}: {
+  title: string;
+  hint?: string;
+  action?: ReactNode;
+}) {
   return (
-    <div className="card" style={{ padding: '2.5rem 1.5rem', textAlign: 'center' }}>
-      <p style={{ margin: 0, fontWeight: 600 }}>{title}</p>
+    <div className="rounded-lg border border-border bg-card px-6 py-10 text-center">
+      <p className="m-0 font-semibold">{title}</p>
       {/* Empty states say what to do next, never just "No data". */}
-      {hint && <p className="dim" style={{ margin: '0.4rem 0 0', fontSize: '0.875rem' }}>{hint}</p>}
-      {action && <div style={{ marginTop: '1rem' }}>{action}</div>}
+      {hint && <p className="mt-1.5 mb-0 text-sm text-muted-foreground">{hint}</p>}
+      {action && <div className="mt-4">{action}</div>}
     </div>
   );
 }
 
+// ── Modal ───────────────────────────────────────────────────────────────────
+
+/**
+ * An always-open dialog that reports its close.
+ *
+ * Every caller already decides whether the modal exists by rendering it or not, so this
+ * takes `open` as given rather than owning that state twice. The focus trap, the Escape
+ * key, the overlay and restoring focus afterwards were fifty hand-written lines here and
+ * are now the dialog primitive's problem.
+ */
 export function Modal({
   title,
   onClose,
@@ -120,124 +297,31 @@ export function Modal({
   children: ReactNode;
   width?: number;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const restoreTo = useRef<Element | null>(null);
-
-  useEffect(() => {
-    restoreTo.current = document.activeElement;
-    ref.current?.querySelector<HTMLElement>('input, button, select, textarea')?.focus();
-
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-      if (e.key !== 'Tab' || !ref.current) return;
-
-      // Trap focus inside the dialog, and restore it on close.
-      const focusable = ref.current.querySelectorAll<HTMLElement>(
-        'a[href], button:not(:disabled), input:not(:disabled), select, textarea, [tabindex]:not([tabindex="-1"])',
-      );
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    };
-
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      (restoreTo.current as HTMLElement | null)?.focus?.();
-    };
-  }, [onClose]);
-
   return (
-    <div
-      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'color-mix(in oklab, black 45%, transparent)',
-        display: 'grid',
-        placeItems: 'center',
-        padding: '1rem',
-        zIndex: 50,
-      }}
-    >
-      <div
-        ref={ref}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        className="card"
-        style={{ width: '100%', maxWidth: width, maxHeight: '85vh', overflow: 'auto', padding: '1.1rem 1.25rem' }}
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        className="max-h-[85vh] overflow-y-auto"
+        style={{ maxWidth: `min(calc(100% - 2rem), ${width}px)` }}
+        // Not every modal has a summary line, and a described-by pointing at nothing is
+        // worse than none at all.
+        aria-describedby={undefined}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.9rem' }}>
-          <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 650 }}>{title}</h2>
-          <button className="btn" onClick={onClose} aria-label="Close">
-            ✕
-          </button>
-        </div>
+        <DialogHeader>
+          <DialogTitle className="text-base">{title}</DialogTitle>
+        </DialogHeader>
         {children}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
-/**
- * Form primitives that carry their own styling.
- *
- * These exist because the alternative does not work. `.input` and `.btn-primary` were
- * opt-in classes on bare elements, and a whole modal shipped with every field invisible
- * and every primary button rendering as a secondary one — nothing failed, the screen was
- * simply wrong, and no test or type could have caught it.
- *
- * A component you cannot construct without its styling removes the entire class of
- * mistake. Same reasoning a component library would give; this is the two-line version.
- */
-export function Input({ className = '', ...rest }: React.InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={`input ${className}`.trim()} {...rest} />;
-}
-
-export function Select({ className = '', children, ...rest }: React.SelectHTMLAttributes<HTMLSelectElement>) {
-  return (
-    <select className={`input ${className}`.trim()} {...rest}>
-      {children}
-    </select>
-  );
-}
-
-export function Button({
-  variant = 'default',
-  className = '',
-  ...rest
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'default' | 'primary' | 'danger' }) {
-  const variantClass = variant === 'default' ? '' : `btn-${variant}`;
-  return <button className={`btn ${variantClass} ${className}`.trim()} {...rest} />;
-}
-
-export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
-  return (
-    <label style={{ display: 'block', marginBottom: '0.85rem' }}>
-      <span style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.3rem' }}>{label}</span>
-      {children}
-      {hint && (
-        <span className="dim" style={{ display: 'block', fontSize: '0.75rem', marginTop: '0.25rem' }}>
-          {hint}
-        </span>
-      )}
-    </label>
-  );
-}
+// ── Odds and ends ───────────────────────────────────────────────────────────
 
 export function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {
   const [done, setDone] = useState(false);
+
   return (
-    <button
-      className="btn"
+    <Button
       onClick={async () => {
         try {
           await navigator.clipboard.writeText(text);
@@ -248,8 +332,9 @@ export function CopyButton({ text, label = 'Copy' }: { text: string; label?: str
         }
       }}
     >
-      {done ? '✓ Copied' : label}
-    </button>
+      {done ? <Check /> : <Copy />}
+      {done ? 'Copied' : label}
+    </Button>
   );
 }
 

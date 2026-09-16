@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type Corpus, type DocumentText, type LibraryDocument } from './api';
-import { Badge, CopyButton, Empty, Field, Modal, Spinner, formatBytes, localTime, relativeTime, stateTone } from './ui';
+import {
+  Badge, Button, CopyButton, Empty, Field, Modal, Select, SelectItem, Spinner,
+  formatBytes, localTime, relativeTime, stateTone,
+} from './ui';
 
 /**
  * The document library.
@@ -82,16 +85,22 @@ export function DocumentsView({
         <h1 style={{ margin: 0, fontSize: '1.15rem' }}>Documents</h1>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <label className="dim" style={{ fontSize: '0.8rem' }} htmlFor="upload-target">Upload into</label>
-          <select id="upload-target" className="input" style={{ width: 'auto' }} value={uploadTo} onChange={(e) => setUploadTo(e.target.value)}>
-            {writable.length === 0 && <option value="">(no writable corpus)</option>}
+          <Select
+            id="upload-target"
+            className="w-auto"
+            value={uploadTo}
+            onValueChange={setUploadTo}
+            disabled={writable.length === 0}
+            placeholder={writable.length === 0 ? 'No writable corpus' : 'Choose a corpus'}
+          >
             {writable.map((c) => (
-              <option key={c.id} value={c.name}>
+              <SelectItem key={c.id} value={c.name}>
                 {c.name} — {c.chunkSets.length === 1
                   ? `${c.chunkSets[0].chunkSize}/${c.chunkSets[0].chunkOverlap}`
                   : `${c.chunkSets.length} chunk sets`}
-              </option>
+              </SelectItem>
             ))}
-          </select>
+          </Select>
         </div>
       </div>
 
@@ -131,9 +140,9 @@ export function DocumentsView({
           PDF, DOCX, PPTX, EPUB, HTML, Markdown and plain text. Extraction happens once per
           file; chunking happens per corpus.
         </p>
-        <button className="btn" onClick={() => fileInput.current?.click()} disabled={busy || !uploadTo}>
+        <Button onClick={() => fileInput.current?.click()} disabled={busy || !uploadTo}>
           Choose files
-        </button>
+        </Button>
       </div>
 
       {loading ? (
@@ -180,8 +189,7 @@ export function DocumentsView({
                     <span className="mono">{a.chunkCount} chunks</span>
                     <span className="dim">from {a.chunkSize}/{a.chunkOverlap} {a.boundaryMode}</span>
                     <span style={{ flex: 1 }} />
-                    <button
-                      className="btn btn-danger"
+                    <Button variant="danger"
                       style={{ padding: '0.1rem 0.45rem', fontSize: '0.72rem' }}
                       onClick={async () => {
                         try {
@@ -192,16 +200,16 @@ export function DocumentsView({
                       }}
                     >
                       Detach
-                    </button>
+                    </Button>
                   </div>
                 ))}
               </div>
 
               <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.7rem', flexWrap: 'wrap' }}>
-                <button className="btn" onClick={() => setAttaching(d)} disabled={writable.length === 0}>
+                <Button onClick={() => setAttaching(d)} disabled={writable.length === 0}>
                   Attach to another corpus…
-                </button>
-                <button className="btn" onClick={() => setInspecting(d)}>View extracted text</button>
+                </Button>
+                <Button onClick={() => setInspecting(d)}>View extracted text</Button>
                 <CopyButton text={d.sha256} label="Copy hash" />
               </div>
             </article>
@@ -259,11 +267,11 @@ function AttachModal({
       ) : (
         <>
           <Field label="Corpus">
-            <select className="input" value={target} onChange={(e) => setTarget(e.target.value)} autoFocus>
+            <Select value={target} onValueChange={setTarget} placeholder="Choose a corpus">
               {available.map((c) => (
-                <option key={c.id} value={c.name}>{c.name}</option>
+                <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
               ))}
-            </select>
+            </Select>
           </Field>
 
           {chosen && (
@@ -282,9 +290,8 @@ function AttachModal({
           )}
 
           <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
-            <button className="btn" onClick={onClose}>Cancel</button>
-            <button
-              className="btn btn-primary"
+            <Button onClick={onClose}>Cancel</Button>
+            <Button variant="primary"
               disabled={!target || busy}
               onClick={async () => {
                 setBusy(true);
@@ -295,7 +302,7 @@ function AttachModal({
               }}
             >
               {busy ? <Spinner /> : null} Attach
-            </button>
+            </Button>
           </div>
         </>
       )}

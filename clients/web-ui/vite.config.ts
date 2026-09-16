@@ -2,9 +2,14 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  resolve: {
+    // `@/` is the shadcn convention; generated components import through it.
+    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+  },
   build: {
     // The .NET host serves this from wwwroot; Dockerfile copies dist/ there.
     outDir: 'dist',
