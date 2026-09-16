@@ -6,9 +6,15 @@
 # Hardening matches docker-compose.yml: non-root UID 10001, read-only rootfs with
 # /tmp on tmpfs, cap_drop ALL, no-new-privileges, and /workspaces mounted READ-ONLY.
 # Dexicon reads your source; it must be structurally incapable of writing to it.
+#
+# Base images are pinned by DIGEST as well as tag. A tag is a moving target, so two builds
+# of one commit could produce different images and neither would be wrong; a digest makes
+# the build reproducible and makes a base image change something that arrives as a pull
+# request rather than as a surprise. Dependabot keeps the digests current — the tag beside
+# each one is there to be read by people, not by the builder.
 
 # ── UI ────────────────────────────────────────────────────────────────────────
-FROM --platform=$BUILDPLATFORM node:22-alpine AS ui
+FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS ui
 WORKDIR /ui
 
 # Dependencies first, so a source-only change does not re-run npm ci.
@@ -24,7 +30,7 @@ RUN npm run build
 # with no native host — the output is the same bytes for every architecture, and only the
 # runtime stage below is per-platform. Emulating an SDK to produce identical output would
 # cost minutes a build for nothing.
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-alpine@sha256:4ac537e13e2f55d1d588ed3e618cb0cb6b82dd8deb17830de43d5086fbde958b AS build
 WORKDIR /build
 
 # Stamped into the assembly, and from there into the OpenAPI document and the version the
@@ -54,7 +60,7 @@ RUN dotnet publish src/Dexicon/Dexicon.csproj \
     /p:MinVerSkip=true
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
-FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine@sha256:6bb0fab0ef31f44f710a668c39c2263ae810f5adf868afa34cbd86815912c7fe AS runtime
 
 # Non-root. The UID is fixed so a bind-mounted /data keeps working across rebuilds.
 RUN addgroup -g 10001 dexicon \

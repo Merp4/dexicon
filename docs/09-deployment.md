@@ -259,7 +259,14 @@ Hardening, matching the compose file:
 - `cap_drop: ALL`, `no-new-privileges`.
 - `/workspaces` mounted **read-only**. Dexicon reads your source; it must be structurally
   incapable of writing to it.
-- Base images pinned by tag.
+- Base images pinned by **digest** as well as tag. A tag moves, so two builds of one
+  commit could produce different images and neither would be wrong. Dependabot raises a
+  pull request when a digest changes, which is how a base image update should arrive.
+- Every published image carries an **SBOM** and build provenance as registry attestations:
+
+  ```bash
+  docker buildx imagetools inspect ghcr.io/<owner>/dexicon:0.1.1 --format '{{ json .SBOM }}'
+  ```
 - Published multi-arch (`linux/amd64`, `linux/arm64`) so it runs on Apple silicon. Both
   builder stages run on the build platform and emit architecture-independent IL
   (`UseAppHost=false`), so the arm64 image costs one small runtime layer rather than a
