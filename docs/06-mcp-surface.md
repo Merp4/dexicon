@@ -36,6 +36,31 @@ claude mcp add --transport http dexicon http://localhost:8477/mcp \
 The tenant header is optional when the token is bound to exactly one tenant, which is the
 normal local-development case. See [07](07-tenancy-auth.md).
 
+## Naming a corpus — and a chunk set
+
+Everywhere a tool takes a corpus, it accepts either form:
+
+```
+books           the corpus's DEFAULT chunk set
+books:fine      a named set within it
+```
+
+A corpus can be cut several ways at once — a coarse set and a fine one, or the live set
+and its replacement on a new model while that replacement backfills
+([D-21](decisions.md#d-21-chunk-sets-not-corpus-level-chunking)). Qualifying the name
+rather than adding a `chunk_set` parameter to four tools is deliberate: the tool count and
+every tool's parameter count are context an agent pays for on every turn, and an agent
+that has never heard of chunk sets sends a bare name and gets the sensible answer.
+
+`list_corpora` names every set, marks the default with `*`, and says so explicitly —
+otherwise an agent told only the corpus name cannot reach the others.
+
+An unknown set is an error that names the real ones, the same way an unknown corpus does:
+
+```
+Corpus 'books' has no chunk set named 'nope'. Its sets: default, fine.
+```
+
 ## Tools
 
 Five tools. The count is a design constraint, not an accident: every tool definition is
@@ -55,7 +80,7 @@ The one that matters.
     "properties": {
       "query":  { "type": "string", "description": "Natural language question or code fragment." },
       "corpus": { "type": "array", "items": { "type": "string" },
-                  "description": "Corpus names to search. Omit to search everything you can see. Use list_corpora to discover them." },
+                  "description": "Corpus names to search, optionally qualified as corpus:set. Omit to search everything you can see. Use list_corpora to discover them." },
       "mode":   { "type": "string", "enum": ["hybrid", "semantic", "keyword"], "default": "hybrid",
                   "description": "hybrid blends meaning and exact terms; keyword is exact-match only and works when embeddings are unavailable." },
       "limit":  { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 },
@@ -86,9 +111,10 @@ reading, not for parsing:
 ### `list_corpora`
 
 No inputs beyond an optional `include_stats`. Returns what the caller can see: name,
-description, whether it is shared, file and chunk counts, embedding model, last indexed
-time, current state. This is how an agent learns what `corpus` values are legal, so its
-description says so explicitly.
+description, whether it is shared, file and chunk counts, last indexed time, current
+state — and every chunk set, with its model, dimensionality, chunk size and overlap, and
+the default marked. This is how an agent learns what `corpus` values are legal, including
+the `corpus:set` ones, so its description says so explicitly.
 
 ### `get_context`
 
@@ -114,9 +140,12 @@ unreachable since 14:02`.
 Corpora are exposed as MCP resources so clients with a resource picker can browse them:
 
 ```
-dexicon://corpus/{name}               -> a JSON summary: sources, counts, model, state
+dexicon://corpus/{name}               -> a JSON summary: sources, counts, chunk sets, state
 dexicon://corpus/{name}/file/{+path}  -> reconstructed text of one indexed file
 ```
+
+`{name}` takes the same `corpus:set` form as the tools, so a file can be read as one set
+cut it.
 
 Resources are for **browsing**; tools are for asking questions. A client with a resource
 picker can attach "this corpus" or "that file" to a conversation without the model having

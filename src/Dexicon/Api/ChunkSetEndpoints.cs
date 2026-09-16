@@ -121,8 +121,9 @@ public static class ChunkSetEndpoints
             await db.SaveChangesAsync(ct);
             await vectors.EnsureCollectionAsync(set.CollectionName, dims, ct);
 
-            // Targeted at this set alone, so the live one keeps serving while it builds.
-            var job = await queue.EnqueueAsync(corpus.Id, JobKind.Full, set.Id, ct);
+            // Rebuild, not Full: both re-index everything, but this one targets a single
+            // set, and the jobs list should say which of those is happening.
+            var job = await queue.EnqueueAsync(corpus.Id, JobKind.Rebuild, set.Id, ct);
 
             return Results.Accepted($"/api/corpora/{corpus.Name}/chunk-sets/{set.Name}", new
             {

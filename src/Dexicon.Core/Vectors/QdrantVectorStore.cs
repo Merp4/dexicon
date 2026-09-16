@@ -34,7 +34,6 @@ public interface IVectorStore
     /// </summary>
     Task<int> PurgeUnsetChunksAsync(CancellationToken ct = default);
     Task DeleteCorpusAsync(string collection, string corpusId, CancellationToken ct = default);
-    Task<IReadOnlyDictionary<string, string>> GetFileHashesAsync(string collection, string chunkSetId, CancellationToken ct = default);
 
     /// <summary>
     /// Every chunk of one file, in file order. A FILTER, not a search: reconstructing a
@@ -270,37 +269,6 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
         var filter = new Filter();
         filter.Must.Add(Keyword("corpus_id", corpusId));
         return _client.DeleteAsync(collection, filter, cancellationToken: ct);
-    }
-
-    public async Task<IReadOnlyDictionary<string, string>> GetFileHashesAsync(string collection, string chunkSetId,
-        CancellationToken ct = default)
-    {
-        var hashes = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (!await _client.CollectionExistsAsync(collection, ct)) return hashes;
-
-        var filter = new Filter();
-        filter.Must.Add(Keyword("chunk_set_id", chunkSetId));
-        filter.Must.Add(Keyword("kind", "chunk"));
-
-        PointId? offset = null;
-        while (true)
-        {
-            var page = await _client.ScrollAsync(collection, filter, limit: 1000, offset: offset,
-                payloadSelector: new WithPayloadSelector { Include = new PayloadIncludeSelector { Fields = { "file_path", "file_hash" } } },
-                vectorsSelector: false, cancellationToken: ct);
-
-            foreach (var p in page.Result)
-            {
-                if (p.Payload.TryGetValue("file_path", out var fp) &&
-                    p.Payload.TryGetValue("file_hash", out var fh))
-                    hashes[fp.StringValue] = fh.StringValue;
-            }
-
-            if (page.Result.Count < 1000 || page.NextPageOffset is null) break;
-            offset = page.NextPageOffset;
-        }
-
-        return hashes;
     }
 
     public async Task<IReadOnlyList<SearchHit>> GetFileChunksAsync(string collection, string chunkSetId,
