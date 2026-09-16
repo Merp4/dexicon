@@ -51,14 +51,6 @@ public sealed class Corpus
     public string? Description { get; set; }
     public CorpusVisibility Visibility { get; set; }
 
-    /// <summary>Pinned at creation. Changing it is a rebuild, never an edit.</summary>
-    public required string EmbeddingModel { get; set; }
-    public int EmbeddingDimensions { get; set; }
-    public required string CollectionName { get; set; }
-
-    public int ChunkSize { get; set; }
-    public int ChunkOverlap { get; set; }
-    public required string BoundaryMode { get; set; }
     public CorpusState State { get; set; }
     public DateTime CreatedUtc { get; set; }
     public DateTime? LastIndexedUtc { get; set; }
@@ -66,6 +58,79 @@ public sealed class Corpus
     public List<Source> Sources { get; set; } = [];
     public List<CorpusGrant> Grants { get; set; } = [];
     public List<IndexJob> Jobs { get; set; } = [];
+
+    /// <summary>
+    /// How this corpus's content is cut and embedded — one entry per variation. The
+    /// embedding model and chunk settings used to live on the corpus itself, which made
+    /// them a property of the CONTENT rather than of a way of reading it.
+    /// </summary>
+    public List<ChunkSet> ChunkSets { get; set; } = [];
+}
+
+/// <summary>
+/// One way of cutting and embedding a corpus's content: a model, a vector space, and a
+/// chunking strategy. A corpus can carry several, over exactly the same documents.
+///
+/// This is what makes a model change safe. The collection name encodes the model and its
+/// dimensionality, so switching models means writing into a different vector space —
+/// measured at roughly twenty minutes for a modest book corpus on CPU Ollama. With one
+/// configuration per corpus, that is twenty minutes of half-populated results. With
+/// several, the new set is built alongside the old one, promoted when it is complete, and
+/// the old one dropped: search never sees a partial index.
+///
+/// It is also the honest home for "the same document, chunked two ways". That worked
+/// before only by duplicating the corpus, which duplicated its grants and its sources
+/// along with it.
+/// </summary>
+public sealed class ChunkSet
+{
+    public required string Id { get; set; }              // ULID
+    public required string CorpusId { get; set; }
+    public Corpus? Corpus { get; set; }
+
+    /// <summary>Unique within the corpus. Addressable from search as `corpus:set`.</summary>
+    public required string Name { get; set; }
+    public string? Description { get; set; }
+
+    /// <summary>
+    /// The vector space. Pinned per set: changing a set's model in place would strand its
+    /// existing vectors in a collection nothing addresses any more, so the model is
+    /// changed by building a NEW set and promoting it.
+    /// </summary>
+    public required string EmbeddingModel { get; set; }
+    public int EmbeddingDimensions { get; set; }
+    public required string CollectionName { get; set; }
+
+    public int ChunkSize { get; set; }
+    public int ChunkOverlap { get; set; }
+    public required string BoundaryMode { get; set; }
+
+    /// <summary>Required when <see cref="BoundaryMode"/> is <c>custom</c>; ignored otherwise.</summary>
+    public string? CustomBoundaryPattern { get; set; }
+
+    /// <summary>
+    /// Prefer the document's own structure — page, chapter, slide — as a chunk boundary.
+    /// The offsets already exist for citations; this feeds them into chunking too.
+    /// </summary>
+    public bool UnitAware { get; set; }
+
+    /// <summary>Cut at a sentence rather than a line when a split lands mid-paragraph.</summary>
+    public bool SentenceAware { get; set; }
+
+    /// <summary>
+    /// Prepend the heading trail to each chunk's EMBEDDED text, so a chunk carries the
+    /// context it was found under rather than floating free of it.
+    /// </summary>
+    public bool HeadingContext { get; set; }
+
+    /// <summary>The set search uses when none is named. Exactly one per corpus.</summary>
+    public bool IsDefault { get; set; }
+
+    public CorpusState State { get; set; }
+    public DateTime CreatedUtc { get; set; }
+    public DateTime? LastIndexedUtc { get; set; }
+
+    public List<FileChunkState> Files { get; set; } = [];
 }
 
 /// <summary>
@@ -119,9 +184,6 @@ public sealed class IndexedFile
     /// <summary>Forward slashes, always, relative to the source root. Never absolute.</summary>
     public required string RelativePath { get; set; }
 
-    /// <summary>Null until the file has been indexed successfully — that is what makes a failure retry.</summary>
-    public string? ContentHash { get; set; }
-
     /// <summary>
     /// Set for upload-sourced files: the content-addressed blob this is an attachment
     /// of. Several corpora can point at the same blob and chunk it differently; that is
@@ -133,8 +195,36 @@ public sealed class IndexedFile
     public long SizeBytes { get; set; }
     public string? MediaType { get; set; }
     public string? Language { get; set; }
-    public int ChunkCount { get; set; }
     public int ExtractedChars { get; set; }
+
+    /// <summary>
+    /// Indexing state, one row per chunk set. It used to live on this entity, which
+    /// quietly asserted that a file has ONE chunking — true only while a corpus had one
+    /// configuration. A hash, a chunk count and a status are properties of a file *as cut
+    /// by a particular set*, not of the attachment.
+    /// </summary>
+    public List<FileChunkState> ChunkStates { get; set; } = [];
+}
+
+/// <summary>
+/// One file as seen by one chunk set: whether it is indexed, under what fingerprint, and
+/// into how many chunks. The same document in the same corpus can be freshly indexed in
+/// one set and still pending in another.
+/// </summary>
+public sealed class FileChunkState
+{
+    public required string FileId { get; set; }
+    public IndexedFile? File { get; set; }
+    public required string ChunkSetId { get; set; }
+    public ChunkSet? ChunkSet { get; set; }
+
+    /// <summary>
+    /// The chunking fingerprint. Null until this set has indexed this file successfully —
+    /// that is what makes a failure retry rather than being skipped as up to date.
+    /// </summary>
+    public string? ContentHash { get; set; }
+
+    public int ChunkCount { get; set; }
     public FileStatus Status { get; set; }
 
     /// <summary>Why, in words. The thing the UI shows for skipped/failed/empty.</summary>
@@ -209,6 +299,14 @@ public sealed class IndexJob
     public required string Id { get; set; }
     public required string CorpusId { get; set; }
     public Corpus? Corpus { get; set; }
+
+    /// <summary>
+    /// The one chunk set this job targets, or null for every set in the corpus. Naming a
+    /// set is what lets a new one be backfilled while the live set keeps serving search.
+    /// </summary>
+    public string? ChunkSetId { get; set; }
+    public ChunkSet? ChunkSet { get; set; }
+
     public JobKind Kind { get; set; }
     public JobState State { get; set; }
 

@@ -52,13 +52,20 @@ public sealed class CorpusIndexer(
     public async Task<IndexJob> RunAsync(string jobId, IProgress<IndexProgress>? progress, CancellationToken ct)
     {
         var job = await db.Jobs.FirstAsync(j => j.Id == jobId, ct);
-        var corpus = await db.Corpora.Include(c => c.Sources)
+        var corpus = await db.Corpora.Include(c => c.Sources).Include(c => c.ChunkSets)
             .FirstAsync(c => c.Id == job.CorpusId, ct);
+
+        // A job either targets one set — which is how a replacement is backfilled while
+        // the live set keeps serving — or every set in the corpus.
+        var targets = job.ChunkSetId is { Length: > 0 } only
+            ? corpus.ChunkSets.Where(s => s.Id == only).ToList()
+            : corpus.ChunkSets.ToList();
 
         job.State = JobState.Running;
         job.StartedUtc = DateTime.UtcNow;
         job.Phase = "discover";
         corpus.State = CorpusState.Indexing;
+        foreach (var s in targets) s.State = CorpusState.Indexing;
         await db.SaveChangesAsync(ct);
         Report(progress, job, null);
 
@@ -66,22 +73,38 @@ public sealed class CorpusIndexer(
 
         try
         {
-            await vectors.EnsureCollectionAsync(corpus.CollectionName, corpus.EmbeddingDimensions, ct);
+            if (targets.Count == 0)
+                throw new InvalidOperationException(
+                    job.ChunkSetId is { Length: > 0 }
+                        ? $"Corpus '{corpus.Name}' has no chunk set '{job.ChunkSetId}'."
+                        : $"Corpus '{corpus.Name}' has no chunk sets, so there is nothing to index into.");
 
-            foreach (var source in corpus.Sources)
+            // Each set is a separate vector space and a separate pass. A workspace tree is
+            // therefore walked once per set: the duplication is real but bounded, and most
+            // corpora carry one set. Sharing one walk across sets would mean holding the
+            // whole discovery in memory, which a large monorepo makes a worse trade.
+            foreach (var set in targets)
             {
-                var full = job.Kind is JobKind.Full or JobKind.Rebuild;
+                await vectors.EnsureCollectionAsync(set.CollectionName, set.EmbeddingDimensions, ct);
 
-                if (source.Kind == SourceKind.Workspace)
+                foreach (var source in corpus.Sources)
                 {
-                    await IndexWorkspaceSourceAsync(corpus, source, job, progress, full,
-                        onEmbeddingFailure: () => embeddingFailed = true, ct);
+                    var full = job.Kind is JobKind.Full or JobKind.Rebuild;
+
+                    if (source.Kind == SourceKind.Workspace)
+                    {
+                        await IndexWorkspaceSourceAsync(corpus, set, source, job, progress, full,
+                            onEmbeddingFailure: () => embeddingFailed = true, ct);
+                    }
+                    else
+                    {
+                        await IndexUploadSourceAsync(corpus, set, source, job, progress, full,
+                            onEmbeddingFailure: () => embeddingFailed = true, ct);
+                    }
                 }
-                else
-                {
-                    await IndexUploadSourceAsync(corpus, source, job, progress, full,
-                        onEmbeddingFailure: () => embeddingFailed = true, ct);
-                }
+
+                set.State = embeddingFailed ? CorpusState.Degraded : CorpusState.Ready;
+                if (!embeddingFailed) set.LastIndexedUtc = DateTime.UtcNow;
             }
 
             job.Phase = "reconcile";
@@ -98,6 +121,7 @@ public sealed class CorpusIndexer(
         {
             job.State = JobState.Cancelled;
             corpus.State = CorpusState.Ready;
+            foreach (var s in targets) s.State = CorpusState.Ready;
         }
         catch (Exception ex)
         {
@@ -105,6 +129,7 @@ public sealed class CorpusIndexer(
             job.State = JobState.Failed;
             job.Error = ex.Message;
             corpus.State = CorpusState.Degraded;
+            foreach (var s in targets) s.State = CorpusState.Degraded;
         }
         finally
         {
@@ -128,12 +153,14 @@ public sealed class CorpusIndexer(
     /// several corpora with different chunk settings, and cheap to re-chunk when those
     /// settings change.
     /// </summary>
-    private async Task IndexUploadSourceAsync(Corpus corpus, Source source, IndexJob job,
+    private async Task IndexUploadSourceAsync(Corpus corpus, ChunkSet set, Source source, IndexJob job,
         IProgress<IndexProgress>? progress, bool full, Action onEmbeddingFailure, CancellationToken ct)
     {
         var attachments = await db.Files
             .Where(f => f.SourceId == source.Id && f.BlobSha256 != null)
             .ToListAsync(ct);
+
+        var states = await StatesFor(set, attachments, ct);
 
         job.FilesTotal += attachments.Count;
         job.Phase = "extract";
@@ -151,26 +178,27 @@ public sealed class CorpusIndexer(
                 // Re-extracts first if this text came from an older extractor, so a fix
                 // reaches documents that were ingested before it.
                 var cached = await documents.CurrentTextFor(file.BlobSha256!, file.RelativePath, ct);
+                var state = states[file.Id];
 
                 if (cached is null)
                 {
-                    file.Status = FileStatus.Failed;
-                    file.StatusDetail = "the stored document has no extracted text — re-upload it";
-                    file.ContentHash = null;
+                    state.Status = FileStatus.Failed;
+                    state.StatusDetail = "the stored document has no extracted text — re-upload it";
+                    state.ContentHash = null;
                     job.FilesFailed++;
                     continue;
                 }
 
                 if (cached.EmptyReason is { Length: > 0 } || cached.Text.Trim().Length == 0)
                 {
-                    file.Status = FileStatus.Empty;
-                    file.StatusDetail = cached.EmptyReason ?? "no extractable text content";
-                    file.ChunkCount = 0;
+                    state.Status = FileStatus.Empty;
+                    state.StatusDetail = cached.EmptyReason ?? "no extractable text content";
+                    state.ChunkCount = 0;
                     file.ExtractedChars = 0;
                     // Hash IS recorded: an empty extraction is a settled outcome, not a
                     // failure to retry. Re-uploading the file is what changes it.
-                    file.ContentHash = ChunkingFingerprint(corpus, cached.Sha256);
-                    file.IndexedUtc = DateTime.UtcNow;
+                    state.ContentHash = ChunkingFingerprint(set, cached.Sha256);
+                    state.IndexedUtc = DateTime.UtcNow;
                     job.FilesSkipped++;
                     continue;
                 }
@@ -178,27 +206,29 @@ public sealed class CorpusIndexer(
                 // The fingerprint mixes the blob hash WITH the corpus's chunk settings,
                 // so changing chunk size or boundary mode makes every attachment look
                 // changed and re-chunks it — without touching the bytes.
-                var fingerprint = ChunkingFingerprint(corpus, cached.Sha256);
-                if (!full && file.ContentHash == fingerprint && file.Status == FileStatus.Indexed)
+                var fingerprint = ChunkingFingerprint(set, cached.Sha256);
+                if (!full && state.ContentHash == fingerprint && state.Status == FileStatus.Indexed)
                 {
                     job.FilesSkipped++;
                     continue;
                 }
 
-                await vectors.DeleteFileChunksAsync(corpus.CollectionName, corpus.Id, file.RelativePath, ct);
+                await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, file.RelativePath, ct);
 
                 var units = Documents.DocumentService.UnitsFrom(cached);
                 var extracted = new ExtractedText(cached.Text, units, cached.Title);
                 var language = LanguageMap.Detect(file.RelativePath);
 
                 // Documents are chunked as prose: a C# member-boundary regex finds
-                // nothing useful in extracted PDF text.
+                // nothing useful in extracted PDF text, so the set's boundary mode is
+                // overridden here while everything else about the set is honoured.
                 var pieces = CodeChunker.Chunk(file.RelativePath, cached.Text,
-                    corpus.ChunkSize, corpus.ChunkOverlap, "blank-line");
+                    set.Options() with { BoundaryMode = "blank-line" }, extracted);
 
                 var chunks = pieces.Select(p => new Chunk
                 {
                     CorpusId = corpus.Id,
+                    ChunkSetId = set.Id,
                     TenantId = corpus.TenantId,
                     SourceId = source.Id,
                     FilePath = file.RelativePath,
@@ -214,32 +244,34 @@ public sealed class CorpusIndexer(
                     Content = p.Content,
                 }).ToList();
 
-                await EmbedAndUpsertAsync(corpus, chunks, file.RelativePath, job, progress, sinceFlush, ct);
+                await EmbedAndUpsertAsync(set, chunks, file.RelativePath, job, progress, sinceFlush, ct);
 
-                file.Status = FileStatus.Indexed;
-                file.StatusDetail = null;
-                file.ContentHash = fingerprint;
+                state.Status = FileStatus.Indexed;
+                state.StatusDetail = null;
+                state.ContentHash = fingerprint;
+                state.ChunkCount = chunks.Count;
+                state.IndexedUtc = DateTime.UtcNow;
                 file.Language = language;
-                file.ChunkCount = chunks.Count;
                 file.ExtractedChars = cached.ExtractedChars;
-                file.IndexedUtc = DateTime.UtcNow;
                 job.FilesDone++;
             }
             catch (EmbeddingUnavailableException ex)
             {
                 log.LogWarning(ex, "Embedding failed for uploaded {File}; skipping it and continuing", file.RelativePath);
-                file.Status = FileStatus.Failed;
-                file.StatusDetail = $"embedding failed: {ex.Message}";
-                file.ContentHash = null;
+                var failed = states[file.Id];
+                failed.Status = FileStatus.Failed;
+                failed.StatusDetail = $"embedding failed: {ex.Message}";
+                failed.ContentHash = null;
                 job.FilesFailed++;
                 onEmbeddingFailure();
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 log.LogWarning(ex, "Failed to index uploaded {File}", file.RelativePath);
-                file.Status = FileStatus.Failed;
-                file.StatusDetail = ex.Message;
-                file.ContentHash = null;
+                var failed = states[file.Id];
+                failed.Status = FileStatus.Failed;
+                failed.StatusDetail = ex.Message;
+                failed.ContentHash = null;
                 job.FilesFailed++;
             }
 
@@ -264,7 +296,7 @@ public sealed class CorpusIndexer(
     /// minutes with no way to tell a slow job from a hung one. It also caps peak memory
     /// at one batch of vectors instead of all of them. Shared by both source kinds.
     /// </summary>
-    private async Task EmbedAndUpsertAsync(Corpus corpus, List<Chunk> chunks, string label,
+    private async Task EmbedAndUpsertAsync(ChunkSet set, List<Chunk> chunks, string label,
         IndexJob job, IProgress<IndexProgress>? progress, System.Diagnostics.Stopwatch sinceFlush,
         CancellationToken ct)
     {
@@ -281,10 +313,13 @@ public sealed class CorpusIndexer(
             job.Phase = "embed";
             Report(progress, job, $"{label} - chunk {through}/{chunks.Count}");
 
-            var embeddings = await embedder.EmbedAsync(batch.Select(c => c.Content).ToList(), ct);
+            // TextToEmbed, not Content: a set with heading context embeds each chunk under
+            // its heading trail while storing the chunk verbatim.
+            var embeddings = await embedder.EmbedAsync(
+                set.EmbeddingModel, batch.Select(c => c.TextToEmbed).ToList(), ct);
 
             job.Phase = "upsert";
-            await vectors.UpsertAsync(corpus.CollectionName, batch, embeddings, ct);
+            await vectors.UpsertAsync(set.CollectionName, batch, embeddings, ct);
 
             job.ChunksWritten += batch.Count;
             Report(progress, job, $"{label} - chunk {through}/{chunks.Count}");
@@ -313,11 +348,41 @@ public sealed class CorpusIndexer(
     /// itself — without it, improved text would be re-extracted and then skipped as
     /// "unchanged", which is the worst of both.
     /// </summary>
-    internal static string ChunkingFingerprint(Corpus corpus, string blobSha) =>
-        HashContent($"{blobSha}|{corpus.ChunkSize}|{corpus.ChunkOverlap}|{corpus.BoundaryMode}|" +
-                    $"{corpus.EmbeddingModel}|x{ExtractorVersions.Current}|c{CodeChunker.Version}");
+    internal static string ChunkingFingerprint(ChunkSet set, string blobSha) =>
+        HashContent($"{blobSha}|{set.ChunkSize}|{set.ChunkOverlap}|{set.BoundaryMode}|" +
+                    $"{set.CustomBoundaryPattern}|{set.UnitAware}|{set.SentenceAware}|{set.HeadingContext}|" +
+                    $"{set.EmbeddingModel}|x{ExtractorVersions.Current}|c{CodeChunker.Version}");
 
-    private async Task IndexWorkspaceSourceAsync(Corpus corpus, Source source, IndexJob job,
+    /// <summary>
+    /// Get-or-create the per-set state for a batch of files, in one round trip. A file
+    /// attached before a set existed has no row yet, and a set added to a corpus full of
+    /// documents has none for any of them.
+    /// </summary>
+    private async Task<Dictionary<string, FileChunkState>> StatesFor(
+        ChunkSet set, IReadOnlyList<IndexedFile> files, CancellationToken ct)
+    {
+        var ids = files.Select(f => f.Id).ToList();
+        var existing = await db.FileChunkStates
+            .Where(s => s.ChunkSetId == set.Id && ids.Contains(s.FileId))
+            .ToDictionaryAsync(s => s.FileId, StringComparer.Ordinal, ct);
+
+        foreach (var file in files)
+        {
+            if (existing.ContainsKey(file.Id)) continue;
+            var state = new FileChunkState
+            {
+                FileId = file.Id,
+                ChunkSetId = set.Id,
+                Status = FileStatus.Pending,
+            };
+            db.FileChunkStates.Add(state);
+            existing[file.Id] = state;
+        }
+
+        return existing;
+    }
+
+    private async Task IndexWorkspaceSourceAsync(Corpus corpus, ChunkSet set, Source source, IndexJob job,
         IProgress<IndexProgress>? progress, bool full, Action onEmbeddingFailure, CancellationToken ct)
     {
         var root = ResolveWorkspacePath(source.RootPath);
@@ -341,19 +406,22 @@ public sealed class CorpusIndexer(
 
         var known = await db.Files.Where(f => f.SourceId == source.Id)
             .ToDictionaryAsync(f => f.RelativePath, f => f, StringComparer.Ordinal, ct);
+
+        var states = (await StatesFor(set, known.Values.ToList(), ct))
+            .ToDictionary(kv => known.Values.First(f => f.Id == kv.Key).RelativePath, kv => kv.Value,
+                StringComparer.Ordinal);
+
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var sinceFlush = System.Diagnostics.Stopwatch.StartNew();
 
         foreach (var skip in walk.SkippedFiles)
         {
             seen.Add(skip.RelativePath);
-            Upsert(known, source.Id, skip.RelativePath, f =>
-            {
-                f.Status = FileStatus.Skipped;
-                f.StatusDetail = skip.Reason;
-                f.ContentHash = null;
-                f.ChunkCount = 0;
-            });
+            var (_, state) = Track(known, states, set, source.Id, skip.RelativePath);
+            state.Status = FileStatus.Skipped;
+            state.StatusDetail = skip.Reason;
+            state.ContentHash = null;
+            state.ChunkCount = 0;
             job.FilesSkipped++;
         }
 
@@ -384,9 +452,9 @@ public sealed class CorpusIndexer(
                 // file looking unchanged, so a refresh re-chunked nothing and the new
                 // setting silently did not apply. Mixing the settings in makes exactly
                 // the right set of files look stale — and no others.
-                var hash = ChunkingFingerprint(corpus, HashContent(content));
+                var hash = ChunkingFingerprint(set, HashContent(content));
 
-                if (!full && known.TryGetValue(candidate.RelativePath, out var existing)
+                if (!full && states.TryGetValue(candidate.RelativePath, out var existing)
                           && existing.ContentHash == hash && existing.Status == FileStatus.Indexed)
                 {
                     job.FilesSkipped++;
@@ -401,16 +469,14 @@ public sealed class CorpusIndexer(
                         ? "no text layer — this is a scanned PDF, and OCR is not supported"
                         : "no extractable text content";
 
-                    Upsert(known, source.Id, candidate.RelativePath, f =>
-                    {
-                        f.Status = FileStatus.Empty;
-                        f.StatusDetail = reason;
-                        f.SizeBytes = candidate.SizeBytes;
-                        f.ContentHash = hash;
-                        f.ChunkCount = 0;
-                        f.ExtractedChars = 0;
-                        f.IndexedUtc = DateTime.UtcNow;
-                    });
+                    var (emptyFile, emptyState) = Track(known, states, set, source.Id, candidate.RelativePath);
+                    emptyState.Status = FileStatus.Empty;
+                    emptyState.StatusDetail = reason;
+                    emptyState.ContentHash = hash;
+                    emptyState.ChunkCount = 0;
+                    emptyState.IndexedUtc = DateTime.UtcNow;
+                    emptyFile.SizeBytes = candidate.SizeBytes;
+                    emptyFile.ExtractedChars = 0;
                     job.FilesSkipped++;
                     continue;
                 }
@@ -420,21 +486,18 @@ public sealed class CorpusIndexer(
                 // A document is chunked as prose regardless of its extension: applying a
                 // C# member-boundary regex to extracted PDF text finds nothing useful.
                 var pieces = extractor is null
-                    ? CodeChunker.Chunk(candidate.RelativePath, content,
-                        corpus.ChunkSize, corpus.ChunkOverlap, corpus.BoundaryMode)
+                    ? CodeChunker.Chunk(candidate.RelativePath, content, set.Options(), extracted)
                     : CodeChunker.Chunk(candidate.RelativePath, content,
-                        corpus.ChunkSize, corpus.ChunkOverlap, "blank-line");
+                        set.Options() with { BoundaryMode = "blank-line" }, extracted);
 
                 if (pieces.Count == 0)
                 {
-                    Upsert(known, source.Id, candidate.RelativePath, f =>
-                    {
-                        f.Status = FileStatus.Empty;
-                        f.StatusDetail = "chunker produced no chunks";
-                        f.ContentHash = hash;
-                        f.ChunkCount = 0;
-                        f.IndexedUtc = DateTime.UtcNow;
-                    });
+                    var (_, noneState) = Track(known, states, set, source.Id, candidate.RelativePath);
+                    noneState.Status = FileStatus.Empty;
+                    noneState.StatusDetail = "chunker produced no chunks";
+                    noneState.ContentHash = hash;
+                    noneState.ChunkCount = 0;
+                    noneState.IndexedUtc = DateTime.UtcNow;
                     job.FilesSkipped++;
                     continue;
                 }
@@ -442,11 +505,12 @@ public sealed class CorpusIndexer(
                 // Replace rather than merge: a changed file's old chunks are stale by
                 // definition, and leaving them produces results pointing at lines that
                 // no longer say what the result claims.
-                await vectors.DeleteFileChunksAsync(corpus.CollectionName, corpus.Id, candidate.RelativePath, ct);
+                await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, candidate.RelativePath, ct);
 
                 var chunks = pieces.Select(p => new Chunk
                 {
                     CorpusId = corpus.Id,
+                    ChunkSetId = set.Id,
                     TenantId = corpus.TenantId,
                     SourceId = source.Id,
                     FilePath = candidate.RelativePath,
@@ -469,20 +533,18 @@ public sealed class CorpusIndexer(
                 // the phase still reading "extract" because it was set but never reported
                 // before the long call. Batching also caps peak memory at one batch of
                 // vectors instead of all of them.
-                await EmbedAndUpsertAsync(corpus, chunks, candidate.RelativePath, job, progress, sinceFlush, ct);
+                await EmbedAndUpsertAsync(set, chunks, candidate.RelativePath, job, progress, sinceFlush, ct);
 
-                Upsert(known, source.Id, candidate.RelativePath, f =>
-                {
-                    f.Status = FileStatus.Indexed;
-                    f.StatusDetail = null;
-                    f.ContentHash = hash;          // written ONLY here, on success
-                    f.SizeBytes = candidate.SizeBytes;
-                    f.Language = language;
-                    f.MediaType = LanguageMap.MediaType(language);
-                    f.ChunkCount = chunks.Count;
-                    f.ExtractedChars = content.Length;
-                    f.IndexedUtc = DateTime.UtcNow;
-                });
+                var (okFile, okState) = Track(known, states, set, source.Id, candidate.RelativePath);
+                okState.Status = FileStatus.Indexed;
+                okState.StatusDetail = null;
+                okState.ContentHash = hash;          // written ONLY here, on success
+                okState.ChunkCount = chunks.Count;
+                okState.IndexedUtc = DateTime.UtcNow;
+                okFile.SizeBytes = candidate.SizeBytes;
+                okFile.Language = language;
+                okFile.MediaType = LanguageMap.MediaType(language);
+                okFile.ExtractedChars = content.Length;
 
                 job.FilesDone++;   // ChunksWritten is accumulated per batch above
             }
@@ -491,36 +553,30 @@ public sealed class CorpusIndexer(
                 // A recognised format we could not read: encrypted, DRM'd, or corrupt.
                 // Distinct from "produced no text", which is not a failure.
                 log.LogWarning(ex, "Extraction failed for {File}", candidate.RelativePath);
-                Upsert(known, source.Id, candidate.RelativePath, f =>
-                {
-                    f.Status = FileStatus.Failed;
-                    f.StatusDetail = ex.Message;
-                    f.ContentHash = null;
-                });
+                var (_, failedState) = Track(known, states, set, source.Id, candidate.RelativePath);
+                failedState.Status = FileStatus.Failed;
+                failedState.StatusDetail = ex.Message;
+                failedState.ContentHash = null;
                 job.FilesFailed++;
             }
             catch (EmbeddingUnavailableException ex)
             {
                 // Skip the FILE, flag the job, keep scanning. See the class remark.
                 log.LogWarning(ex, "Embedding failed for {File}; skipping it and continuing", candidate.RelativePath);
-                Upsert(known, source.Id, candidate.RelativePath, f =>
-                {
-                    f.Status = FileStatus.Failed;
-                    f.StatusDetail = $"embedding failed: {ex.Message}";
-                    f.ContentHash = null;          // deliberately unrecorded, so it retries
-                });
+                var (_, embedFailed) = Track(known, states, set, source.Id, candidate.RelativePath);
+                embedFailed.Status = FileStatus.Failed;
+                embedFailed.StatusDetail = $"embedding failed: {ex.Message}";
+                embedFailed.ContentHash = null;    // deliberately unrecorded, so it retries
                 job.FilesFailed++;
                 onEmbeddingFailure();
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 log.LogWarning(ex, "Failed to index {File}", candidate.RelativePath);
-                Upsert(known, source.Id, candidate.RelativePath, f =>
-                {
-                    f.Status = FileStatus.Failed;
-                    f.StatusDetail = ex.Message;
-                    f.ContentHash = null;
-                });
+                var (_, otherFailed) = Track(known, states, set, source.Id, candidate.RelativePath);
+                otherFailed.Status = FileStatus.Failed;
+                otherFailed.StatusDetail = ex.Message;
+                otherFailed.ContentHash = null;
                 job.FilesFailed++;
             }
 
@@ -543,8 +599,19 @@ public sealed class CorpusIndexer(
         {
             try
             {
-                await vectors.DeleteFileChunksAsync(corpus.CollectionName, corpus.Id, path, ct);
-                db.Files.Remove(known[path]);
+                // Vectors belong to this SET; the catalogue row belongs to the corpus. A
+                // file deleted from disk has to leave every set's collection, and this
+                // pass only owns one of them — so the row survives until the last set has
+                // let go of it. Removing it here would strand the other sets' vectors
+                // with nothing left to name them.
+                await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, path, ct);
+
+                var file = known[path];
+                if (states.TryGetValue(path, out var state)) db.FileChunkStates.Remove(state);
+
+                var remaining = await db.FileChunkStates
+                    .CountAsync(s => s.FileId == file.Id && s.ChunkSetId != set.Id, ct);
+                if (remaining == 0) db.Files.Remove(file);
             }
             catch (Exception ex)
             {
@@ -574,8 +641,15 @@ public sealed class CorpusIndexer(
         return combined;
     }
 
-    private void Upsert(Dictionary<string, IndexedFile> known, string sourceId, string relativePath,
-        Action<IndexedFile> mutate)
+    /// <summary>
+    /// Get-or-create both halves of a file's record: the attachment, which is shared by
+    /// every chunk set, and this set's view of it. Returning the pair rather than taking a
+    /// mutator keeps each call site explicit about which half it is writing to — the split
+    /// between "what the file is" and "what this set made of it" is easy to get wrong.
+    /// </summary>
+    private (IndexedFile File, FileChunkState State) Track(
+        Dictionary<string, IndexedFile> known, Dictionary<string, FileChunkState> states,
+        ChunkSet set, string sourceId, string relativePath)
     {
         if (!known.TryGetValue(relativePath, out var file))
         {
@@ -584,12 +658,24 @@ public sealed class CorpusIndexer(
                 Id = Ulid.NewUlid().ToString(),
                 SourceId = sourceId,
                 RelativePath = relativePath,
-                Status = FileStatus.Pending,   // discovered, not yet chunked
             };
             known[relativePath] = file;
             db.Files.Add(file);
         }
-        mutate(file);
+
+        if (!states.TryGetValue(relativePath, out var state))
+        {
+            state = new FileChunkState
+            {
+                FileId = file.Id,
+                ChunkSetId = set.Id,
+                Status = FileStatus.Pending,   // discovered, not yet chunked
+            };
+            states[relativePath] = state;
+            db.FileChunkStates.Add(state);
+        }
+
+        return (file, state);
     }
 
     private static void Report(IProgress<IndexProgress>? progress, IndexJob job, string? currentFile) =>

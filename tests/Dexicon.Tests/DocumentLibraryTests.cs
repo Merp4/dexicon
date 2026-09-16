@@ -46,6 +46,7 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         try { Directory.Delete(_dataPath, recursive: true); } catch { /* best effort */ }
     }
 
+    /// <summary>A corpus with one default chunk set, which is how the API creates them.</summary>
     private Corpus AddCorpus(string name, int chunkSize, int overlap, string boundary = "blank-line")
     {
         var c = new Corpus
@@ -54,19 +55,37 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
             TenantId = "t",
             Name = name,
             Visibility = CorpusVisibility.Private,
-            EmbeddingModel = "nomic-embed-text",
-            EmbeddingDimensions = 768,
-            CollectionName = "dexicon__nomic-embed-text__768",
-            ChunkSize = chunkSize,
-            ChunkOverlap = overlap,
-            BoundaryMode = boundary,
             State = CorpusState.Ready,
             CreatedUtc = DateTime.UtcNow,
         };
+        c.ChunkSets.Add(AddSet(c, "default", chunkSize, overlap, boundary, isDefault: true));
         _db.Corpora.Add(c);
         _db.SaveChanges();
         return c;
     }
+
+    private static ChunkSet AddSet(Corpus c, string name, int chunkSize, int overlap,
+        string boundary = "blank-line", bool isDefault = false, string model = "nomic-embed-text") => new()
+    {
+        Id = $"set-{c.Id}-{name}",
+        CorpusId = c.Id,
+        Name = name,
+        EmbeddingModel = model,
+        EmbeddingDimensions = 768,
+        CollectionName = $"dexicon__{model}__768",
+        ChunkSize = chunkSize,
+        ChunkOverlap = overlap,
+        BoundaryMode = boundary,
+        IsDefault = isDefault,
+        State = CorpusState.Ready,
+        CreatedUtc = DateTime.UtcNow,
+    };
+
+    /// <summary>The corpus's default set — what an unqualified search reaches.</summary>
+    private static ChunkSet DefaultSet(Corpus c) => c.ChunkSets.First(s => s.IsDefault);
+
+    private FileChunkState StateOf(IndexedFile file, Corpus corpus) =>
+        _db.FileChunkStates.Single(s => s.FileId == file.Id && s.ChunkSetId == DefaultSet(corpus).Id);
 
     private static MemoryStream TextStream(string s) => new MemoryStream(Encoding.UTF8.GetBytes(s));
 
@@ -107,11 +126,11 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         var text = await _documents.TextFor(stored.Sha256);
         text.ShouldNotBeNull();
 
-        var coarseChunks = CodeChunker.Chunk("shared.md", text.Text, coarse.ChunkSize, coarse.ChunkOverlap, "blank-line");
-        var fineChunks = CodeChunker.Chunk("shared.md", text.Text, fine.ChunkSize, fine.ChunkOverlap, "blank-line");
+        var coarseChunks = CodeChunker.Chunk("shared.md", text.Text, DefaultSet(coarse).Options());
+        var fineChunks = CodeChunker.Chunk("shared.md", text.Text, DefaultSet(fine).Options());
 
         fineChunks.Count.ShouldBeGreaterThan(coarseChunks.Count,
-            "the same document must chunk differently under different corpus settings");
+            "the same document must chunk differently under different chunk sets");
 
         // Still one blob and one extraction behind both.
         (await _db.Blobs.CountAsync()).ShouldBe(1);
@@ -126,12 +145,12 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         var fine = AddCorpus("fine", 256, 40);
         const string blob = "abc123";
 
-        var a = CorpusIndexer.ChunkingFingerprint(coarse, blob);
-        var b = CorpusIndexer.ChunkingFingerprint(fine, blob);
-        a.ShouldNotBe(b, "two corpora must not mistake each other's chunking for their own");
+        var a = CorpusIndexer.ChunkingFingerprint(DefaultSet(coarse), blob);
+        var b = CorpusIndexer.ChunkingFingerprint(DefaultSet(fine), blob);
+        a.ShouldNotBe(b, "two chunk sets must not mistake each other's chunking for their own");
 
-        coarse.ChunkSize = 512;
-        CorpusIndexer.ChunkingFingerprint(coarse, blob).ShouldNotBe(a,
+        DefaultSet(coarse).ChunkSize = 512;
+        CorpusIndexer.ChunkingFingerprint(DefaultSet(coarse), blob).ShouldNotBe(a,
             "changing a chunk setting must invalidate the existing chunks");
     }
 
@@ -150,7 +169,8 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
 
         second.Id.ShouldBe(first.Id, "the second attach should rename the first, not create a sibling");
         second.RelativePath.ShouldBe("correct-name.md");
-        second.ContentHash.ShouldBeNull("a rename invalidates chunks keyed by the old path");
+        StateOf(second, corpus).ContentHash.ShouldBeNull(
+            "a rename invalidates chunks keyed by the old path");
 
         var files = await _db.Files.Where(f => f.BlobSha256 == stored.Sha256).ToListAsync();
         files.Count.ShouldBe(1);
@@ -172,6 +192,46 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         (await _db.Blobs.CountAsync()).ShouldBe(1, "the blob survives — another corpus still holds it");
         (await _db.BlobTexts.CountAsync()).ShouldBe(1);
         (await _db.Files.CountAsync()).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task OneCorpusCanHoldTwoChunkSetsOverTheSameDocument()
+    {
+        // The headline capability of chunk sets: two chunkings, one document library, one
+        // set of grants. Before, this meant duplicating the corpus and its permissions.
+        var corpus = AddCorpus("library", 768, 100);
+        var fine = AddSet(corpus, "fine", 256, 40);
+        _db.ChunkSets.Add(fine);
+        await _db.SaveChangesAsync();
+
+        var stored = await _documents.StoreAsync(
+            TextStream(string.Join("\n\n", Enumerable.Range(1, 40).Select(i => $"Paragraph {i}."))), "doc.md");
+
+        var file = await _documents.AttachAsync(corpus, stored.Sha256, "doc.md");
+
+        // One attachment, one blob, one extraction — but outstanding work in BOTH sets.
+        (await _db.Files.CountAsync()).ShouldBe(1);
+        (await _db.Blobs.CountAsync()).ShouldBe(1);
+
+        var states = await _db.FileChunkStates.Where(s => s.FileId == file.Id).ToListAsync();
+        states.Count.ShouldBe(2, "a new attachment is pending in every set, not just the default");
+        states.ShouldAllBe(s => s.Status == FileStatus.Pending);
+
+        // And the two sets must not mistake each other's chunking for their own.
+        CorpusIndexer.ChunkingFingerprint(DefaultSet(corpus), stored.Sha256)
+            .ShouldNotBe(CorpusIndexer.ChunkingFingerprint(fine, stored.Sha256));
+    }
+
+    [Fact]
+    public async Task AChunkSetOnADifferentModelGetsADifferentFingerprint()
+    {
+        // The model is part of the fingerprint, so promoting a set on a new model
+        // re-embeds rather than trusting vectors from another vector space.
+        var corpus = AddCorpus("library", 768, 100);
+        var other = AddSet(corpus, "gemma", 768, 100, model: "embeddinggemma");
+
+        CorpusIndexer.ChunkingFingerprint(DefaultSet(corpus), "abc")
+            .ShouldNotBe(CorpusIndexer.ChunkingFingerprint(other, "abc"));
     }
 
     [Fact]
@@ -206,9 +266,10 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
 
         var file = await _documents.AttachAsync(corpus, stored.Sha256, "book.md");
 
-        file.Status.ShouldBe(FileStatus.Pending);
-        file.ChunkCount.ShouldBe(0);
-        file.ContentHash.ShouldBeNull();
+        var state = StateOf(file, corpus);
+        state.Status.ShouldBe(FileStatus.Pending);
+        state.ChunkCount.ShouldBe(0);
+        state.ContentHash.ShouldBeNull();
     }
 
     [Fact]
@@ -228,15 +289,16 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         var stored = await _documents.StoreAsync(TextStream("some prose to chunk"), "book.md");
 
         var file = await _documents.AttachAsync(corpus, stored.Sha256, "book.md");
-        file.Status = FileStatus.Indexed;
-        file.ContentHash = "whatever-the-last-index-wrote";
-        file.ChunkCount = 3;
+        var state = StateOf(file, corpus);
+        state.Status = FileStatus.Indexed;
+        state.ContentHash = "whatever-the-last-index-wrote";
+        state.ChunkCount = 3;
         await _db.SaveChangesAsync();
 
         var renamed = await _documents.AttachAsync(corpus, stored.Sha256, "better-name.md");
 
         renamed.Id.ShouldBe(file.Id, "a rename is a rename, not a second attachment");
-        renamed.Status.ShouldBe(FileStatus.Pending);
-        renamed.ContentHash.ShouldBeNull();
+        StateOf(renamed, corpus).Status.ShouldBe(FileStatus.Pending);
+        StateOf(renamed, corpus).ContentHash.ShouldBeNull();
     }
 }

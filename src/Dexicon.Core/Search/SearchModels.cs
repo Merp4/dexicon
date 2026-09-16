@@ -6,6 +6,10 @@ public enum SearchMode { Hybrid = 0, Semantic = 1, Keyword = 2 }
 public sealed record Chunk
 {
     public required string CorpusId { get; init; }
+
+    /// <summary>Which chunk set produced this. The corpus stays the tenant key.</summary>
+    public required string ChunkSetId { get; init; }
+
     public required string TenantId { get; init; }
     public required string SourceId { get; init; }
     public required string FilePath { get; init; }
@@ -18,7 +22,19 @@ public sealed record Chunk
     public string? Section { get; init; }
     public IReadOnlyList<string> Symbols { get; init; } = [];
     public int ChunkIndex { get; init; }
+
+    /// <summary>The verbatim text. This is what is stored and returned.</summary>
     public required string Content { get; init; }
+
+    /// <summary>
+    /// What to embed, when it differs from <see cref="Content"/> — a chunk set with
+    /// heading context embeds the chunk under its heading trail. Empty means "embed the
+    /// content", which is the ordinary case.
+    /// </summary>
+    public string EmbedText { get; init; } = string.Empty;
+
+    /// <summary>The text that actually goes to the embedding model.</summary>
+    public string TextToEmbed => EmbedText.Length > 0 ? EmbedText : Content;
 }
 
 public sealed record SearchHit
@@ -79,6 +95,13 @@ public sealed record SearchQuery
     /// raised well before this point, not a search over everything.
     /// </summary>
     public required IReadOnlyList<string> CorpusIds { get; init; }
+
+    /// <summary>
+    /// The chunk sets to search, one per corpus in scope. A corpus mid-migration holds two
+    /// sets in two collections; without this filter a query would see both and return the
+    /// same passage twice, scored in two different vector spaces.
+    /// </summary>
+    public required IReadOnlyList<string> ChunkSetIds { get; init; }
 
     public required string CollectionName { get; init; }
     public SearchMode Mode { get; init; } = SearchMode.Hybrid;

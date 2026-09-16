@@ -86,7 +86,7 @@ public static class DocumentEndpoints
 
             // Chunking and embedding happen in the indexer, not on the request thread:
             // a 400-page PDF outlasts any sensible HTTP timeout.
-            var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct);
+            var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
 
             return Results.Accepted($"/api/jobs/{job.Id}", new
             {
@@ -112,14 +112,22 @@ public static class DocumentEndpoints
             // corpus's way, without re-uploading or re-extracting anything.
             var name = body.FileName ?? blob.OriginalFileName ?? body.Sha256[..12];
             var file = await documents.AttachAsync(corpus, body.Sha256, name, ct);
-            var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct);
+            var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
 
             return Results.Accepted($"/api/jobs/{job.Id}", new
             {
                 corpus = corpus.Name,
                 fileId = file.Id,
                 fileName = name,
-                chunking = new { corpus.ChunkSize, corpus.ChunkOverlap, corpus.BoundaryMode },
+                // Every set, because attaching queues the document into all of them.
+                chunking = corpus.ChunkSets.Select(s => new
+                {
+                    set = s.Name,
+                    s.ChunkSize,
+                    s.ChunkOverlap,
+                    s.BoundaryMode,
+                    s.EmbeddingModel,
+                }),
                 job = job.ToSummary(),
             });
         });
@@ -142,7 +150,7 @@ public static class DocumentEndpoints
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
 
-            var visible = await scopes.VisibleAsync(rc.RequireTenant(), ct);
+            var visible = await scopes.VisibleAsync(rc.RequireTenant(), ct);   // includes ChunkSets
             var corpusById = visible.ToDictionary(c => c.Id, StringComparer.Ordinal);
             var corpusIds = corpusById.Keys.ToList();
 
@@ -155,6 +163,14 @@ public static class DocumentEndpoints
             var attachments = await db.Files
                 .Where(f => sourceIds.Contains(f.SourceId) && f.BlobSha256 != null)
                 .ToListAsync(ct);
+
+            // The library lists each attachment as its corpus's DEFAULT set sees it, which
+            // is the chunking a plain search would actually reach.
+            var attachmentIds = attachments.Select(a => a.Id).ToList();
+            var statesByFile = (await db.FileChunkStates
+                    .Where(s => attachmentIds.Contains(s.FileId))
+                    .ToListAsync(ct))
+                .ToDictionary(s => (s.FileId, s.ChunkSetId), s => s);
 
             var shas = attachments.Select(a => a.BlobSha256!).Distinct().ToList();
             var blobs = await db.Blobs.Where(b => shas.Contains(b.Sha256)).ToListAsync(ct);
@@ -169,10 +185,15 @@ public static class DocumentEndpoints
                     .Select(a =>
                     {
                         var corpus = corpusById[sourceToCorpus[a.SourceId]];
+                        var set = corpus.ChunkSets.FirstOrDefault(s => s.IsDefault)
+                                  ?? corpus.ChunkSets.FirstOrDefault();
+                        var state = statesByFile.TryGetValue((a.Id, set?.Id ?? ""), out var st) ? st : null;
+
                         return new LibraryAttachment(
                             corpus.Id, corpus.Name, a.Id, a.RelativePath,
-                            a.Status.ToString().ToLowerInvariant(), a.ChunkCount,
-                            corpus.ChunkSize, corpus.ChunkOverlap, corpus.BoundaryMode);
+                            (state?.Status ?? FileStatus.Pending).ToString().ToLowerInvariant(),
+                            state?.ChunkCount ?? 0,
+                            set?.ChunkSize ?? 0, set?.ChunkOverlap ?? 0, set?.BoundaryMode ?? "-");
                     })
                     .OrderBy(a => a.CorpusName, StringComparer.Ordinal)
                     .ToList();

@@ -40,8 +40,8 @@ public sealed class DexiconResources
         string name,
         CancellationToken ct = default)
     {
-        var (tenant, corpus) = await ResolveAsync(rc, scopes, name, ct);
-        var summary = await CorpusEndpoints.Summarise(db, corpus, tenant, ct);
+        var (tenant, target) = await ResolveAsync(rc, scopes, name, ct);
+        var summary = await CorpusEndpoints.Summarise(db, target.Corpus, tenant, ct);
         return JsonSerializer.Serialize(summary, JsonOptions.Web);
     }
 
@@ -60,7 +60,8 @@ public sealed class DexiconResources
         string path,
         CancellationToken ct = default)
     {
-        var (_, corpus) = await ResolveAsync(rc, scopes, name, ct);
+        var (_, target) = await ResolveAsync(rc, scopes, name, ct);
+        var corpus = target.Corpus;
 
         // Rebuilt from the INDEX, not from disk: an uploaded PDF has no file to read, and
         // the original would in any case differ from what was indexed.
@@ -70,7 +71,7 @@ public sealed class DexiconResources
         // came back. A reader asking for a file got a plausible-looking one with holes in
         // it, disclosed only by the gap markers.
         var chunks = await vectors.GetFileChunksAsync(
-            corpus.CollectionName, corpus.Id, path, ct);
+            target.Set.CollectionName, target.Set.Id, path, ct);
 
         var pieces = chunks
             .Select(h => (h.StartLine, h.EndLine, h.Content))
@@ -92,7 +93,7 @@ public sealed class DexiconResources
     /// Authenticate, authorise, and resolve the corpus — in that order, and once, so
     /// there is a single place where a resource read can be allowed.
     /// </summary>
-    private static async Task<(string Tenant, Corpus Corpus)> ResolveAsync(
+    private static async Task<(string Tenant, ScopedCorpus Target)> ResolveAsync(
         RequestContext rc, ScopeResolver scopes, string name, CancellationToken ct)
     {
         var principal = rc.Principal
@@ -107,8 +108,9 @@ public sealed class DexiconResources
 
         try
         {
+            // `name` may be `corpus` or `corpus:set` — the same addressing search uses.
             var scope = await scopes.ResolveReadableAsync(tenant, [name], ct);
-            return (tenant, scope.Corpora[0]);
+            return (tenant, scope.Targets[0]);
         }
         catch (ScopeResolutionException ex)
         {

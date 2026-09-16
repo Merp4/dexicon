@@ -23,9 +23,18 @@ public interface IVectorStore
     string CollectionNameFor(string model, int dimensions);
     Task EnsureCollectionAsync(string collection, int dimensions, CancellationToken ct = default);
     Task UpsertAsync(string collection, IReadOnlyList<Chunk> chunks, IReadOnlyList<float[]> vectors, CancellationToken ct = default);
-    Task DeleteFileChunksAsync(string collection, string corpusId, string filePath, CancellationToken ct = default);
+    Task DeleteFileChunksAsync(string collection, string chunkSetId, string filePath, CancellationToken ct = default);
+
+    /// <summary>Drop one chunk set's vectors, leaving the rest of the corpus alone.</summary>
+    Task DeleteChunkSetAsync(string collection, string chunkSetId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Delete points written before chunk sets existed, which carry no chunk_set_id and
+    /// therefore match no query. Returns how many collections were touched.
+    /// </summary>
+    Task<int> PurgeUnsetChunksAsync(CancellationToken ct = default);
     Task DeleteCorpusAsync(string collection, string corpusId, CancellationToken ct = default);
-    Task<IReadOnlyDictionary<string, string>> GetFileHashesAsync(string collection, string corpusId, CancellationToken ct = default);
+    Task<IReadOnlyDictionary<string, string>> GetFileHashesAsync(string collection, string chunkSetId, CancellationToken ct = default);
 
     /// <summary>
     /// Every chunk of one file, in file order. A FILTER, not a search: reconstructing a
@@ -37,7 +46,7 @@ public interface IVectorStore
     /// anything, and one file's chunks are bounded and partition-local already. Worth
     /// revisiting if a profile ever says so; not worth guessing at now.
     /// </summary>
-    Task<IReadOnlyList<SearchHit>> GetFileChunksAsync(string collection, string corpusId, string filePath,
+    Task<IReadOnlyList<SearchHit>> GetFileChunksAsync(string collection, string chunkSetId, string filePath,
         CancellationToken ct = default);
     Task<SearchResponse> SearchAsync(SearchQuery query, float[]? denseVector, SparseVector sparse, CancellationToken ct = default);
     Task<(long Points, int Dimensions)> GetStatsAsync(string collection, CancellationToken ct = default);
@@ -164,7 +173,7 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
         for (var i = 0; i < chunks.Count; i++)
         {
             var c = chunks[i];
-            var sparse = SparseEncoder.Encode(c.Content);
+            var sparse = SparseEncoder.Encode(c.TextToEmbed);
 
             var named = new NamedVectors();
             named.Vectors[DenseVector] = vectors[i];
@@ -174,11 +183,15 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
 
             var p = new PointStruct
             {
-                Id = new PointId { Uuid = DeterministicId(c.CorpusId, c.FilePath, c.ChunkIndex) },
+                // Keyed on the SET, not the corpus: two sets hold the same file at the
+                // same chunk index, and a corpus-keyed id would make them overwrite each
+                // other — silently, and only for the file paths they happen to share.
+                Id = new PointId { Uuid = DeterministicId(c.ChunkSetId, c.FilePath, c.ChunkIndex) },
                 Vectors = new QdrantVectors { Vectors_ = named },
             };
             p.Payload.Add("kind", "chunk");
             p.Payload.Add("corpus_id", c.CorpusId);
+            p.Payload.Add("chunk_set_id", c.ChunkSetId);
             p.Payload.Add("tenant_id", c.TenantId);
             p.Payload.Add("source_id", c.SourceId);
             p.Payload.Add("file_path", c.FilePath);
@@ -215,12 +228,41 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
         return new Guid(guid).ToString();
     }
 
-    public Task DeleteFileChunksAsync(string collection, string corpusId, string filePath, CancellationToken ct = default)
+    public Task DeleteFileChunksAsync(string collection, string chunkSetId, string filePath, CancellationToken ct = default)
     {
         var filter = new Filter();
-        filter.Must.Add(Keyword("corpus_id", corpusId));
+        filter.Must.Add(Keyword("chunk_set_id", chunkSetId));
         filter.Must.Add(Keyword("file_path", filePath));
         return _client.DeleteAsync(collection, filter, cancellationToken: ct);
+    }
+
+    public Task DeleteChunkSetAsync(string collection, string chunkSetId, CancellationToken ct = default)
+    {
+        var filter = new Filter();
+        filter.Must.Add(Keyword("chunk_set_id", chunkSetId));
+        return _client.DeleteAsync(collection, filter, cancellationToken: ct);
+    }
+
+    public async Task<int> PurgeUnsetChunksAsync(CancellationToken ct = default)
+    {
+        // Points from before chunk sets are unreachable, not merely stale: the search
+        // filter requires a chunk_set_id and their ids were derived from the corpus, so a
+        // re-index writes NEW points beside them rather than replacing them. Left alone
+        // they would sit in the index forever, costing memory and matching nothing.
+        var collections = await _client.ListCollectionsAsync(ct);
+        var touched = 0;
+
+        foreach (var collection in collections.Where(c => c.StartsWith("dexicon__", StringComparison.Ordinal)))
+        {
+            var filter = new Filter();
+            filter.Must.Add(Keyword("kind", "chunk"));
+            filter.Must.Add(new Condition { IsEmpty = new IsEmptyCondition { Key = "chunk_set_id" } });
+
+            await _client.DeleteAsync(collection, filter, cancellationToken: ct);
+            touched++;
+        }
+
+        return touched;
     }
 
     public Task DeleteCorpusAsync(string collection, string corpusId, CancellationToken ct = default)
@@ -230,14 +272,14 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
         return _client.DeleteAsync(collection, filter, cancellationToken: ct);
     }
 
-    public async Task<IReadOnlyDictionary<string, string>> GetFileHashesAsync(string collection, string corpusId,
+    public async Task<IReadOnlyDictionary<string, string>> GetFileHashesAsync(string collection, string chunkSetId,
         CancellationToken ct = default)
     {
         var hashes = new Dictionary<string, string>(StringComparer.Ordinal);
         if (!await _client.CollectionExistsAsync(collection, ct)) return hashes;
 
         var filter = new Filter();
-        filter.Must.Add(Keyword("corpus_id", corpusId));
+        filter.Must.Add(Keyword("chunk_set_id", chunkSetId));
         filter.Must.Add(Keyword("kind", "chunk"));
 
         PointId? offset = null;
@@ -261,13 +303,13 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
         return hashes;
     }
 
-    public async Task<IReadOnlyList<SearchHit>> GetFileChunksAsync(string collection, string corpusId,
+    public async Task<IReadOnlyList<SearchHit>> GetFileChunksAsync(string collection, string chunkSetId,
         string filePath, CancellationToken ct = default)
     {
         if (!await _client.CollectionExistsAsync(collection, ct)) return [];
 
         var filter = new Filter();
-        filter.Must.Add(Keyword("corpus_id", corpusId));
+        filter.Must.Add(Keyword("chunk_set_id", chunkSetId));
         filter.Must.Add(Keyword("kind", "chunk"));
         filter.Must.Add(Keyword("file_path", filePath));
 
@@ -384,9 +426,19 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
         var f = new Filter();
         f.Must.Add(Keyword("kind", "chunk"));
 
+        // corpus_id first: it is the is_tenant key, so it selects the partition. The set
+        // filter then narrows within it, which is why chunk_set_id does not need to be a
+        // tenant key of its own.
         var corpora = new Match { Keywords = new RepeatedStrings() };
         corpora.Keywords.Strings.AddRange(q.CorpusIds);
         f.Must.Add(new Condition { Field = new FieldCondition { Key = "corpus_id", Match = corpora } });
+
+        if (q.ChunkSetIds.Count > 0)
+        {
+            var sets = new Match { Keywords = new RepeatedStrings() };
+            sets.Keywords.Strings.AddRange(q.ChunkSetIds);
+            f.Must.Add(new Condition { Field = new FieldCondition { Key = "chunk_set_id", Match = sets } });
+        }
 
         if (!string.IsNullOrWhiteSpace(q.Language)) f.Must.Add(Keyword("language", q.Language));
         if (!string.IsNullOrWhiteSpace(q.Symbol)) f.Must.Add(Keyword("symbols", q.Symbol));

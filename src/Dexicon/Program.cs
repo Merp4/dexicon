@@ -58,6 +58,7 @@ builder.Host.UseSerilog();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddMemoryCache();
 builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<ScopeExceptionHandler>();
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
     o.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
@@ -109,6 +110,7 @@ app.UseDexiconAuth();
 app.MapHealthEndpoints();
 app.MapSearchEndpoints();
 app.MapCorpusEndpoints();
+app.MapChunkSetEndpoints();
 app.MapDocumentEndpoints();
 app.MapJobEndpoints();
 app.MapEventEndpoints();
@@ -225,7 +227,7 @@ internal sealed class ScheduledRefreshService(
                     .ToListAsync(stoppingToken);
 
                 foreach (var id in due)
-                    await queue.EnqueueAsync(id, JobKind.Refresh, stoppingToken);
+                    await queue.EnqueueAsync(id, JobKind.Refresh, ct: stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
             catch (Exception ex)

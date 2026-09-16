@@ -13,6 +13,8 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<ApiToken> Tokens => Set<ApiToken>();
     public DbSet<Corpus> Corpora => Set<Corpus>();
+    public DbSet<ChunkSet> ChunkSets => Set<ChunkSet>();
+    public DbSet<FileChunkState> FileChunkStates => Set<FileChunkState>();
     public DbSet<CorpusGrant> CorpusGrants => Set<CorpusGrant>();
     public DbSet<Source> Sources => Set<Source>();
     public DbSet<IndexedFile> Files => Set<IndexedFile>();
@@ -77,9 +79,6 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).HasMaxLength(40);
             e.Property(x => x.Name).HasMaxLength(200).IsRequired();
-            e.Property(x => x.EmbeddingModel).HasMaxLength(200).IsRequired();
-            e.Property(x => x.CollectionName).HasMaxLength(300).IsRequired();
-            e.Property(x => x.BoundaryMode).HasMaxLength(40).IsRequired();
             e.Property(x => x.Visibility).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.State).HasConversion<string>().HasMaxLength(20);
             e.HasOne(x => x.Tenant).WithMany(t => t.Corpora)
@@ -87,6 +86,38 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             // A tenant cannot have two corpora with the same name; the name is what
             // an agent passes to search_index, so it has to resolve unambiguously.
             e.HasIndex(x => new { x.TenantId, x.Name }).IsUnique();
+        });
+
+        modelBuilder.Entity<ChunkSet>(e =>
+        {
+            e.ToTable("chunk_sets");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasMaxLength(40);
+            e.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            e.Property(x => x.EmbeddingModel).HasMaxLength(200).IsRequired();
+            e.Property(x => x.CollectionName).HasMaxLength(300).IsRequired();
+            e.Property(x => x.BoundaryMode).HasMaxLength(40).IsRequired();
+            e.Property(x => x.CustomBoundaryPattern).HasMaxLength(500);
+            e.Property(x => x.State).HasConversion<string>().HasMaxLength(20);
+            e.HasOne(x => x.Corpus).WithMany(c => c.ChunkSets)
+                .HasForeignKey(x => x.CorpusId).OnDelete(DeleteBehavior.Cascade);
+            // `corpus:set` has to resolve unambiguously, the same way a corpus name does.
+            e.HasIndex(x => new { x.CorpusId, x.Name }).IsUnique();
+            e.HasIndex(x => new { x.CorpusId, x.IsDefault });
+        });
+
+        modelBuilder.Entity<FileChunkState>(e =>
+        {
+            e.ToTable("file_chunk_states");
+            e.HasKey(x => new { x.FileId, x.ChunkSetId });
+            e.Property(x => x.ContentHash).HasMaxLength(64);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.HasOne(x => x.File).WithMany(f => f.ChunkStates)
+                .HasForeignKey(x => x.FileId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.ChunkSet).WithMany(s => s.Files)
+                .HasForeignKey(x => x.ChunkSetId).OnDelete(DeleteBehavior.Cascade);
+            // The indexer's hot read: "what does this set still have to do?"
+            e.HasIndex(x => new { x.ChunkSetId, x.Status });
         });
 
         modelBuilder.Entity<CorpusGrant>(e =>
@@ -116,14 +147,11 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).HasMaxLength(40);
             e.Property(x => x.RelativePath).HasMaxLength(1000).IsRequired();
-            e.Property(x => x.ContentHash).HasMaxLength(64);
             e.Property(x => x.MediaType).HasMaxLength(200);
             e.Property(x => x.Language).HasMaxLength(40);
-            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
             e.HasOne(x => x.Source).WithMany(s => s.Files)
                 .HasForeignKey(x => x.SourceId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(x => new { x.SourceId, x.RelativePath }).IsUnique();
-            e.HasIndex(x => new { x.SourceId, x.Status });
             e.Property(x => x.BlobSha256).HasMaxLength(64);
             // Restrict, not Cascade: deleting a blob that corpora still reference would
             // silently empty them. A blob is only removable once nothing attaches it.
@@ -160,6 +188,11 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             e.Property(x => x.Id).HasMaxLength(40);
             e.Property(x => x.Kind).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.State).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.ChunkSetId).HasMaxLength(40);
+            // SetNull, not Cascade: dropping a set after promoting its replacement must
+            // not erase the record of the job that built it.
+            e.HasOne(x => x.ChunkSet).WithMany()
+                .HasForeignKey(x => x.ChunkSetId).OnDelete(DeleteBehavior.SetNull);
             e.Property(x => x.Phase).HasMaxLength(40);
             e.HasOne(x => x.Corpus).WithMany(c => c.Jobs)
                 .HasForeignKey(x => x.CorpusId).OnDelete(DeleteBehavior.Cascade);

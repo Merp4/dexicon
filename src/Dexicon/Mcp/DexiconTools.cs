@@ -131,7 +131,19 @@ public sealed class DexiconTools
             sb.Append($"\n- {s.Name}");
             if (!s.Owned) sb.Append(" (shared)");
             sb.Append($"\n    state: {s.State}, {s.FileCount:N0} files, {s.ChunkCount:N0} chunks");
-            sb.Append($"\n    model: {s.EmbeddingModel} ({s.EmbeddingDimensions}d)");
+
+            // Every set is addressable as `corpus:set`, so an agent that is only told the
+            // corpus name cannot reach the others. Named here, with the default marked.
+            foreach (var set in s.ChunkSets)
+            {
+                sb.Append($"\n    {(set.IsDefault ? "*" : " ")} {s.Name}:{set.Name}");
+                sb.Append($" — {set.EmbeddingModel} ({set.EmbeddingDimensions}d), ");
+                sb.Append($"{set.ChunkSize} tokens/{set.ChunkOverlap} overlap, {set.ChunkCount:N0} chunks");
+                if (set.State != "ready") sb.Append($" [{set.State}]");
+            }
+            if (s.ChunkSets.Count > 1)
+                sb.Append("\n    (* is the default; name another with corpus:set)");
+
             if (s.LastIndexedUtc is { } t) sb.Append($"\n    last indexed: {t:u}");
             if (s.FailedCount > 0) sb.Append($"\n    {s.FailedCount} file(s) failed — see the UI for why");
             if (s.Description is { Length: > 0 }) sb.Append($"\n    {s.Description}");
@@ -155,11 +167,11 @@ public sealed class DexiconTools
     {
         Require(rc, Scopes.Search);
 
-        Corpus target;
+        ScopedCorpus target;
         try
         {
             var scope = await scopes.ResolveReadableAsync(rc.RequireTenant(), [corpus], ct);
-            target = scope.Corpora[0];
+            target = scope.Targets[0];
         }
         catch (ScopeResolutionException ex) { throw new McpException(ex.Message); }
 
@@ -171,7 +183,8 @@ public sealed class DexiconTools
         // around line 2,625 of a book returned nothing at all, because the chunks holding
         // those lines did not rank for their own filename. Fetching a known span is a
         // lookup; ranking has no business in it.
-        var chunks = await vectors.GetFileChunksAsync(target.CollectionName, target.Id, filePath, ct);
+        var chunks = await vectors.GetFileChunksAsync(
+            target.Set.CollectionName, target.Set.Id, filePath, ct);
 
         var lo = Math.Max(1, aroundLine - before);
         var hi = aroundLine + after;
@@ -309,7 +322,7 @@ public sealed class DexiconTools
         try { target = await scopes.ResolveWritableAsync(rc.RequireTenant(), corpus, ct); }
         catch (ScopeResolutionException ex) { throw new McpException(ex.Message); }
 
-        var job = await queue.EnqueueAsync(target.Id, full ? JobKind.Full : JobKind.Refresh, ct);
+        var job = await queue.EnqueueAsync(target.Id, full ? JobKind.Full : JobKind.Refresh, ct: ct);
 
         // Never blocks: indexing a large repository outlasts any sensible tool timeout.
         return $"Queued {(full ? "full" : "incremental")} reindex of '{target.Name}' as job {job.Id} " +
@@ -358,7 +371,14 @@ public sealed class DexiconTools
             if (summary.SkippedCount > 0) sb.Append($", {summary.SkippedCount:N0} skipped");
             if (summary.FailedCount > 0) sb.Append($", {summary.FailedCount:N0} failed");
             sb.Append('\n');
-            sb.Append($"  model: {c.EmbeddingModel} ({c.EmbeddingDimensions}d)\n");
+            foreach (var set in summary.ChunkSets)
+            {
+                sb.Append($"  {(set.IsDefault ? "*" : " ")} {set.Name}: {set.State}, ");
+                sb.Append($"{set.EmbeddingModel} ({set.EmbeddingDimensions}d), {set.ChunkCount:N0} chunks");
+                if (set.PendingCount > 0) sb.Append($", {set.PendingCount:N0} pending");
+                if (set.FailedCount > 0) sb.Append($", {set.FailedCount:N0} failed");
+                sb.Append('\n');
+            }
             sb.Append($"  last indexed: {(c.LastIndexedUtc is { } t ? $"{t:u}" : "never")}\n");
 
             if (job is not null)

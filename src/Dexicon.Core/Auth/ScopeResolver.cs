@@ -15,16 +15,32 @@ public sealed class ScopeResolutionException(string message, IReadOnlyList<strin
     public IReadOnlyList<string> VisibleNames { get; } = visibleNames;
 }
 
-public sealed record ResolvedScope(IReadOnlyList<Corpus> Corpora)
+/// <summary>
+/// One corpus in a resolved scope, together with the chunk set the caller will actually
+/// search. The corpus is the authorisation and tenancy unit; the set is the vector space.
+/// </summary>
+public sealed record ScopedCorpus(Corpus Corpus, ChunkSet Set)
 {
-    public IReadOnlyList<string> Ids => Corpora.Select(c => c.Id).ToList();
+    public string Id => Corpus.Id;
+    public string Name => Corpus.Name;
+
+    /// <summary>What the caller asked for — `books`, or `books:fine` for a named set.</summary>
+    public string QualifiedName => Set.IsDefault ? Corpus.Name : $"{Corpus.Name}:{Set.Name}";
+}
+
+public sealed record ResolvedScope(IReadOnlyList<ScopedCorpus> Targets)
+{
+    public IReadOnlyList<Corpus> Corpora => Targets.Select(t => t.Corpus).ToList();
+    public IReadOnlyList<string> Ids => Targets.Select(t => t.Corpus.Id).ToList();
 
     /// <summary>
-    /// All corpora in a scope must share a collection, because a collection is one
-    /// vector space. Mixed models are split and searched per collection.
+    /// A collection is one vector space, so a scope spanning two embedding models is two
+    /// queries. Grouped by the CHUNK SET's collection: with sets, two corpora can share a
+    /// model while one of them is mid-migration to another, and each is searched in the
+    /// space its own set actually lives in.
     /// </summary>
-    public IEnumerable<IGrouping<string, Corpus>> ByCollection =>
-        Corpora.GroupBy(c => c.CollectionName, StringComparer.Ordinal);
+    public IEnumerable<IGrouping<string, ScopedCorpus>> ByCollection =>
+        Targets.GroupBy(t => t.Set.CollectionName, StringComparer.Ordinal);
 }
 
 /// <summary>
@@ -41,17 +57,39 @@ public sealed class ScopeResolver(CatalogDbContext db)
 
         if (requestedNamesOrIds is { Count: > 0 })
         {
-            var selected = new List<Corpus>();
+            var selected = new List<ScopedCorpus>();
             var unknown = new List<string>();
 
             foreach (var requested in requestedNamesOrIds.Distinct(StringComparer.OrdinalIgnoreCase))
             {
-                var match = visible.FirstOrDefault(c =>
-                    string.Equals(c.Name, requested, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(c.Id, requested, StringComparison.Ordinal));
+                // `books` is the corpus's default set; `books:fine` names one explicitly.
+                // Qualifying the name rather than adding a parameter keeps the MCP surface
+                // exactly as wide as it was — see D-11 on why the tool count is a budget.
+                var (corpusPart, setPart) = Split(requested);
 
-                if (match is null) unknown.Add(requested);
-                else if (!selected.Contains(match)) selected.Add(match);
+                var match = visible.FirstOrDefault(c =>
+                    string.Equals(c.Name, corpusPart, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(c.Id, corpusPart, StringComparison.Ordinal));
+
+                if (match is null) { unknown.Add(requested); continue; }
+
+                var set = setPart is null
+                    ? DefaultSetOf(match)
+                    : match.ChunkSets.FirstOrDefault(s =>
+                        string.Equals(s.Name, setPart, StringComparison.OrdinalIgnoreCase));
+
+                if (set is null)
+                {
+                    var sets = match.ChunkSets.Select(s => s.Name).Order(StringComparer.Ordinal).ToList();
+                    throw new ScopeResolutionException(
+                        $"Corpus '{match.Name}' has no chunk set named '{setPart}'. " +
+                        (sets.Count == 0
+                            ? "It has no chunk sets at all, which means nothing is indexed."
+                            : $"Its sets: {string.Join(", ", sets)}."),
+                        visible.Select(c => c.Name).ToList());
+                }
+
+                if (!selected.Exists(s => s.Set.Id == set.Id)) selected.Add(new ScopedCorpus(match, set));
             }
 
             if (unknown.Count > 0)
@@ -73,8 +111,39 @@ public sealed class ScopeResolver(CatalogDbContext db)
                 $"No corpora are visible to tenant '{tenantId}'. Create one in the UI, " +
                 "or check the X-Dexicon-Tenant header.", []);
 
-        return new ResolvedScope(visible);
+        // Unqualified scope is every visible corpus at its DEFAULT set. A corpus whose
+        // replacement set is still backfilling keeps serving from the live one.
+        var all = visible
+            .Select(c => (Corpus: c, Set: DefaultSetOf(c)))
+            .Where(x => x.Set is not null)
+            .Select(x => new ScopedCorpus(x.Corpus, x.Set!))
+            .ToList();
+
+        if (all.Count == 0)
+            throw new ScopeResolutionException(
+                $"Tenant '{tenantId}' can see {visible.Count} corpus/corpora, but none has a chunk set. " +
+                "Nothing is indexed yet.", visible.Select(c => c.Name).ToList());
+
+        return new ResolvedScope(all);
     }
+
+    /// <summary>
+    /// Splits `corpus:set`. A corpus name cannot contain a colon, so this is unambiguous;
+    /// an id cannot either, being a ULID.
+    /// </summary>
+    private static (string Corpus, string? Set) Split(string nameOrId)
+    {
+        var i = nameOrId.IndexOf(':');
+        return i < 0 ? (nameOrId, null) : (nameOrId[..i], nameOrId[(i + 1)..]);
+    }
+
+    /// <summary>
+    /// The set marked default, or the only one, or the oldest. The fallbacks matter: a
+    /// corpus with no default flag set must still be searchable rather than invisible.
+    /// </summary>
+    private static ChunkSet? DefaultSetOf(Corpus c) =>
+        c.ChunkSets.FirstOrDefault(s => s.IsDefault)
+        ?? c.ChunkSets.OrderBy(s => s.Id, StringComparer.Ordinal).FirstOrDefault();
 
     /// <summary>
     /// Owned by the tenant, plus shared corpora granted to it, plus shared corpora with
@@ -82,10 +151,13 @@ public sealed class ScopeResolver(CatalogDbContext db)
     /// </summary>
     public async Task<List<Corpus>> VisibleAsync(string tenantId, CancellationToken ct = default)
     {
-        var owned = await db.Corpora.Where(c => c.TenantId == tenantId).ToListAsync(ct);
+        var owned = await db.Corpora
+            .Include(c => c.ChunkSets)
+            .Where(c => c.TenantId == tenantId).ToListAsync(ct);
 
         var shared = await db.Corpora
             .Include(c => c.Grants)
+            .Include(c => c.ChunkSets)
             .Where(c => c.TenantId != tenantId && c.Visibility == CorpusVisibility.Shared)
             .ToListAsync(ct);
 
