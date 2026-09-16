@@ -399,7 +399,10 @@ public sealed class CorpusIndexer(
         var walk = WorkspaceWalker.Walk(root, source.UseGitignore,
             ParseGlobs(source.IncludeGlobs), ParseGlobs(source.ExcludeGlobs), source.MaxFileBytes);
 
-        job.FilesTotal = walk.Files.Count;
+        // += , not =. A job covers every chunk set, and each set walks the tree again, so
+        // an assignment here reported the files of ONE pass against the work done by all
+        // of them — a corpus with two sets showed "24 / 12" and a progress bar past 100%.
+        job.FilesTotal += walk.Files.Count;
         job.Phase = "extract";
         await db.SaveChangesAsync(ct);
         Report(progress, job, null);
