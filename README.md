@@ -29,8 +29,47 @@ visible to whom, and what the indexer is currently doing.
 
 ## Status
 
-**Specification only.** No code yet. These documents are the design being agreed before
-implementation starts.
+**Working, and young.** Published as `ghcr.io/merp4/dexicon`; the current release is
+`0.1.1`. Indexing, hybrid search, chunk sets, the MCP surface, the web UI and the
+container all exist and are covered by tests.
+
+What that does not yet mean: nobody has run it but its author. The defaults — which
+embedding model, which chunk size — are reasonable rather than measured, and
+[the roadmap](docs/11-roadmap.md) says what is still owed.
+
+## Quickstart
+
+Sixty seconds, assuming Docker.
+
+```bash
+git clone https://github.com/Merp4/dexicon.git && cd dexicon
+cp .env.example .env
+docker compose up -d
+```
+
+The first start pulls an embedding model (a few hundred MB), so give it a minute. Then
+take the bootstrap token it printed once:
+
+```bash
+docker compose logs dexicon | grep bootstrap
+```
+
+Open <http://127.0.0.1:8477>, paste the token, and point a corpus at something. Anything
+under `./workspaces` is visible to the indexer and mounted **read-only** — Dexicon reads
+your source, and is structurally incapable of writing to it.
+
+To connect an agent, issue a token under **Access** and run the command it gives you.
+[docs/12](docs/12-clients.md) has the per-client setup for Claude Code, Cursor, VS Code,
+Windsurf, Cline, Claude Desktop and Zed.
+
+```
+search_index("how does promotion work")   -> 04-ingestion.md:228-265, and nine more
+get_context("docs", "04-ingestion.md", 246)  -> the passage around it, with line numbers
+```
+
+Nothing leaves your machine: the embedder is a local Ollama by default, and the index is
+a local Qdrant. Hosted embedding providers are opt-in, and say so on the screen where you
+choose them.
 
 ## Documents
 

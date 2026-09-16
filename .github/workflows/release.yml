@@ -156,6 +156,12 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: VERSION=${{ steps.version.outputs.value }}
+          # An SBOM and build provenance, attached to the image in the registry. These are
+          # registry artefacts rather than GitHub attestations, so unlike the step below
+          # they work for a private repository too — which makes "what is in this image"
+          # answerable today rather than after someone asks.
+          sbom: true
+          provenance: mode=max
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -188,8 +194,14 @@ jobs:
             echo
             echo "digest \`${{ steps.push.outputs.digest }}\`"
             echo
+            echo "SBOM and build provenance are attached to the image in the registry:"
+            echo
+            echo '```'
+            echo "docker buildx imagetools inspect ${{ steps.image.outputs.name }}:${{ steps.version.outputs.value }} --format '{{ json .SBOM }}'"
+            echo '```'
+            echo
             if [ "${{ steps.attest.outcome }}" = "success" ]; then
-              echo "Provenance attested."
+              echo "A GitHub provenance attestation was recorded too."
             else
               echo "> **No provenance attestation.** The API only persists one for public"
               echo "> repositories (and org-owned private ones). Make this repository"
