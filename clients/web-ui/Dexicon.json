@@ -2542,7 +2542,9 @@
           "kind",
           "rootPath",
           "useGitignore",
-          "maxFileBytes"
+          "maxFileBytes",
+          "includeGlobs",
+          "excludeGlobs"
         ],
         "type": "object",
         "properties": {
@@ -2564,6 +2566,18 @@
           "maxFileBytes": {
             "type": "integer",
             "format": "int32"
+          },
+          "includeGlobs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "excludeGlobs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

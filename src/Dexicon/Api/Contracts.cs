@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Search;
 
@@ -197,7 +198,23 @@ public sealed record CorpusSummary(
     /// <summary>Every way this corpus is cut. The default one is what search uses.</summary>
     IReadOnlyList<ChunkSetSummary> ChunkSets);
 
-public sealed record SourceSummary(string Id, string Kind, string? RootPath, bool UseGitignore, int MaxFileBytes);
+/// <summary>
+/// One place a corpus takes content from, and the filters applied to it.
+/// </summary>
+/// <remarks>
+/// The globs are here because they were accepted, stored and then never returned — so
+/// anything setting them had no way to read them back and no way to show what a source is
+/// actually doing. They are persisted as a JSON array in one column; the contract is a
+/// list, because a caller should not be parsing our storage format.
+/// </remarks>
+public sealed record SourceSummary(
+    string Id,
+    string Kind,
+    string? RootPath,
+    bool UseGitignore,
+    int MaxFileBytes,
+    IReadOnlyList<string> IncludeGlobs,
+    IReadOnlyList<string> ExcludeGlobs);
 
 public sealed record FileSummary(
     string Id, string RelativePath, string Status, string? StatusDetail,
@@ -232,7 +249,32 @@ public sealed record WorkspaceEntry(string Name, string RelativePath, bool IsDir
 public static class Mapping
 {
     public static SourceSummary ToSummary(this Source s) =>
-        new(s.Id, s.Kind.ToString().ToLowerInvariant(), s.RootPath, s.UseGitignore, s.MaxFileBytes);
+        new(s.Id,
+            s.Kind.ToString().ToLowerInvariant(),
+            s.RootPath,
+            s.UseGitignore,
+            s.MaxFileBytes,
+            Globs(s.IncludeGlobs),
+            Globs(s.ExcludeGlobs));
+
+    /// <summary>
+    /// A stored glob column as a list. Empty rather than null when unset or unreadable:
+    /// "no filter" and "a filter we could not read" look the same to a caller, and the
+    /// honest one of those two is the one that does not crash a screen.
+    /// </summary>
+    private static List<string> Globs(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(json) ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
 
     /// <summary>
     /// A file as one chunk set sees it. The state argument is separate because the same
