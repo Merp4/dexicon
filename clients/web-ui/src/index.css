@@ -132,18 +132,23 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Visible focus everywhere. A keyboard user should never lose their place. */
-:focus-visible {
+/* Visible focus for anything that does not bring its own.
+ *
+ * `:not([data-slot])` excludes the component library, every piece of which carries that
+ * attribute and its own focus ring. Without the exclusion a focused button drew BOTH —
+ * this 2px outline and shadcn's 3px ring — which is not twice as clear, just wrong.
+ * Links, the corpus tiles and anything else hand-rolled still get it. */
+:focus-visible:not([data-slot]) {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 4px;
 }
 
 @layer components {
-  /* What is left of the hand-written layer. Buttons, inputs, badges and the focus ring
-     moved to `src/components/ui`, where they cannot be left off by accident. These three
-     are not components — they are the two typographic roles the app uses everywhere, and
-     the surface a panel sits on. */
+  /* What is left of the hand-written layer. Buttons, inputs and badges moved to
+     `src/components/ui`, where they cannot be left off by accident. These three are not
+     components — they are the two typographic roles the app uses everywhere, and the
+     surface a panel sits on. */
   .card {
     background: var(--surface);
     border: 1px solid var(--border);

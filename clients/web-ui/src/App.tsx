@@ -183,8 +183,13 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
             <Chip
               key={n.id}
               active={view === n.id}
-              aria-current={view === n.id ? 'page' : undefined}
-              className={view === n.id ? undefined : 'border-transparent bg-transparent'}
+              flat
+              // `false`, not undefined, on the others: it is a valid aria-current value that
+              // screen readers treat as absent, and it keeps every item in the bar
+              // declaring the same kind of thing. Leaving it off made Chip fall back to
+              // toggle semantics and announce the six you are NOT on as buttons you had
+              // not pressed.
+              aria-current={view === n.id ? 'page' : false}
               onClick={() => { setView(n.id); setSelected(null); }}
             >
               <n.Icon />
