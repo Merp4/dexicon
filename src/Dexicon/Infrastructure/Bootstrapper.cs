@@ -29,9 +29,45 @@ public static class Bootstrapper
         await db.Database.MigrateAsync();
         log.LogInformation("Catalogue ready at {Path}", options.Storage.CatalogPath);
 
+        await ReconcileOrphanedJobsAsync(db, log);
         await VerifyDependenciesAsync(sp, log, options);
         await EnsureTenantAsync(db, log, options);
         await EnsureBootstrapTokenAsync(sp, db, log, options);
+    }
+
+    /// <summary>
+    /// A job left Queued or Running belongs to a process that no longer exists: the
+    /// queue is in-memory, so nothing will ever pick it up again. Without this, killing
+    /// Dexicon mid-index leaves the corpus reading "indexing" forever, the UI shows a
+    /// job that is not running, and `index_refresh` refuses to queue a replacement
+    /// because one is apparently already pending. Observed exactly that after a restart
+    /// during a large PDF.
+    /// </summary>
+    private static async Task ReconcileOrphanedJobsAsync(CatalogDbContext db, ILogger log)
+    {
+        var orphaned = await db.Jobs
+            .Where(j => j.State == JobState.Queued || j.State == JobState.Running)
+            .ToListAsync();
+
+        if (orphaned.Count == 0) return;
+
+        foreach (var job in orphaned)
+        {
+            job.State = JobState.Failed;
+            job.Phase = null;
+            job.FinishedUtc = DateTime.UtcNow;
+            job.Error = "Interrupted — Dexicon restarted while this job was running. Re-run the index.";
+        }
+
+        // Any corpus mid-index is now simply not being indexed. Say so rather than
+        // leaving a state that nothing will ever move on.
+        var corpusIds = orphaned.Select(j => j.CorpusId).Distinct().ToList();
+        await db.Corpora.Where(c => corpusIds.Contains(c.Id) && c.State == CorpusState.Indexing)
+            .ExecuteUpdateAsync(s => s.SetProperty(c => c.State, CorpusState.Degraded));
+
+        await db.SaveChangesAsync();
+        log.LogWarning("Reconciled {Count} job(s) orphaned by a previous shutdown; affected corpora marked degraded",
+            orphaned.Count);
     }
 
     /// <summary>

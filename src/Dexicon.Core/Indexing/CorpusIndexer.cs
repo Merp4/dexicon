@@ -3,6 +3,7 @@ using System.Text;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
 using Dexicon.Core.Embedding;
+using Dexicon.Core.Extraction;
 using Dexicon.Core.Search;
 using Dexicon.Core.Vectors;
 using Microsoft.EntityFrameworkCore;
@@ -157,7 +158,20 @@ public sealed class CorpusIndexer(
 
             try
             {
-                var content = await ReadTextAsync(candidate.FullPath, ct);
+                var extractor = ExtractorRegistry.For(candidate.RelativePath);
+                ExtractedText extracted;
+
+                if (extractor is null)
+                {
+                    extracted = new ExtractedText(await ReadTextAsync(candidate.FullPath, ct), []);
+                }
+                else
+                {
+                    await using var stream = File.OpenRead(candidate.FullPath);
+                    extracted = extractor.Extract(stream, candidate.RelativePath);
+                }
+
+                var content = extracted.Text;
                 var hash = HashContent(content);
 
                 if (!full && known.TryGetValue(candidate.RelativePath, out var existing)
@@ -169,10 +183,16 @@ public sealed class CorpusIndexer(
 
                 if (content.Trim().Length == 0)
                 {
+                    // Said plainly rather than left as an absence. "Why isn't my PDF
+                    // searchable" is answered here, in the UI, instead of by silence.
+                    var reason = extractor is PdfTextExtractor
+                        ? "no text layer — this is a scanned PDF, and OCR is not supported"
+                        : "no extractable text content";
+
                     Upsert(known, source.Id, candidate.RelativePath, f =>
                     {
                         f.Status = FileStatus.Empty;
-                        f.StatusDetail = "no extractable text content";
+                        f.StatusDetail = reason;
                         f.SizeBytes = candidate.SizeBytes;
                         f.ContentHash = hash;
                         f.ChunkCount = 0;
@@ -184,8 +204,14 @@ public sealed class CorpusIndexer(
                 }
 
                 var language = LanguageMap.Detect(candidate.RelativePath);
-                var pieces = CodeChunker.Chunk(candidate.RelativePath, content,
-                    corpus.ChunkSize, corpus.ChunkOverlap, corpus.BoundaryMode);
+
+                // A document is chunked as prose regardless of its extension: applying a
+                // C# member-boundary regex to extracted PDF text finds nothing useful.
+                var pieces = extractor is null
+                    ? CodeChunker.Chunk(candidate.RelativePath, content,
+                        corpus.ChunkSize, corpus.ChunkOverlap, corpus.BoundaryMode)
+                    : CodeChunker.Chunk(candidate.RelativePath, content,
+                        corpus.ChunkSize, corpus.ChunkOverlap, "blank-line");
 
                 if (pieces.Count == 0)
                 {
@@ -217,17 +243,49 @@ public sealed class CorpusIndexer(
                     Language = language,
                     StartLine = p.StartLine,
                     EndLine = p.EndLine,
-                    Section = p.Section,
+                    Section = p.Section ?? UnitLabelFor(extracted, p.StartLine, content),
+                    Page = UnitNumberFor(extracted, p.StartLine, content),
                     Symbols = p.Symbols,
                     ChunkIndex = p.Index,
                     Content = p.Content,
                 }).ToList();
 
-                job.Phase = "embed";
-                var embeddings = await embedder.EmbedAsync(chunks.Select(c => c.Content).ToList(), ct);
+                // Embed and upsert in batches rather than in one go. A 500-page PDF is
+                // ONE file producing thousands of chunks, so per-file progress leaves the
+                // UI on "0 done" for minutes with no way to tell a slow job from a hung
+                // one — observed on a 3 MB PDF at roughly 17 s per 32-chunk batch, with
+                // the phase still reading "extract" because it was set but never reported
+                // before the long call. Batching also caps peak memory at one batch of
+                // vectors instead of all of them.
+                // Hand the provider MaxConcurrency batches at a time so it can run them
+                // in parallel, while still reporting progress at that granularity.
+                var batchSize = Math.Max(1, _embedding.BatchSize) * Math.Max(1, _embedding.MaxConcurrency);
+                for (var offset = 0; offset < chunks.Count; offset += batchSize)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var batch = chunks.GetRange(offset, Math.Min(batchSize, chunks.Count - offset));
+                    var through = offset + batch.Count;
 
-                job.Phase = "upsert";
-                await vectors.UpsertAsync(corpus.CollectionName, chunks, embeddings, ct);
+                    job.Phase = "embed";
+                    Report(progress, job, $"{candidate.RelativePath} — chunk {through}/{chunks.Count}");
+
+                    var embeddings = await embedder.EmbedAsync(batch.Select(c => c.Content).ToList(), ct);
+
+                    job.Phase = "upsert";
+                    await vectors.UpsertAsync(corpus.CollectionName, batch, embeddings, ct);
+
+                    job.ChunksWritten += batch.Count;
+                    Report(progress, job, $"{candidate.RelativePath} — chunk {through}/{chunks.Count}");
+
+                    // SSE alone is not enough: /api/jobs reads the catalogue, so without
+                    // a persist here a single-file corpus shows zero progress to anyone
+                    // polling. Throttled, because SaveChanges per batch is not free.
+                    if (sinceFlush.ElapsedMilliseconds >= 1000)
+                    {
+                        await db.SaveChangesAsync(ct);
+                        sinceFlush.Restart();
+                    }
+                }
 
                 Upsert(known, source.Id, candidate.RelativePath, f =>
                 {
@@ -242,8 +300,20 @@ public sealed class CorpusIndexer(
                     f.IndexedUtc = DateTime.UtcNow;
                 });
 
-                job.FilesDone++;
-                job.ChunksWritten += chunks.Count;
+                job.FilesDone++;   // ChunksWritten is accumulated per batch above
+            }
+            catch (ExtractionFailedException ex)
+            {
+                // A recognised format we could not read: encrypted, DRM'd, or corrupt.
+                // Distinct from "produced no text", which is not a failure.
+                log.LogWarning(ex, "Extraction failed for {File}", candidate.RelativePath);
+                Upsert(known, source.Id, candidate.RelativePath, f =>
+                {
+                    f.Status = FileStatus.Failed;
+                    f.StatusDetail = ex.Message;
+                    f.ContentHash = null;
+                });
+                job.FilesFailed++;
             }
             catch (EmbeddingUnavailableException ex)
             {
@@ -347,6 +417,47 @@ public sealed class CorpusIndexer(
         string.IsNullOrWhiteSpace(json)
             ? null
             : System.Text.Json.JsonSerializer.Deserialize<List<string>>(json);
+
+    /// <summary>
+    /// Map a chunk's first line back to the page / slide / chapter it came from, so a
+    /// PDF citation can say "p. 34" rather than "chunk 87".
+    /// </summary>
+    private static int? UnitNumberFor(ExtractedText extracted, int startLine, string content)
+    {
+        if (extracted.Units.Count == 0) return null;
+        var offset = OffsetOfLine(content, startLine);
+        ExtractedUnit? found = null;
+        foreach (var u in extracted.Units)
+        {
+            if (u.StartOffset > offset) break;
+            found = u;
+        }
+        return found?.Number;
+    }
+
+    private static string? UnitLabelFor(ExtractedText extracted, int startLine, string content)
+    {
+        if (extracted.Units.Count == 0) return null;
+        var offset = OffsetOfLine(content, startLine);
+        ExtractedUnit? found = null;
+        foreach (var u in extracted.Units)
+        {
+            if (u.StartOffset > offset) break;
+            found = u;
+        }
+        return found?.Label;
+    }
+
+    private static int OffsetOfLine(string content, int oneBasedLine)
+    {
+        var line = 1;
+        for (var i = 0; i < content.Length; i++)
+        {
+            if (line >= oneBasedLine) return i;
+            if (content[i] == '\n') line++;
+        }
+        return content.Length;
+    }
 
     internal static string HashContent(string content) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(content)));

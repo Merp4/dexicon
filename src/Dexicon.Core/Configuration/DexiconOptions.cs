@@ -16,6 +16,7 @@ public sealed class DexiconOptions
     public UploadOptions Upload { get; init; } = new();
     public BootstrapOptions Bootstrap { get; init; } = new();
     public StorageOptions Storage { get; init; } = new();
+    public LogOptions Log { get; init; } = new();
 }
 
 public sealed class QdrantOptions
@@ -74,6 +75,17 @@ public sealed class BootstrapOptions
 
     /// <summary>Blank generates one on first run and logs it exactly once.</summary>
     public string? Token { get; init; }
+}
+
+/// <summary>
+/// Declared as a real section rather than read as a loose configuration key. Compose
+/// sets DEXICON__LOG__LEVEL, and a variable the options tree has no home for is a
+/// variable nobody can discover.
+/// </summary>
+public sealed class LogOptions
+{
+    /// <summary>Trace | Debug | Information | Warning | Error</summary>
+    public string Level { get; init; } = "Information";
 }
 
 public sealed class StorageOptions
