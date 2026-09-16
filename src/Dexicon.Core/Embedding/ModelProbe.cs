@@ -69,7 +69,10 @@ public sealed class ModelProbe(IEmbeddingService embeddings, ILogger<ModelProbe>
         async Task<float[]> Embed(string text)
         {
             calls++;
-            return (await embeddings.EmbedAsync(target, [text], ct))[0];
+            // Raw, deliberately: this measures what the MODEL does with a given number of
+            // characters. A task template would add characters of its own and shift every
+            // measurement by the length of a prefix.
+            return (await embeddings.EmbedAsync(target, EmbedPurpose.Raw, [text], ct))[0];
         }
 
         var dimensions = (await Embed("dimension probe")).Length;
@@ -170,7 +173,7 @@ public sealed class ModelProbe(IEmbeddingService embeddings, ILogger<ModelProbe>
     {
         try
         {
-            await embeddings.EmbedAsync(target, [Filler(CeilingChars)], ct);
+            await embeddings.EmbedAsync(target, EmbedPurpose.Raw, [Filler(CeilingChars)], ct);
             return false;
         }
         catch (EmbeddingUnavailableException)

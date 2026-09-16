@@ -8,6 +8,7 @@ using Dexicon.Core.Search;
 using Dexicon.Core.Vectors;
 using Dexicon.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 
 namespace Dexicon.Api;
@@ -330,7 +331,7 @@ public static class SystemEndpoints
 
         app.MapGet("/api/embedding-models", async (string? provider, RequestContext rc,
             IModelCatalog catalog, IEmbeddingGeneratorFactory factory, CatalogDbContext db,
-            IOptions<DexiconOptions> opts, CancellationToken ct) =>
+            IModelProfiles profiles, IOptions<DexiconOptions> opts, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
 
@@ -365,11 +366,20 @@ public static class SystemEndpoints
             // Ollama serves chat models from the same endpoint and they cannot embed, so
             // offering them would turn a bad pick into a 503 at index time. A hosted
             // provider's list is curated already, so nothing to filter.
-            var listed = models
+            var candidates = models
                 .Where(m => !managed || ModelNames.LooksLikeAnEmbeddingModel(m.Name, m.Family))
-                .Select(m => new EmbeddingModelInfo(
-                    m.Name, m.SizeBytes, m.Dimensions, inUse.Contains(ModelNames.Normalise(m.Name))))
                 .ToList();
+
+            // The framing travels with the model, because "embedded raw" is the one state
+            // nobody would think to ask about and the one that silently costs recall.
+            var listed = new List<EmbeddingModelInfo>(candidates.Count);
+            foreach (var m in candidates)
+            {
+                var templates = await profiles.ForAsync(new EmbeddingTarget(name, m.Name), ct);
+                listed.Add(new EmbeddingModelInfo(
+                    m.Name, m.SizeBytes, m.Dimensions, inUse.Contains(ModelNames.Normalise(m.Name)),
+                    templates.Document, templates.Query, templates.Origin.ToString().ToLowerInvariant()));
+            }
 
             return Results.Ok(new
             {
@@ -383,6 +393,83 @@ public static class SystemEndpoints
                         ? $"No embedding models are pulled. Pull one, or run: docker compose exec dexicon-ollama ollama pull {opts.Value.Embedding.Model}"
                         : $"Provider '{name}' has no models configured. Add them under Dexicon:Embedding:Providers:{name}:Models."
                     : null,
+            });
+        }).WithTags("System");
+
+        app.MapPut("/api/embedding-models/profile", async (SaveModelProfileRequest body, RequestContext rc,
+            CatalogDbContext db, IMemoryCache cache, IndexJobQueue queue,
+            IOptions<DexiconOptions> opts, CancellationToken ct) =>
+        {
+            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+
+            if (string.IsNullOrWhiteSpace(body.Model))
+                return Results.Problem(title: "A model name is required", statusCode: 400);
+
+            // A template without the placeholder would silently drop every input and embed
+            // a constant string, which returns the same vector for everything.
+            foreach (var (label, template) in new[]
+                     { ("documentTemplate", body.DocumentTemplate), ("queryTemplate", body.QueryTemplate) })
+            {
+                if (string.IsNullOrEmpty(template) || !template.Contains("{text}", StringComparison.Ordinal))
+                    return Results.Problem(
+                        title: $"{label} must contain {{text}}",
+                        detail: "That is where the text being embedded goes. Use exactly \"{text}\" to embed it unchanged.",
+                        statusCode: 400);
+            }
+
+            var provider = string.IsNullOrWhiteSpace(body.Provider) ? opts.Value.Embedding.Provider : body.Provider;
+            var model = body.Model.Trim();
+
+            var existing = await db.ModelProfiles.FirstOrDefaultAsync(
+                p => p.Provider == provider && p.Model == model, ct);
+
+            if (existing is null)
+            {
+                db.ModelProfiles.Add(new EmbeddingModelProfile
+                {
+                    Provider = provider,
+                    Model = model,
+                    DocumentTemplate = body.DocumentTemplate,
+                    QueryTemplate = body.QueryTemplate,
+                    Notes = body.Notes,
+                    CreatedUtc = DateTime.UtcNow,
+                    UpdatedUtc = DateTime.UtcNow,
+                });
+            }
+            else
+            {
+                existing.DocumentTemplate = body.DocumentTemplate;
+                existing.QueryTemplate = body.QueryTemplate;
+                existing.Notes = body.Notes;
+                existing.UpdatedUtc = DateTime.UtcNow;
+            }
+
+            await db.SaveChangesAsync(ct);
+            cache.Remove($"model-templates::{provider}::{model}");
+
+            // Framing is part of the chunking fingerprint, so every set on this model is
+            // now stale: its documents were embedded one way and its queries would arrive
+            // framed another. Re-indexed rather than left to disagree quietly.
+            var affected = await db.ChunkSets
+                .Where(s => s.EmbeddingProvider == provider && s.EmbeddingModel == model)
+                .Select(s => new { s.Id, s.CorpusId, s.Name, Corpus = s.Corpus!.Name })
+                .ToListAsync(ct);
+
+            var queued = new List<string>();
+            foreach (var set in affected)
+            {
+                await queue.EnqueueAsync(set.CorpusId, JobKind.Rebuild, set.Id, ct);
+                queued.Add($"{set.Corpus}:{set.Name}");
+            }
+
+            return Results.Ok(new
+            {
+                provider,
+                model,
+                reindexing = queued,
+                note = queued.Count == 0
+                    ? null
+                    : $"{queued.Count} chunk set(s) are re-indexing: framing changes the vectors.",
             });
         }).WithTags("System");
 

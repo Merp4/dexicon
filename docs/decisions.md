@@ -566,6 +566,45 @@ conservative default (which is what allowed the original bug).
 
 ---
 
+### D-24 Task framing is data, not code
+
+**Decision.** Each embedding model's task templates are stored per `(provider, model)` and
+editable at runtime. Resolution is: a saved row, then a built-in suggestion for a
+recognised name, then raw. Templates carry a `{text}` placeholder rather than being
+prefixes.
+
+**Why.** Most embedding models are trained with a task instruction wrapped around the
+input and retrieve measurably worse without it — one project measured EmbeddingGemma at
+recall@1 16/25 without its prefixes and 23/25 with them. Dexicon sent raw text to every
+model, which cost recall on every search and also made the Q3 comparison meaningless: two
+models penalised by different amounts are not being compared with each other.
+
+Data rather than code because models are added at RUNTIME through the Models screen. A
+build that hard-coded `if (model.StartsWith("nomic"))` would give every model pulled after
+it shipped silently wrong framing — and wrong framing does not fail, it just retrieves
+badly. Built-ins keep it correct out of the box without becoming the mechanism.
+
+A template, not a prefix, because EmbeddingGemma's document form wraps the text
+(`title: none | text: …`) rather than preceding it. One field expresses both, and whatever
+the next model wants.
+
+Unknown models are embedded raw and labelled as such, rather than guessed at from the
+name: a wrong prefix is worse than none, because the model embeds the literal string
+`search_query:` as content.
+
+**Rejected.** A per-model switch in code (breaks the moment someone pulls a model, which is
+a supported action); prefixes rather than templates (cannot express Gemma's form);
+inferring from the model name (a guess that fails silently); applying it at the call sites
+(two places, and forgetting one is undetectable — so it is an argument to `EmbedAsync`
+instead, which cannot be omitted).
+
+**Consequence.** The framing is part of the chunking fingerprint, so editing a profile
+re-indexes every chunk set on that model. Correct — documents embedded one way and queries
+framed another is exactly the silent mismatch this exists to prevent — but it means the
+editor says how many sets it is about to re-index.
+
+---
+
 ## What was carried over from McpToolbox
 
 | Component | Treatment |

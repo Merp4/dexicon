@@ -426,6 +426,7 @@ export function ModelsView() {
 
   const [probing, setProbing] = useState<string | null>(null);
   const [probed, setProbed] = useState<Record<string, ModelCapabilities>>({});
+  const [editingProfile, setEditingProfile] = useState<EmbeddingModelInfo | null>(null);
 
   useEffect(() => {
     api
@@ -618,6 +619,18 @@ export function ModelsView() {
         </div>
       )}
 
+      {editingProfile && (
+        <FramingModal
+          provider={provider}
+          model={editingProfile}
+          onClose={() => setEditingProfile(null)}
+          onSaved={async () => {
+            setEditingProfile(null);
+            await refresh();
+          }}
+        />
+      )}
+
       {loading ? (
         <p className="dim">Loading…</p>
       ) : (
@@ -643,9 +656,34 @@ export function ModelsView() {
                       {m.sizeBytes > 0 ? formatBytes(m.sizeBytes) : provider}
                       {m.dimensions ? ` · ${m.dimensions} dimensions` : ' · dimensions unknown until first use'}
                     </div>
+
+                    {/* Framing is the setting nobody thinks to ask about and the one that
+                        silently costs recall, so it is stated on every row rather than
+                        hidden behind the editor. */}
+                    <div style={{ fontSize: '0.78rem', marginTop: '0.3rem' }}>
+                      {m.templateOrigin === 'none' ? (
+                        <span style={{ color: 'var(--warn)' }}>
+                          embedded raw — no task framing for this model
+                        </span>
+                      ) : (
+                        <span className="dim">
+                          <span className="mono">{m.queryTemplate}</span>
+                          {m.templateOrigin === 'builtin' && ' · built-in default'}
+                          {m.templateOrigin === 'configured' && ' · configured here'}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div style={{ display: 'flex', gap: '0.35rem' }}>
+                    <button
+                      className="btn"
+                      title="How text is wrapped before it is embedded"
+                      onClick={() => setEditingProfile(m)}
+                    >
+                      Framing
+                    </button>
+
                     <button
                       className="btn"
                       disabled={probing !== null}
@@ -705,5 +743,128 @@ export function ModelsView() {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The task framing for one model.
+ *
+ * Most embedding models are trained with an instruction wrapped around the input and
+ * retrieve measurably worse without it — and nothing fails, so the only symptom is a
+ * worse ranking. Built-in defaults cover the models this build knows; this is how you
+ * correct one, or configure a model released after it.
+ */
+function FramingModal({
+  provider,
+  model,
+  onClose,
+  onSaved,
+}: {
+  provider: string;
+  model: EmbeddingModelInfo;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [documentTemplate, setDocumentTemplate] = useState(model.documentTemplate);
+  const [queryTemplate, setQueryTemplate] = useState(model.queryTemplate);
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const [result, setResult] = useState<string[] | null>(null);
+
+  const valid =
+    documentTemplate.includes('{text}') && queryTemplate.includes('{text}');
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const r = await api.saveModelProfile({
+        provider,
+        model: model.name,
+        documentTemplate,
+        queryTemplate,
+        notes: notes || undefined,
+      });
+      // Shown before closing: re-indexing is a consequence people should see coming.
+      if (r.reindexing.length > 0) setResult(r.reindexing);
+      else onSaved();
+    } catch (e) {
+      setError(e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal title={`Framing — ${model.name}`} onClose={onClose} width={620}>
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
+
+      {result ? (
+        <div>
+          <p style={{ fontSize: '0.88rem' }}>
+            Saved. {result.length} chunk set{result.length === 1 ? '' : 's'} are re-indexing, because
+            framing changes the vectors and both sides of a search have to agree:
+          </p>
+          <ul className="mono" style={{ fontSize: '0.82rem' }}>
+            {result.map((s) => <li key={s}>{s}</li>)}
+          </ul>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button className="btn primary" onClick={onSaved}>Done</button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <p className="dim" style={{ fontSize: '0.82rem', marginTop: 0 }}>
+            {model.templateOrigin === 'none' && 'This model has no framing: text is embedded exactly as it is. '}
+            {model.templateOrigin === 'builtin' && 'Currently using a built-in default. Saving overrides it. '}
+            {model.templateOrigin === 'configured' && 'Configured here. '}
+            Use <span className="mono">{'{text}'}</span> where the content goes — on its own it means embed unchanged.
+          </p>
+
+          <Field label="Indexed text" hint="Applied to every chunk as it is indexed.">
+            <input
+              className="mono"
+              value={documentTemplate}
+              onChange={(e) => setDocumentTemplate(e.target.value)}
+              placeholder="search_document: {text}"
+            />
+          </Field>
+
+          <Field label="Search queries" hint="Applied to the query before it is embedded.">
+            <input
+              className="mono"
+              value={queryTemplate}
+              onChange={(e) => setQueryTemplate(e.target.value)}
+              placeholder="search_query: {text}"
+            />
+          </Field>
+
+          <Field label="Notes" hint="Optional — where these values came from.">
+            <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="from the model card" />
+          </Field>
+
+          {!valid && (
+            <p style={{ color: 'var(--warn)', fontSize: '0.8rem' }}>
+              Both templates must contain <span className="mono">{'{text}'}</span>. Without it every input embeds
+              as the same constant string.
+            </p>
+          )}
+
+          {model.inUse && (
+            <p className="dim" style={{ fontSize: '0.8rem' }}>
+              This model is in use. Saving re-indexes every chunk set on it.
+            </p>
+          )}
+
+          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+            <button className="btn" onClick={onClose}>Cancel</button>
+            <button className="btn primary" disabled={saving || !valid} onClick={() => void save()}>
+              {saving ? <Spinner /> : 'Save'}
+            </button>
+          </div>
+        </>
+      )}
+    </Modal>
   );
 }

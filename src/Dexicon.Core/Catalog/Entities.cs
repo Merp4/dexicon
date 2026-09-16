@@ -309,6 +309,32 @@ public sealed class BlobText
 /// because a delete that is queued behind an hour of indexing is a delete that has not
 /// happened.
 /// </summary>
+/// <summary>
+/// A saved task-template override for one embedding model.
+///
+/// Rows, not constants, because models are added at RUNTIME through the UI. A build that
+/// hard-coded the framing for the models it knew about would give every model pulled
+/// afterwards silently wrong framing — and wrong framing does not fail, it just retrieves
+/// badly. See <c>IModelProfiles</c> for the resolution order.
+/// </summary>
+public sealed class EmbeddingModelProfile
+{
+    public required string Provider { get; set; }
+    public required string Model { get; set; }
+
+    /// <summary>Template for indexed text. Contains <c>{text}</c>.</summary>
+    public required string DocumentTemplate { get; set; }
+
+    /// <summary>Template for search queries. Contains <c>{text}</c>.</summary>
+    public required string QueryTemplate { get; set; }
+
+    /// <summary>Why these values, in the operator's words. Free text.</summary>
+    public string? Notes { get; set; }
+
+    public DateTime CreatedUtc { get; set; }
+    public DateTime UpdatedUtc { get; set; }
+}
+
 public enum JobKind { Full = 0, Refresh = 1, Rebuild = 2 }
 
 public enum JobState { Queued = 0, Running = 1, Succeeded = 2, Failed = 3, Degraded = 4, Cancelled = 5 }
