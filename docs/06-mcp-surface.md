@@ -2,18 +2,23 @@
 
 ## Protocol
 
+> **Verified in the M0 spike (2026-09-16)** against `ModelContextProtocol.AspNetCore`
+> 2.2.0 and Claude Code 2.1.248. The version row below is a **correction** to what this
+> document originally claimed — see "Version handling".
+
 | | |
 |---|---|
-| Spec revision | **2026-07-28** (latest at time of writing), negotiating down to `2025-06-18` for older clients |
 | Transport | **Streamable HTTP** at `POST /mcp`. Legacy HTTP+SSE is deprecated in the spec and not implemented. |
-| Session mode | **Stateless.** The 2026-07-28 core removed the `initialize` handshake and `Mcp-Session-Id`; every request is self-contained. |
-| SDK | `ModelContextProtocol.AspNetCore` 2.2.0 — `SessionMode = HttpServerSessionMode.Stateless` is already its default. |
-| Server→client calls | None. Sampling, roots, and logging are deprecated in 2026-07-28 and Dexicon needs none of them. |
+| Handshake revisions | `2024-11-05`, `2025-03-26`, `2025-06-18`, **`2025-11-25`** — what SDK 2.2.0 will negotiate through `initialize`. |
+| Handshake-free | **`2026-07-28`** clients send no `initialize` at all. Measured: `tools/list` and `tools/call` both succeed cold, with no prior handshake. |
+| Session mode | **Stateless.** Measured: no `Mcp-Session-Id` response header is ever emitted. |
+| SDK | `ModelContextProtocol.AspNetCore` **2.2.0**. The option is `WithHttpTransport(o => o.Stateless = true)`. |
+| Server→client calls | None. Sampling, roots and logging are deprecated in 2026-07-28 and Dexicon needs none of them. |
 
-The 2026-07-28 revision also requires `Mcp-Method` and `Mcp-Name` request headers, carries
+The 2026-07-28 revision also defines `Mcp-Method` and `Mcp-Name` request headers, carries
 protocol version and client identity in `_meta`, and allows `tools/list` responses to
-advertise `ttlMs` / `cacheScope`. The SDK handles the first two. Dexicon sets a `ttlMs` of
-60 s on `tools/list` — the tool set only changes when the operator changes configuration.
+advertise `ttlMs` / `cacheScope`. Dexicon sets a `ttlMs` of 60 s on `tools/list` — the tool
+set only changes when the operator changes configuration.
 
 Multi Round-Trip Requests (`resultType: "input_required"`) replace elicitation. Dexicon has
 one plausible use — asking which corpus was meant when a name is ambiguous — and
@@ -139,8 +144,38 @@ code" and an agent waiting thirty seconds.
 
 ## Version handling
 
-The client's requested protocol version arrives in `_meta`. Dexicon serves 2026-07-28 and
-falls back to 2025-06-18 semantics for older clients, as the SDK supports. An unsupported
-version is refused with the list of supported versions rather than best-effort guessing —
-and the negotiated version is logged per connection, because "which revision did that
-client actually get" is the first question when a client misbehaves.
+**This section was wrong before M0 and is now corrected against measurement.**
+
+The original claim was that Dexicon "serves 2026-07-28, negotiating down to 2025-06-18".
+Neither half survived contact with the SDK. What actually happens:
+
+```
+POST /mcp  initialize  protocolVersion: "2026-07-28"
+  -> -32022  "Protocol version '2026-07-28' is not available through the
+              initialize handshake."
+              supported: [2024-11-05, 2025-03-26, 2025-06-18, 2025-11-25]
+
+POST /mcp  initialize  protocolVersion: "2025-11-25"
+  -> 200     protocolVersion: "2025-11-25"
+
+POST /mcp  tools/list  (no initialize at all)
+  -> 200     both tools returned
+```
+
+That error message is the key to it, and it is not a defect: **2026-07-28 removed the
+handshake**, so there is nothing for `initialize` to negotiate. A 2026-07-28 client does
+not call `initialize`; it sends self-contained requests carrying their version in `_meta`,
+and those work cold. Two populations, both served:
+
+- **Handshake clients** (≤ 2025-11-25) negotiate normally, highest common revision wins.
+- **2026-07-28 clients** skip the handshake entirely. Verified working.
+
+`2025-11-25` is therefore the newest *negotiable* revision, not the newest supported one.
+An unsupported version is refused with the supported list, as above, rather than
+best-effort guessing. The negotiated revision is logged per request, because "which
+revision did that client actually get" is the first question when a client misbehaves.
+
+**End-to-end**: Claude Code 2.1.248 connects over
+`claude mcp add --transport http … --header "Authorization: Bearer …"` and reports
+`✔ Connected`. Static bearer auth is enforced ahead of the MCP handler — an unauthenticated
+`tools/list` gets a bare 401.

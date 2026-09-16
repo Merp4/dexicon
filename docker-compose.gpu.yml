@@ -1,0 +1,20 @@
+# Dexicon — NVIDIA GPU overlay for the embedding model. Opt-in:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+#
+# Requires the NVIDIA Container Toolkit on the host. GPU embedding is roughly
+# 5-10x faster than CPU, and the win lands on the FIRST INDEX of a large corpus,
+# not on search — a search embeds one short query.
+#
+# Set DEXICON_GPU_DEVICE_IDS in .env to pin a specific card, e.g. "1", or to
+# "all" for every visible GPU.
+
+services:
+  dexicon-ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ${DEXICON_GPU_DEVICE_IDS:-all}
+              capabilities: [gpu]

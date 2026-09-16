@@ -3,8 +3,8 @@
 Every load-bearing choice, why it was made, and what was rejected. The rejected column is
 the useful one: it is what stops the same argument being had again in six months.
 
-Status: all **Proposed** until M0 ([roadmap](11-roadmap.md)) confirms the four assumptions
-it depends on.
+Status: **Accepted.** M0 ([roadmap](11-roadmap.md)) ran on 2026-09-16 and confirmed all four
+assumptions these decisions rest on. D-06, D-07 and D-12 carry the measured results below.
 
 ---
 
@@ -118,8 +118,10 @@ no way to tune it); DBSF as the default (normalises distributions, which is defe
 it is still score-based and per-query sensitive — available as configuration, not default);
 dense-only (exact identifiers and error strings are exactly what embeddings are worst at).
 
-**Depends on** M0 assumption 1. If the .NET client cannot express prefetch + fusion, this
-becomes two queries and client-side RRF — still rank-based, still no weight.
+**Confirmed by M0** (2026-09-16). `Qdrant.Client` 1.19.0 expresses prefetch + fusion in a
+single call, so the fallback to client-side RRF is not needed. Qdrant uses **RRF k=2**;
+every score returned matched `1/(2+r₀)+1/(2+r₁)` to 1e-4, which is proof the fusion is
+rank-based rather than score-based. Worked example in [05](05-search.md).
 
 ---
 
@@ -134,11 +136,15 @@ corpus statistics maintained by Dexicon, and costs under a millisecond. Identifi
 splitting is what makes it useful on code: a query for "token refresh" has to reach
 `TokenService.RefreshAsync`.
 
-**Rejected.** Qdrant's server-side `qdrant/bm25` inference (cleaner if the .NET client
-supports it locally rather than only through Cloud Inference — M0 assumption 2 checks this,
-and if it holds, switching is a small change); running FastEmbed (a Python dependency for
-tokenization); no keyword retrieval at all (dense-only search on code is noticeably worse
-for exact terms).
+**Confirmed by M0** (2026-09-16). `modifier: idf` ranks correctly from client-supplied term
+frequencies against a self-hosted Qdrant — a rare term isolated its single document at score
+13.39. **Dexicon never has to maintain corpus statistics**, which was the expensive fallback
+this decision risked.
+
+**Rejected.** Qdrant's server-side `qdrant/bm25` inference (would remove our tokenizer, but
+M0 showed the client-side path already works, so this is now an optimisation rather than a
+question); running FastEmbed (a Python dependency for tokenization); no keyword retrieval at
+all (dense-only search on code is noticeably worse for exact terms).
 
 ---
 
@@ -220,9 +226,17 @@ handshake, no `Mcp-Session-Id` — matches Dexicon exactly: every search is self
 and nothing needs server-to-client calls. The C# SDK already defaults to stateless. Legacy
 HTTP+SSE is deprecated in the spec and is not implemented.
 
+**Corrected by M0** (2026-09-16). The decision stands; one premise was wrong. SDK 2.2.0
+will not negotiate `2026-07-28` through `initialize` — it tops out at `2025-11-25` — because
+**2026-07-28 removed the handshake**, so its clients never call `initialize`. Both
+populations are served: handshake clients negotiate to at most 2025-11-25, and 2026-07-28
+clients issue self-contained requests that work cold. Verified: stateless confirmed (no
+`Mcp-Session-Id` ever emitted), static bearer enforced ahead of the handler, and Claude Code
+2.1.248 reports `✔ Connected`. Detail in [06](06-mcp-surface.md).
+
 **Rejected.** stdio (one client per process, no tenancy, no sharing between agents — the
 transport Dexicon exists to replace); HTTP+SSE (deprecated); pinning to 2025-06-18 (would
-work, but starts the project one revision behind).
+work, but starts the project two revisions behind).
 
 ---
 
