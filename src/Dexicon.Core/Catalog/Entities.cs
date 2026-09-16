@@ -290,7 +290,19 @@ public sealed class BlobText
     public string? EmptyReason { get; set; }
 }
 
-public enum JobKind { Full = 0, Refresh = 1, Rebuild = 2, Delete = 3 }
+/// <summary>
+/// Persisted by NAME, so the numbers are free to change.
+///
+/// <c>Rebuild</c> is a full pass targeting ONE chunk set: the backfill that builds a
+/// replacement while the live set keeps serving. It behaves like <c>Full</c> and is named
+/// separately so the jobs list can tell "backfilling a new set" from "re-indexing
+/// everything" — two very different reasons for a corpus to be busy.
+///
+/// A <c>Delete</c> kind existed and was never read or written: deletes are synchronous,
+/// because a delete that is queued behind an hour of indexing is a delete that has not
+/// happened.
+/// </summary>
+public enum JobKind { Full = 0, Refresh = 1, Rebuild = 2 }
 
 public enum JobState { Queued = 0, Running = 1, Succeeded = 2, Failed = 3, Degraded = 4, Cancelled = 5 }
 
