@@ -157,6 +157,17 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Attest provenance
+        id: attest
+        # The attestation API refuses to persist one for a private repository under a user
+        # account: "Feature not available for user-owned private repositories." Attesting
+        # happens AFTER the push, so failing here does not stop a release — it just marks
+        # a successful publish as failed, which is worse than not attesting.
+        #
+        # Checked as `== 'public'` rather than `!= 'private'` so that an unexpected or
+        # missing value skips the step instead of failing it. Make the repository public
+        # and this turns itself on; the summary below always says which happened, so a
+        # missing attestation is never silent.
+        if: github.event.repository.visibility == 'public'
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ steps.image.outputs.name }}
@@ -174,7 +185,15 @@ jobs:
             echo
             echo "digest \`${{ steps.push.outputs.digest }}\`"
             echo
-            echo "Pin a deployment to a digest, not a tag:"
+            if [ "${{ steps.attest.outcome }}" = "success" ]; then
+              echo "Provenance attested."
+            else
+              echo "> **No provenance attestation.** The API only persists one for public"
+              echo "> repositories (and org-owned private ones). Make this repository"
+              echo "> public and the next release will carry it."
+            fi
+            echo
+            echo "Pin a deployment to a version, or to the digest above:"
             echo
             echo '```'
             echo "DEXICON_TAG=${{ steps.version.outputs.value }}"
