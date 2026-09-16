@@ -62,11 +62,6 @@ export interface Corpus {
   owned: boolean;
   visibility: 'private' | 'shared';
   state: 'ready' | 'indexing' | 'degraded' | 'unavailable';
-  embeddingModel: string;
-  embeddingDimensions: number;
-  chunkSize: number;
-  chunkOverlap: number;
-  boundaryMode: string;
   createdUtc: string;
   lastIndexedUtc?: string;
   sourceCount: number;
@@ -75,6 +70,54 @@ export interface Corpus {
   skippedCount: number;
   failedCount: number;
   sources: { id: string; kind: string; rootPath?: string; useGitignore: boolean; maxFileBytes: number }[];
+  /** Every way this corpus is cut. The default one is what an unqualified search reaches. */
+  chunkSets: ChunkSet[];
+}
+
+/**
+ * One way of cutting and embedding a corpus: a model, a vector space, a strategy.
+ * Addressed from search as `corpus:set`; the default set answers to the bare name.
+ */
+export interface ChunkSet {
+  id: string;
+  name: string;
+  description?: string;
+  embeddingModel: string;
+  embeddingDimensions: number;
+  collectionName: string;
+  chunkSize: number;
+  chunkOverlap: number;
+  boundaryMode: string;
+  customBoundaryPattern?: string;
+  unitAware: boolean;
+  sentenceAware: boolean;
+  headingContext: boolean;
+  isDefault: boolean;
+  state: 'ready' | 'indexing' | 'degraded' | 'unavailable';
+  fileCount: number;
+  chunkCount: number;
+  pendingCount: number;
+  failedCount: number;
+  createdUtc: string;
+  lastIndexedUtc?: string;
+}
+
+export interface EmbeddingModelInfo {
+  name: string;
+  sizeBytes: number;
+  dimensions?: number;
+  /** True when a chunk set embeds with it — deleting it is refused while this holds. */
+  inUse: boolean;
+}
+
+export interface ModelPullEvent {
+  model: string;
+  status?: string;
+  completed?: number;
+  total?: number;
+  percent?: number;
+  done?: boolean;
+  error?: string;
 }
 
 export interface SearchHit {
@@ -230,6 +273,39 @@ export const api = {
     request<SearchResult>('/api/search', { method: 'POST', body: JSON.stringify(body) }),
 
   listJobs: (limit = 30) => request<Job[]>(`/api/jobs?limit=${limit}`),
+
+  listChunkSets: (corpus: string) =>
+    request<ChunkSet[]>(`/api/corpora/${encodeURIComponent(corpus)}/chunk-sets`),
+
+  createChunkSet: (corpus: string, body: Record<string, unknown>) =>
+    request<{ chunkSet: ChunkSet; backfillJob: Job }>(
+      `/api/corpora/${encodeURIComponent(corpus)}/chunk-sets`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+
+  updateChunkSet: (corpus: string, set: string, body: Record<string, unknown>) =>
+    request<{ chunkSet: ChunkSet; rechunkJob?: Job }>(
+      `/api/corpora/${encodeURIComponent(corpus)}/chunk-sets/${encodeURIComponent(set)}`,
+      { method: 'PATCH', body: JSON.stringify(body) },
+    ),
+
+  promoteChunkSet: (corpus: string, set: string) =>
+    request<{ promoted: string; corpus: string }>(
+      `/api/corpora/${encodeURIComponent(corpus)}/chunk-sets/${encodeURIComponent(set)}/promote`,
+      { method: 'POST' },
+    ),
+
+  deleteChunkSet: (corpus: string, set: string) =>
+    request<void>(
+      `/api/corpora/${encodeURIComponent(corpus)}/chunk-sets/${encodeURIComponent(set)}`,
+      { method: 'DELETE' },
+    ),
+
+  listEmbeddingModels: () =>
+    request<{ configured: string; models: EmbeddingModelInfo[]; note?: string }>('/api/embedding-models'),
+
+  deleteEmbeddingModel: (model: string) =>
+    request<void>(`/api/embedding-models/${encodeURIComponent(model)}`, { method: 'DELETE' }),
 
   browse: (path?: string) =>
     request<WorkspaceListing>(`/api/workspaces${path ? `?path=${encodeURIComponent(path)}` : ''}`),

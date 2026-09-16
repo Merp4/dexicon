@@ -86,7 +86,9 @@ export function DocumentsView({
             {writable.length === 0 && <option value="">(no writable corpus)</option>}
             {writable.map((c) => (
               <option key={c.id} value={c.name}>
-                {c.name} — {c.chunkSize}/{c.chunkOverlap}
+                {c.name} — {c.chunkSets.length === 1
+                  ? `${c.chunkSets[0].chunkSize}/${c.chunkSets[0].chunkOverlap}`
+                  : `${c.chunkSets.length} chunk sets`}
               </option>
             ))}
           </select>
@@ -266,8 +268,16 @@ function AttachModal({
 
           {chosen && (
             <p className="dim" style={{ fontSize: '0.8rem', marginTop: '-0.45rem' }}>
-              Will chunk at <strong>{chosen.chunkSize}</strong> tokens with{' '}
-              <strong>{chosen.chunkOverlap}</strong> overlap ({chosen.boundaryMode}).
+              {/* An upload is queued into EVERY set, so naming only the default would
+                  understate what is about to happen. */}
+              Will be chunked {chosen.chunkSets.length === 1 ? 'as' : 'by each of'}{' '}
+              {chosen.chunkSets.map((s, i) => (
+                <span key={s.id}>
+                  {i > 0 && ', '}
+                  <strong>{s.name}</strong> ({s.chunkSize}/{s.chunkOverlap}, {s.boundaryMode})
+                </span>
+              ))}
+              .
             </p>
           )}
 
@@ -344,83 +354,3 @@ function ExtractedTextModal({
  * Chunk settings, editable. Changing any of them re-chunks the whole corpus, so the
  * dialog says so plainly and shows what it will cost.
  */
-export function ChunkingModal({
-  corpus,
-  onClose,
-  onSaved,
-  onError,
-}: {
-  corpus: Corpus;
-  onClose: () => void;
-  onSaved: () => Promise<void>;
-  onError: (e: unknown) => void;
-}) {
-  const [chunkSize, setChunkSize] = useState(corpus.chunkSize);
-  const [chunkOverlap, setChunkOverlap] = useState(corpus.chunkOverlap);
-  const [boundaryMode, setBoundaryMode] = useState(corpus.boundaryMode);
-  const [busy, setBusy] = useState(false);
-
-  const changed =
-    chunkSize !== corpus.chunkSize ||
-    chunkOverlap !== corpus.chunkOverlap ||
-    boundaryMode !== corpus.boundaryMode;
-
-  const invalid = chunkOverlap >= chunkSize || chunkSize < 64 || chunkSize > 8192 || chunkOverlap < 0;
-
-  return (
-    <Modal title={`Chunking — ${corpus.name}`} onClose={onClose}>
-      <Field label="Chunk size (tokens)" hint="Approximated at 4 characters per token. 64–8192.">
-        <input className="input" type="number" min={64} max={8192} value={chunkSize}
-          onChange={(e) => setChunkSize(Number(e.target.value))} autoFocus />
-      </Field>
-
-      <Field label="Overlap (tokens)" hint="Carried into the next chunk so a split cannot lose the thread. Must be smaller than the chunk size.">
-        <input className="input" type="number" min={0} value={chunkOverlap}
-          onChange={(e) => setChunkOverlap(Number(e.target.value))} />
-      </Field>
-
-      <Field
-        label="Boundary mode"
-        hint="Where a split is allowed to land. Size still decides when to split — a boundary only decides where."
-      >
-        <select className="input" value={boundaryMode} onChange={(e) => setBoundaryMode(e.target.value)}>
-          <option value="language-aware">language-aware — member and heading boundaries</option>
-          <option value="blank-line">blank-line — paragraph boundaries</option>
-          <option value="none">none — split purely on size</option>
-        </select>
-      </Field>
-
-      {invalid && (
-        <p style={{ color: 'var(--danger)', fontSize: '0.82rem' }}>
-          Overlap must be smaller than the chunk size, and the size must be between 64 and 8192.
-        </p>
-      )}
-
-      {changed && !invalid && (
-        <p style={{ fontSize: '0.82rem', color: 'var(--warn)' }}>
-          This re-chunks and re-embeds all {corpus.fileCount.toLocaleString()} files
-          ({corpus.chunkCount.toLocaleString()} chunks today). Uploaded documents re-use
-          their cached text, so only chunking and embedding are repeated — but embedding
-          is the slow part.
-        </p>
-      )}
-
-      <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
-        <button className="btn" onClick={onClose}>Cancel</button>
-        <button
-          className="btn btn-primary"
-          disabled={!changed || invalid || busy}
-          onClick={async () => {
-            setBusy(true);
-            try {
-              await api.updateCorpus(corpus.name, { chunkSize, chunkOverlap, boundaryMode });
-              await onSaved();
-            } catch (e) { onError(e); setBusy(false); }
-          }}
-        >
-          {busy ? <Spinner /> : null} Save and re-chunk
-        </button>
-      </div>
-    </Modal>
-  );
-}

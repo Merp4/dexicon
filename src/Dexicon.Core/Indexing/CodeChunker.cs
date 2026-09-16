@@ -77,8 +77,12 @@ public static class CodeChunker
     ///
     /// 2: size decides WHEN to split and a boundary decides WHERE (chunk size used to be
     ///    dead configuration); a line longer than the whole budget is now split.
+    /// 3: the meaning-preserving strategies — heading context, unit-aware boundaries,
+    ///    sentence-aware splitting. Only the sets that enable one are affected, but the
+    ///    fingerprint cannot tell "off" from "on but implemented differently", and a set
+    ///    built against the first cut of these would otherwise keep those chunks forever.
     /// </summary>
-    public const int Version = 2;
+    public const int Version = 3;
 
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(500);
 
@@ -121,22 +125,71 @@ public static class CodeChunker
         var boundaries = ResolveBoundaries(
             options.BoundaryMode, language, options.CustomBoundaryPattern, lines).ToHashSet();
 
-        // A document's own units are the strongest boundary it has: a chapter break means
-        // more than a blank line ever will. Added to whatever the boundary mode found
-        // rather than replacing it, so prose inside a long chapter still splits sensibly.
-        if (options.UnitAware && extracted is { Units.Count: > 0 })
-            foreach (var line in UnitBoundaryLines(extracted, content)) boundaries.Add(line);
+        // A document's own units are the strongest boundary it has, and they are the one
+        // kind that FORCES a split rather than merely offering a place for one.
+        //
+        // Everywhere else the chunker's rule is "size decides when, a boundary decides
+        // where" — which is right for prose, and useless here: a chapter shorter than the
+        // budget would simply be swallowed into the next one, and asking for chapter-
+        // aligned chunks would produce chunks spanning three chapters. A chunk that
+        // straddles two chapters is the thing this setting exists to prevent.
+        //
+        // The cost is honest and is the caller's choice: a document of very short pages
+        // yields short chunks, because that is what page-aligned chunking means.
+        var unitBoundaries = options.UnitAware && extracted is { Units.Count: > 0 }
+            ? UnitBoundaryLines(extracted, content).ToHashSet()
+            : [];
+
+        foreach (var line in unitBoundaries) boundaries.Add(line);
 
         var symbolPattern = LanguageMap.SymbolPattern(language);
         var isMarkdown = string.Equals(language, "markdown", StringComparison.Ordinal);
 
+        // Resolved per LINE, up front. Reading a running cursor at the moment a chunk was
+        // emitted looked equivalent and was not: the accumulator fills PAST a boundary
+        // before backing up to it, so the cursor is always ahead of the chunk being
+        // flushed. A chunk from the "Point payload" section came out labelled with a
+        // heading from further down the file — a confident, wrong label, which is worse
+        // than no label, because retrieval then files it under a section it is not in.
+        var trails = options.HeadingContext && isMarkdown ? HeadingTrails(lines) : null;
+
         var chunks = new List<TextChunk>();
         var index = 0;
 
-        foreach (var c in ChunkLines(lines, boundaries, maxChars, overlapChars, symbolPattern, isMarkdown, options))
+        foreach (var c in ChunkLines(lines, boundaries, unitBoundaries, maxChars, overlapChars, symbolPattern,
+                     isMarkdown, options, trails))
             chunks.Add(c with { Index = index++ });
 
         return chunks;
+    }
+
+    /// <summary>
+    /// The heading path in effect at each line — "Data model &gt; Point payload". A deeper
+    /// heading replaces its peers and discards everything below it, so a stale h3 cannot
+    /// trail along underneath the next h2.
+    /// </summary>
+    private static string?[] HeadingTrails(string[] lines)
+    {
+        var trails = new string?[lines.Length];
+        var stack = new string?[7];
+        var inFence = false;
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+
+            if (IsFenceDelimiter(line)) inFence = !inFence;
+            else if (!inFence && TryReadHeading(line, out var heading, out var level))
+            {
+                stack[level] = heading;
+                for (var deeper = level + 1; deeper < stack.Length; deeper++) stack[deeper] = null;
+            }
+
+            var parts = stack.Where(h => !string.IsNullOrEmpty(h)).ToList();
+            trails[i] = parts.Count == 0 ? null : string.Join(" > ", parts);
+        }
+
+        return trails;
     }
 
     /// <summary>
@@ -183,19 +236,16 @@ public static class CodeChunker
     /// as fit and still never ends mid-thought. Falls back to splitting at the current
     /// line when the buffer contains no boundary at all.
     /// </summary>
+    /// <param name="trails">Heading trail per line, or null when heading context is off.</param>
     private static IEnumerable<TextChunk> ChunkLines(string[] lines, HashSet<int> boundaries,
-        int maxChars, int overlapChars, string? symbolPattern, bool isMarkdown, ChunkOptions options)
+        HashSet<int> unitBoundaries, int maxChars, int overlapChars, string? symbolPattern, bool isMarkdown,
+        ChunkOptions options, string?[]? trails)
     {
         var start = 0;
         var chars = 0;
         var lastBoundary = -1;
         var lastHeading = (string?)null;
         var inFence = false;
-
-        // The heading STACK, not just the nearest heading: "Point payload" alone is
-        // ambiguous across a document, "Data model > Storage > Point payload" is not.
-        // Indexed by level so a deeper heading replaces its peers and its children.
-        var trail = new string?[7];
 
         for (var i = 0; i < lines.Length; i++)
         {
@@ -204,15 +254,23 @@ public static class CodeChunker
             if (isMarkdown)
             {
                 if (IsFenceDelimiter(line)) inFence = !inFence;
-                else if (!inFence && TryReadHeading(line, out var heading, out var level))
-                {
-                    lastHeading = heading;
-                    trail[level] = heading;
-                    for (var deeper = level + 1; deeper < trail.Length; deeper++) trail[deeper] = null;
-                }
+                else if (!inFence && TryReadHeading(line, out var heading)) lastHeading = heading;
             }
 
             if (boundaries.Contains(i) && i > start) lastBoundary = i;
+
+            // A unit boundary ends the current chunk regardless of how little is in it.
+            if (unitBoundaries.Contains(i) && i > start && chars > 0)
+            {
+                yield return Build(Join(lines, start, i), start, i - 1, lastHeading, symbolPattern,
+                    TrailAt(trails, start));
+
+                // No overlap across a unit: carrying the tail of chapter 3 into chapter 4
+                // is exactly the straddling this is meant to stop.
+                start = i;
+                lastBoundary = -1;
+                chars = 0;
+            }
 
             var lineChars = line.Length + 1;
 
@@ -228,7 +286,7 @@ public static class CodeChunker
             if (chars == 0 && lineChars > maxChars)
             {
                 foreach (var piece in SplitOversizeLine(line, maxChars, overlapChars, options.SentenceAware))
-                    yield return Build(piece, i, i, lastHeading, symbolPattern, Trail(trail, options));
+                    yield return Build(piece, i, i, lastHeading, symbolPattern, TrailAt(trails, i));
 
                 start = i + 1;
                 lastBoundary = -1;
@@ -240,7 +298,7 @@ public static class CodeChunker
                 var splitAt = lastBoundary > start ? lastBoundary : i;
 
                 yield return Build(Join(lines, start, splitAt), start, splitAt - 1, lastHeading, symbolPattern,
-                    Trail(trail, options));
+                    TrailAt(trails, start));
 
                 // Overlap is carried by rewinding the start, not by copying text, so
                 // line numbers stay exact.
@@ -259,7 +317,7 @@ public static class CodeChunker
             var tail = Join(lines, start, lines.Length);
             if (tail.Trim().Length > 0)
                 yield return Build(tail, start, lines.Length - 1, lastHeading, symbolPattern,
-                    Trail(trail, options));
+                    TrailAt(trails, start));
         }
     }
 
@@ -271,10 +329,12 @@ public static class CodeChunker
     private static IEnumerable<string> SplitOversizeLine(
         string line, int maxChars, int overlapChars, bool sentenceAware = false)
     {
-        // Back up at most an eighth of the budget looking for a boundary: far enough to
-        // avoid cutting mid-word, not so far that a line without spaces (a minified
-        // bundle, a base64 blob) loses a meaningful slice of every piece.
+        // How far back a cut may reach. A word gap is never far away, so an eighth of the
+        // budget is plenty; a sentence end can be a whole sentence away, and with the same
+        // narrow window sentence-awareness simply never fired — every piece still ended
+        // mid-sentence, which is a setting that costs something and does nothing.
         var maxBackup = Math.Max(1, maxChars / 8);
+        var sentenceBackup = Math.Max(1, maxChars / 2);
         var pos = 0;
 
         while (pos < line.Length)
@@ -287,7 +347,7 @@ public static class CodeChunker
                 // sentence embeds as something its author never wrote. Falls back to a
                 // word boundary when there is no sentence end within reach, which is the
                 // usual case for code and for a single very long paragraph.
-                var cut = sentenceAware ? LastSentenceEnd(line, pos, end, maxBackup) : -1;
+                var cut = sentenceAware ? LastSentenceEnd(line, pos, end, sentenceBackup) : -1;
                 if (cut < 0) cut = line.LastIndexOf(' ', end - 1, Math.Min(end - pos, maxBackup));
                 if (cut > pos) end = cut + 1;
             }
@@ -322,16 +382,8 @@ public static class CodeChunker
         return -1;
     }
 
-    /// <summary>
-    /// The heading path as an embedding prefix, or null when the feature is off or there
-    /// are no headings above this point.
-    /// </summary>
-    private static string? Trail(string?[] trail, ChunkOptions options)
-    {
-        if (!options.HeadingContext) return null;
-        var parts = trail.Where(h => !string.IsNullOrEmpty(h)).ToList();
-        return parts.Count == 0 ? null : string.Join(" > ", parts);
-    }
+    private static string? TrailAt(string?[]? trails, int line) =>
+        trails is not null && line >= 0 && line < trails.Length ? trails[line] : null;
 
     private static string Join(string[] lines, int from, int toExclusive) =>
         string.Join('\n', lines[from..toExclusive]);

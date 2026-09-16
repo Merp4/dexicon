@@ -135,6 +135,7 @@ exactly what an incremental refresh is for.
 |---|---|
 | 1 | Initial chunker |
 | 2 | Size decides *when* to split; a line over the whole budget is split |
+| 3 | Heading context, unit-aware boundaries, sentence-aware splitting |
 
 ### A note on OCR
 
@@ -185,6 +186,78 @@ This is a hard guarantee rather than a convention, because the failure mode is i
 an over-budget chunk is not rejected by the embedding model, it is silently truncated, and
 the missing text is reported as indexed. A property test asserts the bound across chunk
 sizes, including on input with no spaces at all (a minified bundle, a base64 blob).
+
+### Chunk sets — a corpus can be cut several ways at once
+
+Chunk size, overlap, boundary mode and the embedding model belong to a **chunk set**, not
+to the corpus. A corpus owns content, sources and visibility; a set owns a vector space and
+a strategy, and a corpus can carry several over exactly the same documents.
+
+```
+corpus "library"          content, sources, who can read it
+  ├── set "default"       nomic-embed-text, 768/100, language-aware   ← search lands here
+  └── set "fine"          nomic-embed-text, 256/40, heading context
+```
+
+Sets are addressed as `corpus:set`. An unqualified name means the default set, which is
+what an agent that has never heard of sets will send.
+
+This is what makes changing the embedding model safe. A collection's name encodes the model
+and its dimensionality, so a different model is a different vector space — and re-embedding
+a three-book corpus was measured at roughly twenty minutes on CPU Ollama. Editing in place
+would mean twenty minutes of half-populated results, so instead:
+
+1. add a set on the new model — it backfills in the background
+2. the live set keeps serving search throughout
+3. promote when it is complete; promotion is one `UPDATE` and the only moment search changes
+4. drop the old set
+
+Promoting a set that still has pending files is refused, with a count of what is left.
+Promoting a half-built set is precisely the outage that building it separately prevents.
+
+It is also the honest home for "the same document, chunked two ways". That worked before
+only by duplicating the corpus, which duplicated its grants and its sources along with it.
+
+### Meaning, not just budget
+
+Chunk size exists because of the embedding model's context window. Everything else here
+exists because a chunk that ends mid-thought retrieves badly regardless of how well it
+fits. Each is per-set and off by default.
+
+**Heading context.** The heading trail — `Data model > Point payload > Storage budget` — is
+prepended to the text that gets EMBEDDED, so a chunk's vector carries the section it came
+from. The stored text stays verbatim, because that is what search returns, what
+`get_context` stitches, and what a `dexicon://` resource read reconstructs a file from;
+prepending to it would insert lines the file never had and break a reconstruction that is
+byte-identical today.
+
+The trail is resolved per line, up front. Reading a running cursor at the moment a chunk is
+emitted looks equivalent and is not: the accumulator fills *past* a boundary before backing
+up to it, so the cursor is always ahead of the chunk being flushed. Chunks came out labelled
+with a heading from further down the file — confidently, and wrongly, which is worse than no
+label because retrieval then files them under a section they are not in.
+
+**Unit-aware boundaries.** Page for PDF, chapter for EPUB, slide for PPTX. These are the one
+kind of boundary that *forces* a split rather than offering a place for one — everywhere
+else the rule is "size decides when, a boundary decides where", and that rule is useless
+here: a chapter shorter than the budget would simply be swallowed into the next one. The
+cost is the caller's choice: a document of very short pages yields short chunks, because
+that is what page-aligned chunking means.
+
+**Sentence-aware splitting.** When a split lands inside a line, cut at a sentence rather
+than a word. A terminator counts only when followed by a space, so `e.g.` and `3.14` are not
+read as the end of a thought. The backup window is half the budget rather than the eighth a
+word search uses — with the narrow window it never fired, and a setting that costs something
+and does nothing is worse than no setting.
+
+**Custom boundaries.** The `custom` mode with your own regex, compiled at the request that
+sets it rather than part-way through a job an hour later.
+
+> **Not implemented: LLM-driven chunking.** Asking a model to decide where the meaningful
+> seams are is the obvious next step and is deliberately not here. It needs a decision about
+> which model does the curating and what it costs per document — a 400-page book is hundreds
+> of calls — and that is a product question, not a missing function. The seam is
+> `ChunkOptions`: a strategy that needs a model is a new flag and a new branch, not a rewrite.
 
 ### Size decides *when* to split; a boundary decides *where*
 
@@ -292,13 +365,15 @@ Two properties this buys:
 The hash above is the **chunking fingerprint**, not the content hash alone:
 
 ```
-sha256(blob | chunk_size | chunk_overlap | boundary_mode | embedding_model
-       | extractor_version | chunker_version)
+sha256(blob | chunk_size | chunk_overlap | boundary_mode | custom_pattern
+       | unit_aware | sentence_aware | heading_context
+       | embedding_model | extractor_version | chunker_version)
 ```
 
-Everything that determines what ends up in Qdrant is in it. Two corpora chunking the same
-blob differently get different fingerprints and independent chunk sets, which is what makes
-per-corpus chunking work at all.
+Everything that determines what ends up in Qdrant is in it, and it is computed **per chunk
+set**. Two sets over the same blob get different fingerprints and independent vectors, which
+is what makes several chunkings of one document work at all — including two sets on
+different models, mid-migration, in two different collections.
 
 Scheduling: on demand (UI button, `index_refresh` MCP tool), plus an optional interval per
 corpus, default off. There is no filesystem watcher — polling with content hashes is more
