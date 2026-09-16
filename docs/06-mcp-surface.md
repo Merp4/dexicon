@@ -110,7 +110,7 @@ reading, not for parsing:
 
 ### `list_corpora`
 
-No inputs beyond an optional `include_stats`. Returns what the caller can see: name,
+No inputs. Returns what the caller can see: name,
 description, whether it is shared, file and chunk counts, last indexed time, current
 state — and every chunk set, with its model, dimensionality, chunk size and overlap, and
 the default marked. This is how an agent learns what `corpus` values are legal, including

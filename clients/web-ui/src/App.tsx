@@ -12,8 +12,8 @@ import {
   type SearchResult,
 } from './api';
 import {
-  Badge, Button, CardButton, Chip, CopyButton, Empty, ErrorBanner, Field, Input, Modal, Select,
-  SelectItem, Spinner, formatBytes, localTime, relativeTime, stateTone,
+  Badge, Button, CardButton, Checkbox, Chip, CopyButton, Empty, ErrorBanner, Field, Input, Modal,
+  Select, SelectItem, Spinner, formatBytes, localTime, relativeTime, stateTone,
 } from './ui';
 import {
   Check, Database, FileText, Key, ListChecks, LogOut, Plus, RefreshCw, RotateCcw, Search,
@@ -588,7 +588,7 @@ function CreateCorpusModal({ onClose, onCreated, onError }: { onClose: () => voi
   );
 }
 
-function CorpusDetail({
+export function CorpusDetail({
   name,
   live,
   onBack,
@@ -605,6 +605,7 @@ function CorpusDetail({
   const [files, setFiles] = useState<IndexedFile[]>([]);
   const [filter, setFilter] = useState<string>('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [addingSource, setAddingSource] = useState(false);
 
 
   const load = useCallback(async () => {
@@ -648,7 +649,33 @@ function CorpusDetail({
       {job?.phase && <div className="card p-3.5"><ProgressBar job={job} /></div>}
 
       <div className="card p-3.5 grid gap-2 text-sm">
-        <Row label="Sources">{corpus.sources.map((s) => s.rootPath ?? s.kind).join(', ') || '—'}</Row>
+        <Row label="Sources">
+          {corpus.sources.length === 0 ? (
+            <span className="dim">none — add one, or upload documents</span>
+          ) : (
+            <span className="grid gap-1">
+              {corpus.sources.map((s) => (
+                <span key={s.id} className="flex flex-wrap items-baseline gap-2">
+                  <span className="mono">{s.rootPath ?? s.kind}</span>
+                  {/* What this source is actually doing. The filters were settable and
+                      invisible, which is the worst of both. */}
+                  <span className="dim text-xs">
+                    {s.useGitignore ? '.gitignore honoured' : '.gitignore ignored'}
+                    {' · '}≤ {formatBytes(s.maxFileBytes)}
+                    {s.includeGlobs.length > 0 && ` · only ${s.includeGlobs.join(', ')}`}
+                    {s.excludeGlobs.length > 0 && ` · not ${s.excludeGlobs.join(', ')}`}
+                  </span>
+                </span>
+              ))}
+            </span>
+          )}
+          {corpus.owned && (
+            <Button className="mt-1.5 px-2 py-0.5 text-xs" onClick={() => setAddingSource(true)}>
+              <Plus />
+              Add source
+            </Button>
+          )}
+        </Row>
         <Row label="Searched as">
           <span className="mono">{corpus.name}</span>
           <span className="dim">
@@ -718,6 +745,15 @@ function CorpusDetail({
         <ChunkSetsPanel corpus={corpus} onChanged={async () => { await load(); await onRefresh(); }} />
       </div>
 
+      {addingSource && (
+        <AddSourceModal
+          corpus={corpus}
+          onClose={() => setAddingSource(false)}
+          onAdded={async () => { setAddingSource(false); await onRefresh(); }}
+          onError={onError}
+        />
+      )}
+
       {confirmDelete && (
         <DeleteCorpusModal
           corpus={corpus}
@@ -727,6 +763,127 @@ function CorpusDetail({
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Add a place this corpus takes content from.
+ *
+ * Every field here has been in the API since the beginning and in docs/08 since the
+ * beginning, and in the UI never — so a corpus was stuck with the one source it was
+ * created with, and the filters could not be set or seen at all.
+ */
+function AddSourceModal({
+  corpus,
+  onClose,
+  onAdded,
+  onError,
+}: {
+  corpus: Corpus;
+  onClose: () => void;
+  onAdded: () => Promise<void>;
+  onError: (e: unknown) => void;
+}) {
+  const [path, setPath] = useState('');
+  const [entries, setEntries] = useState<string[]>([]);
+  const [useGitignore, setUseGitignore] = useState(true);
+  const [maxFileMb, setMaxFileMb] = useState(2);
+  const [include, setInclude] = useState('');
+  const [exclude, setExclude] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    // Browse the mount, so nobody can name a path that is not there.
+    api.browse()
+      .then((l) => setEntries(l.entries.filter((e) => e.isDirectory).map((e) => e.relativePath)))
+      .catch(() => setEntries([]));
+  }, []);
+
+  /** A comma or newline separated list, with the blanks dropped. */
+  const globs = (raw: string) =>
+    raw.split(/[\n,]/).map((g) => g.trim()).filter(Boolean);
+
+  const alreadyHere = corpus.sources.some((s) => s.rootPath === path);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await api.addSource(corpus.name, {
+        workspacePath: path,
+        useGitignore,
+        maxFileBytes: Math.round(maxFileMb * 1024 * 1024),
+        includeGlobs: globs(include),
+        excludeGlobs: globs(exclude),
+      });
+      await onAdded();
+    } catch (err) {
+      onError(err);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title={`Add a source to ${corpus.name}`} onClose={onClose}>
+      <form onSubmit={submit}>
+        <Field
+          label="Workspace folder"
+          hint="Only paths bind-mounted into the container are listed. Set WORKSPACE_ROOT to change what is available."
+        >
+          <Select value={path || NO_SOURCE} onValueChange={(v) => setPath(v === NO_SOURCE ? '' : v)}>
+            <SelectItem value={NO_SOURCE}>(choose a folder)</SelectItem>
+            {entries.map((e) => <SelectItem key={e} value={e}>{e}</SelectItem>)}
+          </Select>
+        </Field>
+
+        {alreadyHere && (
+          <p className="-mt-2 mb-3 text-xs text-[var(--warn)]">
+            This corpus already indexes that folder. Adding it again indexes everything twice.
+          </p>
+        )}
+
+        <Field label="Largest file (MB)" hint="Anything bigger is skipped and reported, not silently dropped.">
+          <Input
+            type="number"
+            min={0.1}
+            step={0.1}
+            value={maxFileMb}
+            onChange={(e) => setMaxFileMb(Number(e.target.value))}
+          />
+        </Field>
+
+        <Field label="Only these (optional)" hint="Globs, comma separated. Empty means everything not excluded.">
+          <Input className="mono" value={include} onChange={(e) => setInclude(e.target.value)} placeholder="src/**, docs/**" />
+        </Field>
+
+        <Field label="Never these (optional)" hint="Globs, comma separated. Applied after the include list.">
+          <Input className="mono" value={exclude} onChange={(e) => setExclude(e.target.value)} placeholder="**/vendor/**, *.min.js" />
+        </Field>
+
+        <label className="mb-3.5 flex items-start gap-2.5">
+          <Checkbox
+            checked={useGitignore}
+            onCheckedChange={(v) => setUseGitignore(v === true)}
+            className="mt-0.5"
+          />
+          <span className="grid gap-0.5">
+            <span className="text-sm leading-none font-semibold">Honour .gitignore</span>
+            <span className="text-xs text-muted-foreground">
+              And .dexiconignore. Off indexes build output and dependencies too, which is
+              almost never what you want.
+            </span>
+          </span>
+        </label>
+
+        <div className="mt-4 flex justify-end gap-2">
+          <Button type="button" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" type="submit" disabled={!path || busy}>
+            {busy ? <Spinner /> : <Plus />}
+            Add source
+          </Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
