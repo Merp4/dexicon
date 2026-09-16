@@ -13,7 +13,7 @@ If any is false, the design changes, and better now than in M2.
 
 | # | Assumption | How it is checked | If false |
 |---|---|---|---|
-| 1 | `Qdrant.Client` 1.19.0 exposes the Query API with `prefetch` + RRF fusion from .NET | Console app: create a collection with dense + sparse vectors, upsert 100 points, run a fused query | Fall back to two queries and client-side RRF in `HybridSearch`; [05](05-search.md) changes, nothing else does |
+| 1 | `Qdrant.Client` 1.19.0 exposes the Query API with `prefetch` + RRF fusion from .NET | Console app: create a collection with dense + sparse vectors, upsert 100 points, run a fused query. **Also pin down the exact fusion syntax** — [05](05-search.md) writes `"query": {"fusion": "rrf"}`, but Qdrant's own docs show `{"rrf": {}}` in at least one example, and the spec should carry whichever the client actually emits | Fall back to two queries and client-side RRF in `HybridSearch`; [05](05-search.md) changes, nothing else does |
 | 2 | Sparse vectors with `modifier: idf` work as documented, with client-supplied term frequencies | Same app: assert BM25-like ordering on a known corpus | Compute IDF in-process and maintain corpus statistics — materially more work, so worth knowing early |
 | 3 | `ModelContextProtocol.AspNetCore` 2.2.0 serves 2026-07-28 statelessly and Claude Code connects to it with a static bearer header | Minimal server with one echo tool; `claude mcp add`; `/mcp` shows connected | Pin to `2025-06-18` semantics and revisit |
 | 4 | `hnsw_config.m = 0` + `payload_m = 16` behaves as expected with `is_tenant` on `corpus_id` | Two corpora, 50k points, compare filtered and unfiltered query latency | Use per-tenant collections; [03](03-data-model.md) changes |
@@ -28,8 +28,8 @@ back into the affected document. The spike code is deleted.
 The narrowest path that is genuinely end to end.
 
 - Solution layout, `Directory.Build.props`, `Directory.Packages.props`, `.gitignore`,
-  `.env.example`, `LICENSE`, `SECURITY.md`, CI with build + test + gitleaks — **all before
-  the first feature**.
+  `.gitattributes`, `.env.example`, `LICENSE`, `SECURITY.md`, CI with build + test +
+  gitleaks — **all before the first feature**.
 - ASP.NET Core host; SQLite catalogue with migrations; Qdrant collection bootstrap.
 - Workspace source: walk a mounted folder, gitignore filter, hash triage, line-based
   chunking (no language awareness yet), Ollama embeddings, Qdrant upsert.
