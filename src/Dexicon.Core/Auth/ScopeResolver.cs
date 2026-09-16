@@ -121,7 +121,8 @@ public sealed class ScopeResolver(CatalogDbContext db)
 
         if (all.Count == 0)
             throw new ScopeResolutionException(
-                $"Tenant '{tenantId}' can see {visible.Count} corpus/corpora, but none has a chunk set. " +
+                $"Tenant '{tenantId}' can see {visible.Count} " +
+                $"{(visible.Count == 1 ? "corpus" : "corpora")}, but none has a chunk set. " +
                 "Nothing is indexed yet.", visible.Select(c => c.Name).ToList());
 
         return new ResolvedScope(all);
