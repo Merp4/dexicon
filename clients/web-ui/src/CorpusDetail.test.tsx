@@ -114,6 +114,24 @@ describe('the sources a corpus reads', () => {
     expect(await screen.findByText(/\.gitignore ignored/)).toBeInTheDocument();
   });
 
+  it('survives a server that does not send the globs at all', async () => {
+    // The dev loop runs this UI against whatever container is up, which can be older than
+    // the code. The first run of this screen against one blanked the page on
+    // `undefined.length` — a whole screen lost to a field that had not shipped yet.
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          { id: 's1', kind: 'workspace', rootPath: 'api-repo', useGitignore: true, maxFileBytes: 1024 },
+        ] as unknown as Corpus['sources'],
+      }),
+    );
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText('api-repo')).toBeInTheDocument();
+    expect(screen.getByText(/\.gitignore honoured/)).toBeInTheDocument();
+  });
+
   it('tells a corpus with no sources what to do about it', async () => {
     getCorpus.mockResolvedValue(corpus({ sources: [] }));
 

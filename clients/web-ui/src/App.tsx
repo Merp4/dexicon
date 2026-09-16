@@ -658,12 +658,19 @@ export function CorpusDetail({
                 <span key={s.id} className="flex flex-wrap items-baseline gap-2">
                   <span className="mono">{s.rootPath ?? s.kind}</span>
                   {/* What this source is actually doing. The filters were settable and
-                      invisible, which is the worst of both. */}
+                      invisible, which is the worst of both.
+
+                      `?.` is not paranoia about a field the contract marks required. The
+                      dev loop is a supported workflow — Vite serving this UI against a
+                      container built earlier — so the UI can genuinely be ahead of the
+                      API, and it was: the first run of this screen against an older
+                      server blanked the page on `undefined.length`. In the image they
+                      always ship together; here they do not. */}
                   <span className="dim text-xs">
                     {s.useGitignore ? '.gitignore honoured' : '.gitignore ignored'}
                     {' · '}≤ {formatBytes(s.maxFileBytes)}
-                    {s.includeGlobs.length > 0 && ` · only ${s.includeGlobs.join(', ')}`}
-                    {s.excludeGlobs.length > 0 && ` · not ${s.excludeGlobs.join(', ')}`}
+                    {s.includeGlobs?.length ? ` · only ${s.includeGlobs.join(', ')}` : ''}
+                    {s.excludeGlobs?.length ? ` · not ${s.excludeGlobs.join(', ')}` : ''}
                   </span>
                 </span>
               ))}
