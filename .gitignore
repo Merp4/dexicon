@@ -1,0 +1,61 @@
+# Dexicon — .gitignore
+#
+# SECRETS MODEL (docs/10-security-secrets.md): secrets are NEVER committed.
+# `.env.example` is the only tracked template; every real value lives in `.env`,
+# `secrets/`, or the environment. This file exists from the first commit because
+# secret hygiene retrofitted before a public push has already failed — the
+# history is what gets scanned.
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+secrets/
+*.local.json
+appsettings.Development.json
+appsettings.*.local.json
+*.pfx
+*.p12
+*.key
+*.pem
+
+# ── Runtime data ──────────────────────────────────────────────────────────────
+# Catalogue, uploaded blobs, local volumes. Never reconstructible, never committed.
+data/
+.dexicon/
+workspaces/
+
+# ── .NET ──────────────────────────────────────────────────────────────────────
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+publish/
+*.user
+*.suo
+.vs/
+TestResults/
+*.trx
+*.coverage
+coverage/
+
+# ── Node / SPA ────────────────────────────────────────────────────────────────
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+.eslintcache
+
+# ── Editors / OS ──────────────────────────────────────────────────────────────
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+.DS_Store
+Thumbs.db
+
+# ── Scratch ───────────────────────────────────────────────────────────────────
+tmp/
+*.tmp
+*.log
