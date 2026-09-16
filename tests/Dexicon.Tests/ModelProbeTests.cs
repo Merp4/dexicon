@@ -47,12 +47,17 @@ public sealed class ModelProbeTests
 
         var capabilities = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
 
-        // The measurement is in characters and the model counts tokens; dense text hits
-        // the same token limit in fewer characters. The headroom is what absorbs that,
-        // so a recommendation at exactly the measured limit would be wrong for code.
+        // The measurement is in characters and the model counts tokens. Headroom absorbs
+        // the part of that gap a single ratio cannot describe — prose, code and CJK do not
+        // share one — so a recommendation at exactly the measured limit would be wrong for
+        // the densest of them.
         capabilities.RecommendedChunkChars.ShouldBeLessThan(capabilities.MaxInputChars!.Value);
+
+        // And the conversion to tokens uses the ratio this model was MEASURED at, not the
+        // 4 the chunker assumes. Asserting against the constant was the old test, and it
+        // passed for a number that meant characters-over-four whatever the model did.
         capabilities.RecommendedChunkTokens
-            .ShouldBe(capabilities.RecommendedChunkChars / Dexicon.Core.Indexing.CodeChunker.CharsPerToken);
+            .ShouldBe((int)(capabilities.RecommendedChunkChars / capabilities.CharsPerToken!.Value));
     }
 
     [Fact]
@@ -107,6 +112,71 @@ public sealed class ModelProbeTests
         model.Inputs.ShouldAllBe(s => s.Contains("alpha beta gamma") || s == "dimension probe");
     }
 
+    [Fact]
+    public async Task MeasuresCharactersPerTokenRatherThanAssumingFour()
+    {
+        // The chunker has always divided by a flat 4. That is a fair average for English
+        // prose and wrong in the direction that hurts for code and CJK, which reach the
+        // same token limit in far fewer characters — so a "768 token" chunk of minified
+        // JavaScript can be two or three times that, and the model truncates it in
+        // silence. The probe now asks the model's OWN tokenizer.
+        var model = new TruncatingModel(limit: 4_000, errorsOnOverflow: false);
+
+        var caps = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
+
+        caps.CharsPerToken.ShouldNotBeNull();
+        caps.CharsPerToken.Value.ShouldBe(3.0, 0.35);
+        caps.CharsPerToken.Value.ShouldNotBe(Dexicon.Core.Indexing.CodeChunker.CharsPerToken);
+    }
+
+    [Fact]
+    public async Task TheTokenRecommendationUsesTheMeasuredRatio()
+    {
+        // The recommendation is in tokens, so it has to be divided by the ratio that was
+        // measured. Dividing by 4 regardless is how a number labelled "tokens" came to
+        // mean characters over four whatever the model does with them.
+        var model = new TruncatingModel(limit: 4_000, errorsOnOverflow: false);
+
+        var caps = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
+
+        var expected = (int)(caps.RecommendedChunkChars / caps.CharsPerToken!.Value);
+        caps.RecommendedChunkTokens.ShouldBe(expected);
+    }
+
+    [Fact]
+    public async Task SaysNothingRatherThanGuessingWhenTheProviderReportsNoTokens()
+    {
+        // OpenAI reports usage; a provider that does not must not be given a made-up
+        // ratio, because a measurement and an assumption look identical once stored.
+        var model = new SilentAboutTokens();
+
+        var caps = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
+
+        caps.CharsPerToken.ShouldBeNull();
+    }
+
+    /// <summary>A model that embeds happily and never reports a token count.</summary>
+    private sealed class SilentAboutTokens : IEmbeddingService
+    {
+        public int KnownDimensions(EmbeddingTarget target) => 0;
+
+        public Task<int> ProbeDimensionsAsync(EmbeddingTarget target, CancellationToken ct = default) =>
+            Task.FromResult(768);
+
+        public Task<int?> CountTokensAsync(
+            EmbeddingTarget target, string text, CancellationToken ct = default) =>
+            Task.FromResult<int?>(null);
+
+        public Task<IReadOnlyList<float[]>> EmbedAsync(
+            EmbeddingTarget target, EmbedPurpose purpose, IReadOnlyList<string> inputs,
+            CancellationToken ct = default)
+        {
+            var rng = new Random(7);
+            return Task.FromResult<IReadOnlyList<float[]>>(
+                [.. inputs.Select(_ => Enumerable.Range(0, 768).Select(_ => (float)rng.NextDouble()).ToArray())]);
+        }
+    }
+
     /// <summary>
     /// A model that reads the first <c>limit</c> characters and ignores the rest — the
     /// behaviour every embedding model tested so far actually has.
@@ -120,6 +190,15 @@ public sealed class ModelProbeTests
 
         public Task<int> ProbeDimensionsAsync(EmbeddingTarget target, CancellationToken ct = default) =>
             Task.FromResult(dimensions);
+
+        /// <summary>
+        /// A fixed three characters a token, which is nothing like any real tokenizer and
+        /// is exactly the point: the probe must REPORT what it measured rather than
+        /// substitute the 4 the chunker assumes.
+        /// </summary>
+        public Task<int?> CountTokensAsync(
+            EmbeddingTarget target, string text, CancellationToken ct = default) =>
+            Task.FromResult<int?>(Math.Max(1, text.Length / 3));
 
         public Task<IReadOnlyList<float[]>> EmbedAsync(
             EmbeddingTarget target, EmbedPurpose purpose, IReadOnlyList<string> inputs,

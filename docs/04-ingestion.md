@@ -232,6 +232,34 @@ prefix.
 The effective template is part of the chunking fingerprint, so editing a profile
 re-indexes every chunk set on that model rather than leaving the two sides to disagree.
 
+### "Tokens" is a character budget, and the ratio is measured
+
+A chunk size is set in tokens and enforced in **characters**. There is no tokenizer in the
+chunking path; `CodeChunker` does one conversion — `maxChars = chunkSizeTokens * 4` — and
+then counts characters for the rest of its life. So `768` means exactly 3,072 characters,
+for every model and every kind of text.
+
+That is a deliberate trade and it is worth being precise about the cost. Shipping an exact
+tokenizer means a vocabulary per model, versioned, for models that are pulled at runtime
+and may not exist yet — the only tokenizer that can be right for an arbitrary model is the
+one inside it, and asking it costs a round trip per chunk. Counting characters is free and
+happens tens of thousands of times per index.
+
+What the flat 4 gets wrong is the direction. English prose is roughly four characters a
+token; dense code is nearer three, and CJK can be one or less. So a "768 token" chunk of
+minified JavaScript is really two or three times that, and a truncating model drops the
+end of it without failing.
+
+The probe closes the gap without putting a tokenizer in the hot path: it MEASURES the
+ratio once per model, with the model's own tokenizer, and that measurement is what turns a
+character budget into an honest token figure. On this machine `nomic-embed-text` is 2.82,
+not 4 — so the default 768-token chunk is really about 1,090 tokens.
+
+The sharper consequence: `mxbai-embed-large` accepts 2,816 characters. The default chunk
+size of 768 tokens is 3,072 characters. **Indexing with that model at the default silently
+truncates every full-size chunk.** That is exactly the failure the probe was written after,
+reachable from the defaults.
+
 ### Chunk sets — a corpus can be cut several ways at once
 
 Chunk size, overlap, boundary mode and the embedding model belong to a **chunk set**, not
@@ -303,8 +331,24 @@ rather than discovered.
 
 ```json
 { "dimensions": 768, "maxInputChars": 11776, "truncatesSilently": true,
-  "recommendedChunkTokens": 1962, "embedCalls": 24 }
+  "charsPerToken": 2.82, "recommendedChunkTokens": 2783, "embedCalls": 27 }
 ```
+
+`charsPerToken` is measured with **the model's own tokenizer**, not estimated. Ollama
+returns `prompt_eval_count` on an embed call, so the probe embeds three samples — prose,
+dense code, and punctuation-heavy structured text — and divides. A provider that reports
+no token counts gets `null`, and callers keep the estimate rather than inventing a
+measurement.
+
+Measured on the three models here:
+
+| model | chars/token | accepts |
+|---|---|---|
+| `nomic-embed-text` | 2.82 | 11,776 chars |
+| `embeddinggemma` | 3.80 | 11,776 chars |
+| `mxbai-embed-large` | 2.82 | **2,816 chars** |
+
+Two of the three are nowhere near the 4 the chunker assumes — see below.
 
 This exists because of a failure nothing could detect. An EPUB produced chunks averaging
 32,000 characters; the model silently truncated every one of them, roughly 95% of the book

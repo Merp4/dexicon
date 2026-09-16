@@ -2277,6 +2277,7 @@
           "truncatesSilently",
           "recommendedChunkChars",
           "recommendedChunkTokens",
+          "charsPerToken",
           "embedCalls",
           "tookMs",
           "summary"
@@ -2310,6 +2311,13 @@
           "recommendedChunkTokens": {
             "type": "integer",
             "format": "int32"
+          },
+          "charsPerToken": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
           },
           "embedCalls": {
             "type": "integer",
