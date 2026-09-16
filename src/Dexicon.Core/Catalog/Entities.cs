@@ -101,7 +101,14 @@ public sealed class Source
     public List<IndexedFile> Files { get; set; } = [];
 }
 
-public enum FileStatus { Indexed = 0, Skipped = 1, Failed = 2, Empty = 3 }
+/// <summary>
+/// Persisted by NAME, so these numbers are free to change — but the ORDER matters:
+/// Pending must be the zero value. It used to be Indexed, which meant a file was born
+/// claiming to be indexed and the library listed freshly uploaded documents as
+/// "indexed — 0 chunks". Defaulting to the pessimistic state makes a missed
+/// assignment show up as work outstanding rather than as work falsely complete.
+/// </summary>
+public enum FileStatus { Pending = 0, Indexed = 1, Skipped = 2, Failed = 3, Empty = 4 }
 
 public sealed class IndexedFile
 {
@@ -177,8 +184,15 @@ public sealed class BlobText
     public string? Title { get; set; }
     public int ExtractedChars { get; set; }
 
-    /// <summary>Which extractor produced this, so a loader upgrade can invalidate the cache.</summary>
+    /// <summary>Which extractor produced this.</summary>
     public required string Extractor { get; set; }
+
+    /// <summary>
+    /// <c>ExtractorVersions.Current</c> when this text was produced. Anything older is
+    /// re-extracted on next use — this is what makes an extractor fix reach documents
+    /// that were ingested before it.
+    /// </summary>
+    public int ExtractorVersion { get; set; }
 
     public DateTime ExtractedUtc { get; set; }
 
@@ -207,6 +221,14 @@ public sealed class IndexJob
     public int FilesFailed { get; set; }
     public int ChunksWritten { get; set; }
     public string? Error { get; set; }
+
+    /// <summary>
+    /// When the job was queued. Never null, which is the point: ordering on StartedUtc
+    /// put every job that never started -- including ones that FAILED before starting --
+    /// permanently at the top of the list, above whatever is actually running.
+    /// </summary>
+    public DateTime QueuedUtc { get; set; }
+
     public DateTime? StartedUtc { get; set; }
     public DateTime? FinishedUtc { get; set; }
 }

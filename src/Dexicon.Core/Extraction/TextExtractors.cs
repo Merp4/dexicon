@@ -1,4 +1,5 @@
 using System.Text;
+using AngleSharp.Dom;
 using AngleSharp.Html.Parser;
 using DocumentFormat.OpenXml.Packaging;
 using UglyToad.PdfPig;
@@ -36,6 +37,25 @@ public interface ITextExtractor
     bool CanHandle(string extension);
     ExtractedText Extract(Stream content, string fileName);
 }
+
+public static class ExtractorVersions
+{
+    /// <summary>
+    /// Bumped whenever extraction OUTPUT changes, so cached text is re-extracted rather
+    /// than trusted forever.
+    ///
+    /// Extraction is cached per blob, and rightly so — a 437-page PDF costs ~1.8 s and
+    /// its bytes never change. But the CODE changes, and without a version the cache is
+    /// permanent: a library ingested before a fix keeps the broken text invisibly, and no
+    /// reindex repairs it, because reindexing re-chunks the cached text rather than
+    /// re-reading the file.
+    ///
+    /// 2: HTML and EPUB keep block structure — one block per line — instead of
+    ///    collapsing a whole chapter onto a single unsplittable line.
+    /// </summary>
+    public const int Current = 2;
+}
+
 
 public static class ExtractorRegistry
 {
@@ -189,8 +209,7 @@ public sealed class EpubTextExtractor : ITextExtractor
             {
                 units.Add(new ExtractedUnit(number, sb.Length, $"Chapter {number}"));
                 using var doc = parser.ParseDocument(file.Content);
-                var text = doc.Body?.TextContent;
-                if (!string.IsNullOrWhiteSpace(text)) sb.Append(text.Trim()).Append('\n');
+                HtmlText.AppendBlocks(doc.Body, sb);
                 number++;
             }
 
@@ -216,9 +235,107 @@ public sealed class HtmlTextExtractor : ITextExtractor
         var parser = new HtmlParser();
         using var doc = parser.ParseDocument(reader.ReadToEnd());
 
-        foreach (var node in doc.QuerySelectorAll("script, style, noscript").ToList())
-            node.Remove();
+        var sb = new StringBuilder();
+        HtmlText.AppendBlocks(doc.Body, sb);
+        return new ExtractedText(sb.ToString().Trim(), [], doc.Title);
+    }
+}
 
-        return new ExtractedText(doc.Body?.TextContent?.Trim() ?? string.Empty, [], doc.Title);
+/// <summary>
+/// Turns an HTML body into text that keeps its BLOCK STRUCTURE, one block per line.
+///
+/// AngleSharp's <c>TextContent</c> is the obvious thing to reach for and it is wrong
+/// here: it concatenates every descendant text node with no separators, so a chapter
+/// comes back as a single line tens of thousands of characters long. The chunker splits
+/// on line boundaries, so it could not split at all — a 578,000-character EPUB produced
+/// 18 chunks averaging 32,000 characters, each of which the embedding model silently
+/// truncated at its context limit. The book reported itself as indexed while most of it
+/// was nowhere in the index.
+///
+/// Newlines are not cosmetic: they are what makes the text chunkable, and what makes a
+/// line number in a search hit mean anything.
+/// </summary>
+internal static class HtmlText
+{
+    /// <summary>Elements whose text is markup machinery, not content.</summary>
+    private static readonly HashSet<string> Skipped =
+        new(StringComparer.Ordinal) { "script", "style", "noscript", "template", "head" };
+
+    /// <summary>
+    /// Block-level elements, as HTML renders them: each one starts on a new line.
+    /// Inline elements (em, a, span, code…) deliberately are NOT here — breaking a line
+    /// mid-sentence at every &lt;em&gt; would be as wrong as not breaking at all.
+    /// </summary>
+    private static readonly HashSet<string> Blocks =
+        new(StringComparer.Ordinal)
+        {
+            "p", "div", "section", "article", "aside", "header", "footer", "main", "nav",
+            "h1", "h2", "h3", "h4", "h5", "h6",
+            "ul", "ol", "li", "dl", "dt", "dd",
+            "blockquote", "pre", "figure", "figcaption", "hr",
+            "table", "thead", "tbody", "tfoot", "tr", "td", "th",
+            "form", "fieldset", "address", "body",
+        };
+
+    public static void AppendBlocks(IElement? root, StringBuilder sb)
+    {
+        if (root is null) return;
+        Walk(root, sb);
+        EndLine(sb);
+    }
+
+    private static void Walk(INode node, StringBuilder sb)
+    {
+        foreach (var child in node.ChildNodes)
+        {
+            switch (child)
+            {
+                case IText text:
+                    AppendCollapsed(text.Data, sb);
+                    break;
+
+                case IElement el when Skipped.Contains(el.LocalName):
+                    break;
+
+                // <br> is an explicit line break even though it is an inline element.
+                case IElement { LocalName: "br" }:
+                    EndLine(sb);
+                    break;
+
+                case IElement el:
+                    var block = Blocks.Contains(el.LocalName);
+                    if (block) EndLine(sb);
+                    Walk(el, sb);
+                    if (block) EndLine(sb);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Collapses runs of whitespace to a single space, the way HTML rendering does.
+    /// Source indentation is not content, and leaving it in inflates every chunk.
+    /// </summary>
+    private static void AppendCollapsed(string text, StringBuilder sb)
+    {
+        // Seeded from what is already in the buffer, so collapsing works ACROSS text
+        // nodes: "A " followed by an inline element whose own text starts with a space
+        // must still come out as one space.
+        var lastWasSpace = sb.Length == 0 || sb[^1] is '\n' or ' ';
+        foreach (var ch in text)
+        {
+            if (char.IsWhiteSpace(ch))
+            {
+                if (!lastWasSpace) { sb.Append(' '); lastWasSpace = true; }
+            }
+            else { sb.Append(ch); lastWasSpace = false; }
+        }
+    }
+
+    /// <summary>Ends the current line, without leaving a run of blank ones.</summary>
+    private static void EndLine(StringBuilder sb)
+    {
+        while (sb.Length > 0 && sb[^1] == ' ') sb.Length--;
+        if (sb.Length > 0 && sb[^1] != '\n') sb.Append('\n');
     }
 }

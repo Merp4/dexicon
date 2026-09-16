@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Dexicon.Core.Configuration;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -33,14 +34,20 @@ public sealed class OllamaEmbeddingProvider : IEmbeddingProvider
     private readonly EmbeddingOptions _embedding;
     private readonly OllamaOptions _ollama;
     private readonly ILogger<OllamaEmbeddingProvider> _log;
+    private readonly IMemoryCache _cache;
     private int _dimensions;
+
+    /// <summary>A model's dimensionality does not change; the TTL only guards a restart of Ollama.</summary>
+    private static readonly TimeSpan DimensionsTtl = TimeSpan.FromHours(1);
 
     public OllamaEmbeddingProvider(
         HttpClient http,
         IOptions<DexiconOptions> options,
+        IMemoryCache cache,
         ILogger<OllamaEmbeddingProvider> log)
     {
         _http = http;
+        _cache = cache;
         _embedding = options.Value.Embedding;
         _ollama = options.Value.Ollama;
         _log = log;
@@ -49,15 +56,40 @@ public sealed class OllamaEmbeddingProvider : IEmbeddingProvider
     }
 
     public string Model => _embedding.Model;
-    public int Dimensions => _dimensions;
+
+    /// <summary>Last known dimensionality, from the shared cache — 0 if never probed.</summary>
+    public int Dimensions =>
+        _dimensions > 0 ? _dimensions
+        : _cache.TryGetValue(DimensionsKey(_embedding.Model), out int cached) ? cached
+        : 0;
 
     public async Task<int> ProbeDimensionsAsync(string model, CancellationToken ct = default)
     {
+        // Cached in the shared memory cache, not in this instance.
+        //
+        // The provider is registered with AddHttpClient, so it is created PER REQUEST:
+        // instance state cannot cache anything across calls. /healthz therefore did a
+        // real embedding round-trip on every poll — wasteful always, and actively
+        // misleading while indexing saturates Ollama, because the poll would time out
+        // and the UI would paint both dependency dots red during normal work.
+        //
+        // Keyed by model: a model change must re-probe, since dimensions are the whole
+        // point of the call.
+        if (_cache.TryGetValue(DimensionsKey(model), out int cached) && cached > 0)
+        {
+            _dimensions = cached;
+            return cached;
+        }
+
         var vectors = await PostEmbedAsync(model, ["dimension probe"], ct);
         _dimensions = vectors[0].Length;
+
+        _cache.Set(DimensionsKey(model), _dimensions, DimensionsTtl);
         _log.LogInformation("Embedding model {Model} produces {Dimensions}-dimension vectors", model, _dimensions);
         return _dimensions;
     }
+
+    private static string DimensionsKey(string model) => $"embed-dims::{model}";
 
     public async Task<IReadOnlyList<float[]>> EmbedAsync(IReadOnlyList<string> inputs, CancellationToken ct = default)
     {

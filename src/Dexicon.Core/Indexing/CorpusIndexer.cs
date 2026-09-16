@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
+using Dexicon.Core.Documents;
 using Dexicon.Core.Embedding;
 using Dexicon.Core.Extraction;
 using Dexicon.Core.Search;
@@ -41,6 +42,7 @@ public sealed class CorpusIndexer(
     CatalogDbContext db,
     IVectorStore vectors,
     IEmbeddingProvider embedder,
+    DocumentService documents,
     IOptions<DexiconOptions> options,
     ILogger<CorpusIndexer> log)
 {
@@ -146,8 +148,9 @@ public sealed class CorpusIndexer(
 
             try
             {
-                var cached = await db.BlobTexts.AsNoTracking()
-                    .FirstOrDefaultAsync(t => t.Sha256 == file.BlobSha256, ct);
+                // Re-extracts first if this text came from an older extractor, so a fix
+                // reaches documents that were ingested before it.
+                var cached = await documents.CurrentTextFor(file.BlobSha256!, file.RelativePath, ct);
 
                 if (cached is null)
                 {
@@ -303,8 +306,16 @@ public sealed class CorpusIndexer(
     /// the other's work for its own, and changing a setting invalidates exactly the
     /// attachments it should.
     /// </summary>
+    /// <summary>
+    /// The staleness key: everything that determines what ends up in Qdrant. If any part
+    /// changes, the file is re-chunked; if none has, it is skipped at zero embedding
+    /// cost. The extractor version is in here because an extraction fix changes the text
+    /// itself — without it, improved text would be re-extracted and then skipped as
+    /// "unchanged", which is the worst of both.
+    /// </summary>
     internal static string ChunkingFingerprint(Corpus corpus, string blobSha) =>
-        HashContent($"{blobSha}|{corpus.ChunkSize}|{corpus.ChunkOverlap}|{corpus.BoundaryMode}|{corpus.EmbeddingModel}");
+        HashContent($"{blobSha}|{corpus.ChunkSize}|{corpus.ChunkOverlap}|{corpus.BoundaryMode}|" +
+                    $"{corpus.EmbeddingModel}|x{ExtractorVersions.Current}|c{CodeChunker.Version}");
 
     private async Task IndexWorkspaceSourceAsync(Corpus corpus, Source source, IndexJob job,
         IProgress<IndexProgress>? progress, bool full, Action onEmbeddingFailure, CancellationToken ct)
@@ -573,7 +584,7 @@ public sealed class CorpusIndexer(
                 Id = Ulid.NewUlid().ToString(),
                 SourceId = sourceId,
                 RelativePath = relativePath,
-                Status = FileStatus.Indexed,
+                Status = FileStatus.Pending,   // discovered, not yet chunked
             };
             known[relativePath] = file;
             db.Files.Add(file);

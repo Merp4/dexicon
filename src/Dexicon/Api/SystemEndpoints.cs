@@ -52,7 +52,11 @@ public static class SystemEndpoints
             var q = db.Jobs.Where(j => ids.Contains(j.CorpusId));
             if (!string.IsNullOrWhiteSpace(corpusId)) q = q.Where(j => j.CorpusId == corpusId);
 
-            var jobs = await q.OrderByDescending(j => j.StartedUtc ?? DateTime.MaxValue)
+            // Newest first, by when it was QUEUED. Ordering on StartedUtc floated every
+            // never-started job to the top, so two long-dead failures sat above the job
+            // that was running -- and anything reading jobs[0] to find "the current job"
+            // got a stale answer.
+            var jobs = await q.OrderByDescending(j => j.QueuedUtc).ThenByDescending(j => j.Id)
                 .Take(Math.Clamp(limit ?? 50, 1, 200)).ToListAsync(ct);
 
             return Results.Ok(jobs.Select(j => j.ToSummary()));

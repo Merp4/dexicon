@@ -61,7 +61,7 @@ public sealed record FileSummary(
 public sealed record JobSummary(
     string Id, string CorpusId, string Kind, string State, string? Phase,
     int FilesTotal, int FilesDone, int FilesSkipped, int FilesFailed, int ChunksWritten,
-    string? Error, DateTime? StartedUtc, DateTime? FinishedUtc);
+    string? Error, DateTime QueuedUtc, DateTime? StartedUtc, DateTime? FinishedUtc);
 
 public sealed record SearchApiRequest(
     string Query,
@@ -96,7 +96,7 @@ public static class Mapping
     public static JobSummary ToSummary(this IndexJob j) =>
         new(j.Id, j.CorpusId, j.Kind.ToString().ToLowerInvariant(), j.State.ToString().ToLowerInvariant(),
             j.Phase, j.FilesTotal, j.FilesDone, j.FilesSkipped, j.FilesFailed, j.ChunksWritten,
-            j.Error, j.StartedUtc, j.FinishedUtc);
+            j.Error, j.QueuedUtc, j.StartedUtc, j.FinishedUtc);
 
     public static TokenSummary ToSummary(this ApiToken t) =>
         new(t.Id, t.Name, t.TenantId, t.Scopes, t.CreatedUtc, t.LastUsedUtc, t.ExpiresUtc, t.RevokedUtc);
