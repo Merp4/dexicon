@@ -49,7 +49,29 @@ import {
   putApiEmbeddingModelsProfile,
 } from './generated';
 import type { JobSummary } from './generated';
+import { client } from './generated/client.gen';
 import { getToken } from './token';
+
+/**
+ * The bearer token, on every generated request.
+ *
+ * An interceptor rather than the client's `auth` option. `auth` is only consulted for
+ * operations the OpenAPI document marks as secured, and the document declared no security
+ * schemes at all — so it was never called, every request went out anonymous, the server
+ * answered 401 "Missing credentials", and the UI told people their token was wrong.
+ *
+ * The document now declares the scheme (see the transformer in Program.cs), so `auth`
+ * would work too. This stays because it does not depend on that: whether the header is
+ * attached should not be a property of a generated file. The client skips its own auth
+ * step when the header is already set, so the two do not fight.
+ *
+ * Read per request, not captured: the token arrives after this module is imported.
+ */
+client.interceptors.request.use((request) => {
+  const token = getToken();
+  if (token) request.headers.set('Authorization', `Bearer ${token}`);
+  return request;
+});
 
 export { getToken, setToken } from './token';
 
@@ -113,27 +135,52 @@ export class ApiError extends Error {
  * to act on — "Unknown corpus 'api'. Visible corpora: api-repo, rfc-library." Losing that
  * to a generic message would throw away the most useful thing in the response.
  */
-function toApiError(e: unknown): ApiError {
+function toApiError(e: unknown, status = 0): ApiError {
   if (e instanceof ApiError) return e;
 
   const err = e as { status?: number; title?: string; detail?: string; message?: string };
   const problem = (e as { error?: { title?: string; detail?: string; status?: number } }).error;
 
   return new ApiError(
-    problem?.status ?? err.status ?? 0,
+    problem?.status ?? err.status ?? status,
     problem?.title ?? err.title ?? err.message ?? 'Request failed',
     problem?.detail ?? err.detail,
   );
 }
 
-/** Unwraps the generated client's envelope, and normalises its errors. */
-async function call<T>(op: () => Promise<{ data?: T }>): Promise<T> {
+/**
+ * Unwraps the generated client's envelope, and normalises its errors.
+ *
+ * The envelope is checked HERE rather than relying on the generator's `throwOnError`.
+ * That option was set and silently did not take — the generated SDK still defaults to
+ * `ThrowOnError = false` — so every failed request returned `{ data: undefined }` and
+ * this function handed that `undefined` straight into component state. The next `.map`
+ * took the whole app down with "Cannot read properties of undefined", and ErrorBanner,
+ * which exists precisely to show the server's message, never ran.
+ *
+ * Reading the envelope works whether the client throws or not, so it cannot regress on a
+ * config flag again.
+ */
+async function call<T>(op: () => Promise<Envelope<T>>): Promise<T> {
+  let result: Envelope<T>;
   try {
-    const { data } = await op();
-    return data as T;
+    result = await op();
   } catch (e) {
-    throw toApiError(e);
+    throw toApiError(e); // the network never got there, or the client threw
   }
+
+  if (result.error !== undefined || (result.response && !result.response.ok)) {
+    throw toApiError(result, result.response?.status);
+  }
+
+  // Not `data!`: a 204 legitimately has no body, and those callers ignore the result.
+  return result.data as T;
+}
+
+interface Envelope<T> {
+  data?: T;
+  error?: unknown;
+  response?: Response;
 }
 
 // ── The surface the app uses ────────────────────────────────────────────────
