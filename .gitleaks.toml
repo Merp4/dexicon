@@ -1,0 +1,59 @@
+# gitleaks configuration.
+#
+# Runs as a pre-commit hook AND as a CI job over full history. Both, deliberately: the
+# hook is convenience and can be skipped with --no-verify, so it cannot be the guard. The
+# CI job over the whole history is the guard.
+
+title = "Dexicon"
+
+[extend]
+# Start from the maintained rule set — AWS keys, GitHub tokens, private keys and the rest
+# — and add what is specific to this project. Replacing it would mean re-deriving a
+# hundred rules that someone else already maintains.
+useDefault = true
+
+[[rules]]
+id = "dexicon-api-token"
+description = "Dexicon API token"
+# Format is dex_<ulid>_<secret>, from TokenService.Prefix. The token is shown once and
+# stored as PBKDF2, so a literal one in the repository is a token that escaped the one
+# place it was ever supposed to exist.
+regex = '''dex_[0-9A-HJKMNP-TV-Z]{26}_[A-Za-z0-9_-]{20,}'''
+keywords = ["dex_"]
+
+[[rules]]
+id = "dexicon-bootstrap-token-assigned"
+description = "Bootstrap token given a value outside .env"
+# DEXICON_BOOTSTRAP_TOKEN= with anything after it. .env.example ships it EMPTY and .env
+# is gitignored, so an assigned value in a tracked file is a secret in the repository.
+regex = '''DEXICON_BOOTSTRAP_TOKEN\s*=\s*\S+'''
+keywords = ["DEXICON_BOOTSTRAP_TOKEN"]
+
+[[rules]]
+id = "embedding-provider-key-assigned"
+description = "Embedding provider API key given a value"
+# Providers are configured with the NAME of an environment variable, never the key. A
+# value here means the split that keeps appsettings.json committable has been broken.
+regex = '''(OPENAI_API_KEY|AZURE_OPENAI_API_KEY|.*__APIKEY)\s*=\s*["']?[A-Za-z0-9_\-]{16,}'''
+keywords = ["OPENAI_API_KEY", "AZURE_OPENAI_API_KEY", "APIKEY"]
+
+[allowlist]
+description = "Known-safe matches"
+
+paths = [
+  # Documentation quotes token SHAPES to explain the format. Redacting them would make
+  # the docs worse to protect against a string that is not a credential.
+  '''docs/.*\.md''',
+  '''README\.md''',
+  '''\.gitleaks\.toml''',
+]
+
+regexes = [
+  # The placeholder used throughout the docs and the UI.
+  '''dex_\.\.\.''',
+  '''dex_…''',
+  '''Bearer dex_\.\.\.''',
+  # The compose default for Qdrant, which is not a secret and is documented as not being
+  # one: the port is never published. See docs/09-deployment.md.
+  '''dexicon-local-dev-key''',
+]

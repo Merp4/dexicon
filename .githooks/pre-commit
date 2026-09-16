@@ -1,0 +1,40 @@
+#!/bin/sh
+# Dexicon pre-commit hook.
+#
+# Enable with:  git config core.hooksPath .githooks
+#
+# Convenience, not the guard. A hook can be skipped with --no-verify and is not installed
+# by default, so the thing that actually protects the repository is the CI job that scans
+# full history. This exists to catch the mistake one second after it is made rather than
+# one push later, which is the difference between editing a file and rewriting history.
+
+set -eu
+
+fail() { printf '\n\033[31m%s\033[0m\n' "$1" >&2; exit 1; }
+
+# ── Secrets ──────────────────────────────────────────────────────────────────
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --config .gitleaks.toml --redact --no-banner \
+    || fail "gitleaks found a secret in the staged changes. Nothing was committed."
+else
+  # Not an error: gitleaks is optional locally and mandatory in CI. Silence would be
+  # worse — someone would assume they were covered.
+  printf '\033[33m%s\033[0m\n' "gitleaks not installed; skipping local scan (CI still runs it)." >&2
+fi
+
+# ── The one file that must never be committed ────────────────────────────────
+if git diff --cached --name-only | grep -qx '.env'; then
+  fail ".env is staged. It holds real tokens and is gitignored for that reason."
+fi
+
+# ── Formatting ───────────────────────────────────────────────────────────────
+# Only when C# changed, and only a verify pass: a hook that rewrites files underneath a
+# commit is a hook that makes people stop trusting what they staged.
+if git diff --cached --name-only --diff-filter=ACM | grep -q '\.cs$'; then
+  if command -v dotnet >/dev/null 2>&1; then
+    dotnet format --verify-no-changes --verbosity quiet \
+      || fail "dotnet format found issues. Run 'dotnet format' and stage the result."
+  fi
+fi
+
+exit 0

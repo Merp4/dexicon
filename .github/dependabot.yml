@@ -1,0 +1,54 @@
+version: 2
+
+# Weekly rather than daily. A dependency bot that opens more pull requests than anyone
+# reads trains people to close them unread, which is worse than not having one.
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for the framework, which moves in lockstep and is pointless to review
+      # package by package.
+      dotnet:
+        patterns:
+          - "Microsoft.Extensions.*"
+          - "Microsoft.EntityFrameworkCore*"
+      ai:
+        patterns:
+          - "Microsoft.Extensions.AI*"
+          - "Azure.AI.OpenAI"
+          - "OllamaSharp"
+      test:
+        patterns:
+          - "xunit*"
+          - "Shouldly"
+          - "coverlet*"
+          - "Microsoft.NET.Test.Sdk"
+
+  - package-ecosystem: npm
+    directory: /clients/web-ui
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      react:
+        patterns: ["react", "react-dom", "@types/react*"]
+      build:
+        patterns: ["vite", "typescript", "@vitejs/*", "tailwindcss", "@tailwindcss/*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+
+  # The base images are digest-pinned; this is what tells us a digest has moved.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
