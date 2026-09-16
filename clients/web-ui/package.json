@@ -5,15 +5,17 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "openapi-ts && tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "generate": "openapi-ts"
   },
   "dependencies": {
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@hey-api/openapi-ts": "^0.99.0",
     "@tailwindcss/vite": "^4.1.13",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",

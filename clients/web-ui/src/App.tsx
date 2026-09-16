@@ -129,7 +129,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           // A job reaching a terminal state changes the corpus counts too.
           if (p.state && !['running', 'queued'].includes(String(p.phase ?? ''))) void refreshCorpora();
         },
-        setConnected,
+        () => setConnected(false),
       ),
     [refreshCorpora],
   );
@@ -393,7 +393,7 @@ function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (e: unkn
                     <span style={{ flex: 1 }} />
                     {h.language && <Badge>{h.language}</Badge>}
                     {result.scope.length > 1 && h.corpusName && <Badge tone="accent">{h.corpusName}</Badge>}
-                    <CopyButton text={h.location} label="Copy path" />
+                    <CopyButton text={h.location ?? ''} label="Copy path" />
                   </header>
                   <pre
                     className="mono"
@@ -853,7 +853,7 @@ function AccessView({ onError }: { onError: (e: unknown) => void }) {
       <section>
         <h2 style={{ margin: '0 0 0.7rem', fontSize: '1rem' }}>Tenants</h2>
         <div className="card">
-          {tenants.map((t, i) => (
+          {tenants.map((t, i: number) => (
             <div key={t.id} style={{ padding: '0.6rem 0.8rem', borderTop: i ? '1px solid var(--border)' : undefined, display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
               <code className="mono" style={{ fontSize: '0.85rem' }}>{t.id}</code>
               {t.disabled && <Badge tone="danger">disabled</Badge>}

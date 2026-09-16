@@ -270,7 +270,7 @@ export function parseUtc(iso: string): Date {
   return new Date(hasZone ? iso : `${iso}Z`);
 }
 
-export function relativeTime(iso?: string): string {
+export function relativeTime(iso?: string | null): string {
   if (!iso) return 'never';
   const secs = Math.round((Date.now() - parseUtc(iso).getTime()) / 1000);
   if (secs < 0) return 'just now';        // small clock skew, not the future
@@ -281,7 +281,7 @@ export function relativeTime(iso?: string): string {
 }
 
 /** Absolute time in the viewer's own locale and zone — for titles and tooltips. */
-export function localTime(iso?: string): string {
+export function localTime(iso?: string | null): string {
   if (!iso) return 'never';
   return parseUtc(iso).toLocaleString(undefined, {
     dateStyle: 'medium',

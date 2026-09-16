@@ -107,9 +107,14 @@ public sealed record DocumentAttached(
     string Corpus, string FileId, string FileName,
     IReadOnlyList<AttachedChunking> Chunking, JobSummary Job);
 
+/// <param name="Preview">
+/// The extracted text, truncated at 20,000 characters. Named for what it is: a caller
+/// that assumed it was the whole document would be wrong for exactly the documents where
+/// it matters.
+/// </param>
 public sealed record ExtractedTextResponse(
     string Sha256, string? Title, string Extractor, int ExtractedChars,
-    DateTime ExtractedUtc, string? EmptyReason, string Text);
+    DateTime ExtractedUtc, string? EmptyReason, string Preview);
 
 public sealed record EmbeddingModelList(
     string Provider, bool Managed, string Configured,

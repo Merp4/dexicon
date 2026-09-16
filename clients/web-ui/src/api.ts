@@ -1,26 +1,99 @@
-// Typed client for the Dexicon REST surface.
+/**
+ * The app's view of the API.
+ *
+ * Every type here is GENERATED from the OpenAPI document the server writes at build time
+ * (`npm run generate`). The hand-written versions that used to live in this file had
+ * already drifted: chunk sets landed and `Corpus` still declared `chunkSize` and
+ * `embeddingModel`, fields the server had moved onto a chunk set. Nothing failed — the UI
+ * simply read `undefined` and rendered it.
+ *
+ * What is still hand-written, and why:
+ *   - the `api` facade below, so call sites read as `api.listCorpora()` rather than
+ *     `getApiCorpora({ throwOnError: true })`, and so a URL shape change stays here
+ *   - `ApiError`, because the generated client throws its own error shape and the UI has
+ *     one error path that shows the server's message verbatim
+ *   - `subscribeToProgress`, because server-sent events are a stream, not an operation an
+ *     OpenAPI document can describe usefully
+ */
+import {
+  deleteApiCorporaByNameOrId,
+  deleteApiCorporaByNameOrIdChunkSetsBySetName,
+  deleteApiCorporaByNameOrIdDocumentsByFileId,
+  deleteApiEmbeddingModelsByModel,
+  deleteApiTokensById,
+  getApiCorpora,
+  getApiCorporaByNameOrId,
+  getApiCorporaByNameOrIdChunkSets,
+  getApiCorporaByNameOrIdFiles,
+  getApiDocuments,
+  getApiDocumentsBySha256Text,
+  getApiTenants,
+  postApiTenants,
+  getApiEmbeddingModels,
+  getApiEmbeddingProviders,
+  getApiJobs,
+  getApiTokens,
+  getApiWorkspaces,
+  getHealthz,
+  patchApiCorporaByNameOrId,
+  patchApiCorporaByNameOrIdChunkSetsBySetName,
+  postApiCorpora,
+  postApiCorporaByNameOrIdChunkSets,
+  postApiCorporaByNameOrIdChunkSetsBySetNamePromote,
+  postApiCorporaByNameOrIdDocumentsAttach,
+  postApiCorporaByNameOrIdReindex,
+  postApiCorporaByNameOrIdSources,
+  postApiEmbeddingModelsProbe,
+  postApiSearch,
+  postApiTokens,
+  putApiEmbeddingModelsProfile,
+} from './generated';
+import type { JobSummary } from './generated';
+import { getToken } from './token';
+
+export { getToken, setToken } from './token';
+
+// ── Types ───────────────────────────────────────────────────────────────────
 //
-// The token lives in sessionStorage, not a cookie: no cookie means no CSRF surface,
-// and a tab close is a sensible session boundary for a local tool.
+// Aliased to the names the app already uses. The server's vocabulary is
+// `CorpusSummary`; the UI's is `Corpus`, and renaming every call site to match a
+// generator's convention would be churn for nothing.
 
-const TOKEN_KEY = 'dexicon.token';
+export type {
+  ChunkSetSummary as ChunkSet,
+  CorpusSummary as Corpus,
+  CreatedTokenResponse as CreatedToken,
+  EmbeddingModelInfo,
+  EmbeddingProviderInfo,
+  ExtractedTextResponse as DocumentText,
+  FileSummary as IndexedFile,
+  HealthResponse as Health,
+  JobSummary as Job,
+  LibraryAttachment,
+  LibraryDocument,
+  ModelCapabilities,
+  SearchHit,
+  SearchResult,
+  TenantSummary as Tenant,
+  TokenSummary,
+  WorkspaceListing,
+} from './generated';
 
-export function getToken(): string | null {
-  try {
-    return sessionStorage.getItem(TOKEN_KEY);
-  } catch {
-    return null; // private mode, blocked storage
-  }
+/**
+ * Model pull progress. Hand-written because it arrives as server-sent events rather than
+ * a response body, so the OpenAPI document describes the request and nothing else.
+ */
+export interface ModelPullEvent {
+  model: string;
+  status?: string;
+  completed?: number;
+  total?: number;
+  percent?: number;
+  done?: boolean;
+  error?: string;
 }
 
-export function setToken(token: string | null) {
-  try {
-    if (token) sessionStorage.setItem(TOKEN_KEY, token);
-    else sessionStorage.removeItem(TOKEN_KEY);
-  } catch {
-    /* non-fatal: the app still works for this page load */
-  }
-}
+// ── Errors ──────────────────────────────────────────────────────────────────
 
 export class ApiError extends Error {
   constructor(
@@ -33,318 +106,103 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const token = getToken();
-  const headers = new Headers(init.headers);
-  if (token) headers.set('Authorization', `Bearer ${token}`);
-  if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-
-  const res = await fetch(path, { ...init, headers });
-
-  if (res.status === 204) return undefined as T;
-
-  const text = await res.text();
-  const body = text ? JSON.parse(text) : undefined;
-
-  if (!res.ok) {
-    throw new ApiError(res.status, body?.title ?? res.statusText, body?.detail);
-  }
-  return body as T;
-}
-
-// ── Types ───────────────────────────────────────────────────────────────────
-
-export interface Corpus {
-  id: string;
-  name: string;
-  description?: string;
-  tenantId: string;
-  owned: boolean;
-  visibility: 'private' | 'shared';
-  state: 'ready' | 'indexing' | 'degraded' | 'unavailable';
-  createdUtc: string;
-  lastIndexedUtc?: string;
-  sourceCount: number;
-  fileCount: number;
-  chunkCount: number;
-  skippedCount: number;
-  failedCount: number;
-  sources: { id: string; kind: string; rootPath?: string; useGitignore: boolean; maxFileBytes: number }[];
-  /** Every way this corpus is cut. The default one is what an unqualified search reaches. */
-  chunkSets: ChunkSet[];
-}
-
 /**
- * One way of cutting and embedding a corpus: a model, a vector space, a strategy.
- * Addressed from search as `corpus:set`; the default set answers to the bare name.
+ * Turns whatever the generated client threw into the one error shape the UI renders.
+ *
+ * The server answers failures with RFC 9457 problem details and writes them for a person
+ * to act on — "Unknown corpus 'api'. Visible corpora: api-repo, rfc-library." Losing that
+ * to a generic message would throw away the most useful thing in the response.
  */
-export interface ChunkSet {
-  id: string;
-  name: string;
-  description?: string;
-  /** Which configured backend embeds this set — ollama, openai, an Azure deployment. */
-  embeddingProvider: string;
-  embeddingModel: string;
-  embeddingDimensions: number;
-  collectionName: string;
-  chunkSize: number;
-  chunkOverlap: number;
-  boundaryMode: string;
-  customBoundaryPattern?: string;
-  unitAware: boolean;
-  sentenceAware: boolean;
-  headingContext: boolean;
-  isDefault: boolean;
-  state: 'ready' | 'indexing' | 'degraded' | 'unavailable';
-  fileCount: number;
-  chunkCount: number;
-  pendingCount: number;
-  failedCount: number;
-  createdUtc: string;
-  lastIndexedUtc?: string;
+function toApiError(e: unknown): ApiError {
+  if (e instanceof ApiError) return e;
+
+  const err = e as { status?: number; title?: string; detail?: string; message?: string };
+  const problem = (e as { error?: { title?: string; detail?: string; status?: number } }).error;
+
+  return new ApiError(
+    problem?.status ?? err.status ?? 0,
+    problem?.title ?? err.title ?? err.message ?? 'Request failed',
+    problem?.detail ?? err.detail,
+  );
 }
 
-export interface EmbeddingModelInfo {
-  name: string;
-  sizeBytes: number;
-  dimensions?: number;
-  /** True when a chunk set embeds with it — deleting it is refused while this holds. */
-  inUse: boolean;
-  /** How text is framed for this model. `{text}` alone means embedded unchanged. */
-  documentTemplate: string;
-  queryTemplate: string;
-  /** `configured` = saved here, `builtin` = shipped default, `none` = embedded raw. */
-  templateOrigin: 'configured' | 'builtin' | 'none';
+/** Unwraps the generated client's envelope, and normalises its errors. */
+async function call<T>(op: () => Promise<{ data?: T }>): Promise<T> {
+  try {
+    const { data } = await op();
+    return data as T;
+  } catch (e) {
+    throw toApiError(e);
+  }
 }
 
-export interface EmbeddingProviderInfo {
-  name: string;
-  kind: string;
-  /** Whether models can be pulled and deleted, or only chosen from a fixed list. */
-  managed: boolean;
-  /** Usable right now. False means configured but missing a credential. */
-  configured: boolean;
-  detail?: string;
-}
-
-/** What a model will actually accept, measured rather than assumed. */
-export interface ModelCapabilities {
-  provider: string;
-  model: string;
-  dimensions: number;
-  maxInputChars?: number;
-  truncatesSilently: boolean;
-  recommendedChunkChars: number;
-  recommendedChunkTokens: number;
-  embedCalls: number;
-  tookMs: number;
-  summary: string;
-}
-
-export interface ModelPullEvent {
-  model: string;
-  status?: string;
-  completed?: number;
-  total?: number;
-  percent?: number;
-  done?: boolean;
-  error?: string;
-}
-
-export interface SearchHit {
-  corpusId: string;
-  corpusName?: string;
-  filePath: string;
-  language?: string;
-  startLine: number;
-  endLine: number;
-  page?: number;
-  section?: string;
-  symbols: string[];
-  content: string;
-  score: number;
-  location: string;
-}
-
-export interface SearchResult {
-  query: string;
-  mode: string;
-  degraded: boolean;
-  degradedReason?: string;
-  scope: { id: string; name: string; state: string }[];
-  hits: SearchHit[];
-  tookMs: number;
-  note?: string;
-}
-
-export interface Job {
-  id: string;
-  corpusId: string;
-  kind: string;
-  state: 'queued' | 'running' | 'succeeded' | 'failed' | 'degraded' | 'cancelled';
-  phase?: string;
-  filesTotal: number;
-  filesDone: number;
-  filesSkipped: number;
-  filesFailed: number;
-  chunksWritten: number;
-  error?: string;
-  queuedUtc: string;
-  startedUtc?: string;
-  finishedUtc?: string;
-}
-
-export interface IndexedFile {
-  id: string;
-  relativePath: string;
-  status: 'indexed' | 'skipped' | 'failed' | 'empty';
-  statusDetail?: string;
-  language?: string;
-  sizeBytes: number;
-  chunkCount: number;
-  indexedUtc?: string;
-}
-
-export interface Health {
-  status: string;
-  qdrant: { reachable: boolean; endpoint: string };
-  ollama: { reachable: boolean; endpoint: string; model: string; dimensions: number; error?: string };
-  corpora: number;
-  activeJob?: Job;
-}
-
-export interface WorkspaceListing {
-  root: string;
-  path: string;
-  entries: { name: string; relativePath: string; isDirectory: boolean; childCount?: number }[];
-}
-
-export interface TokenSummary {
-  id: string;
-  name: string;
-  tenantId: string;
-  scopes: string;
-  createdUtc: string;
-  lastUsedUtc?: string;
-  expiresUtc?: string;
-  revokedUtc?: string;
-}
-
-export interface CreatedToken {
-  token: TokenSummary;
-  secret: string;
-  mcpAddCommand: string;
-}
-
-export interface LibraryAttachment {
-  corpusId: string;
-  corpusName: string;
-  fileId: string;
-  fileName: string;
-  status: string;
-  chunkCount: number;
-  chunkSize: number;
-  chunkOverlap: number;
-  boundaryMode: string;
-}
-
-export interface LibraryDocument {
-  sha256: string;
-  originalFileName?: string;
-  sizeBytes: number;
-  mediaType?: string;
-  title?: string;
-  extractedChars: number;
-  emptyReason?: string;
-  createdUtc: string;
-  attachments: LibraryAttachment[];
-}
-
-export interface DocumentText {
-  sha256: string;
-  title?: string;
-  extractor: string;
-  extractedChars: number;
-  emptyReason?: string;
-  extractedUtc: string;
-  preview: string;
-}
-
-export interface Tenant {
-  id: string;
-  displayName: string;
-  createdUtc: string;
-  disabled: boolean;
-}
-
-// ── Calls ───────────────────────────────────────────────────────────────────
+// ── The surface the app uses ────────────────────────────────────────────────
 
 export const api = {
-  health: () => request<Health>('/healthz'),
-
-  listCorpora: () => request<Corpus[]>('/api/corpora'),
-  getCorpus: (nameOrId: string) => request<Corpus>(`/api/corpora/${encodeURIComponent(nameOrId)}`),
-  createCorpus: (body: Record<string, unknown>) =>
-    request<Corpus>('/api/corpora', { method: 'POST', body: JSON.stringify(body) }),
-  updateCorpus: (nameOrId: string, body: Record<string, unknown>) =>
-    request<{ corpus: Corpus; rechunkJob?: Job }>(
-      `/api/corpora/${encodeURIComponent(nameOrId)}`,
-      { method: 'PATCH', body: JSON.stringify(body) },
-    ),
-  deleteCorpus: (nameOrId: string) =>
-    request<void>(`/api/corpora/${encodeURIComponent(nameOrId)}`, { method: 'DELETE' }),
-  reindex: (nameOrId: string, full = false) =>
-    request<Job>(`/api/corpora/${encodeURIComponent(nameOrId)}/reindex?full=${full}`, { method: 'POST' }),
-  listFiles: (nameOrId: string, status?: string) =>
-    request<{ total: number; files: IndexedFile[] }>(
-      `/api/corpora/${encodeURIComponent(nameOrId)}/files?limit=500${status ? `&status=${status}` : ''}`,
-    ),
+  health: () => call(() => getHealthz()),
 
   search: (body: Record<string, unknown>) =>
-    request<SearchResult>('/api/search', { method: 'POST', body: JSON.stringify(body) }),
+    call(() => postApiSearch({ body: body as never })),
 
-  listJobs: (limit = 30) => request<Job[]>(`/api/jobs?limit=${limit}`),
+  listCorpora: () => call(() => getApiCorpora()),
+
+  getCorpus: (nameOrId: string) => call(() => getApiCorporaByNameOrId({ path: { nameOrId } })),
+
+  createCorpus: (body: Record<string, unknown>) =>
+    call(() => postApiCorpora({ body: body as never })),
+
+  updateCorpus: (nameOrId: string, body: Record<string, unknown>) =>
+    call(() => patchApiCorporaByNameOrId({ path: { nameOrId }, body: body as never })),
+
+  deleteCorpus: (nameOrId: string) =>
+    call(() => deleteApiCorporaByNameOrId({ path: { nameOrId } })),
+
+  addSource: (nameOrId: string, body: Record<string, unknown>) =>
+    call(() => postApiCorporaByNameOrIdSources({ path: { nameOrId }, body: body as never })),
+
+  reindex: (nameOrId: string, full = false) =>
+    call(() => postApiCorporaByNameOrIdReindex({ path: { nameOrId }, query: { full } })),
+
+  listFiles: (nameOrId: string, status?: string) =>
+    call(() => getApiCorporaByNameOrIdFiles({ path: { nameOrId }, query: status ? { status } : {} })),
+
+  listJobs: (limit = 30) => call(() => getApiJobs({ query: { limit } })),
+
+  // ── Chunk sets ────────────────────────────────────────────────────────────
 
   listChunkSets: (corpus: string) =>
-    request<ChunkSet[]>(`/api/corpora/${encodeURIComponent(corpus)}/chunk-sets`),
+    call(() => getApiCorporaByNameOrIdChunkSets({ path: { nameOrId: corpus } })),
 
   createChunkSet: (corpus: string, body: Record<string, unknown>) =>
-    request<{ chunkSet: ChunkSet; backfillJob: Job }>(
-      `/api/corpora/${encodeURIComponent(corpus)}/chunk-sets`,
-      { method: 'POST', body: JSON.stringify(body) },
-    ),
+    call(() => postApiCorporaByNameOrIdChunkSets({ path: { nameOrId: corpus }, body: body as never })),
 
   updateChunkSet: (corpus: string, set: string, body: Record<string, unknown>) =>
-    request<{ chunkSet: ChunkSet; rechunkJob?: Job }>(
-      `/api/corpora/${encodeURIComponent(corpus)}/chunk-sets/${encodeURIComponent(set)}`,
-      { method: 'PATCH', body: JSON.stringify(body) },
+    call(() =>
+      patchApiCorporaByNameOrIdChunkSetsBySetName({
+        path: { nameOrId: corpus, setName: set },
+        body: body as never,
+      }),
     ),
 
   promoteChunkSet: (corpus: string, set: string) =>
-    request<{ promoted: string; corpus: string }>(
-      `/api/corpora/${encodeURIComponent(corpus)}/chunk-sets/${encodeURIComponent(set)}/promote`,
-      { method: 'POST' },
+    call(() =>
+      postApiCorporaByNameOrIdChunkSetsBySetNamePromote({ path: { nameOrId: corpus, setName: set } }),
     ),
 
   deleteChunkSet: (corpus: string, set: string) =>
-    request<void>(
-      `/api/corpora/${encodeURIComponent(corpus)}/chunk-sets/${encodeURIComponent(set)}`,
-      { method: 'DELETE' },
+    call(() =>
+      deleteApiCorporaByNameOrIdChunkSetsBySetName({ path: { nameOrId: corpus, setName: set } }),
     ),
 
-  listEmbeddingProviders: () =>
-    request<{ default: string; providers: EmbeddingProviderInfo[] }>('/api/embedding-providers'),
+  // ── Models ────────────────────────────────────────────────────────────────
+
+  listEmbeddingProviders: () => call(() => getApiEmbeddingProviders()),
 
   listEmbeddingModels: (provider?: string) =>
-    request<{ provider: string; managed: boolean; configured: string; models: EmbeddingModelInfo[]; note?: string }>(
-      provider ? `/api/embedding-models?provider=${encodeURIComponent(provider)}` : '/api/embedding-models',
-    ),
+    call(() => getApiEmbeddingModels({ query: provider ? { provider } : {} })),
 
   probeEmbeddingModel: (model: string, provider?: string) =>
-    request<ModelCapabilities>('/api/embedding-models/probe', {
-      method: 'POST',
-      body: JSON.stringify({ model, provider }),
-    }),
+    call(() => postApiEmbeddingModelsProbe({ body: { model, provider } as never })),
 
   saveModelProfile: (body: {
     provider?: string;
@@ -352,135 +210,119 @@ export const api = {
     documentTemplate: string;
     queryTemplate: string;
     notes?: string;
-  }) =>
-    request<{ provider: string; model: string; reindexing: string[]; note?: string }>(
-      '/api/embedding-models/profile',
-      { method: 'PUT', body: JSON.stringify(body) },
-    ),
+  }) => call(() => putApiEmbeddingModelsProfile({ body: body as never })),
 
   deleteEmbeddingModel: (model: string, provider?: string) =>
-    request<void>(
-      `/api/embedding-models/${encodeURIComponent(model)}${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`,
-      { method: 'DELETE' },
+    call(() =>
+      deleteApiEmbeddingModelsByModel({ path: { model }, query: provider ? { provider } : {} }),
     ),
 
-  browse: (path?: string) =>
-    request<WorkspaceListing>(`/api/workspaces${path ? `?path=${encodeURIComponent(path)}` : ''}`),
-
   // ── Documents ─────────────────────────────────────────────────────────────
-  listDocuments: () => request<LibraryDocument[]>('/api/documents'),
 
-  documentText: (sha256: string) => request<DocumentText>(`/api/documents/${sha256}/text`),
+  listDocuments: () => call(() => getApiDocuments()),
 
-  /** Upload into a corpus. Progress is reported by the indexer, not this call. */
+  documentText: (sha256: string) =>
+    call(() => getApiDocumentsBySha256Text({ path: { sha256 } })),
+
+  attachDocument: (corpus: string, sha256: string, fileName?: string) =>
+    call(() =>
+      postApiCorporaByNameOrIdDocumentsAttach({
+        path: { nameOrId: corpus },
+        body: { sha256, fileName } as never,
+      }),
+    ),
+
+  detachDocument: (corpus: string, fileId: string) =>
+    call(() =>
+      deleteApiCorporaByNameOrIdDocumentsByFileId({ path: { nameOrId: corpus, fileId } }),
+    ),
+
+  /**
+   * Upload is multipart and hand-rolled. The generated client models the body as a typed
+   * object; a browser file upload is a FormData the browser must set its own boundary on,
+   * so going through the generated path would mean fighting it to send what it already
+   * knows how to send.
+   */
   uploadDocuments: async (corpus: string, files: File[]) => {
     const form = new FormData();
     for (const f of files) form.append('files', f, f.name);
 
-    const token = getToken();
     const res = await fetch(`/api/corpora/${encodeURIComponent(corpus)}/documents`, {
       method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body: form, // no Content-Type: the browser sets the multipart boundary
+      headers: authHeaders(),
+      body: form,
     });
 
     const text = await res.text();
     const body = text ? JSON.parse(text) : undefined;
     if (!res.ok) throw new ApiError(res.status, body?.title ?? res.statusText, body?.detail);
-    return body as {
-      corpus: string;
-      stored: { sha256: string; fileName: string; sizeBytes: number; extractedChars: number; deduplicated: boolean; warning?: string }[];
-      failed: unknown[];
-      job: Job;
-    };
+    return body;
   },
 
-  /** Attach an ALREADY STORED document to another corpus, chunked that corpus's way. */
-  attachDocument: (corpus: string, sha256: string, fileName?: string) =>
-    request<{ corpus: string; fileId: string; fileName: string; chunking: { chunkSize: number; chunkOverlap: number; boundaryMode: string }; job: Job }>(
-      `/api/corpora/${encodeURIComponent(corpus)}/documents/attach`,
-      { method: 'POST', body: JSON.stringify({ sha256, fileName }) },
-    ),
+  // ── Access ────────────────────────────────────────────────────────────────
 
-  detachDocument: (corpus: string, fileId: string) =>
-    request<void>(`/api/corpora/${encodeURIComponent(corpus)}/documents/${fileId}`, { method: 'DELETE' }),
+  listTokens: () => call(() => getApiTokens()),
 
-  listTenants: () => request<Tenant[]>('/api/tenants'),
-  createTenant: (id: string, displayName?: string) =>
-    request<Tenant>('/api/tenants', { method: 'POST', body: JSON.stringify({ id, displayName }) }),
-
-  listTokens: () => request<TokenSummary[]>('/api/tokens'),
   createToken: (name: string, scopes: string[], expiresInDays?: number) =>
-    request<CreatedToken>('/api/tokens', {
-      method: 'POST',
-      body: JSON.stringify({ name, scopes, expiresInDays }),
-    }),
-  revokeToken: (id: string) => request<void>(`/api/tokens/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    call(() => postApiTokens({ body: { name, scopes, expiresInDays } as never })),
+
+  revokeToken: (id: string) => call(() => deleteApiTokensById({ path: { id } })),
+
+  browse: (path?: string) =>
+    call(() => getApiWorkspaces({ query: path ? { path } : {} })),
+
+  listTenants: () => call(() => getApiTenants()),
+
+  createTenant: (id: string, displayName?: string) =>
+    call(() => postApiTenants({ body: { id, displayName } as never })),
 };
 
+function authHeaders(): HeadersInit {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 /**
- * Live indexing progress. EventSource cannot send an Authorization header, so this
- * uses fetch with a reader — which also gives us a clean abort.
+ * Live indexing progress.
+ *
+ * `fetch` rather than `EventSource`, which cannot carry an Authorization header — and the
+ * token deliberately is not a cookie.
  */
 export function subscribeToProgress(
-  onProgress: (p: Job & { currentFile?: string }) => void,
-  onStateChange: (connected: boolean) => void,
+  onProgress: (p: JobSummary & { currentFile?: string }) => void,
+  onError?: () => void,
 ): () => void {
   const controller = new AbortController();
-  let stopped = false;
 
-  (async () => {
-    let backoff = 1000;
-    while (!stopped) {
-      try {
-        const token = getToken();
-        const res = await fetch('/api/events', {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          signal: controller.signal,
-        });
-        if (!res.ok || !res.body) throw new Error(`events: ${res.status}`);
+  void (async () => {
+    try {
+      const res = await fetch('/api/events', {
+        headers: authHeaders(),
+        signal: controller.signal,
+      });
+      if (!res.ok || !res.body) throw new Error(`events: ${res.status}`);
 
-        onStateChange(true);
-        backoff = 1000;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
 
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-        while (!stopped) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split('\n\n');
+        buffer = frames.pop() ?? '';
 
-          let sep: number;
-          while ((sep = buffer.indexOf('\n\n')) >= 0) {
-            const frame = buffer.slice(0, sep);
-            buffer = buffer.slice(sep + 2);
-            const data = frame
-              .split('\n')
-              .filter((l) => l.startsWith('data: '))
-              .map((l) => l.slice(6))
-              .join('');
-            if (data) {
-              try {
-                onProgress(JSON.parse(data));
-              } catch {
-                /* a malformed frame is not worth tearing the stream down for */
-              }
-            }
-          }
+        for (const frame of frames) {
+          const line = frame.split('\n').find((l) => l.startsWith('data: '));
+          if (line) onProgress(JSON.parse(line.slice(6)));
         }
-      } catch {
-        if (stopped) return;
-        onStateChange(false);
-        await new Promise((r) => setTimeout(r, backoff));
-        backoff = Math.min(backoff * 2, 15000);
       }
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') onError?.();
     }
   })();
 
-  return () => {
-    stopped = true;
-    controller.abort();
-  };
+  return () => controller.abort();
 }

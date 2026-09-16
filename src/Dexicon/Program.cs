@@ -78,6 +78,13 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 {
     o.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
     o.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
+
+    // A number is a number. The web defaults also accept one written as a string, which
+    // is leniency nobody asked for and which the OpenAPI document has to describe
+    // truthfully — so every int32 came out as `["integer", "string"]` and the generated
+    // TypeScript typed every count and every chunk size as `number | string`. Arithmetic
+    // on that is a cast at every call site, to support input no client sends.
+    o.SerializerOptions.NumberHandling = JsonNumberHandling.Strict;
 });
 
 builder.Services.AddDbContext<CatalogDbContext>(o =>

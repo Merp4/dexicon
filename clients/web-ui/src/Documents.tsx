@@ -59,7 +59,7 @@ export function DocumentsView({
       setBusy(true);
       try {
         const result = await api.uploadDocuments(uploadTo, files);
-        const deduped = result.stored.filter((s) => s.deduplicated).length;
+        const deduped = result.stored.filter((s: { deduplicated: boolean }) => s.deduplicated).length;
         if (deduped > 0) {
           // Worth saying out loud: it looks like nothing happened otherwise.
           // eslint-disable-next-line no-console
