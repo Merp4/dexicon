@@ -21,6 +21,7 @@
   logs     tail the app log
   token    print the bootstrap token from the log
   reset    stop, delete the local catalogue and Qdrant collections, start fresh
+  ui       build the SPA and copy it into wwwroot (the container does this at image build)
 
 .EXAMPLE
   ./scripts/dev.ps1 restart
@@ -28,7 +29,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Position = 0)]
-  [ValidateSet('up', 'restart', 'stop', 'down', 'logs', 'token', 'reset')]
+  [ValidateSet('up', 'restart', 'stop', 'down', 'logs', 'token', 'reset', 'ui')]
   [string]$Command = 'restart'
 )
 
@@ -87,7 +88,23 @@ function Start-Dependencies {
   } finally { Pop-Location }
 }
 
+function Build-Ui {
+  $ui = Join-Path $root 'clients/web-ui'
+  Push-Location $ui
+  try {
+    if (-not (Test-Path (Join-Path $ui 'node_modules'))) { npm install --no-audit --no-fund | Out-Null }
+    npm run build 2>&1 | Select-Object -Last 3
+  } finally { Pop-Location }
+
+  $dest = Join-Path $root 'src/Dexicon/wwwroot'
+  # The built bundle is gitignored; only the placeholder index.html is tracked.
+  Get-ChildItem (Join-Path $dest 'assets') -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+  Copy-Item (Join-Path $ui 'dist/*') $dest -Recurse -Force
+  Write-Host "dexicon: UI copied to wwwroot"
+}
+
 switch ($Command) {
+  'ui' { Build-Ui }
   'up' { Start-Dependencies; Build-Dexicon; Stop-Dexicon; Start-Dexicon }
   'restart' { Stop-Dexicon; Build-Dexicon; Start-Dexicon }
   'stop' { Stop-Dexicon }
