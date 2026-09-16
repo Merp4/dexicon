@@ -181,7 +181,7 @@ export function DocumentsView({
                   >
                     <strong className="min-w-[130px]">{a.corpusName}</strong>
                     <Badge tone={stateTone(a.status)}>{a.status}</Badge>
-                    <span className="mono">{a.chunkCount} chunks</span>
+                    <span className="mono">{a.chunkCount.toLocaleString()} chunks</span>
                     <span className="text-muted-foreground">from {a.chunkSize}/{a.chunkOverlap} {a.boundaryMode}</span>
                     <span className="flex-1" />
                     <Button
