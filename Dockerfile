@@ -28,9 +28,14 @@ FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS build
 WORKDIR /build
 
 # Stamped into the assembly, and from there into the OpenAPI document and the version the
-# MCP server reports. The release workflow passes the git tag; the default matches
-# Directory.Build.props so a local `docker build` is not silently different.
-ARG VERSION=0.1.1
+# MCP server reports.
+#
+# Passed in rather than derived: every other build gets this from the git tag via MinVer,
+# but .dockerignore excludes .git — copying history into the context would invalidate the
+# layer cache on every commit — so this stage has nothing to read. The release workflow
+# passes the tag. The default is deliberately not a real version: an image built by hand
+# should say so rather than impersonate a release.
+ARG VERSION=0.0.0-dev
 
 # Central package management first, again for layer caching.
 COPY Directory.Build.props Directory.Packages.props ./
@@ -45,7 +50,8 @@ RUN dotnet publish src/Dexicon/Dexicon.csproj \
     -o /app/publish \
     --no-restore \
     /p:UseAppHost=false \
-    /p:Version=${VERSION}
+    /p:Version=${VERSION} \
+    /p:MinVerSkip=true
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine AS runtime

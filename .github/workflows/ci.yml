@@ -24,6 +24,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # MinVer derives the version from the nearest tag, and a shallow clone has
+          # neither history nor tags — so without this every CI build would version
+          # itself 0.0.0-alpha.0.
+          fetch-depth: 0
 
       - uses: actions/setup-dotnet@v4
         with:

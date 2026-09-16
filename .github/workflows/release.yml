@@ -32,6 +32,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Tags and history, for MinVer.
+          fetch-depth: 0
 
       - name: Image name
         id: image
