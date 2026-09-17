@@ -6,3 +6,6 @@ contact_links:
   - name: Troubleshooting
     url: https://github.com/Merp4/dexicon/blob/main/docs/troubleshooting.md
     about: The failures that actually happen in the first hour.
+  - name: Questions and ideas
+    url: https://github.com/Merp4/dexicon/discussions
+    about: Ask how something works, or float a change before building it.

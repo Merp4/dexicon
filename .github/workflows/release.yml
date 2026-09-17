@@ -23,7 +23,9 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      contents: read
+      # write, not read: a tag push also cuts the GitHub Release whose body is that
+      # version's CHANGELOG section.
+      contents: write
       packages: write
       # Provenance: what built this image, from which commit. Worth having from the
       # first release rather than retrofitted after someone asks.
@@ -54,6 +56,33 @@ jobs:
           else
             echo "value=0.0.0-edge.${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Release notes
+        id: notes
+        # Read here, at the top, rather than next to the release that consumes them. A
+        # tag with no CHANGELOG section is a mistake worth stopping the release for, and
+        # stopping it is only possible before anything has been pushed to the registry.
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          # The section runs from its own heading to the next one. Matched by string
+          # prefix rather than by regex: a version is full of dots, and a regex would
+          # need them escaped to stop `0.2.2` matching `0x2x2`. The trailing space is
+          # what stops it matching `0.2.20`.
+          awk -v ver="$VERSION" '
+            index($0, "## " ver " ") == 1 || $0 == "## " ver { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+
+          if [ ! -s release-notes.md ]; then
+            echo "::error file=CHANGELOG.md::No section for $VERSION. A tagged release needs one."
+            exit 1
+          fi
+
+          echo "Release notes for $VERSION:"
+          cat release-notes.md
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -182,6 +211,37 @@ jobs:
           subject-name: ${{ steps.image.outputs.name }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+
+      - name: GitHub Release
+        # Only a tag is a release; a push to main publishes an `edge` image and nothing
+        # else. Runs after the push so the body can name the digest that was actually
+        # published, and re-runnable because `workflow_dispatch` on an existing tag
+        # would otherwise fail on a release that is already there.
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          IMAGE: ${{ steps.image.outputs.name }}
+          VERSION: ${{ steps.version.outputs.value }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          {
+            echo
+            echo '---'
+            echo
+            echo '```'
+            echo "docker pull ${IMAGE}:${VERSION}"
+            echo '```'
+            echo
+            echo "Digest \`${DIGEST}\`. An SBOM and build provenance are attached to the"
+            echo "image in the registry."
+          } >> release-notes.md
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file release-notes.md
+          else
+            gh release create "$TAG" --title "$TAG" --notes-file release-notes.md --verify-tag
+          fi
 
       - name: What was published
         run: |
