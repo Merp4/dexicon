@@ -6,6 +6,7 @@ import {
   setToken,
   subscribeToProgress,
   type Corpus,
+  type CoverageGap,
   type Health,
   type IndexedFile,
   type EmbeddingModelInfo,
@@ -813,8 +814,9 @@ export function CorpusDetail({
   const [filter, setFilter] = useState<string>('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [removingSource, setRemovingSource] = useState<Corpus['sources'][number] | null>(null);
-  const [addingSource, setAddingSource] = useState(false);
+  const [addingSource, setAddingSource] = useState<{ path: string } | null>(null);
   const [viewing, setViewing] = useState<{ path: string; line?: number } | null>(null);
+  const [gaps, setGaps] = useState<CoverageGap[]>([]);
 
 
   const load = useCallback(async () => {
@@ -823,6 +825,16 @@ export function CorpusDetail({
       setCorpus(c);
       const f = await api.listFiles(name, filter || undefined);
       setFiles(f.files);
+
+      // Its own call, and a failure here does not reach onError: a coverage report that
+      // cannot be fetched is a missing warning, not a broken page, and an older container
+      // in the dev loop has no such endpoint at all. The page is worth more than the
+      // notice.
+      try {
+        setGaps((await api.coverage(name)).gaps ?? []);
+      } catch {
+        setGaps([]);
+      }
     } catch (e) {
       onError(e);
     }
@@ -856,6 +868,12 @@ export function CorpusDetail({
       </div>
 
       {job?.phase && <div className="card p-3.5"><ProgressBar job={job} /></div>}
+
+      <CoverageNotice
+        gaps={gaps}
+        canAddSource={corpus.owned}
+        onAddSource={(path) => setAddingSource({ path })}
+      />
 
       <div className="card p-3.5 grid gap-2 text-sm">
         <Row label="Sources">
@@ -909,7 +927,7 @@ export function CorpusDetail({
             </span>
           )}
           {corpus.owned && (
-            <Button className="mt-1.5 px-2 py-0.5 text-xs" onClick={() => setAddingSource(true)}>
+            <Button className="mt-1.5 px-2 py-0.5 text-xs" onClick={() => setAddingSource({ path: '' })}>
               <Plus />
               Add source
             </Button>
@@ -1021,8 +1039,9 @@ export function CorpusDetail({
       {addingSource && (
         <AddSourceModal
           corpus={corpus}
-          onClose={() => setAddingSource(false)}
-          onAdded={async () => { setAddingSource(false); await onRefresh(); }}
+          initialPath={addingSource.path}
+          onClose={() => setAddingSource(null)}
+          onAdded={async () => { setAddingSource(null); await onRefresh(); }}
           onError={onError}
         />
       )}
@@ -1050,6 +1069,75 @@ export function CorpusDetail({
 }
 
 /**
+ * Files the corpus is not indexing and has no row for.
+ *
+ * A file outside every source root is not skipped and not failed: it is absent. It appears
+ * in no count on this page, and a search for it returns other documents, which reads like a
+ * ranking result. Nothing on the screen said the corpus had a hole in it.
+ *
+ * Reported only where two or more of the corpus's sources share a parent directory, so the
+ * ordinary case stays silent — a corpus that indexes one folder is not missing everything
+ * beside it. The server decides that; this draws what it returns.
+ *
+ * `warn`, not `danger`: nothing is broken, and a file may be sitting there deliberately.
+ * The button carries the path so the fix does not depend on the reader retyping it.
+ */
+function CoverageNotice({
+  gaps,
+  canAddSource,
+  onAddSource,
+}: {
+  gaps: CoverageGap[];
+  canAddSource: boolean;
+  onAddSource: (path: string) => void;
+}) {
+  if (gaps.length === 0) return null;
+
+  return (
+    <>
+      {gaps.map((gap) => {
+        // The empty string is the workspace root, and "files in  are not indexed" is how
+        // that reads if it is passed through.
+        const where = gap.directory === '' ? 'the workspace root' : gap.directory;
+        const files = gap.files ?? [];
+
+        return (
+          <Notice key={gap.directory} tone="warn">
+            <p className="m-0">
+              <strong>{files.length.toLocaleString()}</strong>{' '}
+              {files.length === 1 ? 'file' : 'files'} in <span className="mono">{where}</span>{' '}
+              {files.length === 1 ? 'is' : 'are'} covered by no source, though its subfolders
+              are. Searching will never return {files.length === 1 ? 'it' : 'them'}.
+            </p>
+
+            {/* Five, then a count. The whole list belongs behind the Files tab; what this
+                has to do is make the gap concrete enough to recognise. */}
+            <ul className="mt-1.5 mb-0 grid gap-0.5 pl-4 text-xs">
+              {files.slice(0, 5).map((f) => (
+                <li key={f} className="mono break-all">{f}</li>
+              ))}
+              {files.length > 5 && (
+                <li className="dim">and {(files.length - 5).toLocaleString()} more</li>
+              )}
+            </ul>
+
+            {canAddSource && (
+              <Button
+                className="mt-2.5 px-2 py-0.5 text-xs"
+                onClick={() => onAddSource(gap.directory)}
+              >
+                <Plus />
+                Add a source on {where}
+              </Button>
+            )}
+          </Notice>
+        );
+      })}
+    </>
+  );
+}
+
+/**
  * Add a place this corpus takes content from.
  *
  * Every field here has been in the API since the beginning and in docs/08 since the
@@ -1058,16 +1146,20 @@ export function CorpusDetail({
  */
 function AddSourceModal({
   corpus,
+  initialPath = '',
   onClose,
   onAdded,
   onError,
 }: {
   corpus: Corpus;
+  /** Pre-filled when the coverage notice opened this, so the fix is one click from the
+   *  warning rather than a path the reader has to retype. */
+  initialPath?: string;
   onClose: () => void;
   onAdded: () => Promise<void>;
   onError: (e: unknown) => void;
 }) {
-  const [path, setPath] = useState('');
+  const [path, setPath] = useState(initialPath);
   const [useGitignore, setUseGitignore] = useState(true);
   const [maxFileMb, setMaxFileMb] = useState(2);
   const [include, setInclude] = useState('');

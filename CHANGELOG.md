@@ -16,6 +16,23 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## Unreleased
+
+### Added
+
+- **The UI reports files no source covers.** `0.2.3` gave this to agents through
+  `index_status` and left the web UI silent about it, which is the wrong way round: the
+  corpus page is where sources are added. A `Notice` above the sources names the directory,
+  up to five of the files in it and how many more, and its button opens the source picker
+  already pointed at that directory, because a path read off a warning and retyped is where
+  this goes wrong.
+
+  New endpoint `GET /api/corpora/{name}/coverage`, additive. It is its own call rather than
+  a field on the corpus summary because answering it reads the filesystem, and the summary
+  is drawn on every navigation. The UI reads it defensively: a coverage report that cannot
+  be fetched is a missing warning, not a broken page, and an older container has no such
+  endpoint at all.
+
 ## 0.2.3 — 2026-09-18
 
 ### ⚠️ Upgrading

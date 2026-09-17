@@ -33,6 +33,7 @@ import {
   getApiCorporaByNameOrId,
   getApiCorporaByNameOrIdChunkSets,
   getApiCorporaByNameOrIdFile,
+  getApiCorporaByNameOrIdCoverage,
   getApiCorporaByNameOrIdFiles,
   getApiDocuments,
   getApiDocumentsBySha256Text,
@@ -106,6 +107,8 @@ export { getToken, setToken } from './token';
 export type {
   ChunkSetSummary as ChunkSet,
   CorpusSummary as Corpus,
+  CoverageGap,
+  CoverageReport,
   CreatedTokenResponse as CreatedToken,
   EmbeddingModelInfo,
   EmbeddingProviderInfo,
@@ -233,6 +236,11 @@ export const api = {
 
   reindex: (nameOrId: string, full = false) =>
     call(() => postApiCorporaByNameOrIdReindex({ path: { nameOrId }, query: { full } })),
+
+  /** Directories that lead to this corpus's sources but which no source covers. Reads
+   *  the filesystem, so it is its own call rather than part of the corpus summary. */
+  coverage: (nameOrId: string) =>
+    call(() => getApiCorporaByNameOrIdCoverage({ path: { nameOrId } })),
 
   listFiles: (nameOrId: string, status?: string) =>
     call(() => getApiCorporaByNameOrIdFiles({ path: { nameOrId }, query: status ? { status } : {} })),

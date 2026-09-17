@@ -271,6 +271,20 @@ public static class CorpusEndpoints
             return Results.NoContent();
         });
 
+        // Its own endpoint rather than a field on the summary: answering it reads the
+        // filesystem, and the summary is drawn on every navigation. Read rather than
+        // stored, so it reflects the disk now and not the last index run.
+        g.MapGet("/{nameOrId}/coverage", async (string nameOrId, RequestContext rc, ScopeResolver scopes,
+            CatalogDbContext db, IOptions<DexiconOptions> opts, CancellationToken ct) =>
+        {
+            if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
+            var tenant = rc.RequireTenant();
+            var scope = await scopes.ResolveReadableAsync(tenant, [nameOrId], ct);
+            var corpus = scope.Corpora[0];
+
+            return Results.Ok(await CoverageAsync(db, opts.Value.Indexing, corpus.Id, ct));
+        }).Produces<CoverageReport>();
+
         g.MapPost("/{nameOrId}/reindex", async (string nameOrId, bool? full, RequestContext rc,
             ScopeResolver scopes, IndexJobQueue queue, CancellationToken ct) =>
         {
@@ -384,6 +398,31 @@ public static class CorpusEndpoints
                 total,
                 more ? offset + window.Length : null));
         }).Produces<IndexedFileText>();
+    }
+
+    /// <summary>
+    /// Directories that lead to this corpus's sources but which no source covers.
+    ///
+    /// Scoped to one corpus, which is the whole of what this adds over
+    /// <see cref="SourceCoverage.Find"/>: reading every source in the database instead
+    /// would report one corpus's gaps on another's page, and the answer would still look
+    /// entirely plausible.
+    /// </summary>
+    internal static async Task<CoverageReport> CoverageAsync(
+        CatalogDbContext db, IndexingOptions indexing, string corpusId, CancellationToken ct)
+    {
+        var sources = await db.Sources
+            .Where(s => s.CorpusId == corpusId)
+            .Select(s => new { s.RootPath, s.MaxFileBytes })
+            .ToListAsync(ct);
+
+        var gaps = SourceCoverage.Find(
+            indexing.WorkspaceRoot,
+            sources.Select(s => new SourceCoverage.SourceRoot(s.RootPath, s.MaxFileBytes)),
+            indexing.DocumentMaxBytes);
+
+        return new CoverageReport(
+            gaps.Select(g => new CoverageGap(g.DirectoryRelativePath, g.Files)).ToList());
     }
 
     internal static async Task<CorpusSummary> Summarise(CatalogDbContext db, Corpus c, string viewerTenant,
