@@ -39,7 +39,7 @@ services:
       # stack is ever attached to a shared network. See "Routing" below.
       DEXICON__QDRANT__ENDPOINT:   http://dexicon-qdrant:6334
       DEXICON__OLLAMA__ENDPOINT:   http://dexicon-ollama:11434
-      DEXICON__EMBEDDING__MODEL:   ${DEXICON_EMBEDDING_MODEL:-nomic-embed-text}
+      DEXICON__EMBEDDING__MODEL:   ${DEXICON_EMBEDDING_MODEL:-embeddinggemma}
       DEXICON__BOOTSTRAP__TENANT:  ${DEXICON_BOOTSTRAP_TENANT:-default}
       DEXICON__BOOTSTRAP__TOKEN:   ${DEXICON_BOOTSTRAP_TOKEN:-}   # blank = generate and log once
     volumes:
@@ -207,6 +207,38 @@ Pointing at another Compose stack's Ollama instead — `http://mcptoolbox-infra-
 — additionally needs that stack's network declared `external: true` here. Use the
 container's real name, never a bare service alias, for the reason above.
 
+## Indexing a tree outside the workspace root
+
+`WORKSPACE_ROOT` is the only thing the indexer can see, and it is one directory. To index
+a second tree — a folder of books, another checkout, a documentation site — mount it
+*underneath* the root:
+
+```yaml
+# docker-compose.override.yml — NOT committed; see .gitignore
+services:
+  dexicon:
+    volumes:
+      - /path/to/books:/workspaces/books:ro
+```
+
+Compose applies `docker-compose.override.yml` automatically, with no `-f` flags. That is
+what makes it convenient locally and wrong to commit: it names paths that exist on one
+machine. The overlays that ARE committed — `docker-compose.gpu.yml`,
+`docker-compose.debug.yml` — are opt-in by name for the same reason.
+
+Two things that are not obvious:
+
+- **The mountpoint must already exist on the host.** `/workspaces` is bind-mounted
+  read-only, so Docker cannot create `/workspaces/books` inside it and the container
+  fails to start with `read-only file system`. Create the empty directory under
+  `WORKSPACE_ROOT` first.
+- **Order is by depth, not by declaration.** Docker mounts `/workspaces` before
+  `/workspaces/books`, so the nested mount lands on top of the parent rather than being
+  hidden by it.
+
+Read-only is not decoration. Dexicon reads your files and is structurally incapable of
+writing to them; keep the `:ro` when you add a mount.
+
 ## Configuration
 
 Environment variables, double-underscore hierarchy (standard ASP.NET Core binding).
@@ -220,10 +252,10 @@ Everything has a working default except `WORKSPACE_ROOT`.
 | `DEXICON__QDRANT__ENDPOINT` | `http://dexicon-qdrant:6334` | gRPC endpoint. Namespaced service name — see "Routing". |
 | `QDRANT_API_KEY` | *(empty)* | Set for anything not on a single trusted machine. |
 | `DEXICON__OLLAMA__ENDPOINT` | `http://dexicon-ollama:11434` | Namespaced service name — see "Routing". |
-| `DEXICON__EMBEDDING__MODEL` | `nomic-embed-text` | Default for new corpora. |
+| `DEXICON__EMBEDDING__MODEL` | `embeddinggemma` | Default for new corpora. Pinned per chunk set at creation, so changing it migrates nothing. |
 | `DEXICON__EMBEDDING__MAXCONCURRENCY` | `4` | Parallel embedding requests. |
 | `DEXICON__INDEXING__MAXFILEBYTES` | `262144` | Default per-source size cap. |
-| `DEXICON__INDEXING__REFRESHMINUTES` | `0` | `0` = manual only. |
+| `DEXICON__INDEXING__REFRESHMINUTES` | `0` | Automatic refresh interval in minutes. `0` = manual only. |
 | `DEXICON__UPLOAD__MAXFILEBYTES` | `209715200` | 200 MB. |
 | `DEXICON__BOOTSTRAP__TENANT` | `default` | Created on first run. |
 | `DEXICON__BOOTSTRAP__TOKEN` | *(empty)* | Blank generates one and logs it once. |
