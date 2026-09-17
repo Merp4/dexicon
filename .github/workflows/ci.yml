@@ -119,11 +119,23 @@ jobs:
           # scanning only the diff is scanning the one place it is not.
           fetch-depth: 0
 
+      # `gitleaks detect` walks the whole git log. The action does not: on a push it
+      # scans the commits in that push, so the comment above described a guard this job
+      # did not have. A token-shaped fixture sat in tests/ for a day across a dozen green
+      # pushes and was only caught when a history rewrite made every commit new to it --
+      # a real secret committed and removed across two pushes would have slipped the same
+      # way. Running the binary makes the scan match what is claimed, and drops a
+      # third-party action from a job whose whole purpose is to be trusted.
       - name: gitleaks
-        uses: gitleaks/gitleaks-action@v2
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_CONFIG: .gitleaks.toml
+          VERSION: 8.30.1
+        run: |
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}"
+          url="${url}/gitleaks_${VERSION}_linux_x64.tar.gz"
+          curl -sSfL "$url" | tar -xzf - gitleaks
+          ./gitleaks version
+          # --redact so a real finding does not print the secret into a public log.
+          ./gitleaks detect --source . --config .gitleaks.toml --redact --verbose
 
   supply-chain:
     name: Dependencies
