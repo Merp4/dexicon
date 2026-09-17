@@ -229,6 +229,48 @@ public static class CorpusEndpoints
             return Results.Ok(new SourceAdded(source.ToSummary(), job.ToSummary()));
         }).Produces<SourceAdded>();
 
+        // Adding a folder was one call; removing one was deleting the whole corpus and
+        // building it again, losing its chunk sets, its history and every other source
+        // with it. A path typed wrong is not a reason to lose all of that.
+        g.MapDelete("/{nameOrId}/sources/{sourceId}", async (string nameOrId, string sourceId,
+            RequestContext rc, ScopeResolver scopes, CatalogDbContext db, IVectorStore vectors,
+            CancellationToken ct) =>
+        {
+            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+            var corpus = await scopes.ResolveWritableAsync(rc.RequireTenant(), nameOrId, ct);
+
+            var source = await db.Sources
+                .FirstOrDefaultAsync(s => s.Id == sourceId && s.CorpusId == corpus.Id, ct);
+
+            if (source is null)
+                return Results.Problem(
+                    title: "No such source",
+                    detail: $"Corpus '{corpus.Name}' has no source '{sourceId}'.",
+                    statusCode: 404);
+
+            var paths = await db.Files.Where(f => f.SourceId == source.Id)
+                .Select(f => f.RelativePath).ToListAsync(ct);
+
+            // Vectors first, for the same reason RemoveAttachmentAsync does it: if the
+            // catalogue row went first and this threw, the corpus would keep returning
+            // hits for files it no longer lists.
+            //
+            // Once per set — a removed folder has to leave every chunking of the corpus,
+            // not only the default one — and scoped to THIS source, because a file_path is
+            // relative to a source root and another source may hold the same name.
+            var sets = await db.ChunkSets.Where(s => s.CorpusId == corpus.Id).ToListAsync(ct);
+            foreach (var set in sets)
+                foreach (var path in paths)
+                    await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, source.Id, path, ct);
+
+            // The file rows and their per-set chunk states go with it: both cascade from
+            // Source, so removing it is the whole of the catalogue side.
+            db.Sources.Remove(source);
+            await db.SaveChangesAsync(ct);
+
+            return Results.NoContent();
+        });
+
         g.MapPost("/{nameOrId}/reindex", async (string nameOrId, bool? full, RequestContext rc,
             ScopeResolver scopes, IndexJobQueue queue, CancellationToken ct) =>
         {

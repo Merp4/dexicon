@@ -693,6 +693,7 @@ export function CorpusDetail({
   const [files, setFiles] = useState<IndexedFile[]>([]);
   const [filter, setFilter] = useState<string>('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [removingSource, setRemovingSource] = useState<Corpus['sources'][number] | null>(null);
   const [addingSource, setAddingSource] = useState(false);
   const [viewing, setViewing] = useState<{ path: string; line?: number } | null>(null);
 
@@ -771,6 +772,19 @@ export function CorpusDetail({
                     {s.includeGlobs?.length ? ` · only ${s.includeGlobs.join(', ')}` : ''}
                     {s.excludeGlobs?.length ? ` · not ${s.excludeGlobs.join(', ')}` : ''}
                   </span>
+                  {/* Adding a folder was one click; removing one meant deleting the whole
+                      corpus and rebuilding it, losing its chunk sets, its history and every
+                      other source with it. A path typed wrong is not worth that. */}
+                  {corpus.owned && (
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={`Remove source ${s.rootPath ?? s.kind}`}
+                      onClick={() => setRemovingSource(s)}
+                    >
+                      <Trash2 />
+                    </Button>
+                  )}
                 </span>
               ))}
             </span>
@@ -874,6 +888,16 @@ export function CorpusDetail({
           corpus={corpus}
           onClose={() => setAddingSource(false)}
           onAdded={async () => { setAddingSource(false); await onRefresh(); }}
+          onError={onError}
+        />
+      )}
+
+      {removingSource && (
+        <RemoveSourceModal
+          corpus={corpus}
+          source={removingSource}
+          onClose={() => setRemovingSource(null)}
+          onRemoved={async () => { setRemovingSource(null); await load(); }}
           onError={onError}
         />
       )}
@@ -1084,6 +1108,47 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <span className="dim w-[96px] shrink-0">{label}</span>
       <span className="flex-1">{children}</span>
     </div>
+  );
+}
+
+function RemoveSourceModal({ corpus, source, onClose, onRemoved, onError }: {
+  corpus: Corpus;
+  source: Corpus['sources'][number];
+  onClose: () => void;
+  onRemoved: () => Promise<void>;
+  onError: (e: unknown) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const where = source.rootPath ?? source.kind;
+
+  return (
+    <Modal title={`Remove ${where}?`} onClose={onClose}>
+      {/* No typed confirmation, unlike deleting a corpus: this is recoverable by adding
+          the folder back, and the cost of getting it wrong is a reindex rather than an
+          index that no longer exists. Say what it costs and take one click. */}
+      <p className="mt-0 text-sm">
+        {source.fileCount
+          ? `Its ${source.fileCount.toLocaleString()} files leave the index immediately, in every chunk set of ${corpus.name}.`
+          : `It has no indexed files, so nothing leaves the index.`}
+        {' '}The folder on disk is untouched — Dexicon only ever reads it. Adding it again
+        re-indexes from scratch.
+      </p>
+      <div className="flex gap-2 justify-end">
+        <Button onClick={onClose}>Cancel</Button>
+        <Button
+          variant="danger"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try { await api.removeSource(corpus.name, source.id); await onRemoved(); }
+            catch (e) { onError(e); setBusy(false); }
+          }}
+        >
+          <Trash2 />
+          {busy ? 'Removing…' : 'Remove source'}
+        </Button>
+      </div>
+    </Modal>
   );
 }
 

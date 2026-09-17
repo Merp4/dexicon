@@ -450,6 +450,36 @@
         }
       }
     },
+    "/api/corpora/{nameOrId}/sources/{sourceId}": {
+      "delete": {
+        "tags": [
+          "Corpora"
+        ],
+        "parameters": [
+          {
+            "name": "nameOrId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sourceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/corpora/{nameOrId}/reindex": {
       "post": {
         "tags": [
