@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
+using Dexicon.Infrastructure;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
@@ -202,5 +203,41 @@ public sealed class SecretHygieneTests
         reader.Has(Scopes.Search).ShouldBeTrue();
         reader.Has(Scopes.Ingest).ShouldBeFalse();
         reader.Has(Scopes.Admin).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void PrincipalCacheKey_IsACryptographicDigest_NotA32BitHash()
+    {
+        // The key was `GetHashCode() + length`. A collision in 32 bits hands the second
+        // caller the FIRST caller's authenticated principal without verifying anything,
+        // so the width of this key is a security property and belongs in a test.
+        var key = DexiconAuthMiddleware.PrincipalCacheKey("dex_01JBXQZ9K7MNPRSTVWXYZ01234_secret-value");
+
+        var digest = key["principal::".Length..];
+        digest.Length.ShouldBe(64, "SHA-256 as lower-case hex");
+        digest.ShouldAllBe(c => Uri.IsHexDigit(c));
+    }
+
+    [Fact]
+    public void PrincipalCacheKey_NeverContainsTheToken()
+    {
+        // Cache keys surface in memory dumps and diagnostics. The credential must not.
+        const string Token = "dex_01JBXQZ9K7MNPRSTVWXYZ01234_a-secret-nobody-should-read";
+
+        DexiconAuthMiddleware.PrincipalCacheKey(Token).ShouldNotContain("a-secret-nobody-should-read");
+    }
+
+    [Fact]
+    public void PrincipalCacheKey_IsStableAndSeparatesTokensThatLookAlike()
+    {
+        const string Token = "dex_01JBXQZ9K7MNPRSTVWXYZ01234_secret-value";
+
+        // Stable, or the cache never hits and PBKDF2 runs on every MCP call.
+        DexiconAuthMiddleware.PrincipalCacheKey(Token)
+            .ShouldBe(DexiconAuthMiddleware.PrincipalCacheKey(Token));
+
+        // Same length, one character apart — the case the old key was weakest on.
+        DexiconAuthMiddleware.PrincipalCacheKey(Token)
+            .ShouldNotBe(DexiconAuthMiddleware.PrincipalCacheKey("dex_01JBXQZ9K7MNPRSTVWXYZ01234_secret-valuf"));
     }
 }
