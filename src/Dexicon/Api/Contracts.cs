@@ -157,7 +157,25 @@ public sealed record ProbeModelRequest(string Model, string? Provider = null);
 public sealed record EmbeddingModelInfo(
     string Name, long SizeBytes, int? Dimensions, bool InUse,
     /// <summary>How text is framed for this model, and whether that is saved or assumed.</summary>
-    string DocumentTemplate, string QueryTemplate, string TemplateOrigin);
+    string DocumentTemplate, string QueryTemplate, string TemplateOrigin,
+    /// <summary>
+    /// What a probe measured about this model, or null if it has never been probed.
+    /// </summary>
+    /// <remarks>
+    /// Here rather than only on the probe response because the moment it matters is when
+    /// somebody is choosing a chunk size, and that screen was showing "64-8192" with no
+    /// reference to what the selected model can actually take. The probe measured it once
+    /// and then forgot, so the answer existed and was unreachable.
+    /// </remarks>
+    ModelMeasurement? Measured);
+
+/// <summary>A probe's findings, as a caller sees them.</summary>
+public sealed record ModelMeasurement(
+    int? MaxInputChars,
+    bool TruncatesSilently,
+    int RecommendedChunkTokens,
+    double? CharsPerToken,
+    DateTime MeasuredUtc);
 
 /// <summary>
 /// Saves the task framing for one model. Templates contain <c>{text}</c>; sending

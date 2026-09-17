@@ -371,13 +371,26 @@ public static class SystemEndpoints
 
             // The framing travels with the model, because "embedded raw" is the one state
             // nobody would think to ask about and the one that silently costs recall.
+            var measured = (await db.ModelMeasurements
+                    .Where(x => x.Provider == name)
+                    .ToListAsync(ct))
+                .ToDictionary(x => ModelNames.Normalise(x.Model), StringComparer.OrdinalIgnoreCase);
+
             var listed = new List<EmbeddingModelInfo>(candidates.Count);
             foreach (var m in candidates)
             {
                 var templates = await profiles.ForAsync(new EmbeddingTarget(name, m.Name), ct);
+                measured.TryGetValue(ModelNames.Normalise(m.Name), out var facts);
+
                 listed.Add(new EmbeddingModelInfo(
-                    m.Name, m.SizeBytes, m.Dimensions, inUse.Contains(ModelNames.Normalise(m.Name)),
-                    templates.Document, templates.Query, templates.Origin.ToString().ToLowerInvariant()));
+                    m.Name, m.SizeBytes,
+                    // A measured dimensionality beats "unknown until first use".
+                    m.Dimensions ?? facts?.Dimensions,
+                    inUse.Contains(ModelNames.Normalise(m.Name)),
+                    templates.Document, templates.Query, templates.Origin.ToString().ToLowerInvariant(),
+                    facts is null ? null : new ModelMeasurement(
+                        facts.MaxInputChars, facts.TruncatesSilently,
+                        facts.RecommendedChunkTokens, facts.CharsPerToken, facts.MeasuredUtc)));
             }
 
             return Results.Ok(new EmbeddingModelList(
@@ -464,7 +477,8 @@ public static class SystemEndpoints
         }).Produces<ModelProfileSaved>().WithTags("System");
 
         app.MapPost("/api/embedding-models/probe", async (ProbeModelRequest body, RequestContext rc,
-            ModelProbe probe, IOptions<DexiconOptions> opts, CancellationToken ct) =>
+            ModelProbe probe, CatalogDbContext db, IOptions<DexiconOptions> opts,
+            CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
 
@@ -477,7 +491,29 @@ public static class SystemEndpoints
 
             try
             {
-                return Results.Ok(await probe.RunAsync(target, ct));
+                var caps = await probe.RunAsync(target, ct);
+
+                // Remembered, because a measurement that has to be taken again is a
+                // measurement nobody takes. Two dozen embed calls to learn a number that
+                // then vanished on reload is why the chunk size field could never say what
+                // the chosen model accepts.
+                var row = await db.ModelMeasurements.FindAsync([target.Provider, target.Model], ct);
+                if (row is null)
+                {
+                    row = new EmbeddingModelMeasurement { Provider = target.Provider, Model = target.Model };
+                    db.ModelMeasurements.Add(row);
+                }
+
+                row.Dimensions = caps.Dimensions;
+                row.MaxInputChars = caps.MaxInputChars;
+                row.TruncatesSilently = caps.TruncatesSilently;
+                row.RecommendedChunkChars = caps.RecommendedChunkChars;
+                row.RecommendedChunkTokens = caps.RecommendedChunkTokens;
+                row.CharsPerToken = caps.CharsPerToken;
+                row.MeasuredUtc = DateTime.UtcNow;
+                await db.SaveChangesAsync(ct);
+
+                return Results.Ok(caps);
             }
             catch (UnknownEmbeddingProviderException ex)
             {

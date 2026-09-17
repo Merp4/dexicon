@@ -15,6 +15,7 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
     public DbSet<Corpus> Corpora => Set<Corpus>();
     public DbSet<ChunkSet> ChunkSets => Set<ChunkSet>();
     public DbSet<EmbeddingModelProfile> ModelProfiles => Set<EmbeddingModelProfile>();
+    public DbSet<EmbeddingModelMeasurement> ModelMeasurements => Set<EmbeddingModelMeasurement>();
     public DbSet<FileChunkState> FileChunkStates => Set<FileChunkState>();
     public DbSet<CorpusGrant> CorpusGrants => Set<CorpusGrant>();
     public DbSet<Source> Sources => Set<Source>();
@@ -100,6 +101,16 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             e.Property(x => x.DocumentTemplate).HasMaxLength(1000).IsRequired();
             e.Property(x => x.QueryTemplate).HasMaxLength(1000).IsRequired();
             e.Property(x => x.Notes).HasMaxLength(1000);
+        });
+
+        modelBuilder.Entity<EmbeddingModelMeasurement>(e =>
+        {
+            e.ToTable("model_measurements");
+            // Same key as a profile and a separate table: one is a measurement and the
+            // other is a choice, and they have no reason to share a lifetime.
+            e.HasKey(x => new { x.Provider, x.Model });
+            e.Property(x => x.Provider).HasMaxLength(40);
+            e.Property(x => x.Model).HasMaxLength(200);
         });
 
         modelBuilder.Entity<ChunkSet>(e =>

@@ -191,6 +191,10 @@ function ChunkSetModal({
   const [sentenceAware, setSentenceAware] = useState(template?.sentenceAware ?? false);
   const [headingContext, setHeadingContext] = useState(template?.headingContext ?? false);
 
+  // Whether the chunk size on screen is still ours to move. The moment someone types a
+  // size they have made a decision, and a later model change must not quietly undo it.
+  const [sizeIsOurs, setSizeIsOurs] = useState(!existing);
+
   const [providers, setProviders] = useState<EmbeddingProviderInfo[]>([]);
   const [models, setModels] = useState<EmbeddingModelInfo[]>([]);
   const [saving, setSaving] = useState(false);
@@ -259,6 +263,25 @@ function ChunkSetModal({
       provider !== template?.embeddingProvider);
 
   const chosenProvider = providers.find((p) => p.name === provider);
+  const chosenModel = models.find((m) => sameModel(m.name, model));
+  const measured = chosenModel?.measured ?? null;
+
+  // What this model was measured to accept, in the same unit the field is in. The chunker
+  // budgets characters at a flat 4 per token, so that is the conversion that decides
+  // whether a chunk fits — not the model's real ratio, which is why a model measured at
+  // 2.8 can truncate a chunk the field says is well inside its limit.
+  const limitInFieldTokens =
+    measured?.maxInputChars != null ? Math.floor(measured.maxInputChars / 4) : null;
+  const overLimit = limitInFieldTokens != null && chunkSize > limitInFieldTokens;
+
+  useEffect(() => {
+    // React to the model, but only while the size is still a suggestion. A model that has
+    // never been probed has nothing to suggest, so the field keeps the inherited value
+    // rather than snapping to a guess.
+    if (!sizeIsOurs || existing || !measured) return;
+    setChunkSize(measured.recommendedChunkTokens);
+    setChunkOverlap(Math.max(1, Math.round(measured.recommendedChunkTokens / 8)));
+  }, [measured, sizeIsOurs, existing]);
 
   return (
     <Modal title={existing ? `Edit ${corpus.name}:${existing.name}` : 'Add a chunk set'} onClose={onClose} width={620}>
@@ -322,13 +345,27 @@ function ChunkSetModal({
       )}
 
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Chunk size (tokens)" hint="64–8192. Roughly four characters each.">
+        <Field
+          label="Chunk size (tokens)"
+          hint={
+            measured
+              ? `${chosenModel?.name.split(':')[0]} was measured at ${measured.maxInputChars?.toLocaleString() ?? 'no'} chars` +
+                `${measured.charsPerToken ? ` · ${measured.charsPerToken} chars/token` : ''}` +
+                ` · suggested ${measured.recommendedChunkTokens.toLocaleString()}`
+              : 'Budgeted as four characters a token. Run Test limits on Models to measure this one.'
+          }
+        >
           <Input
             type="number"
             value={chunkSize}
             min={64}
             max={8192}
-            onChange={(e) => setChunkSize(Number(e.target.value))}
+            aria-invalid={overLimit || undefined}
+            onChange={(e) => {
+              // Typed, so it is theirs now.
+              setSizeIsOurs(false);
+              setChunkSize(Number(e.target.value));
+            }}
           />
         </Field>
         <Field label="Overlap (tokens)" hint="Must be smaller than the chunk size.">
@@ -340,6 +377,21 @@ function ChunkSetModal({
           />
         </Field>
       </div>
+
+      {overLimit && (
+        <p className="-mt-2 mb-3.5 text-sm text-[var(--warn)]">
+          {/* The failure this exists to prevent: a model that returns a perfectly good
+              vector for the part it read, so the rest of every chunk is in no index and
+              nothing reports a problem. */}
+          ⚠ {chosenModel?.name.split(':')[0]} accepts about{' '}
+          {measured?.maxInputChars?.toLocaleString()} characters — roughly{' '}
+          {limitInFieldTokens?.toLocaleString()} at this field's four-characters-a-token
+          budget. At {chunkSize.toLocaleString()},{' '}
+          {measured?.truncatesSilently
+            ? 'it will silently drop the end of every full chunk.'
+            : 'full chunks will be rejected.'}
+        </p>
+      )}
 
       <Field label="Boundary mode" hint="Size decides when to split; the boundary decides where.">
         <Select value={boundaryMode} onValueChange={setBoundaryMode}>
