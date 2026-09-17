@@ -238,8 +238,12 @@ public sealed class WorkspaceWalker
                 var info = new DirectoryInfo(sub);
                 if (info.LinkTarget is not null)
                 {
+                    // Same directory-boundary test as the workspace root, and for the same
+                    // reason: a symlink to a sibling that merely shares the root's name
+                    // prefix is outside the tree being walked, however much of the string
+                    // it has in common with it.
                     var target = Path.GetFullPath(info.ResolveLinkTarget(true)?.FullName ?? sub);
-                    if (!target.StartsWith(root, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!CorpusIndexer.IsInside(target, root)) continue;
                 }
                 stack.Push(sub);
             }

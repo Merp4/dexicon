@@ -653,12 +653,45 @@ public sealed class CorpusIndexer(
         var root = Path.GetFullPath(_indexing.WorkspaceRoot);
         var combined = Path.GetFullPath(Path.Combine(root, relative ?? string.Empty));
 
-        if (!combined.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+        if (!IsInside(combined, root))
             throw new UnauthorizedAccessException(
                 $"Workspace path '{relative}' resolves outside {_indexing.WorkspaceRoot} and was refused.");
 
         return combined;
     }
+
+    /// <summary>
+    /// Whether a resolved path is the root or sits beneath it.
+    ///
+    /// A bare StartsWith is NOT this test, and the difference is a directory boundary: with
+    /// a root of <c>/workspaces</c>, the string <c>/workspaces-secret</c> starts with it and
+    /// is not inside it. `..` was caught, which is what made the gap easy to miss — the
+    /// escape that got through never needed to traverse anywhere, it only needed a sibling
+    /// whose name shares the prefix.
+    /// </summary>
+    internal static bool IsInside(string candidate, string root)
+    {
+        var bounded = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                      + Path.DirectorySeparatorChar;
+
+        var trimmed = candidate.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        // The root itself is inside the root: browsing the mount with no relative path is
+        // the workspace picker's opening call, not an escape.
+        return string.Equals(trimmed, bounded.TrimEnd(Path.DirectorySeparatorChar), PathComparison)
+            || candidate.StartsWith(bounded, PathComparison);
+    }
+
+    /// <summary>
+    /// Case-insensitive only where the filesystem is. On Linux — every container this ships
+    /// in — <c>/Workspaces</c> and <c>/workspaces</c> are two different directories, and
+    /// comparing them as equal is the containment check agreeing to something the kernel
+    /// does not.
+    /// </summary>
+    private static StringComparison PathComparison =>
+        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
 
     /// <summary>
     /// Get-or-create both halves of a file's record: the attachment, which is shared by
