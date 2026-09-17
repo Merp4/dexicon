@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Dexicon.Core.Auth;
 using Microsoft.Extensions.Caching.Memory;
 
@@ -82,7 +84,8 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
         // PBKDF2 at 600k iterations on every MCP call would dominate the cost of a
         // search, so verified principals are cached briefly. Revocation punches
         // through by evicting the entry rather than waiting for the TTL.
-        var cacheKey = $"principal::{presented.GetHashCode(StringComparison.Ordinal)}::{presented.Length}";
+        //
+        var cacheKey = PrincipalCacheKey(presented);
         if (!cache.TryGetValue(cacheKey, out Principal? principal) || principal is null)
         {
             principal = await tokens.VerifyAsync(presented, ctx.RequestAborted);
@@ -122,6 +125,23 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
 
         _ = tokens.TouchAsync(principal.TokenId, CancellationToken.None);
     }
+
+    /// <summary>
+    /// The key a verified principal is cached under, for the TTL above.
+    ///
+    /// SHA-256 over the whole presented token, NOT <c>string.GetHashCode</c>. The key used
+    /// to be a 32-bit non-cryptographic hash plus the token's length, and a collision in
+    /// that space does not return a stale value — it returns somebody else's
+    /// AUTHENTICATED PRINCIPAL, with verification skipped. .NET randomises string hashing
+    /// per process, so the collisions could not be found offline; that is a reason it was
+    /// hard to exploit and not a reason it was sound.
+    ///
+    /// A digest of a sixty-character string costs nothing against the 600k-iteration
+    /// PBKDF2 this cache exists to avoid, and the token itself never becomes the key —
+    /// cache keys turn up in dumps and diagnostics, and a credential should not.
+    /// </summary>
+    internal static string PrincipalCacheKey(string presented) =>
+        "principal::" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(presented)));
 
     private static Task Problem(HttpContext ctx, int status, string title, string detail)
     {
