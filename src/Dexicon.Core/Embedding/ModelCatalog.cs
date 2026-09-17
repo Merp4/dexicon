@@ -58,8 +58,11 @@ public sealed class ModelCatalog(
         // A hosted provider cannot be asked what it has; it has everything it offers. The
         // configured list is the answer, and free text still works in the UI.
         if (configured.Kind != EmbeddingProviderKind.Ollama)
+            // Family is null, not the provider name. A hosted list is curated, so nothing
+            // reads it here — but a field that says "openai" where a model architecture
+            // belongs is a trap for whoever reads it next.
             return [.. configured.Models
-                .Select(m => new AvailableModel(m, 0, provider, KnownDimensions(provider, m)))
+                .Select(m => new AvailableModel(m, 0, null, KnownDimensions(provider, m)))
                 .OrderBy(m => m.Name, StringComparer.Ordinal)];
 
         try

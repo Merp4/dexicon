@@ -677,10 +677,17 @@ public static class ModelNames
     ///
     /// A heuristic, and labelled as one: Ollama's /api/tags does not say what a model is
     /// FOR, and asking every model to embed a probe string would mean loading each one
-    /// into memory in turn just to render a dropdown. Every embedding model in Ollama's
-    /// library carries "embed" or "embedding" in its name; the cost of being wrong is a
-    /// model missing from a list, not a broken index, because the real check still runs
-    /// when one is chosen.
+    /// into memory in turn just to render a dropdown.
+    ///
+    /// The name check alone is NOT enough, and it is worth being exact about why. Of the
+    /// twelve models in Ollama's embedding category, four carry no "embed" in their name:
+    /// bge-m3, bge-large, all-minilm and paraphrase-multilingual. All four are BERT
+    /// derivatives, so the family check is what actually admits them — it is load-bearing,
+    /// not a belt-and-braces afterthought. (`all-minilm` reports family `bert`;
+    /// `nomic-embed-text` reports `nomic-bert`.)
+    ///
+    /// The cost of being wrong is a model missing from a list, not a broken index,
+    /// because the real check still runs when one is chosen.
     /// </summary>
     internal static bool LooksLikeAnEmbeddingModel(string name, string? family) =>
         name.Contains("embed", StringComparison.OrdinalIgnoreCase)
