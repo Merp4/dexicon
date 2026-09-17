@@ -99,27 +99,15 @@ One container for the UI, API, MCP server and indexer; Qdrant and Ollama alongsi
 
 ## Documentation
 
-[01 — Overview](docs/01-overview.md) for scope and non-goals;
-[12 — Connecting an agent](docs/12-clients.md) to wire it up.
+Start at [01 — Overview](docs/01-overview.md) for scope and non-goals, or
+[12 — Connecting an agent](docs/12-clients.md) to wire one up.
 
-| Doc | What it covers |
-|---|---|
-| [01 — Overview](docs/01-overview.md) | Problem, scope, explicit non-goals, who it is for |
-| [02 — Architecture](docs/02-architecture.md) | Container topology, processes, request and data flows |
-| [03 — Data model](docs/03-data-model.md) | Qdrant collections and payloads, SQLite catalogue, identifiers |
-| [04 — Ingestion](docs/04-ingestion.md) | Sources, extraction, chunking, embedding, incremental reindex |
-| [05 — Search](docs/05-search.md) | Hybrid dense + sparse retrieval, fusion, result contract |
-| [06 — MCP surface](docs/06-mcp-surface.md) | Protocol, transport, the tools, `dexicon://` resources, wire examples |
-| [07 — Tenancy & auth](docs/07-tenancy-auth.md) | Tenant header, tokens, corpus visibility, enforcement |
-| [08 — UI](docs/08-ui.md) | Screens, interactions, live progress |
-| [09 — Deployment](docs/09-deployment.md) | Compose topology, configuration, volumes, GPU, healthchecks |
-| [10 — Security & secrets](docs/10-security-secrets.md) | Secret handling, container hardening, CI, licence review |
-| [11 — Roadmap](docs/11-roadmap.md) | Milestones M0–M5, with definitions of done |
-| [12 — Connecting an agent](docs/12-clients.md) | Per-client MCP setup |
-| [Decisions](docs/decisions.md) | Every load-bearing choice, its rationale, and what was rejected |
-| [Benchmarks](docs/benchmarks.md) | 81 retrieval configurations per corpus, and which defaults that earns |
-| [Troubleshooting](docs/troubleshooting.md) | The failures that actually happen in the first hour |
-| [Changelog](CHANGELOG.md) | What changed per release, and what an upgrade needs |
+The numbered docs in [docs/](docs/) run from architecture and data model through
+ingestion, search, the MCP surface, tenancy, the UI, deployment and security.
+[Decisions](docs/decisions.md) records what was chosen and what was rejected,
+[benchmarks](docs/benchmarks.md) the sweeps behind the defaults,
+[troubleshooting](docs/troubleshooting.md) the first-hour failures, and
+[the roadmap](docs/11-roadmap.md) what is still owed.
 
 ## Contributing
 
