@@ -214,8 +214,7 @@ be dropped silently.
 The last row is a decision, not an omission: symmetric sentence-transformers models were
 trained on sentence pairs with no task prefix, so a prefix is noise in the embedding rather
 than framing. The two Arctic generations want **different** prefixes and differ by one
-character in their names — `snowflake-arctic-embed2` shipped as raw here until its model
-card was checked against the code.
+character in their names, so it is worth checking which one a set actually uses.
 
 `bge-large` is the one judgement call. BGE v1.5 made instructions optional "for
 convenience", but the same card recommends them "for a retrieval task that uses short
@@ -484,8 +483,7 @@ docs say so rather than implying call-graph fidelity.
 - A single chunk that fails after retries skips its **file** (not the scan), records the
   reason, and flags the job degraded. The file's hash is deliberately not written, so the
   next scan retries it. One oversized chunk must never be able to starve the rest of a
-  repository — this is a bug that actually happened upstream and cost ten hours of a stuck
-  index.
+  repository.
 
 ### Model choice
 

@@ -3,8 +3,8 @@
 ## Protocol
 
 > **Verified in the M0 spike (2026-09-16)** against `ModelContextProtocol.AspNetCore`
-> 2.2.0 and Claude Code 2.1.248. The version row below is a **correction** to what this
-> document originally claimed — see "Version handling".
+> 2.2.0 and Claude Code 2.1.248. What the handshake will and will not negotiate is in
+> [Version handling](#version-handling).
 
 | | |
 |---|---|
@@ -215,10 +215,7 @@ code" and an agent waiting thirty seconds.
 
 ## Version handling
 
-**This section was wrong before M0 and is now corrected against measurement.**
-
-The original claim was that Dexicon "serves 2026-07-28, negotiating down to 2025-06-18".
-Neither half survived contact with the SDK. What actually happens:
+Measured against `ModelContextProtocol.AspNetCore` 2.2.0:
 
 ```
 POST /mcp  initialize  protocolVersion: "2026-07-28"
@@ -250,8 +247,7 @@ revision did that client actually get" is the first question when a client misbe
 
 The revision is strict about its own envelope, and the server enforces all of it. Every
 piece below is required, and leaving any one out is a `-32602` or `-32020` naming the
-missing part — worth having written down, because assembling this by hand is otherwise
-several rounds of guessing:
+missing part. Assembling one by hand is otherwise several rounds of guessing:
 
 ```bash
 curl -X POST http://127.0.0.1:8477/mcp   -H 'Authorization: Bearer dex_…'   -H 'Content-Type: application/json'   -H 'Accept: application/json, text/event-stream'   -H 'MCP-Protocol-Version: 2026-07-28'   -H 'Mcp-Method: resources/read'   -H 'Mcp-Name: dexicon://corpus/books'   -d '{
