@@ -114,4 +114,46 @@ public class SourceAmbiguityTests
         Pick(a).ShouldBe("source-a");
         Pick(a.Reverse()).ShouldBe("source-a");
     }
+
+    [Fact]
+    public void Two_sources_holding_one_path_do_not_derive_the_same_point_id()
+    {
+        // The quieter half of the same bug, and the one the delete fix did NOT cover.
+        // Point ids were derived from (chunk set, path, index). Two sources of one corpus
+        // holding "Logic For Dummies.pdf" therefore produced IDENTICAL ids for every
+        // chunk, and the second source's upsert overwrote the first — one book's vectors
+        // gone, both files still listed as indexed, nothing reporting a problem.
+        var ai = QdrantVectorStore.DeterministicId("set-1", "source-ai", "Logic For Dummies.pdf", 0);
+        var philosophy = QdrantVectorStore.DeterministicId("set-1", "source-philosophy", "Logic For Dummies.pdf", 0);
+
+        ai.ShouldNotBe(philosophy);
+    }
+
+    [Fact]
+    public void The_same_chunk_keeps_the_same_id_so_reindexing_stays_idempotent()
+    {
+        // The property the deterministic id exists for. If it changed per run, every
+        // refresh would duplicate every chunk instead of replacing it.
+        var first = QdrantVectorStore.DeterministicId("set-1", "source-ai", "a.pdf", 7);
+        var second = QdrantVectorStore.DeterministicId("set-1", "source-ai", "a.pdf", 7);
+
+        first.ShouldBe(second);
+        Guid.TryParse(first, out _).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Chunk_index_still_separates_chunks_of_one_file()
+    {
+        QdrantVectorStore.DeterministicId("set-1", "src", "a.pdf", 0)
+            .ShouldNotBe(QdrantVectorStore.DeterministicId("set-1", "src", "a.pdf", 1));
+    }
+
+    [Fact]
+    public void Two_chunk_sets_do_not_share_ids_either()
+    {
+        // Pre-existing behaviour worth keeping: a corpus mid-migration holds two sets, and
+        // one overwriting the other would corrupt whichever finished second.
+        QdrantVectorStore.DeterministicId("set-1", "src", "a.pdf", 0)
+            .ShouldNotBe(QdrantVectorStore.DeterministicId("set-2", "src", "a.pdf", 0));
+    }
 }

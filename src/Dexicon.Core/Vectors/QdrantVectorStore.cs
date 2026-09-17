@@ -206,7 +206,7 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
                 // Keyed on the SET, not the corpus: two sets hold the same file at the
                 // same chunk index, and a corpus-keyed id would make them overwrite each
                 // other — silently, and only for the file paths they happen to share.
-                Id = new PointId { Uuid = DeterministicId(c.ChunkSetId, c.FilePath, c.ChunkIndex) },
+                Id = new PointId { Uuid = DeterministicId(c.ChunkSetId, c.SourceId, c.FilePath, c.ChunkIndex) },
                 Vectors = new QdrantVectors { Vectors_ = named },
             };
             p.Payload.Add("kind", "chunk");
@@ -234,13 +234,28 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
     }
 
     /// <summary>
-    /// UUIDv5-style deterministic id over corpus + path + index, so re-indexing an
+    /// UUIDv5-style deterministic id over set + SOURCE + path + index, so re-indexing an
     /// unchanged file is idempotent and a changed file's stale chunks are addressable
     /// without a scroll.
+    ///
+    /// The source is part of the identity because a file_path is relative to its source
+    /// root, not to the corpus. Without it, two sources of one corpus holding the same
+    /// filename derive the SAME id for every chunk, and the second source's upsert
+    /// silently overwrites the first — one book's vectors gone, both files still listed as
+    /// indexed in the catalogue, and nothing anywhere reporting a problem. That is a
+    /// quieter failure than the delete filter this mirrors: deletion at least left the
+    /// rows consistent, whereas this left the catalogue claiming content the index does
+    /// not have.
+    ///
+    /// Changing this changes every id. Existing points keep their old ones and are not
+    /// rewritten by an incremental refresh, which skips unchanged files — a corpus with
+    /// more than one source needs `POST /api/corpora/{name}/reindex?full=true` once. The
+    /// stale points are removed by that reindex, because deletion filters on the payload
+    /// rather than on the id.
     /// </summary>
-    internal static string DeterministicId(string corpusId, string filePath, int chunkIndex)
+    internal static string DeterministicId(string chunkSetId, string sourceId, string filePath, int chunkIndex)
     {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"{corpusId}|{filePath}|{chunkIndex}"));
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"{chunkSetId}|{sourceId}|{filePath}|{chunkIndex}"));
         var guid = new byte[16];
         Array.Copy(bytes, guid, 16);
         guid[6] = (byte)((guid[6] & 0x0F) | 0x50); // version 5
