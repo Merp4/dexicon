@@ -625,8 +625,15 @@ function CreateCorpusModal({ onClose, onCreated, onError }: { onClose: () => voi
         <Field label="Name" hint="Agents pass this to search_index, so keep it short and memorable.">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="api-repo" autoFocus />
         </Field>
-        <Field label="Description (optional)">
-          <Input value={description} onChange={(e) => setDescription(e.target.value)} />
+        <Field
+          label="Description"
+          hint="An agent reads this to choose which corpus answers a question. Say what is in it and what it is good for."
+        >
+          <Input
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="O'Reilly architecture and .NET books — design trade-offs, not API reference"
+          />
         </Field>
         <Field
           label="Embedding model"
