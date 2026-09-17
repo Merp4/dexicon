@@ -111,6 +111,24 @@ public sealed class EmbeddingProviderOptions
 public sealed class IndexingOptions
 {
     public int MaxFileBytes { get; init; } = 262_144;
+
+    /// <summary>
+    /// Size cap for formats that go through an extractor — PDF, EPUB, DOCX, PPTX. Separate
+    /// from <see cref="MaxFileBytes"/> because a 300-page PDF is normal and a 300 KB source
+    /// file is not, and one number cannot mean both.
+    ///
+    /// 512 MB. It was a hard-coded 64 MB, chosen when PDF extraction copied the whole file
+    /// into a growing MemoryStream and then called ToArray() on it — nearly 400 MB of raw
+    /// bytes for a 128 MB book before a page was parsed. PdfPig reads a seekable stream, so
+    /// that copying is gone and the ceiling with it.
+    ///
+    /// It is still a cap rather than no cap: extraction holds the TEXT of the document in
+    /// memory, and a chunked, embedded index of a very large file is slow rather than
+    /// broken. Raise it if you have the memory; a file over it is reported as skipped with
+    /// its size and the cap, never silently dropped.
+    /// </summary>
+    public long DocumentMaxBytes { get; init; } = 512L * 1024 * 1024;
+
     public int ChunkSize { get; init; } = 768;
     public int ChunkOverlap { get; init; } = 100;
     public string BoundaryMode { get; init; } = "language-aware";

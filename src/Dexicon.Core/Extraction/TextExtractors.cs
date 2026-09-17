@@ -91,22 +91,43 @@ public sealed class PdfTextExtractor : ITextExtractor
 
     public ExtractedText Extract(Stream content, string fileName)
     {
-        using var buffer = new MemoryStream();
-        content.CopyTo(buffer);
+        // PdfPig reads a seekable stream directly, so hand it the file.
+        //
+        // This used to copy the whole PDF into a MemoryStream and then call ToArray() on
+        // it: a growing buffer that doubles to as much as twice the file, plus a second
+        // full-size array. A 128 MB book cost nearly 400 MB of raw bytes before a single
+        // page was parsed, which is most of the reason the size cap was where it was.
+        // PdfPig itself streams, so none of that was buying anything.
+        Stream source = content;
+        MemoryStream? buffered = null;
+
+        if (!content.CanSeek)
+        {
+            // An upload arriving over the wire. Pre-sized where the length is known, so it
+            // does not double its way up to twice the file.
+            buffered = content.CanRead && content.Length > 0
+                ? new MemoryStream((int)Math.Min(content.Length, int.MaxValue))
+                : new MemoryStream();
+            content.CopyTo(buffered);
+            buffered.Position = 0;
+            source = buffered;
+        }
 
         PdfDocument document;
         try
         {
-            document = PdfDocument.Open(buffer.ToArray());
+            document = PdfDocument.Open(source);
         }
         catch (Exception ex)
         {
+            buffered?.Dispose();
             throw new ExtractionFailedException(
                 $"'{fileName}' could not be opened as a PDF. It may be encrypted or corrupt: {ex.Message}", ex);
         }
 
-        using (document)
+        try
         {
+            using var _ = document;
             var sb = new StringBuilder();
             var units = new List<ExtractedUnit>();
 
@@ -120,6 +141,10 @@ public sealed class PdfTextExtractor : ITextExtractor
             var title = document.Information?.Title;
             return new ExtractedText(sb.ToString(), units,
                 string.IsNullOrWhiteSpace(title) ? null : title);
+        }
+        finally
+        {
+            buffered?.Dispose();
         }
     }
 }
