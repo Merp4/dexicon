@@ -370,8 +370,8 @@ the chunking fingerprint so the fresh text is actually re-chunked.
 
 **Why.** Caching extraction is clearly right — a 437-page PDF costs ~1.8 s and its bytes
 never change. But an unversioned cache is *permanent*, and that turns every extractor bug
-into a permanent one: a library ingested before a fix keeps the broken text, and no reindex
-repairs it, because reindexing re-chunks the cached text rather than re-reading the file.
+into a permanent one
+([04](04-ingestion.md#extraction-is-cached-and-the-cache-is-versioned)).
 The version is what lets a fix reach documents that were ingested before it, without anyone
 re-uploading anything.
 
@@ -574,7 +574,7 @@ chunking.
 Qdrant tenant key and why was it chosen"), and trailed on two others it answered at ranks
 3 and 4.
 
-**This still does not settle Q3, and the reason is worth being precise about.** It is an
+**This still does not settle Q3.** It is an
 independent *corpus configuration*, not an independent *query set* — the same twelve
 hand-written queries were reused. So it tests whether the finding survives a chunking
 change, which it does, and says nothing about whether it survives a different distribution
@@ -623,7 +623,7 @@ recall@1 16/25 without its prefixes and 23/25 with them. Dexicon sent raw text t
 model, which cost recall on every search and also made the Q3 comparison meaningless: two
 models penalised by different amounts are not being compared with each other.
 
-Data rather than code because models are added at RUNTIME through the Models screen. A
+Data rather than code because models are added at *runtime* through the Models screen. A
 build that hard-coded `if (model.StartsWith("nomic"))` would give every model pulled after
 it shipped silently wrong framing — and wrong framing does not fail, it just retrieves
 badly. Built-ins keep it correct out of the box without becoming the mechanism.

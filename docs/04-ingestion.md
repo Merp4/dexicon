@@ -495,12 +495,12 @@ Pinned per corpus at creation. Candidates, all available through Ollama:
 | `qwen3-embedding:0.6b` | 1024 | ~1.5 GB | Strongest general quality per VRAM; 32k context; multilingual. Not yet swept. |
 | `bge-m3` | 1024 | ~2.2 GB | Long documents (8k context). Not yet swept. |
 
-The default is `embeddinggemma` because it is the only model that led on BOTH corpora
+The default is `embeddinggemma` because it is the only model that led on *both* corpora
 ([benchmarks](benchmarks.md)) — by 0.025 mean MRR on documents and 0.075 on code. It costs
 twice the first download of `nomic-embed-text`, which is the reason not to, and the reason
 that lost.
 
-This is the default for NEW corpora only. An existing chunk set records its own model and
+This is the default for *new* corpora only. An existing chunk set records its own model and
 keeps it, so changing this reindexes nothing.
 
 ## Sparse encoding

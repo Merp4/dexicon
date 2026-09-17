@@ -111,10 +111,10 @@ finding the matched text there.
 **Since closed:** `get_context` de-overlapping is now tested, including a chunk-then-stitch
 round-trip property, and verified against this repository's own docs — twelve files
 reconstruct byte-identically. The MCP `dexicon://` resources are implemented. `get_context`
-and the file resource both read by FILTER rather than by search, after an earlier version
+and the file resource both read by *filter* rather than by search, after an earlier version
 let relevance decide which parts of a file came back.
 
-**Still not done, named rather than glossed:** uploaded documents are not exposed to MCP as
+**Still not done:** uploaded documents are not exposed to MCP as
 a distinct concept, so an agent sees them as ordinary files in a corpus — arguably correct,
 but still an assumption nobody has tested.
 
@@ -146,7 +146,7 @@ ones came from pointing the indexer at a real shelf of 95 books rather than at f
   "DRM-protected books cannot be read" — a true-sounding message about a problem they did
   not have. An EPUB is a zip of XHTML, so an unparseable manifest is now salvaged from the
   archive, and DRM is asserted from `META-INF/encryption.xml` rather than guessed.
-- **A file path did not name a file.** `file_path` is relative to its SOURCE root, so two
+- **A file path did not name a file.** `file_path` is relative to its *source* root, so two
   sources of one corpus holding "Logic For Dummies.pdf" are two books with one path. The
   delete filter removed both; `get_context` interleaved them into one passage with line
   numbers on it; and the point id, derived from (set, path, index), made the second

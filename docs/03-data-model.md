@@ -390,4 +390,4 @@ with stored content ≈ 1.2 KB at a 768-token chunk.
 | 200 PDFs (~100 pp each) | 200 | ~16 000 | ~75 MB |
 
 Quantization (scalar `int8`) cuts the dense component by ~4× and is a configuration change,
-not a schema change. Left off by default; revisit with measurements, not in advance.
+not a schema change. Left off by default; revisit when there are measurements.

@@ -33,7 +33,7 @@ public sealed class DexiconTools
         [Description("Corpus names to search. Omit to search everything visible to you. Use list_corpora to discover them.")] string[]? corpus = null,
         [Description("hybrid blends meaning with exact terms; semantic is meaning only; keyword is exact-match only and keeps working when embeddings are unavailable.")] string mode = "hybrid",
         [Description("Maximum results, 1-50.")] int limit = 10,
-        [Description("Restrict to files under this path, e.g. src/Auth/. Relative to the SOURCE root, not the corpus — use `source` to narrow by folder instead.")] string? pathPrefix = null,
+        [Description("Restrict to files under this path, e.g. src/Auth/. Relative to the source root, not the corpus — use `source` to narrow by folder instead.")] string? pathPrefix = null,
         [Description("Restrict to one source of the corpus, by its root path as list_corpora reports it, e.g. orly/AI. A parent matches everything beneath it.")] string? source = null,
         [Description("Restrict to one language, e.g. csharp, python, typescript.")] string? language = null,
         [Description("Restrict to chunks declaring this symbol, e.g. TokenService.")] string? symbol = null,
@@ -245,7 +245,7 @@ public sealed class DexiconTools
         var chunks = await vectors.GetFileChunksAsync(
             target.Set.CollectionName, target.Set.Id, filePath, ct);
 
-        // A file_path is relative to its SOURCE root, so within a corpus it is not unique.
+        // A file_path is relative to its source root, so within a corpus it is not unique.
         // A corpus with sources AI/ and Philosophy/ that both hold "Logic For Dummies.pdf"
         // returns the chunks of both here, ordered by chunk index — which interleaves two
         // different books and stitches them into one passage with line numbers on it. That
