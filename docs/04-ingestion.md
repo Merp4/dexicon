@@ -25,12 +25,12 @@ Discovery walks the tree and applies, **in order**:
    you never have to change VCS behaviour to change index behaviour.
 4. **Per-source `exclude_globs`**, then **`include_globs`** as an override.
 5. **Size cap** — `max_file_bytes`, default 256 KB. A file over the cap is recorded as
-   `skipped` with the reason, never silently dropped.
+   `skipped` with the reason, never dropped without record.
 6. **Binary sniff** — a NUL byte in the first 8 KB means binary, regardless of extension.
 
 Text extraction on a workspace source is `File.ReadAllText` with encoding detection (BOM,
 then UTF-8, then Latin-1 fallback). Document formats (PDF, DOCX, …) found inside a
-workspace tree **are** extracted with their loaders — a repo with reference PDFs in `docs/`
+workspace tree **are** extracted with their loaders: a repository with reference PDFs in `docs/`
 gets them indexed.
 
 ### `upload` — files pushed through the UI or API
@@ -58,7 +58,7 @@ So:
   embedding is repeated, and embedding is the slow part.
 
 A corpus gets at most one upload source, created on first attachment. Detaching removes
-that corpus's chunks only — the blob survives, because another corpus may still hold it.
+that corpus's chunks only; the blob survives, because another corpus may still hold it.
 
 Limits: 200 MB per file (`DEXICON__UPLOAD__MAXFILEBYTES`). Uploads are buffered to a temp
 file rather than memory, because the hash is only known once the whole stream is read and a
@@ -67,8 +67,8 @@ file rather than memory, because the hash is only known once the whole stream is
 **Staleness is a chunking fingerprint**, not a content hash: `sha256(blob | chunkSize |
 chunkOverlap | boundaryMode | model)`. With a bare content hash, changing a corpus's chunk
 size left every file looking unchanged, so a refresh re-chunked nothing and the new setting
-silently did not apply. The fingerprint makes exactly the right set of files look stale, and
-no others.
+had no effect. The fingerprint marks precisely the affected files as stale and no
+others.
 
 ## Extraction
 
@@ -87,21 +87,21 @@ Every loader returns `(text, metadata, unitMarkers)`. Failures are per-file and 
 
 - **PDF with no text layer** → `status: empty`, `status_detail: "no text layer — scanned
   PDF, OCR not supported"`, and the file is visible in the UI as ingested-but-empty. It is
-  not reported as a success and not silently missing.
+  not reported as a success, and not absent without explanation.
 - **Encrypted / DRM** → `status: failed` with the reason.
 - **Malformed archive (EPUB/OOXML)** → `status: failed` with the reason.
 
 ### Block structure is content
 
 HTML-derived formats (HTML, EPUB) are walked block by block, emitting one line per `<p>`,
-heading, list item or table cell. The obvious implementation — AngleSharp's `TextContent` —
-concatenates every descendant text node with no separators, and it was what Dexicon shipped
+heading, list item or table cell. The obvious implementation, AngleSharp's `TextContent`,
+concatenates every descendant text node with no separators, and was what Dexicon shipped
 first.
 
-It failed in a way nothing could detect. The chunker splits on line boundaries, so a chapter
-on one line cannot be split: a 578,000-character EPUB became 18 chunks averaging 32,000
-characters each, every one of them far past the embedding model's context window. Ollama
-truncates silently, so roughly 95% of that book existed in no index anywhere — while the
+It failed in a way nothing could detect. The chunker splits on line boundaries, so a
+chapter on one line cannot be split: a 578,000-character EPUB became 18 chunks averaging
+32,000 characters each, all far beyond the embedding model's context window. Ollama
+truncates without error, so roughly 95% of that book was present in no index, while the
 file, the job and the corpus all reported success.
 
 Newlines here are not cosmetic. They are what makes text chunkable, and what makes a line
@@ -115,7 +115,7 @@ its bytes never change, so re-extracting on every reindex would be waste.
 But the *code* changes. `ExtractorVersions.Current` is stamped on every cached extraction
 and bumped whenever extraction output changes; text from an older version is re-extracted
 the next time it is indexed. The version is also part of the chunking fingerprint, so the
-re-extracted text is actually re-chunked rather than skipped as unchanged.
+re-extracted text is re-chunked rather than skipped as unchanged.
 
 Without this the cache is permanent: a library ingested before a fix keeps the broken text
 forever, and no reindex repairs it, because reindexing re-chunks the *cached text* rather
@@ -128,8 +128,8 @@ than re-reading the file.
 
 The chunker carries its own version for the same reason, one stage later: without it the
 fingerprint says "same bytes, same settings, nothing to do" and a corpus keeps chunks from
-an algorithm that no longer exists — indefinitely, because skipping unchanged files is
-exactly what an incremental refresh is for.
+an algorithm that no longer exists, indefinitely, because skipping unchanged files is what
+an incremental refresh does.
 
 | Chunker version | Change |
 |---|---|
@@ -172,7 +172,7 @@ of slicing it at an arbitrary token count. Patterns per language:
 
 Boundary modes: `none` | `blank-line` | `language-aware` | `custom` (operator regex, compiled
 with a 500 ms timeout; an invalid or timing-out regex fails the job with a clear error and
-never silently falls back).
+never falls back without reporting it).
 
 ### No chunk exceeds the budget
 
@@ -181,9 +181,9 @@ The chunker avoids splitting within a line, so every chunk carries exact
 single line longer than the whole budget is split at word boundaries, each piece keeping
 that line's number.
 
-The bound is a hard guarantee because breaking it is invisible — an embedding model does
-not reject an over-budget chunk, it truncates, and the missing text is still reported as
-indexed. A property test asserts the bound across chunk sizes, including on input with no
+The bound is a hard guarantee because breaking it is not observable: an embedding model
+does not reject an over-budget chunk, it truncates, and the missing text is still reported
+as indexed. A property test asserts the bound across chunk sizes, including on input with no
 spaces at all (a minified bundle, a base64 blob).
 
 ### Task framing — what the model is told the text is for
@@ -192,7 +192,7 @@ Most embedding models are trained with a task instruction wrapped around the inp
 is not decoration. `nomic-embed-text` wants `search_document:` on indexed text and
 `search_query:` on queries and calls them required rather than optional; EmbeddingGemma
 wants `title: none | text: …` and `task: search result | query: …`. Send raw text instead
-and nothing fails — retrieval is simply worse. One project measured EmbeddingGemma at
+and nothing fails; retrieval is worse. One project measured EmbeddingGemma at
 recall@1 16/25 without its prefixes and 23/25 with them.
 
 Dexicon stores this per model as a **template** rather than a prefix, because Gemma's
@@ -200,7 +200,7 @@ document form wraps the text rather than preceding it:
 
 Every model in Ollama's embedding category has a built-in, read off its model card
 (checked 2026-09-17, all twelve). `ModelProfileCoverageTests` pins the list so one cannot
-be dropped silently.
+be dropped unnoticed.
 
 | model | indexed text | queries |
 |---|---|---|
@@ -214,12 +214,12 @@ be dropped silently.
 The last row is intentional: symmetric sentence-transformers models were
 trained on sentence pairs with no task prefix, so a prefix is noise in the embedding rather
 than framing. The two Arctic generations want **different** prefixes and differ by one
-character in their names, so it is worth checking which one a set actually uses.
+character in their names, so the model a set uses should be confirmed.
 
 `bge-large` is the one judgement call. BGE v1.5 made instructions optional "for
 convenience", but the same card recommends them "for a retrieval task that uses short
-queries to find long related documents" — which is exactly what Dexicon is. Save a row to
-override if your corpus is the other shape.
+queries to find long related documents", which describes Dexicon's use. Save a row to
+override if a corpus has the opposite shape.
 
 Resolution, in order:
 
@@ -230,15 +230,15 @@ Resolution, in order:
 Models are added at **runtime**, through the Models screen, so built-ins are a fallback
 rather than the mechanism: any can be overridden by saving a row, and the UI states which of
 the three applies, so "embedded raw" is visible on screen. An unrecognised model
-is embedded raw and says so. Inventing a prefix would be worse than none — the model would
-embed the literal string `search_query:` as content.
+is embedded raw and reports that. Inferring a prefix would be worse than using none: the
+model would embed the literal string `search_query:` as content.
 
 Framing is applied in one place, `IEmbeddingService.EmbedAsync`, with the caller passing
 `EmbedPurpose.Document` or `EmbedPurpose.Query`. Both sides of a retrieval have to agree:
 a document embedded with a prefix and a query embedded without land in a less aligned
-space, and the result is not an error but a quietly worse ranking. Passing the purpose as
-an argument makes it impossible to forget at one of the two places that embed text.
-`ModelProbe` passes `Raw`, deliberately — it measures what the model does with a given
+space, and the result is not an error but a lower-quality ranking. Passing the purpose as
+an argument makes it impossible to omit at either of the two places that embed text.
+`ModelProbe` passes `Raw` by design: it measures what the model does with a given
 number of characters, and a template would shift every measurement by the length of a
 prefix.
 
@@ -248,7 +248,7 @@ re-indexes every chunk set on that model rather than leaving the two sides to di
 ### "Tokens" is a character budget, and the ratio is measured
 
 A chunk size is set in tokens and enforced in **characters**. There is no tokenizer in the
-chunking path; `CodeChunker` does one conversion — `maxChars = chunkSizeTokens * 4` — and
+chunking path; `CodeChunker` performs one conversion, `maxChars = chunkSizeTokens * 4`, and
 counts characters thereafter. `768` means 3,072 characters, for every model and every kind
 of text.
 
@@ -286,11 +286,11 @@ Sets are addressed as `corpus:set`. An unqualified name means the default set, w
 what an agent that has never heard of sets will send.
 
 This is what makes changing the embedding model safe. A collection's name encodes the model
-and its dimensionality, so a different model is a different vector space — and re-embedding
+and its dimensionality, so a different model is a different vector space. Re-embedding
 a three-book corpus was measured at roughly twenty minutes on CPU Ollama. Editing in place
 would mean twenty minutes of half-populated results, so instead:
 
-1. add a set on the new model — it backfills in the background
+1. add a set on the new model, which backfills in the background
 2. the live set keeps serving search throughout
 3. promote when it is complete; promotion is one `UPDATE` and the only moment search changes
 4. drop the old set
@@ -315,20 +315,20 @@ OPENAI_API_KEY=…
 
 The configuration names **the environment variable** holding the key, not the key.
 Configuration files get committed; environment variables do not. The catalogue records
-only which provider a set uses — a database row that carries an API key is a row you
-cannot back up casually, and Dexicon's backup instructions say to copy the catalogue.
+only which provider a set uses. A database row holding an API key cannot be backed up
+casually, and Dexicon's backup instructions direct the operator to copy the catalogue.
 
 A provider that is configured but missing its credential is reported as such in the
 Models screen and in `/api/embedding-providers`.
 
 The model travels as a **per-call argument**, never bound into a client at startup. Chunk
-sets choose models at runtime, so anything resolved from configuration at boot — keyed DI
-included — cannot see a set created five minutes ago. See
+sets choose models at runtime, so anything resolved from configuration at boot, including
+keyed DI, cannot see a set created after startup. See
 [D-22](decisions.md#d-22-the-embedding-model-is-a-per-call-argument).
 
-The collection name carries the provider too — `dexicon__ollama__nomic-embed-text__768` —
-because two providers can serve a model of the same name and those are not the same
-vectors.
+The collection name also carries the provider, as in
+`dexicon__ollama__nomic-embed-text__768`, because two providers can serve a model of the
+same name and those are not the same vectors.
 
 Listing, pulling and deleting models is separate from embedding, and only local providers
 support it. You cannot pull a model into OpenAI; its catalogue is a fixed list, configured
@@ -336,7 +336,7 @@ rather than discovered.
 
 ### Knowing a model's limits, without indexing anything
 
-`POST /api/embedding-models/probe` measures what a model will actually accept:
+`POST /api/embedding-models/probe` measures what a model accepts:
 
 ```json
 { "dimensions": 768, "maxInputChars": 11776, "truncatesSilently": true,
@@ -344,8 +344,8 @@ rather than discovered.
 ```
 
 `charsPerToken` is measured with **the model's own tokenizer**, not estimated. Ollama
-returns `prompt_eval_count` on an embed call, so the probe embeds three samples — prose,
-dense code, and punctuation-heavy structured text — and divides. A provider that reports
+returns `prompt_eval_count` on an embed call, so the probe embeds three samples (prose,
+dense code, and punctuation-heavy structured text) and divides. A provider that reports
 no token counts gets `null`, and callers keep the estimate rather than inventing a
 measurement.
 
@@ -357,7 +357,7 @@ Measured on the three models here:
 | `embeddinggemma` | 3.80 | 11,776 chars |
 | `mxbai-embed-large` | 2.82 | **2,816 chars** |
 
-Two of the three are nowhere near the 4 the chunker assumes — see below.
+Two of the three are well below the 4 the chunker assumes; see below.
 
 This exists because of the EPUB failure above: a truncating model returns a perfectly good
 vector for the part it read, so nothing downstream could tell that most of the book was
@@ -369,8 +369,7 @@ the vector is unchanged. Bisecting on that finds the real limit in about two doz
 calls, with no documentation to trust and nothing indexed.
 
 Measured on this stack, both `nomic-embed-text` and `embeddinggemma` accept about 11,776
-characters of English prose — 2,048 tokens — and **truncate silently** beyond it. Neither
-errors. The recommendation is two thirds of the measured figure, because the measurement
+characters of English prose, or 2,048 tokens, and **truncate without error** beyond it. The recommendation is two thirds of the measured figure, because the measurement
 is in characters and the model counts tokens: code, minified output and CJK reach the same
 token limit in far fewer characters.
 
@@ -380,22 +379,22 @@ Chunk size exists because of the embedding model's context window. Everything el
 exists because a chunk that ends mid-thought retrieves badly regardless of how well it
 fits. Each is per-set and off by default.
 
-**Heading context.** The heading trail — `Data model > Point payload > Storage budget` — is
-prepended to the text that is *embedded*, so a chunk's vector carries the section it came
+**Heading context.** The heading trail, such as `Data model > Point payload > Storage
+budget`, is prepended to the text that is *embedded*, so a chunk's vector carries the section it came
 from. Stored text stays verbatim: it is what search returns, what `get_context` stitches,
 and what a `dexicon://` resource read reconstructs a file from, and prepending would insert
 lines the file never had.
 
 The trail is resolved per line, up front. Reading a running cursor when a chunk is emitted
-looks equivalent and is not — the accumulator fills *past* a boundary before backing up to
-it, so the cursor is ahead of the chunk being flushed. That labelled chunks with a heading
-from further down the file, which is worse than no label: retrieval then files them under a
-section they are not in.
+looks equivalent but is not: the accumulator fills *past* a boundary before backing up to
+it, so the cursor is ahead of the chunk being flushed. This labelled chunks with a heading
+from further down the file, which is worse than no label, because retrieval then places
+them under a section they are not in.
 
 **Unit-aware boundaries.** Page for PDF, chapter for EPUB, slide for PPTX. These *force* a
 split rather than offering a place for one: under the usual rule a chapter shorter than the
-budget would be swallowed into the next. The cost is the caller's — a document of very short
-pages yields short chunks.
+budget would be absorbed into the next. The cost falls to the caller: a document of very
+short pages yields short chunks.
 
 **Sentence-aware splitting.** When a split lands inside a line, cut at a sentence rather
 than a word. A terminator counts only when followed by a space, so `e.g.` and `3.14` do not
@@ -407,8 +406,8 @@ sets it rather than part-way through a job an hour later.
 
 > **Not implemented: LLM-driven chunking.** Asking a model where the meaningful seams are is
 > the obvious next step. It needs a decision about which model curates and what it costs per
-> document — a 400-page book is hundreds of calls — which is a product question rather than a
-> missing function. The seam is `ChunkOptions`: a strategy that needs a model is a new flag
+> document, since a 400-page book is hundreds of calls. That is a product question rather
+> than a missing function. The seam is `ChunkOptions`: a strategy that needs a model is a new flag
 > and a new branch, not a rewrite.
 
 ### Size decides *when* to split; a boundary decides *where*
@@ -426,7 +425,7 @@ badly.
 Five regression tests pin the corrected behaviour, the load-bearing one being that a
 smaller `chunk_size` produces more chunks.
 
-**A boundary is only used when it leaves a chunk worth having** — at least twice the
+**A boundary is only used when it leaves a chunk of usable size**, at least twice the
 overlap. Backing up assumes a boundary near the fill point, and prose interleaved with code
 listings breaks that: a blank line early, then eleven thousand characters of listing with
 none. Backing up to the early boundary emits a fraction of a chunk, and the overlap rewind
@@ -436,14 +435,14 @@ repeats most of it.
 A PDF of prose around code listings came out as **1,051 chunks averaging 388 characters**
 where about 73 were intended. The EPUB of the same book, whose extractor emits no blank
 lines, produced 61: the formats agreed on content to within 4% and disagreed on chunking by
-seventeen times — fifteen times the vectors, embedding cost and storage, for near-duplicate
-fragments too small to carry their own context.
+seventeen times, producing fifteen times the vectors, embedding cost and storage for
+near-duplicate fragments too small to carry their own context.
 
 The threshold is the **overlap**, not a fraction of the budget. Twice the overlap is what
 guarantees the start advances after the rewind. Tying it to the budget would override an
-explicit boundary — a custom pattern or a markdown heading is a request to split there —
-and a set with no overlap has no stall to prevent, so the rule rejects only a zero-length
-chunk.
+explicit boundary, since a custom pattern or a markdown heading is a request to split at
+that point. A set with no overlap has no stall to prevent, so the rule then rejects only a
+zero-length chunk.
 
 ### Documents — unit-aware overlapping
 
@@ -467,8 +466,8 @@ and removes a whole dependency. Chunk size is a target, not a contract.
 
 A lightweight per-language regex pass pulls declared names (types, functions, methods) in
 the chunk into `symbols[]`, indexed as a keyword. This makes `symbol:TokenService` filtering
-cheap. It is **not** a parser and makes no claim to be one — it will miss things, and the
-docs say so rather than implying call-graph fidelity.
+cheap. It is **not** a parser: it will miss declarations, and these documents state that
+rather than implying call-graph fidelity.
 
 ## Embedding
 
@@ -496,9 +495,9 @@ Pinned per corpus at creation. Candidates, all available through Ollama:
 | `bge-m3` | 1024 | ~2.2 GB | Long documents (8k context). Not yet swept. |
 
 The default is `embeddinggemma` because it is the only model that led on *both* corpora
-([benchmarks](benchmarks.md)) — by 0.025 mean MRR on documents and 0.075 on code. It costs
-twice the first download of `nomic-embed-text`, which is the reason not to, and the reason
-that lost.
+([benchmarks](benchmarks.md)), by 0.025 mean MRR on documents and 0.075 on code. Its first
+download is twice the size of `nomic-embed-text`, which is the argument against it and was
+judged the weaker one.
 
 This is the default for *new* corpora only. An existing chunk set records its own model and
 keeps it, so changing this reindexes nothing.
@@ -543,13 +542,12 @@ sha256(blob | chunk_size | chunk_overlap | boundary_mode | custom_pattern
 
 Everything that determines what ends up in Qdrant is in it, and it is computed **per chunk
 set**. Two sets over the same blob get different fingerprints and independent vectors, which
-is what makes several chunkings of one document work at all — including two sets on
-different models, mid-migration, in two different collections.
+is what allows several chunkings of one document, including two sets on different models,
+mid-migration, in two different collections.
 
 Scheduling: on demand (UI button, `index_refresh` MCP tool), plus an optional interval per
-corpus, default off. There is no filesystem watcher — polling with content hashes is more
-reliable over bind mounts, particularly on Windows hosts and WSL2, and is not an area where
-cleverness pays.
+corpus, default off. There is no filesystem watcher: polling with content hashes is more
+reliable over bind mounts, particularly on Windows hosts and WSL2.
 
 ## Job semantics
 
@@ -558,10 +556,9 @@ corpus that already has one queued is a no-op returning the existing job id, not
 job.
 
 Job kinds: `full` (everything, ignoring hashes), `refresh` (incremental, the default),
-`rebuild` (new embedding model — writes into the new collection, drops the old points only
-on success), `delete`.
+`rebuild` (new embedding model, which writes into the new collection and drops the old
+points only on success), `delete`.
 
 Progress events are emitted per file and coalesced to at most 4/second onto
-`GET /api/events` (SSE). The UI shows phase, counts, current file, and — because it is the
-question people actually have — the estimate of remaining time derived from the trailing
-rate.
+`GET /api/events` (SSE). The UI shows phase, counts, current file, and an estimate of
+remaining time derived from the trailing rate.
