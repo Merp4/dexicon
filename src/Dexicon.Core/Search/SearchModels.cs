@@ -50,6 +50,12 @@ public sealed record SearchHit
     /// </summary>
     public string? SourceId { get; init; }
 
+    /// <summary>
+    /// The root path of the source this came from, e.g. `orly/AI`. Filled in after the
+    /// vector query, because the payload stores the id and a person needs the folder.
+    /// </summary>
+    public string? SourceRoot { get; set; }
+
     public required string FilePath { get; init; }
     public string? Language { get; init; }
     public int StartLine { get; init; }

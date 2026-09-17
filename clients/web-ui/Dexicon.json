@@ -2573,6 +2573,12 @@
               "string"
             ]
           },
+          "sourceRoot": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "filePath": {
             "type": "string"
           },

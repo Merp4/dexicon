@@ -50,6 +50,18 @@ public sealed record ResolvedScope(IReadOnlyList<ScopedCorpus> Targets)
 /// </summary>
 public sealed class ScopeResolver(CatalogDbContext db)
 {
+    /// <summary>Root path per source id, for every source of the corpora in scope.</summary>
+    public async Task<IReadOnlyDictionary<string, string>> SourceRootsAsync(
+        IReadOnlyList<string> corpusIds, CancellationToken ct = default)
+    {
+        var rows = await db.Sources
+            .Where(s => corpusIds.Contains(s.CorpusId) && s.RootPath != null)
+            .Select(s => new { s.Id, s.RootPath })
+            .ToListAsync(ct);
+
+        return rows.ToDictionary(s => s.Id, s => s.RootPath!, StringComparer.Ordinal);
+    }
+
     /// <summary>
     /// The sources within an already-authorised scope whose root path matches
     /// <paramref name="rootPath"/>, exactly or as a parent folder.

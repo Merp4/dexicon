@@ -69,6 +69,11 @@ public sealed class SearchService(
             sourceIds = await scopes.SourceIdsAsync(
                 [.. scope.Corpora.Select(c => c.Id)], request.Source, ct);
 
+        // A file_path is relative to its source root, so two sources of one corpus can
+        // return the same path for different files. Without the folder, those results are
+        // indistinguishable — and one of them is the wrong answer to whatever was asked.
+        var sourceRoots = await scopes.SourceRootsAsync([.. scope.Corpora.Select(c => c.Id)], ct);
+
         var hits = new List<SearchHit>();
         var degraded = false;
         string? degradedReason = null;
@@ -126,6 +131,8 @@ public sealed class SearchService(
             foreach (var hit in response.Hits)
             {
                 hit.CorpusName = byId.TryGetValue(hit.CorpusId, out var name) ? name : hit.CorpusId;
+                if (hit.SourceId is { } sid && sourceRoots.TryGetValue(sid, out var root))
+                    hit.SourceRoot = root;
                 hits.Add(hit);
             }
         }
