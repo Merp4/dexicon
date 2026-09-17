@@ -73,6 +73,50 @@ with no section here fails its release rather than publishing an undescribed one
   "literal" flag so Serilog renders string values as JSON and escapes the newline. String
   values in the log are now quoted.
 
+- **The secret scan covered one push, not the history it claimed.** The job was named and
+  commented for full history; the action scans the commits in the push it runs on, so
+  `fetch-depth: 0` fetched a history nothing then read. It also fired on
+  `SecretHygieneTests.cs`, whose fabricated token is token-shaped on purpose: the test
+  asserts a principal cache key never contains the credential it came from. Allowlisted as
+  that exact literal rather than by path, because a path in the global allowlist is exempt
+  from every rule, which would stop the file being scanned for AWS keys and private keys
+  too. ([#8](https://github.com/Merp4/dexicon/pull/8))
+
+- **A UI assertion passed only on an English runner.** `Documents.test.tsx` asserted on the
+  literal `2,940 chunks` beside a `.replace(',', ',')`: a comma replaced by a comma.
+  The component renders the count with `toLocaleString()`, whose thousands separator is
+  `2.940` under `de-DE` and `2 940` under `fr-FR`, so the no-op left an assertion that
+  fails anywhere but an English locale. It now formats the expected value the same way the
+  component does. ([#11](https://github.com/Merp4/dexicon/pull/11))
+
+### Added
+
+- **CodeQL for C# and TypeScript**, on pull requests, on `main` and weekly. `docs/10`
+  listed this among the supply-chain controls while no such workflow existed, and code
+  scanning needs Advanced Security on a private repository, so the line was false for as
+  long as it had been written. Advanced setup rather than GitHub's default: C# here needs
+  a .NET 10 SDK the runner does not ship, which the default setup cannot install.
+
+- **A tag now cuts a GitHub Release**, with that version's CHANGELOG section as the body,
+  plus the pull command and the digest actually published. The workflow previously pushed
+  an image, an SBOM and an attestation and left the Releases page empty. The notes are read
+  at the top of the job, so a tag with no CHANGELOG section stops the release before
+  anything reaches the registry. Releases start at `0.2.3`; the five earlier tags have
+  none. Questions now route to Discussions rather than the issue tracker.
+
+### Changed
+
+- **A neutral professional register across the docs and the code comments**, 102 files.
+  The pass removes the authorial voice: em-dashes where a colon, comma, full stop or
+  parentheses were what the sentence wanted, editorialising asides, sentences admiring the
+  previous sentence, and headings that were phrases rather than labels. Quoted system
+  messages, facts, figures and links are unchanged. The README drops a fifteen-row table of
+  contents that restated the filenames beside it, 22 lines to 11.
+  ([#9](https://github.com/Merp4/dexicon/pull/9))
+
+- **`docs/09` documents the release order**, numbered, because each step exists to stop the
+  next one failing: CHANGELOG, then the regenerated OpenAPI document, then the tag.
+
 ## 0.2.2 — 2026-09-17
 
 Documentation, bar one word of shipped text: the `path_prefix` tool description said
