@@ -3,10 +3,9 @@ namespace Dexicon.Core.Indexing;
 /// <summary>
 /// Extension → canonical language name, and the member-boundary pattern per language.
 ///
-/// The format choices here are carried from McpToolbox, which learned them the hard
-/// way. The one worth restating: HTML, Razor, Vue and Svelte split on BLANK LINES, not
-/// on headings. They are template *source*, not documents — splitting an Angular
-/// template at its <c>&lt;h1&gt;</c> produces slices that mean nothing.
+/// One choice is easy to get backwards: HTML, Razor, Vue and Svelte split on blank
+/// lines, not on headings. They are template <i>source</i>, not documents — splitting
+/// an Angular template at its <c>&lt;h1&gt;</c> produces slices that mean nothing.
 /// </summary>
 public static class LanguageMap
 {

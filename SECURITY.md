@@ -25,7 +25,7 @@ is young enough that "upgrade" is a realistic answer.
 
 Stated plainly, because a security policy that implies more than it delivers is worse than
 one that admits its limits. The full version is in
-[docs/10-security-secrets.md](docs/10-security-secrets.md#threat-model-stated-honestly).
+[docs/10-security-secrets.md](docs/10-security-secrets.md#threat-model).
 
 **Defended.** One tenant reading another's content through the API, MCP, UI, or a guessed
 identifier. Secrets reaching the repository, the logs, or an error response. Dexicon writing

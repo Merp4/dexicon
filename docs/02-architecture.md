@@ -31,9 +31,9 @@ Three containers. Dexicon is the only one we build.
 ```
 
 **Why one container for UI + API + MCP + indexer.** The alternative — splitting the
-indexer out as a sidecar, as McpToolbox does — exists there because the indexer runs inside
-a per-tenant workspace container with a different security boundary. Dexicon has no such
-boundary: it is one operator's tool on one machine. Splitting would add a control API, a
+indexer into a sidecar — earns its keep when the indexer runs inside a per-tenant container
+with a different security boundary. Dexicon has no such boundary: it is one operator's tool
+on one machine. Splitting would add a control API, a
 token, a network, and a failure mode, and buy nothing. See [D-01](decisions.md#d-01-single-container).
 
 ## Process layout inside the container

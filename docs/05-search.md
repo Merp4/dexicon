@@ -59,9 +59,9 @@ where `$scope` expands to
 different scales, and the weight that balances them is corpus-dependent and drifts as
 content changes. RRF reads rank, not magnitude, so it needs no tuning and cannot be
 silently mis-weighted. DBSF is available as a configuration option for anyone who wants
-distribution-normalised scores; it is not the default. This replaces the client-side
-weighted fusion carried over from McpToolbox, which required a `SemanticWeight` knob nobody
-could set from evidence. See [D-06](decisions.md#d-06-rrf-fusion-server-side).
+distribution-normalised scores; it is not the default. It replaces a client-side weighted
+fusion that needed a `SemanticWeight` knob nobody could set from evidence. See
+[D-06](decisions.md#d-06-rrf-fusion-server-side).
 
 **Prefetch limit is 4× the requested limit** (capped at 200). Fusion needs enough candidates
 from each retriever to have something to fuse.

@@ -48,7 +48,7 @@ A single service that:
 
 | Not doing | Why |
 |---|---|
-| Chat, agents, LLM orchestration | That is McpToolbox. Dexicon retrieves; the agent reasons. |
+| Chat, agents, LLM orchestration | Out of scope. Dexicon retrieves; the agent reasons. |
 | Reranking models, query rewriting, HyDE | Adds a second model dependency and latency for gains the caller can get by asking better. Revisit only with measurements. |
 | OCR of scanned PDFs | Needs a vision model and a GPU budget. Text-layer PDFs only; say so plainly when a PDF yields nothing. |
 | Graph/AST-level code understanding | Chunk-level retrieval is the target. Symbol extraction is metadata, not a call graph. |

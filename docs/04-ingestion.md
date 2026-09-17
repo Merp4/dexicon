@@ -154,8 +154,7 @@ next chunk, so every chunk has an exact `start_line`/`end_line`. Never splits a 
 
 With `boundary_mode: language-aware`, the file is first split at member boundaries by
 language, then each segment is size-chunked. This keeps a method with its signature instead
-of slicing it at an arbitrary token count. Patterns per language (carried from McpToolbox,
-which learned them the hard way):
+of slicing it at an arbitrary token count. Patterns per language:
 
 | Language | Boundary |
 |---|---|
@@ -175,17 +174,17 @@ Boundary modes: `none` | `blank-line` | `language-aware` | `custom` (operator re
 with a 500 ms timeout; an invalid or timing-out regex fails the job with a clear error and
 never silently falls back).
 
-### No chunk exceeds the budget, ever
+### No chunk exceeds the budget
 
-The chunker prefers not to split within a line, so that every chunk carries exact
-`start_line`/`end_line` and a hit is directly openable in an editor. One case overrides
-that: a single line longer than the whole budget is split at word boundaries, with each
-piece keeping that line's number.
+The chunker avoids splitting within a line, so every chunk carries exact
+`start_line`/`end_line` and a hit is openable in an editor. One case overrides that: a
+single line longer than the whole budget is split at word boundaries, each piece keeping
+that line's number.
 
-This is a hard guarantee rather than a convention, because the failure mode is invisible —
-an over-budget chunk is not rejected by the embedding model, it is silently truncated, and
-the missing text is reported as indexed. A property test asserts the bound across chunk
-sizes, including on input with no spaces at all (a minified bundle, a base64 blob).
+The bound is a hard guarantee because breaking it is invisible — an embedding model does
+not reject an over-budget chunk, it truncates, and the missing text is still reported as
+indexed. A property test asserts the bound across chunk sizes, including on input with no
+spaces at all (a minified bundle, a base64 blob).
 
 ### Task framing — what the model is told the text is for
 
@@ -229,14 +228,11 @@ Resolution, in order:
 2. **a built-in suggestion** for a recognised name — correct out of the box
 3. **nothing** — the text goes through unchanged
 
-The order matters because models are added at **runtime**, through the Models screen. Code
-that hard-coded the framing for the models it knew about would give every model pulled
-afterwards silently wrong framing, which would quietly undo the point of being able to add
-them at all. Built-ins are a fallback, not the mechanism: any of them can be overridden by
-saving a row, and the UI states which of the three applies so "embedded raw" is visible
-rather than assumed. A model this build has never heard of is embedded raw and says so —
-inventing a prefix would be worse than none, because the model would embed the literal
-string `search_query:` as content.
+Models are added at **runtime**, through the Models screen, so built-ins are a fallback
+rather than the mechanism: any can be overridden by saving a row, and the UI states which of
+the three applies, so "embedded raw" is visible rather than assumed. An unrecognised model
+is embedded raw and says so. Inventing a prefix would be worse than none — the model would
+embed the literal string `search_query:` as content.
 
 Framing is applied in one place, `IEmbeddingService.EmbedAsync`, with the caller passing
 `EmbedPurpose.Document` or `EmbedPurpose.Query`. Both sides of a retrieval have to agree:
@@ -254,29 +250,26 @@ re-indexes every chunk set on that model rather than leaving the two sides to di
 
 A chunk size is set in tokens and enforced in **characters**. There is no tokenizer in the
 chunking path; `CodeChunker` does one conversion — `maxChars = chunkSizeTokens * 4` — and
-then counts characters for the rest of its life. So `768` means exactly 3,072 characters,
-for every model and every kind of text.
+counts characters thereafter. `768` means 3,072 characters, for every model and every kind
+of text.
 
-That is a deliberate trade and it is worth being precise about the cost. Shipping an exact
-tokenizer means a vocabulary per model, versioned, for models that are pulled at runtime
-and may not exist yet — the only tokenizer that can be right for an arbitrary model is the
-one inside it, and asking it costs a round trip per chunk. Counting characters is free and
-happens tens of thousands of times per index.
+The trade is cost. An exact tokenizer means a versioned vocabulary per model, for models
+pulled at runtime that may not exist yet; the only tokenizer guaranteed right for an
+arbitrary model is the one inside it, and asking costs a round trip per chunk. Counting
+characters is free, and happens tens of thousands of times per index.
 
-What the flat 4 gets wrong is the direction. English prose is roughly four characters a
-token; dense code is nearer three, and CJK can be one or less. So a "768 token" chunk of
-minified JavaScript is really two or three times that, and a truncating model drops the
-end of it without failing.
+The flat 4 is wrong in a known direction. English prose is around four characters a token,
+dense code nearer three, CJK one or less. A "768 token" chunk of minified JavaScript can be
+two or three times the budget, and a truncating model drops the end without failing.
 
-The probe closes the gap without putting a tokenizer in the hot path: it MEASURES the
-ratio once per model, with the model's own tokenizer, and that measurement is what turns a
-character budget into an honest token figure. On this machine `nomic-embed-text` is 2.82,
-not 4 — so the default 768-token chunk is really about 1,090 tokens.
+The probe measures the ratio once per model with the model's own tokenizer, which turns the
+character budget into a real token figure without putting a tokenizer in the hot path. On
+this machine `nomic-embed-text` is 2.82, not 4, so the default 768-token chunk is nearer
+1,090 tokens.
 
-The sharper consequence: `mxbai-embed-large` accepts 2,816 characters. The default chunk
-size of 768 tokens is 3,072 characters. **Indexing with that model at the default silently
-truncates every full-size chunk.** That is exactly the failure the probe was written after,
-reachable from the defaults.
+The consequence that matters: `mxbai-embed-large` accepts 2,816 characters, and the default
+768 tokens is 3,072. **At the default, that model truncates every full-size chunk.** The
+probe exists because that happened, reached from the defaults.
 
 ### Chunk sets — a corpus can be cut several ways at once
 
@@ -306,7 +299,7 @@ would mean twenty minutes of half-populated results, so instead:
 Promoting a set that still has pending files is refused, with a count of what is left.
 Promoting a half-built set is precisely the outage that building it separately prevents.
 
-It is also the honest home for "the same document, chunked two ways". That worked before
+It is also the natural home for "the same document, chunked two ways". That worked before
 only by duplicating the corpus, which duplicated its grants and its sources along with it.
 
 ### Embedding providers
@@ -391,77 +384,69 @@ exists because a chunk that ends mid-thought retrieves badly regardless of how w
 fits. Each is per-set and off by default.
 
 **Heading context.** The heading trail — `Data model > Point payload > Storage budget` — is
-prepended to the text that gets EMBEDDED, so a chunk's vector carries the section it came
-from. The stored text stays verbatim, because that is what search returns, what
-`get_context` stitches, and what a `dexicon://` resource read reconstructs a file from;
-prepending to it would insert lines the file never had and break a reconstruction that is
-byte-identical today.
+prepended to the text that is *embedded*, so a chunk's vector carries the section it came
+from. Stored text stays verbatim: it is what search returns, what `get_context` stitches,
+and what a `dexicon://` resource read reconstructs a file from, and prepending would insert
+lines the file never had.
 
-The trail is resolved per line, up front. Reading a running cursor at the moment a chunk is
-emitted looks equivalent and is not: the accumulator fills *past* a boundary before backing
-up to it, so the cursor is always ahead of the chunk being flushed. Chunks came out labelled
-with a heading from further down the file — confidently, and wrongly, which is worse than no
-label because retrieval then files them under a section they are not in.
+The trail is resolved per line, up front. Reading a running cursor when a chunk is emitted
+looks equivalent and is not — the accumulator fills *past* a boundary before backing up to
+it, so the cursor is ahead of the chunk being flushed. That labelled chunks with a heading
+from further down the file, which is worse than no label: retrieval then files them under a
+section they are not in.
 
-**Unit-aware boundaries.** Page for PDF, chapter for EPUB, slide for PPTX. These are the one
-kind of boundary that *forces* a split rather than offering a place for one — everywhere
-else the rule is "size decides when, a boundary decides where", and that rule is useless
-here: a chapter shorter than the budget would simply be swallowed into the next one. The
-cost is the caller's choice: a document of very short pages yields short chunks, because
-that is what page-aligned chunking means.
+**Unit-aware boundaries.** Page for PDF, chapter for EPUB, slide for PPTX. These *force* a
+split rather than offering a place for one: under the usual rule a chapter shorter than the
+budget would be swallowed into the next. The cost is the caller's — a document of very short
+pages yields short chunks.
 
 **Sentence-aware splitting.** When a split lands inside a line, cut at a sentence rather
-than a word. A terminator counts only when followed by a space, so `e.g.` and `3.14` are not
-read as the end of a thought. The backup window is half the budget rather than the eighth a
-word search uses — with the narrow window it never fired, and a setting that costs something
-and does nothing is worse than no setting.
+than a word. A terminator counts only when followed by a space, so `e.g.` and `3.14` do not
+end a sentence. The backup window is half the budget, not the eighth a word search uses:
+with the narrow window it never fired.
 
 **Custom boundaries.** The `custom` mode with your own regex, compiled at the request that
 sets it rather than part-way through a job an hour later.
 
-> **Not implemented: LLM-driven chunking.** Asking a model to decide where the meaningful
-> seams are is the obvious next step and is deliberately not here. It needs a decision about
-> which model does the curating and what it costs per document — a 400-page book is hundreds
-> of calls — and that is a product question, not a missing function. The seam is
-> `ChunkOptions`: a strategy that needs a model is a new flag and a new branch, not a rewrite.
+> **Not implemented: LLM-driven chunking.** Asking a model where the meaningful seams are is
+> the obvious next step. It needs a decision about which model curates and what it costs per
+> document — a 400-page book is hundreds of calls — which is a product question rather than a
+> missing function. The seam is `ChunkOptions`: a strategy that needs a model is a new flag
+> and a new branch, not a rewrite.
 
 ### Size decides *when* to split; a boundary decides *where*
 
-This is worth stating precisely, because the first implementation got it backwards and the
-bug was invisible.
-
 The chunker fills to the size budget, then **backs up to the most recent boundary inside
-the buffer**. A chunk therefore holds as many whole members or paragraphs as fit, and still
-never ends mid-thought. If the buffer contains no boundary at all, it splits where it is.
+the buffer**. A chunk holds as many whole members or paragraphs as fit and does not end
+mid-thought. With no boundary in the buffer, it splits where it is.
 
-The original version split at *every* boundary. That made `chunk_size` dead configuration
-in every mode but `none`: blank-line mode on prose emitted one chunk per paragraph —
-measured at a **252-character mean against a 3,072-character budget** — and two corpora
+The first implementation split at *every* boundary, which made `chunk_size` dead
+configuration in every mode but `none`: blank-line mode on prose emitted one chunk per
+paragraph, a **252-character mean against a 3,072-character budget**, and corpora
 configured 768 and 256 tokens produced byte-identical output. Chunks that small retrieve
-badly; there is not enough context in a paragraph to embed usefully.
+badly.
 
 Five regression tests pin the corrected behaviour, the load-bearing one being that a
-smaller `chunk_size` must produce more chunks.
+smaller `chunk_size` produces more chunks.
 
 **A boundary is only used when it leaves a chunk worth having** — at least twice the
-overlap. "Back up to the most recent boundary" assumes there is one near the fill point,
-and prose interleaved with code listings breaks that assumption: a blank line early, then
-eleven thousand characters of listing with none. Backing up to that early boundary emits a
-fraction of a chunk, and the overlap rewind will not go back past the previous start, so
-the next chunk begins **one line later** and produces almost the same chunk again.
+overlap. Backing up assumes a boundary near the fill point, and prose interleaved with code
+listings breaks that: a blank line early, then eleven thousand characters of listing with
+none. Backing up to the early boundary emits a fraction of a chunk, and the overlap rewind
+will not go back past the previous start, so the next chunk begins **one line later** and
+repeats most of it.
 
-A real book — *Crafting Clean Code with JavaScript and React*, whose PDF is prose around
-code — came out as **1,051 chunks averaging 388 characters** where 73 of ~8,000 were
-intended. Its EPUB, whose extractor emits no blank lines, produced 61 from the same text:
-the two formats agreed on the content to within 4% and disagreed on the chunking by
-seventeen times. Fifteen times the vectors, the embedding cost and the storage, and a
-result set of near-duplicate fragments too small to carry their own context.
+A PDF of prose around code listings came out as **1,051 chunks averaging 388 characters**
+where about 73 were intended. The EPUB of the same book, whose extractor emits no blank
+lines, produced 61: the formats agreed on content to within 4% and disagreed on chunking by
+seventeen times — fifteen times the vectors, embedding cost and storage, for near-duplicate
+fragments too small to carry their own context.
 
-The threshold is the **overlap**, not a fraction of the budget, and the difference matters.
-Twice the overlap is exactly what guarantees the start advances after the rewind. Tying it
-to the budget instead would override a *deliberate* boundary — a custom pattern or a
-markdown heading is a request to split there, and a set with no overlap has no stall to
-prevent, so the rule then rejects only a zero-length chunk.
+The threshold is the **overlap**, not a fraction of the budget. Twice the overlap is what
+guarantees the start advances after the rewind. Tying it to the budget would override an
+explicit boundary — a custom pattern or a markdown heading is a request to split there —
+and a set with no overlap has no stall to prevent, so the rule rejects only a zero-length
+chunk.
 
 ### Documents — unit-aware overlapping
 

@@ -103,7 +103,7 @@ a page that loads and 401s on every request, which reads as a bug in the app), t
 a one-line snippet to run in the console of a Dexicon tab. The page stores it exactly where
 the sign-in form would: `sessionStorage['dexicon.token']`.
 
-What keeps it honest:
+What constrains it:
 
 | Property | Why |
 |---|---|
@@ -159,7 +159,7 @@ a load balancer, and nothing about what is inside.
 
 Errors that name a real internal address, such as `Could not list models from provider
 'ollama': …`, are reachable only from authenticated admin endpoints that the same caller
-can read `/healthz` from anyway. That is a deliberate line, not an oversight: an operator
+can read `/healthz` from anyway. That is where the line sits on purpose: an operator
 debugging a provider needs the endpoint in the message.
 
 ## Container and network posture
@@ -247,7 +247,7 @@ anything non-permissive has moved from build-time into the shipped bundle.
 `CODE_OF_CONDUCT.md` · `.github/workflows/ci.yml` · `.github/dependabot.yml` ·
 `.gitleaks.toml` · `.githooks/pre-commit`.
 
-## Threat model, stated honestly
+## Threat model
 
 **Defended:** one tenant reading another's content through the API, MCP, UI, or a guessed
 identifier. Secrets reaching the repository, the logs, or an error response. Dexicon writing

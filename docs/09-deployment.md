@@ -179,8 +179,7 @@ Three properties keep that from mattering:
 1. **Namespaced service names.** `dexicon-ollama` is unambiguous on any network.
 2. **Namespaced Qdrant collections.** Everything Dexicon creates is prefixed `dexicon__`
    ([03](03-data-model.md)), so even pointing at a Qdrant shared with another product
-   cannot collide — McpToolbox's `mcp_workspace_*` collections and Dexicon's sit side by
-   side untouched.
+   cannot collide with another application's collections.
 3. **Startup assertion.** On boot Dexicon calls both endpoints and logs what answered:
    Qdrant version and collection count, Ollama version and resident models. If the
    embedding model reported by Ollama is not the one configured, it refuses to start rather
@@ -203,7 +202,7 @@ services:
     depends_on: !reset []                      # nothing local to wait for
 ```
 
-Pointing at another Compose stack's Ollama instead — `http://mcptoolbox-infra-ollama:11434`
+Pointing at another Compose stack's Ollama instead — `http://other-stack-ollama:11434`
 — additionally needs that stack's network declared `external: true` here. Use the
 container's real name, never a bare service alias, for the reason above.
 

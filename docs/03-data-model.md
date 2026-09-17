@@ -289,7 +289,7 @@ indexed:
 | Filtered to one corpus | **1.5 ms** |
 | No filter | **3.1 ms** — 2.0× slower |
 
-Two caveats worth keeping honest. The gap is a factor of two, not a cliff — this is a
+Two caveats. The gap is a factor of two, not a cliff — this is a
 deterrent and a signal, not a safety mechanism, and the application and repository guards
 in [07](07-tenancy-auth.md) remain the things that actually prevent a leak. And it will
 widen with corpus size: 50k points is small enough that a brute-force scan is still cheap.

@@ -32,8 +32,8 @@ Resolution order for a request:
 3. If the token is bound to several and no header is present — **fail with 400**, listing
    the candidates.
 
-There is no ambient or inferred tenant. This is carried straight from McpToolbox's
-ADR-005: *if the caller does not specify a valid target, the request fails fast; the system
+There is no ambient or inferred tenant: *if the caller does not specify a valid target,
+the request fails fast; the system
 must not infer a target from ambiguous state.* That ADR exists because four incompatible
 tenant-resolution philosophies once coexisted in one codebase and wrote role assignments
 into the wrong tenant's table.
@@ -130,7 +130,7 @@ tenant, surface (`api` / `mcp` / `ui`), operation, resolved corpus ids, result c
 duration. Authorization failures log at Warning with the reason.
 
 This is a log, not a table. Persisting an audit trail to SQLite is a v2 question, and the
-honest answer for v1 is that a local tool's container logs are the audit trail.
+answer for v1 is that a local tool's container logs are the audit trail.
 
 ## What is deferred, and why
 
@@ -139,4 +139,4 @@ honest answer for v1 is that a local tool's container logs are the audit trail.
 | OIDC / SSO | A local dev tool with three users does not need an identity provider, and adding one would double the auth surface. The token model is a clean seam if it is ever needed. |
 | Per-corpus roles beyond read/write | Two levels cover the actual use. More would be modelling for a team structure Dexicon does not have. |
 | Rate limiting per token | Single-instance local tool. Add it when someone reports a problem, not before. |
-| Signed/expiring share links | Requires a second token model with its own policy envelope. Deliberately not started; see McpToolbox ADR-004 for how much that grows. |
+| Signed/expiring share links | Requires a second token model with its own policy envelope, which grows quickly. Deliberately not started. |

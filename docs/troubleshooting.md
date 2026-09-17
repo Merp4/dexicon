@@ -7,8 +7,8 @@ what they are called. Most were hit while building Dexicon, which is why they ar
 
 ## "My PDF is in the corpus but nothing matches it"
 
-**Look at the file's status in the corpus.** A PDF with no text layer — a scan, or a photo
-of a page — is marked `empty` with the reason `no text layer — this is a scanned PDF, and
+**Look at the file's status in the corpus.** A PDF with no text layer (a scan, or a photo of
+a page) is marked `empty`, with the reason `no text layer — this is a scanned PDF, and
 OCR is not supported`. Dexicon reads text layers and does not do OCR, and it says so rather
 than silently indexing nothing.
 

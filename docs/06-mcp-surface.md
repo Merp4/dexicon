@@ -162,7 +162,7 @@ outlasts any sensible tool timeout.
 ### `index_status`
 
 `(corpus?)` — current job phase and counts, last indexed time, last error, embedding model
-and whether it is reachable. Also the honest answer to "why did search return nothing" —
+and whether it is reachable. Also the answer to "why did search return nothing" —
 it will say `indexing, 12% (1,204 / 9,880 files)` or `degraded: embedding service
 unreachable since 14:02`.
 
