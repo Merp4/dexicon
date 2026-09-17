@@ -272,12 +272,19 @@ public sealed class DexiconTools
                 : $"'{filePath}' is indexed in corpus '{corpus}' but has no content around line " +
                   $"{aroundLine}; it spans lines {chunks.Min(c => c.StartLine)}-{chunks.Max(c => c.EndLine)}.");
 
-        var header = $"{filePath}:{pieces[0].StartLine}-{pieces[^1].EndLine} (corpus: {corpus})\n";
+        // The window, not the span of the chunks overlapping it. `before` and `after` are
+        // documented as lines, and a caller budgeting context should get what it asked
+        // for: one line either side used to return a whole chunk, forty lines in docs/.
+        var shownLo = Math.Max(lo, pieces[0].StartLine);
+        var shownHi = Math.Min(hi, pieces[^1].EndLine);
+
+        var header = $"{filePath}:{shownLo}-{shownHi} (corpus: {corpus})\n";
         if (ambiguous)
             header += $"! {bySource.Count} sources in this corpus contain a file at that path. " +
                       "They are different files with the same name. This is one of them, the " +
                       "largest; the others are not shown and not mixed in.\n";
-        return header + "\n" + Stitch(pieces.Select(p => (p.StartLine, p.EndLine, p.Content)), lineNumbers);
+        return header + "\n" +
+               Stitch(pieces.Select(p => (p.StartLine, p.EndLine, p.Content)), lineNumbers, (lo, hi));
     }
 
     /// <summary>
@@ -292,10 +299,17 @@ public sealed class DexiconTools
     /// arithmetic it gets wrong. Gap markers stay unnumbered: the lines they stand for are
     /// the ones that are not there.
     /// </param>
+    /// <param name="window">
+    /// Inclusive line range to emit, or null for all of it. Chunks are selected by overlap
+    /// with the window, so without this a caller asking for a few lines receives whole
+    /// chunks: a request for one line either side returned forty.
+    /// </param>
     internal static string Stitch(
         IEnumerable<(int StartLine, int EndLine, string Content)> pieces,
-        bool lineNumbers = false)
+        bool lineNumbers = false,
+        (int Lo, int Hi)? window = null)
     {
+        var (winLo, winHi) = window ?? (int.MinValue, int.MaxValue);
         var sb = new StringBuilder();
         var emittedThrough = 0;
         var lastRange = (Start: 0, End: 0);
@@ -309,7 +323,8 @@ public sealed class DexiconTools
             // this, get_context on a minified file returned only its first chunk.
             if (p.StartLine == p.EndLine && (p.StartLine, p.EndLine) == lastRange)
             {
-                AppendWithoutRepeating(sb, p.Content);
+                if (p.StartLine >= winLo && p.StartLine <= winHi)
+                    AppendWithoutRepeating(sb, p.Content);
                 continue;
             }
 
@@ -322,7 +337,12 @@ public sealed class DexiconTools
             // is disclosed instead. This fired on chunks left behind by an older
             // chunker, which is how that staleness was found at all.
             if (emittedThrough > 0 && p.StartLine > emittedThrough + 1)
-                sb.Append($"\n… lines {emittedThrough + 1}-{p.StartLine - 1} not indexed …\n\n");
+            {
+                var gapLo = Math.Max(emittedThrough + 1, winLo);
+                var gapHi = Math.Min(p.StartLine - 1, winHi);
+                if (gapLo <= gapHi)
+                    sb.Append($"\n… lines {gapLo}-{gapHi} not indexed …\n\n");
+            }
 
             // Drop the leading lines shared with the previous chunk. Overlap is configured
             // in characters, not lines, so the shared span is derived from the line
@@ -332,8 +352,11 @@ public sealed class DexiconTools
 
             foreach (var line in p.Content.Split('\n').Skip(skip))
             {
-                if (lineNumbers) sb.Append(lineNo).Append(": ");
-                sb.Append(line).Append('\n');
+                if (lineNo >= winLo && lineNo <= winHi)
+                {
+                    if (lineNumbers) sb.Append(lineNo).Append(": ");
+                    sb.Append(line).Append('\n');
+                }
                 lineNo++;
             }
 
