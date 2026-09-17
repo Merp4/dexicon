@@ -755,6 +755,16 @@ export function CorpusDetail({
                       API, and it was: the first run of this screen against an older
                       server blanked the page on `undefined.length`. In the image they
                       always ship together; here they do not. */}
+                  {/* What it brought in. A corpus with one source does not need this —
+                      the corpus total IS the source total — but a corpus with ten does:
+                      a folder contributing nothing is what a mistyped path, an over-eager
+                      exclude glob and an index that stopped early all look like, and it
+                      is invisible in a corpus-level count. */}
+                  {corpus.sources.length > 1 && (
+                    <span className={s.fileCount ? 'dim text-xs' : 'text-xs text-[var(--warn)]'}>
+                      {s.fileCount ? `${s.fileCount.toLocaleString()} files` : 'no files'}
+                    </span>
+                  )}
                   <span className="dim text-xs">
                     {s.useGitignore ? '.gitignore honoured' : '.gitignore ignored'}
                     {' · '}≤ {formatBytes(s.maxFileBytes)}

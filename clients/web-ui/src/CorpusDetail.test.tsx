@@ -40,6 +40,7 @@ function source(over: Partial<Corpus['sources'][number]> = {}): Corpus['sources'
     maxFileBytes: 2 * 1024 * 1024,
     includeGlobs: [],
     excludeGlobs: [],
+    fileCount: 12,
     ...over,
   };
 }
@@ -237,5 +238,43 @@ describe('adding a source', () => {
 
     await waitFor(() => expect(addSource).toHaveBeenCalled());
     expect(addSource.mock.calls[0][1]).toMatchObject({ includeGlobs: [], excludeGlobs: [] });
+  });
+});
+
+describe('what each source contributed', () => {
+  it('says nothing about it when there is only one source', async () => {
+    // The corpus total IS the source total. Repeating it on the row is noise.
+    getCorpus.mockResolvedValue(corpus({ sources: [source({ fileCount: 12 })] }));
+    render(<CorpusDetail {...props} />);
+
+    await screen.findByText('api-repo');
+    expect(screen.queryByText('12 files')).not.toBeInTheDocument();
+  });
+
+  it('shows a count per source once there are several', async () => {
+    getCorpus.mockResolvedValue(corpus({
+      sources: [
+        source({ id: 's1', rootPath: 'orly/AI', fileCount: 34 }),
+        source({ id: 's2', rootPath: 'orly/Philosophy', fileCount: 12 }),
+      ],
+    }));
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText('34 files')).toBeInTheDocument();
+    expect(screen.getByText('12 files')).toBeInTheDocument();
+  });
+
+  it('calls out a source that brought in nothing', async () => {
+    // A mistyped path, an over-eager exclude glob and an index that stopped early all
+    // look identical from a corpus-level count: fine. This is the only place it shows.
+    getCorpus.mockResolvedValue(corpus({
+      sources: [
+        source({ id: 's1', rootPath: 'orly/AI', fileCount: 34 }),
+        source({ id: 's2', rootPath: 'orly/Typo', fileCount: 0 }),
+      ],
+    }));
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText('no files')).toBeInTheDocument();
   });
 });
