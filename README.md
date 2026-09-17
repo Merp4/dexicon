@@ -73,7 +73,7 @@ Claude Desktop and Zed, and `./scripts/install-mcp.ps1` writes any of them for y
 
 ## Status
 
-**Working, and young.** The current release is [`0.2.0`](CHANGELOG.md), published as
+**Working, and young.** The current release is [`0.2.1`](CHANGELOG.md), published as
 `ghcr.io/merp4/dexicon`. Indexing, hybrid search, chunk sets, the MCP surface, the web UI
 and the container all exist and are covered by tests.
 

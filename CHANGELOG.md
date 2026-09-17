@@ -4,7 +4,7 @@ Notable changes per release. Format loosely follows [Keep a Changelog]; versions
 [Semantic Versioning], with the caveat that this is 0.x and the minor number carries what
 the major one will once it stabilises.
 
-Every version is a git tag (`v0.2.0`), and the container image carries the same number —
+Every version is a git tag (`v0.2.1`), and the container image carries the same number —
 see [docs/09](docs/09-deployment.md) for how versions are derived and what the image tags
 mean.
 
@@ -12,6 +12,47 @@ mean.
 [Semantic Versioning]: https://semver.org/
 
 ---
+
+## 0.2.1 — 2026-09-17
+
+Security fixes. Two of these are real vulnerabilities and affect every release
+before this one; nobody but the author has run any of them, which is the only
+reason this is a changelog entry rather than an advisory.
+
+### Fixed
+
+- **A cache collision returned somebody else's authenticated principal.** The
+  verified-principal cache was keyed on a 32-bit `string.GetHashCode` plus the token's
+  length. A collision there does not return a stale value — it returns a different
+  caller's principal, with verification skipped, because the cache says the token has
+  already been checked. The key is now SHA-256 over the whole token, and the token itself
+  is still not the key: cache keys turn up in dumps and diagnostics.
+  *.NET randomises string hashing per process, so the pairs could not be found offline.
+  That made it hard to exploit; it did not make it sound.*
+- **The workspace boundary was a string prefix, not a directory.** `StartsWith(root)`
+  refuses `../etc/passwd` and accepts `../workspaces-secret` — a sibling that merely
+  begins with the root's name. The escape never needed to traverse anywhere. Symlink
+  targets in the directory walk were checked the same way, and are now checked properly
+  too. The comparison is case-insensitive only where the filesystem is.
+- **The 200 MB upload limit was unreachable** behind Kestrel's 30 MB request cap, so a
+  40 MB PDF died on a bare 413 with no reason given and a configured limit that was a
+  fiction. The cap is lifted per request on the upload endpoint only, and the real limit
+  is enforced while streaming to disk — it stops reading at the cap rather than buffering
+  the whole request to discover how big it was.
+- **The secret scanner matched code rather than secrets.** All four findings over full
+  history were the bootstrap-token rule firing on scripts that name the variable and hold
+  no value. A scanner that cries wolf on source is one people learn to wave through.
+
+### Changed
+
+- The README leads with what the tool does rather than eleven lines of prose, and its
+  screenshot is of this project's own documentation. The first one was of a corpus of
+  O'Reilly books and carried several hundred legible words of two of them; the script that
+  takes it now names its corpus and says that overriding it means content you hold the
+  rights to distribute.
+- `docs/10` records a licence review of the whole transitive dependency tree, and an audit
+  of what an error is allowed to say across the MCP and REST boundaries — both with the
+  scripts and probes that produced them.
 
 ## 0.2.0 — 2026-09-17
 
