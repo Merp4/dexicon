@@ -48,9 +48,9 @@ books:fine      a named set within it
 A corpus can be cut several ways at once — a coarse set and a fine one, or the live set
 and its replacement on a new model while that replacement backfills
 ([D-21](decisions.md#d-21-chunk-sets-not-corpus-level-chunking)). Qualifying the name
-rather than adding a `chunk_set` parameter to four tools is deliberate: the tool count and
-every tool's parameter count are context an agent pays for on every turn, and an agent
-that has never heard of chunk sets sends a bare name and gets the sensible answer.
+rather than adding a `chunk_set` parameter to four tools keeps the parameter count down
+(see [Tools](#tools)), and an agent that has never heard of chunk sets sends a bare name
+and gets the sensible answer.
 
 `list_corpora` names every set, marks the default with `*`, and says so explicitly —
 otherwise an agent told only the corpus name cannot reach the others.
