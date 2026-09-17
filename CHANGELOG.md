@@ -4,8 +4,8 @@ Notable changes per release. Format loosely follows [Keep a Changelog]; versions
 [Semantic Versioning], with the caveat that this is 0.x and the minor number carries what
 the major one will once it stabilises.
 
-Every version is a git tag (`v0.2.2`), and the container image carries the same number —
-see [docs/09](docs/09-deployment.md) for how versions are derived and what the image tags
+Every version is a git tag (`v0.2.2`) and the container image carries the same number. See
+[docs/09](docs/09-deployment.md) for how versions are derived and what the image tags
 mean.
 
 From `0.2.3`, each section below is also the body of that version's GitHub Release. A tag
@@ -27,7 +27,7 @@ Documentation, bar one word of shipped text: the `path_prefix` tool description 
 - A prose pass across the whole set: roughly 90 lines of narrative removed with no facts
   lost. Gone are the editorialising adverbs, the passages where a document narrated its own
   edit history rather than describing the software, and the habit of defining a thing by
-  what it is not — kept only where the rejected alternative is real, which was 187 of the
+  what it is not, kept only where the rejected alternative is real, which was 187 of the
   200 places it appeared.
 - Four corrections found while reading, none of them editorial: `decisions.md` still
   recommended `nomic-embed-text` after the benchmark sweep moved the default to
@@ -50,22 +50,22 @@ reason this is a changelog entry rather than an advisory.
 
 - **A cache collision returned somebody else's authenticated principal.** The
   verified-principal cache was keyed on a 32-bit `string.GetHashCode` plus the token's
-  length. A collision there does not return a stale value — it returns a different
-  caller's principal, with verification skipped, because the cache says the token has
+  length. A collision there does not return a stale value; it returns a different caller's
+  principal, with verification skipped, because the cache records the token as having
   already been checked. The key is now SHA-256 over the whole token, and the token itself
   is still not the key: cache keys turn up in dumps and diagnostics.
   *.NET randomises string hashing per process, so the pairs could not be found offline.
   That made it hard to exploit; it did not make it sound.*
 - **The workspace boundary was a string prefix, not a directory.** `StartsWith(root)`
-  refuses `../etc/passwd` and accepts `../workspaces-secret` — a sibling that merely
-  begins with the root's name. The escape never needed to traverse anywhere. Symlink
+  refuses `../etc/passwd` and accepts `../workspaces-secret`, a sibling that merely begins
+  with the root's name. The escape never needed to traverse anywhere. Symlink
   targets in the directory walk were checked the same way, and are now checked properly
   too. The comparison is case-insensitive only where the filesystem is.
 - **The 200 MB upload limit was unreachable** behind Kestrel's 30 MB request cap, so a
   40 MB PDF died on a bare 413 with no reason given and a configured limit that was a
   fiction. The cap is lifted per request on the upload endpoint only, and the real limit
-  is enforced while streaming to disk — it stops reading at the cap rather than buffering
-  the whole request to discover how big it was.
+  is enforced while streaming to disk, stopping at the cap rather than buffering the whole
+  request to determine its size.
 - **The secret scanner matched code rather than secrets.** All four findings over full
   history were the bootstrap-token rule firing on scripts that name the variable and hold
   no value. A scanner that cries wolf on source is one people learn to wave through.
@@ -78,14 +78,14 @@ reason this is a changelog entry rather than an advisory.
   takes it now names its corpus and says that overriding it means content you hold the
   rights to distribute.
 - `docs/10` records a licence review of the whole transitive dependency tree, and an audit
-  of what an error is allowed to say across the MCP and REST boundaries — both with the
+  of what an error is allowed to say across the MCP and REST boundaries, both with the
   scripts and probes that produced them.
 
 ## 0.2.0 — 2026-09-17
 
-The release that came from pointing the indexer at a real shelf of 95 books instead of at
-fixtures. Six defects surfaced that way, four of them silent — no error, no log line, and a
-system that looked healthy.
+The result of indexing a real collection of 95 books rather than fixtures. Six defects
+surfaced, four of which produced no error and no log line, leaving a system that appeared
+healthy.
 
 ### ⚠️ Upgrading
 
@@ -95,8 +95,8 @@ system that looked healthy.
 - **Everything else re-chunks and re-extracts itself** on the next ordinary refresh. The
   chunker and extractor versions are part of the content fingerprint for exactly this
   reason.
-- The default embedding model is now `embeddinggemma`. This affects **new** corpora only —
-  a chunk set records the model it was built with and keeps it.
+- The default embedding model is now `embeddinggemma`. This affects **new** corpora only;
+  a chunk set records the model it was built with and retains it.
 
 ### Fixed
 
@@ -108,7 +108,7 @@ system that looked healthy.
   root, so two sources of one corpus holding the same filename are two files with one path.
   Three consequences, all fixed: deletion removed both copies; `get_context` interleaved
   them into a single passage with line numbers on it; and the vector point id, derived from
-  (set, path, index), let the second source's write silently overwrite the first.
+  (set, path, index), let the second source's write overwrite the first without error.
 - **A running index job absorbed work it had already passed.** Adding sources to a corpus
   mid-index left them unindexed while the corpus reported `ready` with no job pending.
   Coalescing now happens only onto a *queued* job.
@@ -127,12 +127,12 @@ system that looked healthy.
 - **The GPU overlay could never have started** — `device_ids` was a scalar where Compose
   requires a list.
 - **A shell script with CRLF endings is not a shell script.** `scripts/provision-models.sh`
-  acquired them and took Ollama, and with it the whole stack, down. CI now rejects any
+  acquired them and brought down Ollama, and with it the whole stack. CI now rejects any
   `*.sh` containing a carriage return.
 
 ### Added
 
-- **Sources can be removed** — `DELETE /api/corpora/{name}/sources/{id}` and a control in
+- **Sources can be removed** via `DELETE /api/corpora/{name}/sources/{id}` and a control in
   the UI. Previously the only way to undo a mistyped path was deleting the whole corpus.
 - **Search can be scoped to one source** (`source` on `search_index` and `POST /api/search`),
   and results say which source they came from when that disambiguates. `pathPrefix` cannot
@@ -146,23 +146,24 @@ system that looked healthy.
   nothing ever passed one, so a corpus could only be pointed at a top-level directory.
 - **New corpora choose their embedding model**, sized from what that model was measured to
   accept. It is the one property of a corpus that cannot be changed afterwards.
-- **Built-in task framing for every model in Ollama's embedding category** — all twelve,
-  each read off its model card, pinned by a test so one cannot be dropped silently.
+- **Built-in task framing for every model in Ollama's embedding category**: all twelve,
+  each read from its model card and pinned by a test so that none can be dropped unnoticed.
 - `scripts/dev-token.py`: hands the bootstrap token from `.env` to a browser over loopback,
   behind a single-use nonce, so the UI can be driven signed-in without the token passing
   through a transcript or a shell history.
 
 ### Changed
 
-- **`embeddinggemma` is the default embedding model.** It won both retrieval sweeps — by
-  0.025 mean MRR on documents and 0.075 on code, the widest gap any single variable opened.
+- **`embeddinggemma` is the default embedding model.** It led both retrieval sweeps, by
+  0.025 mean MRR on documents and 0.075 on code, the widest margin any single variable
+  produced.
   See [benchmarks](docs/benchmarks.md).
 - **`list_corpora` leads with what a corpus is *for*.** The description used to come last,
   under the state, counts, chunk sets, dimensions and overlap. An empty corpus is now
   marked `NOT SEARCHABLE` rather than listed as a plausible place to look.
 - Chunk size is measured: a model's real character ceiling and its chars-per-token ratio
   are both read from its own tokenizer.
-- One-of-N choices in the UI are a segmented control — one tab stop with arrow keys, rather
+- One-of-N choices in the UI are a segmented control: one tab stop with arrow keys, rather
   than three separate tab stops with none.
 - The `docs/` corpus sweep gained a code corpus: 81 configurations over each, 162 in total.
 
@@ -174,8 +175,8 @@ system that looked healthy.
   `AssemblyInformationalVersion` is the one to read; MinVer pins `AssemblyVersion` to
   `major.0.0.0`, which reports `0.0.0` for any 0.x project.
 - Base images are pinned by digest, and the release publishes an SBOM and build provenance.
-- CI type-checks and tests the UI, and generates the API client first — the previous
-  pipeline compiled a tree with no client in it, and `npx tsc --noEmit` was a no-op.
+- CI type-checks and tests the UI, and generates the API client first. The previous
+  pipeline compiled a tree with no client in it, so `npx tsc --noEmit` was a no-op.
 
 ## 0.1.0 — 2026-09-16
 
