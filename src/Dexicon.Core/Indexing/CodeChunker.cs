@@ -39,7 +39,7 @@ public sealed record ChunkOptions
     public string BoundaryMode { get; init; } = "language-aware";
     public string? CustomBoundaryPattern { get; init; }
 
-    /// <summary>Prefer the document's own units — page, chapter, slide — as split points.</summary>
+    /// <summary>Prefer the document's own units (page, chapter, slide) as split points.</summary>
     public bool UnitAware { get; init; }
 
     /// <summary>Cut at a sentence rather than a word when splitting an over-long line.</summary>
@@ -54,7 +54,7 @@ public sealed record ChunkOptions
 /// <c>start_line</c>/<c>end_line</c> and a result is directly openable in an editor.
 ///
 /// With <c>language-aware</c> the file is first split at member boundaries, then each
-/// segment is size-chunked — which keeps a method with its signature instead of slicing
+/// segment is size-chunked, which keeps a method with its signature instead of slicing
 /// it at an arbitrary token count.
 /// </summary>
 public static class CodeChunker
@@ -71,13 +71,13 @@ public static class CodeChunker
     /// the chunking fingerprint, so a corpus re-chunks itself after an algorithm change.
     ///
     /// Without it, the fingerprint says "same bytes, same settings, nothing to do" and a
-    /// corpus keeps chunks from a chunker that no longer exists — indefinitely, because an
-    /// incremental refresh's whole purpose is to skip unchanged files. The same reasoning
+    /// corpus keeps chunks from a chunker that no longer exists, indefinitely, because an
+    /// incremental refresh exists to skip unchanged files. The same reasoning
     /// as the extractor version, applied one stage later in the pipeline.
     ///
     /// 2: size decides WHEN to split and a boundary decides WHERE (chunk size used to be
     ///    dead configuration); a line longer than the whole budget is now split.
-    /// 3: the meaning-preserving strategies — heading context, unit-aware boundaries,
+    /// 3: the meaning-preserving strategies: heading context, unit-aware boundaries,
     ///    sentence-aware splitting. Only the sets that enable one are affected, but the
     ///    fingerprint cannot tell "off" from "on but implemented differently", and a set
     ///    built against the first cut of these would otherwise keep those chunks forever.
@@ -132,7 +132,7 @@ public static class CodeChunker
         // kind that FORCES a split rather than merely offering a place for one.
         //
         // Everywhere else the chunker's rule is "size decides when, a boundary decides
-        // where" — which is right for prose, and useless here: a chapter shorter than the
+        // where", which is right for prose and unsuitable here: a chapter shorter than the
         // budget would simply be swallowed into the next one, and asking for chapter-
         // aligned chunks would produce chunks spanning three chapters. A chunk that
         // straddles two chapters is the thing this setting exists to prevent.
@@ -152,8 +152,8 @@ public static class CodeChunker
         // emitted looked equivalent and was not: the accumulator fills PAST a boundary
         // before backing up to it, so the cursor is always ahead of the chunk being
         // flushed. A chunk from the "Point payload" section came out labelled with a
-        // heading from further down the file — a confident, wrong label, which is worse
-        // than no label, because retrieval then files it under a section it is not in.
+        // heading from further down the file, which is worse than no label, because
+        // retrieval then places it under a section it is not in.
         var trails = options.HeadingContext && isMarkdown ? HeadingTrails(lines) : null;
 
         var chunks = new List<TextChunk>();
@@ -167,7 +167,7 @@ public static class CodeChunker
     }
 
     /// <summary>
-    /// The heading path in effect at each line — "Data model &gt; Point payload". A deeper
+    /// The heading path in effect at each line, such as "Data model &gt; Point payload". A deeper
     /// heading replaces its peers and discards everything below it, so a stale h3 cannot
     /// trail along underneath the next h2.
     /// </summary>
@@ -231,7 +231,7 @@ public static class CodeChunker
     /// configuration in every mode but <c>none</c>: blank-line mode on prose produced
     /// one chunk per paragraph, measured at a 252-character mean against a 3072
     /// character budget, and two corpora configured 768 and 256 produced byte-identical
-    /// output. Chunks that small retrieve badly — there is not enough context in a
+    /// output. Chunks that small retrieve badly: there is not enough context in a
     /// paragraph to embed usefully.
     ///
     /// Now the accumulator fills to the budget and then backs up to the most recent
@@ -287,14 +287,14 @@ public static class CodeChunker
             var lineChars = line.Length + 1;
 
             // A single line that alone exceeds the budget. This used to be emitted whole,
-            // on the reasoning that a minified file is ugly but not invisible — which was
-            // wrong, because the embedding model truncates at its context limit WITHOUT
-            // SAYING SO. An EPUB whose extractor emitted one line per chapter produced 18
+            // on the reasoning that a minified file is unwieldy but not invisible. That
+            // was wrong, because the embedding model truncates at its context limit
+            // without reporting it. An EPUB whose extractor emitted one line per chapter produced 18
             // chunks averaging 32,000 characters: the book reported itself as indexed
             // while roughly 95% of it existed nowhere in the index.
             //
-            // So the line is split. Every piece keeps this line's number, which is honest
-            // — they are all on it — and a search hit still opens at the right place.
+            // So the line is split. Every piece keeps this line's number, since they are
+            // all on it, and a search hit still opens at the right place.
             if (chars == 0 && lineChars > maxChars)
             {
                 foreach (var piece in SplitOversizeLine(line, maxChars, overlapChars, options.SentenceAware))
@@ -309,11 +309,11 @@ public static class CodeChunker
             {
                 // Back up to the boundary only if it leaves a chunk worth having.
                 //
-                // "Size decides WHEN, a boundary decides WHERE" assumes a boundary is near
-                // the fill point. When the last one is far behind — a blank line early,
-                // then a long listing with none — backing up to it emits a fraction of a
+                // "Size decides when, a boundary decides where" assumes a boundary is near
+                // the fill point. When the last one is far behind (a blank line early,
+                // then a long listing with none) backing up to it emits a fraction of a
                 // chunk, and then the overlap rewind cannot go past previousStart + 1, so
-                // the next chunk begins ONE LINE later and produces almost the same tiny
+                // the next chunk begins one line later and produces almost the same tiny
                 // chunk again. A 458,000-character book of prose interleaved with code
                 // came out as 1,051 chunks averaging 388 characters, each a one-line shift
                 // of the last, where 70 chunks of ~8,000 were the intent: fifteen times
@@ -326,8 +326,8 @@ public static class CodeChunker
                 //
                 // Tying it to the overlap rather than to the budget also keeps deliberate
                 // boundaries working. A custom pattern or a markdown heading is a request
-                // to split THERE, and a set with no overlap has no stall to prevent — the
-                // rule then rejects only a zero-length chunk, which is what it should do.
+                // to split at that point, and a set with no overlap has no stall to
+                // prevent: the rule then rejects only a zero-length chunk, as intended.
                 var minimumChunk = Math.Max(overlapChars * 2, 1);
                 var boundaryIsWorthIt = lastBoundary > start && charsAtBoundary >= minimumChunk;
                 var splitAt = boundaryIsWorthIt ? lastBoundary : i;
@@ -367,8 +367,8 @@ public static class CodeChunker
     {
         // How far back a cut may reach. A word gap is never far away, so an eighth of the
         // budget is plenty; a sentence end can be a whole sentence away, and with the same
-        // narrow window sentence-awareness simply never fired — every piece still ended
-        // mid-sentence, which is a setting that costs something and does nothing.
+        // narrow window sentence-awareness never fired: every piece still ended
+        // mid-sentence, leaving a setting that costs something and does nothing.
         var maxBackup = Math.Max(1, maxChars / 8);
         var sentenceBackup = Math.Max(1, maxChars / 2);
         var pos = 0;
@@ -393,7 +393,7 @@ public static class CodeChunker
 
             if (end >= line.Length) yield break;
 
-            // Overlap, same as between chunks — but never at the cost of progress.
+            // Overlap, as between chunks, but never at the cost of progress.
             var next = end - overlapChars;
             pos = next > pos ? next : end;
         }
@@ -461,7 +461,7 @@ public static class CodeChunker
     /// An ATX heading: one to six '#' at the start of the line (up to three spaces of
     /// indent), then whitespace, then text.
     ///
-    /// The naive version of this — "starts with # and contains '# '" — fired on YAML
+    /// The naive version of this, "starts with # and contains '# '", fired on YAML
     /// comments inside fenced code blocks and labelled a docs chunk with
     /// "spends its first minutes in embedding backoff" as its section. A section that
     /// is confidently wrong is worse than no section, because a reader trusts it.

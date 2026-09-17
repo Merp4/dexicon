@@ -40,7 +40,7 @@ public enum CorpusState { Ready = 0, Indexing = 1, Degraded = 2, Unavailable = 3
 
 /// <summary>
 /// A named, searchable body of content owned by one tenant. The unit of visibility,
-/// of reindexing, and of search scope — and the <c>is_tenant</c> key in Qdrant.
+/// of reindexing, and of search scope, and the <c>is_tenant</c> key in Qdrant.
 /// </summary>
 public sealed class Corpus
 {
@@ -60,9 +60,9 @@ public sealed class Corpus
     public List<IndexJob> Jobs { get; set; } = [];
 
     /// <summary>
-    /// How this corpus's content is cut and embedded — one entry per variation. The
+    /// How this corpus's content is cut and embedded, one entry per variation. The
     /// embedding model and chunk settings used to live on the corpus itself, which made
-    /// them a property of the CONTENT rather than of a way of reading it.
+    /// them a property of the content rather than of a way of reading it.
     /// </summary>
     public List<ChunkSet> ChunkSets { get; set; } = [];
 }
@@ -72,7 +72,7 @@ public sealed class Corpus
 /// chunking strategy. A corpus can carry several, over exactly the same documents.
 ///
 /// This is what makes a model change safe. The collection name encodes the model and its
-/// dimensionality, so switching models means writing into a different vector space —
+/// dimensionality, so switching models means writing into a different vector space,
 /// measured at roughly twenty minutes for a modest book corpus on CPU Ollama. With one
 /// configuration per corpus, that is twenty minutes of half-populated results. With
 /// several, the new set is built alongside the old one, promoted when it is complete, and
@@ -93,8 +93,8 @@ public sealed class ChunkSet
     public string? Description { get; set; }
 
     /// <summary>
-    /// Which configured backend embeds this set — <c>ollama</c>, <c>openai</c>, an Azure
-    /// deployment. The NAME of a provider, resolved against configuration at use; the
+    /// Which configured backend embeds this set: <c>ollama</c>, <c>openai</c>, an Azure
+    /// deployment. The name of a provider, resolved against configuration at use; the
     /// credentials for it never touch the catalogue.
     /// </summary>
     public string EmbeddingProvider { get; set; } = "ollama";
@@ -116,7 +116,7 @@ public sealed class ChunkSet
     public string? CustomBoundaryPattern { get; set; }
 
     /// <summary>
-    /// Prefer the document's own structure — page, chapter, slide — as a chunk boundary.
+    /// Prefer the document's own structure (page, chapter, slide) as a chunk boundary.
     /// The offsets already exist for citations; this feeds them into chunking too.
     /// </summary>
     public bool UnitAware { get; set; }
@@ -174,10 +174,10 @@ public sealed class Source
 }
 
 /// <summary>
-/// Persisted by NAME, so these numbers are free to change — but the ORDER matters:
+/// Persisted by name, so these numbers are free to change, but the order matters:
 /// Pending must be the zero value. It used to be Indexed, which meant a file was born
 /// claiming to be indexed and the library listed freshly uploaded documents as
-/// "indexed — 0 chunks". Defaulting to the pessimistic state makes a missed
+/// "indexed, 0 chunks". Defaulting to the pessimistic state makes a missed
 /// assignment show up as work outstanding rather than as work falsely complete.
 /// </summary>
 public enum FileStatus { Pending = 0, Indexed = 1, Skipped = 2, Failed = 3, Empty = 4 }
@@ -206,7 +206,7 @@ public sealed class IndexedFile
 
     /// <summary>
     /// Indexing state, one row per chunk set. It used to live on this entity, which
-    /// quietly asserted that a file has ONE chunking — true only while a corpus had one
+    /// implicitly asserted that a file has one chunking, true only while a corpus had one
     /// configuration. A hash, a chunk count and a status are properties of a file *as cut
     /// by a particular set*, not of the attachment.
     /// </summary>
@@ -226,8 +226,8 @@ public sealed class FileChunkState
     public ChunkSet? ChunkSet { get; set; }
 
     /// <summary>
-    /// The chunking fingerprint. Null until this set has indexed this file successfully —
-    /// that is what makes a failure retry rather than being skipped as up to date.
+    /// The chunking fingerprint. Null until this set has indexed this file successfully,
+    /// which is what makes a failure retry rather than be skipped as up to date.
     /// </summary>
     public string? ContentHash { get; set; }
 
@@ -242,7 +242,7 @@ public sealed class FileChunkState
 
 /// <summary>
 /// An uploaded document's bytes, content-addressed. Two uploads of the same file are
-/// one blob, and the blob carries no name — the same PDF can be attached to different
+/// one blob, and the blob carries no name: the same PDF can be attached to different
 /// corpora under different names, so the name belongs to the attachment.
 /// </summary>
 public sealed class Blob
@@ -263,7 +263,7 @@ public sealed class Blob
 /// Extracted text for a blob, cached. This is what makes re-chunking cheap and what
 /// lets the SAME document be chunked differently per corpus.
 ///
-/// Extraction is deterministic in the bytes and expensive — a 437-page PDF costs about
+/// Extraction is deterministic in the bytes and expensive: a 437-page PDF costs about
 /// 1.5 s of layout analysis. Chunking is cheap and corpus-specific. Splitting them means
 /// changing a corpus's chunk size, or attaching a document to a second corpus with
 /// different settings, re-chunks and re-embeds without ever re-opening the PDF.
@@ -275,7 +275,7 @@ public sealed class BlobText
 
     public required string Text { get; set; }
 
-    /// <summary>JSON array of extraction units — page/slide/chapter offsets for provenance.</summary>
+    /// <summary>JSON array of extraction units: page, slide or chapter offsets for provenance.</summary>
     public string? UnitsJson { get; set; }
 
     public string? Title { get; set; }
@@ -286,14 +286,14 @@ public sealed class BlobText
 
     /// <summary>
     /// <c>ExtractorVersions.Current</c> when this text was produced. Anything older is
-    /// re-extracted on next use — this is what makes an extractor fix reach documents
+    /// re-extracted on next use, which is what makes an extractor fix reach documents
     /// that were ingested before it.
     /// </summary>
     public int ExtractorVersion { get; set; }
 
     public DateTime ExtractedUtc { get; set; }
 
-    /// <summary>Set when the format was readable but yielded nothing — a scanned PDF.</summary>
+    /// <summary>Set when the format was readable but yielded nothing, such as a scanned PDF.</summary>
     public string? EmptyReason { get; set; }
 }
 
@@ -303,7 +303,7 @@ public sealed class BlobText
 /// <c>Rebuild</c> is a full pass targeting ONE chunk set: the backfill that builds a
 /// replacement while the live set keeps serving. It behaves like <c>Full</c> and is named
 /// separately so the jobs list can tell "backfilling a new set" from "re-indexing
-/// everything" — two very different reasons for a corpus to be busy.
+/// everything", which are different reasons for a corpus to be busy.
 ///
 /// A <c>Delete</c> kind existed and was never read or written: deletes are synchronous,
 /// because a delete that is queued behind an hour of indexing is a delete that has not
@@ -314,7 +314,7 @@ public sealed class BlobText
 ///
 /// Rows, not constants, because models are added at RUNTIME through the UI. A build that
 /// hard-coded the framing for the models it knew about would give every model pulled
-/// afterwards silently wrong framing — and wrong framing does not fail, it just retrieves
+/// afterwards incorrect framing, and incorrect framing does not fail; it retrieves
 /// badly. See <c>IModelProfiles</c> for the resolution order.
 /// </summary>
 public sealed class EmbeddingModelProfile
@@ -339,10 +339,10 @@ public sealed class EmbeddingModelProfile
 /// What a probe measured about a model, kept so it does not have to be measured again.
 /// </summary>
 /// <remarks>
-/// Deliberately NOT on <see cref="EmbeddingModelProfile"/>. That row is a CHOICE — the
-/// task framing someone configured — and it resolves ahead of the built-in defaults, so
-/// writing one to hold a measurement would silently override the framing too. A
-/// measurement is a fact about the model; a profile is an opinion about how to use it.
+/// Intentionally not on <see cref="EmbeddingModelProfile"/>. That row is a choice, the
+/// task framing someone configured, and it resolves ahead of the built-in defaults, so
+/// writing one to hold a measurement would override the framing as well. A measurement is
+/// a fact about the model; a profile is a decision about how to use it.
 ///
 /// Every field is nullable because a probe can be interrupted and a provider can decline
 /// to answer. Absent means "not measured", which is different from zero and must stay
