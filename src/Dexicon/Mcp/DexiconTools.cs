@@ -3,11 +3,13 @@ using System.Text;
 using Dexicon.Api;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
+using Dexicon.Core.Configuration;
 using Dexicon.Core.Indexing;
 using Dexicon.Core.Search;
 using Dexicon.Core.Vectors;
 using Dexicon.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
@@ -449,6 +451,7 @@ public sealed class DexiconTools
         RequestContext rc,
         ScopeResolver scopes,
         CatalogDbContext db,
+        IOptions<DexiconOptions> opts,
         [Description("Corpus name. Omit for every corpus you can see.")] string? corpus = null,
         CancellationToken ct = default)
     {
@@ -507,7 +510,47 @@ public sealed class DexiconTools
                 sb.Append('\n');
                 if (job.Error is { Length: > 0 }) sb.Append($"  error: {job.Error}\n");
             }
+
+            sb.Append(RenderCoverage(SourceCoverage.Find(
+                opts.Value.Indexing.WorkspaceRoot,
+                summary.Sources.Select(s => new SourceCoverage.SourceRoot(s.RootPath, s.MaxFileBytes)),
+                opts.Value.Indexing.DocumentMaxBytes)));
+
             sb.Append('\n');
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Files no source covers. Not skipped, not failed, not counted: absent, and absence
+    /// has no row in any of the figures above it. An agent that searches for one of these
+    /// gets other documents back, which is indistinguishable from a ranking result, so the
+    /// wording has to say what to do about it.
+    ///
+    /// Capped at five files per directory. The whole list belongs in the UI; what an agent
+    /// needs here is to know the corpus has a hole and roughly where.
+    /// </summary>
+    internal static string RenderCoverage(IReadOnlyList<SourceCoverage.Gap> gaps)
+    {
+        if (gaps.Count == 0) return string.Empty;
+
+        var sb = new StringBuilder();
+        foreach (var gap in gaps)
+        {
+            var where = gap.DirectoryRelativePath.Length == 0
+                ? "the workspace root"
+                : gap.DirectoryRelativePath;
+
+            sb.Append($"  NOT INDEXED: {gap.Files.Count:N0} file(s) in {where} are covered by no source, ");
+            sb.Append("though its subfolders are. Searching will never return them.\n");
+
+            foreach (var file in gap.Files.Take(5))
+                sb.Append($"    {file}\n");
+            if (gap.Files.Count > 5)
+                sb.Append($"    ... and {gap.Files.Count - 5:N0} more\n");
+
+            sb.Append($"  Add a source on {where}, or move the file into one of its subfolders.\n");
         }
 
         return sb.ToString();

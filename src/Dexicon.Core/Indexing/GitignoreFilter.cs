@@ -148,8 +148,14 @@ public sealed class WorkspaceWalker
 
     public sealed record WalkResult(IReadOnlyList<Candidate> Files, IReadOnlyList<Skipped> SkippedFiles);
 
+    /// <param name="topLevelOnly">
+    /// Files directly in <paramref name="rootPath"/> and no deeper. Used by
+    /// <see cref="SourceCoverage"/>, which asks what is in a directory without descending
+    /// into the subdirectories that already have sources of their own.
+    /// </param>
     public static WalkResult Walk(string rootPath, bool useGitignore, IReadOnlyList<string>? includeGlobs,
-        IReadOnlyList<string>? excludeGlobs, long maxFileBytes, long? documentMaxBytes = null)
+        IReadOnlyList<string>? excludeGlobs, long maxFileBytes, long? documentMaxBytes = null,
+        bool topLevelOnly = false)
     {
         var root = Path.GetFullPath(rootPath);
         var files = new List<Candidate>();
@@ -167,7 +173,7 @@ public sealed class WorkspaceWalker
         if (includeGlobs is { Count: > 0 }) include.AddPatterns(includeGlobs, "source.include");
         var hasInclude = include.Count > 0;
 
-        foreach (var full in EnumerateFilesSafely(root))
+        foreach (var full in EnumerateFilesSafely(root, topLevelOnly))
         {
             var relative = Path.GetRelativePath(root, full).Replace('\\', '/');
 
@@ -220,7 +226,7 @@ public sealed class WorkspaceWalker
     /// without following symlinks out of the root, since a link to / would otherwise index
     /// the entire filesystem.
     /// </summary>
-    private static IEnumerable<string> EnumerateFilesSafely(string root)
+    private static IEnumerable<string> EnumerateFilesSafely(string root, bool topLevelOnly = false)
     {
         var stack = new Stack<string>();
         stack.Push(root);
@@ -230,7 +236,7 @@ public sealed class WorkspaceWalker
             var dir = stack.Pop();
 
             string[] subdirs;
-            try { subdirs = Directory.GetDirectories(dir); }
+            try { subdirs = topLevelOnly ? [] : Directory.GetDirectories(dir); }
             catch (Exception) { continue; }
 
             foreach (var sub in subdirs)
