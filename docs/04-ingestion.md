@@ -286,8 +286,8 @@ a strategy, and a corpus can carry several over exactly the same documents.
 
 ```
 corpus "library"          content, sources, who can read it
-  ├── set "default"       nomic-embed-text, 768/100, language-aware   ← search lands here
-  └── set "fine"          nomic-embed-text, 256/40, heading context
+  ├── set "default"       embeddinggemma, 2065/258, language-aware   ← search lands here
+  └── set "fine"          embeddinggemma, 512/64, heading context
 ```
 
 Sets are addressed as `corpus:set`. An unqualified name means the default set, which is
@@ -442,6 +442,26 @@ badly; there is not enough context in a paragraph to embed usefully.
 
 Five regression tests pin the corrected behaviour, the load-bearing one being that a
 smaller `chunk_size` must produce more chunks.
+
+**A boundary is only used when it leaves a chunk worth having** — at least twice the
+overlap. "Back up to the most recent boundary" assumes there is one near the fill point,
+and prose interleaved with code listings breaks that assumption: a blank line early, then
+eleven thousand characters of listing with none. Backing up to that early boundary emits a
+fraction of a chunk, and the overlap rewind will not go back past the previous start, so
+the next chunk begins **one line later** and produces almost the same chunk again.
+
+A real book — *Crafting Clean Code with JavaScript and React*, whose PDF is prose around
+code — came out as **1,051 chunks averaging 388 characters** where 73 of ~8,000 were
+intended. Its EPUB, whose extractor emits no blank lines, produced 61 from the same text:
+the two formats agreed on the content to within 4% and disagreed on the chunking by
+seventeen times. Fifteen times the vectors, the embedding cost and the storage, and a
+result set of near-duplicate fragments too small to carry their own context.
+
+The threshold is the **overlap**, not a fraction of the budget, and the difference matters.
+Twice the overlap is exactly what guarantees the start advances after the rewind. Tying it
+to the budget instead would override a *deliberate* boundary — a custom pattern or a
+markdown heading is a request to split there, and a set with no overlap has no stall to
+prevent, so the rule then rejects only a zero-length chunk.
 
 ### Documents — unit-aware overlapping
 

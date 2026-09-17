@@ -111,11 +111,22 @@ reading, not for parsing:
 
 ### `list_corpora`
 
-No inputs. Returns what the caller can see: name,
-description, whether it is shared, file and chunk counts, last indexed time, current
-state — and every chunk set, with its model, dimensionality, chunk size and overlap, and
-the default marked. This is how an agent learns what `corpus` values are legal, including
-the `corpus:set` ones, so its description says so explicitly.
+No inputs. Returns what the caller can see: name, description, whether it is shared, file
+and chunk counts, last indexed time, current state — and every chunk set, with its model,
+dimensionality, chunk size and overlap, and the default marked. This is how an agent learns
+what `corpus` values are legal, including the `corpus:set` ones, so its description says so
+explicitly.
+
+**The description leads**, before any of the machinery. An agent calls this to answer one
+question — which of these should I search? — and the only line that answers it is the one a
+human wrote. It used to come last, under the state, the counts, every chunk set, the
+dimensions and the overlap. A corpus with no description says so, because silence reads as
+"no information" rather than as an undescribed corpus.
+
+**An empty corpus is marked `NOT SEARCHABLE`.** It is a legal value for `search_index` that
+cannot answer anything, and listed identically to a full one it reads as a reasonable place
+to look — the agent spends a call finding out otherwise. "Still indexing" and "genuinely
+empty" are told apart, because one is worth retrying and the other never will be.
 
 ### `get_context`
 

@@ -227,19 +227,33 @@ is a feature that does not exist.
 
 ### Naming
 
-One collection **per embedding model and dimensionality**, shared by all tenants:
+One collection **per provider, embedding model and dimensionality**, shared by all tenants:
 
 ```
-dexicon__{model_slug}__{dimensions}
+dexicon__{provider_slug}__{model_slug}__{dimensions}
 
-e.g.  dexicon__nomic-embed-text__768
-      dexicon__embeddinggemma__768
-      dexicon__qwen3-embedding-0-6b__1024
+e.g.  dexicon__ollama__embeddinggemma__768
+      dexicon__ollama__nomic-embed-text__768
+      dexicon__ollama__qwen3-embedding-0-6b__1024
+      dexicon__openai__text-embedding-3-small__1536
 ```
 
-`model_slug` is the Ollama model name lowercased with `[^a-z0-9]` collapsed to `-`.
-Encoding the model and dimensions in the name makes a mismatch structurally impossible:
-a corpus pinned to a model can only ever point at that model's collection.
+Each part is lowercased with `[^a-z0-9]` collapsed to `-`. Encoding provider, model and
+dimensions in the name makes a mismatch structurally impossible: a chunk set pinned to a
+model can only ever point at that model's collection.
+
+**The provider is in the name** because two providers can serve a model of the same name,
+and those are different vectors. Without it an OpenAI set and a local set would share a
+collection and silently pollute each other's space.
+
+**`:latest` is stripped first.** Ollama lists `embeddinggemma:latest` and a configuration
+file says `embeddinggemma`; they are one model and one vector space, and slugging them raw
+produced `embeddinggemma-latest__768` alongside `embeddinggemma__768` — two collections
+holding vectors that belong together, neither aware of the other. Only `:latest` goes:
+`:v1.5` and `:0.6b` are different weights producing different vectors.
+
+A chunk set stores the collection name it was built with, so a change to this scheme leaves
+existing sets where they are rather than moving them underneath a running system.
 
 ### Vectors
 
