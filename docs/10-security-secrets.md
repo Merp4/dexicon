@@ -191,7 +191,7 @@ Covered operationally in [09](09-deployment.md); the security-relevant points:
 - Dependabot for NuGet, npm, Docker base images, and GitHub Actions.
 - CI: `dotnet list package --vulnerable --include-transitive` and `npm audit`, both failing
   the build on high severity.
-- CodeQL for C# and TypeScript on PRs.
+- CodeQL for C# and TypeScript on pull requests, on `main`, and weekly.
 - Release builds publish an SBOM (CycloneDX) and pin base images by digest.
 - Every third-party extraction library is permissively licensed and listed with its licence
   in [04](04-ingestion.md#extraction) — a table that exists to be checked, not admired.
