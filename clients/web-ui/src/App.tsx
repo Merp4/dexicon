@@ -424,9 +424,18 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
             <div className="grid gap-3">
               {result.hits.map((h, i) => (
                 <article key={`${h.corpusId}-${h.filePath}-${h.startLine}-${i}`} className="card p-3.5">
-                  <header className="flex gap-2.5 items-baseline flex-wrap mb-2">
-                    <code className="mono text-sm font-semibold">{h.location}</code>
-                    {h.section && <span className="dim text-xs">· {h.section}</span>}
+                  {/* The citation truncates; the actions do not move.
+                      A book's filename is long — "Coaching Agile Teams - A Companion for
+                      ScrumMasters, Agile Coaches, and Project Managers in Transition.epub"
+                      — and wrapping it pushed Copy path and Open onto a second line, so
+                      the controls sat in a different place on every result. The full text
+                      is still on the element and in Copy path, which is how anyone
+                      actually takes a citation. */}
+                  <header className="flex gap-2.5 items-center mb-2">
+                    <code className="mono truncate text-sm font-semibold" title={h.location ?? undefined}>
+                      {h.location}
+                    </code>
+                    {h.section && <span className="dim shrink-0 text-xs">· {h.section}</span>}
                     <span className="flex-1" />
                     {h.language && <Badge>{h.language}</Badge>}
                     {result.scope.length > 1 && h.corpusName && <Badge tone="accent">{h.corpusName}</Badge>}
