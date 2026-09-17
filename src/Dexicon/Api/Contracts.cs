@@ -232,7 +232,14 @@ public sealed record SourceSummary(
     bool UseGitignore,
     int MaxFileBytes,
     IReadOnlyList<string> IncludeGlobs,
-    IReadOnlyList<string> ExcludeGlobs);
+    IReadOnlyList<string> ExcludeGlobs,
+    /// <summary>
+    /// Files this source contributed. A corpus with one source does not need it — the
+    /// corpus total IS the source total. A corpus with ten does: without it there is no
+    /// way to see that one folder brought in nothing, which is what a mistyped path, an
+    /// over-eager exclude glob, or an index that stopped early all look like.
+    /// </summary>
+    int FileCount = 0);
 
 /// <summary>
 /// One indexed file, reconstructed from the chunks of one chunk set.
@@ -296,14 +303,15 @@ public sealed record WorkspaceEntry(string Name, string RelativePath, bool IsDir
 
 public static class Mapping
 {
-    public static SourceSummary ToSummary(this Source s) =>
+    public static SourceSummary ToSummary(this Source s, int fileCount = 0) =>
         new(s.Id,
             s.Kind.ToString().ToLowerInvariant(),
             s.RootPath,
             s.UseGitignore,
             s.MaxFileBytes,
             Globs(s.IncludeGlobs),
-            Globs(s.ExcludeGlobs));
+            Globs(s.ExcludeGlobs),
+            fileCount);
 
     /// <summary>
     /// A stored glob column as a list. Empty rather than null when unset or unreadable:

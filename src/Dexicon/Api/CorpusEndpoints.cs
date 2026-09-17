@@ -328,6 +328,14 @@ public static class CorpusEndpoints
         CancellationToken ct)
     {
         var sources = await db.Sources.Where(s => s.CorpusId == c.Id).ToListAsync(ct);
+
+        // Files per source, so a folder that brought in nothing is visible as such.
+        var filesPerSource = (await db.Files
+                .Where(f => f.Source!.CorpusId == c.Id)
+                .GroupBy(f => f.SourceId)
+                .Select(grp => new { SourceId = grp.Key, Count = grp.Count() })
+                .ToListAsync(ct))
+            .ToDictionary(x => x.SourceId, x => x.Count, StringComparer.Ordinal);
         var sets = await db.ChunkSets.Where(s => s.CorpusId == c.Id)
             .OrderByDescending(s => s.IsDefault).ThenBy(s => s.Name).ToListAsync(ct);
 
@@ -374,7 +382,7 @@ public static class CorpusEndpoints
             headline?.ChunkCount ?? 0,
             defaultRows.Where(r => r.Status is FileStatus.Skipped or FileStatus.Empty).Sum(r => r.Count),
             headline?.FailedCount ?? 0,
-            sources.Select(s => s.ToSummary()).ToList(),
+            sources.Select(s => s.ToSummary(filesPerSource.GetValueOrDefault(s.Id))).ToList(),
             setSummaries);
     }
 }

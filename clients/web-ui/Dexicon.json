@@ -2746,6 +2746,11 @@
             "items": {
               "type": "string"
             }
+          },
+          "fileCount": {
+            "type": "integer",
+            "format": "int32",
+            "default": 0
           }
         }
       },
