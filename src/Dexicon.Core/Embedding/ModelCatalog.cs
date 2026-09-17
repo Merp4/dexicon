@@ -12,7 +12,7 @@ namespace Dexicon.Core.Embedding;
 /// </param>
 public sealed record AvailableModel(string Name, long SizeBytes, string? Family, int? Dimensions);
 
-/// <param name="Status">The provider's own words — "pulling manifest", "success".</param>
+/// <param name="Status">The provider's own words, such as "pulling manifest" or "success".</param>
 public sealed record ModelPullProgress(string Status, long Completed, long Total)
 {
     public int Percent => Total > 0 ? (int)(100 * Completed / Total) : 0;
@@ -20,7 +20,7 @@ public sealed record ModelPullProgress(string Status, long Completed, long Total
 }
 
 /// <summary>
-/// Listing, pulling and deleting models — which is NOT embedding, and not something every
+/// Listing, pulling and deleting models. This is not embedding, and not something every
 /// provider can do.
 ///
 /// Deliberately separate from <see cref="IEmbeddingService"/>. You cannot pull a model
@@ -59,7 +59,7 @@ public sealed class ModelCatalog(
         // configured list is the answer, and free text still works in the UI.
         if (configured.Kind != EmbeddingProviderKind.Ollama)
             // Family is null, not the provider name. A hosted list is curated, so nothing
-            // reads it here — but a field that says "openai" where a model architecture
+            // reads it here, but a field that says "openai" where a model architecture
             // belongs is a trap for whoever reads it next.
             return [.. configured.Models
                 .Select(m => new AvailableModel(m, 0, null, KnownDimensions(provider, m)))
@@ -131,7 +131,7 @@ public sealed class ModelCatalog(
     /// A client with NO request timeout, unlike the embedding path which uses the
     /// configured one. A pull is gigabytes over minutes, and the default hundred seconds
     /// would abort it part-way every time on any model worth having. Cancellation still
-    /// works — the caller's token is what stops it.
+    /// works; the caller's token is what stops it.
     /// </summary>
     private static OllamaApiClient ClientFor(string endpoint) =>
         new(new HttpClient

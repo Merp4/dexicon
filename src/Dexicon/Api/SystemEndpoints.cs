@@ -593,7 +593,7 @@ public static class SystemEndpoints
             var name = string.IsNullOrWhiteSpace(provider) ? opts.Value.Embedding.Provider : provider;
 
             // Refuse while anything depends on it. Deleting a model out from under a chunk
-            // set does not fail loudly — the set keeps its vectors and its collection, and
+            // set does not fail immediately: the set keeps its vectors and its collection, and
             // breaks only at the next index or the next semantic query, by which point the
             // cause is several steps away.
             var usedBy = (await db.ChunkSets
@@ -683,8 +683,8 @@ public static class ModelNames
     /// The name check alone is NOT enough, and it is worth being exact about why. Of the
     /// twelve models in Ollama's embedding category, four carry no "embed" in their name:
     /// bge-m3, bge-large, all-minilm and paraphrase-multilingual. All four are BERT
-    /// derivatives, so the family check is what actually admits them — it is load-bearing,
-    /// not a belt-and-braces afterthought. (`all-minilm` reports family `bert`;
+    /// derivatives, so the family check is what admits them and is load-bearing rather
+    /// than a redundant extra check. (`all-minilm` reports family `bert`;
     /// `nomic-embed-text` reports `nomic-bert`.)
     ///
     /// The cost of being wrong is a model missing from a list, not a broken index,
@@ -695,7 +695,7 @@ public static class ModelNames
         || (family?.Contains("bert", StringComparison.OrdinalIgnoreCase) ?? false);
 
     /// <summary>
-    /// Ollama reports a tagged name — "nomic-embed-text:latest" — while a chunk set
+    /// Ollama reports a tagged name such as "nomic-embed-text:latest", while a chunk set
     /// stores whatever was typed, usually "nomic-embed-text". They refer to the same
     /// model, and comparing them raw made a model in active use look unused: the listing
     /// said so, and the delete guard would have let it be removed out from under four

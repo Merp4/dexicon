@@ -138,8 +138,8 @@ public static class CorpusEndpoints
 
             // Naming a folder is asking for it to be indexed. Without this the corpus is
             // created EMPTY and reports itself ready, and the only sign is a file count of
-            // zero that reads like "this folder had nothing in it" — the first thing a new
-            // user does, silently doing nothing, until someone thinks to press Refresh.
+            // zero that reads like "this folder had nothing in it": the first thing a new
+            // user does appears to do nothing until someone thinks to press Refresh.
             if (corpus.Sources.Count > 0)
                 await queue.EnqueueAsync(corpus.Id, JobKind.Full, ct: ct);
 
@@ -255,8 +255,8 @@ public static class CorpusEndpoints
             // catalogue row went first and this threw, the corpus would keep returning
             // hits for files it no longer lists.
             //
-            // Once per set — a removed folder has to leave every chunking of the corpus,
-            // not only the default one — and scoped to THIS source, because a file_path is
+            // Once per set, because a removed folder has to leave every chunking of the
+            // corpus rather than only the default, and scoped to this source, because a file_path is
             // relative to a source root and another source may hold the same name.
             var sets = await db.ChunkSets.Where(s => s.CorpusId == corpus.Id).ToListAsync(ct);
             foreach (var set in sets)
@@ -329,7 +329,7 @@ public static class CorpusEndpoints
 
             // By FILTER, not by search. An early version of the MCP resource used keyword
             // search for the path, which let relevance decide which of a file's chunks came
-            // back — a reader asking for a file got a plausible one with holes in it.
+            // back, so a reader asking for a file got a plausible one with holes in it.
             var chunks = await vectors.GetFileChunksAsync(
                 target.Set.CollectionName, target.Set.Id, path, ct);
 

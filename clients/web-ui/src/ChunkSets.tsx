@@ -268,7 +268,7 @@ function ChunkSetModal({
 
   // What this model was measured to accept, in the same unit the field is in. The chunker
   // budgets characters at a flat 4 per token, so that is the conversion that decides
-  // whether a chunk fits — not the model's real ratio, which is why a model measured at
+  // whether a chunk fits, not the model's real ratio, which is why a model measured at
   // 2.8 can truncate a chunk the field says is well inside its limit.
   const limitInFieldTokens =
     measured?.maxInputChars != null ? Math.floor(measured.maxInputChars / 4) : null;
@@ -483,8 +483,8 @@ function Toggle({
  * Model management.
  *
  * Pulls are gigabytes and minutes, so progress streams rather than the page hanging on
- * a request. Deletion is guarded server-side — a model a chunk set embeds with cannot be
- * removed — and the reason is shown here rather than discovered by trying.
+ * a request. Deletion is guarded server-side, since a model a chunk set embeds with
+ * cannot be removed, and the reason is shown here rather than discovered by trying.
  */
 export function ModelsView() {
   const [providers, setProviders] = useState<EmbeddingProviderInfo[]>([]);
@@ -838,7 +838,7 @@ export function ModelsView() {
  * The task framing for one model.
  *
  * Most embedding models are trained with an instruction wrapped around the input and
- * retrieve measurably worse without it — and nothing fails, so the only symptom is a
+ * retrieve measurably worse without it, and nothing fails, so the only symptom is a
  * worse ranking. Built-in defaults cover the models this build knows; this is how you
  * correct one, or configure a model released after it.
  */

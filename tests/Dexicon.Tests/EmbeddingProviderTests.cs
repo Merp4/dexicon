@@ -13,7 +13,7 @@ namespace Dexicon.Tests;
 ///
 /// The invariant these protect is the one that broke twice: the MODEL IS A PER-CALL
 /// ARGUMENT. Chunk sets choose a model at runtime and store it in the catalogue, so
-/// anything that binds a model at registration — keyed DI, a generator per model — cannot
+/// anything that binds a model at registration, such as keyed DI or a generator per model, cannot
 /// see a set created after the process started. The first version read the globally
 /// configured model and ignored its caller, which would have filled an mxbai collection
 /// with nomic vectors: no error, just wrong results.
@@ -96,8 +96,8 @@ public sealed class EmbeddingProviderTests
     public async Task TheSameModelUnderTwoProvidersIsCachedSeparately()
     {
         // Two providers can serve a model of the same name and they are different vector
-        // spaces. A cache keyed on the model alone would serve one's dimensionality —
-        // and eventually one's vectors — for the other.
+        // spaces. A cache keyed on the model alone would serve one set's dimensionality,
+        // and eventually its vectors, for the other.
         var generator = new RecordingGenerator(dimensions: 8);
         var cache = new MemoryCache(new MemoryCacheOptions());
 
