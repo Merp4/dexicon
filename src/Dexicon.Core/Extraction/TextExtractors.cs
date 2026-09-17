@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text;
 using AngleSharp.Dom;
 using AngleSharp.Html.Parser;
@@ -52,8 +53,10 @@ public static class ExtractorVersions
     ///
     /// 2: HTML and EPUB keep block structure — one block per line — instead of
     ///    collapsing a whole chapter onto a single unsplittable line.
+    /// 3: An EPUB whose manifest will not parse is salvaged from the archive instead of
+    ///    failing. Books that cached as a failure now have text.
     /// </summary>
-    public const int Current = 2;
+    public const int Current = 3;
 }
 
 
@@ -193,32 +196,112 @@ public sealed class EpubTextExtractor : ITextExtractor
 
     public ExtractedText Extract(Stream content, string fileName)
     {
+        using var buffer = new MemoryStream();
+        content.CopyTo(buffer);
+
+        // Each attempt gets its own stream over the same bytes. VersOne disposes the
+        // stream it is given on some failure paths, so reusing one means the fallback
+        // reads a closed stream and reports ObjectDisposedException instead of the book.
+        var bytes = buffer.ToArray();
+
         try
         {
-            using var buffer = new MemoryStream();
-            content.CopyTo(buffer);
-            buffer.Position = 0;
-
-            var book = VersOne.Epub.EpubReader.ReadBook(buffer);
-            var sb = new StringBuilder();
-            var units = new List<ExtractedUnit>();
-            var parser = new HtmlParser();
-            var number = 1;
-
-            foreach (var file in book.ReadingOrder)
-            {
-                units.Add(new ExtractedUnit(number, sb.Length, $"Chapter {number}"));
-                using var doc = parser.ParseDocument(file.Content);
-                HtmlText.AppendBlocks(doc.Body, sb);
-                number++;
-            }
-
-            return new ExtractedText(sb.ToString(), units, book.Title);
+            using var forManifest = new MemoryStream(bytes);
+            return ReadWithManifest(forManifest);
         }
         catch (Exception ex) when (ex is not ExtractionFailedException)
         {
+            // A real shelf is full of books that no reader complains about and a strict
+            // parser refuses: duplicate manifest IDs, a missing TOC, a spine that names a
+            // file that is not there. Falling back to the archive reads those, in a worse
+            // order and without chapter titles, which is enormously better than not at all.
+            using var forArchive = new MemoryStream(bytes);
+            return ReadFromArchive(forArchive, fileName, ex);
+        }
+    }
+
+    /// <summary>The good path: the manifest gives real reading order and a title.</summary>
+    private static ExtractedText ReadWithManifest(MemoryStream buffer)
+    {
+        var book = VersOne.Epub.EpubReader.ReadBook(buffer);
+        var sb = new StringBuilder();
+        var units = new List<ExtractedUnit>();
+        var parser = new HtmlParser();
+        var number = 1;
+
+        foreach (var file in book.ReadingOrder)
+        {
+            units.Add(new ExtractedUnit(number, sb.Length, $"Chapter {number}"));
+            using var doc = parser.ParseDocument(file.Content);
+            HtmlText.AppendBlocks(doc.Body, sb);
+            number++;
+        }
+
+        return new ExtractedText(sb.ToString(), units, book.Title);
+    }
+
+    /// <summary>
+    /// The salvage path. An EPUB is a zip of XHTML, so the documents can be read without
+    /// the manifest that failed to parse. Entry order stands in for reading order: it is
+    /// usually the authoring order and is nearly always alphabetical by chapter.
+    /// </summary>
+    private static ExtractedText ReadFromArchive(MemoryStream buffer, string fileName, Exception cause)
+    {
+        using var zip = OpenArchive(buffer, fileName, cause);
+
+        // Encryption is declared, not guessed. This is the one case where naming DRM is
+        // correct — and the reason the old message said it about every malformed book.
+        if (zip.Entries.Any(e => e.FullName.Equals("META-INF/encryption.xml", StringComparison.OrdinalIgnoreCase)))
             throw new ExtractionFailedException(
-                $"'{fileName}' is not a readable .epub. DRM-protected books cannot be read: {ex.Message}", ex);
+                $"'{fileName}' is encrypted. DRM-protected books cannot be read.", cause);
+
+        var documents = zip.Entries
+            .Where(e => e.Name.Length > 0)
+            .Where(e => Path.GetExtension(e.Name).ToLowerInvariant() is ".xhtml" or ".html" or ".htm")
+            .OrderBy(e => e.FullName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var sb = new StringBuilder();
+        var units = new List<ExtractedUnit>();
+        var parser = new HtmlParser();
+        var number = 1;
+
+        foreach (var entry in documents)
+        {
+            using var stream = entry.Open();
+            using var doc = parser.ParseDocument(stream);
+            var before = sb.Length;
+            HtmlText.AppendBlocks(doc.Body, sb);
+
+            // A cover page or a stylesheet wrapper contributes nothing; recording a unit
+            // for it would put chapter markers where there is no text.
+            if (sb.Length > before)
+            {
+                units.Add(new ExtractedUnit(number, before, Path.GetFileNameWithoutExtension(entry.Name)));
+                number++;
+            }
+        }
+
+        if (sb.Length == 0)
+            throw new ExtractionFailedException(
+                $"'{fileName}' could not be read: its manifest is unreadable ({cause.Message}) " +
+                "and the archive holds no readable XHTML.", cause);
+
+        return new ExtractedText(sb.ToString(), units);
+    }
+
+    private static ZipArchive OpenArchive(MemoryStream buffer, string fileName, Exception cause)
+    {
+        try
+        {
+            return new ZipArchive(buffer, ZipArchiveMode.Read, leaveOpen: true);
+        }
+        catch (InvalidDataException ex)
+        {
+            // Not a zip at all, so not an EPUB — report the original parse failure, which
+            // is the more informative of the two.
+            throw new ExtractionFailedException(
+                $"'{fileName}' is not a readable .epub: {cause.Message}", ex);
         }
     }
 }
