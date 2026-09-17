@@ -39,7 +39,6 @@ BASE = os.environ.get("DEXICON_URL", "http://127.0.0.1:8477")
 # The corpus this builds and then removes. Named so that a crashed run leaves something
 # obviously disposable rather than something you have to think about.
 BENCH_CORPUS = "bench-sweep"
-WORKSPACE_PATH = "docs"
 
 CHUNK_SIZES = [256, 768, 1536]
 BOUNDARY_MODES = ["language-aware", "blank-line", "none"]
@@ -147,15 +146,20 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="print the plan, build nothing")
     ap.add_argument("--keep", action="store_true", help="leave the bench corpus behind")
+    ap.add_argument(
+        "--queries", default="queries-docs.json",
+        help="query set in scripts/bench/. Its `corpus` field names the folder to index.")
     args = ap.parse_args()
 
-    spec = json.loads((ROOT / "scripts/bench/queries-docs.json").read_text(encoding="utf-8"))
+    spec = json.loads((ROOT / "scripts/bench" / args.queries).read_text(encoding="utf-8"))
     queries = spec["queries"]
+    workspace_path = spec["corpus"]
 
     TOKEN = token()
     available = models()
 
     plan = [(m, s, b) for m in available for s in CHUNK_SIZES for b in BOUNDARY_MODES]
+    print(f"corpus      ./{workspace_path}  ({args.queries})")
     print(f"models      {', '.join(available)}")
     print(f"chunk sizes {CHUNK_SIZES}")
     print(f"boundaries  {BOUNDARY_MODES}")
@@ -173,7 +177,7 @@ def main():
         call("DELETE", f"/api/corpora/{BENCH_CORPUS}")
 
     first_model, first_size, first_boundary = plan[0]
-    print(f"creating {BENCH_CORPUS} over ./{WORKSPACE_PATH}")
+    print(f"creating {BENCH_CORPUS} over ./{workspace_path}")
     call("POST", "/api/corpora", {
         "name": BENCH_CORPUS,
         "description": "Q3 sweep. Built and deleted by scripts/bench/sweep.py.",
@@ -181,7 +185,7 @@ def main():
         "chunkSize": first_size,
         "chunkOverlap": max(1, first_size // 8),
         "boundaryMode": first_boundary,
-        "workspacePath": WORKSPACE_PATH,
+        "workspacePath": workspace_path,
     })
     wait_for_chunks("initial index", "default")
 
@@ -222,7 +226,7 @@ def main():
                 print(f"  {model:<26} {size:>5} {boundary:<14} {mode:<9} "
                       f"MRR {row['mrr']:.3f}  hit@1 {row['hit@1']}/{row['queries']}", flush=True)
     finally:
-        out = ROOT / "scripts/bench/results.json"
+        out = ROOT / "scripts/bench" / args.queries.replace("queries-", "results-")
         out.write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
         print(f"\nwrote {out.relative_to(ROOT)}")
 
