@@ -4,6 +4,7 @@ using Dexicon.Core.Configuration;
 using Dexicon.Core.Documents;
 using Dexicon.Core.Indexing;
 using Dexicon.Infrastructure;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -50,6 +51,18 @@ public static class DocumentEndpoints
                     title: "Expected a multipart upload",
                     detail: "POST the file as multipart/form-data with a 'files' field.",
                     statusCode: 415);
+
+            // The one endpoint that legitimately carries a large body, so the one that
+            // opts out of Kestrel's 30 MB default. Without this, DEXICON__UPLOAD__MAXFILEBYTES
+            // was unreachable above ~28.6 MB and the caller got a bare 413 rather than the
+            // service's own message — a 512 MB DOCUMENTMAXBYTES with a 30 MB front door.
+            //
+            // Set BEFORE the body is read, which is the only point at which the feature is
+            // still writable. The real limit is per FILE and is enforced while streaming in
+            // DocumentService.StoreAsync; a request bound cannot be the same number, because
+            // the UI posts a whole dropped batch as one request.
+            var bodySize = http.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>();
+            if (bodySize is { IsReadOnly: false }) bodySize.MaxRequestBodySize = null;
 
             var corpus = await scopes.ResolveWritableAsync(rc.RequireTenant(), nameOrId, ct);
             var form = await http.ReadFormAsync(ct);
