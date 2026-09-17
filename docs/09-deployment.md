@@ -21,7 +21,7 @@ Nothing else. If a first run needs more steps than that, the first run is the bu
 
 ## Compose
 
-`docker-compose.yml` — the whole deployment.
+`docker-compose.yml` defines the complete deployment.
 
 ```yaml
 name: dexicon          # sets the network (dexicon_default), volume, and container prefixes
@@ -116,7 +116,7 @@ The base file stays boring and complete. Overlays carry everything that is a cho
 ## Exposure
 
 **`dexicon` is the only service that publishes a port, and it binds to `127.0.0.1` by
-default.** Qdrant and Ollama have no `ports:` mapping at all — they are reachable only on
+default.** Qdrant and Ollama have no `ports:` mapping at all; they are reachable only on
 the project's own bridge network.
 
 This is not fastidiousness. Qdrant's stock configuration has **no authentication**, so a
@@ -128,19 +128,20 @@ It also avoids a collision that will otherwise happen on any developer machine: 
 and 11434 are the standard ports for Qdrant and Ollama, and anyone likely to want Dexicon
 is likely to already be running one of them. Two stacks both claiming 11434 fail at
 `docker compose up` with a port-in-use error; worse, if the other stack started first, the
-port silently belongs to it. Publishing nothing makes the question moot. The debug overlay
+the port belongs to it without any indication. Publishing nothing avoids the question. The debug overlay
 uses non-standard host ports for the same reason.
 
-The default host port is **8477** rather than 8080, on the same principle — 8080 is the
-most contended port on any development machine, and the failure mode is a confusing one.
+The default host port is **8477** rather than 8080, on the same principle: 8080 is the
+most contended port on a development machine, and the resulting failure is hard to
+diagnose.
 
 ### The Qdrant API key must never be blank
 
 Found in the M0 spike, and it would have broken every first run.
 
 **Qdrant enables authentication on the *presence* of `QDRANT__SERVICE__API_KEY`, not on it
-having a value.** Setting it to an empty string — the natural result of
-`${QDRANT_API_KEY:-}` with a blank `.env` — turns auth **on** with a key nothing can
+having a value.** Setting it to an empty string, the natural result of
+`${QDRANT_API_KEY:-}` with a blank `.env`, turns auth **on** with a key nothing can
 present, and every request gets a 401, including Qdrant's own dashboard:
 
 ```
@@ -157,19 +158,19 @@ x-qdrant-api-key: &qdrant-api-key ${QDRANT_API_KEY:-dexicon-local-dev-key}
 ```
 
 `.env.example` ships the `QDRANT_API_KEY` line **commented out** rather than blank, for the
-same reason. Override it with a real key — `openssl rand -base64 32` — for anything beyond
+same reason. Override it with a real key (`openssl rand -base64 32`) for anything beyond
 one trusted machine. The default is not a secret and is not treated as one; it is defence
 in depth behind a port that is never published.
 
-## Routing — making sure the endpoint hits *our* container
+## Routing: ensuring the endpoint reaches the intended container
 
 The dependency services are named `dexicon-qdrant` and `dexicon-ollama`, not `qdrant` and
 `ollama`, and the endpoints use those names.
 
 Within a single Compose project this is belt-and-braces: service DNS is scoped to the
 project's own network, so bare `qdrant` would resolve correctly. It stops being
-belt-and-braces the moment the stack touches a shared network — joining an `external:`
-network to reuse a GPU Ollama is the obvious reason, and it is a thing people do. On a
+belt-and-braces once the stack touches a shared network, which happens when joining an
+`external:` network to reuse a GPU Ollama. On a
 shared network a generic service name can resolve to somebody else's container, and the
 failure is quiet: embeddings succeed, come from a different model, and land in a collection
 whose dimensions no longer mean what the catalogue says they mean.
@@ -188,9 +189,9 @@ Three properties keep that from mattering:
 
 ### Reusing an Ollama you already run
 
-`docker-compose.external.yml` drops `dexicon-ollama` and points at an existing instance —
-worth it when you already have models pulled and a GPU configured, since the in-stack
-Ollama otherwise re-downloads them into its own volume.
+`docker-compose.external.yml` drops `dexicon-ollama` and points at an existing instance.
+This is useful when models are already pulled and a GPU is configured, since the in-stack
+Ollama would otherwise re-download them into its own volume.
 
 ```yaml
 services:
@@ -202,14 +203,14 @@ services:
     depends_on: !reset []                      # nothing local to wait for
 ```
 
-Pointing at another Compose stack's Ollama instead — `http://other-stack-ollama:11434`
-— additionally needs that stack's network declared `external: true` here. Use the
+Pointing at another Compose stack's Ollama (`http://other-stack-ollama:11434`)
+additionally requires that stack's network to be declared `external: true` here. Use the
 container's real name, never a bare service alias, for the reason above.
 
 ## Indexing a tree outside the workspace root
 
 `WORKSPACE_ROOT` is the only thing the indexer can see, and it is one directory. To index
-a second tree — a folder of books, another checkout, a documentation site — mount it
+a second tree, such as a folder of documents or another checkout, mount it
 *underneath* the root:
 
 ```yaml
@@ -222,8 +223,8 @@ services:
 
 Compose applies `docker-compose.override.yml` automatically, with no `-f` flags. That is
 what makes it convenient locally and wrong to commit: it names paths that exist on one
-machine. The overlays that ARE committed — `docker-compose.gpu.yml`,
-`docker-compose.debug.yml` — are opt-in by name for the same reason.
+machine. The committed overlays, `docker-compose.gpu.yml` and
+`docker-compose.debug.yml`, are opt-in by name for the same reason.
 
 **The automatic override stops being automatic the moment you pass `-f`.** Compose loads
 it only when you name no files at all, so combining it with the GPU overlay means naming
@@ -233,7 +234,7 @@ all three:
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml -f docker-compose.override.yml up -d
 ```
 
-Get this wrong and the container starts happily with the mount silently missing — the
+If this is wrong the container starts normally with the mount absent, because the
 empty mountpoint directory is still there, so the path exists and lists as empty rather
 than erroring.
 
@@ -341,13 +342,13 @@ DEXICON_TAG=0.2.2 docker compose up -d
 **Cutting a release, in order.**
 
 1. **Write the version's `CHANGELOG.md` section.** The tag push reads it for the GitHub
-   Release body, and a tag with no section fails the release — before anything reaches the
-   registry, which is the only point at which stopping is still free.
+   Release body, and a tag with no section fails the release before anything reaches the
+   registry, which is the last point at which stopping costs nothing.
 2. **Build, and commit the regenerated `clients/web-ui/Dexicon.json`.** It carries the
    release's `major.minor` and CI checks the committed copy against the code. MinVer takes
    the version from the tag, so tagging first produces a tag whose own release build fails
-   on a document still naming the previous version. This bites once per minor version —
-   every `0.2.x` after the first produces the same `0.2` and nothing moves.
+   on a document still naming the previous version. This applies once per minor version;
+   every `0.2.x` after the first produces the same `0.2` and nothing changes.
 3. **Tag and push.** That publishes the image and creates the GitHub Release.
 
 Releases on GitHub start at `0.2.3`. `0.1.0` through `0.2.2` predate the step that creates
@@ -355,9 +356,9 @@ them and exist as tags, images and `CHANGELOG.md` entries only.
 
 The version in the tag is the version in the image, because the tag is where the version
 comes from at all (D-26). MinVer derives it from the nearest `v*` tag; nothing is written
-down, so nothing can be stale. The image build is the one place that cannot do this —
-`.dockerignore` excludes `.git` — so the workflow passes the tag in and then checks what
-the built image actually contains, and refuses to publish a mismatch. An image built by
+down, so nothing can be stale. The image build cannot do this, because `.dockerignore`
+excludes `.git`, so the workflow passes the tag in and then checks what the built image
+contains, refusing to publish a mismatch. An image built by
 hand with no argument reports `0.0.0-dev` rather than impersonating a release. Each image carries a provenance attestation
 recording the commit and the workflow that produced it:
 
@@ -393,11 +394,11 @@ The app is stopped for the duration. SQLite in WAL mode will happily hand you a 
 mid-write that restores into a database missing its last transactions, and a backup you
 cannot trust is worse than none, because you stop taking the other kind.
 
-`verify` is the rehearsal, and it is destructive on purpose — a backup procedure that has
-never been restored is a hypothesis. It has been run: volumes destroyed, restored from the
-tarballs, catalogue intact and **search returning results** afterwards. Liveness alone
-would not have proved it; a restored catalogue with no vectors comes up perfectly healthy
-and answers every query with nothing.
+`verify` is the rehearsal, and it is destructive by design: a backup procedure that has
+never been restored is untested. It has been run, with volumes destroyed, restored from
+the tarballs, the catalogue intact and **search returning results** afterwards. A liveness
+check alone would not have proved this, since a restored catalogue with no vectors reports
+healthy and answers every query with nothing.
 
 ### The migration warning on first run
 
@@ -409,14 +410,13 @@ The migration operation 'PRAGMA foreign_keys = 0;' cannot be executed in a trans
 
 It is expected, and it is not suppressed. SQLite cannot drop a column in place, so EF
 rebuilds the table, and the rebuild has to disable foreign keys outside the transaction.
-EF's own advice — put that operation in its own migration — does not apply, because the
+EF's own advice, to put that operation in its own migration, does not apply, because the
 PRAGMA is generated by the provider rather than written in the migration.
 
-What it actually means: if the process is killed *during* a schema migration, the
-catalogue can be left part-migrated and needs manual repair. Two things make that cheap
-rather than frightening:
+The practical consequence: if the process is killed *during* a schema migration, the
+catalogue can be left part-migrated and requires manual repair. Two things limit the cost:
 
-- on a **fresh install** there is nothing to lose — remove the `dexicon_data` volume and
+- on a **fresh install** there is nothing to lose. Remove the `dexicon_data` volume and
   start again
 - on an **existing install**, the catalogue is the one volume worth backing up, and the
   copy above takes seconds
