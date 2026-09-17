@@ -18,6 +18,7 @@ const listFiles = vi.fn();
 const addSource = vi.fn();
 const browse = vi.fn();
 const removeSource = vi.fn();
+const coverage = vi.fn();
 
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
@@ -27,6 +28,7 @@ vi.mock('./api', async (importOriginal) => ({
     addSource: (...a: unknown[]) => addSource(...a),
     browse: (...a: unknown[]) => browse(...a),
     removeSource: (...a: unknown[]) => removeSource(...a),
+    coverage: (...a: unknown[]) => coverage(...a),
     reindex: vi.fn(),
     updateCorpus: vi.fn(),
     deleteCorpus: vi.fn(),
@@ -81,6 +83,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   getCorpus.mockResolvedValue(corpus());
   listFiles.mockResolvedValue({ files: [] });
+  coverage.mockResolvedValue({ gaps: [] });
   browse.mockResolvedValue({
     entries: [
       { name: 'api-repo', relativePath: 'api-repo', isDirectory: true, childCount: 4 },
@@ -327,5 +330,113 @@ describe('removing a source', () => {
     await user.click(within(dialog).getByRole('button', { name: /^Cancel$/ }));
 
     expect(removeSource).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Files the corpus has no row for.
+ *
+ * A file outside every source root is not skipped and not failed: it is absent. Nothing on
+ * this page counted it, and a search for it returned other documents, which reads like a
+ * ranking result rather than a gap. A real library indexed 95 of 138 files this way.
+ *
+ * The notice is only worth having if it stays quiet, so most of these are about when it
+ * does not appear.
+ */
+describe('files no source covers', () => {
+  const gap = (over: Partial<{ directory: string; files: string[] }> = {}) => ({
+    directory: 'books/orly',
+    files: ['Internet of Things from Scratch.pdf'],
+    ...over,
+  });
+
+  it('names the directory, the file, and what it means for search', async () => {
+    coverage.mockResolvedValue({ gaps: [gap()] });
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText(/covered by no source/)).toBeInTheDocument();
+    expect(screen.getByText('books/orly')).toBeInTheDocument();
+    expect(screen.getByText('Internet of Things from Scratch.pdf')).toBeInTheDocument();
+    // The consequence, not just the fact. Without it this is a statistic.
+    expect(screen.getByText(/Searching will never return it/)).toBeInTheDocument();
+  });
+
+  it('says nothing at all when every file is covered', async () => {
+    // The ordinary case. A warning that appears when there is nothing to say is one that
+    // gets ignored when there is.
+    coverage.mockResolvedValue({ gaps: [] });
+
+    render(<CorpusDetail {...props} />);
+
+    await screen.findByText('api-repo');
+    expect(screen.queryByText(/covered by no source/)).not.toBeInTheDocument();
+  });
+
+  it('lists five files and counts the rest', async () => {
+    coverage.mockResolvedValue({
+      gaps: [gap({ files: Array.from({ length: 12 }, (_, i) => `book-${i + 1}.pdf`) })],
+    });
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText('book-5.pdf')).toBeInTheDocument();
+    expect(screen.queryByText('book-6.pdf')).not.toBeInTheDocument();
+    expect(screen.getByText(/and 7 more/)).toBeInTheDocument();
+  });
+
+  it('names the workspace root rather than leaving a blank', async () => {
+    // The root is the empty string, and "files in  are covered by no source" is what that
+    // renders as if it is passed straight through.
+    coverage.mockResolvedValue({ gaps: [gap({ directory: '', files: ['README.md'] })] });
+
+    render(<CorpusDetail {...props} />);
+
+    // Named in the sentence and again on the button, which is why this asserts on both
+    // rather than on a single match.
+    expect(await screen.findByText('the workspace root')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Add a source on the workspace root/ }),
+    ).toBeInTheDocument();
+  });
+
+  it('opens the add-source form already pointed at the gap', async () => {
+    // The fix is one click from the warning. Retyping a path read off a notice is where
+    // this goes wrong.
+    const user = userEvent.setup();
+    coverage.mockResolvedValue({ gaps: [gap()] });
+
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: /Add a source on books\/orly/ }));
+
+    // The picker shows the chosen folder rather than holding it in a text field, so the
+    // assertion is on what the reader sees it is about to index.
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('books/orly')).toBeInTheDocument();
+    expect(within(dialog).getByText(/Indexing/)).toBeInTheDocument();
+  });
+
+  it('offers no button on a corpus the viewer cannot change', async () => {
+    getCorpus.mockResolvedValue(corpus({ owned: false }));
+    coverage.mockResolvedValue({ gaps: [gap()] });
+
+    render(<CorpusDetail {...props} />);
+
+    // Still worth telling a reader the results are incomplete; the fix is not theirs.
+    expect(await screen.findByText(/covered by no source/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Add a source on/ })).not.toBeInTheDocument();
+  });
+
+  it('keeps the page when the endpoint is missing or fails', async () => {
+    // The dev loop serves this UI against whatever container is up, which can predate the
+    // endpoint entirely. A missing warning is not a broken page, and onError would put a
+    // banner on the screen for something the reader can do nothing about.
+    coverage.mockRejectedValue(new Error('404'));
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText('api-repo')).toBeInTheDocument();
+    expect(screen.queryByText(/covered by no source/)).not.toBeInTheDocument();
+    expect(props.onError).not.toHaveBeenCalled();
   });
 });

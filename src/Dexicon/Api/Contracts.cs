@@ -214,6 +214,21 @@ public sealed record EmbeddingProviderInfo(string Name, string Kind, bool Manage
 public sealed record AddSourceRequest(string WorkspacePath, bool? UseGitignore = null, int? MaxFileBytes = null,
     IReadOnlyList<string>? IncludeGlobs = null, IReadOnlyList<string>? ExcludeGlobs = null);
 
+/// <summary>
+/// A directory that leads to this corpus's sources but which no source covers, and the
+/// indexable files sitting in it.
+/// </summary>
+/// <remarks>
+/// Separate from <see cref="CorpusSummary"/> and fetched on its own, because answering it
+/// reads the filesystem. Folded into the summary it would put a directory listing behind
+/// the corpus list, which is drawn on every navigation.
+/// </remarks>
+/// <param name="Directory">Relative to the workspace root, forward slashes. Empty for the root itself.</param>
+/// <param name="Files">Paths relative to <paramref name="Directory"/>, every one of them indexable.</param>
+public sealed record CoverageGap(string Directory, IReadOnlyList<string> Files);
+
+public sealed record CoverageReport(IReadOnlyList<CoverageGap> Gaps);
+
 public sealed record CorpusSummary(
     string Id,
     string Name,

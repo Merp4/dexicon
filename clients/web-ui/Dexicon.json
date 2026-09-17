@@ -480,6 +480,35 @@
         }
       }
     },
+    "/api/corpora/{nameOrId}/coverage": {
+      "get": {
+        "tags": [
+          "Corpora"
+        ],
+        "parameters": [
+          {
+            "name": "nameOrId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoverageReport"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/corpora/{nameOrId}/reindex": {
       "post": {
         "tags": [
@@ -1508,6 +1537,38 @@
         "properties": {
           "corpus": {
             "$ref": "#/components/schemas/CorpusSummary"
+          }
+        }
+      },
+      "CoverageGap": {
+        "required": [
+          "directory",
+          "files"
+        ],
+        "type": "object",
+        "properties": {
+          "directory": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "CoverageReport": {
+        "required": [
+          "gaps"
+        ],
+        "type": "object",
+        "properties": {
+          "gaps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoverageGap"
+            }
           }
         }
       },
