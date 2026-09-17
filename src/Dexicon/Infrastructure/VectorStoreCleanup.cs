@@ -28,7 +28,7 @@ public sealed class VectorStoreCleanup(CatalogDbContext db, IVectorStore vectors
         // the one the caller happened to be looking at.
         var sets = await db.ChunkSets.Where(s => s.CorpusId == corpus.Id).ToListAsync(ct);
         foreach (var set in sets)
-            await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, file.RelativePath, ct);
+            await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, file.SourceId, file.RelativePath, ct);
 
         return await documents.DetachAsync(corpus.Id, fileId, ct);
     }

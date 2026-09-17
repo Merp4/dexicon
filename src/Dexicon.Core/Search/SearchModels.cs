@@ -41,6 +41,15 @@ public sealed record SearchHit
 {
     public required string CorpusId { get; init; }
     public string? CorpusName { get; set; }
+
+    /// <summary>
+    /// Which source this chunk came from. A file_path is relative to its SOURCE root, so
+    /// within a corpus it is NOT unique: two sources holding "Logic For Dummies.pdf" are
+    /// two different books sharing one path. Null only for points written before this was
+    /// read back, which are indistinguishable anyway.
+    /// </summary>
+    public string? SourceId { get; init; }
+
     public required string FilePath { get; init; }
     public string? Language { get; init; }
     public int StartLine { get; init; }

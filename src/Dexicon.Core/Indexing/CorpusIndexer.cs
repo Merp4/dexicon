@@ -219,7 +219,7 @@ public sealed class CorpusIndexer(
                     continue;
                 }
 
-                await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, file.RelativePath, ct);
+                await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, file.SourceId, file.RelativePath, ct);
 
                 var units = Documents.DocumentService.UnitsFrom(cached);
                 var extracted = new ExtractedText(cached.Text, units, cached.Title);
@@ -523,7 +523,7 @@ public sealed class CorpusIndexer(
                 // Replace rather than merge: a changed file's old chunks are stale by
                 // definition, and leaving them produces results pointing at lines that
                 // no longer say what the result claims.
-                await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, candidate.RelativePath, ct);
+                await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, source.Id, candidate.RelativePath, ct);
 
                 var chunks = pieces.Select(p => new Chunk
                 {
@@ -622,7 +622,7 @@ public sealed class CorpusIndexer(
                 // pass only owns one of them — so the row survives until the last set has
                 // let go of it. Removing it here would strand the other sets' vectors
                 // with nothing left to name them.
-                await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, path, ct);
+                await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, source.Id, path, ct);
 
                 var file = known[path];
                 if (states.TryGetValue(path, out var state)) db.FileChunkStates.Remove(state);
