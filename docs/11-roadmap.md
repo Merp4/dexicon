@@ -19,14 +19,14 @@ was caught before it could ship.**
 | 4 | ✅ **Confirmed** | Collection reports `m=0, payload_m=16` server-side. At **50,007 points across 20 corpora**, filtered 1.5 ms vs unfiltered 3.1 ms — **2.0× slower unfiltered**. Isolation verified: a query embedded from another corpus's most distinctive content returned zero of its points. [03](03-data-model.md) updated with the numbers and the caveat that 2× is a deterrent, not a safety mechanism. |
 
 **Defect caught:** `QDRANT__SERVICE__API_KEY` set to an empty string does not disable
-Qdrant auth — it **enables** it with an unmatchable key, 401-ing everything including the
+Qdrant auth. It **enables** it with an unmatchable key, returning 401 for everything including the
 dashboard. `${QDRANT_API_KEY:-}` with a blank `.env` reproduced it on the first run. Fixed
 with a YAML anchor carrying a non-empty default, shared by server and client so they cannot
 drift; `.env.example` now ships the line commented out rather than blank.
 See [09](09-deployment.md).
 
 **Method note.** The first version of assumption 1 asserted that a specific document should
-rank first, and "failed" when a different — better — document won. That was a bad oracle:
+rank first, and reported failure when a different and better document won. That was a poor oracle:
 it tested retrieval quality, which is M3's job, instead of testing the capability. Rewritten
 to assert the RRF formula itself. Likewise the first latency test ran against seven points,
 where brute force beats any index and the result was meaningless; rerun at 50k.
@@ -57,13 +57,13 @@ back into the affected document. The spike code is deleted.
 
 **Done when:** *open the file at the line and find the matched text there.* Verified: a
 corpus over `docs/` indexed 12 files into 148 chunks, and a hybrid search for
-*"how does tenant isolation get enforced"* returned `07-tenancy-auth.md:22-40` — which is
-exactly where `### Tenant` sits in the file.
+*"how does tenant isolation get enforced"* returned `07-tenancy-auth.md:22-40`, the
+location of `### Tenant` in the file.
 
 Two defects were found by running it rather than by reading it, and both are the kind that
 only surface in use:
 
-- **`/healthz` was unreachable.** The auth middleware prefix-matched the whole `/healthz`
+- **`/healthz` was unreachable.** The auth middleware prefix-matched the entire `/healthz`
   family as anonymous, so the detailed endpoint skipped the middleware, arrived with no
   principal, and then failed its own scope check. Only the two probes are anonymous now.
 - **Progress sat at `done=0` for 24 seconds** on a 12-file corpus, because it flushed every
@@ -76,11 +76,11 @@ The narrowest path that is genuinely end to end.
 
 - Solution layout, `Directory.Build.props`, `Directory.Packages.props`, `.gitignore`,
   `.gitattributes`, `.env.example`, `LICENSE`, `SECURITY.md`, CI with build + test +
-  gitleaks — **all before the first feature**.
+  gitleaks, **all before the first feature**.
 - ASP.NET Core host; SQLite catalogue with migrations; Qdrant collection bootstrap.
 - Workspace source: walk a mounted folder, gitignore filter, hash triage, line-based
   chunking (no language awareness yet), Ollama embeddings, Qdrant upsert.
-- `POST /api/search` — dense only.
+- `POST /api/search`, dense only.
 - Compose with Qdrant + Ollama, model auto-pulled.
 - No UI, no MCP, no tenancy beyond a hard-coded `default`.
 
@@ -109,14 +109,14 @@ finding the matched text there.
 | **CI** | ✅ Build, test, type-check, gitleaks over full history, vulnerable-dependency checks, and an image build that starts the container. |
 
 **Since closed:** `get_context` de-overlapping is now tested, including a chunk-then-stitch
-round-trip property, and verified against this repository's own docs — twelve files
+round-trip property, and verified against this repository's own docs: twelve files
 reconstruct byte-identically. The MCP `dexicon://` resources are implemented. `get_context`
 and the file resource both read by *filter* rather than by search, after an earlier version
 let relevance decide which parts of a file came back.
 
 **Still not done:** uploaded documents are not exposed to MCP as
-a distinct concept, so an agent sees them as ordinary files in a corpus — arguably correct,
-but still an assumption nobody has tested.
+a distinct concept, so an agent sees them as ordinary files in a corpus. That may be
+correct, but it is an untested assumption.
 
 **Defects found by running it against real data, all invisible to a reader.** The later
 ones came from pointing the indexer at a real shelf of 95 books rather than at fixtures:
@@ -126,7 +126,7 @@ ones came from pointing the indexer at a real shelf of 95 books rather than at f
   Every prose corpus indexed before the fix was affected. See
   [04](04-ingestion.md#size-decides-when-to-split-a-boundary-decides-where).
 - **`MaxConcurrency` did nothing.** Configured, documented and passed by compose, read by
-  nothing — embedding batches ran strictly sequentially. The generalised guard that now
+  nothing, so embedding batches ran strictly sequentially. The generalised guard that now
   catches this class immediately found a second instance (`Bootstrap.Token`), and later a
   third when `OllamaOptions.Timeout` was orphaned by a refactor.
 - **An EPUB lost ~95% of its content and reported success.** The extractor emitted one line
@@ -143,7 +143,7 @@ ones came from pointing the indexer at a real shelf of 95 books rather than at f
 - **Every O'Reilly EPUB was unreadable, and blamed DRM.** Their toolchain lists the cover
   image twice in the manifest; the spec forbids it, no reader cares, the strict parser
   refused the book. Six of nineteen books on the first shelf, reported to the user as
-  "DRM-protected books cannot be read" — a true-sounding message about a problem they did
+  "DRM-protected books cannot be read", a plausible message describing a problem they did
   not have. An EPUB is a zip of XHTML, so an unparseable manifest is now salvaged from the
   archive, and DRM is asserted from `META-INF/encryption.xml` rather than guessed.
 - **A file path did not name a file.** `file_path` is relative to its *source* root, so two
@@ -164,8 +164,8 @@ ones came from pointing the indexer at a real shelf of 95 books rather than at f
   which is how it was caught.
 - **Arctic Embed v2 was sent unframed queries.** Listed as needing no task prefix, on the
   belief that Arctic trains without one. Its model card specifies `query_prefix = 'query: '`.
-  Nothing failed; recall was worse — the failure the framing table exists to prevent,
-  inside the table itself.
+  Nothing failed; recall was worse. This is the failure the framing table exists to
+  prevent, occurring within the table itself.
 
 **Still open from the original definition of done:** *a second person clones, runs
 `docker compose up`, indexes their own repository, connects their agent, and uses it
@@ -177,7 +177,7 @@ without asking a question.* That has not been attempted, so M2 is not closed.
 - **MCP**: all five tools, resources, streamable HTTP, error contracts ([06](06-mcp-surface.md)).
   Verified by connecting Claude Code and using it for real work for a day.
 - **Tenancy**: tenants, tokens, scope resolution, corpus visibility, all three enforcement
-  layers, and the isolation test — the test lands in the same commit as the enforcement
+  layers, and the isolation test, which lands in the same commit as the enforcement
   ([07](07-tenancy-auth.md)).
 - **Hybrid search**: sparse encoding with identifier splitting, RRF fusion, filters,
   degradation behaviour ([05](05-search.md)).
@@ -187,7 +187,7 @@ without asking a question.* That has not been attempted, so M2 is not closed.
 - **UI**: all six views ([08](08-ui.md)).
 
 **Done when:** a second person clones, runs `docker compose up`, indexes their own
-repository through the UI, connects their agent, and uses it — **without asking a
+repository through the UI, connects their agent, and uses it **without asking a
 question.** Every question asked is a defect, logged and fixed before the milestone closes.
 
 </details>
@@ -199,24 +199,24 @@ Every number in [04](04-ingestion.md) started as a reasonable guess. This milest
 replaced the ones that matter with measurements.
 
 `scripts/retrieval-bench.py` runs a query set against two chunk sets and reports where the
-expected file ranked — a comparison chunk sets make fair, because the two can hold identical
-chunking over identical documents with one variable changed. A model probe measures each
+expected file ranked. Chunk sets make the comparison fair, because two sets can hold
+identical chunking over identical documents with one variable changed. A model probe measures each
 model's real input ceiling rather than trusting a documented one.
 
 An early twelve-query run, recorded in [decisions.md](decisions.md), put `nomic-embed-text`
-ahead. Fixing one confound — Dexicon was sending raw text to models that expect task
-framing — moved `embeddinggemma` from 0.632 to 0.799 MRR and reversed the ranking, which is
+ahead. Correcting one confound, in which Dexicon sent raw text to models that expect task
+framing, moved `embeddinggemma` from 0.632 to 0.799 MRR and reversed the ranking, which is
 why the milestone needed a committed evaluation set rather than twelve hand-written queries.
 
-**What was done.** Two committed evaluation sets — 55 pairs over `docs/`, 52 over `src/`
-— swept across three models × three chunk sizes × three boundary modes × three search
+**What was done.** Two committed evaluation sets, 55 pairs over `docs/` and 52 over
+`src/`, swept across three models × three chunk sizes × three boundary modes × three search
 modes. 81 configurations per corpus, 162 in total, in
 [benchmarks.md](benchmarks.md) with the raw per-configuration numbers beside the script
 that produced them.
 
-**What it changed.** The default model moved to `embeddinggemma`, which won *both* corpora
-— by 0.025 mean MRR on documents and 0.075 on code, the widest gap any single variable
-opened. That took documents from 30th of 81 to 5th and code from 44th to 36th. `hybrid`
+**What it changed.** The default model moved to `embeddinggemma`, which led on *both*
+corpora: by 0.025 mean MRR on documents and 0.075 on code, the widest margin any single
+variable produced. That took documents from 30th of 81 to 5th and code from 44th to 36th. `hybrid`
 was confirmed as the default it already was. `language-aware` lost on both corpora and was
 *kept*, because the spread across boundary modes on code is 0.009 and changing it costs a
 reindex to buy a rounding error.
@@ -238,10 +238,10 @@ it, and anyone proposing a reranker has a baseline to beat.
 - ✅ `docs/troubleshooting.md` covering the real first-hour failures.
 - ✅ Full-history secret scan in CI, with rules for the `dex_` token format and provider
   API keys. Dependency vulnerability checks for NuGet and npm.
-- ✅ A restore rehearsal — and it was *run*, not just written: volumes destroyed, restored
-  from the tarballs, catalogue intact and **search returning results** afterwards. Liveness
-  alone would have passed a broken restore, because a catalogue with no vectors comes up
-  perfectly healthy and answers every query with nothing.
+- ✅ A restore rehearsal, which was *run* rather than only documented: volumes destroyed,
+  restored from the tarballs, catalogue intact and **search returning results** afterwards.
+  A liveness check alone would have passed a broken restore, because a catalogue with no
+  vectors reports healthy and answers every query with nothing.
 - ✅ Multi-arch images (`linux/amd64`, `linux/arm64`) published to GHCR on tag, with an
   SBOM, `provenance: mode=max`, a GitHub attestation, and every base image digest-pinned.
 - ✅ A 60-second quickstart in the `README`, and a screenshot generated from this
@@ -275,8 +275,8 @@ answer to "what about…" is "yes, here, later" rather than an argument.
 ## Sequencing notes
 
 - **Infrastructure before features.** CI, gitleaks, and `.env.example` land in M1 before any
-  feature. Retrofitting secret hygiene onto a public history is not possible — which is why
-  `.gitignore` was commit one. The licence binds at **first public push**, not at the first
+  feature. Secret hygiene cannot be retrofitted onto a public history, which is why
+  `.gitignore` was the first commit. The licence binds at **first public push**, not at the first
   commit; it is already in the tree (Apache-2.0, [D-14](decisions.md#d-14-licence)).
 - **The isolation test is not a QA task.** It ships with the enforcement code in M2 or the
   enforcement is not done.
