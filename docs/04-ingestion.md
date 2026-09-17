@@ -199,11 +199,29 @@ recall@1 16/25 without its prefixes and 23/25 with them.
 Dexicon stores this per model as a **template** rather than a prefix, because Gemma's
 document form wraps the text rather than preceding it:
 
+Every model in Ollama's embedding category has a built-in, read off its model card
+(checked 2026-09-17, all twelve). `ModelProfileCoverageTests` pins the list so one cannot
+be dropped silently.
+
 | model | indexed text | queries |
 |---|---|---|
-| `nomic-embed-text` | `search_document: {text}` | `search_query: {text}` |
+| `nomic-embed-text`, `nomic-embed-text-v2-moe` | `search_document: {text}` | `search_query: {text}` |
 | `embeddinggemma` | `title: none \| text: {text}` | `task: search result \| query: {text}` |
-| `bge-m3` | `{text}` | `{text}` |
+| `qwen3-embedding` | `{text}` | `Instruct: …\nQuery: {text}` |
+| `mxbai-embed-large`, `bge-large`, `snowflake-arctic-embed` | `{text}` | `Represent this sentence for searching relevant passages: {text}` |
+| `snowflake-arctic-embed2` | `{text}` | `query: {text}` |
+| `bge-m3`, `all-minilm`, `paraphrase-multilingual`, `granite-embedding` | `{text}` | `{text}` |
+
+The last row is a decision, not an omission: symmetric sentence-transformers models were
+trained on sentence pairs with no task prefix, so a prefix is noise in the embedding rather
+than framing. The two Arctic generations want **different** prefixes and differ by one
+character in their names — `snowflake-arctic-embed2` shipped as raw here until its model
+card was checked against the code.
+
+`bge-large` is the one judgement call. BGE v1.5 made instructions optional "for
+convenience", but the same card recommends them "for a retrieval task that uses short
+queries to find long related documents" — which is exactly what Dexicon is. Save a row to
+override if your corpus is the other shape.
 
 Resolution, in order:
 

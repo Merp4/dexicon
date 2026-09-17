@@ -75,6 +75,12 @@ public enum TemplateOrigin
 /// which would quietly undo the point of being able to add models at runtime. Anything
 /// built-in can be overridden by saving a row, and the UI says which of the three applies
 /// so "embedded raw" is visible rather than assumed.
+///
+/// The table below covers every model in Ollama's embedding category as of 2026-09-17 —
+/// all twelve of them, not a selection. That is a snapshot, not a contract: a model added
+/// to the library tomorrow gets raw framing and a UI that says so, which is the designed
+/// behaviour and the reason this is a fallback. `ModelProfileCoverageTests` pins the list
+/// so a future reader can see what was checked and when.
 /// </summary>
 public interface IModelProfiles
 {
@@ -119,10 +125,42 @@ public sealed class ModelProfiles(CatalogDbContext db, IMemoryCache cache) : IMo
             "Represent this sentence for searching relevant passages: {text}",
             TemplateOrigin.BuiltIn),
 
-        // BGE-M3 and Snowflake Arctic v2 are trained without task prefixes. Listed
-        // explicitly so "no template" reads as a decision rather than an omission.
+        // Arctic Embed asks for a query prefix, and the two generations ask for a
+        // DIFFERENT one. v2's card: "For optimal retrieval quality, use the CLS token to
+        // embed each text portion and use the query prefix below (just on the query)."
+        //   v1: https://huggingface.co/Snowflake/snowflake-arctic-embed-m
+        //   v2: https://huggingface.co/Snowflake/snowflake-arctic-embed-l-v2.0
+        // v2 was listed here as raw, on the belief that Arctic was trained without
+        // prefixes. It is not, and raw framing costs recall silently — which is the exact
+        // failure this whole file exists to prevent.
+        ["snowflake-arctic-embed"] = new(
+            "{text}",
+            "Represent this sentence for searching relevant passages: {text}",
+            TemplateOrigin.BuiltIn),
+        ["snowflake-arctic-embed2"] = new("{text}", "query: {text}", TemplateOrigin.BuiltIn),
+
+        // BGE v1.5 made instructions optional — "you can generate embedding without
+        // instruction in all cases for convenience" — but the same card continues: "For a
+        // retrieval task that uses short queries to find long related documents, it is
+        // recommended to add instructions for these short queries." That is precisely what
+        // Dexicon does, so the instruction is on. Override by saving a row if your corpus
+        // is the other shape. https://huggingface.co/BAAI/bge-large-en-v1.5
+        ["bge-large"] = new(
+            "{text}",
+            "Represent this sentence for searching relevant passages: {text}",
+            TemplateOrigin.BuiltIn),
+
+        // BGE-M3 genuinely takes no instruction, unlike its v1.5 siblings.
         ["bge-m3"] = ModelTemplates.Raw with { Origin = TemplateOrigin.BuiltIn },
-        ["snowflake-arctic-embed2"] = ModelTemplates.Raw with { Origin = TemplateOrigin.BuiltIn },
+
+        // Symmetric sentence-transformers models: trained on sentence pairs with no task
+        // prefix at all, so a prefix would be noise in the embedding rather than framing.
+        // Listed explicitly so "no template" reads as a decision rather than an omission.
+        ["all-minilm"] = ModelTemplates.Raw with { Origin = TemplateOrigin.BuiltIn },
+        ["paraphrase-multilingual"] = ModelTemplates.Raw with { Origin = TemplateOrigin.BuiltIn },
+
+        // IBM Granite embedding: bi-encoder, no task instructions in the model card.
+        ["granite-embedding"] = ModelTemplates.Raw with { Origin = TemplateOrigin.BuiltIn },
     };
 
     public async Task<ModelTemplates> ForAsync(EmbeddingTarget target, CancellationToken ct = default)
