@@ -470,15 +470,19 @@ Pinned per corpus at creation. Candidates, all available through Ollama:
 
 | Model | Dims | Size | Use for |
 |---|---|---|---|
-| `nomic-embed-text` | 768 | ~300 MB | Default. Fast, small, good general text. |
-| `embeddinggemma` | 768 | ~620 MB | Best small-model code retrieval measured to date. Preferred for code corpora once verified locally. |
-| `qwen3-embedding:0.6b` | 1024 | ~1.5 GB | Strongest general quality per VRAM; 32k context; multilingual. |
-| `bge-m3` | 1024 | ~2.2 GB | Long documents (8k context). |
+| `embeddinggemma` | 768 | ~620 MB | **Default.** Won both sweeps — best mean MRR on documents and on code. |
+| `mxbai-embed-large` | 1024 | ~670 MB | Close behind, and took the single best code configuration. Accepts only 2,816 characters, so it needs a chunk size well under the default. |
+| `nomic-embed-text` | 768 | ~300 MB | A third the download. Mid on documents, last on code by a clear margin. |
+| `qwen3-embedding:0.6b` | 1024 | ~1.5 GB | Strongest general quality per VRAM; 32k context; multilingual. Not yet swept. |
+| `bge-m3` | 1024 | ~2.2 GB | Long documents (8k context). Not yet swept. |
 
-The default ships as `nomic-embed-text` because it is the smallest thing that works on any
-machine. The UI surfaces the trade-off at corpus creation, and M3 of the
-[roadmap](11-roadmap.md) benchmarks them on a real repository rather than trusting the
-table above.
+The default is `embeddinggemma` because it is the only model that led on BOTH corpora
+([benchmarks](benchmarks.md)) — by 0.025 mean MRR on documents and 0.075 on code. It costs
+twice the first download of `nomic-embed-text`, which is the reason not to, and the reason
+that lost.
+
+This is the default for NEW corpora only. An existing chunk set records its own model and
+keeps it, so changing this reindexes nothing.
 
 ## Sparse encoding
 

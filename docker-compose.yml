@@ -44,7 +44,7 @@ services:
       DEXICON__QDRANT__ENDPOINT: http://dexicon-qdrant:6334
       DEXICON__QDRANT__APIKEY: *qdrant-api-key
       DEXICON__OLLAMA__ENDPOINT: http://dexicon-ollama:11434
-      DEXICON__EMBEDDING__MODEL: ${DEXICON_EMBEDDING_MODEL:-nomic-embed-text}
+      DEXICON__EMBEDDING__MODEL: ${DEXICON_EMBEDDING_MODEL:-embeddinggemma}
       DEXICON__EMBEDDING__MAXCONCURRENCY: ${DEXICON_EMBEDDING_MAXCONCURRENCY:-4}
       DEXICON__INDEXING__MAXFILEBYTES: ${DEXICON_INDEXING_MAXFILEBYTES:-262144}
       DEXICON__INDEXING__REFRESHMINUTES: ${DEXICON_INDEXING_REFRESHMINUTES:-0}
@@ -95,12 +95,12 @@ services:
     entrypoint: ["/bin/sh", "/provision.sh"]
     environment:
       OLLAMA_HOST: 0.0.0.0
-      DEXICON_EMBEDDING_MODEL: ${DEXICON_EMBEDDING_MODEL:-nomic-embed-text}
+      DEXICON_EMBEDDING_MODEL: ${DEXICON_EMBEDDING_MODEL:-embeddinggemma}
     healthcheck:
       # Readiness means the MODEL is present, not merely that the daemon answers.
       # Without this, Dexicon starts indexing against a model still downloading and
       # spends its first minutes in embedding backoff, which reads as a bug.
-      test: ["CMD-SHELL", "ollama list | grep -q \"${DEXICON_EMBEDDING_MODEL:-nomic-embed-text}\" || exit 1"]
+      test: ["CMD-SHELL", "ollama list | grep -q \"${DEXICON_EMBEDDING_MODEL:-embeddinggemma}\" || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 40 # first run pulls the model; allow ~10 minutes
