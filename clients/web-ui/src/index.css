@@ -21,6 +21,23 @@
   --warn: oklch(68% 0.15 75);
   --danger: oklch(58% 0.19 25);
   --on-accent: oklch(100% 0 0);
+
+  /* The same five meanings, at a lightness that can carry text.
+   *
+   * A token tuned to make a good 12%-tint fill and a 40% border is the wrong value for
+   * the words sitting on that fill. `--warn` as text measured 2.95:1 on the light surface
+   * and `--ok` 3.31:1, against the 4.5:1 that 12px type needs; in dark mode the same
+   * tokens came out between 3.63 and 4.24. Every badge in the app and both remaining
+   * coloured sentences failed, in both themes.
+   *
+   * Splitting them keeps the fills and borders exactly as they were and moves only what
+   * is read. Chroma drops slightly as lightness does, which is what keeps these inside
+   * sRGB. Measured after the change by walking every view in both themes and resolving
+   * the oklch to sRGB: no text below the AA threshold for its size. */
+  --ok-text: oklch(45% 0.12 155);
+  --warn-text: oklch(47% 0.11 75);
+  --danger-text: oklch(48% 0.17 25);
+  --accent-text: oklch(48% 0.15 255);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -37,6 +54,10 @@
     --warn: oklch(78% 0.15 75);
     --danger: oklch(68% 0.18 25);
     --on-accent: oklch(17% 0.008 260);
+    --ok-text: oklch(80% 0.14 155);
+    --warn-text: oklch(84% 0.13 75);
+    --danger-text: oklch(76% 0.15 25);
+    --accent-text: oklch(80% 0.12 255);
   }
 }
 
@@ -53,6 +74,10 @@
   --warn: oklch(78% 0.15 75);
   --danger: oklch(68% 0.18 25);
   --on-accent: oklch(17% 0.008 260);
+  --ok-text: oklch(80% 0.14 155);
+  --warn-text: oklch(84% 0.13 75);
+  --danger-text: oklch(76% 0.15 25);
+  --accent-text: oklch(80% 0.12 255);
 }
 
 /* ── shadcn's vocabulary, spoken in Dexicon's palette ──────────────────────────
@@ -130,6 +155,69 @@ body {
   font-family: var(--font-sans);
   margin: 0;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Telling the browser which theme it is painting into.
+ *
+ * The tokens above only colour what this stylesheet draws. Scrollbars, the text caret,
+ * the reveal button in the token field, autofill and the native controls inside a dialog
+ * are drawn by the browser, and it chooses their colour from `color-scheme` — which was
+ * never set, so it fell back to the `light dark` meta tag and followed the OPERATING
+ * SYSTEM. On an OS set to light, choosing dark in Settings produced a dark app with pale
+ * scrollbars down the side of every code block and a white caret well in the token box.
+ *
+ * Declared per theme rather than once, because the whole point is that the app's own
+ * choice wins over the OS. `light dark` on the default keeps `auto` meaning auto. */
+:root {
+  color-scheme: light dark;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+/* Motion, for anyone who has asked for less of it.
+ *
+ * The app already animated before it had this: the dialogs fade and zoom, the progress
+ * bars ease, and the panels below fade in. `prefers-reduced-motion` is the OS switch that
+ * says those are unwelcome — vestibular disorders are the usual reason — and nothing was
+ * reading it.
+ *
+ * Not `animation: none`: a `data-[state=closed]` exit animation that never runs leaves
+ * the element on screen forever, so a dismissed dialog would simply stay. Collapsing the
+ * duration instead ends every animation immediately, which is the same end state without
+ * the journey. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Pointer cursors.
+ *
+ * Tailwind v3's preflight set `cursor: pointer` on buttons; v4 dropped that rule and did
+ * not replace it, so buttons fall back to the user agent's arrow, and the component
+ * library does not put one back either. Every button, tab, checkbox and select trigger in
+ * the app drew an arrow. Three places had noticed and hand-added `cursor-pointer`, which
+ * is how a fix ends up covering the controls someone happened to look at.
+ *
+ * Here rather than on each component, so a control added tomorrow gets it too.
+ * `:disabled` is excluded: the library sets `cursor-not-allowed` on the disabled state of
+ * the input, checkbox and select trigger, and that is the more useful cursor. */
+@layer base {
+  button:not(:disabled),
+  label[for] {
+    cursor: pointer;
+  }
 }
 
 /* Visible focus for anything that does not bring its own.

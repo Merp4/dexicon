@@ -1,6 +1,8 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { Badge, Button, Chip, Field, Input, Select, SelectItem, relativeTime, stateTone } from './ui';
+import {
+  Badge, Button, Chip, Field, Input, Notice, Select, SelectItem, relativeTime, stateTone,
+} from './ui';
 
 /**
  * The primitives, and the bug that caused them to exist.
@@ -243,5 +245,45 @@ describe('Badge', () => {
   it('renders its text', () => {
     render(<Badge tone="warn">3 pending</Badge>);
     expect(screen.getByText('3 pending')).toBeInTheDocument();
+  });
+});
+
+describe('Notice', () => {
+  /**
+   * Nine hand-written warnings, no two alike, and one of them the wrong colour: the
+   * search banner saying an index was still building was drawn in the accent blue that
+   * badges the default chunk set. These assert the two properties a call site cannot
+   * supply by accident — that the tone chooses the styling, and that the message is in a
+   * live region so it is not visual-only.
+   */
+  it('announces itself politely by default', () => {
+    render(<Notice tone="warn">Still indexing; results are incomplete.</Notice>);
+
+    expect(screen.getByRole('status')).toHaveTextContent('Still indexing');
+  });
+
+  it('can interrupt when the caller says it should', () => {
+    // `alert` is assertive and cuts across whatever is being read. A warning beside a
+    // result is not that; a failed request is, which is why ErrorBanner keeps it.
+    render(<Notice tone="danger" role="alert">Vector store unreachable.</Notice>);
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Vector store unreachable');
+  });
+
+  it('takes its colour from the tone rather than from the call site', () => {
+    const { rerender } = render(<Notice tone="warn">x</Notice>);
+    const warn = screen.getByRole('status').className;
+
+    rerender(<Notice tone="danger">x</Notice>);
+    expect(screen.getByRole('status').className).not.toBe(warn);
+  });
+
+  it('keeps body text at the page colour and tints only the glyph', () => {
+    // `--warn` as body text measures 2.95:1 on the light surface, under the 4.5:1 that
+    // 14px type needs. The panel carries the meaning; the sentence stays readable.
+    render(<Notice tone="warn">Still indexing.</Notice>);
+
+    const body = screen.getByText('Still indexing.');
+    expect(body.className).not.toMatch(/text-\[var\(--warn/);
   });
 });

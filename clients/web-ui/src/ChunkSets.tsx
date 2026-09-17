@@ -10,10 +10,11 @@ import {
   type ModelPullEvent,
 } from './api';
 import {
-  Badge, Button, CopyButton, ErrorBanner, Field, Input, Modal, Select, SelectItem,
-  Spinner, formatBytes, localTime, relativeTime, stateTone,
+  Badge, Button, CopyButton, Empty, ErrorBanner, Field, Input, Modal, Notice, Segmented,
+  Select, SelectItem, Spinner, formatBytes, localTime, relativeTime, stateTone,
 } from './ui';
 import { Checkbox } from './ui';
+import { Trash2, TriangleAlert } from 'lucide-react';
 import { cn } from 'cn';
 
 /**
@@ -28,9 +29,46 @@ import { cn } from 'cn';
 const bareName = (m: string) => m.replace(/:latest$/i, '');
 const sameModel = (a: string, b: string) => bareName(a).toLowerCase() === bareName(b).toLowerCase();
 
+/**
+ * A confirmation the app draws itself.
+ *
+ * The two destructive actions on this screen used `window.confirm`, which paints a dialog
+ * the page has no say over: it ignores the theme, so a dark UI produced a white box; it
+ * puts the destructive action wherever the browser likes rather than where every other
+ * dialog here puts it; and after the second one a browser offers to suppress further
+ * dialogs for the session, at which point deleting a chunk set stops asking at all.
+ */
+function ConfirmModal({
+  title,
+  confirmLabel,
+  onConfirm,
+  onClose,
+  children,
+}: {
+  title: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <Modal title={title} onClose={onClose}>
+      <p className="mt-0 text-sm">{children}</p>
+      <div className="mt-4 flex justify-end gap-2">
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="danger" onClick={onConfirm}>
+          <Trash2 />
+          {confirmLabel}
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
 export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChanged: () => void }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<ChunkSet | null>(null);
+  const [deleting, setDeleting] = useState<ChunkSet | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
 
@@ -64,7 +102,7 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
       <div className="grid gap-2">
         {corpus.chunkSets.map((set) => (
           <div key={set.id} className="card py-3 px-3.5">
-            <div className="flex justify-between gap-4 items-start">
+            <div className="flex flex-wrap justify-between gap-4 items-start">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="mono font-semibold">
@@ -101,7 +139,7 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
                 </div>
               </div>
 
-              <div className="flex gap-1.5 shrink-0">
+              <div className="flex flex-wrap gap-1.5">
                 <CopyButton text={`${corpus.name}:${set.name}`} label="Copy name" />
                 <Button onClick={() => setEditing(set)}>Edit</Button>
 
@@ -123,13 +161,11 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
 
                 {!set.isDefault && corpus.chunkSets.length > 1 && (
                   <Button
+                    variant="danger"
                     disabled={busy === set.id}
-                    onClick={() => {
-                      if (!confirm(`Delete chunk set "${set.name}" and its ${set.chunkCount.toLocaleString()} chunks?`))
-                        return;
-                      void act(set.id, () => api.deleteChunkSet(corpus.name, set.name));
-                    }}
+                    onClick={() => setDeleting(set)}
                   >
+                    <Trash2 />
                     Delete
                   </Button>
                 )}
@@ -138,6 +174,23 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
           </div>
         ))}
       </div>
+
+      {deleting && (
+        <ConfirmModal
+          title={`Delete ${corpus.name}:${deleting.name}?`}
+          confirmLabel="Delete chunk set"
+          onClose={() => setDeleting(null)}
+          onConfirm={() => {
+            const set = deleting;
+            setDeleting(null);
+            void act(set.id, () => api.deleteChunkSet(corpus.name, set.name));
+          }}
+        >
+          Its {deleting.chunkCount.toLocaleString()} chunks leave the vector store. The
+          other sets of {corpus.name} are untouched, and the content can be chunked this
+          way again by adding a set back.
+        </ConfirmModal>
+      )}
 
       {adding && (
         <ChunkSetModal
@@ -310,9 +363,9 @@ function ChunkSetModal({
       )}
 
       {!existing && chosenProvider?.detail && (
-        <p className="text-[var(--warn)] text-xs -mt-2">
+        <Notice tone="warn" className="-mt-2 mb-3.5 text-xs">
           {chosenProvider.detail}
-        </p>
+        </Notice>
       )}
 
       {!existing && (
@@ -378,19 +431,19 @@ function ChunkSetModal({
         </Field>
       </div>
 
+      {/* The failure this exists to prevent: a model that returns a perfectly good
+          vector for the part it read, so the rest of every chunk is in no index and
+          nothing reports a problem. */}
       {overLimit && (
-        <p className="-mt-2 mb-3.5 text-sm text-[var(--warn)]">
-          {/* The failure this exists to prevent: a model that returns a perfectly good
-              vector for the part it read, so the rest of every chunk is in no index and
-              nothing reports a problem. */}
-          ⚠ {chosenModel?.name.split(':')[0]} accepts about{' '}
+        <Notice tone="warn" className="-mt-2 mb-3.5">
+          {chosenModel?.name.split(':')[0]} accepts about{' '}
           {measured?.maxInputChars?.toLocaleString()} characters, roughly{' '}
           {limitInFieldTokens?.toLocaleString()} at this field's four-characters-a-token
           budget. At {chunkSize.toLocaleString()},{' '}
           {measured?.truncatesSilently
             ? 'it will silently drop the end of every full chunk.'
             : 'full chunks will be rejected.'}
-        </p>
+        </Notice>
       )}
 
       <Field label="Boundary mode" hint="Size decides when to split; the boundary decides where.">
@@ -470,7 +523,7 @@ function Toggle({
     <div className="mb-2.5 flex gap-2.5">
       <Checkbox id={id} checked={checked} onCheckedChange={(v) => onChange(v === true)} className="mt-0.5" />
       <div className="grid gap-0.5">
-        <label htmlFor={id} className="cursor-pointer text-sm font-semibold leading-none">
+        <label htmlFor={id} className="text-sm font-semibold leading-none">
           {label}
         </label>
         <span className="text-xs text-muted-foreground">{hint}</span>
@@ -502,6 +555,7 @@ export function ModelsView() {
   const [probing, setProbing] = useState<string | null>(null);
   const [probed, setProbed] = useState<Record<string, ModelCapabilities>>({});
   const [editingProfile, setEditingProfile] = useState<EmbeddingModelInfo | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
 
   useEffect(() => {
     api
@@ -602,7 +656,7 @@ export function ModelsView() {
   };
 
   const remove = async (model: string) => {
-    if (!confirm(`Delete ${model} from ${provider}? Its files are removed from the shared volume.`)) return;
+    setRemoving(null);
     try {
       await api.deleteEmbeddingModel(model, provider);
       await refresh();
@@ -625,34 +679,42 @@ export function ModelsView() {
 
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
 
+      {/* Picking a provider is one-of-N, so it is the control the app uses for that
+          everywhere else. As a row of buttons it was N tab stops with no arrow keys, and
+          the current one was marked by an inline style rather than by being selected —
+          nothing announced which of them was in force. */}
       {providers.length > 1 && (
-        <div className="flex gap-1.5 flex-wrap">
-          {providers.map((p) => (
-            <Button
-              key={p.name}
-              style={
-                p.name === provider
-                  ? { borderColor: 'var(--accent)', color: 'var(--accent)' }
-                  : undefined
-              }
-              title={p.detail ?? `${p.kind}${p.managed ? ', models can be pulled' : ', fixed catalogue'}`}
-              onClick={() => setProvider(p.name)}
-            >
-              {p.name}
-              {!p.configured && ' ⚠'}
-            </Button>
-          ))}
-        </div>
+        <Segmented
+          className="justify-self-start"
+          label="Embedding provider"
+          value={provider}
+          onChange={setProvider}
+          options={providers.map((p) => ({
+            value: p.name,
+            title: p.detail ?? `${p.kind}${p.managed ? ', models can be pulled' : ', fixed catalogue'}`,
+            label: (
+              <span className="flex items-center gap-1">
+                {p.name}
+                {!p.configured && (
+                  <>
+                    <TriangleAlert aria-hidden className="size-3 text-[var(--warn-text)]" />
+                    <span className="sr-only">not configured</span>
+                  </>
+                )}
+              </span>
+            ),
+          }))}
+        />
       )}
 
       {current?.detail && (
-        <div className="card py-3 px-3.5 border-[var(--warn)]">
-          <span className="text-[var(--warn)] text-sm">{current.detail}</span>
+        <Notice tone="warn">
+          {current.detail}
           <p className="dim mt-1 mx-0 mb-0 text-xs">
             Credentials come from the environment, never from the catalogue. A chunk set records which provider to
             use, not how to authenticate to it.
           </p>
-        </div>
+        </Notice>
       )}
 
       {managed && (
@@ -684,7 +746,14 @@ export function ModelsView() {
                   {pull.total ? ` · ${formatBytes(pull.completed ?? 0)} / ${formatBytes(pull.total)}` : ''}
                 </span>
               </div>
-              <div className="h-1.5 bg-[var(--border)] rounded-sm mt-1 overflow-hidden">
+              <div
+                role="progressbar"
+                aria-label={`Pulling ${pull.model}`}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(pull.percent ?? 0)}
+                className="h-1.5 bg-[var(--border)] rounded-sm mt-1 overflow-hidden"
+              >
                 <div
                   className={cn(
                     'h-full transition-[width] duration-200 ease-linear',
@@ -700,6 +769,18 @@ export function ModelsView() {
         </div>
       )}
 
+      {removing && (
+        <ConfirmModal
+          title={`Delete ${removing}?`}
+          confirmLabel="Delete model"
+          onClose={() => setRemoving(null)}
+          onConfirm={() => void remove(removing)}
+        >
+          Its files are removed from the shared volume, freeing the space. Nothing indexed
+          is affected; pulling it again re-downloads it.
+        </ConfirmModal>
+      )}
+
       {editingProfile && (
         <FramingModal
           provider={provider}
@@ -712,20 +793,22 @@ export function ModelsView() {
         />
       )}
 
+      {note && <Notice tone="warn">{note}</Notice>}
+
       {loading ? (
-        <p className="dim">Loading…</p>
+        <Empty title="Loading…" />
       ) : (
         <div className="card p-0 overflow-hidden">
-          {note && (
-            <p className="m-0 py-3 px-4 text-sm text-[var(--warn)]">{note}</p>
-          )}
-
-          {models.map((m) => {
+          {/* `i &&`, because a border above the first row draws a line immediately under
+              the top of the card. */}
+          {models.map((m, i) => {
             const caps = probed[m.name];
             return (
-              <div key={m.name} className="py-3 px-4 border-t border-border">
-                <div className="flex justify-between items-center gap-4">
-                  <div>
+              <div key={m.name} className={cn('py-3 px-4', i && 'border-t border-border')}>
+                {/* Wrapping, because the card clips: at phone width the three actions
+                    sat outside `overflow-hidden` and Delete could not be reached at all. */}
+                <div className="flex flex-wrap justify-between items-center gap-4">
+                  <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="mono font-semibold">{m.name}</span>
                       {m.inUse && <Badge tone="accent">in use</Badge>}
@@ -743,7 +826,7 @@ export function ModelsView() {
                         hidden behind the editor. */}
                     <div className="text-xs mt-1">
                       {m.templateOrigin === 'none' ? (
-                        <span className="text-[var(--warn)]">
+                        <span className="text-[var(--warn-text)]">
                           embedded raw; no task framing for this model
                         </span>
                       ) : (
@@ -756,7 +839,7 @@ export function ModelsView() {
                     </div>
                   </div>
 
-                  <div className="flex gap-1.5">
+                  <div className="flex flex-wrap gap-1.5">
                     <Button
                       title="How text is wrapped before it is embedded"
                       onClick={() => setEditingProfile(m)}
@@ -774,10 +857,12 @@ export function ModelsView() {
 
                     {managed && (
                       <Button
+                        variant="danger"
                         disabled={m.inUse}
                         title={m.inUse ? 'A chunk set embeds with this model. Migrate it first.' : 'Remove from Ollama'}
-                        onClick={() => void remove(m.name)}
+                        onClick={() => setRemoving(m.name)}
                       >
+                        <Trash2 />
                         Delete
                       </Button>
                     )}
@@ -933,10 +1018,10 @@ function FramingModal({
           </Field>
 
           {!valid && (
-            <p className="text-[var(--warn)] text-xs">
+            <Notice tone="warn" className="mb-3.5 text-xs">
               Both templates must contain <span className="mono">{'{text}'}</span>. Without it every input embeds
               as the same constant string.
-            </p>
+            </Notice>
           )}
 
           {model.inUse && (

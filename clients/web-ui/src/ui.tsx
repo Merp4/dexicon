@@ -1,7 +1,7 @@
 import { createContext, type ReactNode, useContext, useId, useRef, useState } from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from 'cn';
-import { Check, Copy, Loader2, X } from 'lucide-react';
+import { Check, CircleAlert, CircleCheck, Copy, Info, Loader2, TriangleAlert, X } from 'lucide-react';
 
 import { Button as ShadButton } from '@/components/ui/button';
 import { Input as ShadInput } from '@/components/ui/input';
@@ -202,7 +202,7 @@ export function CardButton({ className, ...rest }: React.ComponentProps<'button'
     <button
       type="button"
       className={cn(
-        'w-full cursor-pointer rounded-lg border border-border bg-card p-3.5 text-left',
+        'w-full rounded-lg border border-border bg-card p-3.5 text-left',
         'transition-colors hover:border-[color-mix(in_oklab,var(--accent)_35%,transparent)] hover:bg-muted',
         'focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none',
         className,
@@ -322,12 +322,12 @@ const badgeVariants = cva(
     variants: {
       tone: {
         neutral: 'border-border bg-muted text-muted-foreground',
-        ok: 'border-[color-mix(in_oklab,var(--ok)_40%,transparent)] bg-[color-mix(in_oklab,var(--ok)_12%,transparent)] text-[var(--ok)]',
-        warn: 'border-[color-mix(in_oklab,var(--warn)_40%,transparent)] bg-[color-mix(in_oklab,var(--warn)_12%,transparent)] text-[var(--warn)]',
+        ok: 'border-[color-mix(in_oklab,var(--ok)_40%,transparent)] bg-[color-mix(in_oklab,var(--ok)_12%,transparent)] text-[var(--ok-text)]',
+        warn: 'border-[color-mix(in_oklab,var(--warn)_40%,transparent)] bg-[color-mix(in_oklab,var(--warn)_12%,transparent)] text-[var(--warn-text)]',
         danger:
-          'border-[color-mix(in_oklab,var(--danger)_40%,transparent)] bg-[color-mix(in_oklab,var(--danger)_12%,transparent)] text-[var(--danger)]',
+          'border-[color-mix(in_oklab,var(--danger)_40%,transparent)] bg-[color-mix(in_oklab,var(--danger)_12%,transparent)] text-[var(--danger-text)]',
         accent:
-          'border-[color-mix(in_oklab,var(--accent)_40%,transparent)] bg-[color-mix(in_oklab,var(--accent)_12%,transparent)] text-[var(--accent)]',
+          'border-[color-mix(in_oklab,var(--accent)_40%,transparent)] bg-[color-mix(in_oklab,var(--accent)_12%,transparent)] text-[var(--accent-text)]',
       },
     },
     defaultVariants: { tone: 'neutral' },
@@ -384,7 +384,7 @@ export function ErrorBanner({ error, onDismiss }: { error: unknown; onDismiss?: 
   return (
     <div
       role="alert"
-      className="mb-3 flex items-start justify-between gap-4 rounded-lg border border-[color-mix(in_oklab,var(--danger)_45%,transparent)] bg-[color-mix(in_oklab,var(--danger)_8%,transparent)] px-3.5 py-2.5"
+      className="mb-3 flex items-start justify-between gap-4 rounded-lg border border-[color-mix(in_oklab,var(--danger)_45%,transparent)] bg-[color-mix(in_oklab,var(--danger)_8%,transparent)] px-3.5 py-2.5 animate-in fade-in-0 slide-in-from-top-1 duration-200"
     >
       {/* The server's own message, verbatim. "Something went wrong" helps nobody. */}
       <span className="text-sm">{message}</span>
@@ -393,6 +393,84 @@ export function ErrorBanner({ error, onDismiss }: { error: unknown; onDismiss?: 
           <X />
         </Button>
       )}
+    </div>
+  );
+}
+
+/**
+ * Something the screen has to say that is not an error.
+ *
+ * Nine of these were written by hand: `text-[var(--warn)]` on a paragraph in one place, a
+ * card carrying a warn border in another, a `⚠` typed into the sentence in four more. No
+ * two matched, and one of them was the wrong colour outright — a search running against a
+ * half-built index was drawn in the accent blue, the same blue that badges the default
+ * chunk set, so the one line on screen saying the results were incomplete read as a label.
+ *
+ * The tones are Badge's five, so a warning is the same yellow wherever it appears, and the
+ * icon follows from the tone rather than from a character typed into the string.
+ *
+ * `role="status"` by default: these appear in response to something the reader just did —
+ * running a search, typing a chunk size — and a message that only exists visually does not
+ * reach anyone driving by keyboard and screen reader. Polite rather than `alert`, which
+ * interrupts; ErrorBanner keeps `alert`, because a failed request should.
+ */
+const noticeVariants = cva(
+  'flex items-start gap-2.5 rounded-lg border px-3.5 py-2.5 text-sm [&>svg]:mt-px [&>svg]:size-4 [&>svg]:shrink-0 animate-in fade-in-0 slide-in-from-top-1 duration-200',
+  {
+    variants: {
+      tone: {
+        neutral: 'border-border bg-muted text-muted-foreground',
+        ok: 'border-[color-mix(in_oklab,var(--ok)_45%,transparent)] bg-[color-mix(in_oklab,var(--ok)_8%,transparent)]',
+        warn: 'border-[color-mix(in_oklab,var(--warn)_45%,transparent)] bg-[color-mix(in_oklab,var(--warn)_8%,transparent)]',
+        danger:
+          'border-[color-mix(in_oklab,var(--danger)_45%,transparent)] bg-[color-mix(in_oklab,var(--danger)_8%,transparent)]',
+        accent:
+          'border-[color-mix(in_oklab,var(--accent)_45%,transparent)] bg-[color-mix(in_oklab,var(--accent)_8%,transparent)]',
+      },
+    },
+    defaultVariants: { tone: 'warn' },
+  },
+);
+
+/** The icon a tone means, so no call site picks one. */
+const noticeIcons = {
+  neutral: Info,
+  accent: Info,
+  ok: CircleCheck,
+  warn: TriangleAlert,
+  danger: CircleAlert,
+} as const;
+
+/** Only the glyph is tinted; the body keeps the page's own text colour. The glyph still
+ *  has to be legible, so it takes the text-weight token rather than the fill one. */
+const noticeIconTone = {
+  neutral: 'text-muted-foreground',
+  accent: 'text-[var(--accent-text)]',
+  ok: 'text-[var(--ok-text)]',
+  warn: 'text-[var(--warn-text)]',
+  danger: 'text-[var(--danger-text)]',
+} as const;
+
+export function Notice({
+  tone = 'warn',
+  className,
+  children,
+  role = 'status',
+}: {
+  tone?: Tone;
+  className?: string;
+  children: ReactNode;
+  role?: 'status' | 'alert' | 'none';
+}) {
+  const Icon = noticeIcons[tone];
+
+  return (
+    <div
+      role={role === 'none' ? undefined : role}
+      className={cn(noticeVariants({ tone }), className)}
+    >
+      <Icon aria-hidden className={noticeIconTone[tone]} />
+      <div className="min-w-0 flex-1">{children}</div>
     </div>
   );
 }

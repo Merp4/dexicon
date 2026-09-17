@@ -134,8 +134,25 @@ public sealed record HealthDependency(bool Reachable, string Endpoint);
 public sealed record EmbeddingHealth(
     bool Reachable, string Endpoint, string Provider, string Model, int Dimensions, string? Error);
 
+/// <summary>
+/// A model some chunk set embeds with that its provider no longer lists.
+///
+/// The failure this reports is silent until someone searches: the set's vectors are still
+/// in Qdrant and its row still says `ready`, but the query cannot be embedded, so the set
+/// answers nothing and a re-index of it cannot start. Deleting a model refuses while a set
+/// uses it, so this is what is left — a model pulled out from under the catalogue, or a
+/// volume restored without it.
+///
+/// Only providers whose models can be listed are checked. A hosted provider cannot be
+/// asked what it has, so a model missing there is indistinguishable from one configured
+/// by hand, and reporting a guess would be a false alarm on a working deployment.
+/// </summary>
+/// <param name="Sets">`corpus:set` for each affected set, because the fix is per set.</param>
+public sealed record MissingModel(string Provider, string Model, IReadOnlyList<string> Sets);
+
 public sealed record HealthResponse(
-    string Status, HealthDependency Qdrant, EmbeddingHealth Ollama, int Corpora, JobSummary? ActiveJob);
+    string Status, HealthDependency Qdrant, EmbeddingHealth Ollama, int Corpora, JobSummary? ActiveJob,
+    IReadOnlyList<MissingModel> MissingModels);
 
 public sealed record ReadinessResponse(string Status, bool Qdrant, bool Catalogue);
 

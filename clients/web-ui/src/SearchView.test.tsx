@@ -148,6 +148,20 @@ describe('telling a bad index from a bad scope', () => {
 
     expect(await screen.findByText(/still indexing; results are incomplete/)).toBeInTheDocument();
   });
+
+  it('says an incomplete result is a warning, not a label', async () => {
+    // It was drawn in the accent blue — the same blue that badges the default chunk set
+    // and the corpus a hit came from — so the one line on the screen saying the results
+    // could not be trusted read as decoration. It is also announced: a warning that only
+    // exists visually never reaches anyone driving this by keyboard.
+    search.mockResolvedValue(result({ note: 'docs is still indexing; results are incomplete.' }));
+    await searchFor('chunk sets');
+
+    const banner = await screen.findByRole('status');
+    expect(banner).toHaveTextContent('still indexing; results are incomplete');
+    expect(banner.className).toMatch(/--warn/);
+    expect(banner.className).not.toMatch(/--accent/);
+  });
 });
 
 describe('when the request fails', () => {

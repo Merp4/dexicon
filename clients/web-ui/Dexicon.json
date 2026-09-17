@@ -2049,7 +2049,8 @@
           "qdrant",
           "ollama",
           "corpora",
-          "activeJob"
+          "activeJob",
+          "missingModels"
         ],
         "type": "object",
         "properties": {
@@ -2075,6 +2076,12 @@
                 "$ref": "#/components/schemas/JobSummary"
               }
             ]
+          },
+          "missingModels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MissingModel"
+            }
           }
         }
       },
@@ -2330,6 +2337,28 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/LibraryAttachment"
+            }
+          }
+        }
+      },
+      "MissingModel": {
+        "required": [
+          "provider",
+          "model",
+          "sets"
+        ],
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "sets": {
+            "type": "array",
+            "items": {
+              "type": "string"
             }
           }
         }

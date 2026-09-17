@@ -59,16 +59,19 @@ export function WorkspacePicker({
   }, [value]);
 
   const segments = value ? value.split('/') : [];
-  const parent = segments.slice(0, -1).join('');
+  // '/' — joining on '' put the parent of `books/orly/Architecture` on screen as
+  // `booksorly`. The button navigated correctly, so the only symptom was a label naming a
+  // folder that does not exist.
+  const parent = segments.slice(0, -1).join('/');
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--surface)]">
-      <div className="flex flex-wrap items-center gap-0.5 border-b border-[var(--border)] px-2 py-1.5 text-xs">
+    <div className="rounded-md border border-border bg-card">
+      <div className="flex flex-wrap items-center gap-0.5 border-b border-border px-2 py-1.5 text-xs">
         <button
           type="button"
           disabled={disabled}
           onClick={() => onChange('')}
-          className="rounded px-1.5 py-0.5 hover:bg-[var(--surface-2)] disabled:opacity-50"
+          className="rounded px-1.5 py-0.5 hover:bg-muted disabled:opacity-50"
         >
           {segments.length === 0 ? emptyLabel : 'workspace root'}
         </button>
@@ -80,7 +83,7 @@ export function WorkspacePicker({
               type="button"
               disabled={disabled}
               onClick={() => onChange(segments.slice(0, i + 1).join('/'))}
-              className="rounded px-1.5 py-0.5 hover:bg-[var(--surface-2)] disabled:opacity-50"
+              className="rounded px-1.5 py-0.5 hover:bg-muted disabled:opacity-50"
             >
               {seg}
             </button>
@@ -94,7 +97,7 @@ export function WorkspacePicker({
             <Spinner className="size-3" /> Reading…
           </div>
         ) : failed ? (
-          <p className="px-2 py-3 text-xs text-[var(--danger)]">{failed}</p>
+          <p role="alert" className="px-2 py-3 text-xs text-[var(--danger-text)]">{failed}</p>
         ) : (
           <>
             {segments.length > 0 && (
@@ -102,7 +105,7 @@ export function WorkspacePicker({
                 type="button"
                 disabled={disabled}
                 onClick={() => onChange(segments.slice(0, -1).join('/'))}
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-[var(--surface-2)] disabled:opacity-50"
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-muted disabled:opacity-50"
               >
                 <CornerLeftUp className="size-3.5 opacity-60" aria-hidden />
                 <span className="opacity-70">{parent === '' ? 'workspace root' : parent}</span>
@@ -115,7 +118,7 @@ export function WorkspacePicker({
                 type="button"
                 disabled={disabled}
                 onClick={() => onChange(e.relativePath)}
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-[var(--surface-2)] disabled:opacity-50"
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-muted disabled:opacity-50"
               >
                 <Folder className="size-3.5 opacity-60" aria-hidden />
                 <span className="truncate">{e.name}</span>
@@ -138,10 +141,10 @@ export function WorkspacePicker({
         )}
       </div>
 
-      <p className="border-t border-[var(--border)] px-2 py-1.5 text-xs">
+      <p className="border-t border-border px-2 py-1.5 text-xs">
         {value ? (
           <>
-            Indexing <code className="rounded bg-[var(--surface-2)] px-1 py-0.5">{value}</code> and everything beneath it.
+            Indexing <code className="mono rounded bg-muted px-1 py-0.5">{value}</code> and everything beneath it.
           </>
         ) : (
           <span className="opacity-70">{emptyLabel}</span>

@@ -331,4 +331,23 @@ describe('the chunk set list', () => {
     render(<ChunkSetsPanel corpus={corpus([chunkSet()])} onChanged={vi.fn()} />);
     expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
   });
+
+  it('confirms a delete in a dialog of its own rather than the browser one', async () => {
+    // This was `window.confirm`, which paints a box the page has no say over: it ignores
+    // the theme, puts the destructive action wherever the browser likes, and after the
+    // second one a browser offers to suppress further dialogs for the session — at which
+    // point deleting a chunk set stops asking at all.
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<ChunkSetsPanel corpus={corpus(twoSets({ chunkCount: 361 }))} onChanged={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/361/)).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /delete chunk set/i })).toBeInTheDocument();
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    confirmSpy.mockRestore();
+  });
 });
