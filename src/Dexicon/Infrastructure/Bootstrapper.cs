@@ -112,7 +112,7 @@ public static class Bootstrapper
             job.State = JobState.Failed;
             job.Phase = null;
             job.FinishedUtc = DateTime.UtcNow;
-            job.Error = "Interrupted — Dexicon restarted while this job was running. Re-run the index.";
+            job.Error = "Interrupted: Dexicon restarted while this job was running. Re-run the index.";
         }
 
         // Any corpus mid-index is now simply not being indexed. Say so rather than
@@ -205,7 +205,7 @@ public static class Bootstrapper
         log.LogWarning(
             "\n" +
             "  ┌───────────────────────────────────────────────────────────────────────┐\n" +
-            "  │  Dexicon bootstrap token — shown ONCE, copy it now                    │\n" +
+            "  │  Dexicon bootstrap token: shown once, copy it now                     │\n" +
             "  └───────────────────────────────────────────────────────────────────────┘\n" +
             "  {Token}\n\n" +
             "  claude mcp add --transport http dexicon http://localhost:8477/mcp \\\n" +

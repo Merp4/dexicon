@@ -92,7 +92,7 @@ public sealed class DocumentService(
         var existing = await db.Blobs.Include(b => b.Text).FirstOrDefaultAsync(b => b.Sha256 == sha, ct);
         if (existing is not null)
         {
-            log.LogInformation("Upload '{File}' is an existing blob {Sha} — stored once, extraction reused",
+            log.LogInformation("Upload '{File}' is an existing blob {Sha}; stored once, extraction reused",
                 fileName, sha[..12]);
             return new StoredDocument(sha, existing.SizeBytes, fileName, existing.Text?.Title,
                 existing.Text?.ExtractedChars ?? 0, AlreadyExisted: true, existing.Text?.EmptyReason);
@@ -187,7 +187,7 @@ public sealed class DocumentService(
             var emptyReason = extracted.Text.Trim().Length > 0
                 ? null
                 : extractor is PdfTextExtractor
-                    ? "no text layer — this is a scanned PDF, and OCR is not supported"
+                    ? "no text layer: this is a scanned PDF, and OCR is not supported"
                     : "no extractable text content";
 
             return new BlobText
@@ -380,7 +380,7 @@ public sealed class DocumentService(
         if (!File.Exists(PathFor(sha256)))
         {
             // The bytes are gone, so the old text is all there is. Better stale than none.
-            log.LogWarning("Cannot re-extract {Sha} — the blob is missing; keeping v{Version} text",
+            log.LogWarning("Cannot re-extract {Sha}: the blob is missing, keeping v{Version} text",
                 sha256[..12], cached.ExtractorVersion);
             return cached;
         }

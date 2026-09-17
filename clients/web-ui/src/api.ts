@@ -147,7 +147,7 @@ export class ApiError extends Error {
     readonly detail?: string,
   ) {
     // Quote the server's own message. "Something went wrong" helps nobody.
-    super(detail ? `${title} — ${detail}` : title);
+    super(detail ? `${title}: ${detail}` : title);
   }
 }
 

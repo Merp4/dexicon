@@ -390,7 +390,7 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
         // works, so degrade to it and SAY SO rather than returning a thin hybrid.
         if (denseVector is null && mode is SearchMode.Hybrid or SearchMode.Semantic)
         {
-            degradedReason = "embedding service unavailable — keyword-only results";
+            degradedReason = "embedding service unavailable; keyword-only results";
             mode = SearchMode.Keyword;
         }
 

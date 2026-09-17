@@ -345,7 +345,7 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
             options={[
               { value: 'hybrid', label: 'hybrid', title: 'Meaning and exact terms together' },
               { value: 'semantic', label: 'semantic', title: 'Meaning only' },
-              { value: 'keyword', label: 'keyword', title: 'Exact matches only — works without embeddings' },
+              { value: 'keyword', label: 'keyword', title: 'Exact matches only; works without embeddings' },
             ]}
           />
 
@@ -411,14 +411,14 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
             <div className="card p-3 text-xs grid gap-1">
               <div><span className="dim">resolved scope:</span> {result.scope.map((s) => s.name).join(', ') || '(none)'}</div>
               <div><span className="dim">mode used:</span> {result.mode}{result.degraded ? ' (degraded from requested)' : ''}</div>
-              <div><span className="dim">scores:</span> reciprocal rank fusion, k=2 — ordering is meaningful, magnitude is not</div>
+              <div><span className="dim">scores:</span> reciprocal rank fusion, k=2. Ordering is meaningful, magnitude is not</div>
             </div>
           )}
 
           {result.hits.length === 0 ? (
             <Empty
               title="Nothing matched"
-              hint="If that is unexpected, check Jobs — the corpus may still be indexing, or the content may not be indexed at all."
+              hint="If that is unexpected, check Jobs: the corpus may still be indexing, or the content may not be indexed at all."
             />
           ) : (
             <div className="grid gap-3">
@@ -479,7 +479,7 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
       {!result && (
         <Empty
           title="Search your indexed content"
-          hint={corpora.length === 0 ? 'No corpora yet — create one under Corpora first.' : 'Hybrid blends meaning with exact terms. Keyword works even when embeddings are down.'}
+          hint={corpora.length === 0 ? 'No corpora yet. Create one under Corpora first.' : 'Hybrid blends meaning with exact terms. Keyword works even when embeddings are down.'}
         />
       )}
     </div>
@@ -641,7 +641,7 @@ function CreateCorpusModal({ onClose, onCreated, onError }: { onClose: () => voi
           <Input
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="O'Reilly architecture and .NET books — design trade-offs, not API reference"
+            placeholder="Architecture and .NET books: design trade-offs, not API reference"
           />
         </Field>
         <Field
@@ -750,7 +750,7 @@ export function CorpusDetail({
       <div className="card p-3.5 grid gap-2 text-sm">
         <Row label="Sources">
           {corpus.sources.length === 0 ? (
-            <span className="dim">none — add one, or upload documents</span>
+            <span className="dim">none: add one, or upload documents</span>
           ) : (
             <span className="grid gap-1">
               {corpus.sources.map((s) => (
@@ -808,7 +808,7 @@ export function CorpusDetail({
         <Row label="Searched as">
           <span className="mono">{corpus.name}</span>
           <span className="dim">
-            {' '}— the default set below. Name another with <span className="mono">corpus:set</span>.
+            {' '}is the default set below. Name another with <span className="mono">corpus:set</span>.
           </span>
         </Row>
         <Row label="Visibility">
@@ -1181,7 +1181,7 @@ function RemoveSourceModal({ corpus, source, onClose, onRemoved, onError }: {
         {source.fileCount
           ? `Its ${source.fileCount.toLocaleString()} files leave the index immediately, in every chunk set of ${corpus.name}.`
           : `It has no indexed files, so nothing leaves the index.`}
-        {' '}The folder on disk is untouched — Dexicon only ever reads it. Adding it again
+        {' '}The folder on disk is untouched; Dexicon only ever reads it. Adding it again
         re-indexes from scratch.
       </p>
       <div className="flex gap-2 justify-end">
@@ -1367,7 +1367,7 @@ function AccessView({ onError }: { onError: (e: unknown) => void }) {
           ))}
         </div>
         <p className="dim text-xs mt-2">
-          A tenant is the isolation boundary. Sharing a corpus grants read access only — writes are always owner-only.
+          A tenant is the isolation boundary. Sharing a corpus grants read access only; writes are always owner-only.
         </p>
       </section>
 
@@ -1382,7 +1382,7 @@ function AccessView({ onError }: { onError: (e: unknown) => void }) {
       {issued && (
         <Modal title="Token created" onClose={() => setIssued(null)} width={680}>
           <p className="mt-0 text-sm text-[var(--warn)]">
-            <strong>Copy it now.</strong> This is the only time it will be shown — it is stored as a hash and cannot be recovered.
+            <strong>Copy it now.</strong> This is the only time it will be shown. It is stored as a hash and cannot be recovered.
           </p>
           <pre className="mono overflow-x-auto rounded-md bg-muted p-3 text-xs break-all whitespace-pre-wrap">
             {issued.secret}
@@ -1420,7 +1420,7 @@ function CreateTokenModal({ onClose, onCreated, onError }: { onClose: () => void
           catch (err) { onError(err); setBusy(false); }
         }}
       >
-        <Field label="Name" hint="What this token is for — it appears in the audit log.">
+        <Field label="Name" hint="What this token is for. It appears in the audit log.">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="claude-code" autoFocus />
         </Field>
         <Field label="Scopes" hint="search reads; ingest can trigger reindexing; admin manages tenants, corpora and tokens.">

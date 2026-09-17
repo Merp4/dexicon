@@ -85,8 +85,9 @@ others.
 
 Every loader returns `(text, metadata, unitMarkers)`. Failures are per-file and recorded:
 
-- **PDF with no text layer** → `status: empty`, `status_detail: "no text layer — scanned
-  PDF, OCR not supported"`, and the file is visible in the UI as ingested-but-empty. It is
+- **PDF with no text layer** → `status: empty`, `status_detail: "no text layer: this is a
+  scanned PDF, and OCR is not supported"`, and the file is visible in the UI as
+  ingested-but-empty. It is
   not reported as a success, and not absent without explanation.
 - **Encrypted / DRM** → `status: failed` with the reason.
 - **Malformed archive (EPUB/OOXML)** → `status: failed` with the reason.

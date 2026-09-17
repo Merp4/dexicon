@@ -153,7 +153,7 @@ public static class SystemEndpoints
                 return Results.Problem(
                     title: "Not mounted",
                     detail: $"'{path}' does not exist under {opts.Value.Indexing.WorkspaceRoot}. " +
-                            "Dexicon can only index paths bind-mounted into the container — see WORKSPACE_ROOT.",
+                            "Dexicon can only index paths bind-mounted into the container. See WORKSPACE_ROOT.",
                     statusCode: 404);
 
             var root = Path.GetFullPath(opts.Value.Indexing.WorkspaceRoot);

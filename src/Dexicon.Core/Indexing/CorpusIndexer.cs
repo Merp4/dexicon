@@ -189,7 +189,7 @@ public sealed class CorpusIndexer(
                 if (cached is null)
                 {
                     state.Status = FileStatus.Failed;
-                    state.StatusDetail = "the stored document has no extracted text — re-upload it";
+                    state.StatusDetail = "the stored document has no extracted text; re-upload it";
                     state.ContentHash = null;
                     job.FilesFailed++;
                     continue;
@@ -485,7 +485,7 @@ public sealed class CorpusIndexer(
                     // Said plainly rather than left as an absence. "Why isn't my PDF
                     // searchable" is answered here, in the UI, instead of by silence.
                     var reason = extractor is PdfTextExtractor
-                        ? "no text layer — this is a scanned PDF, and OCR is not supported"
+                        ? "no text layer: this is a scanned PDF, and OCR is not supported"
                         : "no extractable text content";
 
                     var (emptyFile, emptyState) = Track(known, states, set, source.Id, candidate.RelativePath);

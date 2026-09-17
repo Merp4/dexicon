@@ -140,7 +140,7 @@ describe('the sources a corpus reads', () => {
 
     render(<CorpusDetail {...props} />);
 
-    expect(await screen.findByText(/none — add one, or upload documents/)).toBeInTheDocument();
+    expect(await screen.findByText(/none: add one, or upload documents/)).toBeInTheDocument();
   });
 
   it('offers no add button on a corpus you do not own', async () => {

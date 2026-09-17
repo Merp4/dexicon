@@ -104,7 +104,7 @@ public sealed class SearchService(
                     // avoid, so it is surfaced in the response, not only in the log.
                     log.LogWarning(ex, "Embedding unavailable; degrading search to keyword-only");
                     degraded = true;
-                    degradedReason = "embedding service unavailable — keyword-only results";
+                    degradedReason = "embedding service unavailable; keyword-only results";
                 }
             }
 

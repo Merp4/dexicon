@@ -135,10 +135,10 @@ public sealed class ModelProbe(IEmbeddingService embeddings, ILogger<ModelProbe>
         return Done(target, dimensions, low, !errors, budget, calls, started,
             errors
                 ? $"Accepts about {low:N0} characters of prose and rejects more, which is the safe " +
-                  "behaviour: an over-long chunk fails loudly rather than being silently shortened. " +
+                  "behaviour: an over-long chunk fails rather than being shortened without notice. " +
                   Density
-                : $"Accepts about {low:N0} characters of prose and SILENTLY TRUNCATES beyond that — it " +
-                  "returns a vector for the part it read, so an over-long chunk is indexed as its opening " +
+                : $"Accepts about {low:N0} characters of prose and truncates beyond that without " +
+                  "raising an error. It returns a vector for the part it read, so an over-long chunk is indexed as its opening " +
                   $"and the rest is nowhere. Keep the chunk budget under the recommendation. {Density}",
             charsPerToken);
     }
@@ -174,7 +174,7 @@ public sealed class ModelProbe(IEmbeddingService embeddings, ILogger<ModelProbe>
     }
 
     private const string Density =
-        "Measured with English prose; denser text — code, minified output, CJK — reaches the same " +
+        "Measured with English prose. Denser text (code, minified output or CJK) reaches the same " +
         "token limit in fewer characters, which is what the recommendation's headroom is for.";
 
     /// <summary>Distinctive enough that its presence must move a vector that can see it.</summary>

@@ -131,7 +131,7 @@ export function WorkspacePicker({
               <p className="px-2 py-3 text-xs opacity-60">
                 {segments.length === 0
                   ? 'Nothing is mounted. Set WORKSPACE_ROOT to a folder with something in it.'
-                  : 'No subfolders — this one indexes on its own.'}
+                  : 'No subfolders; this one indexes on its own.'}
               </p>
             )}
           </>

@@ -33,7 +33,7 @@ public sealed class DexiconTools
         [Description("Corpus names to search. Omit to search everything visible to you. Use list_corpora to discover them.")] string[]? corpus = null,
         [Description("hybrid blends meaning with exact terms; semantic is meaning only; keyword is exact-match only and keeps working when embeddings are unavailable.")] string mode = "hybrid",
         [Description("Maximum results, 1-50.")] int limit = 10,
-        [Description("Restrict to files under this path, e.g. src/Auth/. Relative to the source root, not the corpus — use `source` to narrow by folder instead.")] string? pathPrefix = null,
+        [Description("Restrict to files under this path, e.g. src/Auth/. Relative to the source root, not the corpus. Use `source` to narrow by folder instead.")] string? pathPrefix = null,
         [Description("Restrict to one source of the corpus, by its root path as list_corpora reports it, e.g. orly/AI. A parent matches everything beneath it.")] string? source = null,
         [Description("Restrict to one language, e.g. csharp, python, typescript.")] string? language = null,
         [Description("Restrict to chunks declaring this symbol, e.g. TokenService.")] string? symbol = null,
@@ -96,7 +96,7 @@ public sealed class DexiconTools
 
         if (result.Hits.Count == 0)
         {
-            sb.Append("\nNothing matched. If this is unexpected, check index_status — the corpus may still be indexing, or the content may not be indexed at all.\n");
+            sb.Append("\nNothing matched. If this is unexpected, check index_status: the corpus may still be indexing, or the content may not be indexed at all.\n");
             return sb.ToString();
         }
 
@@ -132,7 +132,7 @@ public sealed class DexiconTools
     }
 
     [McpServerTool(Name = "list_corpora")]
-    [Description("List the corpora you can search, what each one holds, and whether it has any indexed content. Call this first when you do not already know which corpus answers a question — the names it returns are the legal values for search_index's corpus parameter.")]
+    [Description("List the corpora you can search, what each one holds, and whether it has any indexed content. Call this first when you do not already know which corpus answers a question. The names it returns are the valid values for search_index's corpus parameter.")]
     public static async Task<string> ListCorporaAsync(
         RequestContext rc,
         ScopeResolver scopes,
@@ -177,7 +177,7 @@ public sealed class DexiconTools
         // What it is, before what it is made of.
         sb.Append(s.Description is { Length: > 0 }
             ? $"    {s.Description}\n"
-            : "    (no description — say what is in it so an agent can choose between corpora)\n");
+            : "    (no description: state what the corpus holds so an agent can choose between corpora)\n");
 
         // An empty corpus is a legal value for search_index that cannot answer anything.
         // Listed identically to a full one, it reads as a reasonable place to look, and the
@@ -204,13 +204,13 @@ public sealed class DexiconTools
             sb.Append("\n    (* is the default; name another with corpus:set)");
 
         if (s.LastIndexedUtc is { } indexed) sb.Append($"\n    last indexed: {indexed:u}");
-        if (s.FailedCount > 0) sb.Append($"\n    {s.FailedCount} file(s) failed — see the UI for why");
+        if (s.FailedCount > 0) sb.Append($"\n    {s.FailedCount} file(s) failed; see the UI for why");
         sb.Append('\n');
         return sb.ToString();
     }
 
     [McpServerTool(Name = "get_context")]
-    [Description("Return the indexed lines surrounding a location, stitched together. Use after search_index when a hit needs its surroundings — including to read on past the end of a hit, by centring further down the file.")]
+    [Description("Return the indexed lines surrounding a location, stitched together. Use after search_index when a hit needs its surroundings, including reading on past the end of a hit, by centring further down the file.")]
     public static async Task<string> GetContextAsync(
         RequestContext rc,
         ScopeResolver scopes,
@@ -274,8 +274,8 @@ public sealed class DexiconTools
 
         var header = $"{filePath}:{pieces[0].StartLine}-{pieces[^1].EndLine} (corpus: {corpus})\n";
         if (ambiguous)
-            header += $"! {bySource.Count} sources in this corpus contain a file at that path — " +
-                      "they are different files with the same name. This is ONE of them, the " +
+            header += $"! {bySource.Count} sources in this corpus contain a file at that path. " +
+                      "They are different files with the same name. This is one of them, the " +
                       "largest; the others are not shown and not mixed in.\n";
         return header + "\n" + Stitch(pieces.Select(p => (p.StartLine, p.EndLine, p.Content)), lineNumbers);
     }
@@ -421,7 +421,7 @@ public sealed class DexiconTools
     }
 
     [McpServerTool(Name = "index_status")]
-    [Description("Report indexing state, counts and last error. The honest answer to 'why did search return nothing'.")]
+    [Description("Report indexing state, counts and last error. Answers 'why did search return nothing'.")]
     public static async Task<string> IndexStatusAsync(
         RequestContext rc,
         ScopeResolver scopes,

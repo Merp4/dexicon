@@ -252,7 +252,7 @@ function AttachModal({
     <Modal title="Attach to another corpus" onClose={onClose}>
       <p className="mt-0 text-sm">
         The bytes are already stored and the text already extracted. Attaching re-chunks
-        that cached text with the target corpus's settings — nothing is re-uploaded and
+        that cached text with the target corpus's settings; nothing is re-uploaded and
         the file is never re-opened.
       </p>
 
