@@ -1,4 +1,4 @@
-import { createContext, useContext, useId, useState, type ReactNode } from 'react';
+import { createContext, type ReactNode, useContext, useId, useRef, useState } from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from 'cn';
 import { Check, Copy, Loader2, X } from 'lucide-react';
@@ -96,6 +96,96 @@ export function Chip({
       )}
       {...rest}
     />
+  );
+}
+
+/**
+ * One-of-N, as a single control rather than a row of loose buttons.
+ *
+ * Three separately-bordered pills with a hairline between them read as three unrelated
+ * buttons that happen to be adjacent — the eye has to work out that they are alternatives,
+ * and at small sizes the gap looks like a rendering fault. A segmented control says
+ * "pick one of these" in its shape: one border around the set, one raised item inside it.
+ *
+ * It is also the accessible answer. A radio group is ONE tab stop with arrow keys moving
+ * between the options; a row of buttons is N tab stops and no arrow keys. That is the
+ * roving tabindex below, and it is the reason this is a component rather than a class
+ * name — the behaviour has to travel with the appearance or it gets left out.
+ */
+export function Segmented<T extends string>({
+  value,
+  onChange,
+  options,
+  label,
+  className,
+}: {
+  value: T;
+  onChange: (value: T) => void;
+  options: readonly { value: T; label: React.ReactNode; title?: string }[];
+  /** Announced as the group's name, so the choice has a subject. */
+  label: string;
+  className?: string;
+}) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  function move(from: number, delta: number) {
+    const next = (from + delta + options.length) % options.length;
+    onChange(options[next].value);
+    refs.current[next]?.focus();
+  }
+
+  return (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      className={cn(
+        // h-9 matches Input and Select. The pills were 30px against their 36px, which is
+        // what made the row look squashed: three short controls sitting inside a line of
+        // taller ones, with the baseline wandering between them.
+        'inline-flex h-9 items-center gap-0.5 rounded-md border border-input bg-muted/50 p-1',
+        'dark:bg-input/30',
+        className,
+      )}
+    >
+      {options.map((option, i) => {
+        const selected = option.value === value;
+        return (
+          <button
+            key={option.value}
+            ref={(el) => {
+              refs.current[i] = el;
+            }}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            title={option.title}
+            // Roving: only the selected option is in the tab order, so the group is one
+            // stop and the arrow keys do the rest.
+            tabIndex={selected ? 0 : -1}
+            onClick={() => onChange(option.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                e.preventDefault();
+                move(i, 1);
+              } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                move(i, -1);
+              }
+            }}
+            className={cn(
+              'flex h-full items-center rounded-[0.3rem] px-2.5 text-xs font-medium whitespace-nowrap',
+              'transition-colors outline-none',
+              'focus-visible:ring-[3px] focus-visible:ring-ring/50',
+              selected
+                ? 'bg-[var(--accent-soft)] text-[var(--accent)] shadow-xs'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
