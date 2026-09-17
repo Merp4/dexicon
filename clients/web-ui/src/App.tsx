@@ -8,6 +8,7 @@ import {
   type Corpus,
   type Health,
   type IndexedFile,
+  type EmbeddingModelInfo,
   type IndexedFileText,
   type Job,
   type SearchResult,
@@ -21,6 +22,10 @@ import {
   Settings, Sliders, Trash2,
 } from 'lucide-react';
 import { cn } from 'cn';
+
+/** `nomic-embed-text` and `nomic-embed-text:latest` are the same model. */
+const sameModelName = (a: string, b: string) =>
+  a.replace(/:latest$/i, '').toLowerCase() === b.replace(/:latest$/i, '').toLowerCase();
 
 import { DocumentsView } from './Documents';
 import { ChunkSetsPanel, ModelsView } from './ChunkSets';
@@ -474,7 +479,7 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
 
 // ── Corpora ─────────────────────────────────────────────────────────────────
 
-function CorporaView({
+export function CorporaView({
   corpora,
   live,
   onRefresh,
@@ -570,6 +575,8 @@ function CreateCorpusModal({ onClose, onCreated, onError }: { onClose: () => voi
   const [description, setDescription] = useState('');
   const [path, setPath] = useState('');
   const [entries, setEntries] = useState<string[]>([]);
+  const [models, setModels] = useState<EmbeddingModelInfo[]>([]);
+  const [model, setModel] = useState('');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -577,11 +584,40 @@ function CreateCorpusModal({ onClose, onCreated, onError }: { onClose: () => voi
     api.browse().then((l) => setEntries(l.entries.filter((e) => e.isDirectory).map((e) => e.relativePath))).catch(() => setEntries([]));
   }, []);
 
+  useEffect(() => {
+    // The model belongs here, not only on the chunk set form. A corpus is born with a
+    // set, and that set's model is the one thing about it that cannot be edited later —
+    // a different model is a different vector space. Leaving it out meant every corpus
+    // made in this UI silently took the configured default, and changing it afterwards
+    // meant building a second set and promoting it.
+    api.listEmbeddingModels()
+      .then((r) => {
+        setModels(r.models);
+        // The server's configured default, matched to what the provider actually lists
+        // (`nomic-embed-text` there, `nomic-embed-text:latest` here).
+        const configured = r.models.find((m) => sameModelName(m.name, r.configured));
+        setModel(configured?.name ?? r.models[0]?.name ?? '');
+      })
+      .catch(() => setModels([]));
+  }, []);
+
+  const chosen = models.find((m) => m.name === model);
+  const measured = chosen?.measured ?? null;
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     try {
-      await api.createCorpus({ name, description: description || undefined, workspacePath: path || undefined });
+      await api.createCorpus({
+        name,
+        description: description || undefined,
+        workspacePath: path || undefined,
+        embeddingModel: model || undefined,
+        // Only when the model has been measured. Sending a guess would pin a size into
+        // the one property of a chunk set nobody can edit afterwards.
+        chunkSize: measured?.recommendedChunkTokens,
+        chunkOverlap: measured ? Math.max(1, Math.round(measured.recommendedChunkTokens / 8)) : undefined,
+      });
       await onCreated();
     } catch (err) {
       onError(err);
@@ -598,6 +634,30 @@ function CreateCorpusModal({ onClose, onCreated, onError }: { onClose: () => voi
         <Field label="Description (optional)">
           <Input value={description} onChange={(e) => setDescription(e.target.value)} />
         </Field>
+        <Field
+          label="Embedding model"
+          hint={
+            measured
+              ? `Measured at ${measured.maxInputChars?.toLocaleString() ?? 'no'} chars` +
+                `${measured.charsPerToken ? ` · ${measured.charsPerToken} chars/token` : ''}` +
+                ` · chunks of ${measured.recommendedChunkTokens.toLocaleString()} tokens`
+              : 'Fixed once the corpus exists: a different model is a different vector space, so changing it later means a new chunk set. Test limits on Models measures one.'
+          }
+        >
+          {models.length > 0 ? (
+            <Select value={model} onValueChange={setModel}>
+              {models.map((m) => (
+                <SelectItem key={m.name} value={m.name}>
+                  {m.name} ({formatBytes(m.sizeBytes)})
+                  {m.measured ? ` · ${m.measured.recommendedChunkTokens.toLocaleString()} tokens` : ''}
+                </SelectItem>
+              ))}
+            </Select>
+          ) : (
+            <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder="embeddinggemma" />
+          )}
+        </Field>
+
         <Field label="Workspace folder" hint="Only paths bind-mounted into the container are listed. Set WORKSPACE_ROOT to change what is available.">
           <Select value={path || NO_SOURCE} onValueChange={(v) => setPath(v === NO_SOURCE ? '' : v)}>
             <SelectItem value={NO_SOURCE}>(add a source later)</SelectItem>

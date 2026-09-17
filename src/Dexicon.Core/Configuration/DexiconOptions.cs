@@ -42,7 +42,15 @@ public sealed class OllamaOptions
 public sealed class EmbeddingOptions
 {
     /// <summary>Default model for new chunk sets.</summary>
-    public string Model { get; init; } = "nomic-embed-text";
+    /// <summary>
+    /// The model a corpus gets when its creator does not choose one.
+    ///
+    /// `embeddinggemma` because it won both retrieval sweeps — see
+    /// docs/benchmarks.md. This is the default for NEW corpora only: an existing chunk
+    /// set records its own model and is untouched, which is why changing this costs a
+    /// larger first pull and nothing else.
+    /// </summary>
+    public string Model { get; init; } = "embeddinggemma";
 
     /// <summary>Which configured provider new chunk sets use by default.</summary>
     public string Provider { get; init; } = "ollama";

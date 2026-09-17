@@ -588,6 +588,12 @@ export function ModelsView() {
     try {
       const capabilities = await api.probeEmbeddingModel(model, provider);
       setProbed((all) => ({ ...all, [model]: capabilities }));
+
+      // The probe is now SAVED, so the row itself changes: a model that said
+      // "dimensions unknown until first use" knows them, and the chunk set form can
+      // suggest a size. Without re-reading, the card below the panel kept describing an
+      // unmeasured model until someone happened to reload.
+      await refresh();
     } catch (e) {
       setError(e);
     } finally {
