@@ -44,13 +44,13 @@ public sealed class DocumentService(
     private readonly StorageOptions _storage = options.Value.Storage;
     private readonly UploadOptions _upload = options.Value.Upload;
 
-    /// <summary>Where a blob's bytes live: /data/blobs/ab/abcdef… — two hex chars of fan-out.</summary>
+    /// <summary>Where a blob's bytes live: /data/blobs/ab/abcdef…, with two hex chars of fan-out.</summary>
     public string PathFor(string sha256) =>
         Path.Combine(_storage.BlobRoot, sha256[..2], sha256);
 
     /// <summary>
     /// Store bytes, extract text once, and return what happened. Does NOT attach the
-    /// document to anything — attachment is a separate, per-corpus act.
+    /// document to anything; attachment is a separate, per-corpus operation.
     /// </summary>
     public async Task<StoredDocument> StoreAsync(Stream content, string fileName, CancellationToken ct = default)
     {
@@ -127,9 +127,9 @@ public sealed class DocumentService(
     /// correct and the disk had already paid for it. Stopping one byte over the cap makes
     /// the limit a limit rather than a verdict.
     ///
-    /// The message cannot name the file's real size for the same reason — the rest of the
-    /// stream is never read — so it names the cap and the setting that moves it, which is
-    /// the actionable half anyway.
+    /// The message cannot name the file's real size for the same reason, since the rest of
+    /// the stream is never read, so it names the cap and the setting that changes it, which
+    /// is the actionable part.
     /// </summary>
     private static async Task<long> CopyCappedAsync(
         Stream source, Stream destination, long cap, string fileName, CancellationToken ct)
@@ -240,7 +240,7 @@ public sealed class DocumentService(
         // ONE BLOB, ONE ATTACHMENT PER CORPUS. Look up by blob first, not by name.
         //
         // Matching on name alone let the same document attach twice to one corpus under
-        // two spellings — observed when the same PDF was uploaded once with a mangled
+        // two spellings, observed when the same PDF was uploaded once with a mangled
         // filename and once correctly. Two attachments of identical bytes means the
         // content is chunked and embedded twice, and every search over that corpus
         // returns each hit twice. A rename is a rename, not a second document.
@@ -305,7 +305,7 @@ public sealed class DocumentService(
 
     /// <summary>
     /// Mark a file as needing re-indexing in EVERY chunk set. A rename invalidates chunks
-    /// keyed by file path, and replaced bytes invalidate the chunks themselves — in both
+    /// keyed by file path, and replaced bytes invalidate the chunks themselves, in both
     /// cases for all sets at once, because they all read the same attachment.
     /// </summary>
     private async Task InvalidateAsync(string fileId, CancellationToken ct)
@@ -341,7 +341,7 @@ public sealed class DocumentService(
         return source;
     }
 
-    /// <summary>Detach from one corpus. The blob survives — other corpora may still use it.</summary>
+    /// <summary>Detach from one corpus. The blob survives, since other corpora may still use it.</summary>
     public async Task<bool> DetachAsync(string corpusId, string fileId, CancellationToken ct = default)
     {
         var file = await db.Files.Include(f => f.Source)
@@ -365,7 +365,7 @@ public sealed class DocumentService(
     {
         // Check the version alone before loading anything. Extracted text runs to
         // hundreds of thousands of characters, and the usual answer is "already current"
-        // — no reason to materialise and change-track a book to learn that.
+        // There is no reason to materialise and change-track a book to learn that.
         var version = await db.BlobTexts.AsNoTracking()
             .Where(t => t.Sha256 == sha256)
             .Select(t => (int?)t.ExtractorVersion)

@@ -21,7 +21,7 @@ public sealed class DexiconOptions
 
 public sealed class QdrantOptions
 {
-    /// <summary>gRPC endpoint. Namespaced service name, never a bare "qdrant" — see docs/09.</summary>
+    /// <summary>gRPC endpoint. Namespaced service name, never a bare "qdrant"; see docs/09.</summary>
     public string Endpoint { get; init; } = "http://dexicon-qdrant:6334";
 
     /// <summary>
@@ -45,8 +45,8 @@ public sealed class EmbeddingOptions
     /// <summary>
     /// The model a corpus gets when its creator does not choose one.
     ///
-    /// `embeddinggemma` because it won both retrieval sweeps — see
-    /// docs/benchmarks.md. This is the default for NEW corpora only: an existing chunk
+    /// `embeddinggemma` because it led both retrieval sweeps; see
+    /// docs/benchmarks.md. This is the default for new corpora only: an existing chunk
     /// set records its own model and is untouched, which is why changing this costs a
     /// larger first pull and nothing else.
     /// </summary>
@@ -74,8 +74,8 @@ public enum EmbeddingProviderKind { Ollama = 0, OpenAI = 1, AzureOpenAI = 2 }
 
 /// <summary>
 /// One embedding backend. A chunk set records the provider NAME and the model; the
-/// credentials live here, in configuration, and never in the catalogue — a database row
-/// that carries an API key is a database row you cannot back up casually.
+/// credentials live here, in configuration, and never in the catalogue. A database row
+/// that carries an API key cannot be backed up casually.
 /// </summary>
 public sealed class EmbeddingProviderOptions
 {
@@ -85,7 +85,7 @@ public sealed class EmbeddingProviderOptions
     public string? Endpoint { get; init; }
 
     /// <summary>
-    /// The NAME of the environment variable holding the API key — not the key.
+    /// The name of the environment variable holding the API key, not the key itself.
     ///
     /// Configuration files get committed; environment variables do not. Naming the
     /// variable keeps appsettings.json safe to check in while the secret stays in the
@@ -103,7 +103,7 @@ public sealed class EmbeddingProviderOptions
     /// <summary>
     /// Models to offer in the UI for providers that cannot be asked. Ollama reports what
     /// it has pulled; OpenAI's model list is long and mostly not embeddings, so a short
-    /// curated list beats a filtered dump — free text still works.
+    /// curated list is preferable to a filtered dump; free text still works.
     /// </summary>
     public List<string> Models { get; init; } = [];
 }
@@ -113,12 +113,12 @@ public sealed class IndexingOptions
     public int MaxFileBytes { get; init; } = 262_144;
 
     /// <summary>
-    /// Size cap for formats that go through an extractor — PDF, EPUB, DOCX, PPTX. Separate
+    /// Size cap for formats that go through an extractor: PDF, EPUB, DOCX, PPTX. Separate
     /// from <see cref="MaxFileBytes"/> because a 300-page PDF is normal and a 300 KB source
     /// file is not, and one number cannot mean both.
     ///
     /// 512 MB. It was a hard-coded 64 MB, chosen when PDF extraction copied the whole file
-    /// into a growing MemoryStream and then called ToArray() on it — nearly 400 MB of raw
+    /// into a growing MemoryStream and then called ToArray() on it, nearly 400 MB of raw
     /// bytes for a 128 MB book before a page was parsed. PdfPig reads a seekable stream, so
     /// that copying is gone and the ceiling with it.
     ///

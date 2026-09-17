@@ -39,7 +39,7 @@ type View = 'search' | 'corpora' | 'documents' | 'jobs' | 'models' | 'access' | 
  * A select option has to carry a value, and the empty string is not one: that is how the
  * control says nothing is chosen. The leading colon makes this impossible to collide
  * with a real corpus name, because a colon is what separates corpus from chunk set. It
- * never leaves the component that uses it — the state it maps to is still `[]`.
+ * never leaves the component that uses it; the state it maps to is still `[]`.
  */
 const ALL_CORPORA = ':all';
 
@@ -137,7 +137,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
         if (e instanceof ApiError && e.status === 401) { onSignOut(); return; }
         // A failed poll is NOT an outage. /healthz can be slow while indexing
         // saturates Ollama, and blanking the state would paint both dots red during
-        // perfectly normal work — a false alarm is as bad as a missed one. Keep the
+        // perfectly normal work, and a false alarm is as bad as a missed one. Keep the
         // last known state and say that it is stale.
         setHealthStale(true);
       }
@@ -405,7 +405,7 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
             </Button>
           </div>
 
-          {/* How you tell "the index is bad" from "the scope was wrong" — the single
+          {/* How to tell "the index is bad" from "the scope was wrong": the single
               most useful thing this screen can show. */}
           {explain && (
             <div className="card p-3 text-xs grid gap-1">
@@ -589,9 +589,9 @@ function CreateCorpusModal({ onClose, onCreated, onError }: { onClose: () => voi
 
   useEffect(() => {
     // The model belongs here, not only on the chunk set form. A corpus is born with a
-    // set, and that set's model is the one thing about it that cannot be edited later —
-    // a different model is a different vector space. Leaving it out meant every corpus
-    // made in this UI silently took the configured default, and changing it afterwards
+    // set, and that set's model is the one thing about it that cannot be edited later,
+    // because a different model is a different vector space. Leaving it out meant every
+    // corpus made in this UI took the configured default, and changing it afterwards
     // meant building a second set and promoting it.
     api.listEmbeddingModels()
       .then((r) => {
@@ -765,7 +765,7 @@ export function CorpusDetail({
                       API, and it was: the first run of this screen against an older
                       server blanked the page on `undefined.length`. In the image they
                       always ship together; here they do not. */}
-                  {/* What it brought in. A corpus with one source does not need this —
+                  {/* What it brought in. A corpus with one source does not need this:
                       the corpus total IS the source total — but a corpus with ten does:
                       a folder contributing nothing is what a mistyped path, an over-eager
                       exclude glob and an index that stopped early all look like, and it
@@ -936,7 +936,7 @@ export function CorpusDetail({
  * Add a place this corpus takes content from.
  *
  * Every field here has been in the API since the beginning and in docs/08 since the
- * beginning, and in the UI never — so a corpus was stuck with the one source it was
+ * beginning, and in the UI never, so a corpus was stuck with the one source it was
  * created with, and the filters could not be set or seen at all.
  */
 function AddSourceModal({
@@ -1046,9 +1046,9 @@ function AddSourceModal({
  * One indexed file, read back.
  *
  * Deliberately NOT the file on disk. This is what was indexed, which is what search is
- * actually searching — the thing worth looking at when a result is surprising, and the
- * only thing there is to look at for an uploaded PDF, which has no file. Where the index
- * is missing lines the text says so inline rather than closing the gap silently.
+ * actually searching, which is what to examine when a result is surprising, and the
+ * only thing available for an uploaded PDF, which has no file. Where the index is missing
+ * lines, the text says so inline rather than closing the gap without notice.
  */
 function FileViewer({
   corpus,
@@ -1075,7 +1075,7 @@ function FileViewer({
    * Read on from where the last window stopped.
    *
    * A book is bigger than one response, and the viewer used to stop at 400,000 characters,
-   * show a "truncated" badge and offer nothing further — which for a 700-page book meant
+   * show a "truncated" badge and offer nothing further, which for a 700-page book meant
    * the first chapter or two and no way to reach the rest.
    */
   async function readOn() {
@@ -1451,7 +1451,7 @@ function SettingsView({ health }: { health: Health | null }) {
 
   // The dots in the header are a 15-second poll and keep their last known value on a
   // failure, which is right for a status light and wrong for "is it working NOW". This
-  // asks, once, and reports what came back — including how long it took, because a
+  // asks, once, and reports what came back, including how long it took, because a
   // dependency that answers in eight seconds is a different problem from one that does
   // not answer at all.
   const [checking, setChecking] = useState(false);
