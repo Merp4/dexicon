@@ -90,6 +90,9 @@ function model(name: string, over: Partial<EmbeddingModelInfo> = {}): EmbeddingM
     documentTemplate: 'search_document: {text}',
     queryTemplate: 'search_query: {text}',
     templateOrigin: 'builtin',
+    // Never probed, which is the ordinary case and the one where the form must not
+    // invent a suggestion.
+    measured: null,
     ...over,
   };
 }
@@ -182,6 +185,69 @@ describe('the Add a chunk set form', () => {
     expect(within(dialog).getByLabelText('Embedding model')).toHaveTextContent(
       'nomic-embed-text',
     );
+  });
+
+  it('suggests the chunk size the chosen model was measured at', async () => {
+    // The field said "64-8192" with no reference to the selected model, and the probe
+    // that knows the answer threw it away on reload. A measurement nobody can reach is
+    // the same as no measurement.
+    listEmbeddingModels.mockResolvedValue({
+      provider: 'ollama', managed: true, configured: 'mxbai-embed-large', note: null,
+      models: [model('mxbai-embed-large:latest', {
+        measured: {
+          maxInputChars: 2816, truncatesSilently: true, recommendedChunkTokens: 665,
+          charsPerToken: 2.82, measuredUtc: new Date().toISOString(),
+        },
+      })],
+    });
+
+    const { dialog } = await openAddModal([chunkSet({ embeddingModel: 'mxbai-embed-large' })]);
+
+    await waitFor(() =>
+      expect(within(dialog).getByLabelText('Chunk size (tokens)')).toHaveValue(665));
+  });
+
+  it('leaves the size alone for a model that has never been probed', async () => {
+    // No measurement is not a licence to guess. The set being copied stays the reference.
+    const { dialog } = await openAddModal();
+
+    expect(within(dialog).getByLabelText('Chunk size (tokens)')).toHaveValue(768);
+    expect(within(dialog).getByText(/Run Test limits/)).toBeInTheDocument();
+  });
+
+  it('warns when the size will silently truncate on the chosen model', async () => {
+    // The concrete failure: mxbai accepts 2,816 characters and the default 768-token
+    // budget produces 3,072, so every full chunk loses its end and nothing reports it.
+    listEmbeddingModels.mockResolvedValue({
+      provider: 'ollama', managed: true, configured: 'mxbai-embed-large', note: null,
+      models: [model('mxbai-embed-large:latest', {
+        measured: {
+          maxInputChars: 2816, truncatesSilently: true, recommendedChunkTokens: 665,
+          charsPerToken: 2.82, measuredUtc: new Date().toISOString(),
+        },
+      })],
+    });
+
+    const { dialog, user } = await openAddModal([chunkSet({ embeddingModel: 'mxbai-embed-large' })]);
+
+    const size = within(dialog).getByLabelText('Chunk size (tokens)');
+    await user.clear(size);
+    await user.type(size, '768');
+
+    expect(await within(dialog).findByText(/silently drop the end of every full chunk/))
+      .toBeInTheDocument();
+    expect(size).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('does not overwrite a size somebody typed', async () => {
+    // Typing is a decision. A later model change must not quietly undo it.
+    const { dialog, user } = await openAddModal();
+
+    const size = within(dialog).getByLabelText('Chunk size (tokens)');
+    await user.clear(size);
+    await user.type(size, '512');
+
+    expect(size).toHaveValue(512);
   });
 
   it('will not add a set without a name', async () => {

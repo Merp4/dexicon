@@ -1749,7 +1749,8 @@
           "inUse",
           "documentTemplate",
           "queryTemplate",
-          "templateOrigin"
+          "templateOrigin",
+          "measured"
         ],
         "type": "object",
         "properties": {
@@ -1778,6 +1779,16 @@
           },
           "templateOrigin": {
             "type": "string"
+          },
+          "measured": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ModelMeasurement"
+              }
+            ]
           }
         }
       },
@@ -2329,6 +2340,43 @@
           },
           "summary": {
             "type": "string"
+          }
+        }
+      },
+      "ModelMeasurement": {
+        "required": [
+          "maxInputChars",
+          "truncatesSilently",
+          "recommendedChunkTokens",
+          "charsPerToken",
+          "measuredUtc"
+        ],
+        "type": "object",
+        "properties": {
+          "maxInputChars": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "truncatesSilently": {
+            "type": "boolean"
+          },
+          "recommendedChunkTokens": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "charsPerToken": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
+          },
+          "measuredUtc": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },

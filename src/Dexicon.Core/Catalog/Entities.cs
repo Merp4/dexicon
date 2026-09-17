@@ -335,6 +335,41 @@ public sealed class EmbeddingModelProfile
     public DateTime UpdatedUtc { get; set; }
 }
 
+/// <summary>
+/// What a probe measured about a model, kept so it does not have to be measured again.
+/// </summary>
+/// <remarks>
+/// Deliberately NOT on <see cref="EmbeddingModelProfile"/>. That row is a CHOICE — the
+/// task framing someone configured — and it resolves ahead of the built-in defaults, so
+/// writing one to hold a measurement would silently override the framing too. A
+/// measurement is a fact about the model; a profile is an opinion about how to use it.
+///
+/// Every field is nullable because a probe can be interrupted and a provider can decline
+/// to answer. Absent means "not measured", which is different from zero and must stay
+/// different.
+/// </remarks>
+public sealed class EmbeddingModelMeasurement
+{
+    public required string Provider { get; set; }
+    public required string Model { get; set; }
+
+    public int Dimensions { get; set; }
+
+    /// <summary>Longest input whose tail still moves the vector. Null = no limit found.</summary>
+    public int? MaxInputChars { get; set; }
+
+    /// <summary>True when over-long input returns a vector instead of an error.</summary>
+    public bool TruncatesSilently { get; set; }
+
+    public int RecommendedChunkChars { get; set; }
+    public int RecommendedChunkTokens { get; set; }
+
+    /// <summary>Measured with the model's own tokenizer. Null when the provider is silent.</summary>
+    public double? CharsPerToken { get; set; }
+
+    public DateTime MeasuredUtc { get; set; }
+}
+
 public enum JobKind { Full = 0, Refresh = 1, Rebuild = 2 }
 
 public enum JobState { Queued = 0, Running = 1, Succeeded = 2, Failed = 3, Degraded = 4, Cancelled = 5 }
