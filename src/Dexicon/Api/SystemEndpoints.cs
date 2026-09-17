@@ -635,7 +635,8 @@ public static class SystemEndpoints
         }).WithTags("System");
 
         app.MapGet("/healthz", async (RequestContext rc, IVectorStore vectors, IEmbeddingService embedder,
-            CatalogDbContext db, IOptions<DexiconOptions> opts, CancellationToken ct) =>
+            IModelCatalog catalog, IEmbeddingGeneratorFactory factory, CatalogDbContext db,
+            IMemoryCache cache, IOptions<DexiconOptions> opts, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
 
@@ -657,11 +658,93 @@ public static class SystemEndpoints
                 qdrant ? "ok" : "degraded",
                 new HealthDependency(qdrant, opts.Value.Qdrant.Endpoint),
                 new EmbeddingHealth(
-                    embeddingError is null, opts.Value.Ollama.Endpoint,
+                    embeddingError is null, EndpointOf(factory, opts.Value, target.Provider),
                     target.Provider, target.Model, dims, embeddingError),
                 await db.Corpora.CountAsync(ct),
-                activeJob?.ToSummary()));
+                activeJob?.ToSummary(),
+                await MissingModelsAsync(db, catalog, cache, rc.RequireTenant(), ct)));
         }).Produces<HealthResponse>().WithTags("Health");
+    }
+
+    /// <summary>
+    /// Where the provider actually in use answers, not where Ollama does.
+    ///
+    /// This reported <c>Ollama.Endpoint</c> unconditionally, so a deployment whose default
+    /// is OpenAI showed the address of a container it never talks to, beside a reachability
+    /// badge for a backend on the other side of the internet. Azure has its own endpoint
+    /// and OpenAI has exactly one, which is why the last arm is a constant rather than a
+    /// setting nobody can change.
+    /// </summary>
+    internal static string EndpointOf(IEmbeddingGeneratorFactory factory, DexiconOptions opts, string provider)
+    {
+        EmbeddingProviderOptions configured;
+        try { configured = factory.Options(provider); }
+        // A default naming a provider that is not configured is a misconfiguration the
+        // reachability probe already reports. Do not also invent an address for it.
+        catch (UnknownEmbeddingProviderException) { return "(no such provider)"; }
+
+        return configured.Kind switch
+        {
+            EmbeddingProviderKind.Ollama => configured.Endpoint ?? opts.Ollama.Endpoint,
+            EmbeddingProviderKind.AzureOpenAI => configured.Endpoint ?? "(no endpoint configured)",
+            _ => configured.Endpoint ?? "https://api.openai.com/v1",
+        };
+    }
+
+    /// <summary>
+    /// Chunk sets whose model the provider no longer has.
+    ///
+    /// Scoped to the caller's tenant: the corpora count above is a number and gives away
+    /// nothing, but a set names its corpus, and another tenant's corpus names are not this
+    /// caller's to see.
+    ///
+    /// Cached, because <c>/healthz</c> is polled every fifteen seconds per open tab and
+    /// this costs a listing per provider. A minute is short enough that pulling a model
+    /// back clears the warning while you are still looking at the screen.
+    /// </summary>
+    internal static async Task<IReadOnlyList<MissingModel>> MissingModelsAsync(
+        CatalogDbContext db, IModelCatalog catalog, IMemoryCache cache, string tenantId, CancellationToken ct)
+    {
+        var key = $"health-missing-models::{tenantId}";
+        if (cache.TryGetValue(key, out IReadOnlyList<MissingModel>? cached) && cached is not null) return cached;
+
+        var sets = await db.ChunkSets
+            .Where(s => s.Corpus!.TenantId == tenantId)
+            .Select(s => new { s.EmbeddingProvider, s.EmbeddingModel, Corpus = s.Corpus!.Name, s.Name })
+            .ToListAsync(ct);
+
+        var missing = new List<MissingModel>();
+
+        foreach (var group in sets.GroupBy(s => s.EmbeddingProvider, StringComparer.OrdinalIgnoreCase))
+        {
+            // Only a provider that can be listed can be checked. A hosted catalogue is the
+            // configured list rather than what the backend holds, so a model absent from it
+            // may be perfectly valid — and a warning that fires on a working deployment
+            // costs more than the one it catches.
+            if (!catalog.IsManaged(group.Key)) continue;
+
+            IReadOnlyList<AvailableModel> available;
+            try { available = await catalog.ListAsync(group.Key, ct); }
+            // Unreachable is not missing. The embedding health above already says the
+            // backend is down; claiming its models are gone as well is a second alarm for
+            // one fault, and a wrong one.
+            catch (Exception ex) when (ex is EmbeddingUnavailableException or UnknownEmbeddingProviderException)
+            { continue; }
+
+            var have = available.Select(m => ModelNames.Normalise(m.Name))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            missing.AddRange(group
+                .GroupBy(s => ModelNames.Normalise(s.EmbeddingModel), StringComparer.OrdinalIgnoreCase)
+                .Where(m => !have.Contains(m.Key))
+                .Select(m => new MissingModel(
+                    group.Key, m.First().EmbeddingModel,
+                    [.. m.Select(s => $"{s.Corpus}:{s.Name}").Order(StringComparer.Ordinal)])));
+        }
+
+        IReadOnlyList<MissingModel> result = missing;
+        cache.Set(key, result, TimeSpan.FromMinutes(1));
+        return result;
     }
 }
 
