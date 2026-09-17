@@ -13,18 +13,18 @@ and nothing in between ever renders it. The operator sees a nonce and a byte cou
 
 WHAT IT DOES
 ------------
-Serves the token exactly once, to exactly one origin, on 127.0.0.1, behind a
-single-use nonce, and exits. Then the page stores it the same way the sign-in form
-would: sessionStorage['dexicon.token'].
+Serves the token exactly once, to exactly one origin, behind a single-use nonce, and
+exits. Loopback unless --bind says otherwise. Then the page stores it the same way
+the sign-in form would: sessionStorage['dexicon.token'].
 
     python scripts/dev-token.py
 
 It prints a one-line snippet to run in the browser's console. Run it on a Dexicon tab.
 
-THIS IS A DEVELOPMENT TOOL. It is not in the image, it binds to loopback only, it
-holds the token in memory for at most --timeout seconds, and it refuses to run if the
-token does not actually authenticate. It is not a login mechanism and must never
-become one: production signs in through the form, deliberately.
+THIS IS A DEVELOPMENT TOOL. It is not in the image, it binds to loopback unless told
+otherwise, it holds the token in memory for at most --timeout seconds, and it refuses
+to run if the token does not actually authenticate. It is not a login mechanism and
+must never become one: production signs in through the form, deliberately.
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ def verify(base: str, token: str) -> str:
         sys.exit(f"Cannot reach {base}: {e.reason}\n    docker compose ps")
 
 
-def serve(token: str, origin: str, port: int, timeout: float) -> None:
+def serve(token: str, origin: str, port: int, timeout: float, bind: str = "127.0.0.1") -> None:
     nonce = secrets.token_urlsafe(16)
     served = threading.Event()
 
@@ -134,15 +134,23 @@ def serve(token: str, origin: str, port: int, timeout: float) -> None:
         allow_reuse_address = False
 
     try:
-        server = OneServerOnly(("127.0.0.1", port), Handler)
+        server = OneServerOnly((bind, port), Handler)
     except OSError as e:
-        sys.exit(f"Cannot listen on 127.0.0.1:{port}: {e}\nAnother dev-token.py is probably still running.")
+        sys.exit(f"Cannot listen on {bind}:{port}: {e}\nAnother dev-token.py is probably still running.")
 
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
-    print(f"Listening on 127.0.0.1:{port} for one request. Run this in the console of a {origin} tab:\n")
+    if bind != "127.0.0.1":
+        # Said out loud, because the loopback bind is most of what makes this safe.
+        print(f"! Listening on {bind}, not loopback. Anything that can reach this port can\n"
+              f"  take the token — once, with the nonce, within {timeout:.0f}s.\n", file=sys.stderr)
+
+    print(f"Listening on {bind}:{port} for one request. Run this in the console of a {origin} tab:\n")
+    # The host the BROWSER should call, which is not always the one we bound to: a
+    # browser in another namespace cannot reach 127.0.0.1 on this machine.
+    reachable = "127.0.0.1" if bind in ("127.0.0.1", "localhost") else bind
     print(
-        f"await fetch('http://127.0.0.1:{port}/{nonce}')"
+        f"await fetch('http://{reachable}:{port}/{nonce}')"
         f".then(r=>r.text()).then(t=>sessionStorage.setItem('dexicon.token',t)),"
         f"location.reload()\n"
     )
@@ -160,13 +168,18 @@ def main() -> None:
     parser.add_argument("--base", default="http://127.0.0.1:8477", help="the Dexicon origin to sign in to")
     parser.add_argument("--port", type=int, default=8478, help="loopback port to serve the token on")
     parser.add_argument("--timeout", type=float, default=120, help="seconds to wait before giving up")
+    parser.add_argument(
+        "--bind", default="127.0.0.1",
+        help="address to listen on. Loopback by default, and it should stay that way: widen it "
+             "only when the browser is in another network namespace (a container, WSL) and cannot "
+             "reach loopback on this host. The nonce and the single-shot still apply.")
     args = parser.parse_args()
 
     base = args.base.rstrip("/")
     token = token_from_env()
     configured = verify(base, token)
     print(f"{base} is up and the token authenticates (embedding model: {configured}).")
-    serve(token, base, args.port, args.timeout)
+    serve(token, base, args.port, args.timeout, args.bind)
 
 
 if __name__ == "__main__":

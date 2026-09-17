@@ -107,7 +107,7 @@ What keeps it honest:
 
 | Property | Why |
 |---|---|
-| Binds `127.0.0.1` only | Nothing off the machine can reach it. |
+| Binds `127.0.0.1` | Nothing off the machine can reach it. `--bind` widens it, for the case where the browser is in another network namespace (WSL, a container) and cannot reach loopback on this host — it says so on stderr when you do, because the loopback bind is most of what makes this safe. |
 | Single-use nonce in the path, compared in constant time | A page that guesses the port gets a 404, and a replay gets a 404. |
 | `Access-Control-Allow-Origin` names one origin | A wildcard would let every page the browser has open read the token while it listens. |
 | Serves once, then exits; `--timeout` bounds the wait | The window is seconds, not a session. |
@@ -151,6 +151,49 @@ Covered operationally in [09](09-deployment.md); the security-relevant points:
 - Release builds publish an SBOM (CycloneDX) and pin base images by digest.
 - Every third-party extraction library is permissively licensed and listed with its licence
   in [04](04-ingestion.md#extraction) — a table that exists to be checked, not admired.
+
+### Licence review of the dependency tree
+
+Reviewed 2026-09-17 over the whole **transitive** graph, from each package's own metadata —
+`.nuspec` for NuGet, `package.json` for npm — rather than from the direct dependency list.
+
+| | Packages | Licences |
+|---|---|---|
+| NuGet (all projects, incl. tests) | 122 | MIT 88, Apache-2.0 29, BSD-3-Clause 2, BSD-2-Clause 1, Unlicense 1, xunit.abstractions (Apache-2.0, by URL) 1 |
+| npm (installed) | 307 | MIT 269, ISC 14, Apache-2.0 7, BSD-3-Clause 5, BSD-2-Clause 3, and the nine below |
+| npm (production, transitive) | 85 | MIT, ISC, BSD, Apache-2.0, and `tslib` under 0BSD |
+
+**No GPL, LGPL, AGPL, SSPL or Commons Clause anywhere in either graph.** Everything is
+compatible with distributing this under Apache-2.0.
+
+Two that needed reading rather than parsing:
+
+- `OllamaSharp` declares a licence *file* rather than an SPDX expression. The file is MIT.
+- `xunit.abstractions` predates SPDX metadata and carries a `licenseUrl`. It is Apache-2.0,
+  and it is a test dependency that does not ship.
+
+**The nine npm licences that are not plain MIT/ISC/BSD/Apache are build-time only**, bar
+one — checked against
+`npm ls --omit=dev`, not assumed from where they sit in the tree:
+
+| Package | Licence | Ships? |
+|---|---|---|
+| `lightningcss`, `lightningcss-win32-x64-msvc` | MPL-2.0 (weak copyleft) | No — CSS transform at build |
+| `caniuse-lite` | CC-BY-4.0 (attribution) | No — browser targets at build |
+| `argparse` | Python-2.0 | No |
+| `mdn-data` | CC0-1.0 | No |
+| `lru-cache` | BlueOak-1.0.0 | No |
+| `@csstools/color-helpers`, `@csstools/css-syntax-patches-for-csstree` | MIT-0 | No |
+| `tslib` | 0BSD | **Yes**, in the browser bundle — 0BSD requires no attribution |
+
+MPL-2.0 is file-level copyleft: using `lightningcss` as a build tool creates no obligation,
+and modifying its sources would. Nothing here modifies it. CC-BY-4.0 on `caniuse-lite`
+requires attribution when the *data* is redistributed; the build consumes it and ships
+none of it.
+
+Re-run it after any dependency change that adds a package rather than bumps one. The two
+things worth re-checking are the same two: whether anything new is copyleft, and whether
+anything non-permissive has moved from build-time into the shipped bundle.
 
 ## Repository files, present at first push
 
