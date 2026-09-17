@@ -412,7 +412,8 @@ public sealed class CorpusIndexer(
         }
 
         var walk = WorkspaceWalker.Walk(root, source.UseGitignore,
-            ParseGlobs(source.IncludeGlobs), ParseGlobs(source.ExcludeGlobs), source.MaxFileBytes);
+            ParseGlobs(source.IncludeGlobs), ParseGlobs(source.ExcludeGlobs), source.MaxFileBytes,
+            options.Value.Indexing.DocumentMaxBytes);
 
         // += , not =. A job covers every chunk set, and each set walks the tree again, so
         // an assignment here reported the files of ONE pass against the work done by all

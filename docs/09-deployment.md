@@ -266,7 +266,8 @@ Everything has a working default except `WORKSPACE_ROOT`.
 | `DEXICON__OLLAMA__ENDPOINT` | `http://dexicon-ollama:11434` | Namespaced service name — see "Routing". |
 | `DEXICON__EMBEDDING__MODEL` | `embeddinggemma` | Default for new corpora. Pinned per chunk set at creation, so changing it migrates nothing. |
 | `DEXICON__EMBEDDING__MAXCONCURRENCY` | `4` | Parallel embedding requests. |
-| `DEXICON__INDEXING__MAXFILEBYTES` | `262144` | Default per-source size cap. |
+| `DEXICON__INDEXING__MAXFILEBYTES` | `262144` | Default per-source size cap, for text and code. |
+| `DEXICON__INDEXING__DOCUMENTMAXBYTES` | `536870912` | Size cap for extracted formats (PDF, EPUB, DOCX, PPTX). 512 MB. A memory decision — extraction holds the document's text. |
 | `DEXICON__INDEXING__REFRESHMINUTES` | `0` | Automatic refresh interval in minutes. `0` = manual only. |
 | `DEXICON__UPLOAD__MAXFILEBYTES` | `209715200` | 200 MB. |
 | `DEXICON__BOOTSTRAP__TENANT` | `default` | Created on first run. |

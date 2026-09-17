@@ -115,8 +115,12 @@ public sealed class WorkspaceWalker
 {
     public const string IgnoreFileName = ".dexiconignore";
 
-    /// <summary>Document formats get their own cap: a 300-page PDF is normal, not suspicious.</summary>
-    public const long DocumentMaxBytes = 64L * 1024 * 1024;
+    /// <summary>
+    /// Fallback document cap for callers that do not pass one — tests, and any code path
+    /// that predates the setting. The configured value is
+    /// <c>DEXICON__INDEXING__DOCUMENTMAXBYTES</c>; see IndexingOptions.
+    /// </summary>
+    public const long DefaultDocumentMaxBytes = 512L * 1024 * 1024;
 
     /// <summary>
     /// Hard-coded and not configurable. Nothing good comes of embedding a .dll, and
@@ -145,7 +149,7 @@ public sealed class WorkspaceWalker
     public sealed record WalkResult(IReadOnlyList<Candidate> Files, IReadOnlyList<Skipped> SkippedFiles);
 
     public static WalkResult Walk(string rootPath, bool useGitignore, IReadOnlyList<string>? includeGlobs,
-        IReadOnlyList<string>? excludeGlobs, long maxFileBytes)
+        IReadOnlyList<string>? excludeGlobs, long maxFileBytes, long? documentMaxBytes = null)
     {
         var root = Path.GetFullPath(rootPath);
         var files = new List<Candidate>();
@@ -190,10 +194,12 @@ public sealed class WorkspaceWalker
             var isDocument = Extraction.ExtractorRegistry.IsDocumentFormat(relative);
             if (isDocument)
             {
-                if (info.Length > DocumentMaxBytes)
+                var documentCap = documentMaxBytes ?? DefaultDocumentMaxBytes;
+                if (info.Length > documentCap)
                 {
                     skipped.Add(new Skipped(relative,
-                        $"document over the {DocumentMaxBytes:N0} byte cap ({info.Length:N0} bytes)"));
+                        $"document over the {documentCap:N0} byte cap ({info.Length:N0} bytes). " +
+                        "Raise DEXICON__INDEXING__DOCUMENTMAXBYTES if you have the memory for it."));
                     continue;
                 }
             }
