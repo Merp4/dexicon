@@ -12,7 +12,7 @@
 
 set -e
 
-MODEL="${DEXICON_EMBEDDING_MODEL:-nomic-embed-text}"
+MODEL="${DEXICON_EMBEDDING_MODEL:-embeddinggemma}"
 
 echo "dexicon-ollama: starting server"
 /bin/ollama serve &

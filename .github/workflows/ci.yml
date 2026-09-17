@@ -30,6 +30,24 @@ jobs:
           # itself 0.0.0-alpha.0.
           fetch-depth: 0
 
+      # A shell script with CRLF endings is not a shell script: `sh` reads the trailing
+      # carriage return as part of the last argument, so `set -euo pipefail` becomes an
+      # illegal option and the container it was entrypointing crash-loops. That has
+      # happened once, to scripts/provision-models.sh, taking Ollama and the app with it.
+      #
+      # .gitattributes already declares `*.sh text eol=lf`, but that governs what git
+      # writes on checkout and stores on commit. It does NOT stop an editor, a generator
+      # or a stray script from writing CRLF into a working-tree file that compose then
+      # bind-mounts straight into a container. This catches that.
+      - name: Shell scripts are LF
+        run: |
+          bad=$(grep -rlU --include='*.sh' --exclude-dir=node_modules "$(printf '\r')" . || true)
+          if [ -n "$bad" ]; then
+            echo "::error::CRLF line endings in shell scripts - sh cannot run these:"
+            echo "$bad"
+            exit 1
+          fi
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
