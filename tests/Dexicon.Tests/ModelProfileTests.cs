@@ -11,7 +11,7 @@ namespace Dexicon.Tests;
 /// Task templates per embedding model.
 ///
 /// Most embedding models are trained with a task instruction wrapped around the input and
-/// retrieve measurably worse without it — and nothing fails, so the only symptom is worse
+/// retrieve measurably worse without it, and nothing fails, so the only symptom is worse
 /// ranking. One project measured EmbeddingGemma at recall@1 16/25 without its prefixes and
 /// 23/25 with them.
 ///
@@ -19,7 +19,7 @@ namespace Dexicon.Tests;
 /// the UI. A build that hard-coded the framing for models it knew about would give every
 /// model pulled afterwards silently wrong framing, which would quietly undo the point of
 /// runtime model management. So resolution is: saved row, then built-in suggestion, then
-/// raw — and anything built-in must be overridable.
+/// raw, and anything built-in must be overridable.
 /// </summary>
 public sealed class ModelProfileTests : IAsyncLifetime
 {
@@ -62,7 +62,7 @@ public sealed class ModelProfileTests : IAsyncLifetime
     [Fact]
     public async Task ATemplateCanWrapRatherThanPrefix()
     {
-        // EmbeddingGemma's document form is not a prefix — it surrounds the text. This is
+        // EmbeddingGemma's document form is not a prefix; it surrounds the text. This is
         // why the stored value is a template with a {text} placeholder and not a prefix
         // string: a prefix-shaped design could not express it.
         var templates = await _profiles.ForAsync(Target("embeddinggemma"));
@@ -144,7 +144,7 @@ public sealed class ModelProfileTests : IAsyncLifetime
     public async Task TheSameModelOnTwoProvidersIsTwoProfiles()
     {
         // Keyed on both, because a hosted provider may frame a same-named model
-        // differently — and their vectors are not interchangeable either way.
+        // differently, and their vectors are not interchangeable either way.
         _db.ModelProfiles.Add(new EmbeddingModelProfile
         {
             Provider = "openai",
@@ -178,7 +178,7 @@ public sealed class ModelProfileTests : IAsyncLifetime
     public void ChangingTheFramingInvalidatesExistingChunks()
     {
         // Both sides of a retrieval must agree. If documents were embedded raw and queries
-        // start arriving framed, nothing errors — the ranking just quietly gets worse. So
+        // start arriving framed, nothing errors and the ranking gets worse. So
         // the framing is part of the staleness key, and editing a profile re-indexes.
         var set = new ChunkSet
         {
@@ -213,7 +213,7 @@ public sealed class ModelProfileTests : IAsyncLifetime
         var a = new ModelTemplates("search_document: {text}", "search_query: {text}", TemplateOrigin.BuiltIn);
         var b = new ModelTemplates("search_document: {text}", "search_query: {text}", TemplateOrigin.Configured);
 
-        // Origin differs — where it came from is not part of what it does.
+        // Origin differs: where it came from is not part of what it does.
         CorpusIndexer.ChunkingFingerprint(set, "blob", a)
             .ShouldBe(CorpusIndexer.ChunkingFingerprint(set, "blob", b));
     }

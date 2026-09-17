@@ -5,9 +5,8 @@ namespace Dexicon.Tests;
 
 /// <summary>
 /// The four meaning-preserving strategies a chunk set can turn on. Each is off by
-/// default, so every test here also asserts that the plain path is unchanged — a
-/// strategy that quietly alters output when nobody asked for it is a regression, not
-/// a feature.
+/// default, so every test here also asserts that the plain path is unchanged. A strategy
+/// that alters output when it was not asked for is a regression rather than a feature.
 /// </summary>
 public sealed class ChunkStrategyTests
 {
@@ -63,7 +62,7 @@ public sealed class ChunkStrategyTests
         // The property that the bug broke: a chunk's trail can only mention headings at or
         // BEFORE where it starts. The trail used to be read from a cursor that had already
         // run ahead to find the split point, so chunks were labelled with a section further
-        // down the file — confidently, and wrongly.
+        // down the file, and incorrectly.
         foreach (var chunk in chunks.Where(c => c.EmbedText != c.Content))
         {
             var trail = chunk.EmbedText[..chunk.EmbedText.IndexOf("\n\n", StringComparison.Ordinal)];
@@ -148,7 +147,7 @@ public sealed class ChunkStrategyTests
     [Fact]
     public void SentenceAwareCutsAtASentenceRatherThanAWord()
     {
-        // One very long line — the only case where the chunker splits within a line.
+        // One very long line: the only case where the chunker splits within a line.
         var line = string.Join(' ', Enumerable.Range(1, 200).Select(i => $"This is sentence number {i}."));
 
         var chunks = CodeChunker.Chunk("prose.txt", line, new ChunkOptions
@@ -204,7 +203,7 @@ public sealed class ChunkStrategyTests
         var chunks = CodeChunker.Chunk("notes.txt", text, new ChunkOptions
         {
             // Small enough to force a split, so the pattern decides WHERE rather than
-            // whether — size decides when.
+            // whether; size decides when.
             ChunkSizeTokens = 8,
             OverlapTokens = 0,
             BoundaryMode = "custom",
@@ -253,8 +252,8 @@ public sealed class ChunkStrategyTests
         chunks.ShouldNotBeEmpty();
         chunks.ShouldAllBe(c => c.Content.Length <= 64 * CodeChunker.CharsPerToken);
 
-        // The prefix is added to EmbedText, so it is allowed to exceed the budget —
-        // deliberately, and only by the length of a heading trail.
+        // The prefix is added to EmbedText, so it is allowed to exceed the budget, by
+        // design, and only by the length of a heading trail.
         chunks.ShouldAllBe(c => c.EmbedText.Length >= c.Content.Length);
     }
 }

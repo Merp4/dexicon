@@ -116,7 +116,7 @@ public sealed class WorkspaceWalker
     public const string IgnoreFileName = ".dexiconignore";
 
     /// <summary>
-    /// Fallback document cap for callers that do not pass one — tests, and any code path
+    /// Fallback document cap for callers that do not pass one: tests, and any code path
     /// that predates the setting. The configured value is
     /// <c>DEXICON__INDEXING__DOCUMENTMAXBYTES</c>; see IndexingOptions.
     /// </summary>
@@ -136,7 +136,7 @@ public sealed class WorkspaceWalker
         "*.woff", "*.woff2", "*.ttf", "*.eot", "*.otf",
         "*.ico", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp", "*.webp", "*.svg",
         "*.mp3", "*.mp4", "*.avi", "*.mov", "*.wav", "*.flac",
-        // NOTE: .pdf/.docx/.pptx/.epub are deliberately NOT here — they are extracted.
+        // Note: .pdf/.docx/.pptx/.epub are intentionally absent here; they are extracted.
         "*.db", "*.sqlite", "*.sqlite3",
         "*.safetensors", "*.gguf", "*.bin", "*.pt", "*.pth", "*.pkl", "*.npy", "*.npz",
         "*.lock", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
@@ -187,8 +187,8 @@ public sealed class WorkspaceWalker
 
             if (info.Length == 0) { skipped.Add(new Skipped(relative, "empty file")); continue; }
 
-            // A PDF, DOCX, PPTX or EPUB IS binary — it just happens to have text inside
-            // that we know how to get at. Sniffing it would silently drop every PDF in a
+            // A PDF, DOCX, PPTX or EPUB is binary, but has text inside that an extractor
+            // can reach. Sniffing it would drop every PDF in a
             // repository's docs/ folder. They also routinely exceed a code-sized cap, so
             // they get their own, larger one.
             var isDocument = Extraction.ExtractorRegistry.IsDocumentFormat(relative);
@@ -217,7 +217,7 @@ public sealed class WorkspaceWalker
 
     /// <summary>
     /// Enumerate without letting one unreadable directory abort the whole walk, and
-    /// without following symlinks out of the root — a link to / would otherwise index
+    /// without following symlinks out of the root, since a link to / would otherwise index
     /// the entire filesystem.
     /// </summary>
     private static IEnumerable<string> EnumerateFilesSafely(string root)

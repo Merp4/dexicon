@@ -25,8 +25,8 @@ namespace Dexicon.Core.Embedding;
 ///
 /// The chunker has always used a flat 4. That is a fair average for English prose and
 /// wrong in the direction that hurts for dense code, minified output and CJK, which reach
-/// the same token limit in far fewer characters — so a "768 token" chunk of minified
-/// JavaScript can be two or three times that, and the model truncates it silently.
+/// the same token limit in far fewer characters, so a "768 token" chunk of minified
+/// JavaScript can be two or three times that, and the model truncates it without error.
 ///
 /// Null when the provider does not report token counts, in which case callers keep the
 /// estimate rather than inventing a measurement.
@@ -47,8 +47,8 @@ public sealed record ModelCapabilities(
 /// <summary>
 /// Measures what a model will actually accept, without indexing anything.
 ///
-/// The question this answers — "how big can a chunk be before the model quietly drops the
-/// end of it?" — had no answer in Dexicon, and the cost of guessing was concrete. An EPUB
+/// The question this answers, "how big can a chunk be before the model drops the end of
+/// it?", had no answer in Dexicon, and the cost of guessing was concrete. An EPUB
 /// once produced chunks averaging 32,000 characters; every one of them was truncated by
 /// the model, roughly 95% of the book was in no index anywhere, and the corpus, the job
 /// and the file all reported success. Nothing in the system could detect it, because a
@@ -123,8 +123,8 @@ public sealed class ModelProbe(IEmbeddingService embeddings, ILogger<ModelProbe>
         calls++;
 
         // Two thirds of the measured limit. The measurement is in characters and the
-        // model counts tokens, and the ratio varies with the text — code and CJK are
-        // denser than English prose — so the headroom absorbs a bad estimate rather
+        // model counts tokens, and the ratio varies with the text, since code and CJK are
+        // denser than English prose, so the headroom absorbs a bad estimate rather
         // than pretending the number is exact.
         var budget = low * 2 / 3;
 
@@ -135,10 +135,10 @@ public sealed class ModelProbe(IEmbeddingService embeddings, ILogger<ModelProbe>
         return Done(target, dimensions, low, !errors, budget, calls, started,
             errors
                 ? $"Accepts about {low:N0} characters of prose and rejects more, which is the safe " +
-                  "behaviour: an over-long chunk fails loudly rather than being silently shortened. " +
+                  "behaviour: an over-long chunk fails rather than being shortened without notice. " +
                   Density
-                : $"Accepts about {low:N0} characters of prose and SILENTLY TRUNCATES beyond that — it " +
-                  "returns a vector for the part it read, so an over-long chunk is indexed as its opening " +
+                : $"Accepts about {low:N0} characters of prose and truncates beyond that without " +
+                  "raising an error. It returns a vector for the part it read, so an over-long chunk is indexed as its opening " +
                   $"and the rest is nowhere. Keep the chunk budget under the recommendation. {Density}",
             charsPerToken);
     }
@@ -167,14 +167,14 @@ public sealed class ModelProbe(IEmbeddingService embeddings, ILogger<ModelProbe>
         {
             // A model that REJECTS over-long input rather than truncating it. Refusing is
             // the safer behaviour and it is still a limit, so it answers the same question
-            // — this length did not work — and the bisection carries on. Letting it escape
-            // meant the probe crashed on exactly the models that behave best.
+            // as "this length did not work", and the bisection carries on. Letting it
+            // escape meant the probe crashed on the models that behave best.
             return (false, 0);
         }
     }
 
     private const string Density =
-        "Measured with English prose; denser text — code, minified output, CJK — reaches the same " +
+        "Measured with English prose. Denser text (code, minified output or CJK) reaches the same " +
         "token limit in fewer characters, which is what the recommendation's headroom is for.";
 
     /// <summary>Distinctive enough that its presence must move a vector that can see it.</summary>

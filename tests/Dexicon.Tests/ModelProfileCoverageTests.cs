@@ -6,12 +6,12 @@ namespace Dexicon.Tests;
 /// Every model in Ollama's embedding category, and what Dexicon does with it.
 ///
 /// Task framing is not optional and not visible: send raw text to a model that was trained
-/// with `search_document:` and nothing fails — retrieval is simply worse, and worse by a
+/// with `search_document:` and nothing fails; retrieval is worse, and worse by a
 /// different amount per model, which also makes comparing two models meaningless. So the
 /// failure mode this guards is silent by construction, and the only defence is checking
 /// the list against the library rather than against memory.
 ///
-/// The list was read off ollama.com/search?c=embedding on 2026-09-17 — the whole category,
+/// The list was read off ollama.com/search?c=embedding on 2026-09-17: the whole category,
 /// twelve models, not a selection. It is a snapshot and will go stale: a model added
 /// tomorrow gets raw framing and a UI that says so, which is the designed fallback. What
 /// this test pins is that nothing in the list was covered by ACCIDENT, and that a future
@@ -49,7 +49,7 @@ public class ModelProfileCoverageTests
     [MemberData(nameof(EveryModel))]
     public void Every_model_in_the_library_has_a_deliberate_framing(string model)
     {
-        // Not "has a template" — being embedded raw is a legitimate answer for a symmetric
+        // Not "has a template": being embedded raw is a legitimate answer for a symmetric
         // sentence-transformers model. What must not happen is a model falling through to
         // raw because nobody looked, which is indistinguishable at runtime from raw because
         // someone checked the card and decided.

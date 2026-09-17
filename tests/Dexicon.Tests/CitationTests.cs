@@ -3,7 +3,7 @@ using Dexicon.Core.Search;
 namespace Dexicon.Tests;
 
 /// <summary>
-/// A hit's <c>Location</c> is the part of a search result that gets repeated verbatim —
+/// A hit's <c>Location</c> is the part of a search result that gets repeated verbatim:
 /// pasted into an editor, quoted back by a model, cited in an answer. A wrong one
 /// propagates further than a wrong score ever will.
 /// </summary>

@@ -8,15 +8,15 @@ namespace Dexicon.Tests;
 /// Found in a real book. "Crafting Clean Code with JavaScript and React" is prose
 /// interleaved with code listings: blank lines are frequent in the prose and absent inside
 /// a listing. Its PDF produced 1,051 chunks averaging 388 characters where 70 of ~8,000
-/// were intended — seventeen times the vectors, the embedding cost and the storage, and a
-/// result set full of near-duplicate fragments too small to carry their own context. The
+/// were intended: seventeen times the vectors, the embedding cost and the storage, and a
+/// result set of near-duplicate fragments too small to carry their own context. The
 /// EPUB of the same book, whose extractor emits no blank lines, produced 61.
 ///
 /// The mechanism is an interaction, which is why neither half looked wrong alone:
 ///
-///   1. the accumulator fills to the budget, then backs up to the last boundary — which
+///   1. the accumulator fills to the budget, then backs up to the last boundary, which
 ///      is 486 characters in when the next 11,000 characters are a listing with none;
-///   2. the overlap rewind refuses to go past previousStart + 1, so a chunk SMALLER than
+///   2. the overlap rewind refuses to go past previousStart + 1, so a chunk smaller than
 ///      the overlap budget leaves the next chunk starting one line later;
 ///   3. which produces the same tiny chunk again, shifted by a line, until the listing ends.
 /// </summary>
@@ -25,7 +25,7 @@ public class BoundaryProgressTests
     private const int ChunkTokens = 2000;   // 8,000 characters at 4 chars/token
     private const int OverlapTokens = 250;  // 1,000 characters
 
-    /// <summary>Prose with blank lines, then a long stretch with none — the real shape.</summary>
+    /// <summary>Prose with blank lines, then a long stretch with none: the real shape.</summary>
     private static string ProseThenListing(int proseChars, int listingChars)
     {
         var sb = new System.Text.StringBuilder();
@@ -124,7 +124,7 @@ public class BoundaryProgressTests
     public void The_whole_file_is_still_covered()
     {
         // Splitting differently must not lose text. Chunks overlap, so the union of their
-        // line ranges — not their concatenation — has to cover every line.
+        // line ranges, rather than their concatenation, has to cover every line.
         var text = ProseThenListing(500, 20_000);
         var lineCount = text.Split('\n').Length;
 

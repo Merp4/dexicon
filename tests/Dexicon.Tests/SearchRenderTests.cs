@@ -9,7 +9,7 @@ namespace Dexicon.Tests;
 ///
 /// Most MCP clients show this text verbatim, so it IS the product's interface for the
 /// only caller that matters. It had no tests at all, which is how a hit in a book came to
-/// be cited as `book.epub#chapter=7` and nothing else — a correct citation that an agent
+/// be cited as `book.epub#chapter=7` and nothing else: a correct citation that an agent
 /// cannot do anything further with, because the tool for reading on takes a line.
 /// </summary>
 public sealed class SearchRenderTests

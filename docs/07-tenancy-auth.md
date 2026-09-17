@@ -8,8 +8,8 @@ another tenant's content through the API, the MCP surface, or the UI. But a tena
 reach the Docker socket, the Qdrant port, or the data volume can read everything, and no
 amount of application-layer work changes that.
 
-Saying so plainly is the point. A model described as "isolation" invites uses it cannot
-carry. See the deployment notes in [09](09-deployment.md) for closing the infrastructure
+This is stated explicitly because a model described as "isolation" invites uses it cannot
+support. See the deployment notes in [09](09-deployment.md) for closing the infrastructure
 gaps that do exist.
 
 ## The model
@@ -29,7 +29,7 @@ Resolution order for a request:
 
 1. The token's bound tenant, if it is bound to exactly one.
 2. The `X-Dexicon-Tenant` header, which must be one of the token's bound tenants.
-3. If the token is bound to several and no header is present — **fail with 400**, listing
+3. If the token is bound to several and no header is present, **fail with 400**, listing
    the candidates.
 
 There is no ambient or inferred tenant: *if the caller does not specify a valid target,
@@ -72,10 +72,10 @@ prints the generated token to the container log on first run.
 | `shared` | none | Every tenant in the deployment. |
 | `shared` | one or more rows | The owning tenant plus the listed tenants. |
 
-Writes — reindex, upload, delete, settings — are **always owner-only**, regardless of
-visibility. Sharing is read-only sharing, and there is no setting that changes that. A
-shared reference library that another tenant can silently reindex is a support call waiting
-to happen.
+Writes (reindex, upload, delete and settings) are **always owner-only**, regardless of
+visibility. Sharing grants read access only, and no setting changes this. A shared
+reference library that another tenant could reindex without the owner's knowledge is a
+predictable source of support requests.
 
 The UI surfaces this as a per-corpus control: *Private* / *Shared with everyone* / *Shared
 with…* plus a tenant picker, and the corpus list shows a badge for anything not private.
@@ -95,8 +95,8 @@ Rules:
 1. Start from: corpora owned by `tenantId`, plus shared corpora granted to it, plus shared
    corpora with no grants at all.
 2. If `requested` is non-empty, intersect with it. A requested corpus that is not in the
-   visible set is a **named error** (`Unknown corpus 'x'. Visible: …`), not a silent drop —
-   silently dropping it means the caller gets confidently incomplete results.
+   visible set produces a **named error** (`Unknown corpus 'x'. Visible: …`) rather than
+   being dropped. Dropping it would return incomplete results without indicating so.
 3. **If the result is empty, throw.** There is no code path that queries Qdrant without a
    `corpus_id` filter.
 
@@ -106,7 +106,8 @@ The last rule is the one that matters, so it is defended three times over:
 - **Repository**: the Qdrant client wrapper rejects any query whose filter lacks a
   `corpus_id` condition, with a message naming the calling method.
 - **Storage**: `hnsw_config.m = 0` ([03](03-data-model.md)) means an unfiltered query has no
-  index to traverse. A leak would also be a brute-force scan — detectable and slow.
+  index to traverse. A leak would therefore require a brute-force scan, which is slow and
+  detectable.
 
 ### The test that proves it
 
@@ -118,7 +119,7 @@ TenantIsolation_SecondTenantCannotRetrieveFirstTenantsContent
 
 Two tenants, two corpora, a distinctive string in one. It asserts the string is
 unreachable via `/api/search`, via `search_index` over MCP, via `list_corpora`, via
-`dexicon://` resource reads, and via `get_context` with a guessed corpus id — and that each
+`dexicon://` resource reads, and via `get_context` with a guessed corpus id, and that each
 attempt fails with an authorization error rather than an empty result. The failure message
 carries the surface that leaked. This lands in the same commit as the enforcement code,
 never as a follow-up.

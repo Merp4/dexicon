@@ -112,7 +112,7 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
                     // the point, and a button that vanishes teaches nothing.
                     title={
                       set.pendingCount > 0
-                        ? `${set.pendingCount.toLocaleString()} file(s) still to index — promoting now would make search incomplete`
+                        ? `${set.pendingCount.toLocaleString()} file(s) still to index; promoting now would make search incomplete`
                         : 'Make this the set that search uses'
                     }
                     onClick={() => act(set.id, () => api.promoteChunkSet(corpus.name, set.name))}
@@ -268,7 +268,7 @@ function ChunkSetModal({
 
   // What this model was measured to accept, in the same unit the field is in. The chunker
   // budgets characters at a flat 4 per token, so that is the conversion that decides
-  // whether a chunk fits — not the model's real ratio, which is why a model measured at
+  // whether a chunk fits, not the model's real ratio, which is why a model measured at
   // 2.8 can truncate a chunk the field says is well inside its limit.
   const limitInFieldTokens =
     measured?.maxInputChars != null ? Math.floor(measured.maxInputChars / 4) : null;
@@ -293,7 +293,7 @@ function ChunkSetModal({
         </Field>
       )}
 
-      <Field label="Description" hint="Optional — what this way of reading the corpus is for.">
+      <Field label="Description" hint="Optional. What this way of reading the corpus is for.">
         <Input value={description} onChange={(e) => setDescription(e.target.value)} />
       </Field>
 
@@ -302,7 +302,7 @@ function ChunkSetModal({
           <Select value={provider} onValueChange={setProvider}>
             {providers.map((p) => (
               <SelectItem key={p.name} value={p.name} disabled={!p.configured}>
-                {p.name} ({p.kind}){p.configured ? '' : ' — not configured'}
+                {p.name} ({p.kind}){p.configured ? '' : ' (not configured)'}
               </SelectItem>
             ))}
           </Select>
@@ -384,7 +384,7 @@ function ChunkSetModal({
               vector for the part it read, so the rest of every chunk is in no index and
               nothing reports a problem. */}
           ⚠ {chosenModel?.name.split(':')[0]} accepts about{' '}
-          {measured?.maxInputChars?.toLocaleString()} characters — roughly{' '}
+          {measured?.maxInputChars?.toLocaleString()} characters, roughly{' '}
           {limitInFieldTokens?.toLocaleString()} at this field's four-characters-a-token
           budget. At {chunkSize.toLocaleString()},{' '}
           {measured?.truncatesSilently
@@ -421,7 +421,7 @@ function ChunkSetModal({
           checked={unitAware}
           onChange={setUnitAware}
           label="Unit-aware boundaries"
-          hint="Split on the document's own structure — page for PDF, chapter for EPUB, slide for PPTX."
+          hint="Split on the document's own structure: page for PDF, chapter for EPUB, slide for PPTX."
         />
         <Toggle
           checked={sentenceAware}
@@ -483,8 +483,8 @@ function Toggle({
  * Model management.
  *
  * Pulls are gigabytes and minutes, so progress streams rather than the page hanging on
- * a request. Deletion is guarded server-side — a model a chunk set embeds with cannot be
- * removed — and the reason is shown here rather than discovered by trying.
+ * a request. Deletion is guarded server-side, since a model a chunk set embeds with
+ * cannot be removed, and the reason is shown here rather than discovered by trying.
  */
 export function ModelsView() {
   const [providers, setProviders] = useState<EmbeddingProviderInfo[]>([]);
@@ -649,7 +649,7 @@ export function ModelsView() {
         <div className="card py-3 px-3.5 border-[var(--warn)]">
           <span className="text-[var(--warn)] text-sm">{current.detail}</span>
           <p className="dim mt-1 mx-0 mb-0 text-xs">
-            Credentials come from the environment, never from the catalogue — a chunk set records which provider to
+            Credentials come from the environment, never from the catalogue. A chunk set records which provider to
             use, not how to authenticate to it.
           </p>
         </div>
@@ -744,7 +744,7 @@ export function ModelsView() {
                     <div className="text-xs mt-1">
                       {m.templateOrigin === 'none' ? (
                         <span className="text-[var(--warn)]">
-                          embedded raw — no task framing for this model
+                          embedded raw; no task framing for this model
                         </span>
                       ) : (
                         <span className="dim">
@@ -821,7 +821,7 @@ export function ModelsView() {
                     </div>
                     <p className="dim mt-1.5 mx-0 mb-0">{caps.summary}</p>
                     <p className="dim mt-1 mx-0 mb-0 text-xs">
-                      {caps.embedCalls} embed calls, {(caps.tookMs / 1000).toFixed(1)}s — nothing was indexed.
+                      {caps.embedCalls} embed calls, {(caps.tookMs / 1000).toFixed(1)}s. Nothing was indexed.
                     </p>
                   </div>
                 )}
@@ -838,7 +838,7 @@ export function ModelsView() {
  * The task framing for one model.
  *
  * Most embedding models are trained with an instruction wrapped around the input and
- * retrieve measurably worse without it — and nothing fails, so the only symptom is a
+ * retrieve measurably worse without it, and nothing fails, so the only symptom is a
  * worse ranking. Built-in defaults cover the models this build knows; this is how you
  * correct one, or configure a model released after it.
  */
@@ -907,7 +907,7 @@ function FramingModal({
             {model.templateOrigin === 'none' && 'This model has no framing: text is embedded exactly as it is. '}
             {model.templateOrigin === 'builtin' && 'Currently using a built-in default. Saving overrides it. '}
             {model.templateOrigin === 'configured' && 'Configured here. '}
-            Use <span className="mono">{'{text}'}</span> where the content goes — on its own it means embed unchanged.
+            Use <span className="mono">{'{text}'}</span> where the content goes. On its own it means embed unchanged.
           </p>
 
           <Field label="Indexed text" hint="Applied to every chunk as it is indexed.">
@@ -928,7 +928,7 @@ function FramingModal({
             />
           </Field>
 
-          <Field label="Notes" hint="Optional — where these values came from.">
+          <Field label="Notes" hint="Optional. Where these values came from.">
             <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="from the model card" />
           </Field>
 

@@ -21,8 +21,8 @@ public sealed class IndexJobQueue(CatalogDbContext db, ILogger<IndexJobQueue> lo
 
     /// <summary>
     /// Enqueue a job for a corpus. Queuing a refresh for a corpus that already has one
-    /// pending is a no-op returning the existing id — two identical scans in a row is
-    /// wasted work, not throughput.
+    /// pending is a no-op returning the existing id, since two identical scans in a row
+    /// is wasted work rather than throughput.
     /// </summary>
     /// <param name="chunkSetId">
     /// The one set to index, or null for every set in the corpus. Naming a set is what
@@ -32,14 +32,14 @@ public sealed class IndexJobQueue(CatalogDbContext db, ILogger<IndexJobQueue> lo
         CancellationToken ct = default)
     {
         // Deduplicated per (corpus, SET). Matching on the corpus alone would hand back a
-        // job for a different set — so a request to backfill a new set would return the
+        // job for a different set, so a request to backfill a new set would return the
         // live set's refresh, report success, and build nothing.
         //
         // QUEUED ONLY, and that word is the whole of it. A queued job has not yet read the
         // corpus, so whatever changes before it starts is included and coalescing is free.
         // A RUNNING job has already taken its list of sources: anything added afterwards is
         // not in it and never will be. Coalescing onto one returned that job's id as though
-        // it covered the new work — so adding nine folders to a corpus mid-index indexed
+        // it covered the new work, so adding nine folders to a corpus mid-index indexed
         // the ones that happened to be there when the walk began, left the rest out, and
         // reported the corpus `ready` with no job pending and nothing wrong on its face.
         //
@@ -114,7 +114,7 @@ public sealed class IndexingBackgroundService(
 
 /// <summary>
 /// Fans indexing progress out to SSE subscribers. Coalesced by the endpoint rather
-/// than here — the indexer reports every 25 files, which is already a sane rate.
+/// than here; the indexer reports every 25 files, which is already a reasonable rate.
 /// </summary>
 public sealed class IndexProgressBroadcaster
 {

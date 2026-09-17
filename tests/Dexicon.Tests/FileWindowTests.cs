@@ -6,7 +6,7 @@ namespace Dexicon.Tests;
 /// The viewer used to return the first 400,000 characters with "…(truncated)" glued on and
 /// no way to ask for the rest. Fine for a source file; useless for a book. A 700-page
 /// technical book runs to two or three million characters, so the reader got the first
-/// chapter or two and the rest of the book was unreachable — which is what "some books
+/// chapter or two and the rest of the book was unreachable, which is what "some books
 /// show as truncated" looked like from the outside.
 ///
 /// The arithmetic below is the endpoint's, extracted so it can be checked without standing
@@ -62,7 +62,7 @@ public class FileWindowTests
     [Fact]
     public void A_files_own_first_line_is_carried_into_the_window()
     {
-        // Chunks do not have to start at line 1 — an indexed file can begin further in.
+        // Chunks do not have to start at line 1; an indexed file can begin further in.
         var (_, start, end, _, _) = Window(Lines(3), firstLine: 900, start: null);
 
         start.ShouldBe(900);

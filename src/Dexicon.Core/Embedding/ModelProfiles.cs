@@ -13,7 +13,7 @@ public enum EmbedPurpose
     /// <summary>Text being searched with.</summary>
     Query = 1,
 
-    /// <summary>Neither — measuring the model itself. Never templated.</summary>
+    /// <summary>Neither; measuring the model itself. Never templated.</summary>
     Raw = 2,
 }
 
@@ -57,7 +57,7 @@ public enum TemplateOrigin
 /// they are NOT optional: nomic-embed-text wants <c>search_document:</c> on indexed text
 /// and <c>search_query:</c> on queries, EmbeddingGemma wants
 /// <c>title: none | text: …</c> and <c>task: search result | query: …</c>. Send raw text
-/// instead and nothing fails — retrieval is simply worse, and worse by different amounts
+/// instead and nothing fails; retrieval is worse, and worse by different amounts
 /// per model, which also makes any comparison between two models meaningless.
 ///
 /// A TEMPLATE rather than a prefix because gemma's document form wraps the text rather
@@ -66,9 +66,9 @@ public enum TemplateOrigin
 /// The resolution order is the whole design, and it exists because models are added at
 /// RUNTIME through the UI:
 ///
-///   1. a saved row for this (provider, model) — always wins
-///   2. a built-in suggestion for a recognised name — correct out of the box
-///   3. nothing — the text goes through unchanged
+///   1. a saved row for this (provider, model), which always wins
+///   2. a built-in suggestion for a recognised name, correct out of the box
+///   3. nothing, and the text goes through unchanged
 ///
 /// Built-ins are a fallback, not the mechanism. Hard-coding <c>if (model.StartsWith("nomic"))</c>
 /// would mean every model pulled after this code was written gets silently wrong framing,
@@ -76,8 +76,8 @@ public enum TemplateOrigin
 /// built-in can be overridden by saving a row, and the UI says which of the three applies
 /// so "embedded raw" is visible rather than assumed.
 ///
-/// The table below covers every model in Ollama's embedding category as of 2026-09-17 —
-/// all twelve of them, not a selection. That is a snapshot, not a contract: a model added
+/// The table below covers every model in Ollama's embedding category as of 2026-09-17,
+/// all twelve of them rather than a selection. That is a snapshot, not a contract: a model added
 /// to the library tomorrow gets raw framing and a UI that says so, which is the designed
 /// behaviour and the reason this is a fallback. `ModelProfileCoverageTests` pins the list
 /// so a future reader can see what was checked and when.
@@ -99,17 +99,17 @@ public sealed class ModelProfiles(CatalogDbContext db, IMemoryCache cache) : IMo
     /// Known models, from their own model cards. Seeds the editor and acts as the
     /// out-of-the-box default; a saved row overrides any of it.
     ///
-    /// Keyed on the family name — the part before any tag — because `nomic-embed-text`,
+    /// Keyed on the family name, the part before any tag, because `nomic-embed-text`,
     /// `nomic-embed-text:latest` and `nomic-embed-text:v1.5` all want the same framing.
-    /// That is the ONLY inference made from a model's name anywhere in this file.
+    /// That is the only inference made from a model's name anywhere in this file.
     /// </summary>
     private static readonly Dictionary<string, ModelTemplates> BuiltIn = new(StringComparer.OrdinalIgnoreCase)
     {
-        // nomic: https://huggingface.co/nomic-ai/nomic-embed-text-v1.5 — "required, not optional"
+        // nomic: https://huggingface.co/nomic-ai/nomic-embed-text-v1.5, "required, not optional"
         ["nomic-embed-text"] = new("search_document: {text}", "search_query: {text}", TemplateOrigin.BuiltIn),
         ["nomic-embed-text-v2-moe"] = new("search_document: {text}", "search_query: {text}", TemplateOrigin.BuiltIn),
 
-        // EmbeddingGemma: https://ai.google.dev/gemma/docs/embeddinggemma — the document form
+        // EmbeddingGemma: https://ai.google.dev/gemma/docs/embeddinggemma. The document form
         // wraps rather than prefixes, which is why these are templates.
         ["embeddinggemma"] = new("title: none | text: {text}", "task: search result | query: {text}", TemplateOrigin.BuiltIn),
 
@@ -131,16 +131,16 @@ public sealed class ModelProfiles(CatalogDbContext db, IMemoryCache cache) : IMo
         //   v1: https://huggingface.co/Snowflake/snowflake-arctic-embed-m
         //   v2: https://huggingface.co/Snowflake/snowflake-arctic-embed-l-v2.0
         // v2 was listed here as raw, on the belief that Arctic was trained without
-        // prefixes. It is not, and raw framing costs recall silently — which is the exact
-        // failure this whole file exists to prevent.
+        // prefixes. It is not, and raw framing costs recall with no error raised, which is
+        // the failure this file exists to prevent.
         ["snowflake-arctic-embed"] = new(
             "{text}",
             "Represent this sentence for searching relevant passages: {text}",
             TemplateOrigin.BuiltIn),
         ["snowflake-arctic-embed2"] = new("{text}", "query: {text}", TemplateOrigin.BuiltIn),
 
-        // BGE v1.5 made instructions optional — "you can generate embedding without
-        // instruction in all cases for convenience" — but the same card continues: "For a
+        // BGE v1.5 made instructions optional ("you can generate embedding without
+        // instruction in all cases for convenience") but the same card continues: "For a
         // retrieval task that uses short queries to find long related documents, it is
         // recommended to add instructions for these short queries." That is precisely what
         // Dexicon does, so the instruction is on. Override by saving a row if your corpus

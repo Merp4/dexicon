@@ -55,7 +55,7 @@ public static class DocumentEndpoints
             // The one endpoint that legitimately carries a large body, so the one that
             // opts out of Kestrel's 30 MB default. Without this, DEXICON__UPLOAD__MAXFILEBYTES
             // was unreachable above ~28.6 MB and the caller got a bare 413 rather than the
-            // service's own message — a 512 MB DOCUMENTMAXBYTES with a 30 MB front door.
+            // service's own message: a 512 MB DOCUMENTMAXBYTES with a 30 MB front door.
             //
             // Set BEFORE the body is read, which is the only point at which the feature is
             // still writable. The real limit is per FILE and is enforced while streaming in

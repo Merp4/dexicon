@@ -33,7 +33,7 @@ public sealed class DexiconTools
         [Description("Corpus names to search. Omit to search everything visible to you. Use list_corpora to discover them.")] string[]? corpus = null,
         [Description("hybrid blends meaning with exact terms; semantic is meaning only; keyword is exact-match only and keeps working when embeddings are unavailable.")] string mode = "hybrid",
         [Description("Maximum results, 1-50.")] int limit = 10,
-        [Description("Restrict to files under this path, e.g. src/Auth/. Relative to the source root, not the corpus — use `source` to narrow by folder instead.")] string? pathPrefix = null,
+        [Description("Restrict to files under this path, e.g. src/Auth/. Relative to the source root, not the corpus. Use `source` to narrow by folder instead.")] string? pathPrefix = null,
         [Description("Restrict to one source of the corpus, by its root path as list_corpora reports it, e.g. orly/AI. A parent matches everything beneath it.")] string? source = null,
         [Description("Restrict to one language, e.g. csharp, python, typescript.")] string? language = null,
         [Description("Restrict to chunks declaring this symbol, e.g. TokenService.")] string? symbol = null,
@@ -72,7 +72,7 @@ public sealed class DexiconTools
     /// Formatted for a model to read, not for a machine to parse. Most clients show
     /// this text verbatim, so it leads with what matters: where the match is.
     ///
-    /// Internal rather than private for the same reason as <see cref="Stitch"/> — this is
+    /// Internal rather than private for the same reason as <see cref="Stitch"/>: this is
     /// the agent-facing surface of the whole product, and it can be checked without
     /// standing up an MCP server.
     /// </summary>
@@ -96,7 +96,7 @@ public sealed class DexiconTools
 
         if (result.Hits.Count == 0)
         {
-            sb.Append("\nNothing matched. If this is unexpected, check index_status — the corpus may still be indexing, or the content may not be indexed at all.\n");
+            sb.Append("\nNothing matched. If this is unexpected, check index_status: the corpus may still be indexing, or the content may not be indexed at all.\n");
             return sb.ToString();
         }
 
@@ -114,8 +114,8 @@ public sealed class DexiconTools
             if (spansSources && hit.SourceRoot is { Length: > 0 } root)
                 sb.Append($"  · in {root}");
 
-            // A hit in a PDF or an EPUB is cited by its unit — `book.epub#chapter=7` —
-            // which is right for a citation and useless as an argument to get_context,
+            // A hit in a PDF or an EPUB is cited by its unit, as `book.epub#chapter=7`,
+            // which is right for a citation and unusable as an argument to get_context,
             // whose handle is a line. Without this an agent could find a passage in a
             // book and then have nothing to pass in order to read on from it.
             if (hit.Page is not null) sb.Append($"  · lines {hit.StartLine}-{hit.EndLine}");
@@ -132,7 +132,7 @@ public sealed class DexiconTools
     }
 
     [McpServerTool(Name = "list_corpora")]
-    [Description("List the corpora you can search, what each one holds, and whether it has any indexed content. Call this first when you do not already know which corpus answers a question — the names it returns are the legal values for search_index's corpus parameter.")]
+    [Description("List the corpora you can search, what each one holds, and whether it has any indexed content. Call this first when you do not already know which corpus answers a question. The names it returns are the valid values for search_index's corpus parameter.")]
     public static async Task<string> ListCorporaAsync(
         RequestContext rc,
         ScopeResolver scopes,
@@ -157,8 +157,8 @@ public sealed class DexiconTools
     /// One corpus, as an agent reads it.
     ///
     /// Ordering is the whole of this method. An agent calls list_corpora to answer one
-    /// question — "which of these should I search?" — and the only line that answers it is
-    /// the description a human wrote. That used to come LAST, under the state, the file
+    /// question, "which of these should I search?", and the only line that answers it is
+    /// the description a human wrote. That used to come last, under the state, the file
     /// counts, the chunk sets, the embedding dimensions and the overlap: five lines of
     /// operational detail an agent cannot act on, ahead of the one line it needs. Now the
     /// description leads and the machinery follows.
@@ -177,7 +177,7 @@ public sealed class DexiconTools
         // What it is, before what it is made of.
         sb.Append(s.Description is { Length: > 0 }
             ? $"    {s.Description}\n"
-            : "    (no description — say what is in it so an agent can choose between corpora)\n");
+            : "    (no description: state what the corpus holds so an agent can choose between corpora)\n");
 
         // An empty corpus is a legal value for search_index that cannot answer anything.
         // Listed identically to a full one, it reads as a reasonable place to look, and the
@@ -204,13 +204,13 @@ public sealed class DexiconTools
             sb.Append("\n    (* is the default; name another with corpus:set)");
 
         if (s.LastIndexedUtc is { } indexed) sb.Append($"\n    last indexed: {indexed:u}");
-        if (s.FailedCount > 0) sb.Append($"\n    {s.FailedCount} file(s) failed — see the UI for why");
+        if (s.FailedCount > 0) sb.Append($"\n    {s.FailedCount} file(s) failed; see the UI for why");
         sb.Append('\n');
         return sb.ToString();
     }
 
     [McpServerTool(Name = "get_context")]
-    [Description("Return the indexed lines surrounding a location, stitched together. Use after search_index when a hit needs its surroundings — including to read on past the end of a hit, by centring further down the file.")]
+    [Description("Return the indexed lines surrounding a location, stitched together. Use after search_index when a hit needs its surroundings, including reading on past the end of a hit, by centring further down the file.")]
     public static async Task<string> GetContextAsync(
         RequestContext rc,
         ScopeResolver scopes,
@@ -234,8 +234,8 @@ public sealed class DexiconTools
         }
         catch (ScopeResolutionException ex) { throw new McpException(ex.Message); }
 
-        // Read from the INDEX rather than from disk, so this works for uploads, which have
-        // no file to read — but by FILTER, not by search.
+        // Read from the index rather than from disk, so this works for uploads, which have
+        // no file to read, and by filter rather than by search.
         //
         // This used to run a keyword search for the path and keep the top 50 hits, which
         // let relevance decide which of a file's chunks came back. Asking for the lines
@@ -247,9 +247,9 @@ public sealed class DexiconTools
 
         // A file_path is relative to its source root, so within a corpus it is not unique.
         // A corpus with sources AI/ and Philosophy/ that both hold "Logic For Dummies.pdf"
-        // returns the chunks of both here, ordered by chunk index — which interleaves two
-        // different books and stitches them into one passage with line numbers on it. That
-        // is the worst shape a wrong answer can take: confident, plausible, and quotable.
+        // returns the chunks of both here, ordered by chunk index, which interleaves two
+        // different books and stitches them into one passage with line numbers on it. The
+        // result is plausible and quotable while being wrong.
         var bySource = chunks
             .GroupBy(c => c.SourceId ?? string.Empty)
             .OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal)
@@ -274,8 +274,8 @@ public sealed class DexiconTools
 
         var header = $"{filePath}:{pieces[0].StartLine}-{pieces[^1].EndLine} (corpus: {corpus})\n";
         if (ambiguous)
-            header += $"! {bySource.Count} sources in this corpus contain a file at that path — " +
-                      "they are different files with the same name. This is ONE of them, the " +
+            header += $"! {bySource.Count} sources in this corpus contain a file at that path. " +
+                      "They are different files with the same name. This is one of them, the " +
                       "largest; the others are not shown and not mixed in.\n";
         return header + "\n" + Stitch(pieces.Select(p => (p.StartLine, p.EndLine, p.Content)), lineNumbers);
     }
@@ -304,8 +304,8 @@ public sealed class DexiconTools
         {
             // Several chunks can share ONE line number: the chunker splits a line that is
             // longer than the whole budget, and every piece honestly reports that line.
-            // Line-based de-overlapping cannot separate those — by line they are all
-            // "already emitted" — so they are stitched on their text instead. Without
+            // Line-based de-overlapping cannot separate those, since by line they are all
+            // "already emitted", so they are stitched on their text instead. Without
             // this, get_context on a minified file returned only its first chunk.
             if (p.StartLine == p.EndLine && (p.StartLine, p.EndLine) == lastRange)
             {
@@ -318,8 +318,8 @@ public sealed class DexiconTools
 
             // Chunks from one pass tile the file, so a gap here means the index really is
             // missing those lines. Butting the two ends together would hand a model code
-            // that reads as contiguous and is not — the kind of wrong it cannot detect —
-            // so it is disclosed instead. This fired on chunks left behind by an older
+            // that reads as contiguous and is not, which the model cannot detect, so it
+            // is disclosed instead. This fired on chunks left behind by an older
             // chunker, which is how that staleness was found at all.
             if (emittedThrough > 0 && p.StartLine > emittedThrough + 1)
                 sb.Append($"\n… lines {emittedThrough + 1}-{p.StartLine - 1} not indexed …\n\n");
@@ -347,12 +347,12 @@ public sealed class DexiconTools
     /// <summary>
     /// Appends <paramref name="piece"/>, dropping any prefix already present at the end of
     /// the buffer. Two slices of one line overlap by the configured amount, which this
-    /// cannot know — so it measures the repeat instead of assuming it.
+    /// cannot know, so it measures the repeat instead of assuming it.
     /// </summary>
     private static void AppendWithoutRepeating(StringBuilder sb, string piece)
     {
         // These slices are all one line, so the newline the previous piece ended with does
-        // not belong between them — and leaving it there would also block every match,
+        // not belong between them, and leaving it there would also block every match,
         // since no chunk's text begins with the end of the last one plus a newline.
         while (sb.Length > 0 && sb[^1] == '\n') sb.Length--;
 
@@ -369,7 +369,7 @@ public sealed class DexiconTools
 
     /// <summary>
     /// The length of the longest prefix of <paramref name="prefixOf"/> that is also a
-    /// suffix of <paramref name="suffixOf"/> — the classic KMP failure function over
+    /// suffix of <paramref name="suffixOf"/>: the KMP failure function over
     /// <c>prefixOf + sentinel + suffixOf</c>, which gets the answer in one linear pass
     /// rather than testing every candidate length.
     /// </summary>
@@ -421,7 +421,7 @@ public sealed class DexiconTools
     }
 
     [McpServerTool(Name = "index_status")]
-    [Description("Report indexing state, counts and last error. The honest answer to 'why did search return nothing'.")]
+    [Description("Report indexing state, counts and last error. Answers 'why did search return nothing'.")]
     public static async Task<string> IndexStatusAsync(
         RequestContext rc,
         ScopeResolver scopes,

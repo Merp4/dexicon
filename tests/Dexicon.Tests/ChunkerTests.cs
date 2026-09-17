@@ -116,7 +116,7 @@ public class ChunkerTests
     //
     // The regression these guard: the chunker used to split at EVERY boundary, which
     // made chunkSize dead configuration in every mode but `none`. Two corpora set to
-    // 768 and 256 tokens produced byte-identical output — 48 chunks each, at a 252
+    // 768 and 256 tokens produced byte-identical output: 48 chunks each, at a 252
     // character mean against budgets of 3072 and 1024.
 
     [Fact]
@@ -146,7 +146,7 @@ public class ChunkerTests
 
         var mean = chunks.Average(c => c.Content.Length);
 
-        // Not a tight bound — the point is it must not collapse to paragraph-sized
+        // Not a tight bound; it must simply not collapse to paragraph-sized
         // chunks again. Half the budget is comfortably above the 252 chars observed.
         mean.ShouldBeGreaterThan(budget * 0.4,
             $"chunks averaged {mean:F0} chars against a {budget} budget — the boundary is forcing splits again");
@@ -168,7 +168,7 @@ public class ChunkerTests
         chunks.Count.ShouldBeGreaterThan(1);
 
         // The property that actually matters: every chunk BEGINS at a paragraph start.
-        // (Asserting on the ending was a bad oracle — a chunk that ends correctly at a
+        // (Asserting on the ending was a poor oracle: a chunk that ends correctly at a
         // paragraph boundary necessarily ends with that paragraph's last words.)
         foreach (var c in chunks)
             // A split that landed mid-paragraph would start with "token", not "Para".

@@ -1,7 +1,7 @@
 # 10 — Security and secrets
 
 The project is intended to be published. Secret hygiene that is retrofitted before a first
-public push has already failed — the history is what gets scanned. These rules apply from
+public push has already failed, because the history is what gets scanned. These rules apply from
 commit one.
 
 ## The secrets model
@@ -81,8 +81,8 @@ as the rule it protects.
 | Tenant isolation | `TenantIsolation_SecondTenantCannotRetrieveFirstTenantsContent` — see [07](07-tenancy-auth.md). |
 
 Each guard is verified by **breaking the value and watching it go red**, then restoring it.
-A guard that has never failed has not been shown to work — the failure mode is a check that
-silently matches the wrong thing and reads as cover.
+A guard that has never failed has not been shown to work. The failure mode is a check
+that matches the wrong thing and is mistaken for coverage.
 
 ## Signing in without handling the token (development only)
 
@@ -92,7 +92,7 @@ browser reads it out of `.env` and types it, which puts a live credential into a
 transcript, a shell history and a log.
 
 `scripts/dev-token.py` is the third way. The token goes from `.env` to the page directly
-and nothing in between renders it — the operator sees a nonce and a byte count.
+and nothing in between renders it; the operator sees a nonce and a byte count.
 
 ```bash
 python scripts/dev-token.py
@@ -139,20 +139,20 @@ Audited 2026-09-17 by provoking each failure against the running stack.
 | Well-formed unknown token | 401 `Invalid credentials` — **identical**, so nothing says whether a token exists, is revoked or has expired |
 | `POST /mcp` unauthenticated | 401 before any tool listing; the tool surface is not enumerable |
 
-Two properties this rests on, both worth re-checking:
+Two properties this depends on, both of which should be re-checked:
 
 - **Unhandled exceptions are redacted by the MCP SDK.** Only `McpException` has its message
   surfaced; anything else becomes `An error occurred invoking '<tool>'.` Every message a
   caller can read is therefore one this repository wrote deliberately. That is the SDK's
-  behaviour, not a setting here — **re-run the probes after upgrading
+  behaviour rather than a setting here, so **re-run the probes after upgrading
   `ModelContextProtocol`**, because the day it starts forwarding `ex.Message` is the day a
   Qdrant connection failure starts naming `dexicon-qdrant:6334` to a model.
 - **The environment is Production.** `ASPNETCORE_ENVIRONMENT` is unset in the image and in
   compose, so the developer exception page is never added. Setting it to `Development` to
   debug something also turns stack traces on for every REST caller.
 
-The detailed health endpoint — internal endpoints, model, dimensions, corpus count, the
-running job — is behind auth. The anonymous ones answer `{"status":"ok"}` and
+The detailed health endpoint (internal endpoints, model, dimensions, corpus count and the
+running job) is behind auth. The anonymous ones answer `{"status":"ok"}` and
 `{"status":"ready","qdrant":true,"catalogue":true}`: enough for a container healthcheck and
 a load balancer, and nothing about what is inside.
 
@@ -166,7 +166,7 @@ debugging a provider needs the endpoint in the message.
 Covered operationally in [09](09-deployment.md); the security-relevant points:
 
 - Non-root (UID 10001), read-only rootfs, `cap_drop: ALL`, `no-new-privileges`.
-- `/workspaces` mounted **read-only** — Dexicon cannot write to your source tree.
+- `/workspaces` mounted **read-only**, so Dexicon cannot write to source trees.
 - No Docker socket. Ever. There is no feature that needs it.
 - Qdrant and Ollama are not published to the host in the default compose file. Qdrant with
   no API key on an exposed port bypasses the entire tenancy model.
@@ -194,12 +194,13 @@ Covered operationally in [09](09-deployment.md); the security-relevant points:
 - CodeQL for C# and TypeScript on pull requests, on `main`, and weekly.
 - Release builds publish an SBOM (CycloneDX) and pin base images by digest.
 - Every third-party extraction library is permissively licensed and listed with its licence
-  in [04](04-ingestion.md#extraction) — a table that exists to be checked, not admired.
+  in [04](04-ingestion.md#extraction).
 
 ### Licence review of the dependency tree
 
-Reviewed 2026-09-17 over the whole **transitive** graph, from each package's own metadata —
-`.nuspec` for NuGet, `package.json` for npm — rather than from the direct dependency list.
+Reviewed 2026-09-17 over the whole **transitive** graph, from each package's own metadata
+(`.nuspec` for NuGet, `package.json` for npm) rather than from the direct dependency
+list.
 
 | | Packages | Licences |
 |---|---|---|
@@ -217,8 +218,8 @@ Two that needed reading rather than parsing:
   and it is a test dependency that does not ship.
 
 **The nine npm licences that are not plain MIT/ISC/BSD/Apache are build-time only**, bar
-one — checked against
-`npm ls --omit=dev`, not assumed from where they sit in the tree:
+one. This was checked against `npm ls --omit=dev` rather than inferred from position in
+the tree:
 
 | Package | Licence | Ships? |
 |---|---|---|
@@ -236,7 +237,7 @@ requires attribution when the *data* is redistributed; the build consumes it and
 none of it.
 
 Re-run it after any dependency change that adds a package rather than bumps one. The two
-things worth re-checking are the same two: whether anything new is copyleft, and whether
+checks are the same two: whether anything new is copyleft, and whether
 anything non-permissive has moved from build-time into the shipped bundle.
 
 ## Repository files, present at first push

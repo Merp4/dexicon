@@ -6,7 +6,7 @@ Report privately through GitHub's **[Report a vulnerability](https://github.com/
 form. Please do not open a public issue for a security problem.
 
 Include what you did, what happened, and what you expected. A proof of concept helps but is
-not required — a clear description of the mechanism is worth more than a working exploit.
+not required. A clear description of the mechanism is worth more than a working exploit.
 
 **What to expect.** An acknowledgement within 3 working days and an assessment within 10.
 If it is a real issue you will get a fix or a dated plan, and credit in the advisory unless
@@ -29,12 +29,12 @@ admits its limits. How each line below is enforced is in
 
 **Defended.** One tenant reading another's content through the API, MCP, UI, or a guessed
 identifier. Secrets reaching the repository, the logs, or an error response. Dexicon writing
-to your source tree — workspace mounts are read-only. A malformed document taking the
+to your source tree, because workspace mounts are read-only. A malformed document taking the
 service down.
 
 **Not defended.** Anyone with access to the Docker socket, the data volume, or a published
-Qdrant port. A malicious tenant holding a valid `admin` token. Side channels — timing,
-per-corpus chunk counts — that might reveal that content exists without revealing what it
+Qdrant port. A malicious tenant holding a valid `admin` token. Side channels (timing,
+per-corpus chunk counts) that might reveal that content exists without revealing what it
 is.
 
 **Dexicon is a local developer tool with tenant separation. It is not a multi-tenant SaaS
@@ -45,11 +45,11 @@ considering exposing it to untrusted users, that is the sentence to read twice.
 
 Dexicon assumes it is reachable only by people you trust:
 
-- The app binds to `127.0.0.1` by default. Qdrant and Ollama publish **no ports at all** —
+- The app binds to `127.0.0.1` by default. Qdrant and Ollama publish **no ports at all**:
   Qdrant's stock configuration has no authentication, so a published `6333` is an open
   read/write door to every tenant's content regardless of what the application enforces.
 - API tokens are stored as PBKDF2-HMAC-SHA256 with a per-token salt. The secret is shown
-  once at creation and has no retrieval path. A lost token is replaced, not recovered — or
+  once at creation and has no retrieval path. A lost token is replaced, not recovered, or
   recovered through `DEXICON_BOOTSTRAP_TOKEN`, which is an escape hatch documented in
   [docs/09-deployment.md](docs/09-deployment.md).
 - Embedding provider API keys are read from the environment, never from the catalogue.
@@ -57,7 +57,7 @@ Dexicon assumes it is reachable only by people you trust:
 
 If you put Dexicon behind a reverse proxy on a shared network, the tenant header
 (`X-Dexicon-Tenant`) becomes something the proxy must control. Dexicon trusts the token
-first — a header asking for a tenant the token does not own is refused — but the
+first (a header asking for a tenant the token does not own is refused), but the
 deployment is yours to reason about.
 
 ## Things that are not vulnerabilities

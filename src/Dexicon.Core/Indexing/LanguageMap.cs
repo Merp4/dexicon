@@ -4,7 +4,7 @@ namespace Dexicon.Core.Indexing;
 /// Extension → canonical language name, and the member-boundary pattern per language.
 ///
 /// One choice is easy to get backwards: HTML, Razor, Vue and Svelte split on blank
-/// lines, not on headings. They are template <i>source</i>, not documents — splitting
+/// lines, not on headings. They are template <i>source</i>, not documents, so splitting
 /// an Angular template at its <c>&lt;h1&gt;</c> produces slices that mean nothing.
 /// </summary>
 public static class LanguageMap
@@ -74,7 +74,7 @@ public static class LanguageMap
         ["shell"] = @"(?m)^(\w+\s*\(\)\s*\{|function\s+\w+)",
         ["powershell"] = @"(?m)^(function\s+|class\s+|\[CmdletBinding)",
 
-        // Template SOURCE, not documents. See the class remark.
+        // Template source, not documents. See the class remark.
         ["html"] = BlankLine,
         ["razor"] = BlankLine,
         ["vue"] = BlankLine,

@@ -11,7 +11,7 @@ drift from the version it claims to be. It is published under
 
 ## In short
 
-Be decent. Assume good faith. Criticise the work and not the person — this repository is
+Be decent. Assume good faith. Criticise the work and not the person. This repository is
 full of comments explaining why something was got wrong the first time, and that only works
 in a project where being wrong is normal and survivable.
 
@@ -25,7 +25,7 @@ security advisory if you would rather not use the issue tracker at all. Reports 
 maintainer, are handled confidentially, and get a response within 3 working days.
 
 The maintainer may edit, hide, or delete contributions that breach this policy, and may
-restrict or ban an account — temporarily or permanently — depending on severity. Where a
+restrict or ban an account, temporarily or permanently, depending on severity. Where a
 decision is made, the person affected will be told what it was and why.
 
 This is a small project maintained by one person. That is a genuine commitment about how

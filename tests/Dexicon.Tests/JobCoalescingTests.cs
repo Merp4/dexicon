@@ -16,8 +16,8 @@ namespace Dexicon.Tests;
 /// 96-file shelf, and nothing anywhere saying half of it was missing.
 ///
 /// The distinction is about what a job has already decided:
-///   queued  — has not read the corpus yet, so new work is included for free.
-///   running — has its list; anything added now is not in it and never will be.
+///   queued:  has not read the corpus yet, so new work is included for free.
+///   running: has its list; anything added now is not in it and never will be.
 /// </summary>
 public sealed class JobCoalescingTests : IAsyncLifetime
 {
@@ -97,7 +97,7 @@ public sealed class JobCoalescingTests : IAsyncLifetime
     public async Task Repeated_requests_during_one_run_still_queue_only_one_job()
     {
         // The reason coalescing exists at all. Nine sources added while a job runs must
-        // produce one follow-up job, not nine — the first creates it, the rest fold in.
+        // produce one follow-up job rather than nine: the first creates it, the rest fold in.
         await Existing(JobState.Running);
 
         var first = await _queue.EnqueueAsync("c", JobKind.Refresh);

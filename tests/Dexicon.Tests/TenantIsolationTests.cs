@@ -12,7 +12,7 @@ namespace Dexicon.Tests;
 /// code, not as a follow-up. See docs/07-tenancy-auth.md.
 ///
 /// It asserts that every failure is an AUTHORIZATION ERROR naming the problem, not an
-/// empty result — because an empty result is indistinguishable from "that content does
+/// empty result, because an empty result is indistinguishable from "that content does
 /// not exist", and a caller acts on it.
 /// </summary>
 public sealed class TenantIsolationTests : IAsyncLifetime
@@ -107,8 +107,8 @@ public sealed class TenantIsolationTests : IAsyncLifetime
     [Fact]
     public async Task UnscopedSearch_NeverBecomesSearchEverything()
     {
-        // A tenant with nothing visible gets an error. The alternative — an empty
-        // corpus list reaching the vector store — is the bug this guards.
+        // A tenant with nothing visible gets an error. The alternative, an empty
+        // corpus list reaching the vector store, is the bug this guards.
         //
         // The shared-with-everyone corpus has to go first: it is visible to EVERY
         // tenant by design (docs/07), so with it present there is no such thing as a

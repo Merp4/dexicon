@@ -6,8 +6,8 @@ import { client } from './generated/client.gen';
  * What the app does with a request that fails.
  *
  * This exists because of a bug that took the whole UI down. The generator was told
- * `throwOnError: true` and silently did not apply it — the generated SDK still defaults
- * to `ThrowOnError = false` — so a failed request came back as `{ data: undefined }`
+ * `throwOnError: true` and it had no effect: the generated SDK still defaults
+ * to `ThrowOnError = false`, so a failed request came back as `{ data: undefined }`
  * rather than throwing. The facade returned that `undefined`, a component stored it in
  * state, and the next `.map` threw "Cannot read properties of undefined". A blank page,
  * on every load, while ErrorBanner sat there unused.
@@ -46,7 +46,7 @@ describe('every request', () => {
   it('carries the bearer token', async () => {
     // The regression this file was written for. The client's `auth` option is only
     // consulted for operations the OpenAPI document marks as secured, and the document
-    // declares no security schemes — so `auth` never ran, every request went out
+    // declares no security schemes, so `auth` never ran, every request went out
     // anonymous, and the UI told people their token was wrong.
     setToken('dex_test-token');
     fetchMock.mockResolvedValue(new Response('[]', {

@@ -9,8 +9,8 @@ import type { EmbeddingModelInfo } from './api';
  *
  * The form had no model picker at all: it sent a name, a description and a path, so every
  * corpus made in this UI silently took whatever the server was configured with. That is
- * the one property of a corpus that cannot be edited afterwards — a different model is a
- * different vector space — so getting it by default and discovering it later meant
+ * the one property of a corpus that cannot be edited afterwards, since a different model is a
+ * different vector space, so getting it by default and discovering it later meant
  * building a second chunk set and promoting it.
  */
 const createCorpus = vi.fn();

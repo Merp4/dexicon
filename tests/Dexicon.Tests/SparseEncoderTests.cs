@@ -10,7 +10,7 @@ public class SparseEncoderTests
     {
         // THE critical property. string.GetHashCode() is randomised per process in
         // .NET, so using it would make an index built in one run unqueryable after a
-        // restart — silently, with every keyword search simply returning nothing.
+        // restart, with no error and every keyword search returning nothing.
         // These are the FNV-1a values; if this test fails, every existing index is
         // invalidated and the change needs a migration, not a fix to the test.
         SparseEncoder.Hash("token").ShouldBe(SparseEncoder.Hash("token"));

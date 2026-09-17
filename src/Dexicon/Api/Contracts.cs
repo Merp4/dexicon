@@ -87,7 +87,7 @@ public sealed record PullModelRequest(string Model, string? Provider = null);
 //
 // These were anonymous objects. A minimal API returning `Results.Ok(new { … })`
 // describes nothing in the OpenAPI document, so the generated TypeScript client typed
-// every one of them as `unknown` — which defeats most of the point of generating it.
+// every one of them as `unknown`, which defeats most of the point of generating it.
 // Named records make the contract explicit on both sides of the wire.
 
 public sealed record ChunkSetCreated(ChunkSetSummary ChunkSet, JobSummary BackfillJob);
@@ -220,7 +220,7 @@ public sealed record CorpusSummary(
 /// One place a corpus takes content from, and the filters applied to it.
 /// </summary>
 /// <remarks>
-/// The globs are here because they were accepted, stored and then never returned — so
+/// The globs are here because they were accepted, stored and then never returned, so
 /// anything setting them had no way to read them back and no way to show what a source is
 /// actually doing. They are persisted as a JSON array in one column; the contract is a
 /// list, because a caller should not be parsing our storage format.
@@ -234,8 +234,8 @@ public sealed record SourceSummary(
     IReadOnlyList<string> IncludeGlobs,
     IReadOnlyList<string> ExcludeGlobs,
     /// <summary>
-    /// Files this source contributed. A corpus with one source does not need it — the
-    /// corpus total IS the source total. A corpus with ten does: without it there is no
+    /// Files this source contributed. A corpus with one source does not need it, since
+    /// the corpus total is the source total. A corpus with ten does: without it there is no
     /// way to see that one folder brought in nothing, which is what a mistyped path, an
     /// over-eager exclude glob, or an index that stopped early all look like.
     /// </summary>
@@ -343,7 +343,7 @@ public static class Mapping
 
     /// <summary>
     /// A file as one chunk set sees it. The state argument is separate because the same
-    /// attachment has a different answer per set — indexed in one, pending in another.
+    /// attachment has a different answer per set: indexed in one, pending in another.
     /// </summary>
     public static FileSummary ToSummary(this IndexedFile f, FileChunkState? state) =>
         new(f.Id, f.RelativePath,

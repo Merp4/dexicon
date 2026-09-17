@@ -67,7 +67,7 @@ public sealed class DexiconResources
         // the original would in any case differ from what was indexed.
         //
         // A FILTER, not a search. Reconstructing a file is a lookup, and an early version
-        // of this used keyword search — which let RELEVANCE decide which parts of the file
+        // of this used keyword search, which let relevance decide which parts of the file
         // came back. A reader asking for a file got a plausible-looking one with holes in
         // it, disclosed only by the gap markers.
         var chunks = await vectors.GetFileChunksAsync(
@@ -90,7 +90,7 @@ public sealed class DexiconResources
     }
 
     /// <summary>
-    /// Authenticate, authorise, and resolve the corpus — in that order, and once, so
+    /// Authenticate, authorise, and resolve the corpus, in that order and once, so
     /// there is a single place where a resource read can be allowed.
     /// </summary>
     private static async Task<(string Tenant, ScopedCorpus Target)> ResolveAsync(
@@ -108,7 +108,7 @@ public sealed class DexiconResources
 
         try
         {
-            // `name` may be `corpus` or `corpus:set` — the same addressing search uses.
+            // `name` may be `corpus` or `corpus:set`: the same addressing search uses.
             var scope = await scopes.ResolveReadableAsync(tenant, [name], ct);
             return (tenant, scope.Targets[0]);
         }

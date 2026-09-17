@@ -17,11 +17,11 @@
 
 The 2026-07-28 revision also defines `Mcp-Method` and `Mcp-Name` request headers, carries
 protocol version and client identity in `_meta`, and allows `tools/list` responses to
-advertise `ttlMs` / `cacheScope`. Dexicon sets a `ttlMs` of 60 s on `tools/list` — the tool
+advertise `ttlMs` / `cacheScope`. Dexicon sets a `ttlMs` of 60 s on `tools/list`; the tool
 set only changes when the operator changes configuration.
 
 Multi Round-Trip Requests (`resultType: "input_required"`) replace elicitation. Dexicon has
-one plausible use — asking which corpus was meant when a name is ambiguous — and
+one plausible use, asking which corpus was meant when a name is ambiguous, and
 deliberately does not use it in v1: an ambiguous scope is an error with the candidates
 listed in the message, which every client handles today.
 
@@ -36,7 +36,7 @@ claude mcp add --transport http dexicon http://localhost:8477/mcp \
 The tenant header is optional when the token is bound to exactly one tenant, which is the
 normal local-development case. See [07](07-tenancy-auth.md).
 
-## Naming a corpus — and a chunk set
+## Naming a corpus and a chunk set
 
 Everywhere a tool takes a corpus, it accepts either form:
 
@@ -45,15 +45,15 @@ books           the corpus's DEFAULT chunk set
 books:fine      a named set within it
 ```
 
-A corpus can be cut several ways at once — a coarse set and a fine one, or the live set
+A corpus can be cut several ways at once: a coarse set and a fine one, or the live set
 and its replacement on a new model while that replacement backfills
 ([D-21](decisions.md#d-21-chunk-sets-not-corpus-level-chunking)). Qualifying the name
 rather than adding a `chunk_set` parameter to four tools keeps the parameter count down
 (see [Tools](#tools)), and an agent that has never heard of chunk sets sends a bare name
 and gets the sensible answer.
 
-`list_corpora` names every set, marks the default with `*`, and says so explicitly —
-otherwise an agent told only the corpus name cannot reach the others.
+`list_corpora` names every set and marks the default with `*`. Without this, an agent
+given only the corpus name cannot reach the others.
 
 An unknown set is an error that names the real ones, the same way an unknown corpus does:
 
@@ -112,57 +112,57 @@ reading, not for parsing:
 ### `list_corpora`
 
 No inputs. Returns what the caller can see: name, description, whether it is shared, file
-and chunk counts, last indexed time, current state — and every chunk set, with its model,
+and chunk counts, last indexed time, current state, and every chunk set with its model,
 dimensionality, chunk size and overlap, and the default marked. This is how an agent learns
 what `corpus` values are legal, including the `corpus:set` ones, so its description says so
 explicitly.
 
 **The description leads**, before any of the machinery. An agent calls this to answer one
-question — which of these should I search? — and the only line that answers it is the one a
-human wrote. It used to come last, under the state, the counts, every chunk set, the
-dimensions and the overlap. A corpus with no description says so, because silence reads as
-"no information" rather than as an undescribed corpus.
+question: which of these should I search? The only line that answers it is the one a human
+wrote, so it is placed before the state, the counts, the chunk sets, the dimensions and the
+overlap. A corpus with no description states that explicitly, since an absent value reads
+as "no information" rather than as an undescribed corpus.
 
 **An empty corpus is marked `NOT SEARCHABLE`.** It is a legal value for `search_index` that
 cannot answer anything, and listed identically to a full one it reads as a reasonable place
-to look — the agent spends a call finding out otherwise. "Still indexing" and "genuinely
-empty" are told apart, because one is worth retrying and the other never will be.
+to look, costing the agent a call to discover otherwise. "Still indexing" and "empty" are
+reported distinctly, because the first is worth retrying and the second is not.
 
 ### `get_context`
 
-`(corpus, file_path, around_line, before = 30, after = 30, line_numbers = true)` —
+`(corpus, file_path, around_line, before = 30, after = 30, line_numbers = true)`:
 neighbouring indexed lines, stitched from stored chunks. For when a search hit needs its
 surroundings and the agent cannot open the file itself.
 
 This is also how an agent **reads on**. Chunks overlap and tile the file, so calling it
-again further down the file walks forwards through a document — a search hit in a book,
+again further down the file walks forwards through a document: a search hit in a book,
 then the next few pages of it, without the agent ever holding the file. It reads by
 filter, not by relevance: an early version keyword-searched for the path, which let
 ranking decide which of a file's chunks came back, and asking for the lines around line
 2,625 of a book returned nothing at all.
 
-`around_line` is a LINE, and a hit in a PDF or an EPUB is cited by its unit —
+`around_line` is a line number, and a hit in a PDF or an EPUB is cited by its unit:
 `moby-dick.epub#chapter=7`. So `search_index` prints the line span alongside that
 citation, because otherwise an agent could find a passage in a book and have nothing to
 pass in order to continue from it.
 
 `line_numbers` prefixes each line with its number in the file, on by default. The passage
 is what a model reads before quoting or editing, and the alternative is counting lines
-down from the header — over a passage that has had overlap removed from it, which is
-exactly the sum it gets wrong. Gap markers stay unnumbered: the lines they stand for are
+down from the header, over a passage from which overlap has been removed. Gap markers
+stay unnumbered: the lines they stand for are
 the ones that are not there. The `dexicon://` file resource leaves numbering off, because
 a file read back should be the file rather than a listing of it.
 
 ### `index_refresh`
 
-`(corpus, full = false)` — queues an incremental (or full) reindex, returns `{ jobId,
+`(corpus, full = false)`: queues an incremental (or full) reindex, returns `{ jobId,
 state }` immediately. Requires the `ingest` scope. Never blocks: indexing a large repo
 outlasts any sensible tool timeout.
 
 ### `index_status`
 
-`(corpus?)` — current job phase and counts, last indexed time, last error, embedding model
-and whether it is reachable. Also the answer to "why did search return nothing" —
+`(corpus?)`: current job phase and counts, last indexed time, last error, embedding model
+and whether it is reachable. It also answers "why did search return nothing":
 it will say `indexing, 12% (1,204 / 9,880 files)` or `degraded: embedding service
 unreachable since 14:02`.
 
@@ -182,15 +182,14 @@ Resources are for **browsing**; tools are for asking questions. A client with a 
 picker can attach "this corpus" or "that file" to a conversation without the model having
 to guess a search query first.
 
-Both go through the same scope resolution as search, deliberately. A corpus a tenant
-cannot search must not become readable merely because it was reached by URI instead: the
-tenant boundary is the whole security model, and a second way in is a second way to get it
-wrong.
+Both use the same scope resolution as search. A corpus a tenant cannot search must not
+become readable because it was reached by URI instead: the tenant boundary is the security
+model, and a second route into it is a second opportunity for error.
 
 File text is reconstructed **from the index**, not read from disk. An uploaded PDF has no
-file to read, and the original would in any case differ from what was indexed — what a
-reader wants here is what search can actually find. Overlapping chunks are de-overlapped,
-and any gap is marked rather than closed silently.
+file to read, and the original would in any case differ from what was indexed. What is
+returned is what search can find. Overlapping chunks are de-overlapped, and any gap is
+marked rather than closed without notice.
 
 ## Prompts
 
@@ -241,7 +240,7 @@ and those work cold. Two populations, both served:
 `2025-11-25` is therefore the newest *negotiable* revision, not the newest supported one.
 An unsupported version is refused with the supported list, as above, rather than
 best-effort guessing. The negotiated revision is logged per request, because "which
-revision did that client actually get" is the first question when a client misbehaves.
+revision did that client receive" is the first question when a client misbehaves.
 
 ### A 2026-07-28 request, exactly
 
@@ -262,11 +261,11 @@ curl -X POST http://127.0.0.1:8477/mcp   -H 'Authorization: Bearer dex_…'   -H
   }'
 ```
 
-`Mcp-Name` must match the body — the name for a tool call, the URI for a resource read —
-and a mismatch is refused rather than resolved in favour of either. The response is an SSE
+`Mcp-Name` must match the body: the name for a tool call, the URI for a resource read. A
+mismatch is refused rather than resolved in favour of either. The response is an SSE
 frame: one `data:` line carrying the JSON-RPC result.
 
 **End-to-end**: Claude Code 2.1.248 connects over
 `claude mcp add --transport http … --header "Authorization: Bearer …"` and reports
-`✔ Connected`. Static bearer auth is enforced ahead of the MCP handler — an unauthenticated
+`✔ Connected`. Static bearer auth is enforced ahead of the MCP handler; an unauthenticated
 `tools/list` gets a bare 401.

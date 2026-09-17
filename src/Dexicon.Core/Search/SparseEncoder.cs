@@ -62,7 +62,7 @@ public static class SparseEncoder
 
     /// <summary>
     /// Lowercased alphanumeric runs, plus the sub-words of any compound identifier.
-    /// The whole identifier is kept as well as its parts — an exact match on
+    /// The whole identifier is kept as well as its parts, so an exact match on
     /// <c>RefreshAsync</c> should outrank a document that merely says "refresh".
     /// </summary>
     public static IEnumerable<string> Tokenize(string text)
@@ -122,7 +122,7 @@ public static class SparseEncoder
 
     /// <summary>
     /// Stable 32-bit FNV-1a, masked to a positive value. Deliberately NOT
-    /// <see cref="string.GetHashCode()"/>, which is randomised per process — an index
+    /// <see cref="string.GetHashCode()"/>, which is randomised per process, so an index
     /// built in one run would not be queryable from the next.
     /// </summary>
     internal static uint Hash(string term)

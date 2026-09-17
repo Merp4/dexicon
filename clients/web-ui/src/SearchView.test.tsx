@@ -9,7 +9,7 @@ import type { Corpus, SearchResult } from './api';
  * The search screen, which is the product.
  *
  * Two things it has to do beyond returning rows. It has to make "the index is bad"
- * distinguishable from "the scope was wrong" — that is what Explain is for. And it has to
+ * distinguishable from "the scope was wrong", which is what Explain is for. And it has to
  * survive a failed request: a call that rejects used to take the page with it, because the
  * facade resolved `undefined` into state and the next `.map` threw. That fault is fixed in
  * api.ts, but no component test ever asserted the screen's half of it.

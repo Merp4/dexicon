@@ -6,7 +6,7 @@ namespace Dexicon.Tests;
 /// get_context can number the lines it returns.
 ///
 /// It exists because the passage is what a model reads before quoting or editing, and the
-/// alternative is counting lines down from the header — arithmetic over a passage that has
+/// alternative is counting lines down from the header: arithmetic over a passage that has
 /// had overlap removed from it, which is precisely the sum it gets wrong. A number that is
 /// wrong is worse than no number, so every case below is about the number matching the
 /// file rather than matching the position in the output.
@@ -36,7 +36,7 @@ public sealed class LineNumberedContextTests
     public void OverlapRemovalDoesNotShiftTheNumbering()
     {
         // The second chunk repeats lines 8-10. They are dropped, and line 11 must still be
-        // numbered 11 — this is the off-by-one the whole file exists to guard.
+        // numbered 11, which is the off-by-one this file exists to guard.
         var stitched = DexiconTools.Stitch(
         [
             (1, 10, Lines(1, 10)),
@@ -82,7 +82,7 @@ public sealed class LineNumberedContextTests
     public void SlicesOfOneOverlongLineShareTheOneNumber()
     {
         // A line longer than the whole chunk budget is split across chunks, each honestly
-        // reporting the same line. It is one line, so it gets one number — not one per
+        // reporting the same line. It is one line, so it gets one number, not one per
         // slice, which would invent lines that are not in the file.
         var stitched = DexiconTools.Stitch(
         [

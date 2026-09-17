@@ -32,7 +32,7 @@ public interface IVectorStore
     /// Drop one file's chunks, within one source.
     ///
     /// <paramref name="sourceId"/> is not optional and not decoration. A chunk's
-    /// file_path is relative to its SOURCE root, not to the corpus — a corpus with sources
+    /// file_path is relative to its source root, not to the corpus: a corpus with sources
     /// `AI/` and `Philosophy/` that both contain "Logic For Dummies.pdf" writes two sets of
     /// chunks with the same file_path and the same chunk_set_id. Deleting on that pair
     /// alone removes both, and an incremental refresh only rewrites the one whose file
@@ -102,12 +102,12 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
 
     public string CollectionNameFor(EmbeddingTarget target, int dimensions) =>
         // The provider is in the name because two providers can serve a model of the same
-        // name — and those are different vectors. Leaving it out would have let an OpenAI
-        // set and a local set share a collection and silently pollute each other's space.
+        // name, and those are different vectors. Leaving it out would have let an OpenAI
+        // set and a local set share a collection, each writing into the other's space.
         //
         // CanonicalModel, not Model: Ollama lists `embeddinggemma:latest` and a config file
         // says `embeddinggemma`. Slugged raw those became `embeddinggemma-latest__768` and
-        // `embeddinggemma__768` — two collections for one model, holding vectors from the
+        // `embeddinggemma__768`: two collections for one model, holding vectors from the
         // same vector space, neither aware of the other. A corpus created from the UI's
         // model picker (which offers the provider's tagged names) would not share a
         // collection with one created from the configured default. This Qdrant has both,
@@ -186,8 +186,8 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
         catch (Exception ex)
         {
             // Creating an index that already exists is not an error worth failing a
-            // startup over, but it IS worth saying out loud — a genuinely broken index
-            // creation would otherwise look identical to a no-op.
+            // startup over, but it is worth logging: a genuinely broken index creation
+            // would otherwise look identical to a no-op.
             _log.LogDebug(ex, "Payload index {Field} on {Collection} not created (likely already present)",
                 field, collection);
         }
@@ -216,7 +216,7 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
             {
                 // Keyed on the SET, not the corpus: two sets hold the same file at the
                 // same chunk index, and a corpus-keyed id would make them overwrite each
-                // other — silently, and only for the file paths they happen to share.
+                // other, without error, and only for the file paths they share.
                 Id = new PointId { Uuid = DeterministicId(c.ChunkSetId, c.SourceId, c.FilePath, c.ChunkIndex) },
                 Vectors = new QdrantVectors { Vectors_ = named },
             };
@@ -252,14 +252,14 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
     /// The source is part of the identity because a file_path is relative to its source
     /// root, not to the corpus. Without it, two sources of one corpus holding the same
     /// filename derive the SAME id for every chunk, and the second source's upsert
-    /// silently overwrites the first — one book's vectors gone, both files still listed as
-    /// indexed in the catalogue, and nothing anywhere reporting a problem. That is a
-    /// quieter failure than the delete filter this mirrors: deletion at least left the
+    /// overwrites the first: one book's vectors gone, both files still listed as indexed
+    /// in the catalogue, and nothing reporting a problem. That is less visible than the
+    /// delete filter this mirrors, since deletion at least left the
     /// rows consistent, whereas this left the catalogue claiming content the index does
     /// not have.
     ///
     /// Changing this changes every id. Existing points keep their old ones and are not
-    /// rewritten by an incremental refresh, which skips unchanged files — a corpus with
+    /// rewritten by an incremental refresh, which skips unchanged files, so a corpus with
     /// more than one source needs `POST /api/corpora/{name}/reindex?full=true` once. The
     /// stale points are removed by that reindex, because deletion filters on the payload
     /// rather than on the id.
@@ -282,7 +282,7 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
     /// <summary>
     /// The filter that decides which points are one file's.
     ///
-    /// Extracted so the thing that makes it correct — the source_id term — can be asserted
+    /// Extracted so that the term which makes it correct, source_id, can be asserted
     /// without a running Qdrant. source_id has been written into every point's payload and
     /// indexed as a keyword since chunk sets landed; it was simply never filtered on.
     /// </summary>
@@ -390,7 +390,7 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
         // works, so degrade to it and SAY SO rather than returning a thin hybrid.
         if (denseVector is null && mode is SearchMode.Hybrid or SearchMode.Semantic)
         {
-            degradedReason = "embedding service unavailable — keyword-only results";
+            degradedReason = "embedding service unavailable; keyword-only results";
             mode = SearchMode.Keyword;
         }
 

@@ -25,7 +25,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // ── Configuration ────────────────────────────────────────────────────────────
 // DEXICON__SECTION__KEY from the environment, plus /run/secrets/* for orchestrated
-// deployments. A secret never comes from appsettings.json — see docs/10.
+// deployments. A secret never comes from appsettings.json; see docs/10.
 builder.Configuration.AddKeyPerFile("/run/secrets", optional: true, reloadOnChange: false);
 builder.Services.Configure<DexiconOptions>(builder.Configuration.GetSection(DexiconOptions.SectionName));
 
@@ -49,7 +49,7 @@ Log.Logger = new LoggerConfiguration()
     .Enrich.With<UtcTimestampEnricher>()
     .WriteTo.Console(outputTemplate:
         // UTC, and labelled. Rendering the log in local time while the API returns UTC
-        // makes the two impossible to line up — which cost real time once already,
+        // makes the two impossible to line up, which cost time once already,
         // reading a job that "started an hour ago" when it had started three minutes
         // before. Timestamps are UTC everywhere; only the UI localises, for its viewer.
         "[{UtcTime:HH:mm:ss}Z {Level:u3}] {Message:lj}{NewLine}{Exception}")
@@ -63,7 +63,7 @@ builder.Services.AddMemoryCache();
 builder.Services.AddProblemDetails();
 
 // Describes the REST surface so the web client's types can be generated from it rather
-// than hand-maintained. api.ts had already drifted from the C# contracts more than once —
+// than hand-maintained. api.ts had already drifted from the C# contracts more than once:
 // chunk sets landed and the Corpus interface still carried fields the server had dropped.
 builder.Services.AddOpenApi(o => o.AddDocumentTransformer((doc, _, _) =>
 {
@@ -77,7 +77,7 @@ builder.Services.AddOpenApi(o => o.AddDocumentTransformer((doc, _, _) =>
 
     // The prose above said this; the document did not. A generated client reads the
     // document, not the description, and only attaches credentials to operations that
-    // declare a security requirement — so with none declared, the web UI's own client
+    // declare a security requirement, so with none declared the web UI's own client
     // sent every request anonymously and the server answered "Missing credentials",
     // which the UI reported to people as a bad token.
     doc.Components ??= new();
@@ -105,7 +105,7 @@ builder.Services.AddOpenApi(o => o.AddDocumentTransformer((doc, _, _) =>
 .AddOperationTransformer((operation, context, _) =>
 {
     // The document-wide requirement above is right for almost everything, and wrong for
-    // the container probes — which is what Docker's HEALTHCHECK calls, without a token.
+    // the container probes, which is what Docker's HEALTHCHECK calls, without a token.
     // An empty `security` on an operation means "this one needs none", and the list comes
     // from the middleware that actually enforces it rather than a copy that can drift.
     var path = "/" + (context.Description.RelativePath ?? string.Empty).TrimEnd('/');
@@ -125,7 +125,7 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 
     // A number is a number. The web defaults also accept one written as a string, which
     // is leniency nobody asked for and which the OpenAPI document has to describe
-    // truthfully — so every int32 came out as `["integer", "string"]` and the generated
+    // truthfully, so every int32 came out as `["integer", "string"]` and the generated
     // TypeScript typed every count and every chunk size as `number | string`. Arithmetic
     // on that is a cast at every call site, to support input no client sends.
     o.SerializerOptions.NumberHandling = JsonNumberHandling.Strict;
@@ -171,7 +171,7 @@ builder.WebHost.ConfigureKestrel(k => k.AddServerHeader = false);
 // Kestrel's stock 30 MB request cap stays on for every endpoint EXCEPT the document
 // upload, which lifts it per request (DocumentEndpoints). That cap is the right guard for
 // a JSON body and the wrong one for a book: DEXICON__UPLOAD__MAXFILEBYTES advertises
-// 200 MB per file and nothing could ever reach it — a 40 MB PDF died on a bare 413 with
+// 200 MB per file and nothing could ever reach it: a 40 MB PDF died on a bare 413 with
 // no message, which reads as the upload being broken rather than as a limit.
 //
 // The multipart limit has to move with it. It governs the whole form, and the UI posts
@@ -205,8 +205,8 @@ app.MapAdminEndpoints();
 app.MapMcp("/mcp");
 
 // SPA fallback. The built UI is not in source control (see .gitignore): the container
-// image builds it, and `dev.ps1 ui` builds it locally. When it is absent — a bare
-// `dotnet run` on a fresh clone — say so in words rather than 404ing, and say how to
+// image builds it, and `dev.ps1 ui` builds it locally. When it is absent, as after a
+// bare `dotnet run` on a fresh clone, say so in words rather than 404ing, and say how to
 // get it.
 var spaIndex = Path.Combine(app.Environment.WebRootPath ?? "wwwroot", "index.html");
 
@@ -237,7 +237,7 @@ else
         "text/html"));
 }
 
-// Skipped when `dotnet build` is only reading the OpenAPI document out of this app —
+// Skipped when `dotnet build` is only reading the OpenAPI document out of this app;
 // see Bootstrapper.IsBuildTimeToolRun. A build must not migrate a database or mint a
 // token.
 if (!Bootstrapper.IsBuildTimeToolRun)
@@ -334,12 +334,12 @@ internal static class ThisAssembly
 {
     /// <summary>
     /// What this build is: <c>0.1.1</c> on a release, <c>0.1.2-alpha.0.7</c> seven commits
-    /// after one. Derived from the nearest git tag at build time — see Directory.Build.props.
+    /// after one. Derived from the nearest git tag at build time; see Directory.Build.props.
     /// </summary>
     /// <remarks>
     /// The INFORMATIONAL version, not <c>Assembly.GetName().Version</c>. MinVer pins that
     /// one to <c>major.0.0.0</c> on purpose, so a patch release cannot break assembly
-    /// binding — which means that for a 0.x project it is <c>0.0.0.0</c>, and reading it
+    /// binding, which means that for a 0.x project it is <c>0.0.0.0</c>, and reading it
     /// reported <c>0.0.0</c> for every build. The <c>+sha</c> a deterministic build appends
     /// is dropped: it is provenance, and the image already carries it as a `sha-` tag.
     /// </remarks>
@@ -350,8 +350,8 @@ internal static class ThisAssembly
     /// </summary>
     /// <remarks>
     /// Deliberately coarse, and deliberately not <see cref="Version"/>. The document is
-    /// generated at build time and COMMITTED, because the image builds the web client from
-    /// it — so a version carrying the commit height would make that file differ on every
+    /// generated at build time and committed, because the image builds the web client from
+    /// it, so a version carrying the commit height would make that file differ on every
     /// commit, and the check that it matches the code would become noise everyone learns
     /// to ignore. A patch does not change the contract; a minor does.
     /// </remarks>

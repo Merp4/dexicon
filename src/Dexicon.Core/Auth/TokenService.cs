@@ -65,9 +65,9 @@ public sealed class TokenService(CatalogDbContext db, TimeProvider clock)
     }
 
     /// <summary>
-    /// Verify a presented token. Returns null for every failure mode — unknown id,
-    /// wrong secret, revoked, expired, disabled tenant — because telling a caller
-    /// which of those it was is free reconnaissance.
+    /// Verify a presented token. Returns null for every failure mode (unknown id, wrong
+    /// secret, revoked, expired, disabled tenant) because telling a caller which of those
+    /// it was is free reconnaissance.
     /// </summary>
     public async Task<Principal?> VerifyAsync(string? presented, CancellationToken ct = default)
     {
@@ -84,7 +84,7 @@ public sealed class TokenService(CatalogDbContext db, TimeProvider clock)
         // AsNoTracking is load-bearing, not an optimisation. RevokeAsync and TouchAsync
         // use ExecuteUpdateAsync, which writes straight to the database and does NOT
         // update the change tracker. A tracked read therefore returns the stale entity,
-        // with RevokedUtc still null — so a revoked token kept authenticating for the
+        // with RevokedUtc still null, so a revoked token kept authenticating for the
         // lifetime of the DbContext. Caught by Token_RevokedAndExpired_StopVerifying.
         var row = await db.Tokens.AsNoTracking().Include(t => t.Tenant)
             .FirstOrDefaultAsync(t => t.Id == id, ct);
@@ -102,7 +102,7 @@ public sealed class TokenService(CatalogDbContext db, TimeProvider clock)
 
     /// <summary>
     /// Store a token whose secret the operator chose, rather than one we generated.
-    /// Used only for <c>DEXICON__BOOTSTRAP__TOKEN</c> — scripted setup, and recovery
+    /// Used only for <c>DEXICON__BOOTSTRAP__TOKEN</c>: scripted setup, and recovery
     /// when the one-time printed value is lost.
     ///
     /// The value must still be a well-formed <c>dex_&lt;id&gt;_&lt;secret&gt;</c>, so the

@@ -20,7 +20,7 @@ public readonly record struct EmbeddingTarget(string Provider, string Model)
     ///
     /// Ollama lists `embeddinggemma:latest`; a configuration file says `embeddinggemma`.
     /// They are the same model and the same vectors, and anything that treats them as two
-    /// names splits one model in half. Only `:latest` goes — `:v1.5` and `:0.6b` are
+    /// names splits one model in half. Only `:latest` is removed; `:v1.5` and `:0.6b` are
     /// genuinely different models with genuinely different vectors.
     /// </summary>
     public string CanonicalModel =>
@@ -40,7 +40,7 @@ public sealed class UnknownEmbeddingProviderException(string provider, IEnumerab
 ///
 /// Per provider, not per model, because the model is a per-call argument
 /// (<see cref="EmbeddingGenerationOptions.ModelId"/>) and a chunk set chooses it at
-/// runtime, in the UI. Anything that binds a model at registration — keyed DI included —
+/// runtime, in the UI. Anything that binds a model at registration, including keyed DI,
 /// cannot see a set created after the process started, and would either fail to resolve
 /// or quietly serve a different model than the one asked for. A client is a connection
 /// and a credential; a model is an argument.
@@ -68,7 +68,7 @@ public sealed class EmbeddingGeneratorFactory : IEmbeddingGeneratorFactory, IDis
 
     // Owned here, so the configured Ollama timeout actually applies. OllamaApiClient built
     // from a Uri makes its own HttpClient with the default 100 seconds, which quietly
-    // orphaned DEXICON__OLLAMA__TIMEOUT — a setting that exists because embedding a batch
+    // orphaned DEXICON__OLLAMA__TIMEOUT, a setting that exists because embedding a batch
     // on CPU Ollama was measured at ~18 seconds and a slow machine needs longer.
     private readonly ConcurrentDictionary<string, HttpClient> _httpClients =
         new(StringComparer.OrdinalIgnoreCase);

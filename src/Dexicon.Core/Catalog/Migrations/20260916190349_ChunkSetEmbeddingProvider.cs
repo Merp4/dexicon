@@ -16,14 +16,14 @@ namespace Dexicon.Core.Catalog.Migrations
                 type: "TEXT",
                 maxLength: 60,
                 nullable: false,
-                // Not "" — an empty provider resolves to nothing, and every existing set
+                // Not "": an empty provider resolves to nothing, and every existing set
                 // would fail at its next index with "no embedding provider named ''".
                 defaultValue: "ollama");
 
             // Collection names now carry the provider, because two providers can serve a
             // model of the same name and those are NOT the same vectors. Existing rows
             // still hold the old format, so they are rewritten to match what
-            // CollectionNameFor now produces — otherwise a set would keep writing into a
+            // CollectionNameFor now produces; otherwise a set would keep writing into a
             // collection whose name nothing derives any more.
             migrationBuilder.Sql(
                 """
@@ -39,7 +39,7 @@ namespace Dexicon.Core.Catalog.Migrations
             // refresh rebuilds into the renamed collection.
             //
             // The old collections are left in Qdrant rather than dropped from a SQL
-            // migration that cannot reach it. They are inert — no chunk set names them —
+            // migration that cannot reach it. They are inert, since no chunk set names them,
             // and safe to delete by hand once the reindex has finished.
             migrationBuilder.Sql(
                 "UPDATE file_chunk_states SET ContentHash = NULL, Status = 'Pending', ChunkCount = 0");

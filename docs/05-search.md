@@ -18,7 +18,7 @@ search(query, scope, mode, limit, filters)
   `source` narrows to one source of a corpus, named by its root path as `list_corpora`
   reports it (`orly/AI`); a parent folder matches everything beneath it. It is the only
   way to narrow by *where* content came from, because `path_prefix` matches `file_path`,
-  which is relative to a source root — a corpus with a source at `orly/AI` stores its
+  which is relative to a source root: a corpus with a source at `orly/AI` stores its
   files as bare names, and no prefix matches the folder they live in. Resolution runs
   against the already-authorised scope, so naming a source can only narrow a search,
   never reach into a corpus the caller cannot see.
@@ -57,10 +57,11 @@ where `$scope` expands to
 
 **Why RRF rather than weighted score fusion.** Dense cosine scores and BM25 scores live on
 different scales, and the weight that balances them is corpus-dependent and drifts as
-content changes. RRF reads rank, not magnitude, so it needs no tuning and cannot be
-silently mis-weighted. DBSF is available as a configuration option for anyone who wants
-distribution-normalised scores; it is not the default. It replaces a client-side weighted
-fusion that needed a `SemanticWeight` knob nobody could set from evidence. See
+content changes. RRF reads rank rather than magnitude, so it requires no tuning and
+cannot be mis-weighted. DBSF is available as a configuration option where
+distribution-normalised scores are wanted; it is not the default. It replaces a
+client-side weighted fusion requiring a `SemanticWeight` value that could not be set from
+evidence. See
 [D-06](decisions.md#d-06-rrf-fusion-server-side).
 
 **Prefetch limit is 4× the requested limit** (capped at 200). Fusion needs enough candidates
@@ -68,9 +69,9 @@ from each retriever to have something to fuse.
 
 ### Verified in the M0 spike (2026-09-16)
 
-The REST shape above is the wire format. From .NET it is one call — `Qdrant.Client` 1.19.0
-exposes fusion as a first-class `Query`, so the ambiguity this document used to flag
-(`{"fusion": "rrf"}` vs `{"rrf": {}}`) never reaches our code:
+The REST shape above is the wire format. From .NET it is a single call: `Qdrant.Client`
+1.19.0 exposes fusion as a first-class `Query`, so the `{"fusion": "rrf"}` versus
+`{"rrf": {}}` ambiguity does not reach application code:
 
 ```csharp
 var hits = await client.QueryAsync(
@@ -86,10 +87,10 @@ var hits = await client.QueryAsync(
     payloadSelector: true);
 ```
 
-The fusion is genuinely server-side and genuinely rank-based. Qdrant uses **RRF with k=2**,
-so an item at rank `r₀` and `r₁` in the two prefetches scores `1/(2+r₀) + 1/(2+r₁)`.
-Measured output on a seven-document corpus — a document top of both lists scores exactly
-`1.0`, which no cosine similarity produces:
+Fusion is performed server-side and is rank-based. Qdrant uses **RRF with k=2**, so an
+item at rank `r₀` and `r₁` in the two prefetches scores `1/(2+r₀) + 1/(2+r₁)`. Measured
+output on a seven-document corpus, where a document ranked first in both lists scores
+`1.0`, a value no cosine similarity produces:
 
 ```
  1.00000  docs/auth.md                 (rank 0 dense, rank 0 sparse)
@@ -114,7 +115,7 @@ and set `degraded: true` with `degraded_reason` in the response, and log at Warn
 caller is told; the result is not passed off as a full hybrid search.
 
 If the corpus's pinned dimensions do not match what the collection reports, the search is
-**refused** — not degraded — with a message naming both numbers and the rebuild action.
+**refused**, not degraded, with a message naming both numbers and the rebuild action.
 Returning plausible results from a mismatched space is worse than returning none.
 
 ## Result contract
@@ -144,7 +145,7 @@ Returning plausible results from a mismatched space is worse than returning none
 }
 ```
 
-Three deliberate choices:
+Three design choices:
 
 1. **`location` is a formatted string** as well as structured fields. `file:line` is
    clickable in every editor and is what an agent will paste back to the user.
@@ -178,7 +179,7 @@ file faster anyway; this path exists for uploads and for agents without filesyst
 | Qdrant hybrid query, 400k points, tenant-indexed | 20–80 ms |
 | Total p95 | **< 400 ms** |
 
-Cold Ollama — model not resident — adds seconds. Readiness on `/healthz` reports whether
+A cold Ollama, with the model not resident, adds seconds. Readiness on `/healthz` reports whether
 the embedding model is loaded, and the UI shows it, so "first search is slow" is visible
 on screen.
 
@@ -192,5 +193,5 @@ there has to be a measurement, so M3 of the [roadmap](11-roadmap.md) builds a sm
 evaluation set: 40–60 (query, expected file) pairs over a real repository, scored on
 recall@10 and MRR, run against each candidate embedding model and each chunking mode.
 
-The point is not the score. It is that the next person who wants to add a reranker has a
-number to beat, and the defaults in [04](04-ingestion.md) stop being guesses.
+The purpose is not the score itself, but to give any proposed reranker a baseline to
+improve on, and to derive the defaults in [04](04-ingestion.md) from measurement.

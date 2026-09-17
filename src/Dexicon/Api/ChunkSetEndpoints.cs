@@ -12,13 +12,13 @@ namespace Dexicon.Api;
 /// Chunk sets: the ways a corpus's content is cut and embedded.
 ///
 /// The migration story these exist for. A collection's name encodes its model and
-/// dimensionality, so changing model means writing into a different vector space —
+/// dimensionality, so changing model means writing into a different vector space,
 /// measured at roughly twenty minutes for a three-book corpus on CPU Ollama. Editing in
 /// place would mean twenty minutes of half-populated results; instead a new set is built
 /// alongside the live one and promoted only once it is complete.
 ///
 ///     POST   /chunk-sets              add a set (queued, backfills in the background)
-///     POST   /chunk-sets/{n}/promote  make it the default — the atomic switch
+///     POST   /chunk-sets/{n}/promote  make it the default: the atomic switch
 ///     DELETE /chunk-sets/{n}          drop it, vectors and all
 /// </summary>
 public static class ChunkSetEndpoints

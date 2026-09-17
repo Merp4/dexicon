@@ -6,8 +6,8 @@ namespace Dexicon.Tests;
 
 /// <summary>
 /// The jobs list is how both the UI and an operator answer "what is happening right
-/// now". Ordering it on StartedUtc — with nulls coalesced to MaxValue so queued work
-/// floats to the top — looked right and was not: a job that FAILED before it ever
+/// now". Ordering it on StartedUtc, with nulls coalesced to MaxValue so queued work
+/// floats to the top, appeared correct but was not: a job that failed before it ever
 /// started also has a null StartedUtc, so two long-dead failures sat permanently above
 /// the job that was actually running.
 ///
@@ -67,7 +67,7 @@ public sealed class JobOrderingTests : IAsyncLifetime
     public async Task AFreshlyQueuedJobIsListedFirst()
     {
         // The other half: work that has not started yet is the newest thing and belongs
-        // at the top, which was the original — correct — intent behind the null handling.
+        // at the top, which was the original and correct intent behind the null handling.
         var t0 = new DateTime(2026, 9, 16, 17, 0, 0, DateTimeKind.Utc);
 
         Add("finished", queued: t0, started: t0, finished: t0.AddMinutes(1), state: JobState.Succeeded);

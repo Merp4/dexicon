@@ -12,7 +12,7 @@ import type { ChunkSet, Corpus, EmbeddingModelInfo } from './api';
  * dropdown listed the same model twice. Types were clean, the build was clean, 163 server
  * tests passed. It was found by someone looking at a screenshot.
  *
- * jsdom computes no layout, so none of this asserts "visible" — it asserts that each
+ * jsdom computes no layout, so none of this asserts "visible"; it asserts that each
  * control is the component library's, wearing the variant asked for, which is the thing
  * that was actually wrong.
  */

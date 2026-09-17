@@ -9,7 +9,7 @@ import type { Corpus } from './api';
  *
  * docs/08 has described a per-source `.gitignore` toggle, include/exclude globs and a size
  * cap since the beginning. The API has accepted all of it since the beginning. The UI
- * never called `addSource` at all — so a corpus was stuck with the single source it was
+ * never called `addSource` at all, so a corpus was stuck with the single source it was
  * created with, and the filters could be set over the API and then never seen again,
  * because the summary did not return them either.
  */
@@ -120,7 +120,7 @@ describe('the sources a corpus reads', () => {
   it('survives a server that does not send the globs at all', async () => {
     // The dev loop runs this UI against whatever container is up, which can be older than
     // the code. The first run of this screen against one blanked the page on
-    // `undefined.length` — a whole screen lost to a field that had not shipped yet.
+    // `undefined.length`: a whole screen lost to a field that had not shipped yet.
     getCorpus.mockResolvedValue(
       corpus({
         sources: [
@@ -140,7 +140,7 @@ describe('the sources a corpus reads', () => {
 
     render(<CorpusDetail {...props} />);
 
-    expect(await screen.findByText(/none — add one, or upload documents/)).toBeInTheDocument();
+    expect(await screen.findByText(/none: add one, or upload documents/)).toBeInTheDocument();
   });
 
   it('offers no add button on a corpus you do not own', async () => {
@@ -290,7 +290,7 @@ describe('removing a source', () => {
   });
 
   it('says what it costs before doing it', async () => {
-    // Adding a folder is one click, so removing one should be too — but the cost has to
+    // Adding a folder is one click, so removing one should be too, but the cost has to
     // be stated, because the files leave every chunk set, not just the default one.
     const user = userEvent.setup();
     getCorpus.mockResolvedValue(corpus({ sources: [source({ rootPath: 'orly/AI', fileCount: 34 })] }));

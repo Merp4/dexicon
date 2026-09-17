@@ -10,7 +10,7 @@ import { Segmented } from './ui';
  * Three separately-bordered pills read as three unrelated buttons that happen to be
  * adjacent, and behave that way too: N tab stops, no arrow keys. A radio group is ONE tab
  * stop with the arrows moving between options, which is the part most likely to be
- * dropped by anyone restyling this later — so it is the part with tests.
+ * dropped by anyone restyling this later, so it is the part with tests.
  */
 function Harness({ onChange = vi.fn() }: { onChange?: (v: string) => void }) {
   const [value, setValue] = useState('hybrid');

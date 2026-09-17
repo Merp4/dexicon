@@ -3,8 +3,8 @@
 ## The problem
 
 A coding agent working in a local repository reads files by grep and by path. That works
-until the question is semantic — *"where do we handle token refresh?"*, *"what does the
-spec say about retention?"* — where the useful answer lives in wording the agent cannot
+until the question is semantic (*"where do we handle token refresh?"*, *"what does the
+spec say about retention?"*), where the useful answer lives in wording the agent cannot
 guess, in a file it has no reason to open, or in a PDF it cannot grep at all.
 
 Running a vector index for this is normally a project in itself: a store, an embedding
@@ -27,7 +27,7 @@ A single service that:
 ## Who it is for
 
 - **Primary**: a developer running Claude Code against local repositories who wants
-  semantic recall over the code, the docs, and the reference PDFs — on their own hardware,
+  semantic recall over the code, the docs, and the reference PDFs, on their own hardware,
   with nothing leaving the machine.
 - **Secondary**: a small team running one shared Dexicon, each project a tenant, some
   reference material shared across all of them.
@@ -44,7 +44,7 @@ A single service that:
 - Web UI for corpora, tenants, visibility, tokens, indexing control, and a search playground.
 - Docker Compose bringing up Dexicon + Qdrant + Ollama.
 
-**Out of scope** — deliberately, and permanently unless re-argued
+**Out of scope.** Permanently, unless re-argued.
 
 | Not doing | Why |
 |---|---|
@@ -58,7 +58,7 @@ A single service that:
 
 ## Design principles
 
-These are the ones that will actually get argued about later, so they are written down now.
+These are recorded here because they constrain later design choices.
 
 1. **A search that cannot name its scope is an error, not a broad search.** There is no
    "search everything" path. See [05](05-search.md) and [07](07-tenancy-auth.md).

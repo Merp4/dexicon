@@ -56,8 +56,8 @@ public sealed class CorpusIndexer(
         var corpus = await db.Corpora.Include(c => c.Sources).Include(c => c.ChunkSets)
             .FirstAsync(c => c.Id == job.CorpusId, ct);
 
-        // A job either targets one set — which is how a replacement is backfilled while
-        // the live set keeps serving — or every set in the corpus.
+        // A job either targets one set, which is how a replacement is backfilled while
+        // the live set keeps serving, or every set in the corpus.
         var targets = job.ChunkSetId is { Length: > 0 } only
             ? corpus.ChunkSets.Where(s => s.Id == only).ToList()
             : corpus.ChunkSets.ToList();
@@ -189,7 +189,7 @@ public sealed class CorpusIndexer(
                 if (cached is null)
                 {
                     state.Status = FileStatus.Failed;
-                    state.StatusDetail = "the stored document has no extracted text — re-upload it";
+                    state.StatusDetail = "the stored document has no extracted text; re-upload it";
                     state.ContentHash = null;
                     job.FilesFailed++;
                     continue;
@@ -211,7 +211,7 @@ public sealed class CorpusIndexer(
 
                 // The fingerprint mixes the blob hash WITH the corpus's chunk settings,
                 // so changing chunk size or boundary mode makes every attachment look
-                // changed and re-chunks it — without touching the bytes.
+                // changed and re-chunks it, without touching the bytes.
                 var fingerprint = ChunkingFingerprint(set, cached.Sha256, templates);
                 if (!full && state.ContentHash == fingerprint && state.Status == FileStatus.Indexed)
                 {
@@ -351,15 +351,15 @@ public sealed class CorpusIndexer(
     /// The staleness key: everything that determines what ends up in Qdrant. If any part
     /// changes, the file is re-chunked; if none has, it is skipped at zero embedding
     /// cost. The extractor version is in here because an extraction fix changes the text
-    /// itself — without it, improved text would be re-extracted and then skipped as
-    /// "unchanged", which is the worst of both.
+    /// itself. Without it, improved text would be re-extracted and then skipped as
+    /// "unchanged", which is the worst of both outcomes.
     /// </summary>
     /// <param name="templates">
     /// The task framing in force for this set's model. Part of the key because it changes
     /// the vectors: text embedded as `search_document: …` is not the same point as the
     /// same text embedded raw. Without it, editing a model profile would leave every
-    /// existing chunk in place while every new query used the new framing — the two sides
-    /// of a retrieval disagreeing, silently.
+    /// existing chunk in place while every new query used the new framing, leaving the
+    /// two sides of a retrieval disagreeing with no error raised.
     /// </param>
     internal static string ChunkingFingerprint(ChunkSet set, string blobSha, ModelTemplates templates) =>
         HashContent($"{blobSha}|{set.ChunkSize}|{set.ChunkOverlap}|{set.BoundaryMode}|" +
@@ -416,8 +416,8 @@ public sealed class CorpusIndexer(
             options.Value.Indexing.DocumentMaxBytes);
 
         // += , not =. A job covers every chunk set, and each set walks the tree again, so
-        // an assignment here reported the files of ONE pass against the work done by all
-        // of them — a corpus with two sets showed "24 / 12" and a progress bar past 100%.
+        // an assignment here reported the files of one pass against the work done by all
+        // of them: a corpus with two sets showed "24 / 12" and a progress bar past 100%.
         job.FilesTotal += walk.Files.Count;
         job.Phase = "extract";
         await db.SaveChangesAsync(ct);
@@ -469,8 +469,8 @@ public sealed class CorpusIndexer(
                 // The stored hash is the CHUNKING FINGERPRINT, not the raw content hash.
                 // With a content hash alone, changing a corpus's chunk size left every
                 // file looking unchanged, so a refresh re-chunked nothing and the new
-                // setting silently did not apply. Mixing the settings in makes exactly
-                // the right set of files look stale — and no others.
+                // setting had no effect. Mixing the settings in marks precisely the
+                // affected files as stale, and no others.
                 var hash = ChunkingFingerprint(set, HashContent(content), templates);
 
                 if (!full && states.TryGetValue(candidate.RelativePath, out var existing)
@@ -485,7 +485,7 @@ public sealed class CorpusIndexer(
                     // Said plainly rather than left as an absence. "Why isn't my PDF
                     // searchable" is answered here, in the UI, instead of by silence.
                     var reason = extractor is PdfTextExtractor
-                        ? "no text layer — this is a scanned PDF, and OCR is not supported"
+                        ? "no text layer: this is a scanned PDF, and OCR is not supported"
                         : "no extractable text content";
 
                     var (emptyFile, emptyState) = Track(known, states, set, source.Id, candidate.RelativePath);
@@ -548,7 +548,7 @@ public sealed class CorpusIndexer(
                 // Embed and upsert in batches rather than in one go. A 500-page PDF is
                 // ONE file producing thousands of chunks, so per-file progress leaves the
                 // UI on "0 done" for minutes with no way to tell a slow job from a hung
-                // one — observed on a 3 MB PDF at roughly 17 s per 32-chunk batch, with
+                // one, observed on a 3 MB PDF at roughly 17 s per 32-chunk batch, with
                 // the phase still reading "extract" because it was set but never reported
                 // before the long call. Batching also caps peak memory at one batch of
                 // vectors instead of all of them.
@@ -601,7 +601,7 @@ public sealed class CorpusIndexer(
 
             // Flush on EITHER a file count or a time budget. Count alone means a corpus
             // with fewer files than the batch size reports nothing at all until it
-            // finishes — observed on a 12-file corpus sitting at done=0 for 24 seconds,
+            // finishes, observed on a 12-file corpus sitting at done=0 for 24 seconds,
             // which is indistinguishable from a hung job.
             var processed = job.FilesDone + job.FilesSkipped + job.FilesFailed;
             if (processed % 25 == 0 || sinceFlush.ElapsedMilliseconds >= 1000)
@@ -620,7 +620,7 @@ public sealed class CorpusIndexer(
             {
                 // Vectors belong to this SET; the catalogue row belongs to the corpus. A
                 // file deleted from disk has to leave every set's collection, and this
-                // pass only owns one of them — so the row survives until the last set has
+                // pass only owns one of them, so the row survives until the last set has
                 // let go of it. Removing it here would strand the other sets' vectors
                 // with nothing left to name them.
                 await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, source.Id, path, ct);
@@ -665,8 +665,8 @@ public sealed class CorpusIndexer(
     ///
     /// A bare StartsWith is NOT this test, and the difference is a directory boundary: with
     /// a root of <c>/workspaces</c>, the string <c>/workspaces-secret</c> starts with it and
-    /// is not inside it. `..` was caught, which is what made the gap easy to miss — the
-    /// escape that got through never needed to traverse anywhere, it only needed a sibling
+    /// is not inside it. `..` was caught, which is what made the gap easy to miss: the
+    /// escape that got through never needed to traverse anywhere, only a sibling
     /// whose name shares the prefix.
     /// </summary>
     internal static bool IsInside(string candidate, string root)
@@ -683,8 +683,8 @@ public sealed class CorpusIndexer(
     }
 
     /// <summary>
-    /// Case-insensitive only where the filesystem is. On Linux — every container this ships
-    /// in — <c>/Workspaces</c> and <c>/workspaces</c> are two different directories, and
+    /// Case-insensitive only where the filesystem is. On Linux, which is every container
+    /// this ships in, <c>/Workspaces</c> and <c>/workspaces</c> are different directories, and
     /// comparing them as equal is the containment check agreeing to something the kernel
     /// does not.
     /// </summary>
@@ -696,7 +696,7 @@ public sealed class CorpusIndexer(
     /// <summary>
     /// Get-or-create both halves of a file's record: the attachment, which is shared by
     /// every chunk set, and this set's view of it. Returning the pair rather than taking a
-    /// mutator keeps each call site explicit about which half it is writing to — the split
+    /// mutator keeps each call site explicit about which half it is writing to. The split
     /// between "what the file is" and "what this set made of it" is easy to get wrong.
     /// </summary>
     private (IndexedFile File, FileChunkState State) Track(
@@ -784,7 +784,7 @@ public sealed class CorpusIndexer(
     internal static string HashContent(string content) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(content)));
 
-    /// <summary>BOM, then UTF-8, then Latin-1 — never throw on a file with odd bytes.</summary>
+    /// <summary>BOM, then UTF-8, then Latin-1. Never throws on a file with unusual bytes.</summary>
     private static async Task<string> ReadTextAsync(string path, CancellationToken ct)
     {
         var bytes = await File.ReadAllBytesAsync(path, ct);

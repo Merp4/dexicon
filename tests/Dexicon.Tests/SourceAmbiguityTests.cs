@@ -12,8 +12,8 @@ namespace Dexicon.Tests;
 /// Edition.pdf" and "Intensional First-Order Logic.pdf". Two different files, one path,
 /// one corpus, one chunk set.
 ///
-/// Everything downstream assumed paths were unique, and `source_id` — written into every
-/// point's payload and indexed as a keyword since chunk sets landed — was never read.
+/// Everything downstream assumed paths were unique, and `source_id`, written into every
+/// point's payload and indexed as a keyword since chunk sets landed, was never read.
 /// </summary>
 public class SourceAmbiguityTests
 {
@@ -30,9 +30,9 @@ public class SourceAmbiguityTests
     public void Deleting_one_source_file_does_not_take_the_other_sources_copy()
     {
         // The filter decides which points die. Without source_id, refreshing the AI copy
-        // deletes the Philosophy copy too — and an incremental refresh only rewrites the
-        // file that changed, so the other silently vanishes until a full reindex. Lost
-        // content, no error, no log line.
+        // deletes the Philosophy copy too, and an incremental refresh only rewrites the
+        // file that changed, so the other disappears until a full reindex. Lost content,
+        // no error, no log line.
         var scoped = QdrantVectorStore.FileChunksFilter("set-1", "source-ai", "Logic For Dummies.pdf");
 
         var keys = scoped.Must
@@ -68,7 +68,7 @@ public class SourceAmbiguityTests
         var bySource = chunks.GroupBy(c => c.SourceId ?? "").ToList();
 
         bySource.Count.ShouldBe(2);
-        // Interleaved by chunk index — which is exactly how they used to be stitched.
+        // Interleaved by chunk index, which is how they used to be stitched.
         chunks.OrderBy(c => c.ChunkIndex).Select(c => c.SourceId).ShouldBe(
             ["source-ai", "source-philosophy", "source-ai"]);
     }
@@ -121,7 +121,7 @@ public class SourceAmbiguityTests
         // The quieter half of the same bug, and the one the delete fix did NOT cover.
         // Point ids were derived from (chunk set, path, index). Two sources of one corpus
         // holding "Logic For Dummies.pdf" therefore produced IDENTICAL ids for every
-        // chunk, and the second source's upsert overwrote the first — one book's vectors
+        // chunk, and the second source's upsert overwrote the first: one book's vectors
         // gone, both files still listed as indexed, nothing reporting a problem.
         var ai = QdrantVectorStore.DeterministicId("set-1", "source-ai", "Logic For Dummies.pdf", 0);
         var philosophy = QdrantVectorStore.DeterministicId("set-1", "source-philosophy", "Logic For Dummies.pdf", 0);

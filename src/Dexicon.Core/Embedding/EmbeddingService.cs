@@ -24,7 +24,7 @@ public interface IEmbeddingService
     /// <param name="purpose">
     /// Whether this text is being indexed or searched with. Most embedding models are
     /// trained with a task instruction wrapped around the input and retrieve measurably
-    /// worse without it, so the framing is applied HERE rather than at the call sites —
+    /// worse without it, so the framing is applied here rather than at the call sites:
     /// the caller knows which it has, and nothing else does. Passing it as an argument
     /// makes it impossible to forget at one of the two places that embed text.
     /// </param>
@@ -35,7 +35,7 @@ public interface IEmbeddingService
     /// <remarks>
     /// This is the model's OWN tokenizer, not an estimate and not a tokenizer we ship.
     /// Shipping one means a vocabulary per model, versioned, for models that are pulled at
-    /// runtime and may not exist yet — so the only tokenizer that can be right for an
+    /// runtime and may not exist yet, so the only tokenizer that can be right for an
     /// arbitrary model is the one inside it. Ollama returns `prompt_eval_count` on an
     /// embed call; providers that report nothing get null, and callers fall back to an
     /// estimate rather than pretending.
@@ -80,7 +80,7 @@ public sealed class EmbeddingService(
     public async Task<int> ProbeDimensionsAsync(EmbeddingTarget target, CancellationToken ct = default)
     {
         // In the SHARED cache, not in a field. This service is registered per request, so
-        // instance state cannot survive one — /healthz used to do a real embedding
+        // instance state cannot survive one. /healthz used to do a real embedding
         // round-trip on every fifteen-second poll because of exactly that, which timed out
         // under indexing load and painted the dependency dots red during normal work.
         if (cache.TryGetValue(DimensionsKey(target), out int cached) && cached > 0) return cached;
@@ -195,9 +195,9 @@ public sealed class EmbeddingService(
             }
             catch (Exception ex)
             {
-                // Deliberately broad. Each provider SDK throws its own exception types —
-                // HttpRequestException, ClientResultException, RequestFailedException —
-                // and a catch list is a list that goes out of date the moment a provider
+                // Intentionally broad. Each provider SDK throws its own exception types
+                // (HttpRequestException, ClientResultException, RequestFailedException)
+                // and a catch list goes out of date the moment a provider
                 // is added. Cancellation is separated out above; everything else here is
                 // "the embedder did not answer", which is one condition with one response.
                 last = ex;

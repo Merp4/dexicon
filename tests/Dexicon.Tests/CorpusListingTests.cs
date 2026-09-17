@@ -8,7 +8,7 @@ namespace Dexicon.Tests;
 ///
 /// An agent calls this to answer exactly one question: which of these should I search?
 /// Everything else in the output is operational detail it cannot act on. So the tests here
-/// are about ORDER and about warnings, not about content — the facts were all present
+/// are about order and about warnings rather than content: the facts were all present
 /// before, arranged so the answer came last.
 /// </summary>
 public class CorpusListingTests

@@ -62,7 +62,7 @@ public sealed class SearchService(
         var byId = scope.Targets.ToDictionary(t => t.Corpus.Id, t => t.QualifiedName, StringComparer.Ordinal);
         var sparse = SparseEncoder.Encode(request.Query);
 
-        // Resolved once, against the scope already authorised above — so naming a source
+        // Resolved once, against the scope already authorised above, so naming a source
         // can only ever narrow the search, never reach into a corpus the caller cannot see.
         IReadOnlyList<string>? sourceIds = null;
         if (!string.IsNullOrWhiteSpace(request.Source))
@@ -71,7 +71,7 @@ public sealed class SearchService(
 
         // A file_path is relative to its source root, so two sources of one corpus can
         // return the same path for different files. Without the folder, those results are
-        // indistinguishable — and one of them is the wrong answer to whatever was asked.
+        // indistinguishable, and one of them is the wrong answer to whatever was asked.
         var sourceRoots = await scopes.SourceRootsAsync([.. scope.Corpora.Select(c => c.Id)], ct);
 
         var hits = new List<SearchHit>();
@@ -79,9 +79,9 @@ public sealed class SearchService(
         string? degradedReason = null;
 
         // A collection is one vector space, so a scope spanning two embedding models is
-        // two queries. Merged by score afterwards, which is approximate across models —
-        // the honest alternative is refusing, and refusing a legitimate cross-corpus
-        // search is worse than an approximate merge that is documented as such.
+        // two queries. Merged by score afterwards, which is approximate across models.
+        // The alternative is refusing, and refusing a legitimate cross-corpus search is
+        // worse than an approximate merge that is documented as such.
         foreach (var group in scope.ByCollection)
         {
             var corpusIds = group.Select(c => c.Id).Distinct(StringComparer.Ordinal).ToList();
@@ -104,7 +104,7 @@ public sealed class SearchService(
                     // avoid, so it is surfaced in the response, not only in the log.
                     log.LogWarning(ex, "Embedding unavailable; degrading search to keyword-only");
                     degraded = true;
-                    degradedReason = "embedding service unavailable — keyword-only results";
+                    degradedReason = "embedding service unavailable; keyword-only results";
                 }
             }
 
@@ -168,8 +168,8 @@ public sealed class SearchService(
     /// <summary>
     /// The query vector for one MODEL. Keyed by model as well as text: a scope spanning
     /// two chunk sets on different models needs a vector from each, and caching on the
-    /// query alone would serve the first model's vector to the second collection — a
-    /// comparison between two unrelated vector spaces, which returns confident nonsense.
+    /// query alone would serve the first model's vector to the second collection: a
+    /// comparison between two unrelated vector spaces, whose results are meaningless.
     /// </summary>
     private async Task<float[]> EmbedQueryAsync(string query, EmbeddingTarget target, CancellationToken ct)
     {

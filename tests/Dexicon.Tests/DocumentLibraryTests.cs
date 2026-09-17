@@ -82,7 +82,7 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         CreatedUtc = DateTime.UtcNow,
     };
 
-    /// <summary>The corpus's default set — what an unqualified search reaches.</summary>
+    /// <summary>The corpus's default set: what an unqualified search reaches.</summary>
     private static ChunkSet DefaultSet(Corpus c) => c.ChunkSets.First(s => s.IsDefault);
 
     private FileChunkState StateOf(IndexedFile file, Corpus corpus) =>
@@ -210,7 +210,7 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
 
         var file = await _documents.AttachAsync(corpus, stored.Sha256, "doc.md");
 
-        // One attachment, one blob, one extraction — but outstanding work in BOTH sets.
+        // One attachment, one blob, one extraction, but outstanding work in both sets.
         (await _db.Files.CountAsync()).ShouldBe(1);
         (await _db.Blobs.CountAsync()).ShouldBe(1);
 
@@ -343,7 +343,7 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     {
         // Regression: FileStatus.Indexed was the enum's zero value, so an attachment was
         // born claiming to be indexed. The library then showed every just-uploaded
-        // document as "indexed", next to a chunk count of 0 — and a corpus whose
+        // document as "indexed", next to a chunk count of 0, and a corpus whose
         // indexing job was interrupted looked finished.
         var corpus = AddCorpus("books", 512, 64);
         var stored = await _documents.StoreAsync(TextStream("some prose to chunk"), "book.md");

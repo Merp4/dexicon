@@ -35,7 +35,7 @@ things, deliberately:
 ```
 
 One document can therefore live in several corpora AND be cut several ways within one of
-them, with the expensive half — storage and extraction — paid exactly once. See
+them, with the expensive part, storage and extraction, performed once. See
 [04](04-ingestion.md#chunk-sets--a-corpus-can-be-cut-several-ways-at-once).
 
 A corpus is the right grain for visibility because it is the thing a human names
@@ -45,7 +45,7 @@ never be changed while it lived on the corpus, because a different model is a di
 collection ([D-21](decisions.md#d-21-chunk-sets-not-corpus-level-chunking)).
 
 Indexing state is per `(file, chunk set)`, not per file. A hash, a chunk count and a
-status describe a file *as cut by a particular set* — the same document can be freshly
+status describe a file *as cut by a particular set*: the same document may be freshly
 indexed in one set and still pending in another.
 
 ## SQLite schema
@@ -244,11 +244,11 @@ model can only ever point at that model's collection.
 
 **The provider is in the name** because two providers can serve a model of the same name,
 and those are different vectors. Without it an OpenAI set and a local set would share a
-collection and silently pollute each other's space.
+collection, each writing vectors into the other's space.
 
 **`:latest` is stripped first.** Ollama lists `embeddinggemma:latest` and a configuration
 file says `embeddinggemma`; they are one model and one vector space, and slugging them raw
-produced `embeddinggemma-latest__768` alongside `embeddinggemma__768` — two collections
+produced `embeddinggemma-latest__768` alongside `embeddinggemma__768`: two collections
 holding vectors that belong together, neither aware of the other. Only `:latest` goes:
 `:v1.5` and `:0.6b` are different weights producing different vectors.
 
@@ -274,7 +274,7 @@ existing sets where they are rather than moving them underneath a running system
 
 `m: 0` disables the global HNSW graph; `payload_m: 16` builds a graph **per tenant value**
 instead. Combined with the payload index below, this is Qdrant's recommended many-tenant
-layout. It has a consequence worth stating loudly:
+layout. This has one significant consequence:
 
 > **An unfiltered query against this collection has no index to use.** It degrades to brute
 > force. Forgetting the scope filter is therefore both *blocked* (by the guard in
@@ -289,9 +289,9 @@ indexed:
 | Filtered to one corpus | **1.5 ms** |
 | No filter | **3.1 ms** — 2.0× slower |
 
-Two caveats. The gap is a factor of two, not a cliff — this is a
-deterrent and a signal, not a safety mechanism, and the application and repository guards
-in [07](07-tenancy-auth.md) remain the things that actually prevent a leak. And it will
+Two caveats. The gap is a factor of two rather than a hard barrier: it is a deterrent and
+a signal, not a safety mechanism. The application and repository guards in
+[07](07-tenancy-auth.md) are what prevent a leak. And it will
 widen with corpus size: 50k points is small enough that a brute-force scan is still cheap.
 
 Isolation itself was verified too: a query embedded from another
@@ -311,17 +311,17 @@ points from that corpus when filtered to a different one.
 ```
 
 **`corpus_id` is the `is_tenant` field, not `tenant_id`.** A corpus belongs to exactly one
-tenant, is never split across tenants, and is what every query actually filters on — so
-co-locating storage by corpus is strictly finer-grained than by tenant, and matches the
+tenant, is never split across tenants, and is what every query filters on, so
+co-locating storage by corpus is finer-grained than by tenant and matches the
 access pattern. `tenant_id` is still carried in the payload for auditing and for bulk
 deletes when a tenant is removed. See [D-04](decisions.md#d-04-corpus-as-the-qdrant-tenant-key).
 
 **`chunk_set_id` is an ordinary filter, not a second tenant key.** It narrows *within* a
 corpus's partition, which `corpus_id` has already selected, so it needs no co-location of
 its own. Re-keying the tenant index onto the set would have been invasive and bought
-nothing. A point's **id** does derive from the set, though — `uuid(chunk_set_id, file_path,
-chunk_index)`. Keying it on the corpus would have made two sets holding the same file at
-the same index overwrite each other, silently, and only for the paths they share.
+nothing. A point's **id** does derive from the set: `uuid(chunk_set_id, file_path,
+chunk_index)`. Keying it on the corpus would cause two sets holding the same file at the
+same index to overwrite each other, without error, and only for the paths they share.
 
 ### Point payload
 
@@ -352,8 +352,8 @@ re-index of an unchanged file is idempotent and a changed file's stale chunks ar
 addressable without a scroll.
 
 Keyed on the **set**, not the corpus: two sets hold the same file at the same chunk index,
-and a corpus-keyed id would make them overwrite each other — silently, and only for the
-file paths they happen to share.
+and a corpus-keyed id would cause them to overwrite each other without error, and only
+for the file paths they share.
 
 **Content is stored in the payload.** It costs storage and it is the right call: an agent
 that must open the file to see what it matched has gained nothing over grep, and a corpus

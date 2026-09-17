@@ -27,7 +27,7 @@ public static class DexiconHeaders
 /// Bearer token in, principal and tenant out. Runs ahead of everything except the
 /// health endpoints and the SPA's static files.
 ///
-/// Tenant resolution is explicit and fails fast — there is no ambient or inferred
+/// Tenant resolution is explicit and fails fast: there is no ambient or inferred
 /// tenant. A token bound to one tenant resolves to it; the header may name that same
 /// tenant; anything else is a 400 naming what was wrong.
 /// </summary>
@@ -39,7 +39,7 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
     /// Container and load-balancer probes only. NOT bare "/healthz": that one reports
     /// endpoints, model names and job state, so it authenticates like everything else.
     /// Prefix-matching the whole "/healthz" family would have made the detailed
-    /// endpoint permanently unreachable — it would skip the middleware, arrive with no
+    /// endpoint permanently unreachable, because it would skip the middleware, arrive with no
     /// principal, and then fail its own scope check.
     /// </summary>
     private static readonly string[] AnonymousExact =
@@ -131,14 +131,14 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
     ///
     /// SHA-256 over the whole presented token, NOT <c>string.GetHashCode</c>. The key used
     /// to be a 32-bit non-cryptographic hash plus the token's length, and a collision in
-    /// that space does not return a stale value — it returns somebody else's
-    /// AUTHENTICATED PRINCIPAL, with verification skipped. .NET randomises string hashing
+    /// that space does not return a stale value; it returns another caller's
+    /// authenticated principal, with verification skipped. .NET randomises string hashing
     /// per process, so the collisions could not be found offline; that is a reason it was
     /// hard to exploit and not a reason it was sound.
     ///
     /// A digest of a sixty-character string costs nothing against the 600k-iteration
-    /// PBKDF2 this cache exists to avoid, and the token itself never becomes the key —
-    /// cache keys turn up in dumps and diagnostics, and a credential should not.
+    /// PBKDF2 this cache exists to avoid, and the token itself never becomes the key,
+    /// because cache keys turn up in dumps and diagnostics and a credential should not.
     /// </summary>
     internal static string PrincipalCacheKey(string presented) =>
         "principal::" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(presented)));
