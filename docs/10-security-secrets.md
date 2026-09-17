@@ -84,6 +84,39 @@ Each guard is verified by **breaking the value and watching it go red**, then re
 A guard that has never failed has not been shown to work — the failure mode is a check that
 silently matches the wrong thing and reads as cover.
 
+## Signing in without handling the token (development only)
+
+Testing the UI end to end means being signed in, and the two obvious ways there are both
+bad. A person pastes the token into the form every session; or whatever is driving the
+browser reads it out of `.env` and types it, which puts a live credential into a
+transcript, a shell history and a log.
+
+`scripts/dev-token.py` is the third way. The token goes from `.env` to the page directly
+and nothing in between renders it — the operator sees a nonce and a byte count.
+
+```bash
+python scripts/dev-token.py
+```
+
+It verifies the token against the running server first (a stale `.env` otherwise produces
+a page that loads and 401s on every request, which reads as a bug in the app), then prints
+a one-line snippet to run in the console of a Dexicon tab. The page stores it exactly where
+the sign-in form would: `sessionStorage['dexicon.token']`.
+
+What keeps it honest:
+
+| Property | Why |
+|---|---|
+| Binds `127.0.0.1` only | Nothing off the machine can reach it. |
+| Single-use nonce in the path, compared in constant time | A page that guesses the port gets a 404, and a replay gets a 404. |
+| `Access-Control-Allow-Origin` names one origin | A wildcard would let every page the browser has open read the token while it listens. |
+| Serves once, then exits; `--timeout` bounds the wait | The window is seconds, not a session. |
+| Refuses to share a port | `http.server` sets `SO_REUSEADDR`, and on Windows that lets a second instance bind the same port — two nonces, one socket, and a handover that silently lands nowhere. |
+
+**This is a development tool and must not become a login mechanism.** It is not in the
+image, it reads a file that only exists on a developer's machine, and production signs in
+through the form on purpose.
+
 ## Container and network posture
 
 Covered operationally in [09](09-deployment.md); the security-relevant points:
