@@ -280,7 +280,7 @@ layout. It has a consequence worth stating loudly:
 > force. Forgetting the scope filter is therefore both *blocked* (by the guard in
 > [07](07-tenancy-auth.md)) and *slow*. Two independent mechanisms, on purpose.
 
-**Measured, not assumed** (M0 spike, 2026-09-16). 50,007 points across 20 corpora, Qdrant
+**Measured** in the M0 spike, 2026-09-16. 50,007 points across 20 corpora, Qdrant
 1.16.3, collection reporting `m=0, payload_m=16` server-side, status `Green`, all vectors
 indexed:
 
@@ -294,7 +294,7 @@ deterrent and a signal, not a safety mechanism, and the application and reposito
 in [07](07-tenancy-auth.md) remain the things that actually prevent a leak. And it will
 widen with corpus size: 50k points is small enough that a brute-force scan is still cheap.
 
-Isolation itself was also verified rather than assumed: a query embedded from another
+Isolation itself was verified too: a query embedded from another
 corpus's most distinctive content (`"doomsday launch code hunter2"`) returned **zero**
 points from that corpus when filtered to a different one.
 

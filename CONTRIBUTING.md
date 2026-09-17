@@ -52,8 +52,8 @@ is the most useful possible form of it.
 Not to be difficult — these have each been decided, and the reasoning is in
 [docs/decisions.md](docs/decisions.md):
 
-- **New MCP tools.** There are five and the count is a budget, not an accident: every tool
-  definition is context an agent pays for on every turn ([D-11](docs/decisions.md)). New
+- **New MCP tools.** There are five, and the count is a budget: every tool definition is
+  context an agent pays for on every turn ([D-11](docs/decisions.md)). New
   capability usually belongs as an argument to an existing tool, the way `corpus:set` did.
 - **Silent fallbacks.** If the embedding service is down, search degrades to keyword **and
   says so in the response**. A result that is quietly worse than the caller expects is the

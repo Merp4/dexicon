@@ -71,9 +71,9 @@ Zed. `./scripts/install-mcp.ps1` writes any of those configs for you.
 Working, and young. The current release is [`0.2.1`](CHANGELOG.md), published as
 `ghcr.io/merp4/dexicon`.
 
-The defaults are [measured](docs/benchmarks.md) rather than guessed — 81 retrieval
-configurations over a document corpus and again over a code corpus — though both corpora
-are this repository's own. [The roadmap](docs/11-roadmap.md) lists what is outstanding.
+The defaults are [measured](docs/benchmarks.md) — 81 retrieval configurations over a
+document corpus and again over a code corpus — though both corpora are this repository's
+own. [The roadmap](docs/11-roadmap.md) lists what is outstanding.
 
 ## How it fits together
 
