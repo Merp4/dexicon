@@ -130,7 +130,11 @@ describe('the document library', () => {
 
     expect(within(card).getByText('980 chunks')).toBeInTheDocument();
     expect(within(card).getByText(/from 768\/100 language-aware/)).toBeInTheDocument();
-    expect(within(card).getByText('2,940 chunks'.replace(',', ','))).toBeInTheDocument();
+    // Formatted the way the component formats it. The literal used to be hard-coded with
+    // a `.replace(',', ',')` beside it, which replaced a comma with a comma and did
+    // nothing; the separator it was presumably meant to normalise is locale-dependent,
+    // so under de-DE or fr-FR this asserted on a string the component never renders.
+    expect(within(card).getByText(`${(2940).toLocaleString()} chunks`)).toBeInTheDocument();
     expect(within(card).getByText(/from 256\/40 blank-line/)).toBeInTheDocument();
   });
 
