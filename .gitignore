@@ -84,3 +84,16 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# A developer's own compose overlay: extra bind mounts, a different port, a debug flag.
+# Compose applies this automatically with no -f flags, which is exactly what makes it
+# convenient locally and wrong to share — it names paths that exist on one machine.
+# The committed overlays (gpu, debug) are opt-in by name for that reason.
+docker-compose.override.yml
+docker-compose.override.yaml
+
+# Mountpoint for a local overlay. It has to EXIST on the host before Docker can mount
+# anything at /workspaces/books, because /workspaces is bind-mounted read-only and a
+# mountpoint cannot be created inside it. Empty, so git would ignore it anyway — named
+# here so it stays empty rather than becoming somewhere files get put.
+/books/
