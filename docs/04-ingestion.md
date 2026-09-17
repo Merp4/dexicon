@@ -319,8 +319,7 @@ only which provider a set uses — a database row that carries an API key is a r
 cannot back up casually, and Dexicon's backup instructions say to copy the catalogue.
 
 A provider that is configured but missing its credential is reported as such in the
-Models screen and in `/api/embedding-providers`, rather than looking identical to a
-working one until someone picks it and an index fails an hour later.
+Models screen and in `/api/embedding-providers`.
 
 The model travels as a **per-call argument**, never bound into a client at startup. Chunk
 sets choose models at runtime, so anything resolved from configuration at boot — keyed DI
@@ -360,10 +359,9 @@ Measured on the three models here:
 
 Two of the three are nowhere near the 4 the chunker assumes — see below.
 
-This exists because of a failure nothing could detect. An EPUB produced chunks averaging
-32,000 characters; the model silently truncated every one of them, roughly 95% of the book
-was in no index anywhere, and the file, the job and the corpus all reported success. A
-truncating model returns a perfectly good vector for the part it read.
+This exists because of the EPUB failure above: a truncating model returns a perfectly good
+vector for the part it read, so nothing downstream could tell that most of the book was
+missing.
 
 Truncation is silent but **empirically visible**: embed a text, then embed the same text
 with distinctive content appended. If the tail was read, the vector moves. If it did not,

@@ -249,14 +249,9 @@ anything non-permissive has moved from build-time into the shipped bundle.
 
 ## Threat model
 
-**Defended:** one tenant reading another's content through the API, MCP, UI, or a guessed
-identifier. Secrets reaching the repository, the logs, or an error response. Dexicon writing
-to your source tree. A malformed document taking the service down.
-
-**Not defended:** anyone with access to the Docker socket, the data volume, or a published
-Qdrant port. A malicious tenant with a valid `admin` token. Side channels — timing,
-per-corpus chunk counts — that might reveal that content exists without revealing what it
-is.
-
 Dexicon is a local developer tool with tenant separation. It is not a multi-tenant SaaS
 boundary, and describing it as one would invite uses it cannot carry.
+
+What is and is not defended is listed in
+[SECURITY.md](../SECURITY.md#what-dexicon-defends-against), next to how to report a
+problem. Everything above is how those lines are enforced.
