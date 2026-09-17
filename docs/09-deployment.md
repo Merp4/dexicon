@@ -339,6 +339,13 @@ if it should not change even for a re-push:
 DEXICON_TAG=0.2.0 docker compose up -d
 ```
 
+**Cutting a release, in order.** The generated OpenAPI document carries the release's
+`major.minor`, and CI checks that the committed copy matches the code. MinVer takes the
+version from the tag, so tagging first produces a tag whose own release build fails on a
+document that still says the previous version. Build, commit the regenerated
+`clients/web-ui/Dexicon.json`, then tag. It bites once per minor version — every `0.2.x`
+after the first produces the same `0.2` and nothing moves.
+
 The version in the tag is the version in the image, because the tag is where the version
 comes from at all (D-26). MinVer derives it from the nearest `v*` tag; nothing is written
 down, so nothing can be stale. The image build is the one place that cannot do this —
