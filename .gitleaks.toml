@@ -75,4 +75,10 @@ regexes = [
   # The compose default for Qdrant, which is not a secret and is documented as not being
   # one: the port is never published. See docs/09-deployment.md.
   '''dexicon-local-dev-key''',
+  # The fabricated token in SecretHygieneTests, which asserts that a principal cache key
+  # never contains the credential it was derived from. Token-SHAPED on purpose: a fixture
+  # that did not look like a token would not exercise the thing under test. Pinned to the
+  # exact literal rather than exempting the file, so a real token pasted into that same
+  # test is still a finding.
+  '''dex_01JBXQZ9K7MNPRSTVWXYZ01234_a-secret-nobody-should-read''',
 ]
