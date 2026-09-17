@@ -28,7 +28,18 @@ public interface IVectorStore
     string CollectionNameFor(EmbeddingTarget target, int dimensions);
     Task EnsureCollectionAsync(string collection, int dimensions, CancellationToken ct = default);
     Task UpsertAsync(string collection, IReadOnlyList<Chunk> chunks, IReadOnlyList<float[]> vectors, CancellationToken ct = default);
-    Task DeleteFileChunksAsync(string collection, string chunkSetId, string filePath, CancellationToken ct = default);
+    /// <summary>
+    /// Drop one file's chunks, within one source.
+    ///
+    /// <paramref name="sourceId"/> is not optional and not decoration. A chunk's
+    /// file_path is relative to its SOURCE root, not to the corpus — a corpus with sources
+    /// `AI/` and `Philosophy/` that both contain "Logic For Dummies.pdf" writes two sets of
+    /// chunks with the same file_path and the same chunk_set_id. Deleting on that pair
+    /// alone removes both, and an incremental refresh only rewrites the one whose file
+    /// changed. The other silently disappears from the index until a full reindex.
+    /// </summary>
+    Task DeleteFileChunksAsync(string collection, string chunkSetId, string sourceId, string filePath,
+        CancellationToken ct = default);
 
     /// <summary>Drop one chunk set's vectors, leaving the rest of the corpus alone.</summary>
     Task DeleteChunkSetAsync(string collection, string chunkSetId, CancellationToken ct = default);
@@ -237,12 +248,25 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
         return new Guid(guid).ToString();
     }
 
-    public Task DeleteFileChunksAsync(string collection, string chunkSetId, string filePath, CancellationToken ct = default)
+    public Task DeleteFileChunksAsync(string collection, string chunkSetId, string sourceId, string filePath,
+        CancellationToken ct = default)
+        => _client.DeleteAsync(collection, FileChunksFilter(chunkSetId, sourceId, filePath),
+            cancellationToken: ct);
+
+    /// <summary>
+    /// The filter that decides which points are one file's.
+    ///
+    /// Extracted so the thing that makes it correct — the source_id term — can be asserted
+    /// without a running Qdrant. source_id has been written into every point's payload and
+    /// indexed as a keyword since chunk sets landed; it was simply never filtered on.
+    /// </summary>
+    internal static Filter FileChunksFilter(string chunkSetId, string? sourceId, string filePath)
     {
         var filter = new Filter();
         filter.Must.Add(Keyword("chunk_set_id", chunkSetId));
+        if (sourceId is not null) filter.Must.Add(Keyword("source_id", sourceId));
         filter.Must.Add(Keyword("file_path", filePath));
-        return _client.DeleteAsync(collection, filter, cancellationToken: ct);
+        return filter;
     }
 
     public Task DeleteChunkSetAsync(string collection, string chunkSetId, CancellationToken ct = default)
@@ -448,6 +472,7 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
         return new SearchHit
         {
             CorpusId = Str("corpus_id") ?? "",
+            SourceId = Str("source_id"),
             FilePath = Str("file_path") ?? "",
             Language = Str("language"),
             StartLine = Int("start_line"),

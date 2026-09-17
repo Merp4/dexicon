@@ -226,6 +226,18 @@ what makes it convenient locally and wrong to commit: it names paths that exist 
 machine. The overlays that ARE committed — `docker-compose.gpu.yml`,
 `docker-compose.debug.yml` — are opt-in by name for the same reason.
 
+**The automatic override stops being automatic the moment you pass `-f`.** Compose loads
+it only when you name no files at all, so combining it with the GPU overlay means naming
+all three:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml -f docker-compose.override.yml up -d
+```
+
+Get this wrong and the container starts happily with the mount silently missing — the
+empty mountpoint directory is still there, so the path exists and lists as empty rather
+than erroring.
+
 Two things that are not obvious:
 
 - **The mountpoint must already exist on the host.** `/workspaces` is bind-mounted

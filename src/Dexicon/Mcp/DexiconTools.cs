@@ -234,6 +234,19 @@ public sealed class DexiconTools
         var chunks = await vectors.GetFileChunksAsync(
             target.Set.CollectionName, target.Set.Id, filePath, ct);
 
+        // A file_path is relative to its SOURCE root, so within a corpus it is not unique.
+        // A corpus with sources AI/ and Philosophy/ that both hold "Logic For Dummies.pdf"
+        // returns the chunks of both here, ordered by chunk index — which interleaves two
+        // different books and stitches them into one passage with line numbers on it. That
+        // is the worst shape a wrong answer can take: confident, plausible, and quotable.
+        var bySource = chunks
+            .GroupBy(c => c.SourceId ?? string.Empty)
+            .OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal)
+            .ToList();
+
+        var ambiguous = bySource.Count > 1;
+        if (ambiguous) chunks = [.. bySource[0].OrderBy(c => c.ChunkIndex)];
+
         var lo = Math.Max(1, aroundLine - before);
         var hi = aroundLine + after;
 
@@ -248,8 +261,12 @@ public sealed class DexiconTools
                 : $"'{filePath}' is indexed in corpus '{corpus}' but has no content around line " +
                   $"{aroundLine}; it spans lines {chunks.Min(c => c.StartLine)}-{chunks.Max(c => c.EndLine)}.");
 
-        var header = $"{filePath}:{pieces[0].StartLine}-{pieces[^1].EndLine} (corpus: {corpus})\n\n";
-        return header + Stitch(pieces.Select(p => (p.StartLine, p.EndLine, p.Content)), lineNumbers);
+        var header = $"{filePath}:{pieces[0].StartLine}-{pieces[^1].EndLine} (corpus: {corpus})\n";
+        if (ambiguous)
+            header += $"! {bySource.Count} sources in this corpus contain a file at that path — " +
+                      "they are different files with the same name. This is ONE of them, the " +
+                      "largest; the others are not shown and not mixed in.\n";
+        return header + "\n" + Stitch(pieces.Select(p => (p.StartLine, p.EndLine, p.Content)), lineNumbers);
     }
 
     /// <summary>
