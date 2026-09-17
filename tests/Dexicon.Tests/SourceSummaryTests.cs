@@ -6,7 +6,7 @@ namespace Dexicon.Tests;
 /// <summary>
 /// What a source reports about itself.
 ///
-/// The globs were accepted, stored and never returned. Nothing failed — a caller set a
+/// The globs were accepted, stored and never returned. Nothing failed; a caller set a
 /// filter, the indexer honoured it, and every screen and every agent afterwards had no way
 /// to discover that a corpus was only reading part of a folder. "Indexed 12 files" with no
 /// way to see why it was not 400.

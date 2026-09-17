@@ -10,7 +10,7 @@ namespace Dexicon.Tests;
 /// Indexing a real shelf of 19 O'Reilly books produced one hard failure on the first
 /// pass: "Incorrect EPUB manifest: item with ID = 'img_cover' is not unique". The book
 /// was fine. The manifest listed a cover image twice, which the spec forbids and
-/// publishers ship anyway — and the error it raised was reported to the user as
+/// publishers ship anyway, and the error it raised was reported to the user as
 /// "DRM-protected books cannot be read", which was not true and sent them looking for a
 /// problem they did not have.
 /// </summary>

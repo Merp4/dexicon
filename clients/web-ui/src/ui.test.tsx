@@ -13,7 +13,7 @@ import { Badge, Button, Chip, Field, Input, Select, SelectItem, relativeTime, st
  *
  * So the assertions below are about IDENTITY, not appearance: `data-slot` and
  * `data-variant` are the component library's own markers, so they say "this is the
- * component, wearing the variant asked for" — which is exactly what went wrong — without
+ * component, wearing the variant asked for", which is what went wrong, without
  * pinning the test to a class list that is free to change. jsdom computes no layout and
  * could not tell you a field was invisible even if the test tried.
  */
@@ -142,7 +142,7 @@ describe('Chip', () => {
 
   it('carries a dark twin for every background it overrides', () => {
     // shadcn's outline variant sets `dark:bg-input/30`, and dark-variant utilities are
-    // emitted last — so a plain `bg-*` override silently does nothing in dark mode. This
+    // emitted last, so a plain `bg-*` override has no effect in dark mode. This
     // is the trap that left the current nav item looking like all the others.
     render(
       <>
@@ -227,7 +227,7 @@ describe('relativeTime', () => {
 
   it('reads a zone-less timestamp as UTC rather than local', () => {
     // SQLite has no date type, so timestamps once came back without a `Z` and
-    // `new Date(...)` parsed them as local — every relative time silently wrong by the
+    // `new Date(...)` parsed them as local, making every relative time wrong by the
     // viewer's offset.
     const justNow = new Date(Date.now() - 5_000).toISOString().replace('Z', '');
     expect(relativeTime(justNow)).toBe('just now');

@@ -13,7 +13,7 @@ namespace Dexicon.Tests;
 ///
 /// The defect this guards: SQLite has no date type, so EF read every DateTime back with
 /// <c>Kind = Unspecified</c>. System.Text.Json then serialised it without a `Z`, and
-/// <c>new Date("2026-09-16T17:08:11")</c> in a browser parses that as LOCAL time — so
+/// <c>new Date("2026-09-16T17:08:11")</c> in a browser parses that as local time, so
 /// every timestamp in the UI was wrong by the viewer's UTC offset, silently, and job
 /// times did not line up with the log.
 /// </summary>

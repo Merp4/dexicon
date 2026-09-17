@@ -9,7 +9,7 @@ import type { Corpus, IndexedFileText } from './api';
  * Opening a file.
  *
  * You could search a file, list it, and read a forty-line snippet of it, and there was no
- * way to open it — the REST API had no endpoint for it at all, though MCP has had one
+ * way to open it: the REST API had no endpoint for it at all, though MCP has had one
  * since the resources landed. A file you can see listed and cannot open is the screen
  * telling you it knows something it will not say.
  *

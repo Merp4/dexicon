@@ -4,17 +4,17 @@ import { api } from './api';
 import { Spinner } from './ui';
 
 /**
- * Choosing a folder under the mounted workspace root — at any depth.
+ * Choosing a folder under the mounted workspace root, at any depth.
  *
  * `GET /api/workspaces` has always taken a `path` and returned the directories beneath
  * it, and `api.browse` has always had the parameter. Neither caller ever passed one, so
  * the two forms that point a corpus at a folder were flat lists of the top level: with
  * WORKSPACE_ROOT holding a shelf of books at books/orly/Architecture, the only reachable
- * choice was `books` — all 1.5 GB of it. Anything organised into subfolders, which is
+ * choice was `books`, all 1.5 GB of it. Anything organised into subfolders, which is
  * what a workspace root normally is, could not be addressed from the UI at all.
  *
  * The current directory IS the selection. Descending into a folder selects it, so the
- * thing on screen and the thing that will be indexed are never different — there is no
+ * thing on screen and the thing that will be indexed are never different: there is no
  * separate "use this one" to forget to press.
  */
 export function WorkspacePicker({

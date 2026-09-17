@@ -90,8 +90,8 @@ namespace Dexicon.Core.Catalog.Migrations
             // data it was meant to move is not a migration.
             //
             // Each corpus gets one set named "default", carrying exactly what it had, so
-            // nothing re-chunks and nothing re-embeds on upgrade. A deterministic id —
-            // the corpus id with a prefix — keeps this repeatable and lets the second
+            // nothing re-chunks and nothing re-embeds on upgrade. A deterministic id,
+            // the corpus id with a prefix, keeps this repeatable and lets the second
             // statement join without a temporary table.
             migrationBuilder.Sql(
                 """

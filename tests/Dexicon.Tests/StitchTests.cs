@@ -126,7 +126,7 @@ public sealed class StitchTests
     {
         // The chunker splits a line longer than the whole budget, so several chunks can
         // report the SAME single line. Line-based de-overlapping cannot tell those apart
-        // — by line, each one is "already emitted" — and dropped all but the first.
+        // because by line each one is "already emitted", and dropped all but the first.
         var stitched = DexiconTools.Stitch(
         [
             (1, 1, "alpha beta gamma"),

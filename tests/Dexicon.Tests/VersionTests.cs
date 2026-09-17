@@ -9,7 +9,7 @@ namespace Dexicon.Tests;
 /// Two ways that has already gone quietly wrong, both guarded here:
 ///
 /// Reading the wrong attribute. MinVer pins <c>AssemblyVersion</c> to
-/// <c>major.0.0.0</c> so a patch release cannot break assembly binding — so for a 0.x
+/// <c>major.0.0.0</c> so a patch release cannot break assembly binding, so for a 0.x
 /// project it is <c>0.0.0.0</c>, and the code that read it reported <c>0.0.0</c> as the
 /// product version. Nothing failed; the OpenAPI document and every MCP client were simply
 /// told the wrong number.

@@ -9,7 +9,7 @@ namespace Dexicon.Tests;
 ///
 /// Dexicon shipped exactly that defect once: <c>EmbeddingOptions.MaxConcurrency</c> was
 /// declared, documented in .env.example and passed by docker-compose, while nothing in
-/// the codebase read it — so raising it changed nothing, silently. This test catches
+/// the codebase read it, so raising it changed nothing and reported nothing. This test catches
 /// the whole class rather than that one instance.
 /// </summary>
 public sealed class ConfigurationIsReadTests
@@ -62,7 +62,7 @@ public sealed class ConfigurationIsReadTests
                 //
                 // The earlier version counted bare whole-word matches everywhere, which
                 // is far too loose: `BootstrapOptions.Token` looked "read" because the
-                // word Token appears in TokenService, Scopes and a dozen other places —
+                // word Token appears in TokenService, Scopes and a dozen other places,
                 // and it was in fact read by nothing at all. A guard that cannot catch
                 // what it claims to is worse than no guard, because it reads as cover.
                 var memberAccess = new Regex($@"\.{Regex.Escape(prop.Name)}\b");

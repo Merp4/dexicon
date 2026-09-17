@@ -7,13 +7,13 @@ namespace Dexicon.Tests;
 ///
 /// The distinction is easy to get wrong in the direction that matters. The container
 /// probes must answer before anyone has a token, so <c>/healthz/live</c> and
-/// <c>/healthz/ready</c> are open — but bare <c>/healthz</c> reports endpoints, model
+/// <c>/healthz/ready</c> are open, but bare <c>/healthz</c> reports endpoints, model
 /// names and job state, so it authenticates like everything else. Prefix-matching the
 /// "/healthz" family would open the detailed one; prefix-matching nothing would make the
 /// probes unreachable and the container permanently unhealthy.
 ///
 /// The OpenAPI document asks this same question when it decides which operations carry a
-/// security requirement, so a change here changes both — which is the point of there
+/// security requirement, so a change here changes both, which is the point of there
 /// being one list.
 /// </summary>
 public sealed class AnonymousPathTests

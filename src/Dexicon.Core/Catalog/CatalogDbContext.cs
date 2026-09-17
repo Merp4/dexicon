@@ -29,7 +29,7 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
     ///
     /// SQLite has no date type, so EF stores a DateTime as text and reads it back with
     /// <c>Kind = Unspecified</c>. System.Text.Json then serialises it WITHOUT a `Z`, and
-    /// <c>new Date("2026-09-16T17:08:11")</c> in a browser parses that as LOCAL time — so
+    /// <c>new Date("2026-09-16T17:08:11")</c> in a browser parses that as local time, so
     /// every timestamp in the UI was silently wrong by the viewer's UTC offset, and job
     /// times did not line up with the log.
     ///

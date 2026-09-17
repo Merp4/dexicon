@@ -10,7 +10,7 @@ namespace Dexicon.Tests;
 /// Which collection a chunk set lands in.
 ///
 /// A collection IS a vector space. Two names for one model mean two collections holding
-/// vectors that belong together, neither aware of the other — and the multitenancy design
+/// vectors that belong together, neither aware of the other, and the multitenancy design
 /// rests on corpus_id partitioning ONE collection per (provider, model, dimensions).
 ///
 /// Ollama lists `embeddinggemma:latest`; a configuration file says `embeddinggemma`. The

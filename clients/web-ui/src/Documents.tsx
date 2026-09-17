@@ -12,7 +12,7 @@ import { cn } from 'cn';
  * The thing this screen has to make obvious, because it is the whole point of the
  * design: a document is stored and extracted ONCE, and each corpus holds its own
  * chunking of it. So every row shows the blob, and underneath it every corpus that
- * attaches it — with that corpus's chunk settings and resulting chunk count side by
+ * attaches it, with that corpus's chunk settings and resulting chunk count side by
  * side, where they can be compared.
  */
 export function DocumentsView({

@@ -236,7 +236,7 @@ public sealed class SecretHygieneTests
         DexiconAuthMiddleware.PrincipalCacheKey(Token)
             .ShouldBe(DexiconAuthMiddleware.PrincipalCacheKey(Token));
 
-        // Same length, one character apart — the case the old key was weakest on.
+        // Same length, one character apart: the case the old key was weakest on.
         DexiconAuthMiddleware.PrincipalCacheKey(Token)
             .ShouldNotBe(DexiconAuthMiddleware.PrincipalCacheKey("dex_01JBXQZ9K7MNPRSTVWXYZ01234_secret-valuf"));
     }

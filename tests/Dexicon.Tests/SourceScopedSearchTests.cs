@@ -10,8 +10,8 @@ namespace Dexicon.Tests;
 /// A corpus over a shelf of books has one source per topic folder, and until now there was
 /// no way to say "only the AI ones". `pathPrefix` cannot do it: file_path is relative to a
 /// SOURCE root, so a source at `orly/AI` stores its books as bare filenames and no prefix
-/// matches the folder they came from. The information was in the index the whole time —
-/// source_id is written to every point and indexed as a keyword — and unreachable.
+/// matches the folder they came from. The information was in the index the whole time,
+/// source_id is written to every point and indexed as a keyword, and unreachable.
 /// </summary>
 public sealed class SourceScopedSearchTests : IDisposable
 {

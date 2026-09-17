@@ -9,7 +9,7 @@ namespace Dexicon.Infrastructure;
 /// <summary>
 /// Detaching a document removes its chunks from THIS corpus only. The blob and its
 /// cached extraction survive, because another corpus may still hold the same document
-/// chunked its own way — that is the point of separating bytes from chunking.
+/// chunked its own way, which is the point of separating bytes from chunking.
 /// </summary>
 public sealed class VectorStoreCleanup(CatalogDbContext db, IVectorStore vectors) : IVectorStoreCleanup
 {
@@ -22,7 +22,7 @@ public sealed class VectorStoreCleanup(CatalogDbContext db, IVectorStore vectors
         if (file is null) return false;
 
         // Vectors first. If the catalogue row went first and this threw, the corpus
-        // would keep returning search hits for a document it no longer lists — a
+        // would keep returning search hits for a document it no longer lists: a
         // result pointing at something the UI says is not there.
         // Once per set: a detached document must leave every chunking of it, not just
         // the one the caller happened to be looking at.

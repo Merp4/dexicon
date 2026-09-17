@@ -10,7 +10,7 @@ namespace Dexicon.Tests;
 /// line per chapter (AngleSharp's TextContent concatenates everything with no
 /// separators), the chunker never splits within a line, so a 578,000-character book
 /// became 18 chunks averaging 32,000 characters. The embedding model truncates at its
-/// context limit silently, so about 95% of that book was in no index anywhere — while
+/// context limit without error, so about 95% of that book was in no index anywhere, while
 /// the corpus, the job and the file all reported success.
 ///
 /// Nothing in the system could have detected that. Hence a guarantee, not a convention.

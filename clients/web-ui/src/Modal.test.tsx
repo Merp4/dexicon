@@ -83,7 +83,7 @@ describe('Modal', () => {
 
   it('keeps Tab inside it', async () => {
     // The trap. Tabbing past the last control must come back to the first, not escape to
-    // the page behind — which is where the old hand-rolled version earned its fifty lines.
+    // the page behind, which is where the old hand-rolled version earned its fifty lines.
     const user = userEvent.setup();
     render(<Harness />);
 

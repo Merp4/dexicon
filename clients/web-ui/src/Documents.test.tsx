@@ -183,7 +183,7 @@ describe('the document library', () => {
   });
 
   it('explains an empty extraction where the question gets asked', async () => {
-    // "Why isn't my scanned PDF searchable" — answered on the document, not in a log.
+    // "Why isn't my scanned PDF searchable", answered on the document rather than in a log.
     listDocuments.mockResolvedValue([
       { ...doc, emptyReason: 'No text layer; this looks like a scan.' },
     ]);
