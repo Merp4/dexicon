@@ -77,3 +77,10 @@ src/Dexicon/wwwroot/*
 # document, which IS tracked — so the diff that matters (the contract) is reviewable
 # without 1,000 lines of generated TypeScript in every pull request.
 clients/web-ui/src/generated/
+
+# The benchmark harness (scripts/bench) is Python. Without these, running a sweep
+# leaves a compiled sweep.cpython-314.pyc in the tree — and one of them was committed.
+__pycache__/
+*.py[cod]
+.venv/
+venv/
