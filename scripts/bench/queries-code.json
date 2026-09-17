@@ -1,0 +1,67 @@
+{
+  "corpus": "src",
+  "note": "Questions a developer or an agent actually asks of a codebase: where something is handled, why it behaves as it does, or a fragment they are staring at. Paths are relative to src/. `why` records what makes the target unambiguous — several of these touch two files, and those are marked rather than quietly counted as clean.",
+  "queries": [
+    { "query": "how are dense and sparse results fused into one ranking", "file": "Dexicon.Core/Search/SearchService.cs", "why": "Fusion is issued here; QdrantVectorStore carries the query shape, so this is a two-file question scored on the service." },
+    { "query": "what stops a search running without a corpus scope", "file": "Dexicon.Core/Search/SearchModels.cs", "why": "UnscopedQueryException is declared here." },
+    { "query": "how is the sparse vector built from text", "file": "Dexicon.Core/Search/SparseEncoder.cs", "why": "Only file that encodes sparse terms." },
+    { "query": "how is a query embedding cached between searches", "file": "Dexicon.Core/Search/SearchService.cs", "why": "QueryEmbeddingTtl lives here." },
+
+    { "query": "how does a line longer than the whole chunk budget get split", "file": "Dexicon.Core/Indexing/CodeChunker.cs", "why": "SplitOversizeLine." },
+    { "query": "where is chunk size converted from tokens to characters", "file": "Dexicon.Core/Indexing/CodeChunker.cs", "why": "CharsPerToken and maxChars." },
+    { "query": "how does an incremental refresh decide a file is unchanged", "file": "Dexicon.Core/Indexing/CorpusIndexer.cs", "why": "The fingerprint comparison." },
+    { "query": "how are gitignore and dexiconignore rules applied", "file": "Dexicon.Core/Indexing/GitignoreFilter.cs", "why": "Whole responsibility of one file." },
+    { "query": "what decides the language of a file from its extension", "file": "Dexicon.Core/Indexing/LanguageMap.cs", "why": "LanguageMap.Detect." },
+    { "query": "how does a job get queued and picked up", "file": "Dexicon.Core/Indexing/IndexJobQueue.cs", "why": "The queue itself." },
+    { "query": "what options control how a chunk set chunks", "file": "Dexicon.Core/Indexing/ChunkSetOptions.cs", "why": "The options record." },
+    { "query": "how does one bad file avoid starving the whole index", "file": "Dexicon.Core/Indexing/CorpusIndexer.cs", "why": "The continue-not-break isolation." },
+
+    { "query": "how is the embedding model chosen per call rather than at startup", "file": "Dexicon.Core/Embedding/EmbeddingGeneratorFactory.cs", "why": "The per-provider caching decision is documented here." },
+    { "query": "how does it measure what a model will actually accept", "file": "Dexicon.Core/Embedding/ModelProbe.cs", "why": "The bisection probe." },
+    { "query": "where is task framing applied to text before embedding", "file": "Dexicon.Core/Embedding/EmbeddingService.cs", "why": "Applied once, in EmbedAsync." },
+    { "query": "how are per-model prompt templates resolved", "file": "Dexicon.Core/Embedding/ModelProfiles.cs", "why": "Saved row, built-in, raw." },
+    { "query": "how does it count tokens with the model's own tokenizer", "file": "Dexicon.Core/Embedding/EmbeddingService.cs", "why": "CountTokensAsync." },
+    { "query": "which models are offered and which are filtered out as chat models", "file": "Dexicon.Core/Embedding/ModelCatalog.cs", "why": "LooksLikeAnEmbeddingModel." },
+    { "query": "how does embedding back off when the provider is struggling", "file": "Dexicon.Core/Embedding/EmbeddingService.cs", "why": "Jittered retry in GenerateAsync." },
+
+    { "query": "how is a Qdrant collection named", "file": "Dexicon.Core/Vectors/QdrantVectorStore.cs", "why": "CollectionNameFor." },
+    { "query": "how is multitenancy enforced in the vector store", "file": "Dexicon.Core/Vectors/QdrantVectorStore.cs", "why": "is_tenant and hnsw m=0." },
+    { "query": "how are a file's chunks fetched by filter rather than by search", "file": "Dexicon.Core/Vectors/QdrantVectorStore.cs", "why": "GetFileChunksAsync." },
+
+    { "query": "how is an API token hashed and verified", "file": "Dexicon.Core/Auth/TokenService.cs", "why": "PBKDF2 lives here." },
+    { "query": "how does a tenant get read access to another tenant's corpus", "file": "Dexicon.Core/Auth/ScopeResolver.cs", "why": "Grants and visibility resolution." },
+    { "query": "what happens when a corpus name does not resolve", "file": "Dexicon.Core/Auth/ScopeResolver.cs", "why": "ScopeResolutionException with the visible list." },
+    { "query": "how is corpus:set parsed into a corpus and a chunk set", "file": "Dexicon.Core/Auth/ScopeResolver.cs", "why": "The addressing split." },
+
+    { "query": "which paths are served without a token", "file": "Dexicon/Infrastructure/DexiconAuth.cs", "why": "AnonymousExact and AnonymousPrefixes." },
+    { "query": "what runs on first start before the server accepts requests", "file": "Dexicon/Infrastructure/Bootstrapper.cs", "why": "InitialiseAsync." },
+    { "query": "how is a scope failure turned into a problem response", "file": "Dexicon/Infrastructure/ScopeExceptionHandler.cs", "why": "One handler, one job." },
+    { "query": "how do log timestamps stay UTC", "file": "Dexicon/Infrastructure/UtcTimestampEnricher.cs", "why": "The Serilog enricher." },
+    { "query": "how are vectors removed when an attachment is detached", "file": "Dexicon/Infrastructure/VectorStoreCleanup.cs", "why": "RemoveAttachmentAsync." },
+
+    { "query": "where is the OpenAPI document's security scheme declared", "file": "Dexicon/Program.cs", "why": "The document transformer." },
+    { "query": "why does a build not run first-run setup", "file": "Dexicon/Infrastructure/Bootstrapper.cs", "why": "IsBuildTimeToolRun." },
+    { "query": "where is JSON number handling configured to be strict", "file": "Dexicon/Program.cs", "why": "ConfigureHttpJsonOptions." },
+
+    { "query": "what happens when a corpus is created with a workspace path", "file": "Dexicon/Api/CorpusEndpoints.cs", "why": "The create handler." },
+    { "query": "how is one indexed file read back over REST", "file": "Dexicon/Api/CorpusEndpoints.cs", "why": "The /file endpoint." },
+    { "query": "how is a chunk set promoted to the default", "file": "Dexicon/Api/ChunkSetEndpoints.cs", "why": "The promote handler." },
+    { "query": "what happens to the old set when a new one is promoted", "file": "Dexicon/Api/ChunkSetEndpoints.cs", "why": "Promotion semantics." },
+    { "query": "how is an uploaded document deduplicated by hash", "file": "Dexicon/Api/DocumentEndpoints.cs", "why": "Upload and sha256." },
+    { "query": "how is the extracted text of a document served", "file": "Dexicon/Api/DocumentEndpoints.cs", "why": "The /text endpoint." },
+    { "query": "where are the request and response shapes for the REST API", "file": "Dexicon/Api/Contracts.cs", "why": "The contracts file." },
+    { "query": "how does the model list report what a probe measured", "file": "Dexicon/Api/SystemEndpoints.cs", "why": "The embedding-models listing." },
+    { "query": "how does the health endpoint decide readiness", "file": "Dexicon/Api/SystemEndpoints.cs", "why": "healthz/ready." },
+
+    { "query": "how are overlapping chunks stitched back into a passage", "file": "Dexicon/Mcp/DexiconTools.cs", "why": "Stitch." },
+    { "query": "what tools does the MCP server expose", "file": "Dexicon/Mcp/DexiconTools.cs", "why": "The McpServerTool attributes." },
+    { "query": "how is a search result rendered for a model to read", "file": "Dexicon/Mcp/DexiconTools.cs", "why": "Render." },
+    { "query": "how is a file reconstructed for an MCP resource read", "file": "Dexicon/Mcp/DexiconResources.cs", "why": "The dexicon:// file resource." },
+
+    { "query": "what is stored in the SQLite catalogue", "file": "Dexicon.Core/Catalog/Entities.cs", "why": "The entity definitions." },
+    { "query": "how are tables and keys configured for the catalogue", "file": "Dexicon.Core/Catalog/CatalogDbContext.cs", "why": "OnModelCreating." },
+    { "query": "which settings can be set from the environment", "file": "Dexicon.Core/Configuration/DexiconOptions.cs", "why": "The options tree." },
+    { "query": "how is text extracted from a PDF or an EPUB", "file": "Dexicon.Core/Extraction/TextExtractors.cs", "why": "The extractors." },
+    { "query": "how is an uploaded blob stored and its text cached", "file": "Dexicon.Core/Documents/DocumentService.cs", "why": "Blob storage and BlobTexts." }
+  ]
+}
