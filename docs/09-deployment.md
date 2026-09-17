@@ -310,7 +310,7 @@ Hardening, matching the compose file:
 - Every published image carries an **SBOM** and build provenance as registry attestations:
 
   ```bash
-  docker buildx imagetools inspect ghcr.io/<owner>/dexicon:0.1.1 --format '{{ json .SBOM }}'
+  docker buildx imagetools inspect ghcr.io/<owner>/dexicon:0.2.0 --format '{{ json .SBOM }}'
   ```
 - Published multi-arch (`linux/amd64`, `linux/arm64`) so it runs on Apple silicon. Both
   builder stages run on the build platform and emit architecture-independent IL
@@ -323,7 +323,7 @@ Hardening, matching the compose file:
 
 | Tag | Means | Use it for |
 |---|---|---|
-| `0.1.1` | That release, forever | Deployments |
+| `0.2.0` | That release, forever | Deployments |
 | `0.1` | Newest patch of that minor | Deployments that accept patches |
 | `latest` | Newest release | Trying it out |
 | `edge` | Tip of `main` | Following development |
@@ -336,7 +336,7 @@ promise a compatibility that does not exist.
 if it should not change even for a re-push:
 
 ```bash
-DEXICON_TAG=0.1.1 docker compose up -d
+DEXICON_TAG=0.2.0 docker compose up -d
 ```
 
 The version in the tag is the version in the image, because the tag is where the version
@@ -348,7 +348,7 @@ hand with no argument reports `0.0.0-dev` rather than impersonating a release. E
 recording the commit and the workflow that produced it:
 
 ```bash
-gh attestation verify oci://ghcr.io/<owner>/dexicon:0.1.1 --owner <owner>
+gh attestation verify oci://ghcr.io/<owner>/dexicon:0.2.0 --owner <owner>
 ```
 
 ## Health

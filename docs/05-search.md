@@ -29,7 +29,7 @@ Hybrid is a single Qdrant Query API call with two prefetches and server-side fus
 is no client-side score merging.
 
 ```jsonc
-POST /collections/dexicon__nomic-embed-text__768/points/query
+POST /collections/dexicon__ollama__embeddinggemma__768/points/query
 {
   "prefetch": [
     { "query": { "nearest": [0.01, 0.45, ...] },            // dense, from Ollama

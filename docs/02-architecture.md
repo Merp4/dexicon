@@ -66,7 +66,7 @@ into its own container later without touching the API.
 | SPA | React 19 + Vite + Tailwind v4 | — |
 | Logging | Serilog → console, structured | — |
 
-Third-party extraction libraries and their licences are listed in [04](04-ingestion.md#libraries);
+Third-party extraction libraries and their licences are listed in [04](04-ingestion.md#extraction);
 all are permissive, which matters for open-sourcing.
 
 ## Request flows
@@ -93,7 +93,7 @@ Response
 ```
 
 Two round trips to external services on the hot path (Ollama embed, Qdrant query). The
-sparse encoding is in-process. Target p95 under 400 ms for a warm `nomic-embed-text`.
+sparse encoding is in-process. Target p95 under 400 ms for a warm `embeddinggemma`.
 
 ### Indexing (the slow path)
 

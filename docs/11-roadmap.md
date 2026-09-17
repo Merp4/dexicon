@@ -105,7 +105,7 @@ finding the matched text there.
 | **UI** | ✅ Search, Corpora, Documents, Jobs, Models, Access, Settings. |
 | **Chunk sets** | ✅ A corpus carries several chunkings over the same documents, addressed as `corpus:set`. Changing embedding model is add-set → backfill → promote, so search never sees a partial index ([D-21](decisions.md)). |
 | **Providers** | ✅ Ollama, OpenAI and Azure OpenAI through `IEmbeddingGenerator`, model chosen per call. Model list/pull/delete, and a probe that measures a model's real input limit without indexing anything ([D-24](decisions.md)). |
-| **Tests** | ✅ 163 passing, including guards for the "configured but unread" defect class and for chunk-then-stitch round-tripping. |
+| **Tests** | ✅ 307 server + 114 UI passing, including guards for the "configured but unread" defect class and for chunk-then-stitch round-tripping. Every fix is mutation-verified: break it, watch the named test go red, restore. |
 | **CI** | ✅ Build, test, type-check, gitleaks over full history, vulnerable-dependency checks, and an image build that starts the container. |
 
 **Since closed:** `get_context` de-overlapping is now tested, including a chunk-then-stitch
@@ -118,7 +118,8 @@ let relevance decide which parts of a file came back.
 a distinct concept, so an agent sees them as ordinary files in a corpus — arguably correct,
 but still an assumption nobody has tested.
 
-**Defects this milestone found by running it, all invisible to a reader:**
+**Defects found by running it against real data, all invisible to a reader.** The later
+ones came from pointing the indexer at a real shelf of 95 books rather than at fixtures:
 
 - **`chunk_size` did nothing.** The chunker split at every boundary, so two corpora
   configured 768 and 256 tokens produced byte-identical output at a 252-character mean.
@@ -139,6 +140,32 @@ but still an assumption nobody has tested.
 - **Jobs were ordered by a nullable column.** A job that failed *before* starting has a null
   `StartedUtc`, so dead failures sat permanently above the running job and anything reading
   the first entry got a stale answer with complete confidence.
+- **Every O'Reilly EPUB was unreadable, and blamed DRM.** Their toolchain lists the cover
+  image twice in the manifest; the spec forbids it, no reader cares, the strict parser
+  refused the book. Six of nineteen books on the first shelf, reported to the user as
+  "DRM-protected books cannot be read" — a true-sounding message about a problem they did
+  not have. An EPUB is a zip of XHTML, so an unparseable manifest is now salvaged from the
+  archive, and DRM is asserted from `META-INF/encryption.xml` rather than guessed.
+- **A file path did not name a file.** `file_path` is relative to its SOURCE root, so two
+  sources of one corpus holding "Logic For Dummies.pdf" are two books with one path. The
+  delete filter removed both; `get_context` interleaved them into one passage with line
+  numbers on it; and the point id, derived from (set, path, index), made the second
+  source's upsert silently overwrite the first. `source_id` had been in every point's
+  payload since chunk sets landed and was never read back.
+- **A running index job absorbed work it had already passed.** Adding nine folders to a
+  corpus mid-index indexed 46 of 96 files and reported the corpus `ready`, with no job
+  pending: deduplication handed each request the job already running, which had taken its
+  list of sources when it started. Coalescing now happens only onto a *queued* job.
+- **Chunking collapsed on prose interleaved with code.** A blank line early, then eleven
+  thousand characters of listing with none, made the splitter back up to that early
+  boundary, emit a ~400-character chunk, and — because the chunk was smaller than the
+  overlap — advance one line and do it again. One book: 1,051 chunks averaging 388
+  characters where 73 of ~8,000 were intended. Its EPUB produced 61 from the same text,
+  which is how it was caught.
+- **Arctic Embed v2 was sent unframed queries.** Listed as needing no task prefix, on the
+  belief that Arctic trains without one. Its model card specifies `query_prefix = 'query: '`.
+  Nothing failed; recall was quietly worse — the exact failure the framing table exists to
+  prevent, inside the table itself.
 
 **Still open from the original definition of done:** *a second person clones, runs
 `docker compose up`, indexes their own repository, connects their agent, and uses it
@@ -166,7 +193,7 @@ question.** Every question asked is a defect, logged and fixed before the milest
 </details>
 ---
 
-## M3 — Make the defaults earned (1 week) — **started**
+## M3 — Make the defaults earned ✅ **COMPLETE (2026-09-17)**
 
 Every number in [04](04-ingestion.md) is currently a reasonable guess. This milestone
 replaces the ones that matter with measurements.
@@ -183,20 +210,27 @@ flipped the ranking. **A result that reverses when one variable is corrected is 
 strongest evidence yet that twelve hand-written queries cannot settle this**, which is
 precisely what the full milestone is for.
 
-- Build a fixed evaluation set: 40–60 `(query, expected file)` pairs over a real repository
-  and a real document set, committed to the repo.
-- Score recall@10 and MRR across: `nomic-embed-text` / `embeddinggemma` /
-  `qwen3-embedding:0.6b`; chunk sizes 512 / 768 / 1024; boundary modes `none` /
-  `blank-line` / `language-aware`; modes `semantic` / `keyword` / `hybrid`.
-- Publish the table in the repo. Change the defaults if the evidence says so — and if it
-  does not, say that too.
+**What was done.** Two committed evaluation sets — 55 pairs over `docs/`, 52 over `src/`
+— swept across three models × three chunk sizes × three boundary modes × three search
+modes. 81 configurations per corpus, 162 in total, in
+[benchmarks.md](benchmarks.md) with the raw per-configuration numbers beside the script
+that produced them.
 
-**Done when:** `docs/benchmarks.md` exists with reproducible numbers, the defaults cite it,
-and anyone proposing a reranker has a baseline to beat.
+**What it changed.** The default model moved to `embeddinggemma`, which won *both* corpora
+— by 0.025 mean MRR on documents and 0.075 on code, the widest gap any single variable
+opened. That took documents from 30th of 81 to 5th and code from 44th to 36th. `hybrid`
+was confirmed as the default it already was. `language-aware` lost on both corpora and was
+*kept*, because the spread across boundary modes on code is 0.009 and changing it costs a
+reindex to buy a rounding error — which is the "if it does not, say that too" case.
 
-**Also open here:** the probe measures ~1,962 tokens as the safe ceiling for both local
-models while the default chunk size is 768. Raising it is a retrieval-quality decision, not
-a safety one, and belongs in this milestone's sweep rather than as a guess.
+**What it closed.** The probe measured ~1,962 tokens as the safe ceiling while the default
+chunk size was 768. That is no longer a guess in either direction: a new chunk set is sized
+from what its model was *measured* to accept. The same measurement is what stops
+`mxbai-embed-large`, offered in a dropdown and accepting only 2,816 characters, from
+silently truncating every full-size chunk at the old default.
+
+**Done when:** ✅ `docs/benchmarks.md` exists with reproducible numbers, the defaults cite
+it, and anyone proposing a reranker has a baseline to beat.
 
 ---
 
@@ -210,8 +244,10 @@ a safety one, and belongs in this milestone's sweep rather than as a guess.
   from the tarballs, catalogue intact and **search returning results** afterwards. Liveness
   alone would have passed a broken restore, because a catalogue with no vectors comes up
   perfectly healthy and answers every query with nothing.
-- ⬜ `README` screenshot and a 60-second quickstart.
-- ⬜ Multi-arch images published to GHCR on tag, with an SBOM and digest-pinned bases.
+- ✅ Multi-arch images (`linux/amd64`, `linux/arm64`) published to GHCR on tag, with an
+  SBOM, `provenance: mode=max`, a GitHub attestation, and every base image digest-pinned.
+- ✅ A 60-second quickstart in the `README`.
+- ⬜ A `README` screenshot.
 - ⬜ Licence review of the dependency tree.
 
 **Done when:** the repository is public and the quickstart has been followed on a clean

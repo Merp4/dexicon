@@ -701,6 +701,7 @@ and reused twelve queries; this varies everything and reuses none of them.
   a corpus that is entirely markdown, whose real boundaries are blank lines. It stays the
   default, because it was written for code and the sweep has not been run over a code
   corpus, and a default changed on the wrong evidence is worse than one left alone.
+  *(Since revised — the code sweep was run; see the fifth measurement below.)*
 - **`nomic-embed-text` stays.** `embeddinggemma` leads by 0.025 mean MRR, consistent with
   the three earlier runs, and still inside the noise of 55 queries. Changing it forces a
   reindex of every corpus; that needs better evidence than "probably".
@@ -711,6 +712,35 @@ model's rows measure silent truncation rather than retrieval — and its steady 
 across chunk sizes is what truncation looks like from the outside. A default that quietly
 breaks a model the UI offers in a dropdown is a worse problem than which model is 2% better,
 and it is the one worth acting on. See [D-27](#d-27-chunk-budget).
+
+### Q3, fifth measurement — the code corpus (2026-09-17)
+
+The fourth measurement said the code sweep had not been run and that two of its
+conclusions were therefore provisional. It has now been run: 52 `(query, expected file)`
+pairs over `src/`, the same 81 configurations, in `scripts/bench/queries-code.json`.
+
+**Since revised, twice:**
+
+- **`nomic-embed-text` does not stay.** On documents `embeddinggemma` led by 0.025 mean
+  MRR, which the fourth measurement correctly called inside the noise. On code it leads by
+  **0.075** — the widest gap any single variable opens in either sweep. Two independent
+  corpora agreeing is the better evidence that decision asked for, so the default moved.
+  The cost is twice the first download, and that is the whole of the case against it.
+- **`language-aware` is not earned for code either**, which was the open question. It is
+  last of three boundary modes on both corpora. It still stays, for a different and weaker
+  reason than before: the spread across all three modes on code is **0.009**, so changing
+  it costs a reindex to buy a rounding error. The boundary mode is the least load-bearing
+  setting in the sweep, which is itself worth knowing.
+
+**What did not change.** Hybrid wins both corpora on mean, for every model. Keyword is
+markedly weaker on code than on prose — 0.579 against 0.677 — which is what you would
+expect when the identifier a developer half-remembers is rarely the identifier in the file.
+
+**And a footnote to the truncation finding.** `mxbai-embed-large` takes the single best
+code configuration (0.829) at 768 tokens — the one swept size its 2,816-character limit
+does not ruin. That is not a case for the model so much as confirmation of the earlier
+reading: its other rows measured truncation, not quality. The chunk size is now set from
+what a model was measured to accept, so that default is no longer reachable.
 
 ### D-27 A chunk budget is characters, and the ratio is measured {#d-27-chunk-budget}
 

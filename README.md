@@ -30,13 +30,14 @@ visible to whom, and what the indexer is currently doing.
 ## Status
 
 **Working, and young.** Published as `ghcr.io/merp4/dexicon`; the current release is
-`0.1.1`. Indexing, hybrid search, chunk sets, the MCP surface, the web UI and the
-container all exist and are covered by tests.
+[`0.2.0`](CHANGELOG.md). Indexing, hybrid search, chunk sets, the MCP surface, the web UI
+and the container all exist and are covered by tests.
 
-What that does not yet mean: nobody has run it but its author. The defaults are now
-[measured](docs/benchmarks.md) rather than guessed — across 81 retrieval configurations —
-but on one corpus of one content type, and [the roadmap](docs/11-roadmap.md) says what is
-still owed.
+What that does not yet mean: nobody has run it but its author. The defaults are
+[measured](docs/benchmarks.md) rather than guessed — 81 retrieval configurations over a
+document corpus and again over a code corpus — and the extractors have been run over a real
+shelf of 95 books, which is where most of the recent bug fixes came from. Both corpora are
+this repository's own, and [the roadmap](docs/11-roadmap.md) says what is still owed.
 
 ## Quickstart
 
@@ -91,6 +92,7 @@ choose them.
 | [Benchmarks](docs/benchmarks.md) | 81 retrieval configurations swept, and which defaults that earns |
 | [12 — Connecting an agent](docs/12-clients.md) | Per-client MCP setup: Claude Code, Cursor, VS Code, Windsurf, Cline, Claude Desktop, Zed |
 | [Troubleshooting](docs/troubleshooting.md) | The failures that actually happen in the first hour |
+| [Changelog](CHANGELOG.md) | What changed per release, and what an upgrade needs |
 
 ## Contributing
 
@@ -100,7 +102,7 @@ and the handful of things this project will push back on. Security problems go t
 
 ## Provenance
 
-Dexicon carves a subset out of [McpToolbox](../McpToolbox): the workspace sidecar indexer,
+Dexicon carves a subset out of McpToolbox, a private sibling project: the workspace indexer,
 the Qdrant repository, the language-aware code chunker, the document loaders, and the
 tenancy/auth ADRs. McpToolbox has grown into a full agent platform; Dexicon keeps only the
 indexing and search parts, aimed at local agentic development, and re-specifies them against
