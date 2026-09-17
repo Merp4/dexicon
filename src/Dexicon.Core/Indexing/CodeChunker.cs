@@ -81,8 +81,11 @@ public static class CodeChunker
     ///    sentence-aware splitting. Only the sets that enable one are affected, but the
     ///    fingerprint cannot tell "off" from "on but implemented differently", and a set
     ///    built against the first cut of these would otherwise keep those chunks forever.
+    /// 4: a boundary is only used as a split point when it leaves a chunk worth having.
+    ///    Text with a boundary early and then a long stretch without one produced chunks
+    ///    a few hundred characters long, one line apart, by the thousand.
     /// </summary>
-    public const int Version = 3;
+    public const int Version = 4;
 
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(500);
 
@@ -244,6 +247,10 @@ public static class CodeChunker
         var start = 0;
         var chars = 0;
         var lastBoundary = -1;
+
+        // How much text had accumulated when lastBoundary was seen. Tracked rather than
+        // recomputed so the check below stays O(1) per line.
+        var charsAtBoundary = 0;
         var lastHeading = (string?)null;
         var inFence = false;
 
@@ -257,7 +264,11 @@ public static class CodeChunker
                 else if (!inFence && TryReadHeading(line, out var heading)) lastHeading = heading;
             }
 
-            if (boundaries.Contains(i) && i > start) lastBoundary = i;
+            if (boundaries.Contains(i) && i > start)
+            {
+                lastBoundary = i;
+                charsAtBoundary = chars;
+            }
 
             // A unit boundary ends the current chunk regardless of how little is in it.
             if (unitBoundaries.Contains(i) && i > start && chars > 0)
@@ -269,6 +280,7 @@ public static class CodeChunker
                 // is exactly the straddling this is meant to stop.
                 start = i;
                 lastBoundary = -1;
+                charsAtBoundary = 0;
                 chars = 0;
             }
 
@@ -295,7 +307,30 @@ public static class CodeChunker
 
             if (chars > 0 && chars + lineChars > maxChars)
             {
-                var splitAt = lastBoundary > start ? lastBoundary : i;
+                // Back up to the boundary only if it leaves a chunk worth having.
+                //
+                // "Size decides WHEN, a boundary decides WHERE" assumes a boundary is near
+                // the fill point. When the last one is far behind — a blank line early,
+                // then a long listing with none — backing up to it emits a fraction of a
+                // chunk, and then the overlap rewind cannot go past previousStart + 1, so
+                // the next chunk begins ONE LINE later and produces almost the same tiny
+                // chunk again. A 458,000-character book of prose interleaved with code
+                // came out as 1,051 chunks averaging 388 characters, each a one-line shift
+                // of the last, where 70 chunks of ~8,000 were the intent: fifteen times
+                // the vectors, the embedding cost and the storage, and a result set full
+                // of near-duplicate fragments too small to carry their own context.
+                //
+                // The threshold is the OVERLAP, not a fraction of the budget, because the
+                // overlap is what causes the stall: a chunk must be at least twice it, so
+                // that after rewinding the start still advances by at least the overlap.
+                //
+                // Tying it to the overlap rather than to the budget also keeps deliberate
+                // boundaries working. A custom pattern or a markdown heading is a request
+                // to split THERE, and a set with no overlap has no stall to prevent — the
+                // rule then rejects only a zero-length chunk, which is what it should do.
+                var minimumChunk = Math.Max(overlapChars * 2, 1);
+                var boundaryIsWorthIt = lastBoundary > start && charsAtBoundary >= minimumChunk;
+                var splitAt = boundaryIsWorthIt ? lastBoundary : i;
 
                 yield return Build(Join(lines, start, splitAt), start, splitAt - 1, lastHeading, symbolPattern,
                     TrailAt(trails, start));
@@ -304,6 +339,7 @@ public static class CodeChunker
                 // line numbers stay exact.
                 start = RewindForOverlap(lines, splitAt, start, overlapChars);
                 lastBoundary = -1;
+                charsAtBoundary = 0;
                 chars = 0;
                 i = start - 1;      // re-accumulate from the new start
                 continue;
