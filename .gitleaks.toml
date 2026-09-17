@@ -24,9 +24,20 @@ keywords = ["dex_"]
 [[rules]]
 id = "dexicon-bootstrap-token-assigned"
 description = "Bootstrap token given a value outside .env"
-# DEXICON_BOOTSTRAP_TOKEN= with anything after it. .env.example ships it EMPTY and .env
-# is gitignored, so an assigned value in a tracked file is a secret in the repository.
-regex = '''DEXICON_BOOTSTRAP_TOKEN\s*=\s*\S+'''
+# DEXICON_BOOTSTRAP_TOKEN= with a REAL token after it. .env.example ships it EMPTY and
+# .env is gitignored, so an assigned value in a tracked file is a secret in the repository.
+#
+# The value has to look like `dex_…` because TokenService.AdoptAsync refuses anything else
+# — a bootstrap token without the prefix is not a token the verifier would ever recognise,
+# so it is not a credential either.
+#
+# `\s*=\s*\S+` was too loose in both directions, and a rule that fires on code is a rule
+# people learn to wave through. It matched newlines, so the EMPTY assignment in
+# .env.example ran on into the next line and reported itself; and `\S+` matched the `")`
+# in `line.startswith("DEXICON_BOOTSTRAP_TOKEN=")`, so every script that reads the variable
+# was a finding. Four of the scanner's four hits on full history were this rule matching
+# code that names the variable and holds no value at all.
+regex = '''DEXICON_BOOTSTRAP_TOKEN[ \t]*=[ \t]*["']?dex_[^\s"']+'''
 keywords = ["DEXICON_BOOTSTRAP_TOKEN"]
 
 [[rules]]
@@ -40,13 +51,21 @@ keywords = ["OPENAI_API_KEY", "AZURE_OPENAI_API_KEY", "APIKEY"]
 [allowlist]
 description = "Known-safe matches"
 
-paths = [
-  # Documentation quotes token SHAPES to explain the format. Redacting them would make
-  # the docs worse to protect against a string that is not a credential.
-  '''docs/.*\.md''',
-  '''README\.md''',
-  '''\.gitleaks\.toml''',
-]
+# NO `paths` here, deliberately. A path in the GLOBAL allowlist is exempt from every rule
+# — including the default set's AWS keys, GitHub tokens and private keys — not merely from
+# the project rules it was meant to quiet. That exempted all of docs/ and README.md from
+# the scan this repository calls its guard, so the one file type a credential is most
+# likely to be pasted into while writing an example was the one file type nothing checked.
+#
+# The documentation quotes token SHAPES rather than tokens, and the regexes below already
+# cover every placeholder it uses, so nothing needed the exemption in the first place.
+
+# Test the allowlist against the WHOLE match, not against the secret gitleaks extracted
+# from it. The default target is the secret, and for a rule with no capture group that can
+# be just the left-hand side: `embedding-provider-key-assigned` handed the allowlist
+# `$env:DEXICON__QDRANT__APIKEY` and kept the value to itself, so the entry below for the
+# compose default never suppressed anything and the known-safe line was a finding.
+regexTarget = "match"
 
 regexes = [
   # The placeholder used throughout the docs and the UI.
