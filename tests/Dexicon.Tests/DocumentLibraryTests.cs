@@ -244,6 +244,89 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task OversizeUpload_IsRejectedAndNamesTheSettingThatMovesTheLimit()
+    {
+        var documents = ServiceCapping(64);
+
+        var ex = await Should.ThrowAsync<ArgumentException>(
+            () => documents.StoreAsync(new MemoryStream(new byte[65]), "too-big.bin"));
+
+        ex.Message.ShouldContain("too-big.bin");
+        ex.Message.ShouldContain("DEXICON__UPLOAD__MAXFILEBYTES",
+            customMessage: "the error has to say which knob moves the limit, or the answer is a search");
+    }
+
+    [Fact]
+    public async Task AnUploadExactlyAtTheLimit_IsStored()
+    {
+        // Off-by-one guard. The cap is the largest ACCEPTABLE size, and a limit that
+        // refuses the value it advertises is a limit one byte lower than documented.
+        var documents = ServiceCapping(64);
+
+        var stored = await documents.StoreAsync(new MemoryStream(new byte[64]), "exact.bin");
+
+        stored.SizeBytes.ShouldBe(64);
+    }
+
+    [Fact]
+    public async Task OversizeUpload_StopsReadingAtTheCapInsteadOfBufferingTheWholeStream()
+    {
+        // The reason this is enforced during the copy and not on the finished file: the
+        // old check hashed a 2 GB upload in full before refusing it, so a rejected file
+        // still cost the disk. CountingStream reports how far the read actually got.
+        var documents = ServiceCapping(1024);
+        var source = new CountingStream(10 * 1024 * 1024);
+
+        await Should.ThrowAsync<ArgumentException>(
+            () => documents.StoreAsync(source, "huge.bin"));
+
+        source.BytesRead.ShouldBeLessThan(
+            source.Length, "the stream was drained before the size was judged");
+    }
+
+    private DocumentService ServiceCapping(long maxFileBytes) =>
+        new(_db,
+            Options.Create(new DexiconOptions
+            {
+                Storage = new StorageOptions { DataPath = _dataPath },
+                Upload = new UploadOptions { MaxFileBytes = maxFileBytes },
+            }),
+            NullLogger<DocumentService>.Instance);
+
+    /// <summary>A readable stream of the given length that remembers how much was taken.</summary>
+    private sealed class CountingStream(long length) : Stream
+    {
+        public long BytesRead { get; private set; }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => length;
+
+        public override long Position
+        {
+            get => BytesRead;
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var remaining = length - BytesRead;
+            if (remaining <= 0) return 0;
+
+            var n = (int)Math.Min(count, remaining);
+            Array.Clear(buffer, offset, n);
+            BytesRead += n;
+            return n;
+        }
+
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    [Fact]
     public async Task PlainTextUpload_IsExtractedNotTreatedAsAnUnknownBinary()
     {
         var stored = await _documents.StoreAsync(TextStream("# Title\n\nSome prose."), "readme.md");

@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -68,14 +69,10 @@ public sealed class DocumentService(
             await using (var fs = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None,
                              bufferSize: 81920, useAsync: true))
             {
-                await content.CopyToAsync(fs, ct);
-                size = fs.Length;
+                size = await CopyCappedAsync(content, fs, _upload.MaxFileBytes, fileName, ct);
             }
 
             if (size == 0) throw new ArgumentException($"'{fileName}' is empty.", nameof(content));
-            if (size > _upload.MaxFileBytes)
-                throw new ArgumentException(
-                    $"'{fileName}' is {size:N0} bytes, over the {_upload.MaxFileBytes:N0} byte limit.", nameof(content));
 
             await using (var fs = File.OpenRead(temp))
                 sha = Convert.ToHexStringLower(await SHA256.HashDataAsync(fs, ct));
@@ -120,6 +117,48 @@ public sealed class DocumentService(
 
         return new StoredDocument(sha, size, fileName, text.Title, text.ExtractedChars,
             AlreadyExisted: false, text.EmptyReason);
+    }
+
+    /// <summary>
+    /// Copy to the destination and refuse anything over the cap WITHOUT reading past it.
+    ///
+    /// The check used to run on the finished file, which meant a 2 GB upload was written
+    /// to /data in full and hashed before being told it was too big: the refusal was
+    /// correct and the disk had already paid for it. Stopping one byte over the cap makes
+    /// the limit a limit rather than a verdict.
+    ///
+    /// The message cannot name the file's real size for the same reason — the rest of the
+    /// stream is never read — so it names the cap and the setting that moves it, which is
+    /// the actionable half anyway.
+    /// </summary>
+    private static async Task<long> CopyCappedAsync(
+        Stream source, Stream destination, long cap, string fileName, CancellationToken ct)
+    {
+        var buffer = ArrayPool<byte>.Shared.Rent(81920);
+        try
+        {
+            long total = 0;
+            int read;
+            while ((read = await source.ReadAsync(buffer, ct)) > 0)
+            {
+                total += read;
+                if (total > cap)
+                    // No paramName: the endpoint reports this message to whoever uploaded
+                    // the file, and "(Parameter 'source')" is the name of an argument they
+                    // cannot see and did not pass.
+                    throw new ArgumentException(
+                        $"'{fileName}' is over the {cap:N0} byte upload limit " +
+                        "(DEXICON__UPLOAD__MAXFILEBYTES).");
+
+                await destination.WriteAsync(buffer.AsMemory(0, read), ct);
+            }
+
+            return total;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
     }
 
     private async Task<BlobText> ExtractAsync(string sha, string fileName, CancellationToken ct)
