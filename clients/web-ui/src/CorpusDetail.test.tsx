@@ -17,6 +17,7 @@ const getCorpus = vi.fn();
 const listFiles = vi.fn();
 const addSource = vi.fn();
 const browse = vi.fn();
+const removeSource = vi.fn();
 
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
@@ -25,6 +26,7 @@ vi.mock('./api', async (importOriginal) => ({
     listFiles: (...a: unknown[]) => listFiles(...a),
     addSource: (...a: unknown[]) => addSource(...a),
     browse: (...a: unknown[]) => browse(...a),
+    removeSource: (...a: unknown[]) => removeSource(...a),
     reindex: vi.fn(),
     updateCorpus: vi.fn(),
     deleteCorpus: vi.fn(),
@@ -276,5 +278,54 @@ describe('what each source contributed', () => {
     render(<CorpusDetail {...props} />);
 
     expect(await screen.findByText('no files')).toBeInTheDocument();
+  });
+});
+
+describe('removing a source', () => {
+  it('offers a remove control per source', async () => {
+    getCorpus.mockResolvedValue(corpus({ sources: [source({ rootPath: 'orly/AI' })] }));
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByRole('button', { name: /Remove source orly\/AI/ })).toBeInTheDocument();
+  });
+
+  it('says what it costs before doing it', async () => {
+    // Adding a folder is one click, so removing one should be too — but the cost has to
+    // be stated, because the files leave every chunk set, not just the default one.
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(corpus({ sources: [source({ rootPath: 'orly/AI', fileCount: 34 })] }));
+    render(<CorpusDetail {...props} />);
+
+    await user.click(await screen.findByRole('button', { name: /Remove source orly\/AI/ }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(within(dialog).getByText(/34 files leave the index/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/folder on disk is untouched/)).toBeInTheDocument();
+    expect(removeSource).not.toHaveBeenCalled();
+  });
+
+  it('removes it only once confirmed', async () => {
+    const user = userEvent.setup();
+    removeSource.mockResolvedValue(undefined);
+    getCorpus.mockResolvedValue(corpus({ sources: [source({ id: 's9', rootPath: 'orly/AI' })] }));
+    render(<CorpusDetail {...props} />);
+
+    await user.click(await screen.findByRole('button', { name: /Remove source orly\/AI/ }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: /^Remove source$/ }));
+
+    await waitFor(() => expect(removeSource).toHaveBeenCalledWith('docs', 's9'));
+  });
+
+  it('cancels without removing anything', async () => {
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(corpus({ sources: [source({ rootPath: 'orly/AI' })] }));
+    render(<CorpusDetail {...props} />);
+
+    await user.click(await screen.findByRole('button', { name: /Remove source orly\/AI/ }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: /^Cancel$/ }));
+
+    expect(removeSource).not.toHaveBeenCalled();
   });
 });

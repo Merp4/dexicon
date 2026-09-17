@@ -26,6 +26,7 @@ import {
   deleteApiCorporaByNameOrId,
   deleteApiCorporaByNameOrIdChunkSetsBySetName,
   deleteApiCorporaByNameOrIdDocumentsByFileId,
+  deleteApiCorporaByNameOrIdSourcesBySourceId,
   deleteApiEmbeddingModelsByModel,
   deleteApiTokensById,
   getApiCorpora,
@@ -226,6 +227,9 @@ export const api = {
 
   addSource: (nameOrId: string, body: AddSourceRequest) =>
     call(() => postApiCorporaByNameOrIdSources({ path: { nameOrId }, body })),
+
+  removeSource: (nameOrId: string, sourceId: string) =>
+    call(() => deleteApiCorporaByNameOrIdSourcesBySourceId({ path: { nameOrId, sourceId } })),
 
   reindex: (nameOrId: string, full = false) =>
     call(() => postApiCorporaByNameOrIdReindex({ path: { nameOrId }, query: { full } })),
