@@ -16,10 +16,9 @@ content with exactly one variable changed, in one instance at one time. That com
 only possible because a corpus can carry several chunk sets; before that it needed two
 corpora and a promise that nothing else had drifted.
 
-**What is measured:** the rank of the file that should answer each query. Not relevance,
-not whether the passage is any good — only whether retrieval put the right document in
-front of you. MRR is the mean of `1/rank`, so 1.000 means every query put the right file
-first.
+**What is measured:** the rank of the file that should answer each query. This measures
+retrieval position only, not relevance or passage quality. MRR is the mean of `1/rank`, so
+1.000 means every query returned the correct file first.
 
 ## What it says
 
@@ -50,10 +49,10 @@ Current defaults: `nomic-embed-text` / 768 / `language-aware` / `hybrid`, **MRR 
 
 ## What that does and does not justify
 
-**Hybrid is earned.** It wins on mean for every model, and by more than any other choice
-in the table — and it has the highest floor, which matters more than its ceiling. Semantic
-takes the single best configuration but also the worst: it is the higher-variance bet, and
-a default should be the one that is hardest to be badly wrong with.
+**Hybrid is justified by the results.** It leads on mean for every model, by a larger
+margin than any other choice in the table, and has the highest floor. Semantic produces
+both the single best configuration and the worst, making it the higher-variance option; a
+default should minimise the worst case.
 
 | | hybrid | semantic | keyword |
 |---|---|---|---|
@@ -62,8 +61,8 @@ a default should be the one that is hardest to be badly wrong with.
 | `mxbai-embed-large` | 0.725 | 0.669 | 0.677 |
 
 **`language-aware` is not earned, on either corpus.** It is last of the three boundary
-modes on documents (0.705) and last again on code (0.649) — and code is what it was
-written for. The spread on code is 0.009 across all three modes, which is nothing: the
+modes on documents (0.705) and last again on code (0.649), the corpus it was written
+for. The spread on code is 0.009 across all three modes, which is nothing: the
 boundary mode is the least load-bearing setting in the sweep. It remains the default
 because changing it costs a reindex and buys a rounding error, not because it won.
 
@@ -73,9 +72,9 @@ metric: a file split finer has more chances to land one chunk in the top ten.
 
 **`mxbai-embed-large`'s numbers are not a fair reading of the model.** It accepts 2,816
 characters; at 768 tokens the chunker produces 3,072 and at 1536 it produces 6,144. Two
-thirds of its rows measure silent truncation rather than retrieval quality — and its
-degradation across sizes (0.714 → 0.687 → 0.668) is what that looks like. It is the
-clearest thing in the sweep, and it is a finding about the defaults rather than about the
+thirds of its rows measure truncation rather than retrieval quality, and the degradation
+across sizes (0.714 → 0.687 → 0.668) reflects that. This is the clearest result in the
+sweep, and it is a finding about the defaults rather than about the
 model: **the default chunk size truncates every full-size chunk on a model the UI offers
 in a dropdown.**
 
@@ -111,10 +110,10 @@ against it.
 | `language-aware` | 0.649 | 0.773 | 0.518 |
 
 Best single configuration: `mxbai-embed-large` / 768 / `blank-line` / `hybrid`, **MRR
-0.829**, 39 of 52 first — which is `mxbai` at the one swept size its 2,816-character limit
-does not ruin.
+0.829**, 39 of 52 first. This is `mxbai` at the one swept size its 2,816-character limit
+does not compromise.
 
-**Keyword retrieval is much weaker on code than on prose** — 0.579 against 0.677. An
+**Keyword retrieval is considerably weaker on code than on prose**, 0.579 against 0.677. An
 identifier a developer half-remembers is rarely the identifier in the file, and the sparse
 encoder has no notion of `TokenService` being what you meant by "token hashing". Hybrid
 carries it: it beats keyword on every model, by 0.13 on the best of them.
@@ -131,9 +130,10 @@ matters.
 | after (`embeddinggemma`, same otherwise) | **0.811, rank 5/81** | 0.674, rank 36/81 |
 
 One model change moved documents from 30th to 5th and code from 44th to 36th, without
-touching anything else. Mid-table on code is deliberate: the configurations above it are
-above by margins inside the noise of 52 queries, and several are there for a reason that
-does not generalise — 256 flatters the metric, because a file split finer has more chances
+touching anything else. Its mid-table position on code is accepted: the configurations
+above it lead by margins within the noise of 52 queries, and several do so for reasons
+that do not generalise. A 256-token size flatters the metric, because a file split finer
+has more chances
 to land a chunk in the top ten, and the single best code configuration is `mxbai` at the
 one size its character limit does not ruin. A default should be the thing that is hardest
 to be badly wrong with.
@@ -146,8 +146,8 @@ from the defaults at all.
 
 Two corpora, both this repository, ~107 queries written by someone who already knew them.
 That makes it a fair comparison **between configurations** and a poor estimate of absolute
-quality. Nothing here measures whether a retrieved passage is any *good* — only whether
-retrieval put the right file in front of you.
+quality. Nothing here measures the usefulness of a retrieved passage, only whether
+retrieval returned the correct file.
 
 Reproduce with:
 

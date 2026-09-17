@@ -30,11 +30,12 @@ Three containers. Dexicon is the only one we build.
                 dexicon_data      ─▶ /data        (catalog.db, uploads)
 ```
 
-**Why one container for UI + API + MCP + indexer.** The alternative — splitting the
-indexer into a sidecar — earns its keep when the indexer runs inside a per-tenant container
-with a different security boundary. Dexicon has no such boundary: it is one operator's tool
-on one machine. Splitting would add a control API, a
-token, a network, and a failure mode, and buy nothing. See [D-01](decisions.md#d-01-single-container).
+**Why one container for UI + API + MCP + indexer.** The alternative, a separate indexer
+sidecar, is worthwhile when the indexer runs inside a per-tenant container with a different
+security boundary. Dexicon has no such boundary: it is a single-operator tool on one
+machine. Separating the indexer would add a control API, a token, a network hop and an
+additional failure mode without benefit. See
+[D-01](decisions.md#d-01-single-container).
 
 ## Process layout inside the container
 

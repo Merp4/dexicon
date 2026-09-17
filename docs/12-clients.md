@@ -11,14 +11,14 @@ header  Authorization: Bearer dex_…
 That one line is the whole integration. Everything below is the same fact written in each
 client's own dialect, plus the two clients that need a bridge and the reasons why.
 
-`./scripts/install-mcp.ps1` writes any of these for you — see [Installer](#installer).
+`./scripts/install-mcp.ps1` generates any of these; see [Installer](#installer).
 
 > **Where the token comes from.** It is printed once on first run:
 > `docker compose logs dexicon | grep "bootstrap token"`. If you have lost it, set
 > `DEXICON_BOOTSTRAP_TOKEN` in `.env` and restart; see
 > [09-deployment.md](09-deployment.md). Issue scoped tokens from the **Access** screen
-> rather than handing an agent the bootstrap one — a search-only token cannot delete a
-> corpus.
+> rather than supplying an agent with the bootstrap token. A search-only token cannot
+> delete a corpus.
 
 ---
 

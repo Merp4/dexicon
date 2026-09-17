@@ -1,7 +1,7 @@
 # Contributing
 
 Thanks for looking. This is a small project with strong opinions about a few things and no
-opinion at all about most — this page is mostly the first category, because that is the
+opinion at all about most. This page is mostly the first category, because that is the
 part you cannot guess from the code.
 
 ## Getting it running
@@ -22,7 +22,7 @@ For the inner loop, run the app on the host against the containerised dependenci
 ```
 
 `dev.ps1 test` exists because the test project references the host, so `dotnet test`
-rebuilds it — and that fails while the detached dev instance holds its own DLLs. The script
+rebuilds it, and that fails while the detached dev instance holds its own DLLs. The script
 does the stop/test/start dance so you do not have to remember it.
 
 Enable the pre-commit hook once:
@@ -40,7 +40,7 @@ split when nothing else does. Every one of those was a bug or an argument once. 
 change encodes a decision, write down the alternative you rejected.
 
 **Tests carry the reasoning.** Several tests in this repository open with a paragraph about
-the defect they exist to prevent — usually one that was invisible in production, like an
+the defect they exist to prevent, usually one that was invisible in production, like an
 embedding model silently truncating an over-long chunk and reporting success. A test named
 `ShouldWork` that asserts a value teaches nothing when it fails in two years.
 
@@ -49,7 +49,7 @@ is the most useful possible form of it.
 
 ## Things this project will push back on
 
-Not to be difficult — these have each been decided, and the reasoning is in
+Not to be difficult: these have each been decided, and the reasoning is in
 [docs/decisions.md](docs/decisions.md):
 
 - **New MCP tools.** There are five, and the count is a budget: every tool definition is
@@ -68,7 +68,7 @@ Not to be difficult — these have each been decided, and the reasoning is in
 
 - C# with `TreatWarningsAsErrors`. `dotnet format` before you commit; the hook checks.
 - Comments explain *why*. The code already says what.
-- Timestamps are UTC everywhere — stored, returned, logged. The browser is the only thing
+- Timestamps are UTC everywhere: stored, returned, logged. The browser is the only thing
   that converts, because it is the only thing that knows whose clock to use. Any property
   holding one is named `…Utc`, and a test enforces that.
 - Errors are written for whoever has to act on them. `Unknown corpus 'api'. Visible
@@ -76,7 +76,7 @@ Not to be difficult — these have each been decided, and the reasoning is in
 
 ## Secrets
 
-Never commit one. `.env` is gitignored and `.env.example` is the only tracked template —
+Never commit one. `.env` is gitignored, and `.env.example` is the only tracked template:
 it ships every key **empty**. `gitleaks` runs as a pre-commit hook and as a CI job over
 full history with rules for the `dex_` token format and provider API keys.
 
@@ -85,4 +85,4 @@ pushing: a secret that reached a remote is a secret to rotate, not to hide.
 
 ## Reporting a vulnerability
 
-Privately, through the process in [SECURITY.md](SECURITY.md) — not a public issue.
+Privately, through the process in [SECURITY.md](SECURITY.md), not a public issue.
