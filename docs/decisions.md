@@ -14,13 +14,13 @@ assumptions these decisions rest on. D-06, D-07 and D-12 carry the measured resu
 container. Qdrant and Ollama are separate, as external dependencies.
 
 **Why.** A sidecar indexer earns its keep when it runs inside a per-tenant workspace
-container with a genuinely different security boundary — untrusted execution on one side,
+container with a different security boundary: untrusted execution on one side,
 the platform on the other. Dexicon has no such boundary: it is one operator's tool on one
 machine. Splitting would add a control API, a shared token, an internal
 network, and a new class of failure, and buy nothing.
 
 **Rejected.** Sidecar indexer (boundary does not exist here); separate UI container (a
-static bundle is 200 KB — serving it from the same host costs nothing and removes a CORS
+static bundle is 200 KB, so serving it from the same host costs nothing and removes a CORS
 configuration and a reverse proxy); bundling Qdrant and Ollama into the image (breaks the
 upgrade path for both, and people already have Ollama running).
 
@@ -52,7 +52,7 @@ that code); .NET 11 (STS, no benefit, ships after work starts).
 sources, files, jobs, and tokens. Qdrant holds only chunks and vectors.
 
 **Why.** The control plane needs listing, filtering, joining, counting, and transactional
-updates — all of which Qdrant does badly and a relational store does for free. SQLite adds
+updates, all of which Qdrant handles poorly and a relational store handles natively. SQLite adds
 no container and no configuration. Keeping the two planes strictly separated means the
 vector store is fully reconstructible from the catalogue plus the sources.
 
@@ -69,17 +69,17 @@ story, no query story).
 in the payload but is a plain field.
 
 **Why.** A corpus belongs to exactly one tenant and is never split across tenants, so
-partitioning by corpus is strictly finer-grained than partitioning by tenant — and it is
-what queries actually filter on, because search is scoped to a corpus set
+partitioning by corpus is finer-grained than partitioning by tenant, and is what queries
+filter on, because search is scoped to a corpus set
 ([05](05-search.md)). Co-locating storage by the field the query filters on is the entire
 point of `is_tenant`.
 
 **Rejected.** `tenant_id` as the tenant key (coarser, and every query would carry a second
 filter on the field that actually selects); a collection per tenant or per corpus (Qdrant
-documents this as rarely efficient — per-collection overhead, a 1000-collection ceiling,
+documents this as rarely efficient, citing per-collection overhead, a 1000-collection ceiling,
 and it puts collection lifecycle on the hot path of corpus creation).
 
-**Consequence worth naming.** Authorization is resolved in SQLite ([07](07-tenancy-auth.md))
+**Consequence.** Authorization is resolved in SQLite ([07](07-tenancy-auth.md))
 and enforced as a `corpus_id` filter. The tenant is not part of the Qdrant filter, so a bug
 in scope resolution is a leak. That is why three independent guards defend it, one of which
 is the storage layout itself.
@@ -93,8 +93,8 @@ all corpora using that model.
 
 **Why.** A collection has one vector size. Encoding model and dimensions in the name makes
 a dimension mismatch structurally impossible rather than a runtime check that someone
-forgets. Changing a corpus's model becomes an explicit rebuild into a different collection,
-which is what it actually is.
+forgets. Changing a corpus's model becomes an explicit rebuild into a different collection, which
+is an accurate description of the operation.
 
 **Rejected.** A collection per corpus (loses cross-corpus search in one query, multiplies
 collection overhead); a single collection with mixed dimensions (not possible); named
@@ -115,7 +115,8 @@ reads rank, not magnitude: no tuning, nothing to mis-set, and one round trip ins
 
 **Rejected.** Client-side weighted fusion (a tuning knob with
 no way to tune it); DBSF as the default (normalises distributions, which is defensible, but
-it is still score-based and per-query sensitive — available as configuration, not default);
+it is still score-based and per-query sensitive, so it is available as configuration
+rather than as the default);
 dense-only (exact identifiers and error strings are exactly what embeddings are worst at).
 
 **Confirmed by M0** (2026-09-16). `Qdrant.Client` 1.19.0 expresses prefetch + fusion in a
@@ -127,8 +128,8 @@ rank-based rather than score-based. Worked example in [05](05-search.md).
 
 ### D-07 Client-side term frequencies with `modifier: idf`
 
-**Decision.** Sparse vectors are computed in-process — tokenize, split identifiers, drop
-stopwords, emit `{term_hash: frequency}` — and the sparse index is declared
+**Decision.** Sparse vectors are computed in-process (tokenize, split identifiers, drop
+stopwords, emit `{term_hash: frequency}`) and the sparse index is declared
 `modifier: idf`, so Qdrant applies the IDF component itself.
 
 **Why.** It works on any self-hosted Qdrant with any client, needs no model, needs no
@@ -137,7 +138,7 @@ splitting is what makes it useful on code: a query for "token refresh" has to re
 `TokenService.RefreshAsync`.
 
 **Confirmed by M0** (2026-09-16). `modifier: idf` ranks correctly from client-supplied term
-frequencies against a self-hosted Qdrant — a rare term isolated its single document at score
+frequencies against a self-hosted Qdrant: a rare term isolated its single document at score
 13.39. **Dexicon never has to maintain corpus statistics**, which was the expensive fallback
 this decision risked.
 
@@ -153,7 +154,7 @@ all (dense-only search on code is noticeably worse for exact terms).
 **Decision.** The full chunk text is stored in the Qdrant payload and returned by search.
 
 **Why.** A result that only says "this file, these lines" forces the caller to open the
-file — two round trips to save a kilobyte, and impossible for uploaded documents where
+file, which is two round trips to save a kilobyte and impossible for uploaded documents where
 there is no file to open. Roughly 1.2 KB per chunk at the default size; on a 400k-chunk
 index that is around 480 MB, against a dense-vector cost four times larger.
 
@@ -167,7 +168,7 @@ preview (the caller cannot tell whether truncation lost the answer).
 **Decision.** Reindexing walks the tree on demand or on an interval, comparing SHA-256
 content hashes. No filesystem watcher.
 
-**Why.** `FileSystemWatcher` over Docker bind mounts is unreliable — silently so, and worse
+**Why.** `FileSystemWatcher` over Docker bind mounts is unreliable, without reporting it, and worse
 on Windows hosts and WSL2, which is the primary environment. Content hashing is the correct
 answer regardless, because a watcher tells you a file changed, not whether its content did
 (every `git checkout` touches thousands of files whose content is identical). A refresh over
@@ -185,7 +186,7 @@ container boundary).
 `ingest` / `admin` scopes. Tenant resolved from the token, or from `X-Dexicon-Tenant` when
 the token is bound to several. No inference.
 
-**Why.** It works identically for the SPA, `curl`, and every MCP client — Claude Code's
+**Why.** It works identically for the SPA, `curl`, and every MCP client. Claude Code's
 `--header "Authorization: Bearer …"` is the documented path for a server with a static
 token. OIDC would mean an identity provider in the compose file for a tool with three
 users.
@@ -221,20 +222,20 @@ the UI, where a human is present).
 **Decision.** `POST /mcp`, streamable HTTP, stateless, protocol revision 2026-07-28, with
 negotiation down to 2025-06-18.
 
-**Why.** It is the current revision, all Tier 1 SDKs ship it, and its stateless core — no
-handshake, no `Mcp-Session-Id` — matches Dexicon exactly: every search is self-contained
+**Why.** It is the current revision, all Tier 1 SDKs ship it, and its stateless core, with
+no handshake and no `Mcp-Session-Id`, matches Dexicon's model: every search is self-contained
 and nothing needs server-to-client calls. The C# SDK already defaults to stateless. Legacy
 HTTP+SSE is deprecated in the spec and is not implemented.
 
 **Corrected by M0** (2026-09-16). The decision stands; one premise was wrong. SDK 2.2.0
-will not negotiate `2026-07-28` through `initialize` — it tops out at `2025-11-25` — because
+will not negotiate `2026-07-28` through `initialize`, stopping at `2025-11-25`, because
 **2026-07-28 removed the handshake**, so its clients never call `initialize`. Both
 populations are served: handshake clients negotiate to at most 2025-11-25, and 2026-07-28
 clients issue self-contained requests that work cold. Verified: stateless confirmed (no
 `Mcp-Session-Id` ever emitted), static bearer enforced ahead of the handler, and Claude Code
 2.1.248 reports `✔ Connected`. Detail in [06](06-mcp-surface.md).
 
-**Rejected.** stdio (one client per process, no tenancy, no sharing between agents — the
+**Rejected.** stdio (one client per process, no tenancy, no sharing between agents, and
 transport Dexicon exists to replace); HTTP+SSE (deprecated); pinning to 2025-06-18 (would
 work, but starts the project two revisions behind).
 
@@ -283,13 +284,13 @@ other codebases. It is an application, so it is not.
 
 **Deadline, corrected.** This was originally recorded as needed *before the first commit*,
 alongside the secret-hygiene rules. That conflated two different deadlines. A licence
-governs **distribution** — it binds at first publication, not at a local commit, and the
+governs **distribution**: it binds at first publication rather than at a local commit, and the
 first three commits were made without one with no consequence. Secret hygiene is the rule
 that genuinely cannot be retrofitted, because history is what gets scanned, and that one
 did land on commit one. The roadmap and open-questions table now say *before first public
 push*.
 
-**Compatible with every dependency** in [04](04-ingestion.md#extraction) — PdfPig is
+**Compatible with every dependency** in [04](04-ingestion.md#extraction): PdfPig is
 Apache-2.0; Markdig is BSD-2; AngleSharp, VersOne.Epub and DocumentFormat.OpenXml are MIT.
 
 ---
@@ -315,7 +316,7 @@ Docker socket access to mount on demand (an enormous privilege for a convenience
 tokenizer.
 
 **Why.** Exact tokenization means shipping and versioning a tokenizer per embedding model,
-and matching it to whatever Ollama actually loaded. The approximation costs a few percent
+and matching it to whichever model Ollama loaded. The approximation costs a few percent
 of the context window on a value that is already a heuristic. Chunk size is a target, not a
 contract, and the documentation says so rather than implying precision it does not have.
 
@@ -330,10 +331,10 @@ word counting (worse approximation, same class of error).
 `ghcr.io/merp4/dexicon`, config prefix `DEXICON__`, tenant header `X-Dexicon-Tenant`, token
 prefix `dex_`, collections `dexicon__{model}__{dims}`, MCP resources `dexicon://`.
 
-**Why.** A lexicon is a reference work you *consult* — you arrive with a question and leave
-with an answer. That is the category this tool belongs to, and category signal turned out to
-matter more than availability, because on the evidence below almost every candidate was
-available and almost none signalled correctly.
+**Why.** A lexicon is a reference work that is *consulted*: the reader arrives with a
+question and leaves with an answer, which is the category this tool belongs to. Category
+signal mattered more than availability, because on the evidence below almost every
+candidate was available and few signalled the category correctly.
 
 **How the candidates were judged.** Two kinds of name collision, with very different costs:
 
@@ -366,9 +367,9 @@ No security-tool drag, no overloaded abbreviation, no trademark holder.
 
 **Decision.** Extracted text is cached per blob and stamped with
 `ExtractorVersions.Current`. A bump re-extracts on next index, and the version is part of
-the chunking fingerprint so the fresh text is actually re-chunked.
+the chunking fingerprint so the fresh text is re-chunked.
 
-**Why.** Caching extraction is clearly right — a 437-page PDF costs ~1.8 s and its bytes
+**Why.** Caching extraction is worthwhile: a 437-page PDF costs ~1.8 s and its bytes
 never change. But an unversioned cache is *permanent*, and that turns every extractor bug
 into a permanent one
 ([04](04-ingestion.md#extraction-is-cached-and-the-cache-is-versioned)).
@@ -395,18 +396,19 @@ the index while reporting success).
 **Decision.** No chunk exceeds `chunk_size × 4` characters. A single line longer than the
 whole budget is split at word boundaries, each piece keeping that line's number.
 
-**Why.** The chunker's original rule — never split within a line — buys exact
-`start_line`/`end_line` on every chunk, which is what makes a result openable in an editor.
-That is worth keeping, and it was worth relaxing in exactly one case, because an
-over-budget chunk is not *rejected* by the embedding model. It is silently truncated. The
-text past the context window is reported as indexed and is nowhere, and nothing in the
-system can detect it.
+**Why.** The chunker's original rule, never splitting within a line, gives exact
+`start_line`/`end_line` on every chunk, which makes a result openable in an editor. That
+property is retained and relaxed in one case only, because an over-budget chunk is not
+*rejected* by the embedding model: it is truncated without error. The text beyond the
+context window is reported as indexed but is absent, and nothing in the system detects
+it.
 
 A guarantee that only holds for well-behaved input is not a guarantee. It is enforced by a
 property test across chunk sizes, including input with no spaces at all.
 
 **Rejected.** Rejecting over-long lines (loses content); truncating them (loses content and
-lies about it); trusting extractors not to produce them (they did — see [D-18](#d-18-versioned-extraction-cache)).
+lies about it); trusting extractors not to produce them, which they did (see
+[D-18](#d-18-versioned-extraction-cache)).
 
 ---
 
@@ -415,11 +417,10 @@ lies about it); trusting extractors not to produce them (they did — see [D-18]
 **Decision.** `IndexJob` carries a non-nullable `QueuedUtc`, and every "latest job" query
 orders by it.
 
-**Why.** Ordering on `StartedUtc` with nulls treated as newest looks right — queued work
-should be at the top — but a job that *failed before starting* also has a null
-`StartedUtc`. Two long-dead failures sat permanently above the job that was running, so
-anything reading the first entry to find "the current job" got a stale answer with complete
-confidence. The `/api/jobs` list and `index_status` both did; so did a watcher written
+**Why.** Ordering on `StartedUtc` with nulls treated as newest appears correct, since
+queued work belongs at the top, but a job that *failed before starting* also has a null
+`StartedUtc`. Two long-dead failures sat permanently above the running job, so anything
+reading the first entry to find "the current job" received a stale answer. The `/api/jobs` list and `index_status` both did; so did a watcher written
 against them, which reported an index as failed while it was running perfectly.
 
 A nullable column used as an ordering key is a bug waiting for the right null. A queued
@@ -434,7 +435,7 @@ corpus. A corpus owns content, sources and visibility; a set owns a vector space
 strategy, and a corpus may carry several. Sets are addressed as `corpus:set`.
 
 **Why.** The model was the one setting a corpus could never change, because a collection's
-name encodes the model and its dimensionality — so changing it means writing into a
+name encodes the model and its dimensionality, so changing it means writing into a
 different vector space. A re-embed of a three-book corpus measured at roughly twenty
 minutes on CPU Ollama, and doing that in place means twenty minutes of half-populated
 results. With sets, the replacement is built alongside the live one and promoted when it is
@@ -464,24 +465,24 @@ which a large monorepo makes the worse trade.
 to a model at registration.
 
 **Why.** Chunk sets choose their model at runtime, in the UI, and store it in the
-catalogue. Anything resolved from configuration at startup — keyed DI included — cannot see
-a set created after the process began, and would either fail to resolve or quietly serve a
+catalogue. Anything resolved from configuration at startup, including keyed DI, cannot see
+a set created after the process began, and would either fail to resolve or serve a
 different model than the one asked for. Ollama takes the model in the request body, so
 there is nothing to bind in the first place.
 
 This also closed a live bug: `EmbedAsync` read the globally configured model and ignored
 its caller, so a set pinned to `mxbai-embed-large` would have filled an `mxbai` collection
-with `nomic` vectors. Nothing errors. The results are simply wrong.
+with `nomic` vectors. No error is raised; the results are wrong.
 
 **Rejected.** Keyed singletons per configured model (the pattern a sibling project uses,
-and a good one where models come from configuration — here the configuration is a database
+and a good one where models come from configuration. Here the configuration is a database
 row that changes while the process runs); a factory with a per-model cache (the same
 lifetime problem with more machinery, for a value that is one field on a request).
 
 **Since revised.** The seam is now `Microsoft.Extensions.AI`'s `IEmbeddingGenerator`, which
 makes OpenAI and Azure OpenAI a registration rather than a rewrite. The decision above
 survives the change intact, because `EmbeddingGenerationOptions.ModelId` carries the model
-per call: generators are cached per PROVIDER — a connection and a credential — and the
+per call: generators are cached per provider, which is a connection and a credential, and the
 model stays an argument. Adopting the abstraction the obvious way, one generator per
 configured model, would have reinstated exactly the bug this decision exists to prevent.
 
@@ -494,9 +495,9 @@ regardless of how little is in it, and no overlap is carried across it.
 
 **Why.** Everywhere else the rule is "size decides when, a boundary decides where"
 ([D-19](#d-19-the-chunker-guarantees-its-budget) and the section above it), which is right
-for prose and useless here. A chapter shorter than the budget would simply be swallowed
-into the next one, so asking for chapter-aligned chunks would produce chunks spanning three
-chapters — the exact straddling the setting exists to prevent. Carrying overlap across the
+for prose and unsuitable here. A chapter shorter than the budget would be absorbed into
+the next, so requesting chapter-aligned chunks would produce chunks spanning three
+chapters: the straddling the setting exists to prevent. Carrying overlap across the
 boundary would reintroduce it by the back door.
 
 The cost is that a document of very short pages yields short chunks. That is what
@@ -536,8 +537,7 @@ on the same twelve queries and the same 114 chunks per set:
 | `embeddinggemma`, raw | 6/12 | 9/12 | 10/12 | 0.632 |
 | `embeddinggemma`, framed | 8/12 | 11/12 | 12/12 | **0.799** |
 
-**`embeddinggemma` improved substantially — 0.632 to 0.799 — which is what the confound
-predicted.** It was being handicapped by an input format it was never trained on.
+**`embeddinggemma` improved substantially, 0.632 to 0.799, as the confound predicted.** It was being handicapped by an input format it was never trained on.
 
 `nomic-embed-text` moved the other way, from 0.829 to 0.739. That difference is two
 queries out of twelve, which is inside the noise of a sample this small, and it would be
@@ -547,8 +547,8 @@ wrong to read it as framing harming it.
 correcting the confound made the two models roughly equivalent, with gemma marginally
 ahead. That the ranking flipped when one variable was fixed is the strongest evidence yet
 that twelve queries cannot settle this. A real answer needs a query set built from
-questions people actually asked, large enough that one lucky retrieval does not move the
-result.
+questions drawn from real use, large enough that a single fortunate retrieval does not
+move the result.
 
 What the exercise did settle: task framing is not cosmetic, and Dexicon was getting it
 wrong for every model.
@@ -556,7 +556,7 @@ wrong for every model.
 ### Q3, third measurement — a different chunking, same conclusion
 
 The second run left one obvious question: was gemma's lead an artefact of that particular
-chunk size? So the same twelve queries were run against a second corpus configuration —
+chunk size? The same twelve queries were run against a second corpus configuration:
 256/40 with unit-aware, sentence-aware and heading context all enabled, 473 chunks per
 set, and the model as the only difference between the two sets.
 
@@ -565,9 +565,9 @@ set, and the model as the only difference between the two sets.
 | `nomic-embed-text`, framed, 256/40 | 8/12 | 10/12 | 11/12 | 0.743 |
 | `embeddinggemma`, framed, 256/40 | 10/12 | 10/12 | 12/12 | **0.871** |
 
-**Gemma is ahead again, by a wider margin — and nomic's score barely moved between the two
+**Gemma leads again by a wider margin, and nomic's score changed little between the two
 chunkings (0.739 at 768/100, 0.743 at 256/40).** That consistency is what makes the
-comparison worth something: the variable that changed the ranking was the framing, not the
+comparison meaningful: the variable that changed the ranking was the framing, not the
 chunking.
 
 `nomic-embed-text` missed one query outright that gemma found at rank 5 ("what is the
@@ -575,7 +575,7 @@ Qdrant tenant key and why was it chosen"), and trailed on two others it answered
 3 and 4.
 
 **This still does not settle Q3.** It is an
-independent *corpus configuration*, not an independent *query set* — the same twelve
+independent *corpus configuration*, not an independent *query set*: the same twelve
 hand-written queries were reused. So it tests whether the finding survives a chunking
 change, which it does, and says nothing about whether it survives a different distribution
 of questions, which remains the open gap. Two runs agreeing on twelve queries is two
@@ -590,18 +590,18 @@ Nothing is indexed.
 
 **Why.** Dexicon had no idea what any model would accept, and the cost of guessing was a
 book. An EPUB produced chunks averaging 32,000 characters, the model truncated every one
-of them, ~95% of the content was in no index anywhere, and every layer reported success —
-because a truncating model returns a perfectly good vector for the part it read. No
+of them, ~95% of the content was present in no index, and every layer reported success,
+because a truncating model returns a valid vector for the part it read. No
 assertion could have caught it, because nothing was wrong with any individual result.
 
-Truncation is silent but not invisible. Changing only the END of an input and watching
-whether the vector moves answers "did the model read this far", and bisection turns that
-into a limit. Roughly two dozen short calls, no documentation to trust, no vendor claim to
-take on faith — and it works identically for a provider whose limits are not published.
+Truncation raises no error but is detectable. Changing only the end of an input and
+observing whether the vector moves answers whether the model read that far, and bisection
+turns that into a limit. This takes roughly two dozen short calls, relies on no
+documentation or vendor claim, and works identically for a provider whose limits are not
+published.
 
 Measured here: `nomic-embed-text` and `embeddinggemma` both accept ~11,776 characters of
-prose and truncate silently. Neither errors, which is the worse of the two behaviours and
-worth knowing.
+prose and truncate beyond it without raising an error.
 
 **Rejected.** A table of known models (goes stale, and says nothing about a model someone
 pulled yesterday); trusting documented context windows (they are in tokens, the chunker
@@ -618,15 +618,15 @@ recognised name, then raw. Templates carry a `{text}` placeholder rather than be
 prefixes.
 
 **Why.** Most embedding models are trained with a task instruction wrapped around the
-input and retrieve measurably worse without it — one project measured EmbeddingGemma at
+input and retrieve measurably worse without it. One project measured EmbeddingGemma at
 recall@1 16/25 without its prefixes and 23/25 with them. Dexicon sent raw text to every
 model, which cost recall on every search and also made the Q3 comparison meaningless: two
 models penalised by different amounts are not being compared with each other.
 
 Data rather than code because models are added at *runtime* through the Models screen. A
 build that hard-coded `if (model.StartsWith("nomic"))` would give every model pulled after
-it shipped silently wrong framing — and wrong framing does not fail, it just retrieves
-badly. Built-ins keep it correct out of the box without becoming the mechanism.
+it shipped incorrect framing, and incorrect framing does not fail; it retrieves poorly.
+Built-ins keep the common cases correct without becoming the mechanism.
 
 A template, not a prefix, because EmbeddingGemma's document form wraps the text
 (`title: none | text: …`) rather than preceding it. One field expresses both, and whatever
@@ -638,14 +638,14 @@ name: a wrong prefix is worse than none, because the model embeds the literal st
 
 **Rejected.** A per-model switch in code (breaks the moment someone pulls a model, which is
 a supported action); prefixes rather than templates (cannot express Gemma's form);
-inferring from the model name (a guess that fails silently); applying it at the call sites
-(two places, and forgetting one is undetectable — so it is an argument to `EmbedAsync`
-instead, which cannot be omitted).
+inferring from the model name (a guess whose failure is not observable); applying it at
+the call sites (two places, where omitting one is undetectable, so it is an argument to
+`EmbedAsync` instead, which cannot be omitted).
 
 **Consequence.** The framing is part of the chunking fingerprint, so editing a profile
-re-indexes every chunk set on that model. Correct — documents embedded one way and queries
-framed another is exactly the silent mismatch this exists to prevent — but it means the
-editor says how many sets it is about to re-index.
+re-indexes every chunk set on that model. This is correct, since documents embedded one
+way and queries framed another is the mismatch this exists to prevent, but it means the
+editor reports how many sets it is about to re-index.
 
 ---
 
@@ -657,8 +657,8 @@ editor says how many sets it is about to re-index.
 **Why.** A number in a file has to be bumped by somebody, and between cutting a release
 and remembering to bump it, the number is wrong. That happened here within an hour: a
 build from source reported 0.1.0 while 0.1.1 was the newest release. It is not
-decoration — it is what the OpenAPI document carries and what the MCP server tells every
-client it is, so a stale one is a small lie told to every consumer.
+decorative: it is what the OpenAPI document carries and what the MCP server reports to
+every client, so a stale value misinforms every consumer.
 
 Deriving it also dissolves the question of which commit to tag. There is no bump commit,
 so the tag goes on the commit being released, and the tag is the only thing that has to
@@ -681,9 +681,9 @@ be right.
   is-it-current check into noise everyone learns to ignore. A patch does not change the
   contract.
 
-One trap worth stating, because it is silent: MinVer deliberately pins `AssemblyVersion`
-to `major.0.0.0` so a patch release cannot break assembly binding. Reading that as the
-product version reports `0.0.0` for any 0.x project, which is exactly what happened. The
+One behaviour to be aware of, since it produces no error: MinVer pins `AssemblyVersion`
+to `major.0.0.0` so that a patch release cannot break assembly binding. Reading that as the
+product version reports `0.0.0` for any 0.x project, which occurred here. The
 informational version is the one to read.
 
 ### Q3, fourth measurement — the full sweep (2026-09-17)
@@ -696,22 +696,21 @@ and reused twelve queries; this varies everything and reuses none of them.
 **What changed as a result:**
 
 - **Hybrid is earned as the default search mode.** Best mean for every model, and the
-  highest floor — semantic takes the single best configuration and also the worst.
+  highest floor; semantic takes both the single best configuration and the worst.
 - **`language-aware` is NOT earned for documents.** It is last of three boundary modes on
   a corpus that is entirely markdown, whose real boundaries are blank lines. It stays the
   default, because it was written for code and the sweep has not been run over a code
-  corpus, and a default changed on the wrong evidence is worse than one left alone.
-  *(Since revised — the code sweep was run; see the fifth measurement below.)*
+  corpus, and changing a default on insufficient evidence is worse than leaving it.
+  *(Since revised: the code sweep was run; see the fifth measurement below.)*
 - **`nomic-embed-text` stays.** `embeddinggemma` leads by 0.025 mean MRR, consistent with
   the three earlier runs, and still inside the noise of 55 queries. Changing it forces a
   reindex of every corpus; that needs better evidence than "probably".
 
 **And the sweep found something the question was not asking.** `mxbai-embed-large` accepts
 2,816 characters. The default chunk size of 768 tokens produces 3,072. Two thirds of that
-model's rows measure silent truncation rather than retrieval — and its steady decline
-across chunk sizes is what truncation looks like from the outside. A default that quietly
-breaks a model the UI offers in a dropdown is a worse problem than which model is 2% better,
-and it is the one worth acting on. See [D-27](#d-27-a-chunk-budget-is-characters-and-the-ratio-is-measured).
+model's rows measure truncation rather than retrieval, and its steady decline across chunk
+sizes is consistent with that. A default that breaks a model the UI offers in a dropdown is
+a more significant problem than which model is 2% better, and was the one acted on. See [D-27](#d-27-a-chunk-budget-is-characters-and-the-ratio-is-measured).
 
 ### Q3, fifth measurement — the code corpus (2026-09-17)
 
@@ -723,23 +722,23 @@ pairs over `src/`, the same 81 configurations, in `scripts/bench/queries-code.js
 
 - **`nomic-embed-text` does not stay.** On documents `embeddinggemma` led by 0.025 mean
   MRR, which the fourth measurement correctly called inside the noise. On code it leads by
-  **0.075** — the widest gap any single variable opens in either sweep. Two independent
+  **0.075**, the widest margin any single variable produces in either sweep. Two independent
   corpora agreeing is the better evidence that decision asked for, so the default moved.
   The cost is twice the first download, and that is the whole of the case against it.
 - **`language-aware` is not earned for code either**, which was the open question. It is
   last of three boundary modes on both corpora. It still stays, for a different and weaker
   reason than before: the spread across all three modes on code is **0.009**, so changing
-  it costs a reindex to buy a rounding error. The boundary mode is the least load-bearing
-  setting in the sweep, which is itself worth knowing.
+  it costs a reindex for a rounding error. The boundary mode is the least load-bearing
+  setting in the sweep.
 
 **What did not change.** Hybrid wins both corpora on mean, for every model. Keyword is
-markedly weaker on code than on prose — 0.579 against 0.677 — which is what you would
-expect when the identifier a developer half-remembers is rarely the identifier in the file.
+markedly weaker on code than on prose, 0.579 against 0.677, which is expected when the
+identifier a developer half-remembers is rarely the identifier in the file.
 
 **And a footnote to the truncation finding.** `mxbai-embed-large` takes the single best
-code configuration (0.829) at 768 tokens — the one swept size its 2,816-character limit
-does not ruin. That is not a case for the model so much as confirmation of the earlier
-reading: its other rows measured truncation, not quality. The chunk size is now set from
+code configuration (0.829) at 768 tokens, the one swept size its 2,816-character limit
+does not compromise. This is not an argument for the model but confirmation of the earlier
+reading: its other rows measured truncation rather than quality. The chunk size is now set from
 what a model was measured to accept, so that default is no longer reachable.
 
 ### D-27 A chunk budget is characters, and the ratio is measured
@@ -750,15 +749,15 @@ changes is that the conversion ratio is now measured per model rather than assum
 
 **Why not a real tokenizer.** Exactness would mean a vocabulary per model, versioned, for
 models pulled at runtime that may not exist yet. The only tokenizer guaranteed correct for
-an arbitrary model is the one inside it, and asking it costs a round trip — per chunk, tens
+an arbitrary model is the one inside it, and asking it costs a round trip per chunk, tens
 of thousands of times per index. Counting characters is free.
 
 **Why measuring is not the same as assuming.** Ollama returns `prompt_eval_count` on an
 embed call, so the model's own tokenizer can be asked once and the answer kept. Measured
 here: `nomic-embed-text` 2.82 characters per token, `embeddinggemma` 3.80,
-`mxbai-embed-large` 2.82. Two of the three are nowhere near 4, so a "768 token" chunk was
-really about 1,090 tokens — and the number the UI showed was wrong by 40% in the direction
-that truncates.
+`mxbai-embed-large` 2.82. Two of the three are well below 4, so a "768 token" chunk was
+nearer 1,090 tokens, and the figure shown in the UI was wrong by 40% in the direction that
+causes truncation.
 
 **Consequence.** The probe reports the ratio and the Models screen shows it. The chunker
 still divides by 4: using the measured ratio there changes every chunk boundary and
