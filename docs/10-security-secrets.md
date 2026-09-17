@@ -117,6 +117,51 @@ What keeps it honest:
 image, it reads a file that only exists on a developer's machine, and production signs in
 through the form on purpose.
 
+## What an error is allowed to say
+
+An MCP tool result is read by a model and often shown to a person, and a model may repeat
+it. That makes it an API boundary like any other: a stack trace, an internal hostname or a
+connection string crossing it is a disclosure, and one that can end up pasted into a
+conversation elsewhere.
+
+Audited 2026-09-17 by provoking each failure against the running stack rather than reading
+the code and hoping.
+
+| Probe | What comes back |
+|---|---|
+| Unknown corpus | `Unknown corpus 'x'. Visible corpora: books, docs.` — only what THIS tenant can see |
+| Unknown file, `get_context` | The path and the corpus, nothing else |
+| Line outside the file | `…has no content around line -9999; it spans lines 1-197.` |
+| Unknown source filter | `No source at '../../etc' in the corpora searched.` |
+| **Vector store down** (`search_index`) | `An error occurred invoking 'search_index'.` — no message, no type, no host |
+| **Vector store down** (REST) | RFC 9457 problem: `An error occurred while processing your request.` + a traceId |
+| No `Authorization` header | 401 `Missing credentials` |
+| Malformed token | 401 `Invalid credentials` |
+| Well-formed unknown token | 401 `Invalid credentials` — **identical**, so nothing says whether a token exists, is revoked or has expired |
+| `POST /mcp` unauthenticated | 401 before any tool listing; the tool surface is not enumerable |
+
+Two properties this rests on, both worth re-checking rather than assuming:
+
+- **Unhandled exceptions are redacted by the MCP SDK.** Only `McpException` has its message
+  surfaced; anything else becomes `An error occurred invoking '<tool>'.` Every message a
+  caller can read is therefore one this repository wrote deliberately. That is the SDK's
+  behaviour, not a setting here — **re-run the probes after upgrading
+  `ModelContextProtocol`**, because the day it starts forwarding `ex.Message` is the day a
+  Qdrant connection failure starts naming `dexicon-qdrant:6334` to a model.
+- **The environment is Production.** `ASPNETCORE_ENVIRONMENT` is unset in the image and in
+  compose, so the developer exception page is never added. Setting it to `Development` to
+  debug something also turns stack traces on for every REST caller.
+
+The detailed health endpoint — internal endpoints, model, dimensions, corpus count, the
+running job — is behind auth. The anonymous ones answer `{"status":"ok"}` and
+`{"status":"ready","qdrant":true,"catalogue":true}`: enough for a container healthcheck and
+a load balancer, and nothing about what is inside.
+
+Errors that name a real internal address, such as `Could not list models from provider
+'ollama': …`, are reachable only from authenticated admin endpoints that the same caller
+can read `/healthz` from anyway. That is a deliberate line, not an oversight: an operator
+debugging a provider needs the endpoint in the message.
+
 ## Container and network posture
 
 Covered operationally in [09](09-deployment.md); the security-relevant points:
