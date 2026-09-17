@@ -33,7 +33,8 @@ public sealed class DexiconTools
         [Description("Corpus names to search. Omit to search everything visible to you. Use list_corpora to discover them.")] string[]? corpus = null,
         [Description("hybrid blends meaning with exact terms; semantic is meaning only; keyword is exact-match only and keeps working when embeddings are unavailable.")] string mode = "hybrid",
         [Description("Maximum results, 1-50.")] int limit = 10,
-        [Description("Restrict to files under this path, e.g. src/Auth/.")] string? pathPrefix = null,
+        [Description("Restrict to files under this path, e.g. src/Auth/. Relative to the SOURCE root, not the corpus — use `source` to narrow by folder instead.")] string? pathPrefix = null,
+        [Description("Restrict to one source of the corpus, by its root path as list_corpora reports it, e.g. orly/AI. A parent matches everything beneath it.")] string? source = null,
         [Description("Restrict to one language, e.g. csharp, python, typescript.")] string? language = null,
         [Description("Restrict to chunks declaring this symbol, e.g. TokenService.")] string? symbol = null,
         CancellationToken ct = default)
@@ -50,6 +51,7 @@ public sealed class DexiconTools
                 Mode = Mapping.ParseMode(mode),
                 Limit = Math.Clamp(limit, 1, 50),
                 PathPrefix = pathPrefix,
+                Source = source,
                 Language = language,
                 Symbol = symbol,
             }, ct);

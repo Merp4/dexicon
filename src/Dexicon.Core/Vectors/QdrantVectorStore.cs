@@ -442,6 +442,13 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
             f.Must.Add(new Condition { Field = new FieldCondition { Key = "chunk_set_id", Match = sets } });
         }
 
+        if (q.SourceIds is { Count: > 0 })
+        {
+            var sources = new Match { Keywords = new RepeatedStrings() };
+            sources.Keywords.Strings.AddRange(q.SourceIds);
+            f.Must.Add(new Condition { Field = new FieldCondition { Key = "source_id", Match = sources } });
+        }
+
         if (!string.IsNullOrWhiteSpace(q.Language)) f.Must.Add(Keyword("language", q.Language));
         if (!string.IsNullOrWhiteSpace(q.Symbol)) f.Must.Add(Keyword("symbols", q.Symbol));
         if (!string.IsNullOrWhiteSpace(q.PathPrefix))

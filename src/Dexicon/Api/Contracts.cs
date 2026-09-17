@@ -278,6 +278,7 @@ public sealed record SearchApiRequest(
     string? Mode = null,
     int? Limit = null,
     string? PathPrefix = null,
+    string? Source = null,
     string? Language = null,
     string? Symbol = null);
 

@@ -31,6 +31,7 @@ public static class SystemEndpoints
                 Mode = Mapping.ParseMode(body.Mode),
                 Limit = Math.Clamp(body.Limit ?? 10, 1, 50),
                 PathPrefix = body.PathPrefix,
+                Source = body.Source,
                 Language = body.Language,
                 Symbol = body.Symbol,
             }, ct);
