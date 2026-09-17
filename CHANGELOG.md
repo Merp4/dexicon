@@ -16,12 +16,15 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
-## Unreleased
+## 0.2.3 — 2026-09-18
 
 ### ⚠️ Upgrading
 
 - **Every PDF re-extracts and re-chunks itself** on the next ordinary refresh, because the
   extractor version is part of the content fingerprint. Nothing to run by hand.
+- `/healthz` gains a `missingModels` array. Additive, and a client that ignores it is
+  unaffected; the UI reads it defensively, because an older container returns a response
+  without the field.
 
 ### Fixed
 
@@ -89,7 +92,78 @@ with no section here fails its release rather than publishing an undescribed one
   fails anywhere but an English locale. It now formats the expected value the same way the
   component does. ([#11](https://github.com/Merp4/dexicon/pull/11))
 
+- **Every button in the app drew the wrong cursor.** Tailwind v3's preflight set
+  `cursor: pointer` on buttons; v4 dropped the rule without replacing it, and the component
+  library does not put one back. Three call sites had hand-added it, which is how a fix ends
+  up covering only the controls someone happened to look at.
+
+- **Every badge failed text contrast, in both themes.** A token tuned for a 12% fill and a
+  40% border is the wrong value for the words sitting on that fill: `--warn` as text
+  measured 2.95:1 on the light surface against the 4.5:1 needed at 12px, `--ok` 3.31:1, and
+  dark ran 3.63:1 to 4.24:1. The palette is now two values per meaning, one for fills and
+  borders and one that can carry text. Fills and borders are byte-identical; only what is
+  read moved.
+
+- **`color-scheme` followed the operating system rather than the chosen theme**, so an OS on
+  light with the app on dark gave pale scrollbars down every code block. The tokens colour
+  only what this stylesheet draws; scrollbars, the caret, the reveal button in the token
+  field and autofill are the browser's, and it picks those from `color-scheme`.
+
+- **`prefers-reduced-motion` was read nowhere** while the app animated. It now collapses
+  durations rather than setting `animation: none`, because a `data-[state=closed]` exit
+  animation that never runs leaves the element on screen, and a dismissed dialog would
+  simply stay.
+
+- **The one line saying results could not be trusted read as decoration.** "Corpus 'books'
+  is still indexing; results are incomplete." was drawn in the accent blue, the same blue
+  that badges the default chunk set and the corpus a hit came from. It is a warning, and it
+  is now announced as one.
+
+- **A book title pushed the page past the viewport.** A result header's min-content is a
+  whole title plus an unshrinkable section label, and a grid item will not let its track be
+  narrower than its own min-content, so the citation truncated only after widening the track
+  past the screen: a horizontal scrollbar under the whole page, with the search box and
+  results count pushed off the right edge. At phone width the result actions sat 80px beyond
+  it, and on Models the Delete button sat outside the card's `overflow-hidden`, where
+  nothing could reach it.
+
+- **The health panel's reachability badge carried the model name**, so the panel never
+  plainly answered the question it exists for, and colour-coded a model by whether the
+  backend was up. It now reports reachability the way Qdrant does and names the provider
+  instead of assuming Ollama.
+
+- **The workspace picker named a folder that does not exist.** It joined a parent path on
+  `''` rather than `/`, so the button above `books/orly/Architecture` was labelled
+  `booksorly`. Navigation was correct; only the label was wrong.
+
+- **A deduplicated upload reported itself to `console.info`.** That is the case that looks
+  most like nothing happened, and it was written where nobody is looking.
+
+- **Progress bars announced nothing**, being a pair of divs, so an index running was
+  invisible to a screen reader.
+
+- **The file list stopped at 300 rows in silence**, so a corpus of 4,000 files looked like a
+  corpus of 300.
+
 ### Added
+
+- **`/healthz` reports a model a chunk set can no longer reach.** The failure is silent
+  until someone searches: the set's vectors are still in Qdrant and its row still says
+  `ready`, but the query cannot be embedded, so the set answers nothing and a re-index of
+  it cannot start. Deleting a model is already refused while a set uses it, so what this
+  catches is a model pulled out from under the catalogue, or a volume restored without it.
+  Only providers whose models can be listed are checked: a hosted provider cannot be asked
+  what it has, and a guess there would be a false alarm on a working deployment. Reported
+  per `corpus:set`, because the fix is per set, and surfaced in the health panel.
+
+- **`Notice`, one warning component.** Nine of these were hand-written: `text-[var(--warn)]`
+  on a paragraph in one place, a card with a warn border in another, a `⚠` typed into the
+  sentence in four more. No two matched and one was the wrong colour outright. Tones are
+  Badge's five, the icon follows from the tone rather than from a character in the string,
+  and `role="status"` by default, so a message that appears in response to something the
+  reader just did also reaches anyone driving by keyboard and screen reader. Polite rather
+  than `alert`, which interrupts; `ErrorBanner` keeps `alert`, because a failed request
+  should.
 
 - **CodeQL for C# and TypeScript**, on pull requests, on `main` and weekly. `docs/10`
   listed this among the supply-chain controls while no such workflow existed, and code
@@ -105,6 +179,18 @@ with no section here fails its release rather than publishing an undescribed one
   none. Questions now route to Discussions rather than the issue tracker.
 
 ### Changed
+
+- **`/healthz` names the endpoint of the provider actually in use.** It reported
+  `Ollama.Endpoint` unconditionally, so a deployment defaulting to OpenAI showed
+  `http://dexicon-ollama:11434`, an address it never calls, beside a reachability badge for
+  a backend on the other side of the internet. A default naming a provider that is not
+  configured now says so rather than having an address invented for it.
+
+- **Deleting a corpus or a chunk set asks in the app's own dialog.** Both used
+  `window.confirm`, which the page has no say over: it ignores the theme, places the
+  destructive action wherever the browser likes, and after the second one a browser offers
+  to suppress further dialogs for the session, at which point deleting a chunk set stops
+  asking at all.
 
 - **A neutral professional register across the docs and the code comments**, 102 files.
   The pass removes the authorial voice: em-dashes where a colon, comma, full stop or
