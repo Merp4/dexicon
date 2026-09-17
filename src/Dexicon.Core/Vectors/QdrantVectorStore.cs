@@ -104,7 +104,18 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
         // The provider is in the name because two providers can serve a model of the same
         // name — and those are different vectors. Leaving it out would have let an OpenAI
         // set and a local set share a collection and silently pollute each other's space.
-        $"dexicon__{Slug(target.Provider)}__{Slug(target.Model)}__{dimensions}";
+        //
+        // CanonicalModel, not Model: Ollama lists `embeddinggemma:latest` and a config file
+        // says `embeddinggemma`. Slugged raw those became `embeddinggemma-latest__768` and
+        // `embeddinggemma__768` — two collections for one model, holding vectors from the
+        // same vector space, neither aware of the other. A corpus created from the UI's
+        // model picker (which offers the provider's tagged names) would not share a
+        // collection with one created from the configured default. This Qdrant has both,
+        // left over from before it was noticed.
+        //
+        // A chunk set stores its collection name, so existing sets keep the name they were
+        // built with and nothing moves underneath them; only new sets are affected.
+        $"dexicon__{Slug(target.Provider)}__{Slug(target.CanonicalModel)}__{dimensions}";
 
     private static string Slug(string value)
     {

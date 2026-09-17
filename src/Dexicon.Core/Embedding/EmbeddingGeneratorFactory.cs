@@ -14,6 +14,17 @@ namespace Dexicon.Core.Embedding;
 public readonly record struct EmbeddingTarget(string Provider, string Model)
 {
     public override string ToString() => $"{Provider}/{Model}";
+
+    /// <summary>
+    /// The model without a redundant <c>:latest</c>.
+    ///
+    /// Ollama lists `embeddinggemma:latest`; a configuration file says `embeddinggemma`.
+    /// They are the same model and the same vectors, and anything that treats them as two
+    /// names splits one model in half. Only `:latest` goes — `:v1.5` and `:0.6b` are
+    /// genuinely different models with genuinely different vectors.
+    /// </summary>
+    public string CanonicalModel =>
+        Model.EndsWith(":latest", StringComparison.OrdinalIgnoreCase) ? Model[..^7] : Model;
 }
 
 /// <summary>Raised when a chunk set names a provider this deployment has not configured.</summary>
