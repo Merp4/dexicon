@@ -4,7 +4,10 @@ using AngleSharp.Dom;
 using AngleSharp.Html.Parser;
 using DocumentFormat.OpenXml.Packaging;
 using UglyToad.PdfPig;
-using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
+using UglyToad.PdfPig.Content;
+using UglyToad.PdfPig.DocumentLayoutAnalysis.PageSegmenter;
+using UglyToad.PdfPig.DocumentLayoutAnalysis.ReadingOrderDetector;
+using UglyToad.PdfPig.DocumentLayoutAnalysis.WordExtractor;
 
 namespace Dexicon.Core.Extraction;
 
@@ -55,8 +58,10 @@ public static class ExtractorVersions
     ///    collapsing a whole chapter onto a single unsplittable line.
     /// 3: An EPUB whose manifest will not parse is salvaged from the archive instead of
     ///    failing. Books that cached as a failure now have text.
+    /// 4: PDFs are read by layout rather than by content-stream order, so a paragraph is
+    ///    one line as it already is for EPUB and HTML, and columns no longer interleave.
     /// </summary>
-    public const int Current = 3;
+    public const int Current = 4;
 }
 
 
@@ -84,6 +89,21 @@ public static class ExtractorRegistry
 /// <summary>
 /// PdfPig (Apache-2.0). Text layer only: there is no OCR, and a scanned PDF is
 /// reported as empty with a reason rather than producing nothing without explanation.
+///
+/// Text is read by layout, not by the order operators appear in the content stream.
+/// Content order follows the file, which on a two-column page or a table means reading
+/// across the columns rather than down them, and in ordinary prose means breaking at
+/// every visual line ending. Measured over a 424-page book against the EPUB of the same
+/// title, the EPUB being the control because its extractor emits one block per line:
+///
+///   content order   674,149 chars   14,954 lines   mean 43
+///   layout          659,789 chars    5,559 lines   mean 118
+///   EPUB            631,576 chars    5,727 lines   mean 109
+///
+/// The character counts barely move, so this is not about losing or gaining text. The
+/// chunker splits on lines and treats a blank line as a PDF's boundary, and content order
+/// handed it a paragraph spread over ten short lines. Layout costs about 1.2x the time:
+/// 2,444 ms against 2,122 ms for that book, 5.8 ms a page.
 /// </summary>
 public sealed class PdfTextExtractor : ITextExtractor
 {
@@ -134,8 +154,8 @@ public sealed class PdfTextExtractor : ITextExtractor
             foreach (var page in document.GetPages())
             {
                 units.Add(new ExtractedUnit(page.Number, sb.Length, $"Page {page.Number}"));
-                var text = ContentOrderTextExtractor.GetText(page);
-                if (!string.IsNullOrWhiteSpace(text)) sb.Append(text).Append('\n');
+                foreach (var block in ReadInLayoutOrder(page))
+                    sb.Append(block).Append('\n');
             }
 
             var title = document.Information?.Title;
@@ -145,6 +165,31 @@ public sealed class PdfTextExtractor : ITextExtractor
         finally
         {
             buffered?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// One line per text block, in reading order.
+    ///
+    /// Docstrum groups words into blocks by the spacing between them, which is what
+    /// separates a table cell or a column from its neighbour; the reading-order detector
+    /// then puts those blocks in the order a person would read them. A block's own line
+    /// breaks are collapsed, because they are where the text met the right margin rather
+    /// than where a thought ended.
+    /// </summary>
+    private static IEnumerable<string> ReadInLayoutOrder(Page page)
+    {
+        // A page with no text layer has no letters, and the segmenter is not defined on
+        // an empty set. Yielding nothing is what surfaces as `status: empty`.
+        if (page.Letters.Count == 0) yield break;
+
+        var words = NearestNeighbourWordExtractor.Instance.GetWords(page.Letters);
+        var blocks = DocstrumBoundingBoxes.Instance.GetBlocks(words);
+
+        foreach (var block in UnsupervisedReadingOrderDetector.Instance.Get(blocks))
+        {
+            var line = block.Text.ReplaceLineEndings(" ").Trim();
+            if (line.Length > 0) yield return line;
         }
     }
 }
