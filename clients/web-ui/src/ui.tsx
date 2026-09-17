@@ -19,8 +19,8 @@ import {
  *
  * `src/components/ui/*` is shadcn's own code, left exactly as its CLI writes it so that
  * `shadcn add` and `shadcn diff` keep working. This file is the layer between that and
- * Dexicon: it keeps the names the app already uses — `Modal`, `Field`, a `Badge` with a
- * tone, a `Button` whose confirming variant is called `primary` — so adopting a component
+ * Dexicon: it keeps the names the app already uses (`Modal`, `Field`, a `Badge` with a
+ * tone, a `Button` whose confirming variant is called `primary`) so adopting a component
  * library did not mean rewriting every call site into someone else's nouns.
  *
  * It also keeps the property these primitives were written for: a component you cannot
@@ -67,8 +67,8 @@ export function Button({
  * button, so it is set only when the caller has claimed neither of the others.
  *
  * Note the `dark:` repeats below. shadcn's outline variant carries `dark:bg-input/30` and
- * `dark:border-input`, and a dark-variant utility is emitted after the plain ones — so a
- * plain `bg-*` here loses to it in dark mode and the override silently does nothing.
+ * `dark:border-input`, and a dark-variant utility is emitted after the plain ones, so a
+ * plain `bg-*` here loses to it in dark mode and the override has no effect.
  * Anything overriding this component's background or border needs its dark twin.
  */
 export function Chip({
@@ -103,14 +103,14 @@ export function Chip({
  * One-of-N, as a single control rather than a row of loose buttons.
  *
  * Three separately-bordered pills with a hairline between them read as three unrelated
- * buttons that happen to be adjacent — the eye has to work out that they are alternatives,
+ * buttons that happen to be adjacent: the reader has to work out that they are alternatives,
  * and at small sizes the gap looks like a rendering fault. A segmented control says
  * "pick one of these" in its shape: one border around the set, one raised item inside it.
  *
  * It is also the accessible answer. A radio group is ONE tab stop with arrow keys moving
  * between the options; a row of buttons is N tab stops and no arrow keys. That is the
  * roving tabindex below, and it is the reason this is a component rather than a class
- * name — the behaviour has to travel with the appearance or it gets left out.
+ * name: the behaviour has to travel with the appearance or it gets left out.
  */
 export function Segmented<T extends string>({
   value,
@@ -194,7 +194,7 @@ export function Segmented<T extends string>({
  *
  * A button, not a div with an onClick: it is reachable by Tab, activates on Enter and
  * Space, and announces itself as something that can be pressed. The last bare element in
- * the app was this one, styled by an opt-in class — which is the pattern that shipped a
+ * the app was this one, styled by an opt-in class, which is the pattern that shipped a
  * modal with every field invisible.
  */
 export function CardButton({ className, ...rest }: React.ComponentProps<'button'>) {
@@ -351,8 +351,8 @@ export function stateTone(state: string): Tone {
     case 'indexing':
     case 'running':
     case 'queued':
-    // Attached but not yet chunked. Shown as work outstanding, never as done —
-    // "indexed · 0 chunks" was the old lie.
+    // Attached but not yet chunked. Shown as work outstanding rather than as done;
+    // "indexed · 0 chunks" was the previous, incorrect display.
     case 'pending':
       return 'accent';
     // `degraded` is its own colour, distinct from both running and failed. A job
@@ -484,10 +484,10 @@ export function CopyButton({ text, label = 'Copy' }: { text: string; label?: str
  * Dexicon stores, returns and logs UTC. The browser is the single edge that converts,
  * because it is the only component that knows whose clock to use.
  *
- * `parseUtc` exists because the API used to serialise DateTime without a `Z` — SQLite
- * has no date type, so EF read values back with Kind=Unspecified — and
- * `new Date("2026-09-16T17:08:11")` parses THAT as local time. Every relative time was
- * silently wrong by the viewer's UTC offset. The server is fixed, and this stays as a
+ * `parseUtc` exists because the API used to serialise DateTime without a `Z`. SQLite
+ * has no date type, so EF read values back with Kind=Unspecified, and
+ * `new Date("2026-09-16T17:08:11")` parses that as local time. Every relative time was
+ * wrong by the viewer's UTC offset, with nothing reporting it. The server is fixed, and this stays as a
  * belt-and-braces parse: an ISO string with no zone is treated as UTC, never as local.
  */
 export function parseUtc(iso: string): Date {

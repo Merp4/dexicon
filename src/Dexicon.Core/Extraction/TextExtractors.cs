@@ -10,7 +10,7 @@ namespace Dexicon.Core.Extraction;
 
 /// <summary>
 /// The result of pulling text out of a file. <paramref name="Units"/> carries the
-/// format's natural provenance unit — page for PDF, slide for PPTX, chapter for EPUB —
+/// format's natural provenance unit (page for PDF, slide for PPTX, chapter for EPUB)
 /// so a citation can say "p. 34" instead of "chunk 87".
 /// </summary>
 public sealed record ExtractedText(string Text, IReadOnlyList<ExtractedUnit> Units, string? Title = null)
@@ -23,7 +23,7 @@ public sealed record ExtractedText(string Text, IReadOnlyList<ExtractedUnit> Uni
 public sealed record ExtractedUnit(int Number, int StartOffset, string? Label = null);
 
 /// <summary>
-/// Raised when a file is a recognised format that cannot be read — encrypted, DRM'd,
+/// Raised when a file is a recognised format that cannot be read: encrypted, DRM'd,
 /// or structurally broken. Distinct from "produced no text", which is not an error.
 /// </summary>
 public sealed class ExtractionFailedException(string message, Exception? inner = null)
@@ -45,13 +45,13 @@ public static class ExtractorVersions
     /// Bumped whenever extraction OUTPUT changes, so cached text is re-extracted rather
     /// than trusted forever.
     ///
-    /// Extraction is cached per blob, and rightly so — a 437-page PDF costs ~1.8 s and
-    /// its bytes never change. But the CODE changes, and without a version the cache is
+    /// Extraction is cached per blob, since a 437-page PDF costs ~1.8 s and its bytes
+    /// never change. The code changes, however, and without a version the cache is
     /// permanent: a library ingested before a fix keeps the broken text invisibly, and no
     /// reindex repairs it, because reindexing re-chunks the cached text rather than
     /// re-reading the file.
     ///
-    /// 2: HTML and EPUB keep block structure — one block per line — instead of
+    /// 2: HTML and EPUB keep block structure, one block per line, instead of
     ///    collapsing a whole chapter onto a single unsplittable line.
     /// 3: An EPUB whose manifest will not parse is salvaged from the archive instead of
     ///    failing. Books that cached as a failure now have text.
@@ -82,8 +82,8 @@ public static class ExtractorRegistry
 }
 
 /// <summary>
-/// PdfPig (Apache-2.0). Text layer only — there is no OCR, and a scanned PDF is
-/// reported as empty with a reason rather than silently producing nothing.
+/// PdfPig (Apache-2.0). Text layer only: there is no OCR, and a scanned PDF is
+/// reported as empty with a reason rather than producing nothing without explanation.
 /// </summary>
 public sealed class PdfTextExtractor : ITextExtractor
 {
@@ -275,7 +275,7 @@ public sealed class EpubTextExtractor : ITextExtractor
         using var zip = OpenArchive(buffer, fileName, cause);
 
         // Encryption is declared, not guessed. This is the one case where naming DRM is
-        // correct — and the reason the old message said it about every malformed book.
+        // correct, and the reason the old message applied it to every malformed book.
         if (zip.Entries.Any(e => e.FullName.Equals("META-INF/encryption.xml", StringComparison.OrdinalIgnoreCase)))
             throw new ExtractionFailedException(
                 $"'{fileName}' is encrypted. DRM-protected books cannot be read.", cause);
@@ -323,7 +323,7 @@ public sealed class EpubTextExtractor : ITextExtractor
         }
         catch (InvalidDataException ex)
         {
-            // Not a zip at all, so not an EPUB — report the original parse failure, which
+            // Not a zip at all, so not an EPUB. Report the original parse failure, which
             // is the more informative of the two.
             throw new ExtractionFailedException(
                 $"'{fileName}' is not a readable .epub: {cause.Message}", ex);
@@ -338,7 +338,7 @@ public sealed class HtmlTextExtractor : ITextExtractor
     public ExtractedText Extract(Stream content, string fileName)
     {
         // NOTE: this handles HTML *documents* reached as uploads. HTML found inside a
-        // workspace tree is template SOURCE and is indexed as code — see LanguageMap.
+        // workspace tree is template source and is indexed as code; see LanguageMap.
         using var reader = new StreamReader(content, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
         var parser = new HtmlParser();
         using var doc = parser.ParseDocument(reader.ReadToEnd());
@@ -355,9 +355,9 @@ public sealed class HtmlTextExtractor : ITextExtractor
 /// AngleSharp's <c>TextContent</c> is the obvious thing to reach for and it is wrong
 /// here: it concatenates every descendant text node with no separators, so a chapter
 /// comes back as a single line tens of thousands of characters long. The chunker splits
-/// on line boundaries, so it could not split at all — a 578,000-character EPUB produced
-/// 18 chunks averaging 32,000 characters, each of which the embedding model silently
-/// truncated at its context limit. The book reported itself as indexed while most of it
+/// on line boundaries, so it could not split at all: a 578,000-character EPUB produced
+/// 18 chunks averaging 32,000 characters, each of which the embedding model truncated at
+/// its context limit without reporting it. The book reported itself as indexed while most of it
 /// was nowhere in the index.
 ///
 /// Newlines are not cosmetic: they are what makes the text chunkable, and what makes a
@@ -371,7 +371,7 @@ internal static class HtmlText
 
     /// <summary>
     /// Block-level elements, as HTML renders them: each one starts on a new line.
-    /// Inline elements (em, a, span, code…) deliberately are NOT here — breaking a line
+    /// Inline elements (em, a, span, code…) are intentionally excluded: breaking a line
     /// mid-sentence at every &lt;em&gt; would be as wrong as not breaking at all.
     /// </summary>
     private static readonly HashSet<string> Blocks =

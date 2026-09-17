@@ -4,13 +4,13 @@
  * Every type here is GENERATED from the OpenAPI document the server writes at build time
  * (`npm run generate`). The hand-written versions that used to live in this file had
  * already drifted: chunk sets landed and `Corpus` still declared `chunkSize` and
- * `embeddingModel`, fields the server had moved onto a chunk set. Nothing failed — the UI
- * simply read `undefined` and rendered it.
+ * `embeddingModel`, fields the server had moved onto a chunk set. Nothing failed; the UI
+ * read `undefined` and rendered it.
  *
  * Request bodies are typed from the generated request types too, not just responses.
  * They were `Record<string, unknown>` with a cast for a while, because the document
- * marked every field of every body as required — positional record parameters with no
- * default are `required` in the schema — so the generated types demanded fields the API
+ * marked every field of every body as required, because positional record parameters
+ * with no default are `required` in the schema, so the generated types demanded fields the API
  * does not. The contracts carry defaults now, so the document says what is actually
  * optional and a misspelt or mistyped field is a compile error again.
  *
@@ -79,7 +79,7 @@ import { getToken } from './token';
  *
  * An interceptor rather than the client's `auth` option. `auth` is only consulted for
  * operations the OpenAPI document marks as secured, and the document declared no security
- * schemes at all — so it was never called, every request went out anonymous, the server
+ * schemes at all, so it was never called, every request went out anonymous, the server
  * answered 401 "Missing credentials", and the UI told people their token was wrong.
  *
  * The document now declares the scheme (see the transformer in Program.cs), so `auth`
@@ -155,7 +155,7 @@ export class ApiError extends Error {
  * Turns whatever the generated client threw into the one error shape the UI renders.
  *
  * The server answers failures with RFC 9457 problem details and writes them for a person
- * to act on — "Unknown corpus 'api'. Visible corpora: api-repo, rfc-library." Losing that
+ * to act on: "Unknown corpus 'api'. Visible corpora: api-repo, rfc-library." Losing that
  * to a generic message would throw away the most useful thing in the response.
  */
 function toApiError(e: unknown, status = 0): ApiError {
@@ -174,9 +174,9 @@ function toApiError(e: unknown, status = 0): ApiError {
 /**
  * Unwraps the generated client's envelope, and normalises its errors.
  *
- * The envelope is checked HERE rather than relying on the generator's `throwOnError`.
- * That option was set and silently did not take — the generated SDK still defaults to
- * `ThrowOnError = false` — so every failed request returned `{ data: undefined }` and
+ * The envelope is checked here rather than relying on the generator's `throwOnError`.
+ * That option was set and had no effect, because the generated SDK still defaults to
+ * `ThrowOnError = false`, so every failed request returned `{ data: undefined }` and
  * this function handed that `undefined` straight into component state. The next `.map`
  * took the whole app down with "Cannot read properties of undefined", and ErrorBanner,
  * which exists precisely to show the server's message, never ran.
@@ -355,8 +355,8 @@ function authHeaders(): HeadersInit {
 /**
  * Live indexing progress.
  *
- * `fetch` rather than `EventSource`, which cannot carry an Authorization header — and the
- * token deliberately is not a cookie.
+ * `fetch` rather than `EventSource`, which cannot carry an Authorization header, and the
+ * token is intentionally not a cookie.
  */
 export function subscribeToProgress(
   onProgress: (p: JobSummary & { currentFile?: string }) => void,
