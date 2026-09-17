@@ -16,6 +16,23 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## Unreleased
+
+### Fixed
+
+- **The audit trail could be forged by an unauthenticated caller.** A request path is
+  decoded before it is logged, so `%0A` arrived as a real newline, and the console output
+  template rendered string values literally. A request to
+  `/x%0A[19:05:31Z INF] DELETE /api/corpora/books -> 200 (token bootstrap)` wrote that
+  second line into the log as an entry of its own. No valid token was needed: the
+  rejection is logged before the 401 is returned. `docs/07` names the container logs as
+  the audit trail, so the trail itself was forgeable.
+
+  Fixed in the output template rather than at the call sites, which cannot be forgotten
+  by a later log statement: `{Message:j}` instead of `{Message:lj}`, dropping the
+  "literal" flag so Serilog renders string values as JSON and escapes the newline. String
+  values in the log are now quoted.
+
 ## 0.2.2 — 2026-09-17
 
 Documentation, bar one word of shipped text: the `path_prefix` tool description said
