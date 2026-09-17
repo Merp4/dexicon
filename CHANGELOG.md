@@ -25,6 +25,19 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Fixed
 
+- **Files no source covered were invisible rather than reported.** A file outside every
+  source root is not skipped and not failed: it has no row in any count, and a search for
+  it returns other documents, which is indistinguishable from a ranking result. A library
+  of 138 files indexed 95 of them; one book sat directly in `orly/` while every source was
+  `orly/<topic>/`, and a keyword search on its exact title returned four other books.
+
+  `index_status` now reports a directory when two or more of the corpus's sources share it
+  as their parent, which is where the children were enumerated deliberately and a file left
+  loose among them was passed over. One source under a directory says nothing about that
+  directory and is not reported, so a corpus that indexes a single folder stays silent.
+  Only files that would have been indexed are listed: the always-exclude list, a
+  `.gitignore` in the directory, the size caps and binary sniffing all still apply.
+
 - **PDFs were read in content-stream order, not in reading order.** A producer writes the
   content stream in whatever order it likes, which on a two-column page is often left line,
   right line, left line. Read that way the columns interleave into text that is grammatical

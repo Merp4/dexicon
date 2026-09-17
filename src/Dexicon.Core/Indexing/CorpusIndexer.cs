@@ -688,7 +688,7 @@ public sealed class CorpusIndexer(
     /// comparing them as equal is the containment check agreeing to something the kernel
     /// does not.
     /// </summary>
-    private static StringComparison PathComparison =>
+    internal static StringComparison PathComparison =>
         OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;

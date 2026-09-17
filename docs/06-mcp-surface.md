@@ -166,6 +166,26 @@ and whether it is reachable. It also answers "why did search return nothing":
 it will say `indexing, 12% (1,204 / 9,880 files)` or `degraded: embedding service
 unreachable since 14:02`.
 
+It also reports files no source covers. A file outside every source root has no row in any
+of the counts above: it is not skipped and not failed, it is absent, and a search for it
+returns other documents instead. The check reports a directory when **two or more of the
+corpus's sources share it as their parent**, which is the case where the children were
+enumerated deliberately and a file left loose among them was passed over. One source under
+a directory says nothing about that directory and is not reported, so a corpus that indexes
+a single folder stays silent.
+
+```
+NOT INDEXED: 1 file(s) in books/orly are covered by no source, though its subfolders are.
+  Internet of Things from Scratch.pdf
+Add a source on books/orly, or move the file into one of its subfolders.
+```
+
+The directory has no source, so it has no include or exclude globs to apply. What is
+applied is what holds for any path: the always-exclude list, a `.gitignore` in the
+directory itself, the size caps and binary sniffing. A reported file is one that would have
+been indexed had a source covered it. Five files are listed per directory and the rest
+counted.
+
 ## Resources
 
 Corpora are exposed as MCP resources so clients with a resource picker can browse them:
