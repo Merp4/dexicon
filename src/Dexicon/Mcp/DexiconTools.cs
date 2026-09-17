@@ -100,10 +100,19 @@ public sealed class DexiconTools
             return sb.ToString();
         }
 
+        // Only when it disambiguates. A corpus with one source would add the same folder
+        // name to every line for nothing; a corpus with ten needs it, because two of its
+        // books share a filename and the results are otherwise identical down to the path.
+        var spansSources = result.Hits
+            .Select(h => h.SourceRoot).Where(r => r is { Length: > 0 })
+            .Distinct(StringComparer.Ordinal).Count() > 1;
+
         var i = 1;
         foreach (var hit in result.Hits)
         {
             sb.Append($"\n{i++}. {hit.Location}");
+            if (spansSources && hit.SourceRoot is { Length: > 0 } root)
+                sb.Append($"  · in {root}");
 
             // A hit in a PDF or an EPUB is cited by its unit — `book.epub#chapter=7` —
             // which is right for a citation and useless as an argument to get_context,

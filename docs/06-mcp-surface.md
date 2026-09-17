@@ -84,7 +84,8 @@ The one that matters.
       "mode":   { "type": "string", "enum": ["hybrid", "semantic", "keyword"], "default": "hybrid",
                   "description": "hybrid blends meaning and exact terms; keyword is exact-match only and works when embeddings are unavailable." },
       "limit":  { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 },
-      "path_prefix": { "type": "string", "description": "Restrict to files under this path, e.g. src/Auth/." },
+      "source": { "type": "string", "description": "Restrict to one source of the corpus, by root path as list_corpora reports it, e.g. orly/AI. A parent matches everything beneath it." },
+      "path_prefix": { "type": "string", "description": "Restrict to files under this path, e.g. src/Auth/. Relative to the SOURCE root, not the corpus." },
       "language":    { "type": "string", "description": "Restrict to one language, e.g. csharp, python." },
       "symbol":      { "type": "string", "description": "Restrict to chunks declaring this symbol." }
     },
