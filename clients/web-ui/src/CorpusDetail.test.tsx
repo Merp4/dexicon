@@ -163,12 +163,31 @@ describe('adding a source', () => {
 
   it('offers only folders that are really mounted', async () => {
     // A path you can type is a path you can get wrong; a file is not a source.
+    const { dialog } = await openAddSource();
+
+    await within(dialog).findByRole('button', { name: /api-repo/ });
+    expect(within(dialog).getByRole('button', { name: /notes/ })).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: /README/ })).not.toBeInTheDocument();
+  });
+
+  it('can reach a folder that is not at the top level', async () => {
+    // The whole reason this stopped being a flat list: `GET /api/workspaces` has always
+    // taken a path and the UI never passed one, so a corpus could only ever be pointed at
+    // a top-level directory. A shelf of books at books/orly/Architecture was unreachable.
+    addSource.mockResolvedValue({});
     const { user, dialog } = await openAddSource();
 
-    await user.click(within(dialog).getByLabelText(/Workspace folder/));
-    const options = (await screen.findAllByRole('option')).map((o) => o.textContent);
+    browse.mockResolvedValueOnce({
+      entries: [{ name: 'orly', relativePath: 'notes/orly', isDirectory: true, childCount: 10 }],
+    });
+    await user.click(await within(dialog).findByRole('button', { name: /notes/ }));
 
-    expect(options).toEqual(['(choose a folder)', 'api-repo', 'notes']);
+    await waitFor(() => expect(browse).toHaveBeenLastCalledWith('notes'));
+    await user.click(await within(dialog).findByRole('button', { name: /orly/ }));
+    await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
+
+    await waitFor(() => expect(addSource).toHaveBeenCalled());
+    expect(addSource.mock.calls[0][1]).toMatchObject({ workspacePath: 'notes/orly' });
   });
 
   it('will not submit without a folder', async () => {
@@ -180,8 +199,7 @@ describe('adding a source', () => {
   it('warns before indexing the same folder twice', async () => {
     const { user, dialog } = await openAddSource();
 
-    await user.click(within(dialog).getByLabelText(/Workspace folder/));
-    await user.click(await screen.findByRole('option', { name: 'api-repo' }));
+    await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
 
     expect(within(dialog).getByText(/already indexes that folder/i)).toBeInTheDocument();
   });
@@ -192,8 +210,7 @@ describe('adding a source', () => {
     addSource.mockResolvedValue({});
     const { user, dialog } = await openAddSource();
 
-    await user.click(within(dialog).getByLabelText(/Workspace folder/));
-    await user.click(await screen.findByRole('option', { name: 'notes' }));
+    await user.click(await within(dialog).findByRole('button', { name: /notes/ }));
 
     await user.type(within(dialog).getByLabelText(/Only these/), 'src/**, docs/**');
     await user.type(within(dialog).getByLabelText(/Never these/), '**/vendor/**');
@@ -215,8 +232,7 @@ describe('adding a source', () => {
     addSource.mockResolvedValue({});
     const { user, dialog } = await openAddSource();
 
-    await user.click(within(dialog).getByLabelText(/Workspace folder/));
-    await user.click(await screen.findByRole('option', { name: 'notes' }));
+    await user.click(await within(dialog).findByRole('button', { name: /notes/ }));
     await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
 
     await waitFor(() => expect(addSource).toHaveBeenCalled());

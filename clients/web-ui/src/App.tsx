@@ -22,6 +22,7 @@ import {
   Settings, Sliders, Trash2,
 } from 'lucide-react';
 import { cn } from 'cn';
+import { WorkspacePicker } from './WorkspacePicker';
 
 /** `nomic-embed-text` and `nomic-embed-text:latest` are the same model. */
 const sameModelName = (a: string, b: string) =>
@@ -36,12 +37,11 @@ type View = 'search' | 'corpora' | 'documents' | 'jobs' | 'models' | 'access' | 
  * Sentinels for "no particular one".
  *
  * A select option has to carry a value, and the empty string is not one: that is how the
- * control says nothing is chosen. The leading colon makes these impossible to collide
- * with a real corpus name, because a colon is what separates corpus from chunk set. They
- * never leave the component that uses them — the state they map to is still `[]` and `''`.
+ * control says nothing is chosen. The leading colon makes this impossible to collide
+ * with a real corpus name, because a colon is what separates corpus from chunk set. It
+ * never leaves the component that uses it — the state it maps to is still `[]`.
  */
 const ALL_CORPORA = ':all';
-const NO_SOURCE = ':none';
 
 /**
  * The UI exists to answer four questions and to do nothing else:
@@ -574,15 +574,9 @@ function CreateCorpusModal({ onClose, onCreated, onError }: { onClose: () => voi
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [path, setPath] = useState('');
-  const [entries, setEntries] = useState<string[]>([]);
   const [models, setModels] = useState<EmbeddingModelInfo[]>([]);
   const [model, setModel] = useState('');
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    // Browse the mount so nobody can type a path that does not exist.
-    api.browse().then((l) => setEntries(l.entries.filter((e) => e.isDirectory).map((e) => e.relativePath))).catch(() => setEntries([]));
-  }, []);
 
   useEffect(() => {
     // The model belongs here, not only on the chunk set form. A corpus is born with a
@@ -658,11 +652,11 @@ function CreateCorpusModal({ onClose, onCreated, onError }: { onClose: () => voi
           )}
         </Field>
 
-        <Field label="Workspace folder" hint="Only paths bind-mounted into the container are listed. Set WORKSPACE_ROOT to change what is available.">
-          <Select value={path || NO_SOURCE} onValueChange={(v) => setPath(v === NO_SOURCE ? '' : v)}>
-            <SelectItem value={NO_SOURCE}>(add a source later)</SelectItem>
-            {entries.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-          </Select>
+        <Field
+          label="Workspace folder"
+          hint="Only paths bind-mounted into the container are reachable. Set WORKSPACE_ROOT to change what is available."
+        >
+          <WorkspacePicker value={path} onChange={setPath} emptyLabel="(add a source later)" disabled={busy} />
         </Field>
         <div className="flex gap-2 justify-end mt-4">
           <Button type="button" onClick={onClose}>Cancel</Button>
@@ -898,19 +892,11 @@ function AddSourceModal({
   onError: (e: unknown) => void;
 }) {
   const [path, setPath] = useState('');
-  const [entries, setEntries] = useState<string[]>([]);
   const [useGitignore, setUseGitignore] = useState(true);
   const [maxFileMb, setMaxFileMb] = useState(2);
   const [include, setInclude] = useState('');
   const [exclude, setExclude] = useState('');
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    // Browse the mount, so nobody can name a path that is not there.
-    api.browse()
-      .then((l) => setEntries(l.entries.filter((e) => e.isDirectory).map((e) => e.relativePath)))
-      .catch(() => setEntries([]));
-  }, []);
 
   /** A comma or newline separated list, with the blanks dropped. */
   const globs = (raw: string) =>
@@ -941,12 +927,9 @@ function AddSourceModal({
       <form onSubmit={submit}>
         <Field
           label="Workspace folder"
-          hint="Only paths bind-mounted into the container are listed. Set WORKSPACE_ROOT to change what is available."
+          hint="Only paths bind-mounted into the container are reachable. Set WORKSPACE_ROOT to change what is available."
         >
-          <Select value={path || NO_SOURCE} onValueChange={(v) => setPath(v === NO_SOURCE ? '' : v)}>
-            <SelectItem value={NO_SOURCE}>(choose a folder)</SelectItem>
-            {entries.map((e) => <SelectItem key={e} value={e}>{e}</SelectItem>)}
-          </Select>
+          <WorkspacePicker value={path} onChange={setPath} emptyLabel="(choose a folder)" disabled={busy} />
         </Field>
 
         {alreadyHere && (
