@@ -318,7 +318,7 @@ public static class CorpusEndpoints
         // A path rather than a file id, and a query parameter rather than a route segment:
         // the handle a caller already has is the path, because that is what search returns,
         // and a relative path contains slashes.
-        g.MapGet("/{nameOrId}/file", async (string nameOrId, string path, RequestContext rc,
+        g.MapGet("/{nameOrId}/file", async (string nameOrId, string path, int? start, RequestContext rc,
             ScopeResolver scopes, IVectorStore vectors, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
@@ -350,19 +350,39 @@ public static class CorpusEndpoints
             // caller can say "3 gaps" without reading the text for it.
             var gaps = text.Split("… lines").Length - 1;
 
-            const int Limit = 400_000;
-            var truncated = text.Length > Limit;
-            if (truncated) text = text[..Limit] + "\n…(truncated)";
+            // A WINDOW of the file, not the head of it.
+            //
+            // This used to return the first 400,000 characters with "…(truncated)" glued on
+            // the end and no way to ask for the rest. That is fine for a source file and
+            // useless for a book: a 700-page technical book runs to two or three million
+            // characters, so the viewer showed the first chapter or two and called the rest
+            // of the book an implementation detail. Worse, it reported the line range of the
+            // WHOLE file while showing a fraction of it, so the header said 1–40,521 over
+            // about five thousand lines of text.
+            const int WindowChars = 400_000;
+            var total = text.Length;
+            var offset = Math.Clamp(start ?? 0, 0, Math.Max(total - 1, 0));
+            var window = text.Substring(offset, Math.Min(WindowChars, total - offset));
+            var more = offset + window.Length < total;
+
+            // Line numbers for THIS window. Counting newlines before it is exact and cheap;
+            // reporting the file's own first line here is what made the header lie.
+            var firstLine = chunks.Min(c => c.StartLine);
+            var windowStart = firstLine + text.AsSpan(0, offset).Count('\n');
+            var windowEnd = windowStart + window.AsSpan().Count('\n');
 
             return Results.Ok(new IndexedFileText(
                 target.Corpus.Name,
                 target.Set.Name,
                 path,
-                chunks.Min(c => c.StartLine),
-                chunks.Max(c => c.EndLine),
+                windowStart,
+                windowEnd,
                 gaps,
-                truncated,
-                text));
+                more,
+                window,
+                offset,
+                total,
+                more ? offset + window.Length : null));
         }).Produces<IndexedFileText>();
     }
 
