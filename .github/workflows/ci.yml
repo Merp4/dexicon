@@ -23,7 +23,7 @@ jobs:
     name: Build and test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # MinVer derives the version from the nearest tag, and a shallow clone has
           # neither history nor tags — so without this every CI build would version
@@ -113,7 +113,7 @@ jobs:
     name: Secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # FULL history. A secret removed in the last commit is still a secret, and
           # scanning only the diff is scanning the one place it is not.
@@ -129,7 +129,7 @@ jobs:
     name: Dependencies
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -167,7 +167,7 @@ jobs:
     # same minutes spent twice.
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: docker/setup-buildx-action@v3
 
