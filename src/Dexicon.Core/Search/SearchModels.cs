@@ -2,7 +2,7 @@ namespace Dexicon.Core.Search;
 
 public enum SearchMode { Hybrid = 0, Semantic = 1, Keyword = 2 }
 
-/// <summary>One embedded span of a file — the unit stored in Qdrant and returned by search.</summary>
+/// <summary>One embedded span of a file: the unit stored in Qdrant and returned by search.</summary>
 public sealed record Chunk
 {
     public required string CorpusId { get; init; }
@@ -27,7 +27,7 @@ public sealed record Chunk
     public required string Content { get; init; }
 
     /// <summary>
-    /// What to embed, when it differs from <see cref="Content"/> — a chunk set with
+    /// What to embed, when it differs from <see cref="Content"/>. A chunk set with
     /// heading context embeds the chunk under its heading trail. Empty means "embed the
     /// content", which is the ordinary case.
     /// </summary>
@@ -75,7 +75,7 @@ public sealed record SearchHit
     public float Score { get; init; }
 
     /// <summary>
-    /// `file:line`, or `file#unit=n` for a document — clickable in every editor, and what
+    /// `file:line`, or `file#unit=n` for a document. Clickable in every editor, and what
     /// an agent pastes back into a conversation.
     /// </summary>
     public string Location => Page is { } p
@@ -90,7 +90,7 @@ public sealed record SearchHit
     ///
     /// Derived from the extension rather than stored: the information is already here, and
     /// a payload field that can drift out of step with the file it describes is worse than
-    /// none. <c>#page=</c> for PDFs is also a real convention — viewers honour it.
+    /// none. <c>#page=</c> for PDFs is an established convention that viewers honour.
     /// </summary>
     private static string UnitAnchor(string filePath) =>
         Path.GetExtension(filePath).ToLowerInvariant() switch
@@ -106,7 +106,7 @@ public sealed record SearchQuery
     public required string Text { get; init; }
 
     /// <summary>
-    /// The resolved, authorised corpus ids. Never empty — an empty scope is an error
+    /// The resolved, authorised corpus ids. Never empty: an empty scope is an error
     /// raised well before this point, not a search over everything.
     /// </summary>
     public required IReadOnlyList<string> CorpusIds { get; init; }
@@ -158,8 +158,8 @@ public sealed class UnscopedQueryException(string caller)
 
 /// <summary>
 /// Raised when the embedding model's dimensionality does not match what the collection
-/// was built with. Refused rather than degraded — plausible results from a mismatched
-/// vector space are worse than none.
+/// was built with. Refused rather than degraded, because plausible results from a
+/// mismatched vector space are worse than none.
 /// </summary>
 public sealed class EmbeddingDimensionMismatchException(string collection, int expected, int actual)
     : InvalidOperationException(

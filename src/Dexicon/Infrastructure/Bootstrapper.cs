@@ -22,9 +22,9 @@ public static class Bootstrapper
     /// </summary>
     /// <remarks>
     /// `dotnet build` generates the OpenAPI document by loading this assembly and calling
-    /// Main, and it runs it all the way into <c>app.RunAsync()</c> before intercepting —
-    /// so there is no host lifecycle hook early enough to hide behind, and the check has
-    /// to be explicit. Without it a BUILD performs first-run setup: creates directories,
+    /// Main, and it runs it all the way into <c>app.RunAsync()</c> before intercepting,
+    /// so there is no host lifecycle hook early enough to use, and the check has to be
+    /// explicit. Without it a build performs first-run setup: creates directories,
     /// migrates a database, contacts Qdrant and Ollama, and mints a bootstrap token. On CI
     /// that failed outright ("Access to the path '/data' is denied") and turned every
     /// build red; where it had not failed it was doing all of that silently.
@@ -71,7 +71,7 @@ public static class Bootstrapper
     {
         // Guarded on work actually being outstanding. An earlier version asked whether any
         // set had never been indexed, which the migration had already answered "no" to by
-        // copying the corpus's timestamp — so the sweep silently never ran.
+        // copying the corpus's timestamp, so the sweep never ran and nothing said so.
         var anyUnindexed = await db.FileChunkStates.AnyAsync(s => s.ContentHash == null);
         if (!anyUnindexed) return;
 
@@ -86,7 +86,7 @@ public static class Bootstrapper
         catch (Exception ex)
         {
             // Not fatal. Qdrant may simply not be up yet, and unreachable points are a
-            // waste of space rather than a correctness problem — they match no query.
+            // waste of space rather than a correctness problem: they match no query.
             log.LogWarning(ex, "Could not sweep pre-chunk-set vectors; will retry on next start");
         }
     }
@@ -127,8 +127,8 @@ public static class Bootstrapper
     }
 
     /// <summary>
-    /// Call both dependencies and log what answered. A wrong-but-reachable endpoint —
-    /// someone else's Ollama on a shared network — is otherwise indistinguishable from
+    /// Call both dependencies and log what answered. A wrong but reachable endpoint, such
+    /// as someone else's Ollama on a shared network, is otherwise indistinguishable from
     /// the right one until the embeddings turn out to mean nothing.
     /// </summary>
     private static async Task VerifyDependenciesAsync(IServiceProvider sp, ILogger log, DexiconOptions options)
@@ -179,7 +179,7 @@ public static class Bootstrapper
         var tenantId = options.Bootstrap.Tenant.Trim().ToLowerInvariant();
         var tokens = sp.GetRequiredService<TokenService>();
 
-        // A pinned bootstrap token, for scripted setup and CI — and the escape hatch
+        // A pinned bootstrap token, for scripted setup and CI, and the recovery path
         // when someone loses the one-time printed value. Without this the only recovery
         // from a lost token is deleting the catalogue, which also deletes every corpus.
         //

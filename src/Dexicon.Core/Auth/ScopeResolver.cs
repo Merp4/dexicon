@@ -6,8 +6,8 @@ namespace Dexicon.Core.Auth;
 /// <summary>
 /// Raised when a caller's authorised corpus set would be empty, or when they named a
 /// corpus they cannot see. Never degraded into "search everything" and never silently
-/// narrowed — a caller who asked for a corpus they cannot read gets a named error,
-/// because silently dropping it returns confidently incomplete results.
+/// narrowed: a caller who asked for a corpus they cannot read gets a named error,
+/// because dropping it would return incomplete results without saying so.
 /// </summary>
 public sealed class ScopeResolutionException(string message, IReadOnlyList<string> visibleNames)
     : Exception(message)
@@ -24,7 +24,7 @@ public sealed record ScopedCorpus(Corpus Corpus, ChunkSet Set)
     public string Id => Corpus.Id;
     public string Name => Corpus.Name;
 
-    /// <summary>What the caller asked for — `books`, or `books:fine` for a named set.</summary>
+    /// <summary>What the caller asked for: `books`, or `books:fine` for a named set.</summary>
     public string QualifiedName => Set.IsDefault ? Corpus.Name : $"{Corpus.Name}:{Set.Name}";
 }
 
@@ -45,7 +45,7 @@ public sealed record ResolvedScope(IReadOnlyList<ScopedCorpus> Targets)
 
 /// <summary>
 /// The authorization boundary. One function, one place, called by every read path.
-/// See docs/07-tenancy-auth.md — this is the application-level guard; the repository
+/// See docs/07-tenancy-auth.md. This is the application-level guard; the repository
 /// refuses an unfiltered query, and the storage layout makes one useless.
 /// </summary>
 public sealed class ScopeResolver(CatalogDbContext db)
@@ -67,7 +67,7 @@ public sealed class ScopeResolver(CatalogDbContext db)
     /// <paramref name="rootPath"/>, exactly or as a parent folder.
     ///
     /// Takes corpus ids that resolution has ALREADY authorised, so this cannot widen a
-    /// scope — only narrow one. Matching a parent is what makes `orly` mean all ten topic
+    /// scope, only narrow one. Matching a parent is what makes `orly` mean all ten topic
     /// folders beneath it and `orly/AI` mean one.
     /// </summary>
     public async Task<IReadOnlyList<string>> SourceIdsAsync(
@@ -111,7 +111,7 @@ public sealed class ScopeResolver(CatalogDbContext db)
             {
                 // `books` is the corpus's default set; `books:fine` names one explicitly.
                 // Qualifying the name rather than adding a parameter keeps the MCP surface
-                // exactly as wide as it was — see D-11 on why the tool count is a budget.
+                // as wide as it was; see D-11 on why the tool count is a budget.
                 var (corpusPart, setPart) = Split(requested);
 
                 var match = visible.FirstOrDefault(c =>

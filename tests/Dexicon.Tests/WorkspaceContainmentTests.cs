@@ -5,13 +5,13 @@ using Microsoft.Extensions.Options;
 namespace Dexicon.Tests;
 
 /// <summary>
-/// The workspace root is a boundary, and a boundary is a DIRECTORY — not a string prefix.
+/// The workspace root is a boundary, and a boundary is a directory, not a string prefix.
 ///
 /// The check used to be <c>combined.StartsWith(root)</c>, which refuses `../etc/passwd`
 /// and accepts `../workspaces-secret`. That is the shape of the bug worth a permanent
 /// test: the escape it missed never traversed anywhere, it only needed a sibling whose
 /// name begins with the root's. Every case below fails against the old check or passes
-/// against both — the interesting ones are the siblings.
+/// against both; the siblings are the interesting cases.
 ///
 /// Paths are built with Path.Combine and Path.GetFullPath rather than written as literals
 /// so the cases mean the same thing on the Windows they are usually written on and the
@@ -83,7 +83,7 @@ public sealed class WorkspaceContainmentTests
         var indexer = IndexerRootedAt(Root);
 
         // Path.Combine discards the root when the second argument is absolute, so this
-        // never touches the root at all — it has to be refused on the way out.
+        // never touches the root at all, so it has to be refused on the way out.
         Should.Throw<UnauthorizedAccessException>(
             () => indexer.ResolveWorkspacePath(Path.GetFullPath(Path.Combine(Path.GetTempPath(), "elsewhere"))));
     }
@@ -98,8 +98,8 @@ public sealed class WorkspaceContainmentTests
     }
 
     /// <summary>
-    /// ResolveWorkspacePath reads the options and nothing else — no database, no vector
-    /// store, no embedder — so the rest is left null rather than mocked. If that stops
+    /// ResolveWorkspacePath reads the options and nothing else: no database, no vector
+    /// store, no embedder, so the rest is left null rather than mocked. If that stops
     /// being true this throws a NullReferenceException, which is the right way to find out.
     /// </summary>
     private static CorpusIndexer IndexerRootedAt(string root) =>

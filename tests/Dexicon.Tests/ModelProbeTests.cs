@@ -48,8 +48,8 @@ public sealed class ModelProbeTests
         var capabilities = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
 
         // The measurement is in characters and the model counts tokens. Headroom absorbs
-        // the part of that gap a single ratio cannot describe — prose, code and CJK do not
-        // share one — so a recommendation at exactly the measured limit would be wrong for
+        // the part of that gap a single ratio cannot describe, since prose, code and CJK
+        // do not share one, so a recommendation at the measured limit would be wrong for
         // the densest of them.
         capabilities.RecommendedChunkChars.ShouldBeLessThan(capabilities.MaxInputChars!.Value);
 
@@ -104,7 +104,7 @@ public sealed class ModelProbeTests
     public async Task IndexesNothing()
     {
         // The point of the feature. Everything it learns comes from embedding throwaway
-        // filler — no corpus, no chunk set, no document.
+        // filler: no corpus, no chunk set, no document.
         var model = new TruncatingModel(8_000, errorsOnOverflow: false);
 
         await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
@@ -117,9 +117,9 @@ public sealed class ModelProbeTests
     {
         // The chunker has always divided by a flat 4. That is a fair average for English
         // prose and wrong in the direction that hurts for code and CJK, which reach the
-        // same token limit in far fewer characters — so a "768 token" chunk of minified
-        // JavaScript can be two or three times that, and the model truncates it in
-        // silence. The probe now asks the model's OWN tokenizer.
+        // same token limit in far fewer characters, so a "768 token" chunk of minified
+        // JavaScript can be two or three times that, and the model truncates it without
+        // reporting it. The probe now asks the model's own tokenizer.
         var model = new TruncatingModel(limit: 4_000, errorsOnOverflow: false);
 
         var caps = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
@@ -178,8 +178,8 @@ public sealed class ModelProbeTests
     }
 
     /// <summary>
-    /// A model that reads the first <c>limit</c> characters and ignores the rest — the
-    /// behaviour every embedding model tested so far actually has.
+    /// A model that reads the first <c>limit</c> characters and ignores the rest, which
+    /// is the behaviour of every embedding model tested so far.
     /// </summary>
     private sealed class TruncatingModel(int limit, bool errorsOnOverflow, int dimensions = 768)
         : IEmbeddingService
@@ -221,8 +221,8 @@ public sealed class ModelProbeTests
                 // affect the vector: identical prefix, identical vector.
                 //
                 // Seeded pseudo-random rather than "hash in element zero", which was the
-                // first attempt and was useless — one huge dominant component makes the
-                // cosine similarity of ANY two vectors about 1.0, so every input looked
+                // first attempt and was useless: one dominant component makes the cosine
+                // similarity of any two vectors about 1.0, so every input looked
                 // truncated. A real embedding spreads meaning across all the dimensions,
                 // and the fake has to as well or it tests nothing.
                 var visible = input.Length <= limit ? input : input[..limit];
