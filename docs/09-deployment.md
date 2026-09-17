@@ -338,12 +338,20 @@ if it should not change even for a re-push:
 DEXICON_TAG=0.2.2 docker compose up -d
 ```
 
-**Cutting a release, in order.** The generated OpenAPI document carries the release's
-`major.minor`, and CI checks that the committed copy matches the code. MinVer takes the
-version from the tag, so tagging first produces a tag whose own release build fails on a
-document that still says the previous version. Build, commit the regenerated
-`clients/web-ui/Dexicon.json`, then tag. It bites once per minor version — every `0.2.x`
-after the first produces the same `0.2` and nothing moves.
+**Cutting a release, in order.**
+
+1. **Write the version's `CHANGELOG.md` section.** The tag push reads it for the GitHub
+   Release body, and a tag with no section fails the release — before anything reaches the
+   registry, which is the only point at which stopping is still free.
+2. **Build, and commit the regenerated `clients/web-ui/Dexicon.json`.** It carries the
+   release's `major.minor` and CI checks the committed copy against the code. MinVer takes
+   the version from the tag, so tagging first produces a tag whose own release build fails
+   on a document still naming the previous version. This bites once per minor version —
+   every `0.2.x` after the first produces the same `0.2` and nothing moves.
+3. **Tag and push.** That publishes the image and creates the GitHub Release.
+
+Releases on GitHub start at `0.2.3`. `0.1.0` through `0.2.2` predate the step that creates
+them and exist as tags, images and `CHANGELOG.md` entries only.
 
 The version in the tag is the version in the image, because the tag is where the version
 comes from at all (D-26). MinVer derives it from the nearest `v*` tag; nothing is written

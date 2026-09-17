@@ -8,6 +8,9 @@ Every version is a git tag (`v0.2.2`), and the container image carries the same 
 see [docs/09](docs/09-deployment.md) for how versions are derived and what the image tags
 mean.
 
+From `0.2.3`, each section below is also the body of that version's GitHub Release. A tag
+with no section here fails its release rather than publishing an undescribed one.
+
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 [Semantic Versioning]: https://semver.org/
 
