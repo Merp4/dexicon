@@ -34,16 +34,27 @@ public sealed class IndexJobQueue(CatalogDbContext db, ILogger<IndexJobQueue> lo
         // Deduplicated per (corpus, SET). Matching on the corpus alone would hand back a
         // job for a different set — so a request to backfill a new set would return the
         // live set's refresh, report success, and build nothing.
+        //
+        // QUEUED ONLY, and that word is the whole of it. A queued job has not yet read the
+        // corpus, so whatever changes before it starts is included and coalescing is free.
+        // A RUNNING job has already taken its list of sources: anything added afterwards is
+        // not in it and never will be. Coalescing onto one returned that job's id as though
+        // it covered the new work — so adding nine folders to a corpus mid-index indexed
+        // the ones that happened to be there when the walk began, left the rest out, and
+        // reported the corpus `ready` with no job pending and nothing wrong on its face.
+        //
+        // At most one queued job can exist per (corpus, set), so refusing to coalesce onto
+        // a running one adds a single job, not a pile.
         var existing = await db.Jobs
             .Where(j => j.CorpusId == corpusId && j.ChunkSetId == chunkSetId
-                        && (j.State == JobState.Queued || j.State == JobState.Running))
+                        && j.State == JobState.Queued)
             .OrderByDescending(j => j.QueuedUtc)
             .FirstOrDefaultAsync(ct);
 
         if (existing is not null)
         {
-            log.LogInformation("Corpus {Corpus} already has job {JobId} in state {State}; not queuing another",
-                corpusId, existing.Id, existing.State);
+            log.LogInformation("Corpus {Corpus} already has job {JobId} queued; not queuing another",
+                corpusId, existing.Id);
             return existing;
         }
 

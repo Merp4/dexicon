@@ -2530,6 +2530,12 @@
               "string"
             ]
           },
+          "source": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "language": {
             "type": [
               "null",

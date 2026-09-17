@@ -115,6 +115,16 @@ public sealed record SearchQuery
     public required string CollectionName { get; init; }
     public SearchMode Mode { get; init; } = SearchMode.Hybrid;
     public int Limit { get; init; } = 10;
+    /// <summary>
+    /// Resolved source ids to restrict to, or null for every source in scope.
+    ///
+    /// The only way to narrow a multi-source corpus by WHERE content came from. PathPrefix
+    /// cannot do it: file_path is relative to a source root, so a corpus with a source at
+    /// `orly/Architecture` stores its books as bare filenames and no prefix matches the
+    /// folder they live in.
+    /// </summary>
+    public IReadOnlyList<string>? SourceIds { get; init; }
+
     public string? PathPrefix { get; init; }
     public string? Language { get; init; }
     public string? Symbol { get; init; }

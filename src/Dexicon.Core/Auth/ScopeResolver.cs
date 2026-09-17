@@ -50,6 +50,41 @@ public sealed record ResolvedScope(IReadOnlyList<ScopedCorpus> Targets)
 /// </summary>
 public sealed class ScopeResolver(CatalogDbContext db)
 {
+    /// <summary>
+    /// The sources within an already-authorised scope whose root path matches
+    /// <paramref name="rootPath"/>, exactly or as a parent folder.
+    ///
+    /// Takes corpus ids that resolution has ALREADY authorised, so this cannot widen a
+    /// scope — only narrow one. Matching a parent is what makes `orly` mean all ten topic
+    /// folders beneath it and `orly/AI` mean one.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> SourceIdsAsync(
+        IReadOnlyList<string> corpusIds, string rootPath, CancellationToken ct = default)
+    {
+        var needle = rootPath.Trim('/', '\\').Replace('\\', '/');
+
+        var candidates = await db.Sources
+            .Where(s => corpusIds.Contains(s.CorpusId))
+            .Select(s => new { s.Id, s.RootPath })
+            .ToListAsync(ct);
+
+        // An upload source has no root path at all; it can never match a folder.
+        var rooted = candidates.Where(s => s.RootPath is not null).ToList();
+
+        var matched = rooted
+            .Where(s => string.Equals(s.RootPath, needle, StringComparison.OrdinalIgnoreCase)
+                        || s.RootPath!.StartsWith(needle + "/", StringComparison.OrdinalIgnoreCase))
+            .Select(s => s.Id)
+            .ToList();
+
+        if (matched.Count == 0)
+            throw new ScopeResolutionException(
+                $"No source at '{rootPath}' in the corpora searched.",
+                [.. rooted.Select(s => s.RootPath!).Distinct().Order(StringComparer.Ordinal)]);
+
+        return matched;
+    }
+
     public async Task<ResolvedScope> ResolveReadableAsync(
         string tenantId, IReadOnlyList<string>? requestedNamesOrIds, CancellationToken ct = default)
     {

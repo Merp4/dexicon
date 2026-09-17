@@ -18,6 +18,9 @@ public sealed record SearchRequest
     public string? PathPrefix { get; init; }
     public string? Language { get; init; }
     public string? Symbol { get; init; }
+
+    /// <summary>A source root path to restrict to, e.g. `orly/AI`. Null searches them all.</summary>
+    public string? Source { get; init; }
 }
 
 public sealed record SearchResult
@@ -58,6 +61,13 @@ public sealed class SearchService(
         // Qualified, so a result from a non-default set says which set it came from.
         var byId = scope.Targets.ToDictionary(t => t.Corpus.Id, t => t.QualifiedName, StringComparer.Ordinal);
         var sparse = SparseEncoder.Encode(request.Query);
+
+        // Resolved once, against the scope already authorised above — so naming a source
+        // can only ever narrow the search, never reach into a corpus the caller cannot see.
+        IReadOnlyList<string>? sourceIds = null;
+        if (!string.IsNullOrWhiteSpace(request.Source))
+            sourceIds = await scopes.SourceIdsAsync(
+                [.. scope.Corpora.Select(c => c.Id)], request.Source, ct);
 
         var hits = new List<SearchHit>();
         var degraded = false;
@@ -101,6 +111,7 @@ public sealed class SearchService(
                 CollectionName = group.Key,
                 Mode = request.Mode,
                 Limit = request.Limit,
+                SourceIds = sourceIds,
                 PathPrefix = request.PathPrefix,
                 Language = request.Language,
                 Symbol = request.Symbol,
