@@ -121,7 +121,7 @@ public sealed class DexiconTools
     }
 
     [McpServerTool(Name = "list_corpora")]
-    [Description("List the corpora you can search, with their sizes and state. These names are the legal values for search_index's corpus parameter.")]
+    [Description("List the corpora you can search, what each one holds, and whether it has any indexed content. Call this first when you do not already know which corpus answers a question — the names it returns are the legal values for search_index's corpus parameter.")]
     public static async Task<string> ListCorporaAsync(
         RequestContext rc,
         ScopeResolver scopes,
@@ -138,29 +138,63 @@ public sealed class DexiconTools
         var sb = new StringBuilder(
             $"{visible.Count} {(visible.Count == 1 ? "corpus" : "corpora")} visible to '{tenant}':\n");
         foreach (var c in visible)
+            sb.Append(RenderCorpus(await CorpusEndpoints.Summarise(db, c, tenant, ct)));
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// One corpus, as an agent reads it.
+    ///
+    /// Ordering is the whole of this method. An agent calls list_corpora to answer one
+    /// question — "which of these should I search?" — and the only line that answers it is
+    /// the description a human wrote. That used to come LAST, under the state, the file
+    /// counts, the chunk sets, the embedding dimensions and the overlap: five lines of
+    /// operational detail an agent cannot act on, ahead of the one line it needs. Now the
+    /// description leads and the machinery follows.
+    ///
+    /// Internal and pure for the same reason as <see cref="Render"/>: this is the
+    /// agent-facing surface of the product and it should be checkable without standing up
+    /// an MCP server.
+    /// </summary>
+    internal static string RenderCorpus(CorpusSummary s)
+    {
+        var sb = new StringBuilder();
+        sb.Append($"\n- {s.Name}");
+        if (!s.Owned) sb.Append(" (shared)");
+        sb.Append('\n');
+
+        // What it is, before what it is made of.
+        sb.Append(s.Description is { Length: > 0 }
+            ? $"    {s.Description}\n"
+            : "    (no description — say what is in it so an agent can choose between corpora)\n");
+
+        // An empty corpus is a legal value for search_index that cannot answer anything.
+        // Listed identically to a full one, it reads as a reasonable place to look, and the
+        // agent spends a call discovering otherwise.
+        if (s.ChunkCount == 0)
         {
-            var s = await CorpusEndpoints.Summarise(db, c, tenant, ct);
-            sb.Append($"\n- {s.Name}");
-            if (!s.Owned) sb.Append(" (shared)");
-            sb.Append($"\n    state: {s.State}, {s.FileCount:N0} files, {s.ChunkCount:N0} chunks");
-
-            // Every set is addressable as `corpus:set`, so an agent that is only told the
-            // corpus name cannot reach the others. Named here, with the default marked.
-            foreach (var set in s.ChunkSets)
-            {
-                sb.Append($"\n    {(set.IsDefault ? "*" : " ")} {s.Name}:{set.Name}");
-                sb.Append($" — {set.EmbeddingModel} ({set.EmbeddingDimensions}d), ");
-                sb.Append($"{set.ChunkSize} tokens/{set.ChunkOverlap} overlap, {set.ChunkCount:N0} chunks");
-                if (set.State != "ready") sb.Append($" [{set.State}]");
-            }
-            if (s.ChunkSets.Count > 1)
-                sb.Append("\n    (* is the default; name another with corpus:set)");
-
-            if (s.LastIndexedUtc is { } t) sb.Append($"\n    last indexed: {t:u}");
-            if (s.FailedCount > 0) sb.Append($"\n    {s.FailedCount} file(s) failed — see the UI for why");
-            if (s.Description is { Length: > 0 }) sb.Append($"\n    {s.Description}");
-            sb.Append('\n');
+            sb.Append(s.State.Equals("indexing", StringComparison.OrdinalIgnoreCase)
+                ? "    NOT SEARCHABLE YET: indexing has not written any chunks. Try index_status.\n"
+                : "    NOT SEARCHABLE: no indexed content. Nothing here will ever match.\n");
         }
+
+        sb.Append($"    state: {s.State}, {s.FileCount:N0} files, {s.ChunkCount:N0} chunks");
+
+        // Every set is addressable as `corpus:set`, so an agent that is only told the
+        // corpus name cannot reach the others. Named here, with the default marked.
+        foreach (var set in s.ChunkSets)
+        {
+            sb.Append($"\n    {(set.IsDefault ? "*" : " ")} {s.Name}:{set.Name}");
+            sb.Append($" — {set.EmbeddingModel} ({set.EmbeddingDimensions}d), ");
+            sb.Append($"{set.ChunkSize} tokens/{set.ChunkOverlap} overlap, {set.ChunkCount:N0} chunks");
+            if (set.State != "ready") sb.Append($" [{set.State}]");
+        }
+        if (s.ChunkSets.Count > 1)
+            sb.Append("\n    (* is the default; name another with corpus:set)");
+
+        if (s.LastIndexedUtc is { } indexed) sb.Append($"\n    last indexed: {indexed:u}");
+        if (s.FailedCount > 0) sb.Append($"\n    {s.FailedCount} file(s) failed — see the UI for why");
+        sb.Append('\n');
         return sb.ToString();
     }
 
