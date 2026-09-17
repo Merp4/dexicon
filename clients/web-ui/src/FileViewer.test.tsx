@@ -76,6 +76,9 @@ function text(over: Partial<IndexedFileText> = {}): IndexedFileText {
     gaps: 0,
     truncated: false,
     text: 'first line\nsecond line\nthird line\nfourth line',
+    offset: 0,
+    totalChars: 44,
+    nextOffset: null,
     ...over,
   };
 }
@@ -141,12 +144,40 @@ describe('opening a file from the list', () => {
     expect(await within(dialog).findByText('2 gaps in the index')).toBeInTheDocument();
   });
 
-  it('says when it has cut the file short', async () => {
-    fileText.mockResolvedValue(text({ truncated: true }));
+  it('says how much of the file is on screen, not merely that it stopped', async () => {
+    // "truncated" states a problem and offers no way out of it. A book runs to two or
+    // three million characters, so the old badge meant the first chapter or two and
+    // nothing else, with no indication of how much was missing.
+    fileText.mockResolvedValue(text({ truncated: true, totalChars: 400, nextOffset: 44 }));
 
     const { dialog } = await openTheFile();
 
-    expect(await within(dialog).findByText('truncated')).toBeInTheDocument();
+    expect(await within(dialog).findByText(/11% of 400 characters/)).toBeInTheDocument();
+  });
+
+  it('reads on from where the window stopped', async () => {
+    const user = userEvent.setup();
+    fileText.mockResolvedValueOnce(text({ truncated: true, totalChars: 88, nextOffset: 44 }));
+    const { dialog } = await openTheFile();
+
+    fileText.mockResolvedValueOnce(text({
+      text: '\nfifth line', offset: 44, totalChars: 88, nextOffset: null, truncated: false,
+    }));
+    await user.click(await within(dialog).findByRole('button', { name: /Read on/ }));
+
+    // Appended, not replaced: scrolling back to what you already read is the point.
+    expect(await within(dialog).findByText(/fifth line/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/first line/)).toBeInTheDocument();
+    expect(fileText).toHaveBeenLastCalledWith('docs', '05-search.md', 44);
+  });
+
+  it('offers nothing to read on to at the end of a file', async () => {
+    fileText.mockResolvedValue(text());
+
+    const { dialog } = await openTheFile();
+
+    await within(dialog).findByText(/first line/);
+    expect(within(dialog).queryByRole('button', { name: /Read on/ })).not.toBeInTheDocument();
   });
 
   it('reports a file that is not indexed instead of showing an empty box', async () => {

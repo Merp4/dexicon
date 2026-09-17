@@ -238,8 +238,8 @@ export const api = {
     call(() => getApiCorporaByNameOrIdFiles({ path: { nameOrId }, query: status ? { status } : {} })),
 
   /** One indexed file, stitched back together from its chunks. */
-  fileText: (nameOrId: string, path: string) =>
-    call(() => getApiCorporaByNameOrIdFile({ path: { nameOrId }, query: { path } })),
+  fileText: (nameOrId: string, path: string, start?: number) =>
+    call(() => getApiCorporaByNameOrIdFile({ path: { nameOrId }, query: { path, start } })),
 
   listJobs: (limit = 30) => call(() => getApiJobs({ query: { limit } })),
 

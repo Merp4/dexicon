@@ -589,6 +589,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
           }
         ],
         "responses": {
@@ -2109,6 +2117,23 @@
           },
           "text": {
             "type": "string"
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int32",
+            "default": 0
+          },
+          "totalChars": {
+            "type": "integer",
+            "format": "int32",
+            "default": 0
+          },
+          "nextOffset": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
           }
         }
       },

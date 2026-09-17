@@ -1046,11 +1046,32 @@ function FileViewer({
   onError: (e: unknown) => void;
 }) {
   const [file, setFile] = useState<IndexedFileText | null>(null);
+  const [more, setMore] = useState(false);
   const highlight = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     api.fileText(corpus, path).then(setFile).catch(onError);
   }, [corpus, path, onError]);
+
+  /**
+   * Read on from where the last window stopped.
+   *
+   * A book is bigger than one response, and the viewer used to stop at 400,000 characters,
+   * show a "truncated" badge and offer nothing further — which for a 700-page book meant
+   * the first chapter or two and no way to reach the rest.
+   */
+  async function readOn() {
+    if (!file?.nextOffset) return;
+    setMore(true);
+    try {
+      const next = await api.fileText(corpus, path, file.nextOffset);
+      setFile({ ...next, startLine: file.startLine, text: file.text + next.text });
+    } catch (e) {
+      onError(e);
+    } finally {
+      setMore(false);
+    }
+  }
 
   useEffect(() => {
     // Opened from a search hit, so land on the hit rather than at the top of a long file.
@@ -1073,8 +1094,20 @@ function FileViewer({
             {file.gaps > 0 && (
               <Badge tone="warn">{file.gaps} gap{file.gaps === 1 ? '' : 's'} in the index</Badge>
             )}
-            {file.truncated && <Badge tone="warn">truncated</Badge>}
+            {/* How much of the file is on screen. The old badge said "truncated" and
+                stopped there, which states a problem and offers no way out of it. */}
+            {(file.totalChars ?? 0) > file.text.length && (
+              <span>
+                {Math.round((100 * file.text.length) / (file.totalChars ?? 1))}% of{' '}
+                {(file.totalChars ?? 0).toLocaleString()} characters
+              </span>
+            )}
             <span className="flex-1" />
+            {file.nextOffset != null && (
+              <Button size="xs" disabled={more} onClick={readOn}>
+                {more ? 'Reading…' : 'Read on'}
+              </Button>
+            )}
             <CopyButton text={file.text} label="Copy text" />
           </div>
 

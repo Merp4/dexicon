@@ -258,11 +258,20 @@ public sealed record IndexedFileText(
     string Corpus,
     string ChunkSet,
     string Path,
+    /// <summary>First line of the RETURNED WINDOW, not of the file.</summary>
     int StartLine,
+    /// <summary>Last line of the returned window.</summary>
     int EndLine,
     int Gaps,
+    /// <summary>More text follows this window. Fetch it with <see cref="NextOffset"/>.</summary>
     bool Truncated,
-    string Text);
+    string Text,
+    /// <summary>Character offset this window starts at.</summary>
+    int Offset = 0,
+    /// <summary>Length of the whole file's indexed text, so a caller can show progress.</summary>
+    int TotalChars = 0,
+    /// <summary>Offset to pass for the next window, or null at the end.</summary>
+    int? NextOffset = null);
 
 /// <summary>
 /// A source, and the job now reading it. The job is returned rather than left implicit so
