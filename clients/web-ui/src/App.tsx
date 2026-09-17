@@ -15,7 +15,7 @@ import {
 } from './api';
 import {
   Badge, Button, CardButton, Checkbox, Chip, CopyButton, Empty, ErrorBanner, Field, Input, Modal,
-  Select, SelectItem, Spinner, formatBytes, localTime, relativeTime, stateTone,
+  Segmented, Select, SelectItem, Spinner, formatBytes, localTime, relativeTime, stateTone,
 } from './ui';
 import {
   Check, Database, FileText, Key, ListChecks, LogOut, Plus, RefreshCw, RotateCcw, Search,
@@ -338,20 +338,16 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
         />
 
         <div className="flex gap-3 flex-wrap items-center">
-          <div className="flex gap-0.5" role="radiogroup" aria-label="Search mode">
-            {(['hybrid', 'semantic', 'keyword'] as const).map((m) => (
-              <Chip
-                key={m}
-                type="button"
-                role="radio"
-                active={mode === m}
-                aria-checked={mode === m}
-                onClick={() => setMode(m)}
-              >
-                {m}
-              </Chip>
-            ))}
-          </div>
+          <Segmented
+            label="Search mode"
+            value={mode}
+            onChange={setMode}
+            options={[
+              { value: 'hybrid', label: 'hybrid', title: 'Meaning and exact terms together' },
+              { value: 'semantic', label: 'semantic', title: 'Meaning only' },
+              { value: 'keyword', label: 'keyword', title: 'Exact matches only — works without embeddings' },
+            ]}
+          />
 
           <Select
             className="w-auto min-w-[170px]"
@@ -376,7 +372,11 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
             ))}
           </Select>
 
-          <Button variant="primary" type="submit" disabled={busy || !query.trim()}>
+          {/* size="default" is h-9, matching the Input, the Segmented control and both
+              Selects on this row. Button defaults to the app's compact h-8, which left
+              the one control that commits the search sitting 4px shorter than everything
+              beside it. */}
+          <Button variant="primary" size="default" type="submit" disabled={busy || !query.trim()}>
             {busy ? <Spinner /> : <Search />}
             Search
           </Button>
@@ -827,13 +827,22 @@ export function CorpusDetail({
       </div>
 
       <div>
-        <div className="flex gap-1.5 mb-2.5 flex-wrap">
-          {['', 'indexed', 'skipped', 'empty', 'failed'].map((s) => (
-            <Chip key={s || 'all'} active={filter === s} onClick={() => setFilter(s)}>
-              {s || 'all'}
-            </Chip>
-          ))}
-          {problems.length > 0 && <span className="dim self-center text-xs">{problems.length} need attention</span>}
+        <div className="flex gap-2 mb-2.5 flex-wrap items-center">
+          {/* One-of-N, like the search mode: a status filter is a lens on the same list,
+              not five independent buttons. */}
+          <Segmented
+            label="File status"
+            value={filter}
+            onChange={setFilter}
+            options={[
+              { value: '', label: 'all' },
+              { value: 'indexed', label: 'indexed' },
+              { value: 'skipped', label: 'skipped' },
+              { value: 'empty', label: 'empty' },
+              { value: 'failed', label: 'failed' },
+            ]}
+          />
+          {problems.length > 0 && <span className="dim text-xs">{problems.length} need attention</span>}
         </div>
 
         {files.length === 0 ? (
