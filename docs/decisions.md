@@ -13,10 +13,10 @@ assumptions these decisions rest on. D-06, D-07 and D-12 carry the measured resu
 **Decision.** UI, REST API, MCP server, and the indexer run in one process, in one
 container. Qdrant and Ollama are separate, as external dependencies.
 
-**Why.** McpToolbox splits the indexer into a sidecar because it runs inside a per-tenant
-workspace container with a genuinely different security boundary — untrusted execution on
-one side, the platform on the other. Dexicon has no such boundary: it is one operator's
-tool on one machine. Splitting would add a control API, a shared token, an internal
+**Why.** A sidecar indexer earns its keep when it runs inside a per-tenant workspace
+container with a genuinely different security boundary — untrusted execution on one side,
+the platform on the other. Dexicon has no such boundary: it is one operator's tool on one
+machine. Splitting would add a control API, a shared token, an internal
 network, and a new class of failure, and buy nothing.
 
 **Rejected.** Sidecar indexer (boundary does not exist here); separate UI container (a
@@ -34,15 +34,15 @@ touching the API.
 
 **Decision.** .NET 10 LTS, ASP.NET Core minimal APIs, C#.
 
-**Why.** Every carried-over component — the chunker, the gitignore filter, the Qdrant
-repository, the document loaders — is already C#. Rewriting them in Python to follow the
-ML ecosystem would be a rewrite of the only part that is already proven. .NET 10 is LTS
+**Why.** The chunker, the gitignore filter, the Qdrant repository and the document loaders
+already existed in C#. Rewriting them in Python to follow the ML ecosystem would mean
+rewriting the only part that is already proven. .NET 10 is LTS
 until November 2028; .NET 11 ships 2026-11-10 as an STS release with the same end date, so
 there is nothing to gain by tracking it.
 
 **Rejected.** Python/FastAPI (better embedding ecosystem, but Dexicon calls Ollama over
 HTTP and uses none of it); Node/TypeScript (would unify with the SDK but discards the
-carried-over code); .NET 11 (STS, no benefit, ships after work starts).
+that code); .NET 11 (STS, no benefit, ships after work starts).
 
 ---
 
@@ -109,11 +109,11 @@ vector, or sparse point structures with awkward filtering).
 and `fusion: rrf`. No client-side score merging, no weight parameter.
 
 **Why.** Dense cosine and BM25 scores are on incomparable scales, and the weight that
-balances them is corpus-dependent and drifts as content changes. McpToolbox carries a
-`SemanticWeight` knob defaulted to `0.8` that nobody could set from evidence. RRF reads
-rank, not magnitude: no tuning, nothing to mis-set, and one round trip instead of two.
+balances them is corpus-dependent and drifts as content changes. The approach this replaces
+carried a `SemanticWeight` knob defaulted to `0.8` that nobody could set from evidence. RRF
+reads rank, not magnitude: no tuning, nothing to mis-set, and one round trip instead of two.
 
-**Rejected.** Client-side weighted fusion (the carried-over approach — a tuning knob with
+**Rejected.** Client-side weighted fusion (a tuning knob with
 no way to tune it); DBSF as the default (normalises distributions, which is defensible, but
 it is still score-based and per-query sensitive — available as configuration, not default);
 dense-only (exact identifiers and error strings are exactly what embeddings are worst at).
@@ -195,8 +195,8 @@ needed); no auth on localhost (the MCP endpoint is reachable by anything on the 
 and tenancy would be decorative); MCP OAuth flows (the spec supports them, but for a
 self-hosted local server they add an authorization server for no gain).
 
-**Carried from** McpToolbox ADR-005: target selection is explicit, validated, and
-least-privilege; an ambiguous target fails fast rather than being inferred.
+**The rule:** target selection is explicit, validated and least-privilege; an ambiguous
+target fails fast rather than being inferred.
 
 ---
 
@@ -206,9 +206,9 @@ least-privilege; an ambiguous target fails fast rather than being inferred.
 `index_status`. Nothing else.
 
 **Why.** Every tool definition is context the agent pays for on every turn, and a large
-surface measurably degrades smaller models — McpToolbox observed a 12B model exhaust its
-generation budget against 35 tool definitions without calling any of them. Five is enough
-to find things, understand them, and know whether the index is current.
+surface measurably degrades smaller models: a 12B model, measured against 35 tool
+definitions, exhausted its generation budget without calling any of them. Five is enough to
+find things, understand them, and know whether the index is current.
 
 **Rejected.** Per-format search tools; separate keyword and semantic tools (a `mode`
 parameter, not three tools); admin tools over MCP (tenant and token management belongs in
@@ -246,7 +246,7 @@ work, but starts the project two revisions behind).
 
 **Why.** Static output, no runtime dependency, no CORS, no second container, no reverse
 proxy. Typed client generated from the OpenAPI document, so a contract change breaks the
-build. It is also the stack McpToolbox's UI uses, so patterns transfer.
+build.
 
 **Rejected.** Blazor Server (a stateful circuit for a UI that is mostly forms and a search
 box); Blazor WASM (multi-megabyte payload for the same result); server-rendered Razor
@@ -423,7 +423,7 @@ confidence. The `/api/jobs` list and `index_status` both did; so did a watcher w
 against them, which reported an index as failed while it was running perfectly.
 
 A nullable column used as an ordering key is a bug waiting for the right null. A queued
-timestamp is also just honest data: the UI can now say how long a job has been waiting.
+timestamp is also usable data: the UI can now say how long a job has been waiting.
 
 ---
 
@@ -440,7 +440,7 @@ minutes on CPU Ollama, and doing that in place means twenty minutes of half-popu
 results. With sets, the replacement is built alongside the live one and promoted when it is
 complete: promotion is one `UPDATE` and the only moment search changes.
 
-It also makes "the same document, chunked two ways" honest. That worked before only by
+It also makes "the same document, chunked two ways" workable. That worked before only by
 duplicating the corpus, which duplicated its grants and its sources with it.
 
 `corpus:set` rather than a new parameter keeps the MCP surface at five tools ([D-11](#d-11-five-mcp-tools)),
@@ -507,8 +507,8 @@ page-aligned chunking means, it is off by default, and the caller asked for it.
 ### Q3, first measurement
 
 `scripts/retrieval-bench.py` runs one query set against two chunk sets and reports where
-the expected file ranked. Chunk sets are what make this honest: identical chunking over
-identical documents, differing in the model and nothing else. Both sets held 108 chunks.
+the expected file ranked. Chunk sets are what make the comparison fair: identical chunking
+over identical documents, differing in the model and nothing else. Both sets held 108 chunks.
 
 12 queries over this repository's own docs, hybrid mode:
 
@@ -667,8 +667,8 @@ be right.
 **Consequence.** Three, all of them real:
 
 - A build needs history and tags. CI checks out with `fetch-depth: 0`; a shallow clone
-  versions itself `0.0.0-alpha.0.N` rather than failing, which is honest about not
-  knowing.
+  versions itself `0.0.0-alpha.0.N` rather than failing, which states that it does not
+  know.
 - The container image cannot do this. `.dockerignore` excludes `.git`, because copying
   history into the build context would invalidate the layer cache on every commit — so
   the Dockerfile takes `VERSION` as a build argument, which the release workflow supplies
@@ -711,7 +711,7 @@ and reused twelve queries; this varies everything and reuses none of them.
 model's rows measure silent truncation rather than retrieval — and its steady decline
 across chunk sizes is what truncation looks like from the outside. A default that quietly
 breaks a model the UI offers in a dropdown is a worse problem than which model is 2% better,
-and it is the one worth acting on. See [D-27](#d-27-chunk-budget).
+and it is the one worth acting on. See [D-27](#d-27-a-chunk-budget-is-characters-and-the-ratio-is-measured).
 
 ### Q3, fifth measurement — the code corpus (2026-09-17)
 
@@ -742,7 +742,7 @@ does not ruin. That is not a case for the model so much as confirmation of the e
 reading: its other rows measured truncation, not quality. The chunk size is now set from
 what a model was measured to accept, so that default is no longer reachable.
 
-### D-27 A chunk budget is characters, and the ratio is measured {#d-27-chunk-budget}
+### D-27 A chunk budget is characters, and the ratio is measured
 
 **Decision.** Chunk size stays a character budget. The chunker converts tokens to
 characters once and counts characters; no tokenizer runs in the chunking path. What
@@ -767,26 +767,12 @@ decision.
 
 ---
 
-## What was carried over from McpToolbox
-
-| Component | Treatment |
-|---|---|
-| `WorkspaceChunker` — language-aware code chunking | **Carried**, largely intact. The per-language boundary table is hard-won; the HTML-templates-are-not-documents decision in particular. |
-| `GitignoreFilter` — gitignore + workspaceignore + size caps | **Carried.** Renamed `.workspaceignore` to `.dexiconignore`. |
-| Document loaders — PDF, DOCX, PPTX, EPUB, HTML, Markdown | **Carried**, same libraries. |
-| `QdrantWorkspaceRepository` | **Rewritten.** Collection naming, tenancy layout, and hybrid search all change (D-04, D-05, D-06). The structure and the payload design survive. |
-| Embedding backoff and per-file failure isolation | **Carried**, including the `continue`-not-`break` fix that stopped one bad file starving an entire index. |
-| ADR-004 tenancy, ADR-005 auth | **Adapted.** Explicit target selection and fail-fast resolution survive; workspaces, published endpoints, and derived sessions do not — Dexicon has corpora, not conversations. |
-| Sidecar control API and per-tenant containers | **Dropped** (D-01). |
-| `SemanticWeight` client-side fusion | **Dropped** (D-06). |
-| Session/conversation model, jobs bus, agent host | **Dropped** — out of scope ([01](01-overview.md)). |
-
 ## Open questions
 
 | # | Question | Needed by | Current lean |
 |---|---|---|---|
 | ~~Q1~~ | ~~Licence — Apache-2.0 or MIT?~~ | — | **Resolved** — Apache-2.0, see [D-14](#d-14-licence) |
 | ~~Q2~~ | ~~Repository name and GHCR namespace~~ | — | **Resolved** — see [D-17](#d-17-name) |
-| Q3 | Default embedding model — `nomic-embed-text` or `embeddinggemma`? | M3 | **Swept, see [benchmarks](benchmarks.md).** Keep `nomic-embed-text`: gemma leads by 0.025 mean MRR over 55 queries, which is suggestive and not worth a forced reindex |
+| ~~Q3~~ | ~~Default embedding model — `nomic-embed-text` or `embeddinggemma`?~~ | — | **Resolved** — `embeddinggemma`, which won both sweeps. See [benchmarks](benchmarks.md) |
 | Q4 | Should `index_refresh` require the `ingest` scope, or be admin-only? | M2 | `ingest` — an agent noticing a stale index and refreshing it is the point |
 | Q5 | Git history indexing in v1? | M2 scope freeze | No. M5, and only on request |
