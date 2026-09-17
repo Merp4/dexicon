@@ -17,7 +17,7 @@ search(query, scope, mode, limit, filters)
 
   `source` narrows to one source of a corpus, named by its root path as `list_corpora`
   reports it (`orly/AI`); a parent folder matches everything beneath it. It is the only
-  way to narrow by WHERE content came from, because `path_prefix` matches `file_path`,
+  way to narrow by *where* content came from, because `path_prefix` matches `file_path`,
   which is relative to a source root — a corpus with a source at `orly/AI` stores its
   files as bare names, and no prefix matches the folder they live in. Resolution runs
   against the already-authorised scope, so naming a source can only narrow a search,
@@ -164,9 +164,9 @@ Search returns chunks. Two ways to get more, and only one of them is a tool:
 - **`dexicon://corpus/{name}/file/{path}`** — an MCP *resource*, not a tool. The
   reconstructed text of one indexed file, capped at a configurable size.
 
-Whole-file retrieval is a resource rather than a sixth tool deliberately. It is a read of a
-named thing, which is what resources are for, and D-11 treats the tool count as a budget
-every agent pays on every turn. For workspace corpora an agent can usually read the real
+Whole-file retrieval is a resource rather than a sixth tool. It is a read of a named
+thing, which is what resources are for, and D-11 treats the tool count as a budget every
+agent pays on every turn. For workspace corpora an agent can usually read the real
 file faster anyway; this path exists for uploads and for agents without filesystem access.
 
 ## Performance
@@ -180,7 +180,7 @@ file faster anyway; this path exists for uploads and for agents without filesyst
 
 Cold Ollama — model not resident — adds seconds. Readiness on `/healthz` reports whether
 the embedding model is loaded, and the UI shows it, so "first search is slow" is visible
-rather than mysterious.
+on screen.
 
 Query embeddings are cached in memory keyed by `(model, normalized query)` with a short
 TTL. Agents repeat queries far more than people do.

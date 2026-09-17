@@ -85,7 +85,7 @@ does not own is refused with `Tenant mismatch`, not 401. The message names both.
 ## "The first run sits doing nothing for ten minutes"
 
 Ollama is pulling the embedding model — several hundred megabytes. The healthcheck
-deliberately waits for the **model** to be present rather than just the daemon, because
+waits for the **model** to be present rather than just the daemon, because
 otherwise Dexicon starts indexing against a model that is still downloading and spends its
 first minutes in embedding backoff, which reads as a bug.
 

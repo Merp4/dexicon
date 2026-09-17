@@ -124,8 +124,7 @@ it. That makes it an API boundary like any other: a stack trace, an internal hos
 connection string crossing it is a disclosure, and one that can end up pasted into a
 conversation elsewhere.
 
-Audited 2026-09-17 by provoking each failure against the running stack rather than reading
-the code and hoping.
+Audited 2026-09-17 by provoking each failure against the running stack.
 
 | Probe | What comes back |
 |---|---|
@@ -140,7 +139,7 @@ the code and hoping.
 | Well-formed unknown token | 401 `Invalid credentials` — **identical**, so nothing says whether a token exists, is revoked or has expired |
 | `POST /mcp` unauthenticated | 401 before any tool listing; the tool surface is not enumerable |
 
-Two properties this rests on, both worth re-checking rather than assuming:
+Two properties this rests on, both worth re-checking:
 
 - **Unhandled exceptions are redacted by the MCP SDK.** Only `McpException` has its message
   surfaced; anything else becomes `An error occurred invoking '<tool>'.` Every message a
