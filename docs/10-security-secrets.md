@@ -218,8 +218,8 @@ Two that needed reading rather than parsing:
   and it is a test dependency that does not ship.
 
 **The nine npm licences that are not plain MIT/ISC/BSD/Apache are build-time only**, bar
-one — checked against
-`npm ls --omit=dev`, not assumed from where they sit in the tree:
+one. This was checked against `npm ls --omit=dev` rather than inferred from position in
+the tree:
 
 | Package | Licence | Ships? |
 |---|---|---|

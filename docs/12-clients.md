@@ -32,7 +32,7 @@ claude mcp add --transport http dexicon http://localhost:8477/mcp \
 ```
 
 Add `--scope user` for every project rather than the current one. Verify with
-`claude mcp list` — Dexicon should report `✔ Connected`.
+`claude mcp list`; Dexicon should report `✔ Connected`.
 
 ## Cursor
 
@@ -124,8 +124,8 @@ Edit through the MCP Servers panel, or the settings JSON directly:
 ### Claude Desktop
 
 **`claude_desktop_config.json` only validates stdio servers.** A `url` field is silently
-dropped — or takes the app down on startup — with nothing explaining why. It is worth being
-precise about this, because a config that looks right and does nothing costs an hour.
+dropped, or causes the app to fail on startup, with nothing explaining why. A
+configuration that appears correct and does nothing is difficult to diagnose.
 
 Two working options.
 
@@ -163,7 +163,7 @@ Config file location:
 
 ### Zed
 
-`settings.json`, under `context_servers`, and stdio only — so the same bridge:
+`settings.json`, under `context_servers`, and stdio only, so the same bridge applies:
 
 ```json
 {
@@ -181,7 +181,7 @@ Config file location:
 
 ## Anything else
 
-If a client takes a URL and headers, it works — there is nothing Dexicon-specific to learn.
+If a client accepts a URL and headers, it works; there is nothing Dexicon-specific to learn.
 If it only speaks stdio, `mcp-remote` bridges it, as above.
 
 Two things that trip people up with any client:
@@ -204,7 +204,7 @@ Two things that trip people up with any client:
 ```
 
 It merges into an existing config rather than replacing it, backs the file up first, and
-prints what it wrote — minus the token. `-WhatIf` shows the change without making it.
+prints what it wrote, excluding the token. `-WhatIf` shows the change without making it.
 `-Project` is the directory to write into for project scope, defaulting to the current one
 rather than the Dexicon checkout.
 

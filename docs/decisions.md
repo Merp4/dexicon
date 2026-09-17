@@ -670,7 +670,7 @@ be right.
   versions itself `0.0.0-alpha.0.N` rather than failing, which states that it does not
   know.
 - The container image cannot do this. `.dockerignore` excludes `.git`, because copying
-  history into the build context would invalidate the layer cache on every commit — so
+  history into the build context would invalidate the layer cache on every commit, so
   the Dockerfile takes `VERSION` as a build argument, which the release workflow supplies
   from the tag and then verifies against what the built image actually contains. A hand
   build with no argument reports `0.0.0-dev`: an image built outside the pipeline should
