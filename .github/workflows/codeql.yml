@@ -1,0 +1,72 @@
+name: CodeQL
+
+# Static analysis for both halves of the codebase. Code scanning is free on public
+# repositories; this workflow is the "advanced" setup rather than GitHub's default one
+# because C# here needs a .NET 10 SDK the runner does not ship, which the default setup
+# has no way to install.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, so a newly published query finds existing code without waiting for someone
+    # to touch the file it is about.
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze ${{ matrix.language }}
+    runs-on: ubuntu-latest
+
+    permissions:
+      # Writing the results back to the Security tab is the entire point.
+      security-events: write
+      contents: read
+      actions: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: csharp
+            # `autobuild` would try to build with whatever SDK is on the image, and .NET
+            # 10 is not on it. `none` would analyse without building and lose the
+            # dataflow that makes C# results worth reading, so the build is explicit.
+            build-mode: manual
+          - language: javascript-typescript
+            # Interpreted languages are extracted from source; there is nothing to build.
+            build-mode: none
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - uses: actions/setup-dotnet@v4
+        if: matrix.build-mode == 'manual'
+        with:
+          dotnet-version: '10.0.x'
+
+      # Debug, not Release: this build exists to be observed, and the analysis wants the
+      # code as written rather than as optimised.
+      - name: Build
+        if: matrix.build-mode == 'manual'
+        run: |
+          dotnet restore
+          dotnet build --no-restore
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}
