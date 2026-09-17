@@ -68,7 +68,7 @@ Zed. `./scripts/install-mcp.ps1` writes any of those configs for you.
 
 ## Status
 
-Working, and young. The current release is [`0.2.1`](CHANGELOG.md), published as
+Working, and young. The current release is [`0.2.2`](CHANGELOG.md), published as
 `ghcr.io/merp4/dexicon`.
 
 The defaults are [measured](docs/benchmarks.md) — 81 retrieval configurations over a
