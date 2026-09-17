@@ -63,9 +63,9 @@ Corpus 'books' has no chunk set named 'nope'. Its sets: default, fine.
 
 ## Tools
 
-Five tools. The count is a design constraint, not an accident: every tool definition is
-context an agent pays for on every turn, and a surface of thirty tools measurably degrades
-smaller models.
+Five tools. The count is a design constraint: every tool definition is context an agent
+pays for on every turn, and a surface of thirty tools measurably degrades smaller
+models.
 
 ### `search_index`
 

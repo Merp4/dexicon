@@ -211,7 +211,7 @@ be dropped silently.
 | `snowflake-arctic-embed2` | `{text}` | `query: {text}` |
 | `bge-m3`, `all-minilm`, `paraphrase-multilingual`, `granite-embedding` | `{text}` | `{text}` |
 
-The last row is a decision, not an omission: symmetric sentence-transformers models were
+The last row is intentional: symmetric sentence-transformers models were
 trained on sentence pairs with no task prefix, so a prefix is noise in the embedding rather
 than framing. The two Arctic generations want **different** prefixes and differ by one
 character in their names, so it is worth checking which one a set actually uses.
@@ -229,7 +229,7 @@ Resolution, in order:
 
 Models are added at **runtime**, through the Models screen, so built-ins are a fallback
 rather than the mechanism: any can be overridden by saving a row, and the UI states which of
-the three applies, so "embedded raw" is visible rather than assumed. An unrecognised model
+the three applies, so "embedded raw" is visible on screen. An unrecognised model
 is embedded raw and says so. Inventing a prefix would be worse than none — the model would
 embed the literal string `search_query:` as content.
 

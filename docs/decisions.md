@@ -582,7 +582,7 @@ of questions, which remains the open gap. Two runs agreeing on twelve queries is
 correlated samples, not twenty-four.
 
 
-### D-24 Model limits are measured, not assumed
+### D-24 Model limits are measured
 
 **Decision.** `POST /api/embedding-models/probe` measures a model's real input limit by
 embedding throwaway filler and bisecting on whether the tail still affects the vector.
@@ -746,7 +746,7 @@ what a model was measured to accept, so that default is no longer reachable.
 
 **Decision.** Chunk size stays a character budget. The chunker converts tokens to
 characters once and counts characters; no tokenizer runs in the chunking path. What
-changes is that the conversion ratio is now MEASURED per model rather than assumed to be 4.
+changes is that the conversion ratio is now measured per model rather than assumed to be 4.
 
 **Why not a real tokenizer.** Exactness would mean a vocabulary per model, versioned, for
 models pulled at runtime that may not exist yet. The only tokenizer guaranteed correct for

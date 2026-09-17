@@ -133,8 +133,8 @@ system that looked healthy.
 - **`list_corpora` leads with what a corpus is *for*.** The description used to come last,
   under the state, counts, chunk sets, dimensions and overlap. An empty corpus is now
   marked `NOT SEARCHABLE` rather than listed as a plausible place to look.
-- Chunk size is measured, not guessed: a model's real character ceiling and its
-  chars-per-token ratio are measured with its own tokenizer.
+- Chunk size is measured: a model's real character ceiling and its chars-per-token ratio
+  are both read from its own tokenizer.
 - One-of-N choices in the UI are a segmented control — one tab stop with arrow keys, rather
   than three separate tab stops with none.
 - The `docs/` corpus sweep gained a code corpus: 81 configurations over each, 162 in total.

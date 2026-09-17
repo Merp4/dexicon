@@ -135,6 +135,7 @@ Stated up front because these are the cases that get fudged.
 - **No message broker.** One in-process channel, one worker. Jobs are local and short.
 - **No Redis.** Nothing to share between instances, because there is one instance.
 - **No relational server.** SQLite in WAL mode on a volume covers the catalogue.
-- **No FileSystemWatcher.** Polling plus content hashing is more reliable across bind
-  mounts (this is a carried-over lesson, not a guess). Refresh interval is configurable;
+- **No FileSystemWatcher.** Watch events go missing across Docker bind mounts without
+  reporting anything, so refresh polls and compares content hashes
+  ([D-09](decisions.md#d-09-polling-with-content-hashes)). The interval is configurable;
   manual reindex is always available.
