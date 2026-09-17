@@ -28,7 +28,7 @@ services:
     # `latest` is the newest RELEASE — the release workflow puts that tag on version tags
     # only, never on a build of main and never on a prerelease. It is the right default
     # for trying this out and the wrong one for running it: set DEXICON_TAG to a version
-    # (0.2.1) or a digest (sha256:…) for anything you would be annoyed to see change
+    # (0.2.2) or a digest (sha256:…) for anything you would be annoyed to see change
     # under you. `edge` is the tip of main, published on every push.
     image: ghcr.io/${DEXICON_OWNER:-merp4}/dexicon:${DEXICON_TAG:-latest}
     build:

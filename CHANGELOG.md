@@ -4,7 +4,7 @@ Notable changes per release. Format loosely follows [Keep a Changelog]; versions
 [Semantic Versioning], with the caveat that this is 0.x and the minor number carries what
 the major one will once it stabilises.
 
-Every version is a git tag (`v0.2.1`), and the container image carries the same number —
+Every version is a git tag (`v0.2.2`), and the container image carries the same number —
 see [docs/09](docs/09-deployment.md) for how versions are derived and what the image tags
 mean.
 
@@ -12,6 +12,30 @@ mean.
 [Semantic Versioning]: https://semver.org/
 
 ---
+
+## 0.2.2 — 2026-09-17
+
+Documentation, bar one word of shipped text: the `path_prefix` tool description said
+`SOURCE` in capitals at a model. The API surface is otherwise identical to `0.2.1`.
+
+- The docs no longer reference a separate, non-public project of the same author's. Two
+  sections existed only to describe it and are gone; the design decisions they pointed at
+  stand where they are. `NOTICE` drops an attribution that was never required.
+- A prose pass across the whole set: roughly 90 lines of narrative removed with no facts
+  lost. Gone are the editorialising adverbs, the passages where a document narrated its own
+  edit history rather than describing the software, and the habit of defining a thing by
+  what it is not — kept only where the rejected alternative is real, which was 187 of the
+  200 places it appeared.
+- Four corrections found while reading, none of them editorial: `decisions.md` still
+  recommended `nomic-embed-text` after the benchmark sweep moved the default to
+  `embeddinggemma`; M3 was marked complete while still carrying the interim note that
+  superseded it; two M4 items were unticked for work that shipped in `0.2.1`; and a
+  `{#custom-id}` heading attribute, which GitHub does not support, left `SECURITY.md`
+  linking to an anchor that did not exist.
+- Duplicated passages removed, including the same EPUB-truncation story told twice in one
+  file and a threat model restated almost verbatim in two.
+- Shouting caps removed from prose, one instance of which was in a shipped MCP tool
+  description.
 
 ## 0.2.1 — 2026-09-17
 
