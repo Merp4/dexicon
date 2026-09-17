@@ -15,11 +15,11 @@ import {
 } from './api';
 import {
   Badge, Button, CardButton, Checkbox, Chip, CopyButton, Empty, ErrorBanner, Field, Input, Modal,
-  Segmented, Select, SelectItem, Spinner, formatBytes, localTime, relativeTime, stateTone,
+  Notice, Segmented, Select, SelectItem, Spinner, formatBytes, localTime, relativeTime, stateTone,
 } from './ui';
 import {
-  Check, Database, FileText, Key, ListChecks, LogOut, Plus, RefreshCw, RotateCcw, Search,
-  Settings, Sliders, Trash2,
+  ArrowLeft, Check, Database, FileText, Key, ListChecks, LogOut, Plus, RefreshCw, RotateCcw,
+  Search, Settings, Sliders, Trash2, TriangleAlert,
 } from 'lucide-react';
 import { cn } from 'cn';
 import { WorkspacePicker } from './WorkspacePicker';
@@ -230,8 +230,29 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   );
 }
 
-function HealthDots({ health, connected, stale }: { health: Health | null; connected: boolean; stale: boolean }) {
+export function HealthDots({ health, connected, stale }: { health: Health | null; connected: boolean; stale: boolean }) {
   const [open, setOpen] = useState(false);
+  const wrapper = useRef<HTMLDivElement>(null);
+
+  // Escape and a click elsewhere, which is what every other popover on the web does and
+  // what the rest of this app's dialogs already do. Without them the panel could only be
+  // dismissed by finding the button again, so it sat over the page while you worked.
+  useEffect(() => {
+    if (!open) return;
+
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    const onPointer = (e: PointerEvent) => {
+      if (!wrapper.current?.contains(e.target as Node)) setOpen(false);
+    };
+
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onPointer);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onPointer);
+    };
+  }, [open]);
+
   // A dev tool that hides whether its dependencies are healthy wastes an hour of
   // someone's day per incident. One that cries wolf wastes just as much, so an
   // unknown state is grey, never red.
@@ -244,31 +265,91 @@ function HealthDots({ health, connected, stale }: { health: Health | null; conne
     display: 'inline-block',
   });
 
+  const missing = health?.missingModels ?? [];
+
   return (
-    <div className="relative">
-      <Button onClick={() => setOpen((v) => !v)} aria-expanded={open} title="Dependency health">
+    <div className="relative" ref={wrapper}>
+      <Button
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        title={missing.length > 0
+          ? `${missing.length} embedding model${missing.length === 1 ? '' : 's'} a chunk set needs ` +
+            `${missing.length === 1 ? 'is' : 'are'} missing`
+          : 'Dependency health'}
+      >
         <span style={dot(health?.qdrant.reachable)} /> qdrant
-        <span className="ml-1.5" style={dot(health?.ollama.reachable)} /> ollama
+        {/* The configured provider names itself. Hardcoding "ollama" labelled the dot
+            with the wrong backend on any deployment whose default is not Ollama. */}
+        <span className="ml-1.5" style={dot(health?.ollama.reachable)} /> {health?.ollama.provider ?? 'embeddings'}
+        {/* Both dots can be green while a set is unsearchable, so the fault needs a mark
+            of its own out here. Behind the click it is a fault the screen knows about and
+            does not mention. */}
+        {missing.length > 0 && (
+          <>
+            <TriangleAlert aria-hidden className="ml-1 size-3.5 text-[var(--warn-text)]" />
+            <span className="sr-only">
+              {missing.length} embedding model{missing.length === 1 ? '' : 's'} missing
+            </span>
+          </>
+        )}
         {stale && <span className="dim ml-1.5 text-xs">· checking</span>}
         {!connected && <span className="dim ml-1.5 text-xs">· reconnecting</span>}
       </Button>
 
+      {/* The same entrance the dialogs use. This is the one panel in the app that is
+          hand-rolled rather than a shadcn primitive, and it was the only one that appeared
+          with a hard cut. `origin-top-right` so it grows from the button it belongs to
+          rather than from its own middle. Reduced motion collapses the duration, handled
+          once in index.css. */}
       {open && health && (
-        <div className="card absolute top-10 right-0 z-20 w-[330px] p-3 text-xs">
+        <div className="card absolute top-10 right-0 z-20 w-[330px] origin-top-right p-3 text-xs shadow-lg animate-in fade-in-0 zoom-in-95 duration-150">
           <p className="mt-0 mx-0 mb-2 font-semibold">Qdrant</p>
           <p className="dim mono m-0 break-all">{health.qdrant.endpoint}</p>
           <p className="mt-1 mx-0 mb-3">
             <Badge tone={health.qdrant.reachable ? 'ok' : 'danger'}>{health.qdrant.reachable ? 'reachable' : 'unreachable'}</Badge>
           </p>
 
-          <p className="mt-0 mx-0 mb-2 font-semibold">Ollama</p>
-          <p className="dim mono m-0 break-all">{health.ollama.endpoint}</p>
-          <p className="mt-1 mx-0 mb-0">
-            <Badge tone={health.ollama.reachable ? 'ok' : 'danger'}>{health.ollama.model}</Badge>{' '}
-            <Badge>{health.ollama.dimensions}d</Badge>
+          {/* The provider's own name, not "Ollama": the default provider is configurable
+              and the response has carried `provider` all along. */}
+          <p className="mt-0 mx-0 mb-2 font-semibold">
+            Embeddings <span className="dim font-normal">· {health.ollama.provider}</span>
           </p>
+          <p className="dim mono m-0 break-all">{health.ollama.endpoint}</p>
+          {/* Reachability, said the same way Qdrant says it. This badge used to carry the
+              model name instead, so the panel never plainly answered the one question it
+              exists for, and colour-coded a model name by whether the backend was up. */}
+          <p className="mt-1 mx-0 mb-0">
+            <Badge tone={health.ollama.reachable ? 'ok' : 'danger'}>
+              {health.ollama.reachable ? 'reachable' : 'unreachable'}
+            </Badge>
+          </p>
+          {/* The default model and its dimensionality used to sit here as two badges,
+              which read as "this is what Dexicon embeds with" — true of nothing, since
+              every set pins its own. It is also already on screen at the one moment it
+              applies, in the corpus form. What belongs in a health panel is the inverse:
+              a set whose model the provider no longer has. That set still says `ready`
+              and its vectors are still in Qdrant, but its queries cannot be embedded.
+
+              `missing`, not `health.missingModels`: the field is newer than the container
+              a dev loop may be running against, and reading `.length` off the undefined it
+              returns took the whole page down the moment the panel was opened. See the
+              same note on a source's globs below. */}
+          {missing.length > 0 && (
+            <div className="mt-2.5 grid gap-1.5">
+              {missing.map((m) => (
+                <Notice key={`${m.provider}/${m.model}`} tone="danger" className="text-xs">
+                  <strong className="mono">{m.model}</strong> is gone from{' '}
+                  <span className="mono">{m.provider}</span>, and{' '}
+                  {m.sets.length === 1 ? 'a chunk set needs it' : `${m.sets.length} chunk sets need it`}:{' '}
+                  <span className="mono">{m.sets.join(', ')}</span>. Searching{' '}
+                  {m.sets.length === 1 ? 'it' : 'them'} returns nothing until the model is
+                  pulled back.
+                </Notice>
+              ))}
+            </div>
+          )}
           {health.ollama.error && (
-            <p className="mt-2 mx-0 mb-0 text-[var(--danger)]">{health.ollama.error}</p>
+            <p className="mt-2 mx-0 mb-0 text-[var(--danger-text)]">{health.ollama.error}</p>
           )}
           {!health.ollama.reachable && (
             <p className="dim mt-2 mx-0 mb-0">
@@ -320,6 +401,12 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
 
   return (
     <div className="grid gap-4">
+      {/* Every other view names itself in an h1; this was the one screen with no heading
+          at all, so the headings outline skipped it and a screen reader arrived somewhere
+          unnamed. Not shown, because a "Search" title sitting on top of a search box that
+          already says what it is would be furniture. */}
+      <h1 className="sr-only">Search</h1>
+
       <form onSubmit={run} className="card p-4 grid gap-3">
         <Input
           ref={inputRef}
@@ -384,15 +471,14 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
       </form>
 
       {result?.degraded && (
-        <div className="card border-[color-mix(in_oklab,var(--warn)_45%,transparent)] bg-[color-mix(in_oklab,var(--warn)_8%,transparent)] px-3.5 py-3 text-sm">
+        <Notice tone="warn">
           <strong>Degraded:</strong> {result.degradedReason}
-        </div>
+        </Notice>
       )}
-      {result?.note && (
-        <div className="card border-[color-mix(in_oklab,var(--accent)_40%,transparent)] px-3.5 py-3 text-sm">
-          {result.note}
-        </div>
-      )}
+      {/* An incomplete result is a warning, not a footnote. This was drawn in the accent
+          blue, which is the colour the app uses for "default" and "in use", so the one
+          line saying the index was still building looked like a label on it. */}
+      {result?.note && <Notice tone="warn">{result.note}</Notice>}
 
       {result && (
         <>
@@ -423,7 +509,13 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
           ) : (
             <div className="grid gap-3">
               {result.hits.map((h, i) => (
-                <article key={`${h.corpusId}-${h.filePath}-${h.startLine}-${i}`} className="card p-3.5">
+                // `min-w-0`: a grid item's default `min-width: auto` will not let the
+                // track be narrower than the item's own min-content, and this header's
+                // min-content is a whole book title plus an unshrinkable section label.
+                // The citation did truncate — after widening the track past the viewport,
+                // which put a horizontal scrollbar under the entire page and pushed the
+                // search box and the results count off the right-hand edge with it.
+                <article key={`${h.corpusId}-${h.filePath}-${h.startLine}-${i}`} className="card min-w-0 p-3.5">
                   {/* The citation truncates; the actions do not move.
                       A book's filename is long — "Coaching Agile Teams - A Companion for
                       ScrumMasters, Agile Coaches, and Project Managers in Transition.epub"
@@ -431,7 +523,10 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
                       the controls sat in a different place on every result. The full text
                       is still on the element and in Copy path, which is how anyone
                       actually takes a citation. */}
-                  <header className="flex gap-2.5 items-center mb-2">
+                  {/* `flex-wrap` is inert where there is room, so the row still reads as
+                      one line on a desktop. At phone width there is not room, and without
+                      it Copy path and Open sat 80px past the right edge of the page. */}
+                  <header className="flex flex-wrap gap-2.5 items-center mb-2">
                     <code className="mono truncate text-sm font-semibold" title={h.location ?? undefined}>
                       {h.location}
                     </code>
@@ -538,7 +633,7 @@ export function CorporaView({
                   <span>{c.fileCount.toLocaleString()} files</span>
                   <span>{c.chunkCount.toLocaleString()} chunks</span>
                   {c.skippedCount > 0 && <span>{c.skippedCount.toLocaleString()} skipped</span>}
-                  {c.failedCount > 0 && <span className="text-[var(--danger)]">{c.failedCount.toLocaleString()} failed</span>}
+                  {c.failedCount > 0 && <span className="text-[var(--danger-text)]">{c.failedCount.toLocaleString()} failed</span>}
                   {/* The default set is what this corpus answers to unqualified. */}
                   <span className="mono">
                     {c.chunkSets.find((s) => s.isDefault)?.embeddingModel ?? c.chunkSets[0]?.embeddingModel ?? '—'}
@@ -561,9 +656,24 @@ export function CorporaView({
 function ProgressBar({ job }: { job: Job & { currentFile?: string } }) {
   const processed = job.filesDone + job.filesSkipped + job.filesFailed;
   const pct = job.filesTotal > 0 ? Math.min(100, (processed / job.filesTotal) * 100) : 0;
+  const caption =
+    `${job.phase ?? job.state} · ${processed.toLocaleString()}/${job.filesTotal.toLocaleString()} files` +
+    ` · ${job.chunksWritten.toLocaleString()} chunks`;
+
   return (
     <div className="mt-2.5">
-      <div className="h-[5px] overflow-hidden rounded-full bg-muted">
+      {/* A bare pair of divs is a picture of a progress bar, not a progress bar: nothing
+          announced it, so the only indication that an index was running was a coloured
+          rectangle. The caption below carries the numbers, so it is the accessible name
+          rather than a second thing to keep in step. */}
+      <div
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(pct)}
+        aria-valuetext={caption}
+        className="h-[5px] overflow-hidden rounded-full bg-muted"
+      >
         <div
           className="h-full bg-[var(--accent)] transition-[width] duration-300"
           // Live percentage: the one thing that cannot be a class without generating a
@@ -572,7 +682,7 @@ function ProgressBar({ job }: { job: Job & { currentFile?: string } }) {
         />
       </div>
       <div className="dim text-xs mt-1">
-        {job.phase ?? job.state} · {processed.toLocaleString()}/{job.filesTotal.toLocaleString()} files · {job.chunksWritten.toLocaleString()} chunks
+        {caption}
         {job.currentFile ? ` · ${job.currentFile}` : ''}
       </div>
     </div>
@@ -732,7 +842,7 @@ export function CorpusDetail({
   return (
     <div className="grid gap-4">
       <div className="flex gap-2.5 items-center flex-wrap">
-        <Button onClick={onBack}>← Corpora</Button>
+        <Button onClick={onBack}><ArrowLeft />Corpora</Button>
         <h1 className="m-0 text-lg">{corpus.name}</h1>
         <Badge tone={stateTone(corpus.state)}>{corpus.state}</Badge>
         <span className="flex-1" />
@@ -771,7 +881,7 @@ export function CorpusDetail({
                       exclude glob and an index that stopped early all look like, and it
                       is invisible in a corpus-level count. */}
                   {corpus.sources.length > 1 && (
-                    <span className={s.fileCount ? 'dim text-xs' : 'text-xs text-[var(--warn)]'}>
+                    <span className={s.fileCount ? 'dim text-xs' : 'text-xs text-[var(--warn-text)]'}>
                       {s.fileCount ? `${s.fileCount.toLocaleString()} files` : 'no files'}
                     </span>
                   )}
@@ -862,7 +972,7 @@ export function CorpusDetail({
               <div
                 key={f.id}
                 className={cn(
-                  'flex flex-wrap items-baseline gap-2.5 px-3 py-2',
+                  'flex flex-wrap items-baseline gap-2.5 px-3 py-2 transition-colors hover:bg-muted',
                   i && 'border-t border-border',
                 )}
               >
@@ -870,7 +980,7 @@ export function CorpusDetail({
                     is the screen telling you it knows something it will not say. */}
                 <button
                   type="button"
-                  className="mono min-w-[220px] flex-1 cursor-pointer text-left text-xs break-all underline-offset-2 hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+                  className="mono min-w-[220px] flex-1 text-left text-xs break-all underline-offset-2 hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
                   onClick={() => setViewing({ path: f.relativePath })}
                 >
                   {f.relativePath}
@@ -881,6 +991,13 @@ export function CorpusDetail({
                 {f.statusDetail && <span className="dim text-xs w-[100%]">↳ {f.statusDetail}</span>}
               </div>
             ))}
+            {/* The list stopped at 300 and said nothing, so a corpus of 4,000 files looked
+                like a corpus of 300. Narrow the status filter to reach the rest. */}
+            {files.length > 300 && (
+              <div className="dim border-t border-border px-3 py-2 text-xs">
+                Showing the first 300 of {files.length.toLocaleString()} files.
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -992,9 +1109,9 @@ function AddSourceModal({
         </Field>
 
         {alreadyHere && (
-          <p className="-mt-2 mb-3 text-xs text-[var(--warn)]">
+          <Notice tone="warn" className="-mt-2 mb-3.5 text-xs">
             This corpus already indexes that folder. Adding it again indexes everything twice.
-          </p>
+          </Notice>
         )}
 
         <Field label="Largest file (MB)" hint="Anything bigger is skipped and reported, not silently dropped.">
@@ -1244,10 +1361,21 @@ function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: Record<
     return () => clearInterval(id);
   }, [onError]);
 
-  if (jobs.length === 0) return <Empty title="No jobs yet" hint="Indexing runs appear here, newest first." />;
+  // The heading stays whichever way this goes: every other view keeps its title over an
+  // empty state, and a screen that loses its name is a screen you cannot tell you are on.
+  if (jobs.length === 0) {
+    return (
+      <div className="grid gap-4">
+        <h1 className="m-0 text-lg">Jobs</h1>
+        <Empty title="No jobs yet" hint="Indexing runs appear here, newest first." />
+      </div>
+    );
+  }
 
+  // gap-4 like every other list page. This one sat on gap-3, which put its heading
+  // closer to the first card than the same heading is on Corpora or Documents.
   return (
-    <div className="grid gap-3">
+    <div className="grid gap-4">
       <h1 className="m-0 text-lg">Jobs</h1>
       {jobs.map((j) => {
         const merged = live[j.corpusId]?.id === j.id ? live[j.corpusId] : j;
@@ -1274,7 +1402,7 @@ function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: Record<
             <div className="dim mt-1.5 text-xs flex gap-3.5 flex-wrap">
               <span>{merged.filesDone.toLocaleString()} indexed</span>
               <span>{merged.filesSkipped.toLocaleString()} skipped</span>
-              {merged.filesFailed > 0 && <span className="text-[var(--danger)]">{merged.filesFailed.toLocaleString()} failed</span>}
+              {merged.filesFailed > 0 && <span className="text-[var(--danger-text)]">{merged.filesFailed.toLocaleString()} failed</span>}
               <span>{merged.chunksWritten.toLocaleString()} chunks</span>
             </div>
 
@@ -1284,7 +1412,7 @@ function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: Record<
                   'mt-2 mb-0 text-xs',
                   // A job that is alive but achieving nothing is not a failed one, and
                   // colouring it red says it is.
-                  merged.state === 'degraded' ? 'text-[var(--warn)]' : 'text-[var(--danger)]',
+                  merged.state === 'degraded' ? 'text-[var(--warn-text)]' : 'text-[var(--danger-text)]',
                 )}
               >
                 {merged.error}
@@ -1316,9 +1444,14 @@ function AccessView({ onError }: { onError: (e: unknown) => void }) {
 
   return (
     <div className="grid gap-5">
+      {/* The nav calls this Access and the page called itself Tokens, so the heading
+          contradicted the thing you clicked to get here. Tokens and Tenants are its two
+          sections, and now read as two. */}
+      <h1 className="m-0 text-lg">Access</h1>
+
       <section>
         <div className="flex justify-between items-center mb-3">
-          <h1 className="m-0 text-lg">Tokens</h1>
+          <h2 className="mt-0 mx-0 mb-0 text-base">Tokens</h2>
           <Button variant="primary" onClick={() => setCreating(true)}><Plus />New token</Button>
         </div>
 
@@ -1381,9 +1514,9 @@ function AccessView({ onError }: { onError: (e: unknown) => void }) {
 
       {issued && (
         <Modal title="Token created" onClose={() => setIssued(null)} width={680}>
-          <p className="mt-0 text-sm text-[var(--warn)]">
+          <Notice tone="warn" className="mb-3.5">
             <strong>Copy it now.</strong> This is the only time it will be shown. It is stored as a hash and cannot be recovered.
-          </p>
+          </Notice>
           <pre className="mono overflow-x-auto rounded-md bg-muted p-3 text-xs break-all whitespace-pre-wrap">
             {issued.secret}
           </pre>
@@ -1483,30 +1616,48 @@ function SettingsView({ health }: { health: Health | null }) {
       <h1 className="m-0 text-lg">Settings</h1>
 
       <section className="card p-3.5">
-        <h2 className="mt-0 mx-0 mb-3 text-sm">Appearance</h2>
-        <div className="flex gap-1.5">
-          {['auto', 'light', 'dark'].map((t) => (
-            <Chip key={t} active={theme === t} onClick={() => setTheme(t)}>
-              {t}
-            </Chip>
-          ))}
-        </div>
+        <h2 className="mt-0 mx-0 mb-3 text-base">Appearance</h2>
+        {/* One-of-N, so the same control as the search mode and the file filter. As three
+            Chips it announced three independent toggles, two of them unpressed, which is
+            not what choosing a theme is. */}
+        <Segmented
+          label="Appearance"
+          value={theme}
+          onChange={setTheme}
+          options={[
+            { value: 'auto', label: 'auto', title: 'Follow the operating system' },
+            { value: 'light', label: 'light' },
+            { value: 'dark', label: 'dark' },
+          ]}
+        />
       </section>
 
       <section className="card p-3.5">
-        <h2 className="mt-0 mx-0 mb-3 text-sm">Dependencies</h2>
+        <h2 className="mt-0 mx-0 mb-3 text-base">Dependencies</h2>
         {/* Read-only: endpoints come from the environment. Making them editable here
             would mean storing them, and an endpoint is not a user preference. */}
         <div className="grid gap-2 text-sm">
           <Row label="Qdrant"><span className="mono">{health?.qdrant.endpoint ?? '—'}</span> <Badge tone={health?.qdrant.reachable ? 'ok' : 'danger'}>{health?.qdrant.reachable ? 'reachable' : 'unreachable'}</Badge></Row>
-          <Row label="Ollama"><span className="mono">{health?.ollama.endpoint ?? '—'}</span> <Badge tone={health?.ollama.reachable ? 'ok' : 'danger'}>{health?.ollama.reachable ? 'reachable' : 'unreachable'}</Badge></Row>
-          <Row label="Model"><span className="mono">{health?.ollama.model ?? '—'}</span> · {health?.ollama.dimensions ?? 0}d</Row>
+          <Row label="Embeddings">
+            <span className="mono">{health?.ollama.endpoint ?? '—'}</span>{' '}
+            <Badge tone={health?.ollama.reachable ? 'ok' : 'danger'}>{health?.ollama.reachable ? 'reachable' : 'unreachable'}</Badge>{' '}
+            {health?.ollama.provider && <Badge>{health.ollama.provider}</Badge>}
+          </Row>
+          {/* "Model" implied the deployment had one. It has a default for new corpora;
+              every chunk set records the model it was built with and keeps it. */}
+          <Row label="New corpora">
+            <span className="mono">{health?.ollama.model ?? '—'}</span> · {health?.ollama.dimensions ?? 0}d
+          </Row>
           <Row label="Corpora">{health?.corpora ?? 0}</Row>
         </div>
 
         <div className="mt-3">
+          {/* The label stays put while it runs. Swapping it for a bare spinner left an
+              unlabelled square where the button had been, and a screen reader reading a
+              button with no name. */}
           <Button disabled={checking} onClick={() => void checkConnectivity()}>
-            {checking ? <Spinner /> : 'Check connectivity'}
+            {checking ? <Spinner /> : null}
+            {checking ? 'Checking…' : 'Check connectivity'}
           </Button>
 
           <ErrorBanner error={checkError} onDismiss={() => setCheckError(null)} />

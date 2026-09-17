@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type Corpus, type DocumentText, type LibraryDocument } from './api';
 import {
-  Badge, Button, CopyButton, Empty, Field, Modal, Select, SelectItem, Spinner,
+  Badge, Button, CopyButton, Empty, Field, Modal, Notice, Select, SelectItem, Spinner,
   formatBytes, localTime, relativeTime, stateTone,
 } from './ui';
 import { cn } from 'cn';
@@ -31,6 +31,7 @@ export function DocumentsView({
   const [inspecting, setInspecting] = useState<LibraryDocument | null>(null);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [lastUpload, setLastUpload] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const writable = corpora.filter((c) => c.owned);
@@ -61,14 +62,19 @@ export function DocumentsView({
         return;
       }
       setBusy(true);
+      setLastUpload(null);
       try {
         const result = await api.uploadDocuments(uploadTo, files);
         const deduped = result.stored.filter((s: { deduplicated: boolean }) => s.deduplicated).length;
-        if (deduped > 0) {
-          // Worth saying out loud: it looks like nothing happened otherwise.
-          // eslint-disable-next-line no-console
-          console.info(`${deduped} file(s) were already stored; the existing extraction was reused.`);
-        }
+        // On screen, not in the console. Re-uploading a file that is already stored is
+        // the case that looks like nothing happened — same row, same count, no new
+        // document — and the explanation was being written somewhere nobody was looking.
+        setLastUpload(
+          deduped === 0
+            ? `${result.stored.length} file${result.stored.length === 1 ? '' : 's'} stored.`
+            : `${deduped} of ${result.stored.length} ${deduped === 1 ? 'was' : 'were'} already stored; ` +
+              'the existing extraction was reused rather than running again.',
+        );
         await load();
         await onRefresh();
       } catch (e) {
@@ -108,7 +114,12 @@ export function DocumentsView({
       {/* Drop zone */}
       <div
         onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-        onDragLeave={() => setDragging(false)}
+        // `dragleave` also fires as the pointer crosses onto a child, so dragging a file
+        // over the zone's own text made it flash on and off. Only a leave that lands
+        // outside the zone is a leave.
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+        }}
         onDrop={(e) => {
           e.preventDefault();
           setDragging(false);
@@ -143,6 +154,12 @@ export function DocumentsView({
         </Button>
       </div>
 
+      {lastUpload && (
+        <Notice tone="ok">
+          {lastUpload}
+        </Notice>
+      )}
+
       {loading ? (
         <Empty title="Loading…" />
       ) : docs.length === 0 ? (
@@ -165,11 +182,11 @@ export function DocumentsView({
                 </span>
               </header>
 
+              {/* Where "why isn't my scanned PDF searchable" gets answered. */}
               {d.emptyReason && (
-                <p className="mt-2 mb-0 text-sm text-[var(--warn)]">
-                  {/* Where "why isn't my scanned PDF searchable" gets answered. */}
-                  ⚠ {d.emptyReason}
-                </p>
+                <Notice tone="warn" className="mt-2.5">
+                  {d.emptyReason}
+                </Notice>
               )}
 
               {/* The comparison that makes the model legible. */}
@@ -327,7 +344,7 @@ function ExtractedTextModal({
       {/* "What did the extractor actually see?" is the first question when results are
           wrong, and it should not require a database client to answer. */}
       {!text ? (
-        <p><Spinner /> Loading…</p>
+        <p className="flex items-center gap-2"><Spinner /> Loading…</p>
       ) : (
         <>
           <div className="mb-3 text-sm text-muted-foreground">
@@ -336,7 +353,9 @@ function ExtractedTextModal({
             </span>
           </div>
           {text.emptyReason && (
-            <p className="text-sm text-[var(--warn)]">⚠ {text.emptyReason}</p>
+            <Notice tone="warn" className="mb-2.5">
+              {text.emptyReason}
+            </Notice>
           )}
           <pre className="mono m-0 max-h-[55vh] overflow-auto rounded-md bg-muted p-3 text-xs break-words whitespace-pre-wrap">
             {text.preview || '(nothing was extracted)'}
