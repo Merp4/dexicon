@@ -18,7 +18,34 @@ with no section here fails its release rather than publishing an undescribed one
 
 ## Unreleased
 
+### ⚠️ Upgrading
+
+- **Every PDF re-extracts and re-chunks itself** on the next ordinary refresh, because the
+  extractor version is part of the content fingerprint. Nothing to run by hand.
+
 ### Fixed
+
+- **PDFs were read in content-stream order, not in reading order.** A producer writes the
+  content stream in whatever order it likes, which on a two-column page is often left line,
+  right line, left line. Read that way the columns interleave into text that is grammatical
+  nonsense but looks like prose, so nothing downstream detects it: it embeds, it chunks and
+  it comes back as a search hit. A table is worse, every cell being its own column.
+
+  The quieter half affected every PDF. Content order ends a line where the text met the
+  right margin, so a paragraph arrived as ten fragments. Over a 424-page book, against the
+  EPUB of the same title: 14,954 lines averaging 43 characters became 5,559 averaging 118,
+  where the EPUB gives 5,727 averaging 109. Character counts barely move, so this is not
+  about gaining or losing text. It costs 1.2x the extraction time, 5.8 ms a page.
+
+  Measured and not claimed: this does **not** improve chunk parity between a title's PDF
+  and its EPUB. Parity was already close and is marginally worse at the smallest chunk
+  size, because chunks are budgeted in characters and the character count is what did not
+  change.
+
+- **`get_context` returned the chunks holding the lines, not the lines.** Asking for three
+  lines of context returned forty: the stitcher emitted every chunk that overlapped the
+  window rather than trimming to it, so a request was answered with whatever the chunk
+  boundaries happened to be. ([#12](https://github.com/Merp4/dexicon/pull/12))
 
 - **The audit trail could be forged by an unauthenticated caller.** A request path is
   decoded before it is logged, so `%0A` arrived as a real newline, and the console output
