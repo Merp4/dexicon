@@ -71,6 +71,14 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Fixed
 
+- **Probing one model by two names took the models list to a 500.** A measurement is stored
+  under the name it was requested with, and the table is keyed on (provider, model), so
+  `embeddinggemma` and `embeddinggemma:latest` are two legal rows for one model. Listing them
+  normalised both to a single key and then keyed a dictionary on it, which threw. Reachable
+  by doing nothing stranger than probing the same model twice by its two names. The listing
+  now groups instead, and the most recent measurement wins, because a re-probe is a
+  correction.
+
 - **Collapsing duplicate documents returned fewer results than were asked for.** Search
   over-fetches so that dropping a near-duplicate can promote the next distinct document, and
   two ceilings quietly threw that away. The vector store clamped every request to 50 — a
