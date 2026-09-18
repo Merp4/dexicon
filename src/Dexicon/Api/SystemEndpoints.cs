@@ -385,10 +385,22 @@ public static class SystemEndpoints
 
             // The framing travels with the model, because "embedded raw" is the one state
             // nobody would think to ask about and the one that silently costs recall.
+            // Grouped, not keyed directly. A measurement is stored under the model name it
+            // was requested with, and `embeddinggemma` and `embeddinggemma:latest` are the
+            // same model under two names: both are legal rows, since the table's key is
+            // (provider, model), and both normalise to one key here. Keying threw
+            // ArgumentException and took the whole models list to a 500 — a listing that
+            // cannot survive its own stored data.
+            //
+            // The most recent wins, because a re-probe is a correction.
             var measured = (await db.ModelMeasurements
                     .Where(x => x.Provider == name)
                     .ToListAsync(ct))
-                .ToDictionary(x => ModelNames.Normalise(x.Model), StringComparer.OrdinalIgnoreCase);
+                .GroupBy(x => ModelNames.Normalise(x.Model), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.OrderByDescending(x => x.MeasuredUtc).First(),
+                    StringComparer.OrdinalIgnoreCase);
 
             var listed = new List<EmbeddingModelInfo>(candidates.Count);
             foreach (var m in candidates)
