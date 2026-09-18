@@ -1065,7 +1065,7 @@ export function CorpusDetail({
           corpus={corpus}
           initialPath={addingSource.path}
           onClose={() => setAddingSource(null)}
-          onAdded={async () => { setAddingSource(null); await onRefresh(); }}
+          onAdded={async () => { setAddingSource(null); await onRefresh(); await load(); }}
           onError={onError}
         />
       )}
@@ -1544,7 +1544,10 @@ function AddSourceModal({
 }) {
   const [path, setPath] = useState(initialPath);
   const [useGitignore, setUseGitignore] = useState(true);
-  const [maxFileMb, setMaxFileMb] = useState(2);
+  // 2 MB was too small to be a useful default: it is a cap on ordinary files, since PDFs,
+  // EPUBs and the other document formats are measured against DocumentMaxBytes instead, so
+  // the only thing it was excluding was large text.
+  const [maxFileMb, setMaxFileMb] = useState(20);
   const [include, setInclude] = useState('');
   const [exclude, setExclude] = useState('');
   const [busy, setBusy] = useState(false);

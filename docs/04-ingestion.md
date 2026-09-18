@@ -28,6 +28,29 @@ Discovery walks the tree and applies, **in order**:
    `skipped` with the reason, never dropped without record.
 6. **Binary sniff** — a NUL byte in the first 8 KB means binary, regardless of extension.
 
+### One file, one source
+
+A source covers its whole tree, so a corpus can hold two sources where one sits above the
+other: `books/orly` above `books/orly/AI`, or the workspace root above `docs`. Every file
+under the deeper one is then reachable from both.
+
+File identity is (source, relative path), so without care each copy is a separate row, a
+separate chunking and a separate set of vectors. The corpus silently doubles, every search
+returns the same passage twice, and the second copy is paid for in embedding time.
+
+The inventory is therefore made distinct **across sources** before anything is indexed. A
+file belongs to the **most specific** source that covers it, the one whose root is deepest:
+that source was created for that content, and its filters and size cap are the more
+deliberate statement about it. A source higher up keeps everything the deeper ones do not
+claim, which is what makes "index the loose files in this folder" work without anybody
+maintaining a list of exclusions that goes stale the moment a source is added.
+
+Two sources on the *same* root are a mistake the UI warns about and the API allows; one of
+them yields, chosen by id so the answer does not depend on the order rows came back.
+
+Overlap is decidable from the root paths alone, since each source covers exactly its own
+subtree, so this costs no extra walk and holds no inventory in memory.
+
 ### Where steps 2, 4 and 5 get their values
 
 `use_gitignore`, the two glob lists and `max_file_bytes` resolve through three layers,

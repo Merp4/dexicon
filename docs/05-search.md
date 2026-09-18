@@ -155,9 +155,47 @@ Three design choices:
    the first thing anyone does with a float is threshold it. Say so in the schema
    description, not only here.
 
+## What a result returns, and what it costs
+
+A result is a **window onto the matching passage**, not the whole chunk. The chunk is the
+unit that was embedded and the unit that scored; at 2,065 tokens on the book corpus it is
+the right size for retrieval and far too large to hand back. Measured over eight questions,
+five results each, returning chunks whole cost a mean of 40,797 characters, about 10,200
+tokens: an agent with a 200k window could afford twenty searches.
+
+**The window is centred on what matched.** Head truncation was the obvious implementation
+and loses the answer. On the same corpus, with a 1,500-character window:
+
+| | |
+|---|---|
+| first matching term already past the window | 12% of hits |
+| every matching term inside the window | 25% of hits |
+| where matched terms sit (0 = start, 1 = end) | median 0.10, 90th 0.56 |
+
+So a head-cut preview would have carried none of what the query matched for one hit in
+eight. Centring fixes that. The window grows outwards from the matching line, is cut on line
+boundaries, and marks an elision with `…` so a window is distinguishable from a whole chunk.
+When a chunk has no usable line breaks near the match — a PDF page extracted as one line, a
+minified file — it is cut on characters instead.
+
+`max_chars_per_hit` sets the budget, default 1,500. `0` returns whole chunks, which is what
+comparing two extractions of one title wants and what an agent almost never does. On the
+eight queries: **40,715 → 6,532 characters per call, 10,178 → 1,633 tokens.**
+
+**`distinct_titles`**, default on, returns one result per document. A library holding each
+title as both PDF and EPUB returned 3.0 distinct books per 5 results; collapsing them raises
+that to 4.8 and takes the text not already returned earlier in the same response from 85% to
+100%. This is a **quality** fix and is counted as one: it saved 0.2% of the tokens, because
+dropping a duplicate only promotes another chunk of the same size. The limit is applied
+after collapsing, and the vector query over-fetches, so a dropped duplicate promotes the
+next distinct hit instead of leaving a gap. Collapsing can still return fewer results than
+were asked for, and says so.
+
+Turning it off returns every copy, which is how two extractors get compared on one title.
+
 ## Retrieving more context
 
-Search returns chunks. Two ways to get more, and only one of them is a tool:
+Search returns windows onto chunks. Two ways to get more, and only one of them is a tool:
 
 - **`get_context(corpus, file_path, around_line, before, after, line_numbers)`** — an MCP tool
   ([06](06-mcp-surface.md)). Returns the neighbouring lines from the stored chunks for that

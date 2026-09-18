@@ -34,6 +34,10 @@ public static class SystemEndpoints
                 Source = body.Source,
                 Language = body.Language,
                 Symbol = body.Symbol,
+                MaxCharsPerHit = body.MaxCharsPerHit is { } n
+                    ? Math.Clamp(n, 0, 100_000)
+                    : SearchRequest.DefaultMaxCharsPerHit,
+                DistinctTitles = body.DistinctTitles ?? true,
             }, ct);
 
             return Results.Ok(result);

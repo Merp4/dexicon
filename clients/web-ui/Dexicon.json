@@ -2789,6 +2789,19 @@
               "null",
               "string"
             ]
+          },
+          "maxCharsPerHit": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "distinctTitles": {
+            "type": [
+              "null",
+              "boolean"
+            ]
           }
         }
       },

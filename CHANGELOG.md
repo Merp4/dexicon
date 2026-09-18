@@ -18,6 +18,57 @@ with no section here fails its release rather than publishing an undescribed one
 
 ## Unreleased
 
+### Changed
+
+- **A search result is a window onto the matching passage, not the whole chunk.** Measured
+  over eight questions against a 95-book library, five results each, a search returned a
+  mean of 40,797 characters, about 10,200 tokens: the chunk is sized for retrieval, at
+  2,065 tokens, and was being handed back whole. An agent with a 200k window could afford
+  twenty searches.
+
+  The window is **centred on what matched**, not taken from the head, and that is the whole
+  of the design. Head truncation was the obvious implementation and loses the answer: at
+  1,500 characters, 12% of real hits had their first matching term already past the cut, and
+  only 25% had all of them inside it. Matched terms sit at 0.10 of the chunk at the median
+  and 0.56 at the 90th percentile. Cut on line boundaries, and an elision is marked.
+
+  `search_index` takes `max_chars_per_hit`, default 1,500; `0` returns whole chunks. On the
+  same eight queries: **40,715 → 6,532 characters per call, 10,178 → 1,633 tokens.**
+
+- **One result per document, where a library holds the same title twice.** The measured
+  corpus returned 3.0 distinct books per 5 results, because most titles are held as both
+  PDF and EPUB. Collapsing them is a quality fix and is counted as one: dropping a duplicate
+  saved 0.2% of the tokens, because it only promotes another chunk of the same size. It
+  raised distinct books per 5 results to **4.8**, and the text not already returned earlier
+  in the same response from 85% to **100%**.
+
+  `distinct_titles`, default on. Off returns every copy, which is what comparing two
+  extractions of one title needs. Collapsing can return fewer results than were asked for,
+  and says so rather than being quietly short.
+
+### Fixed
+
+- **A file reachable from two sources was indexed twice.** A source covers its whole tree,
+  so adding one above an existing source made everything beneath reachable from both, and
+  file identity is (source, relative path), so each copy was a separate row, chunking and
+  set of vectors. The corpus silently doubled, every search returned the same passage twice,
+  and the second copy was paid for in embedding time. Nothing failed and no count said which
+  files were affected.
+
+  The inventory is now made distinct across sources before anything is indexed: a file
+  belongs to the most specific source that covers it, and a source higher up keeps what the
+  deeper ones do not claim. That is what makes "index the loose files in this folder" work
+  without anybody maintaining exclusions that go stale as soon as a source is added.
+
+- **Adding a source did not update the corpus you added it to.** Every other dialog reloaded
+  the corpus; this one refreshed only the list behind it, so adding a folder looked like it
+  had done nothing until the page was reloaded by hand.
+
+- The Add source form defaults to a 20 MB size cap rather than 2 MB. It caps ordinary files
+  only — PDFs, EPUBs and the other document formats are measured against
+  `DEXICON__INDEXING__DOCUMENTMAXBYTES` instead — so the old default excluded nothing but
+  large text.
+
 ### ⚠️ Upgrading
 
 - One migration, `SourceFilterInheritance`, applied at startup. Widening only: a source's
