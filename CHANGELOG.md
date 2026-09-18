@@ -48,6 +48,21 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Fixed
 
+- **Over-long input was embedded truncated, and recorded as fully indexed.** Ollama's
+  `/api/embed` shortens anything past the model's context and returns a vector, with no
+  field in the response to say it happened
+  ([ollama/ollama#14259](https://github.com/ollama/ollama/issues/14259)). The end of the
+  chunk was then missing from its vector while the file was reported as indexed, search
+  could never match it, and nothing anywhere was red. Measured on the real library: about
+  4% of embed calls, because `embeddinggemma` has a 2,048-token context and the chunk set
+  was cut at 2,065.
+
+  The request now asks the provider to refuse instead. A refusal is handled rather than
+  retried — the same input fails identically every time, so the backoff loop has nothing to
+  offer it — by embedding once with truncation allowed and logging a warning that names the
+  model, the length and the fix. A worse vector for one chunk rather than a failed file,
+  and no longer silent. The chunk set form already warns about the size beforehand.
+
 - **A model probe could spin forever with nothing to show for it.** The probe embeds two
   dozen inputs one after another, and the embedding service answers indexing first, so
   during a reindex it can run for the better part of an hour. It had no deadline and the
