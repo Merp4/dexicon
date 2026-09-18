@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   api,
   ApiError,
@@ -20,7 +20,7 @@ import {
 } from './ui';
 import {
   ArrowLeft, Check, Database, FileText, Key, ListChecks, LogOut, Plus, RefreshCw, RotateCcw,
-  Search, Settings, Sliders, Trash2, TriangleAlert,
+  Search, Settings, Sliders, SlidersHorizontal, Trash2, TriangleAlert,
 } from 'lucide-react';
 import { cn } from 'cn';
 import { WorkspacePicker } from './WorkspacePicker';
@@ -817,6 +817,8 @@ export function CorpusDetail({
   const [addingSource, setAddingSource] = useState<{ path: string } | null>(null);
   const [viewing, setViewing] = useState<{ path: string; line?: number } | null>(null);
   const [gaps, setGaps] = useState<CoverageGap[]>([]);
+  const [editingSource, setEditingSource] = useState<Corpus['sources'][number] | null>(null);
+  const [editingDefaults, setEditingDefaults] = useState(false);
 
 
   const load = useCallback(async () => {
@@ -908,10 +910,24 @@ export function CorpusDetail({
                     {' · '}≤ {formatBytes(s.maxFileBytes)}
                     {s.includeGlobs?.length ? ` · only ${s.includeGlobs.join(', ')}` : ''}
                     {s.excludeGlobs?.length ? ` · not ${s.excludeGlobs.join(', ')}` : ''}
+                    {/* Which of those the source would keep if the corpus default moved.
+                        Without it a reader reads every value as one they typed here, and
+                        editing the corpus default looks like it did nothing. */}
+                    {inheritsFromCorpus(s, corpus.defaults) && ' · some from the corpus'}
                   </span>
                   {/* Adding a folder was one click; removing one meant deleting the whole
                       corpus and rebuilding it, losing its chunk sets, its history and every
                       other source with it. A path typed wrong is not worth that. */}
+                  {corpus.owned && s.kind === 'workspace' && (
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={`Edit filters for ${s.rootPath ?? s.kind}`}
+                      onClick={() => setEditingSource(s)}
+                    >
+                      <SlidersHorizontal />
+                    </Button>
+                  )}
                   {corpus.owned && (
                     <Button
                       variant="ghost"
@@ -927,10 +943,18 @@ export function CorpusDetail({
             </span>
           )}
           {corpus.owned && (
-            <Button className="mt-1.5 px-2 py-0.5 text-xs" onClick={() => setAddingSource({ path: '' })}>
-              <Plus />
-              Add source
-            </Button>
+            <span className="mt-1.5 flex flex-wrap gap-2">
+              <Button className="px-2 py-0.5 text-xs" onClick={() => setAddingSource({ path: '' })}>
+                <Plus />
+                Add source
+              </Button>
+              {/* Set once here rather than repeated on every folder. Ten sources under one
+                  parent used to carry ten copies of the same two globs. */}
+              <Button className="px-2 py-0.5 text-xs" onClick={() => setEditingDefaults(true)}>
+                <SlidersHorizontal />
+                Default filters
+              </Button>
+            </span>
           )}
         </Row>
         <Row label="Searched as">
@@ -1046,6 +1070,25 @@ export function CorpusDetail({
         />
       )}
 
+      {editingSource && (
+        <EditSourceModal
+          corpus={corpus}
+          source={editingSource}
+          onClose={() => setEditingSource(null)}
+          onSaved={async () => { setEditingSource(null); await load(); }}
+          onError={onError}
+        />
+      )}
+
+      {editingDefaults && (
+        <CorpusDefaultsModal
+          corpus={corpus}
+          onClose={() => setEditingDefaults(false)}
+          onSaved={async () => { setEditingDefaults(false); await load(); }}
+          onError={onError}
+        />
+      )}
+
       {removingSource && (
         <RemoveSourceModal
           corpus={corpus}
@@ -1137,6 +1180,346 @@ function CoverageNotice({
   );
 }
 
+/** A comma or newline separated list, with the blanks dropped. */
+function globList(raw: string): string[] {
+  return raw.split(/[\n,]/).map((g) => g.trim()).filter(Boolean);
+}
+
+/**
+ * Whether this source takes a filter the CORPUS actually sets.
+ *
+ * Not "inherits anything": almost every source inherits something, because a source with
+ * no globs is inheriting the absence of them, and saying so on every row is noise that
+ * teaches a reader to skip the line. It is only worth a word when a corpus-level value is
+ * really reaching this source.
+ */
+function inheritsFromCorpus(
+  s: Corpus['sources'][number],
+  d: Corpus['defaults'],
+): boolean {
+  if (!d) return false;
+  return (d.useGitignore != null && s.ownUseGitignore == null)
+    || (d.maxFileBytes != null && s.ownMaxFileBytes == null)
+    || (d.includeGlobs != null && s.ownIncludeGlobs == null)
+    || (d.excludeGlobs != null && s.ownExcludeGlobs == null);
+}
+
+/**
+ * One field that either follows the corpus or does not.
+ *
+ * The checkbox is the whole of inheritance as a reader meets it, so it says what the
+ * inherited value actually is. "Use the corpus default" on its own asks someone to accept
+ * a value they cannot see, and the answer to "what will this do" is the only thing the
+ * control is for.
+ */
+function Inheritable({
+  label,
+  inherited,
+  inheritedLabel,
+  onInheritedChange,
+  children,
+}: {
+  label: string;
+  inherited: boolean;
+  inheritedLabel: string;
+  onInheritedChange: (v: boolean) => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="mb-3.5 grid gap-1.5">
+      <label className="flex items-center gap-2">
+        <Checkbox
+          checked={inherited}
+          onCheckedChange={(v) => onInheritedChange(v === true)}
+          aria-label={`${label}: use the corpus default`}
+        />
+        <span className="text-xs text-muted-foreground">
+          Corpus default ({inheritedLabel})
+        </span>
+      </label>
+      {!inherited && children}
+    </div>
+  );
+}
+
+/**
+ * Change one source's filters.
+ *
+ * They were write-once: set when the folder was added and unreachable afterwards, so
+ * changing one meant deleting the source — which drops its files from every chunk set —
+ * and re-embedding the folder from scratch.
+ *
+ * Saving queues a refresh only when something moved. Narrowing a filter removes the files
+ * it now excludes through the walk's own reconcile: they are simply not seen next pass,
+ * which is the path a file deleted from disk already takes.
+ */
+function EditSourceModal({
+  corpus,
+  source,
+  onClose,
+  onSaved,
+  onError,
+}: {
+  corpus: Corpus;
+  source: Corpus['sources'][number];
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+  onError: (e: unknown) => void;
+}) {
+  const d = corpus.defaults;
+
+  // Seeded from what the source itself sets. A null there is the source inheriting, which
+  // is what the checkbox starts checked for; the input below it is seeded with the
+  // effective value so unchecking does not blank the field.
+  const [inheritGitignore, setInheritGitignore] = useState(source.ownUseGitignore == null);
+  const [inheritCap, setInheritCap] = useState(source.ownMaxFileBytes == null);
+  const [inheritInclude, setInheritInclude] = useState(source.ownIncludeGlobs == null);
+  const [inheritExclude, setInheritExclude] = useState(source.ownExcludeGlobs == null);
+
+  const [useGitignore, setUseGitignore] = useState(source.useGitignore);
+  const [maxFileMb, setMaxFileMb] = useState(source.maxFileBytes / 1024 / 1024);
+  const [include, setInclude] = useState((source.includeGlobs ?? []).join(', '));
+  const [exclude, setExclude] = useState((source.excludeGlobs ?? []).join(', '));
+  const [busy, setBusy] = useState(false);
+
+  const capMb = maxFileMb > 0;
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!capMb) return;
+    setBusy(true);
+    try {
+      // `clear` rather than a null, because the API cannot tell an absent field from an
+      // explicit null and would read one as the other.
+      const clear: string[] = [];
+      if (inheritGitignore) clear.push('useGitignore');
+      if (inheritCap) clear.push('maxFileBytes');
+      if (inheritInclude) clear.push('includeGlobs');
+      if (inheritExclude) clear.push('excludeGlobs');
+
+      await api.updateSource(corpus.name, source.id, {
+        clear,
+        useGitignore: inheritGitignore ? undefined : useGitignore,
+        maxFileBytes: inheritCap ? undefined : Math.round(maxFileMb * 1024 * 1024),
+        includeGlobs: inheritInclude ? undefined : globList(include),
+        excludeGlobs: inheritExclude ? undefined : globList(exclude),
+      });
+      await onSaved();
+    } catch (err) {
+      onError(err);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title={`Filters for ${source.rootPath ?? source.kind}`} onClose={onClose}>
+      <form onSubmit={submit}>
+        <Inheritable
+          label="Honour .gitignore"
+          inherited={inheritGitignore}
+          inheritedLabel={(d?.useGitignore ?? true) ? '.gitignore honoured' : '.gitignore ignored'}
+          onInheritedChange={setInheritGitignore}
+        >
+          <label className="flex items-start gap-2.5">
+            <Checkbox
+              checked={useGitignore}
+              onCheckedChange={(v) => setUseGitignore(v === true)}
+              className="mt-0.5"
+            />
+            <span className="text-sm leading-none font-semibold">Honour .gitignore</span>
+          </label>
+        </Inheritable>
+
+        <Inheritable
+          label="Largest file"
+          inherited={inheritCap}
+          inheritedLabel={formatBytes(d?.maxFileBytes ?? source.maxFileBytes)}
+          onInheritedChange={setInheritCap}
+        >
+          <Field label="Largest file (MB)" hint="Anything bigger is skipped and reported, not silently dropped.">
+            <Input
+              type="number"
+              min={0.01}
+              step="any"
+              value={maxFileMb}
+              onChange={(e) => setMaxFileMb(Number(e.target.value))}
+            />
+          </Field>
+          {!capMb && (
+            <Notice tone="danger" role="alert" className="text-xs">
+              A cap of zero indexes nothing. Tick the box above to follow the corpus instead.
+            </Notice>
+          )}
+        </Inheritable>
+
+        <Inheritable
+          label="Only these"
+          inherited={inheritInclude}
+          inheritedLabel={d?.includeGlobs?.length ? d.includeGlobs.join(', ') : 'everything not excluded'}
+          onInheritedChange={setInheritInclude}
+        >
+          <Field label="Only these" hint="Globs, comma separated. Empty means everything not excluded.">
+            <Input className="mono" value={include} onChange={(e) => setInclude(e.target.value)}
+              placeholder="src/**, docs/**" />
+          </Field>
+        </Inheritable>
+
+        <Inheritable
+          label="Never these"
+          inherited={inheritExclude}
+          inheritedLabel={d?.excludeGlobs?.length ? d.excludeGlobs.join(', ') : 'nothing'}
+          onInheritedChange={setInheritExclude}
+        >
+          <Field label="Never these" hint="Globs, comma separated. Applied after the include list.">
+            <Input className="mono" value={exclude} onChange={(e) => setExclude(e.target.value)}
+              placeholder="**/vendor/**, *.min.js" />
+          </Field>
+        </Inheritable>
+
+        <Notice tone="neutral" className="text-xs">
+          Saving re-walks the corpus. Files a narrower filter now excludes leave the index;
+          nothing on disk is touched.
+        </Notice>
+
+        <div className="mt-3.5 flex justify-end gap-2">
+          <Button type="button" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button type="submit" variant="primary" disabled={busy || !capMb}>
+            {busy ? <Spinner /> : <Check />}
+            Save filters
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/**
+ * Filters every source of this corpus inherits unless it sets its own.
+ *
+ * Inherited live rather than copied when a source is added: ten folders under one parent
+ * is the case this exists for, and a default that only reached the eleventh would leave
+ * the other ten to be edited one at a time, which is the problem it is here to solve.
+ */
+function CorpusDefaultsModal({
+  corpus,
+  onClose,
+  onSaved,
+  onError,
+}: {
+  corpus: Corpus;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+  onError: (e: unknown) => void;
+}) {
+  const d = corpus.defaults;
+
+  const [setGitignore, setSetGitignore] = useState(d?.useGitignore != null);
+  const [setCap, setSetCap] = useState(d?.maxFileBytes != null);
+  const [useGitignore, setUseGitignore] = useState(d?.useGitignore ?? true);
+  const [maxFileMb, setMaxFileMb] = useState((d?.maxFileBytes ?? 262_144) / 1024 / 1024);
+  const [include, setInclude] = useState((d?.includeGlobs ?? []).join(', '));
+  const [exclude, setExclude] = useState((d?.excludeGlobs ?? []).join(', '));
+  const [busy, setBusy] = useState(false);
+
+  // A source that sets its own value keeps it. Saying how many, rather than how it works,
+  // is what stops this reading as "nothing happened".
+  const overriding = corpus.sources.filter((s) =>
+    s.ownUseGitignore != null || s.ownMaxFileBytes != null
+    || s.ownIncludeGlobs != null || s.ownExcludeGlobs != null).length;
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await api.updateCorpus(corpus.name, {
+        defaults: {
+          useGitignore: setGitignore ? useGitignore : null,
+          maxFileBytes: setCap ? Math.round(maxFileMb * 1024 * 1024) : null,
+          includeGlobs: globList(include).length ? globList(include) : null,
+          excludeGlobs: globList(exclude).length ? globList(exclude) : null,
+        },
+      });
+      await onSaved();
+    } catch (err) {
+      onError(err);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title={`Default filters for ${corpus.name}`} onClose={onClose}>
+      <form onSubmit={submit}>
+        <p className="mt-0 mb-3.5 text-sm text-muted-foreground">
+          Every source here follows these unless it sets its own.
+        </p>
+
+        <label className="mb-3.5 flex items-start gap-2.5">
+          <Checkbox checked={setGitignore} onCheckedChange={(v) => setSetGitignore(v === true)} className="mt-0.5" />
+          <span className="grid gap-0.5">
+            <span className="text-sm leading-none font-semibold">Set a .gitignore rule</span>
+            <span className="text-xs text-muted-foreground">
+              Unticked, sources follow the server's setting.
+            </span>
+          </span>
+        </label>
+
+        {setGitignore && (
+          <label className="mb-3.5 ml-6 flex items-start gap-2.5">
+            <Checkbox checked={useGitignore} onCheckedChange={(v) => setUseGitignore(v === true)} className="mt-0.5" />
+            <span className="text-sm leading-none font-semibold">Honour .gitignore</span>
+          </label>
+        )}
+
+        <label className="mb-3.5 flex items-start gap-2.5">
+          <Checkbox checked={setCap} onCheckedChange={(v) => setSetCap(v === true)} className="mt-0.5" />
+          <span className="grid gap-0.5">
+            <span className="text-sm leading-none font-semibold">Set a size cap</span>
+            <span className="text-xs text-muted-foreground">
+              Unticked, sources follow the server's cap.
+            </span>
+          </span>
+        </label>
+
+        {setCap && (
+          <div className="ml-6">
+            <Field label="Largest file (MB)">
+              <Input type="number" min={0.01} step="any" value={maxFileMb}
+                onChange={(e) => setMaxFileMb(Number(e.target.value))} />
+            </Field>
+          </div>
+        )}
+
+        <Field label="Only these" hint="Globs, comma separated. Empty means everything not excluded.">
+          <Input className="mono" value={include} onChange={(e) => setInclude(e.target.value)}
+            placeholder="**/*.cs, **/*.md" />
+        </Field>
+
+        <Field label="Never these" hint="Globs, comma separated. Applied after the include list.">
+          <Input className="mono" value={exclude} onChange={(e) => setExclude(e.target.value)}
+            placeholder="**/*.Designer.cs, **/*.test.ts" />
+        </Field>
+
+        {overriding > 0 && (
+          <Notice tone="warn" className="text-xs">
+            {overriding === 1
+              ? '1 source sets some of its own filters and keeps them.'
+              : `${overriding} sources set some of their own filters and keep them.`}{' '}
+            Open a source to return a field to the default.
+          </Notice>
+        )}
+
+        <div className="mt-3.5 flex justify-end gap-2">
+          <Button type="button" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button type="submit" variant="primary" disabled={busy}>
+            {busy ? <Spinner /> : <Check />}
+            Save defaults
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 /**
  * Add a place this corpus takes content from.
  *
@@ -1166,22 +1549,21 @@ function AddSourceModal({
   const [exclude, setExclude] = useState('');
   const [busy, setBusy] = useState(false);
 
-  /** A comma or newline separated list, with the blanks dropped. */
-  const globs = (raw: string) =>
-    raw.split(/[\n,]/).map((g) => g.trim()).filter(Boolean);
-
   const alreadyHere = corpus.sources.some((s) => s.rootPath === path);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     try {
+      // Undefined, not an empty array: an omitted filter means this source follows the
+      // corpus, and an empty one means "none, whatever the corpus says". Sending [] for a
+      // box nobody typed in would pin every new source against the default.
       await api.addSource(corpus.name, {
         workspacePath: path,
         useGitignore,
         maxFileBytes: Math.round(maxFileMb * 1024 * 1024),
-        includeGlobs: globs(include),
-        excludeGlobs: globs(exclude),
+        includeGlobs: globList(include).length ? globList(include) : undefined,
+        excludeGlobs: globList(exclude).length ? globList(exclude) : undefined,
       });
       await onAdded();
     } catch (err) {
@@ -1210,7 +1592,7 @@ function AddSourceModal({
           <Input
             type="number"
             min={0.1}
-            step={0.1}
+            step="any"
             value={maxFileMb}
             onChange={(e) => setMaxFileMb(Number(e.target.value))}
           />

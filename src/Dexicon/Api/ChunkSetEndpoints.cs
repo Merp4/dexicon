@@ -1,5 +1,7 @@
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
+using Dexicon.Core.Configuration;
+using Microsoft.Extensions.Options;
 using Dexicon.Core.Embedding;
 using Dexicon.Core.Indexing;
 using Dexicon.Core.Vectors;
@@ -28,13 +30,13 @@ public static class ChunkSetEndpoints
         var g = app.MapGroup("/api/corpora/{nameOrId}/chunk-sets").WithTags("Chunk sets");
 
         g.MapGet("/", async (string nameOrId, RequestContext rc, ScopeResolver scopes,
-            CatalogDbContext db, CancellationToken ct) =>
+            CatalogDbContext db, IOptions<DexiconOptions> opts, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
             var tenant = rc.RequireTenant();
             var scope = await scopes.ResolveReadableAsync(tenant, [nameOrId], ct);
 
-            var summary = await CorpusEndpoints.Summarise(db, scope.Targets[0].Corpus, tenant, ct);
+            var summary = await CorpusEndpoints.Summarise(db, scope.Targets[0].Corpus, tenant, opts.Value.Indexing, ct);
             return Results.Ok(summary.ChunkSets);
         }).Produces<IReadOnlyList<ChunkSetSummary>>();
 

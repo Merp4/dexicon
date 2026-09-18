@@ -17,23 +17,24 @@ public static class CorpusEndpoints
     {
         var g = app.MapGroup("/api/corpora").WithTags("Corpora");
 
-        g.MapGet("/", async (RequestContext rc, ScopeResolver scopes, CatalogDbContext db, CancellationToken ct) =>
+        g.MapGet("/", async (RequestContext rc, ScopeResolver scopes, CatalogDbContext db,
+            IOptions<DexiconOptions> opts, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
             var tenant = rc.RequireTenant();
             var visible = await scopes.VisibleAsync(tenant, ct);
             var summaries = new List<CorpusSummary>(visible.Count);
-            foreach (var c in visible) summaries.Add(await Summarise(db, c, tenant, ct));
+            foreach (var c in visible) summaries.Add(await Summarise(db, c, tenant, opts.Value.Indexing, ct));
             return Results.Ok(summaries);
         }).Produces<IReadOnlyList<CorpusSummary>>();
 
         g.MapGet("/{nameOrId}", async (string nameOrId, RequestContext rc, ScopeResolver scopes,
-            CatalogDbContext db, CancellationToken ct) =>
+            CatalogDbContext db, IOptions<DexiconOptions> opts, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
             var tenant = rc.RequireTenant();
             var scope = await scopes.ResolveReadableAsync(tenant, [nameOrId], ct);
-            return Results.Ok(await Summarise(db, scope.Corpora[0], tenant, ct));
+            return Results.Ok(await Summarise(db, scope.Corpora[0], tenant, opts.Value.Indexing, ct));
         }).Produces<CorpusSummary>();
 
         g.MapPost("/", async (CreateCorpusRequest body, RequestContext rc, CatalogDbContext db,
@@ -143,11 +144,12 @@ public static class CorpusEndpoints
             if (corpus.Sources.Count > 0)
                 await queue.EnqueueAsync(corpus.Id, JobKind.Full, ct: ct);
 
-            return Results.Created($"/api/corpora/{corpus.Id}", await Summarise(db, corpus, tenant, ct));
+            return Results.Created($"/api/corpora/{corpus.Id}", await Summarise(db, corpus, tenant, opts.Value.Indexing, ct));
         }).Produces<CorpusSummary>();
 
         g.MapPatch("/{nameOrId}", async (string nameOrId, UpdateCorpusRequest body, RequestContext rc,
-            ScopeResolver scopes, CatalogDbContext db, CancellationToken ct) =>
+            ScopeResolver scopes, CatalogDbContext db, IOptions<DexiconOptions> opts,
+            IndexJobQueue queue, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             var tenant = rc.RequireTenant();
@@ -169,8 +171,30 @@ public static class CorpusEndpoints
                     db.CorpusGrants.Add(new CorpusGrant { CorpusId = corpus.Id, TenantId = tid });
             }
 
+            // Changing what sources inherit changes which files are in the index, so it
+            // queues a refresh the way adding a source does. Narrowing a glob removes the
+            // files it now excludes through the walk's own reconcile: they are simply not
+            // seen, which is the path a deleted file already takes.
+            var filtersChanged = false;
+            if (body.Defaults is { } d)
+            {
+                filtersChanged =
+                    corpus.DefaultUseGitignore != d.UseGitignore ||
+                    corpus.DefaultMaxFileBytes != d.MaxFileBytes ||
+                    corpus.DefaultIncludeGlobs != SourceFilters.Store(d.IncludeGlobs) ||
+                    corpus.DefaultExcludeGlobs != SourceFilters.Store(d.ExcludeGlobs);
+
+                corpus.DefaultUseGitignore = d.UseGitignore;
+                corpus.DefaultMaxFileBytes = d.MaxFileBytes;
+                corpus.DefaultIncludeGlobs = SourceFilters.Store(d.IncludeGlobs);
+                corpus.DefaultExcludeGlobs = SourceFilters.Store(d.ExcludeGlobs);
+            }
+
             await db.SaveChangesAsync(ct);
-            return Results.Ok(new CorpusUpdated(await Summarise(db, corpus, tenant, ct)));
+
+            if (filtersChanged) await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
+
+            return Results.Ok(new CorpusUpdated(await Summarise(db, corpus, tenant, opts.Value.Indexing, ct)));
         }).Produces<CorpusUpdated>();
 
         g.MapDelete("/{nameOrId}", async (string nameOrId, RequestContext rc, ScopeResolver scopes,
@@ -209,12 +233,12 @@ public static class CorpusEndpoints
                 CorpusId = corpus.Id,
                 Kind = SourceKind.Workspace,
                 RootPath = body.WorkspacePath.Trim('/', '\\'),
-                UseGitignore = body.UseGitignore ?? true,
-                MaxFileBytes = body.MaxFileBytes ?? opts.Value.Indexing.MaxFileBytes,
-                IncludeGlobs = body.IncludeGlobs is { Count: > 0 }
-                    ? System.Text.Json.JsonSerializer.Serialize(body.IncludeGlobs) : null,
-                ExcludeGlobs = body.ExcludeGlobs is { Count: > 0 }
-                    ? System.Text.Json.JsonSerializer.Serialize(body.ExcludeGlobs) : null,
+                // Null, not a default. An omitted field means this source has no opinion
+                // and follows the corpus, which is the point of the corpus having one.
+                UseGitignore = body.UseGitignore,
+                MaxFileBytes = body.MaxFileBytes,
+                IncludeGlobs = SourceFilters.Store(body.IncludeGlobs),
+                ExcludeGlobs = SourceFilters.Store(body.ExcludeGlobs),
                 CreatedUtc = DateTime.UtcNow,
             };
 
@@ -226,7 +250,8 @@ public static class CorpusEndpoints
             // indexed and re-embedding them costs real money on a hosted provider.
             var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
 
-            return Results.Ok(new SourceAdded(source.ToSummary(), job.ToSummary()));
+            return Results.Ok(new SourceAdded(
+                source.ToSummary(corpus, opts.Value.Indexing), job.ToSummary()));
         }).Produces<SourceAdded>();
 
         // Adding a folder was one call; removing one was deleting the whole corpus and
@@ -271,6 +296,50 @@ public static class CorpusEndpoints
             return Results.NoContent();
         });
 
+        // Filters were write-once: set when the folder was added and then unreachable, so
+        // changing one meant deleting the source, which drops its files from every chunk
+        // set, and re-embedding the folder from scratch. Nobody iterates on a glob at that
+        // price.
+        g.MapPatch("/{nameOrId}/sources/{sourceId}", async (string nameOrId, string sourceId,
+            UpdateSourceRequest body, RequestContext rc, ScopeResolver scopes, CatalogDbContext db,
+            IOptions<DexiconOptions> opts, IndexJobQueue queue, CancellationToken ct) =>
+        {
+            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+            var corpus = await scopes.ResolveWritableAsync(rc.RequireTenant(), nameOrId, ct);
+
+            var source = await db.Sources
+                .FirstOrDefaultAsync(s => s.Id == sourceId && s.CorpusId == corpus.Id, ct);
+
+            if (source is null)
+                return Results.Problem(
+                    title: "No such source",
+                    detail: $"Corpus '{corpus.Name}' has no source '{sourceId}'.",
+                    statusCode: 404);
+
+            if (source.Kind != SourceKind.Workspace)
+                return Results.Problem(
+                    title: "Not a workspace source",
+                    detail: "Filters apply to a folder being walked. An upload source has no tree to filter.",
+                    statusCode: 400);
+
+            if (body.MaxFileBytes is { } m && m <= 0)
+                return Results.Problem(
+                    title: "Invalid size cap",
+                    detail: "maxFileBytes must be greater than zero. Name it in `clear` to inherit the corpus default.",
+                    statusCode: 400);
+
+            var changed = ApplyFilters(source, body);
+
+            await db.SaveChangesAsync(ct);
+
+            // Only when something moved. A form submitted unchanged should not re-walk a
+            // library, and a refresh on every save is how that happens.
+            var job = changed ? await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct) : null;
+
+            return Results.Ok(new SourceUpdated(
+                source.ToSummary(corpus, opts.Value.Indexing), job?.ToSummary()));
+        }).Produces<SourceUpdated>();
+
         // Its own endpoint rather than a field on the summary: answering it reads the
         // filesystem, and the summary is drawn on every navigation. Read rather than
         // stored, so it reflects the disk now and not the last index run.
@@ -282,7 +351,7 @@ public static class CorpusEndpoints
             var scope = await scopes.ResolveReadableAsync(tenant, [nameOrId], ct);
             var corpus = scope.Corpora[0];
 
-            return Results.Ok(await CoverageAsync(db, opts.Value.Indexing, corpus.Id, ct));
+            return Results.Ok(await CoverageAsync(db, opts.Value.Indexing, corpus, ct));
         }).Produces<CoverageReport>();
 
         g.MapPost("/{nameOrId}/reindex", async (string nameOrId, bool? full, RequestContext rc,
@@ -401,6 +470,38 @@ public static class CorpusEndpoints
     }
 
     /// <summary>
+    /// Apply a filter update to a source, returning whether anything actually moved.
+    ///
+    /// Three cases per field and only two of them are obvious. An omitted field leaves the
+    /// value alone. A field named in <see cref="UpdateSourceRequest.Clear"/> returns it to
+    /// the corpus default. A field with a value sets it.
+    ///
+    /// Clearing is said out loud rather than inferred from a null, because JSON gives no
+    /// way to tell an absent property from an explicit null once it is bound to a nullable:
+    /// inferring it would make every partial update an accidental reset of everything it
+    /// did not mention.
+    /// </summary>
+    internal static bool ApplyFilters(Source source, UpdateSourceRequest body)
+    {
+        var clear = new HashSet<string>(body.Clear ?? [], StringComparer.OrdinalIgnoreCase);
+        var before = (source.UseGitignore, source.MaxFileBytes, source.IncludeGlobs, source.ExcludeGlobs);
+
+        if (clear.Contains("useGitignore")) source.UseGitignore = null;
+        else if (body.UseGitignore is { } g) source.UseGitignore = g;
+
+        if (clear.Contains("maxFileBytes")) source.MaxFileBytes = null;
+        else if (body.MaxFileBytes is { } m) source.MaxFileBytes = m;
+
+        if (clear.Contains("includeGlobs")) source.IncludeGlobs = null;
+        else if (body.IncludeGlobs is not null) source.IncludeGlobs = SourceFilters.Store(body.IncludeGlobs);
+
+        if (clear.Contains("excludeGlobs")) source.ExcludeGlobs = null;
+        else if (body.ExcludeGlobs is not null) source.ExcludeGlobs = SourceFilters.Store(body.ExcludeGlobs);
+
+        return before != (source.UseGitignore, source.MaxFileBytes, source.IncludeGlobs, source.ExcludeGlobs);
+    }
+
+    /// <summary>
     /// Directories that lead to this corpus's sources but which no source covers.
     ///
     /// Scoped to one corpus, which is the whole of what this adds over
@@ -409,16 +510,14 @@ public static class CorpusEndpoints
     /// entirely plausible.
     /// </summary>
     internal static async Task<CoverageReport> CoverageAsync(
-        CatalogDbContext db, IndexingOptions indexing, string corpusId, CancellationToken ct)
+        CatalogDbContext db, IndexingOptions indexing, Corpus corpus, CancellationToken ct)
     {
-        var sources = await db.Sources
-            .Where(s => s.CorpusId == corpusId)
-            .Select(s => new { s.RootPath, s.MaxFileBytes })
-            .ToListAsync(ct);
+        var sources = await db.Sources.Where(s => s.CorpusId == corpus.Id).ToListAsync(ct);
 
         var gaps = SourceCoverage.Find(
             indexing.WorkspaceRoot,
-            sources.Select(s => new SourceCoverage.SourceRoot(s.RootPath, s.MaxFileBytes)),
+            sources.Select(s => new SourceCoverage.SourceRoot(
+                s.RootPath, SourceFilters.Resolve(corpus, s, indexing).MaxFileBytes)),
             indexing.DocumentMaxBytes);
 
         return new CoverageReport(
@@ -426,7 +525,7 @@ public static class CorpusEndpoints
     }
 
     internal static async Task<CorpusSummary> Summarise(CatalogDbContext db, Corpus c, string viewerTenant,
-        CancellationToken ct)
+        IndexingOptions indexing, CancellationToken ct)
     {
         var sources = await db.Sources.Where(s => s.CorpusId == c.Id).ToListAsync(ct);
 
@@ -483,7 +582,8 @@ public static class CorpusEndpoints
             headline?.ChunkCount ?? 0,
             defaultRows.Where(r => r.Status is FileStatus.Skipped or FileStatus.Empty).Sum(r => r.Count),
             headline?.FailedCount ?? 0,
-            sources.Select(s => s.ToSummary(filesPerSource.GetValueOrDefault(s.Id))).ToList(),
-            setSummaries);
+            sources.Select(s => s.ToSummary(c, indexing, filesPerSource.GetValueOrDefault(s.Id))).ToList(),
+            setSummaries,
+            c.DefaultsOf());
     }
 }

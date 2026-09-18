@@ -411,8 +411,13 @@ public sealed class CorpusIndexer(
             return;
         }
 
-        var walk = WorkspaceWalker.Walk(root, source.UseGitignore,
-            ParseGlobs(source.IncludeGlobs), ParseGlobs(source.ExcludeGlobs), source.MaxFileBytes,
+        // Through SourceFilters, not off the source: a null field there means the source
+        // has no opinion and the corpus default applies. Reading the columns directly
+        // indexed a source by its own emptiness.
+        var filters = SourceFilters.Resolve(corpus, source, _indexing);
+
+        var walk = WorkspaceWalker.Walk(root, filters.UseGitignore,
+            filters.IncludeGlobs, filters.ExcludeGlobs, filters.MaxFileBytes,
             options.Value.Indexing.DocumentMaxBytes);
 
         // += , not =. A job covers every chunk set, and each set walks the tree again, so
@@ -734,11 +739,6 @@ public sealed class CorpusIndexer(
         progress?.Report(new IndexProgress(job.Id, job.CorpusId, job.Phase ?? job.State.ToString(),
             job.FilesTotal, job.FilesDone, job.FilesSkipped, job.FilesFailed, job.ChunksWritten,
             currentFile, job.Error));
-
-    private static List<string>? ParseGlobs(string? json) =>
-        string.IsNullOrWhiteSpace(json)
-            ? null
-            : System.Text.Json.JsonSerializer.Deserialize<List<string>>(json);
 
     /// <summary>
     /// Map a chunk's first line back to the page / slide / chapter it came from, so a

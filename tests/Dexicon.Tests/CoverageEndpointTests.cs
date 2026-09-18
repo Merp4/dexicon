@@ -65,8 +65,12 @@ public sealed class CoverageEndpointTests : IAsyncLifetime
         await _db.SaveChangesAsync();
     }
 
-    private Task<CoverageReport> Coverage(string corpusId = "c") =>
-        CorpusEndpoints.CoverageAsync(_db, new IndexingOptions { WorkspaceRoot = _root }, corpusId, default);
+    private async Task<CoverageReport> Coverage(string corpusId = "c")
+    {
+        var corpus = await _db.Corpora.FirstAsync(c => c.Id == corpusId);
+        return await CorpusEndpoints.CoverageAsync(
+            _db, new IndexingOptions { WorkspaceRoot = _root }, corpus, default);
+    }
 
     [Fact]
     public async Task ReportsTheGapAsTheContractDescribesIt()

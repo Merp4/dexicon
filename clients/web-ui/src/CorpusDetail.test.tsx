@@ -19,6 +19,8 @@ const addSource = vi.fn();
 const browse = vi.fn();
 const removeSource = vi.fn();
 const coverage = vi.fn();
+const updateSource = vi.fn();
+const updateCorpus = vi.fn();
 
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
@@ -29,8 +31,9 @@ vi.mock('./api', async (importOriginal) => ({
     browse: (...a: unknown[]) => browse(...a),
     removeSource: (...a: unknown[]) => removeSource(...a),
     coverage: (...a: unknown[]) => coverage(...a),
+    updateSource: (...a: unknown[]) => updateSource(...a),
+    updateCorpus: (...a: unknown[]) => updateCorpus(...a),
     reindex: vi.fn(),
-    updateCorpus: vi.fn(),
     deleteCorpus: vi.fn(),
   },
 }));
@@ -84,6 +87,8 @@ beforeEach(() => {
   getCorpus.mockResolvedValue(corpus());
   listFiles.mockResolvedValue({ files: [] });
   coverage.mockResolvedValue({ gaps: [] });
+  updateSource.mockResolvedValue({});
+  updateCorpus.mockResolvedValue({});
   browse.mockResolvedValue({
     entries: [
       { name: 'api-repo', relativePath: 'api-repo', isDirectory: true, childCount: 4 },
@@ -233,8 +238,12 @@ describe('adding a source', () => {
     });
   });
 
-  it('sends empty glob lists rather than a list containing nothing', async () => {
-    // `''.split(',')` is `['']`, and a glob that matches nothing would exclude everything.
+  it('omits a glob nobody typed rather than sending one that matches nothing', async () => {
+    // Two failures guarded here. `''.split(',')` is `['']`, and a glob matching nothing
+    // would exclude everything. And an empty ARRAY is not nothing either: it means "no
+    // globs, whatever the corpus default says", so sending it for an untouched box would
+    // pin every new source against the default it was supposed to follow. Omitted is the
+    // only one of the three that means "follow the corpus".
     addSource.mockResolvedValue({});
     const { user, dialog } = await openAddSource();
 
@@ -242,7 +251,8 @@ describe('adding a source', () => {
     await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
 
     await waitFor(() => expect(addSource).toHaveBeenCalled());
-    expect(addSource.mock.calls[0][1]).toMatchObject({ includeGlobs: [], excludeGlobs: [] });
+    expect(addSource.mock.calls[0][1].includeGlobs).toBeUndefined();
+    expect(addSource.mock.calls[0][1].excludeGlobs).toBeUndefined();
   });
 });
 
@@ -438,5 +448,216 @@ describe('files no source covers', () => {
     expect(await screen.findByText('api-repo')).toBeInTheDocument();
     expect(screen.queryByText(/covered by no source/)).not.toBeInTheDocument();
     expect(props.onError).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Changing a source's filters, and the corpus default they fall back to.
+ *
+ * Filters were write-once: set when the folder was added and unreachable afterwards, so
+ * changing one meant deleting the source, which drops its files from every chunk set, and
+ * re-embedding the folder from scratch.
+ *
+ * The distinction these protect is null against empty. A source with no opinion follows
+ * the corpus; a source with an empty list has decided on none. The UI has to send those
+ * two differently, or a reset silently re-pins whatever was on screen.
+ */
+describe('editing a source filter', () => {
+  const owning = (over: Partial<Corpus['sources'][number]> = {}) =>
+    corpus({
+      defaults: {
+        useGitignore: false,
+        maxFileBytes: 64 * 1024 * 1024,
+        includeGlobs: null,
+        excludeGlobs: ['**/*.pdf'],
+      },
+      sources: [source({
+        rootPath: 'books/orly/AI',
+        useGitignore: false,
+        maxFileBytes: 64 * 1024 * 1024,
+        excludeGlobs: ['**/*.pdf'],
+        ownUseGitignore: null,
+        ownMaxFileBytes: null,
+        ownIncludeGlobs: null,
+        ownExcludeGlobs: null,
+        ...over,
+      })] as Corpus['sources'],
+    }) as Corpus;
+
+  async function openEdit(c: Corpus) {
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(c);
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: /Edit filters for books\/orly\/AI/ }));
+    return { user, dialog: await screen.findByRole('dialog') };
+  }
+
+  it('says which values are the corpus and not this source', async () => {
+    // Without it a reader takes every value for one they typed here, and editing the
+    // corpus default looks like it did nothing.
+    getCorpus.mockResolvedValue(owning());
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText(/some from the corpus/)).toBeInTheDocument();
+  });
+
+  it('says nothing about inheritance when the source sets everything itself', async () => {
+    getCorpus.mockResolvedValue(owning({
+      ownUseGitignore: false,
+      ownMaxFileBytes: 64 * 1024 * 1024,
+      ownIncludeGlobs: [],
+      ownExcludeGlobs: ['**/*.pdf'],
+    }));
+    render(<CorpusDetail {...props} />);
+
+    await screen.findByText('books/orly/AI');
+    expect(screen.queryByText(/some from the corpus/)).not.toBeInTheDocument();
+  });
+
+  it('says nothing when the corpus sets no defaults to inherit', async () => {
+    // Found by looking at the real library: every source there inherits the ABSENCE of
+    // globs, so an "inherited" word appeared on all ten rows and said nothing. A label on
+    // every row is one a reader learns to skip.
+    getCorpus.mockResolvedValue(corpus({
+      sources: [source({ rootPath: 'books/orly/AI' })],
+    }));
+    render(<CorpusDetail {...props} />);
+
+    await screen.findByText('books/orly/AI');
+    expect(screen.queryByText(/from the corpus/)).not.toBeInTheDocument();
+  });
+
+  it('shows what each inherited field would actually be', async () => {
+    // A checkbox saying only "use the corpus default" asks someone to accept a value they
+    // cannot see, which is the one thing the control is for.
+    const { dialog } = await openEdit(owning());
+
+    expect(within(dialog).getByText(/Corpus default \(\.gitignore ignored\)/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Corpus default \(\*\*\/\*\.pdf\)/)).toBeInTheDocument();
+  });
+
+  it('clears every field the source still inherits', async () => {
+    const { user, dialog } = await openEdit(owning());
+
+    await user.click(within(dialog).getByRole('button', { name: /^Save filters$/ }));
+
+    await waitFor(() => expect(updateSource).toHaveBeenCalled());
+    const body = updateSource.mock.calls[0][2];
+    expect(body.clear).toEqual(
+      expect.arrayContaining(['useGitignore', 'maxFileBytes', 'includeGlobs', 'excludeGlobs']),
+    );
+    // Sent alongside a clear, a value would re-pin the field the reader just released.
+    expect(body.excludeGlobs).toBeUndefined();
+  });
+
+  it('sends an override when a field is taken off the default', async () => {
+    const { user, dialog } = await openEdit(owning());
+
+    await user.click(within(dialog).getByRole('checkbox', { name: /Never these: use the corpus default/ }));
+    const globs = within(dialog).getByPlaceholderText('**/vendor/**, *.min.js');
+    await user.clear(globs);
+    await user.type(globs, '**/*.epub');
+    await user.click(within(dialog).getByRole('button', { name: /^Save filters$/ }));
+
+    await waitFor(() => expect(updateSource).toHaveBeenCalled());
+    const body = updateSource.mock.calls[0][2];
+    expect(body.excludeGlobs).toEqual(['**/*.epub']);
+    expect(body.clear).not.toContain('excludeGlobs');
+  });
+
+  it('can say none at all against a corpus that excludes something', async () => {
+    // The case null-versus-empty exists for. A cleared box that is not inherited is an
+    // empty array, which is an override rather than an absence.
+    const { user, dialog } = await openEdit(owning());
+
+    await user.click(within(dialog).getByRole('checkbox', { name: /Never these: use the corpus default/ }));
+    await user.clear(within(dialog).getByPlaceholderText('**/vendor/**, *.min.js'));
+    await user.click(within(dialog).getByRole('button', { name: /^Save filters$/ }));
+
+    await waitFor(() => expect(updateSource).toHaveBeenCalled());
+    expect(updateSource.mock.calls[0][2].excludeGlobs).toEqual([]);
+  });
+
+  it('refuses a cap of zero rather than indexing nothing', async () => {
+    const { user, dialog } = await openEdit(owning());
+
+    await user.click(within(dialog).getByRole('checkbox', { name: /Largest file: use the corpus default/ }));
+    // Exact: the inherit checkbox's own label also contains "Largest file".
+    const cap = within(dialog).getByLabelText('Largest file (MB)');
+    await user.clear(cap);
+    await user.type(cap, '0');
+
+    expect(await within(dialog).findByText(/A cap of zero indexes nothing/)).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /^Save filters$/ })).toBeDisabled();
+  });
+
+  it('accepts a cap that is not a round number of megabytes', async () => {
+    // Found in a browser, not here: `step` on a number input makes anything off the grid
+    // invalid, and an invalid field makes the browser refuse to submit the form WITHOUT
+    // saying anything. A source on the 256 KB default is 0.25 MB, which is not 0.01 + n/2,
+    // so its own edit dialog could not be saved and nothing on screen said why.
+    //
+    // A size cap is a free value. There is no grid for it to be on.
+    const { dialog } = await openEdit(owning({ ownMaxFileBytes: 262_144, maxFileBytes: 262_144 }));
+
+    const cap = within(dialog).getByLabelText('Largest file (MB)') as HTMLInputElement;
+
+    expect(cap.value).toBe('0.25');
+    expect(cap.validity.stepMismatch).toBe(false);
+    expect(cap.checkValidity()).toBe(true);
+    expect(cap.form!.checkValidity()).toBe(true);
+  });
+
+  it('offers no edit button on a corpus you do not own', async () => {
+    getCorpus.mockResolvedValue({ ...owning(), owned: false });
+    render(<CorpusDetail {...props} />);
+
+    await screen.findByText('books/orly/AI');
+    expect(screen.queryByRole('button', { name: /Edit filters/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('the corpus default filters', () => {
+  async function openDefaults(c: Corpus) {
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(c);
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: /Default filters/ }));
+    return { user, dialog: await screen.findByRole('dialog') };
+  }
+
+  it('sends globs the sources will inherit', async () => {
+    const { user, dialog } = await openDefaults(corpus());
+
+    await user.type(within(dialog).getByPlaceholderText(/Designer\.cs/), '**/*.test.ts');
+    await user.click(within(dialog).getByRole('button', { name: /^Save defaults$/ }));
+
+    await waitFor(() => expect(updateCorpus).toHaveBeenCalled());
+    expect(updateCorpus.mock.calls[0][1].defaults).toMatchObject({ excludeGlobs: ['**/*.test.ts'] });
+  });
+
+  it('sends null for a default left unset rather than a value nobody chose', async () => {
+    // Null means the server's setting applies. Sending 0 or false here would quietly
+    // impose a cap or a gitignore rule on every source in the corpus.
+    const { user, dialog } = await openDefaults(corpus());
+
+    await user.click(within(dialog).getByRole('button', { name: /^Save defaults$/ }));
+
+    await waitFor(() => expect(updateCorpus).toHaveBeenCalled());
+    expect(updateCorpus.mock.calls[0][1].defaults).toEqual({
+      useGitignore: null,
+      maxFileBytes: null,
+      includeGlobs: null,
+      excludeGlobs: null,
+    });
+  });
+
+  it('warns that a source setting its own filters keeps them', async () => {
+    // Otherwise saving a default that changes nothing visible reads as a bug.
+    const { dialog } = await openDefaults(corpus({
+      sources: [source({ ownUseGitignore: true, ownMaxFileBytes: 1024, ownIncludeGlobs: [], ownExcludeGlobs: [] })],
+    }));
+
+    expect(within(dialog).getByText(/1 source sets some of its own filters/)).toBeInTheDocument();
   });
 });

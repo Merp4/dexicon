@@ -139,6 +139,7 @@ public sealed class DexiconTools
         RequestContext rc,
         ScopeResolver scopes,
         CatalogDbContext db,
+        IOptions<DexiconOptions> opts,
         CancellationToken ct = default)
     {
         Require(rc, Scopes.Search);
@@ -151,7 +152,7 @@ public sealed class DexiconTools
         var sb = new StringBuilder(
             $"{visible.Count} {(visible.Count == 1 ? "corpus" : "corpora")} visible to '{tenant}':\n");
         foreach (var c in visible)
-            sb.Append(RenderCorpus(await CorpusEndpoints.Summarise(db, c, tenant, ct)));
+            sb.Append(RenderCorpus(await CorpusEndpoints.Summarise(db, c, tenant, opts.Value.Indexing, ct)));
         return sb.ToString();
     }
 
@@ -474,7 +475,7 @@ public sealed class DexiconTools
         var sb = new StringBuilder();
         foreach (var c in targets)
         {
-            var summary = await CorpusEndpoints.Summarise(db, c, tenant, ct);
+            var summary = await CorpusEndpoints.Summarise(db, c, tenant, opts.Value.Indexing, ct);
             // By QueuedUtc, not StartedUtc: a job that has been QUEUED but not yet started
             // is the latest news about this corpus, and ordering on StartedUtc reported
             // the previous job instead -- so index_status said "succeeded" to an agent
