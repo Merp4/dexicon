@@ -23,6 +23,7 @@ import {
   Search, Settings, Sliders, SlidersHorizontal, Trash2, TriangleAlert,
 } from 'lucide-react';
 import { cn } from 'cn';
+import { parseHash, toHash, type View as RouteView } from './route';
 import { WorkspacePicker } from './WorkspacePicker';
 
 /** `nomic-embed-text` and `nomic-embed-text:latest` are the same model. */
@@ -32,7 +33,9 @@ const sameModelName = (a: string, b: string) =>
 import { DocumentsView } from './Documents';
 import { ChunkSetsPanel, ModelsView } from './ChunkSets';
 
-type View = 'search' | 'corpora' | 'documents' | 'jobs' | 'models' | 'access' | 'settings';
+// The list and the parsing live in route.ts, so the URL and the switch below cannot
+// drift apart.
+type View = RouteView;
 
 /**
  * Sentinels for "no particular one".
@@ -111,14 +114,37 @@ function TokenGate({ onToken }: { onToken: (t: string) => void }) {
 }
 
 function Shell({ onSignOut }: { onSignOut: () => void }) {
-  const [view, setView] = useState<View>('search');
+  // Seeded from the URL, so a reload, a bookmark and a shared link all open the screen they
+  // name. Before this, every reload landed on Search whatever you were reading.
+  const initial = parseHash(window.location.hash);
+  const [view, setView] = useState<View>(initial.view);
   const [health, setHealth] = useState<Health | null>(null);
   const [corpora, setCorpora] = useState<Corpus[]>([]);
   const [live, setLive] = useState<Record<string, Job & { currentFile?: string }>>({});
   const [connected, setConnected] = useState(true);
   const [healthStale, setHealthStale] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(initial.corpus ?? null);
+
+  // State to URL. Assigning only when it differs is what stops this and the listener below
+  // from handing the same value back and forth; assigning at all is what puts an entry in
+  // history, which is what makes the back button work.
+  useEffect(() => {
+    const want = toHash({ view, corpus: selected ?? undefined });
+    if (window.location.hash !== want) window.location.hash = want;
+  }, [view, selected]);
+
+  // URL to state, for the back and forward buttons and for a hand-edited address.
+  useEffect(() => {
+    const onHashChange = () => {
+      const route = parseHash(window.location.hash);
+      setView(route.view);
+      setSelected(route.corpus ?? null);
+    };
+
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   const refreshCorpora = useCallback(async () => {
     try {
