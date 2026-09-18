@@ -1,0 +1,35 @@
+# Dexicon — reuse an Ollama you already run, instead of the one in this stack. Opt-in:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.external.yml up -d
+#
+# Worth it when the models are already pulled and a GPU is already configured: the in-stack
+# Ollama keeps its own volume and would download them again into it.
+#
+# docs/09-deployment.md has described this file, contents and all, since before it existed.
+# Written from that description rather than invented, so the documentation and the
+# repository finally agree.
+#
+# `depends_on: !reset []` is the load-bearing line. The base file waits for
+# dexicon-ollama to report healthy, and that service is not here, so without the reset
+# Compose refuses to start anything at all.
+#
+# Ollama is the one worth sharing: its models are already pulled and its GPU already
+# configured. DEXICON_QDRANT_ENDPOINT is here because docs/09 promises both, but it is left
+# pointing at the in-stack Qdrant, which is cheap to run and whose collections are this
+# corpus's. Sharing one means sharing collections, and two Dexicons writing into a single
+# store is a data question rather than a deployment one.
+
+services:
+  dexicon:
+    environment:
+      DEXICON__OLLAMA__ENDPOINT: ${DEXICON_OLLAMA_ENDPOINT:-http://host.docker.internal:11434}
+      DEXICON__QDRANT__ENDPOINT: ${DEXICON_QDRANT_ENDPOINT:-http://dexicon-qdrant:6334}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # required on Linux; a no-op elsewhere
+    depends_on: !reset []                      # nothing local to wait for
+
+  # Not started. Compose has no "remove a service" directive, so the next best thing is a
+  # profile nothing activates: `docker compose up` skips it, and `--profile in-stack`
+  # brings it back for anyone who wants it for an afternoon.
+  dexicon-ollama:
+    profiles: ["in-stack"]

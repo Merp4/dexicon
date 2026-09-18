@@ -48,6 +48,17 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Fixed
 
+- **Each source's indexing summary reported the whole job's counts.** The log line took the
+  job's running totals, which accumulate across every source and every chunk set, so each
+  source in turn was credited with all the work done so far: `books/orly` owns one file and
+  its line read `96 indexed`. It now reports the difference either side of its own pass.
+
+- **`docker-compose.external.yml` was documented but did not exist.** `docs/09` listed it in
+  the overlays table and set out its contents in full. Written from that description, so the
+  documentation and the repository agree: it drops `dexicon-ollama` and points at one you
+  already run, with `--profile in-stack` to bring the local one back. The table's claim that
+  it drops *both* dependencies is corrected to match what it does.
+
 - **The chunk-size recommendation overshot the model's context.** `Test limits` measures the
   character ceiling with its own filler — four repeated words, which tokenizes about as well
   as text ever does — and measures characters-per-token separately, averaged over prose,

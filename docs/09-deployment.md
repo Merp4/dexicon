@@ -109,7 +109,7 @@ volumes:          # left unnamed: Compose prefixes them with the project name, s
 |---|---|
 | `docker-compose.gpu.yml` | Adds `deploy.resources.reservations.devices` for NVIDIA to `dexicon-ollama`. Opt-in: `docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d`. |
 | `docker-compose.debug.yml` | Publishes Qdrant on **16333** and Ollama on **21434** — deliberately *not* their standard ports, so it cannot collide with a stock Qdrant or Ollama already running on the host. Loopback-bound. Never part of the default up. |
-| `docker-compose.external.yml` | Drops both dependency services and points the endpoints at instances you already run. |
+| `docker-compose.external.yml` | Drops `dexicon-ollama` and points at an instance you already run. `DEXICON_QDRANT_ENDPOINT` redirects the vector store too, though the in-stack Qdrant is left running by default. |
 
 The base file stays boring and complete. Overlays carry everything that is a choice.
 
@@ -192,6 +192,9 @@ Three properties keep that from mattering:
 `docker-compose.external.yml` drops `dexicon-ollama` and points at an existing instance.
 This is useful when models are already pulled and a GPU is configured, since the in-stack
 Ollama would otherwise re-download them into its own volume.
+
+`--profile in-stack` brings the local Ollama back without editing anything, which is the
+quickest way to tell a configuration problem from a reachability one.
 
 ```yaml
 services:

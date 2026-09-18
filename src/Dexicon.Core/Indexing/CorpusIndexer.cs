@@ -440,6 +440,12 @@ public sealed class CorpusIndexer(
         // of them: a corpus with two sets showed "24 / 12" and a progress bar past 100%.
         job.FilesTotal += files.Count;
         job.Phase = "extract";
+
+        // The job's counters accumulate across every source and every set, so this pass's
+        // own numbers are the difference either side of it. Logging the running totals
+        // reported the whole job against each source in turn: `books/orly` owns one file
+        // and its line said "96 indexed".
+        var startedWith = (job.FilesDone, job.FilesSkipped, job.FilesFailed);
         await db.SaveChangesAsync(ct);
         Report(progress, job, null);
 
@@ -660,7 +666,11 @@ public sealed class CorpusIndexer(
 
         await db.SaveChangesAsync(ct);
         log.LogInformation("Source {Source}: {Indexed} indexed, {Skipped} skipped, {Failed} failed, {Removed} removed",
-            source.RootPath, job.FilesDone, job.FilesSkipped, job.FilesFailed, vanished.Count);
+            source.RootPath,
+            job.FilesDone - startedWith.FilesDone,
+            job.FilesSkipped - startedWith.FilesSkipped,
+            job.FilesFailed - startedWith.FilesFailed,
+            vanished.Count);
     }
 
     /// <summary>
