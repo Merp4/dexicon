@@ -53,12 +53,14 @@ public sealed class ModelProbeTests
         // the densest of them.
         capabilities.RecommendedChunkChars.ShouldBeLessThan(capabilities.MaxInputChars!.Value);
 
-        // And the token figure keeps headroom under the model's own context, counted in
-        // tokens. It used to be the character budget divided by a ratio measured on other
-        // text, which applied a density correction a second time and cancelled the
-        // headroom out.
+        // The token figure never exceeds the model's own context, counted in tokens. It
+        // used to be the character budget divided by a ratio measured on other text, which
+        // applied a density correction a second time and put the recommendation ABOVE the
+        // context. That is the property; it used to be bought with a third of the context
+        // held back, and it is now bought by the chunker capping and converting with the
+        // measured ratio, which costs nothing in retrieval.
         var contextTokens = await model.CountTokensAsync(Target, new string('x', capabilities.MaxInputChars!.Value));
-        capabilities.RecommendedChunkTokens.ShouldBeLessThan(contextTokens!.Value);
+        capabilities.RecommendedChunkTokens.ShouldBeLessThanOrEqualTo(contextTokens!.Value);
     }
 
     [Fact]
@@ -139,9 +141,11 @@ public sealed class ModelProbeTests
 
         var caps = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
 
-        // Two thirds of the context, the same headroom the character budget gets.
+        // The context itself. The headroom that used to be held back here is now enforced
+        // by the chunker, which caps the size at this number and converts to characters
+        // with the measured ratio rather than a flat 4.
         var contextTokens = (await model.CountTokensAsync(Target, new string('x', caps.MaxInputChars!.Value)))!.Value;
-        caps.RecommendedChunkTokens.ShouldBe(contextTokens * 2 / 3);
+        caps.RecommendedChunkTokens.ShouldBe(contextTokens);
     }
 
     [Fact]
@@ -162,9 +166,10 @@ public sealed class ModelProbeTests
 
         var contextTokens = (await model.CountTokensAsync(Target, Filler(caps.MaxInputChars!.Value)))!.Value;
 
-        // The recommendation has to fit the context with room to spare, whatever the text.
-        caps.RecommendedChunkTokens.ShouldBeLessThan(contextTokens);
-        caps.RecommendedChunkTokens.ShouldBeLessThanOrEqualTo(contextTokens * 2 / 3);
+        // The recommendation has to fit the context, whatever the text. That is what the
+        // old arithmetic broke, and it is the part that matters: a recommendation above the
+        // context is a chunk size nothing can honour.
+        caps.RecommendedChunkTokens.ShouldBeLessThanOrEqualTo(contextTokens);
 
         // And the old arithmetic would not have. Kept as an assertion rather than a comment
         // so the bug cannot quietly return.
