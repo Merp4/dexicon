@@ -478,6 +478,51 @@
             "description": "OK"
           }
         }
+      },
+      "patch": {
+        "tags": [
+          "Corpora"
+        ],
+        "parameters": [
+          {
+            "name": "nameOrId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sourceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceUpdated"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/corpora/{nameOrId}/coverage": {
@@ -1431,6 +1476,48 @@
           }
         }
       },
+      "CorpusDefaults": {
+        "required": [
+          "useGitignore",
+          "maxFileBytes",
+          "includeGlobs",
+          "excludeGlobs"
+        ],
+        "type": "object",
+        "properties": {
+          "useGitignore": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "maxFileBytes": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "includeGlobs": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "excludeGlobs": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "CorpusState": {
         "enum": [
           "Ready",
@@ -1526,6 +1613,16 @@
             "items": {
               "$ref": "#/components/schemas/ChunkSetSummary"
             }
+          },
+          "defaults": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CorpusDefaults"
+              }
+            ]
           }
         }
       },
@@ -2896,6 +2993,59 @@
             "type": "integer",
             "format": "int32",
             "default": 0
+          },
+          "ownUseGitignore": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "ownMaxFileBytes": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "ownIncludeGlobs": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "ownExcludeGlobs": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "SourceUpdated": {
+        "required": [
+          "source",
+          "indexJob"
+        ],
+        "type": "object",
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/SourceSummary"
+          },
+          "indexJob": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JobSummary"
+              }
+            ]
           }
         }
       },
@@ -3046,6 +3196,61 @@
             ]
           },
           "grantTenantIds": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "defaults": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CorpusDefaults"
+              }
+            ]
+          }
+        }
+      },
+      "UpdateSourceRequest": {
+        "type": "object",
+        "properties": {
+          "useGitignore": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "maxFileBytes": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "includeGlobs": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "excludeGlobs": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "clear": {
             "type": [
               "null",
               "array"

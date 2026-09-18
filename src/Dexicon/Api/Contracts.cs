@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Dexicon.Core.Catalog;
+using Dexicon.Core.Configuration;
+using Dexicon.Core.Indexing;
 using Dexicon.Core.Search;
 
 namespace Dexicon.Api;
@@ -21,7 +23,14 @@ public sealed record CreateCorpusRequest(
 public sealed record UpdateCorpusRequest(
     string? Description = null,
     string? Visibility = null,
-    IReadOnlyList<string>? GrantTenantIds = null);
+    IReadOnlyList<string>? GrantTenantIds = null,
+    /// <summary>
+    /// Filters every source inherits. Sent, it REPLACES all four: they are edited together
+    /// on one form, and a partial update would need a way to say "leave that one alone"
+    /// that is indistinguishable from "unset it". Omit the field to leave the defaults
+    /// unchanged; send a member as null to return it to the configured value.
+    /// </summary>
+    CorpusDefaults? Defaults = null);
 
 /// <summary>
 /// A new way of cutting and embedding a corpus's existing content. Omitted fields are
@@ -246,7 +255,9 @@ public sealed record CorpusSummary(
     int FailedCount,
     IReadOnlyList<SourceSummary> Sources,
     /// <summary>Every way this corpus is cut. The default one is what search uses.</summary>
-    IReadOnlyList<ChunkSetSummary> ChunkSets);
+    IReadOnlyList<ChunkSetSummary> ChunkSets,
+    /// <summary>Filters every source here inherits unless it sets its own.</summary>
+    CorpusDefaults? Defaults = null);
 
 /// <summary>
 /// One place a corpus takes content from, and the filters applied to it.
@@ -271,7 +282,44 @@ public sealed record SourceSummary(
     /// way to see that one folder brought in nothing, which is what a mistyped path, an
     /// over-eager exclude glob, or an index that stopped early all look like.
     /// </summary>
-    int FileCount = 0);
+    int FileCount = 0,
+    /// <summary>
+    /// What this source sets for itself, null where it inherits the corpus default. The
+    /// four fields above are the EFFECTIVE values, which is what indexing uses and what a
+    /// reader wants to see; these say which of them the source would keep if the corpus
+    /// default changed, and they are what an edit form binds to.
+    /// </summary>
+    bool? OwnUseGitignore = null,
+    int? OwnMaxFileBytes = null,
+    IReadOnlyList<string>? OwnIncludeGlobs = null,
+    IReadOnlyList<string>? OwnExcludeGlobs = null);
+
+/// <summary>
+/// Filters every source of a corpus inherits unless it sets its own. Null means the
+/// deployment's configured value applies.
+/// </summary>
+public sealed record CorpusDefaults(
+    bool? UseGitignore,
+    int? MaxFileBytes,
+    IReadOnlyList<string>? IncludeGlobs,
+    IReadOnlyList<string>? ExcludeGlobs);
+
+/// <summary>
+/// Change one source's filters. An omitted field is left alone; a field sent as null
+/// clears the source's own value and returns it to inheriting the corpus default, which is
+/// why every one of them is nullable and why "omitted" and "null" cannot be the same here.
+/// </summary>
+/// <param name="Clear">
+/// Names of fields to return to inheritance: <c>useGitignore</c>, <c>maxFileBytes</c>,
+/// <c>includeGlobs</c>, <c>excludeGlobs</c>. JSON cannot distinguish an absent property
+/// from an explicit null once it is bound to a nullable, so clearing is said out loud.
+/// </param>
+public sealed record UpdateSourceRequest(
+    bool? UseGitignore = null,
+    int? MaxFileBytes = null,
+    IReadOnlyList<string>? IncludeGlobs = null,
+    IReadOnlyList<string>? ExcludeGlobs = null,
+    IReadOnlyList<string>? Clear = null);
 
 /// <summary>
 /// One indexed file, reconstructed from the chunks of one chunk set.
@@ -311,6 +359,13 @@ public sealed record IndexedFileText(
 /// </summary>
 public sealed record SourceAdded(SourceSummary Source, JobSummary IndexJob);
 
+/// <summary>
+/// A source after its filters changed. <paramref name="IndexJob"/> is null when the
+/// request left every value as it found it, because a form submitted unchanged should not
+/// re-walk a library.
+/// </summary>
+public sealed record SourceUpdated(SourceSummary Source, JobSummary? IndexJob);
+
 public sealed record FileSummary(
     string Id, string RelativePath, string Status, string? StatusDetail,
     string? Language, long SizeBytes, int ChunkCount, DateTime? IndexedUtc);
@@ -344,15 +399,36 @@ public sealed record WorkspaceEntry(string Name, string RelativePath, bool IsDir
 
 public static class Mapping
 {
-    public static SourceSummary ToSummary(this Source s, int fileCount = 0) =>
-        new(s.Id,
+    /// <summary>
+    /// A source as a caller reads it: the EFFECTIVE filters, plus what the source itself
+    /// set. Resolution needs the corpus, so it is passed rather than reached through the
+    /// navigation property, which is not always loaded.
+    /// </summary>
+    public static SourceSummary ToSummary(this Source s, Corpus corpus, IndexingOptions configured,
+        int fileCount = 0)
+    {
+        var effective = SourceFilters.Resolve(corpus, s, configured);
+
+        return new SourceSummary(
+            s.Id,
             s.Kind.ToString().ToLowerInvariant(),
             s.RootPath,
+            effective.UseGitignore,
+            effective.MaxFileBytes,
+            effective.IncludeGlobs,
+            effective.ExcludeGlobs,
+            fileCount,
             s.UseGitignore,
             s.MaxFileBytes,
-            Globs(s.IncludeGlobs),
-            Globs(s.ExcludeGlobs),
-            fileCount);
+            SourceFilters.Globs(s.IncludeGlobs),
+            SourceFilters.Globs(s.ExcludeGlobs));
+    }
+
+    public static CorpusDefaults DefaultsOf(this Corpus c) =>
+        new(c.DefaultUseGitignore,
+            c.DefaultMaxFileBytes,
+            SourceFilters.Globs(c.DefaultIncludeGlobs),
+            SourceFilters.Globs(c.DefaultExcludeGlobs));
 
     /// <summary>
     /// A stored glob column as a list. Empty rather than null when unset or unreadable:

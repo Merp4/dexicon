@@ -18,7 +18,41 @@ with no section here fails its release rather than publishing an undescribed one
 
 ## Unreleased
 
+### ⚠️ Upgrading
+
+- One migration, `SourceFilterInheritance`, applied at startup. Widening only: a source's
+  filter columns become nullable and a corpus gains four default columns. Every existing
+  source keeps the value it had, so it stays an explicit override and indexes exactly as
+  before. Nothing re-indexes on upgrade.
+
 ### Added
+
+- **A source's filters can be changed after it was added, and a corpus can set defaults
+  they inherit.** They were write-once: set when the folder was added and unreachable
+  afterwards, so changing one glob meant deleting the source, which drops its files from
+  every chunk set, then re-adding it and re-embedding the folder from scratch. Nobody
+  iterates on a filter at that price. Ten folders under one parent also carried ten copies
+  of the same two globs, set one at a time.
+
+  Filters now resolve through three layers, narrowest first: the source's own value, the
+  corpus default, then the configured value. Each field resolves on its own, and
+  inheritance is live, so changing a corpus default moves every source that has not
+  overridden that field.
+
+  An unset field inherits; an empty glob list is a decision, meaning "none, whatever the
+  corpus says". The difference is what lets a source under a corpus that excludes
+  `**/*.pdf` say it wants those PDFs after all. `PATCH /api/corpora/{name}/sources/{id}`
+  leaves omitted fields alone and takes a `clear` list to return one to the default, named
+  rather than inferred from a null, because JSON cannot distinguish an absent property from
+  an explicit null. `PATCH /api/corpora/{name}` takes the defaults. Both queue a refresh,
+  and only when something actually moved.
+
+### Fixed
+
+- **A size cap that was not a round number of megabytes could not be saved.** The Add
+  source form set `step` on its size input, which makes the browser reject anything off
+  that grid and then refuse to submit the form without saying so. A cap is a free value,
+  not one on a grid.
 
 - **The UI reports files no source covers.** `0.2.3` gave this to agents through
   `index_status` and left the web UI silent about it, which is the wrong way round: the

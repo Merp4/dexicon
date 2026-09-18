@@ -23,10 +23,46 @@ Discovery walks the tree and applies, **in order**:
 3. **`.dexiconignore`** — same syntax, for things that are checked in but not worth
    indexing (lock files, generated clients, vendored trees). Separate from `.gitignore` so
    you never have to change VCS behaviour to change index behaviour.
-4. **Per-source `exclude_globs`**, then **`include_globs`** as an override.
+4. **`exclude_globs`**, then **`include_globs`** as an override.
 5. **Size cap** — `max_file_bytes`, default 256 KB. A file over the cap is recorded as
    `skipped` with the reason, never dropped without record.
 6. **Binary sniff** — a NUL byte in the first 8 KB means binary, regardless of extension.
+
+### Where steps 2, 4 and 5 get their values
+
+`use_gitignore`, the two glob lists and `max_file_bytes` resolve through three layers,
+narrowest first:
+
+```
+  the source's own value        set on one folder
+  the corpus default            inherited by every source that sets none
+  the configured value          DEXICON__INDEXING__*
+```
+
+Each field resolves on its own, so a source that only wants a larger cap still follows the
+corpus on globs. Inheritance is **live**: changing a corpus default moves every source that
+has not overridden that field, which is the point, because ten folders under one parent
+used to carry ten copies of the same two globs.
+
+**Null and empty are different, and the difference is the whole of it.** An unset field
+inherits; an empty glob list is a decision, meaning "none, whatever the corpus says". A
+source under a corpus that excludes `**/*.pdf` needs the second to say it wants those PDFs
+after all. Over the API, an omitted field leaves a value alone and `clear` returns it to
+the default:
+
+```jsonc
+// Stop excluding PDFs here, and go back to the corpus's size cap.
+PATCH /api/corpora/books/sources/{id}
+{ "excludeGlobs": [], "clear": ["maxFileBytes"] }
+```
+
+Clearing is named rather than inferred from a null, because JSON gives no way to tell an
+absent property from an explicit null; inferring it would make every partial update reset
+whatever it did not mention.
+
+Changing a filter queues a refresh, and only when something actually moved. Narrowing one
+removes the files it now excludes through the ordinary reconcile: the walk stops seeing
+them, which is the path a file deleted from disk already takes. Nothing on disk is touched.
 
 Text extraction on a workspace source is `File.ReadAllText` with encoding detection (BOM,
 then UTF-8, then Latin-1 fallback). Document formats (PDF, DOCX, …) found inside a

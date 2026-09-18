@@ -1,5 +1,6 @@
 using Dexicon.Api;
 using Dexicon.Core.Catalog;
+using Dexicon.Core.Configuration;
 
 namespace Dexicon.Tests;
 
@@ -16,6 +17,12 @@ namespace Dexicon.Tests;
 /// </summary>
 public sealed class SourceSummaryTests
 {
+    /// <summary>A corpus that sets no defaults, so a source's own values are what resolve.</summary>
+    private static readonly Corpus Corpus =
+        new() { Id = "c1", TenantId = "t", Name = "docs", CreatedUtc = DateTime.UtcNow };
+
+    private static readonly IndexingOptions Configured = new() { MaxFileBytes = 262_144 };
+
     private static Source Source(string? include = null, string? exclude = null) => new()
     {
         Id = "s1",
@@ -31,7 +38,7 @@ public sealed class SourceSummaryTests
     [Fact]
     public void GlobsComeBackAsAList()
     {
-        var summary = Source(include: """["src/**","docs/**"]""", exclude: """["**/vendor/**"]""").ToSummary();
+        var summary = Source(include: """["src/**","docs/**"]""", exclude: """["**/vendor/**"]""").ToSummary(Corpus, Configured);
 
         summary.IncludeGlobs.ShouldBe(["src/**", "docs/**"]);
         summary.ExcludeGlobs.ShouldBe(["**/vendor/**"]);
@@ -42,7 +49,7 @@ public sealed class SourceSummaryTests
     {
         // A caller rendering `globs.length` should not have to guard against null for the
         // ordinary case of "no filter", which is most sources.
-        var summary = Source().ToSummary();
+        var summary = Source().ToSummary(Corpus, Configured);
 
         summary.IncludeGlobs.ShouldBeEmpty();
         summary.ExcludeGlobs.ShouldBeEmpty();
@@ -58,14 +65,14 @@ public sealed class SourceSummaryTests
         // "No filter" and "a filter we cannot read" look the same to a caller. The honest
         // one of those two is the one that does not take a screen down: a corpus listing
         // should not 500 because one row holds something unexpected.
-        Should.NotThrow(() => Source(include: stored).ToSummary())
+        Should.NotThrow(() => Source(include: stored).ToSummary(Corpus, Configured))
             .IncludeGlobs.ShouldBeEmpty();
     }
 
     [Fact]
     public void TheRestOfTheSourceStillCarriesThrough()
     {
-        var summary = Source().ToSummary();
+        var summary = Source().ToSummary(Corpus, Configured);
 
         summary.RootPath.ShouldBe("api-repo");
         summary.UseGitignore.ShouldBeTrue();

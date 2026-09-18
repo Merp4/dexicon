@@ -55,6 +55,20 @@ public sealed class Corpus
     public DateTime CreatedUtc { get; set; }
     public DateTime? LastIndexedUtc { get; set; }
 
+    /// <summary>
+    /// Filters every source of this corpus inherits unless it sets its own. Stored as the
+    /// same shapes a source stores, so resolution is a coalesce and nothing has to
+    /// translate between two representations.
+    ///
+    /// Inherited LIVE, not copied when a source is added: a corpus with ten folders under
+    /// one parent is the case this exists for, and a default that only applied to the
+    /// eleventh would leave the other ten to be edited one at a time, which is the problem.
+    /// </summary>
+    public string? DefaultIncludeGlobs { get; set; }     // json array
+    public string? DefaultExcludeGlobs { get; set; }     // json array
+    public bool? DefaultUseGitignore { get; set; }
+    public int? DefaultMaxFileBytes { get; set; }
+
     public List<Source> Sources { get; set; } = [];
     public List<CorpusGrant> Grants { get; set; } = [];
     public List<IndexJob> Jobs { get; set; } = [];
@@ -164,10 +178,19 @@ public sealed class Source
     /// <summary>Workspace sources only: path relative to the workspace root.</summary>
     public string? RootPath { get; set; }
 
-    public string? IncludeGlobs { get; set; }            // json array
-    public string? ExcludeGlobs { get; set; }            // json array
-    public bool UseGitignore { get; set; } = true;
-    public int MaxFileBytes { get; set; } = 262_144;
+    /// <summary>
+    /// This source's own filters, or null to inherit the corpus default.
+    ///
+    /// Null and empty are different, and the difference is the whole of inheritance: null
+    /// is "I have no opinion, use the corpus's", and an empty array is "none, whatever the
+    /// corpus says". Resolve through <see cref="Indexing.SourceFilters"/> rather than
+    /// reading these directly, or a source will be indexed by its own opinion where it
+    /// meant to hold none.
+    /// </summary>
+    public string? IncludeGlobs { get; set; }            // json array, null = inherit
+    public string? ExcludeGlobs { get; set; }            // json array, null = inherit
+    public bool? UseGitignore { get; set; }
+    public int? MaxFileBytes { get; set; }
     public DateTime CreatedUtc { get; set; }
 
     public List<IndexedFile> Files { get; set; } = [];

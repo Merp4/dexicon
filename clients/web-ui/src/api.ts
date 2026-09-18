@@ -34,6 +34,7 @@ import {
   getApiCorporaByNameOrIdChunkSets,
   getApiCorporaByNameOrIdFile,
   getApiCorporaByNameOrIdCoverage,
+  patchApiCorporaByNameOrIdSourcesBySourceId,
   getApiCorporaByNameOrIdFiles,
   getApiDocuments,
   getApiDocumentsBySha256Text,
@@ -60,6 +61,7 @@ import {
 } from './generated';
 import type {
   AddSourceRequest,
+  UpdateSourceRequest,
   AttachDocumentRequest,
   CreateChunkSetRequest,
   CreateCorpusRequest,
@@ -107,8 +109,10 @@ export { getToken, setToken } from './token';
 export type {
   ChunkSetSummary as ChunkSet,
   CorpusSummary as Corpus,
+  CorpusDefaults,
   CoverageGap,
   CoverageReport,
+  SourceSummary as CorpusSource,
   CreatedTokenResponse as CreatedToken,
   EmbeddingModelInfo,
   EmbeddingProviderInfo,
@@ -230,6 +234,11 @@ export const api = {
 
   addSource: (nameOrId: string, body: AddSourceRequest) =>
     call(() => postApiCorporaByNameOrIdSources({ path: { nameOrId }, body })),
+
+  /** Change one source's filters. Omitted fields are left alone; names in `clear`
+   *  return that field to the corpus default. */
+  updateSource: (nameOrId: string, sourceId: string, body: UpdateSourceRequest) =>
+    call(() => patchApiCorporaByNameOrIdSourcesBySourceId({ path: { nameOrId, sourceId }, body })),
 
   removeSource: (nameOrId: string, sourceId: string) =>
     call(() => deleteApiCorporaByNameOrIdSourcesBySourceId({ path: { nameOrId, sourceId } })),

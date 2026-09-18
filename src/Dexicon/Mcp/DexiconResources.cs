@@ -3,6 +3,8 @@ using System.Text.Json;
 using Dexicon.Api;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
+using Dexicon.Core.Configuration;
+using Microsoft.Extensions.Options;
 using Dexicon.Core.Search;
 using Dexicon.Core.Vectors;
 using Dexicon.Infrastructure;
@@ -37,11 +39,12 @@ public sealed class DexiconResources
         RequestContext rc,
         ScopeResolver scopes,
         CatalogDbContext db,
+        IOptions<DexiconOptions> opts,
         string name,
         CancellationToken ct = default)
     {
         var (tenant, target) = await ResolveAsync(rc, scopes, name, ct);
-        var summary = await CorpusEndpoints.Summarise(db, target.Corpus, tenant, ct);
+        var summary = await CorpusEndpoints.Summarise(db, target.Corpus, tenant, opts.Value.Indexing, ct);
         return JsonSerializer.Serialize(summary, JsonOptions.Web);
     }
 
