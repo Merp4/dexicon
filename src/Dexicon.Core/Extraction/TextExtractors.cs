@@ -63,8 +63,10 @@ public static class ExtractorVersions
     ///    one line as it already is for EPUB and HTML, and columns no longer interleave.
     /// 5: A page number alone in a PDF's top or bottom margin is furniture, not text, and
     ///    is dropped. About one extracted block in ten was one.
+    /// 6: Whitespace inside an HTML or EPUB <pre> is kept, so a code listing arrives with
+    ///    its lines and indentation instead of as one line.
     /// </summary>
-    public const int Current = 5;
+    public const int Current = 6;
 }
 
 
@@ -472,18 +474,27 @@ internal static class HtmlText
     public static void AppendBlocks(IElement? root, StringBuilder sb)
     {
         if (root is null) return;
-        Walk(root, sb);
+        Walk(root, sb, preformatted: false);
         EndLine(sb);
     }
 
-    private static void Walk(INode node, StringBuilder sb)
+    /// <param name="preformatted">
+    /// Inside a <c>pre</c>, where whitespace is content rather than markup layout.
+    ///
+    /// Collapsing it everywhere turned a code listing into one line: `if (a) {`, four
+    /// spaces, `b();` and `}` came out as `if (a) { b(); }`. The listing stays findable
+    /// that way, which is why this went unnoticed, but it is unreadable in a search result
+    /// and the chunker splits on lines, so a long listing was one line it could not split.
+    /// </param>
+    private static void Walk(INode node, StringBuilder sb, bool preformatted)
     {
         foreach (var child in node.ChildNodes)
         {
             switch (child)
             {
                 case IText text:
-                    AppendCollapsed(text.Data, sb);
+                    if (preformatted) AppendVerbatim(text.Data, sb);
+                    else AppendCollapsed(text.Data, sb);
                     break;
 
                 case IElement el when Skipped.Contains(el.LocalName):
@@ -497,7 +508,9 @@ internal static class HtmlText
                 case IElement el:
                     var block = Blocks.Contains(el.LocalName);
                     if (block) EndLine(sb);
-                    Walk(el, sb);
+                    // Inherited, so the <code> inside a <pre> is preformatted too, which
+                    // is how a listing is marked up nearly everywhere.
+                    Walk(el, sb, preformatted || el.LocalName == "pre");
                     if (block) EndLine(sb);
                     break;
             }
@@ -523,6 +536,16 @@ internal static class HtmlText
             else { sb.Append(ch); lastWasSpace = false; }
         }
     }
+
+    /// <summary>
+    /// Text exactly as written, for a <c>pre</c>: indentation and line breaks included.
+    ///
+    /// No line-ending normalisation, because the HTML parser has already done it. A
+    /// CRLF in the source reaches here as a single LF, which is what the spec requires
+    /// of a parser and what <c>CarriageReturnsDoNotDoubleTheLines</c> holds it to. The
+    /// first version of this handled CR itself, and that code was unreachable.
+    /// </summary>
+    private static void AppendVerbatim(string text, StringBuilder sb) => sb.Append(text);
 
     /// <summary>Ends the current line, without leaving a run of blank ones.</summary>
     private static void EndLine(StringBuilder sb)

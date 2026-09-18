@@ -390,6 +390,15 @@ public sealed class EmbeddingModelMeasurement
     /// <summary>Measured with the model's own tokenizer. Null when the provider is silent.</summary>
     public double? CharsPerToken { get; set; }
 
+    /// <summary>
+    /// How many tokens the model reads in one go, counted with its own tokenizer. A chunk
+    /// budget above this is a budget whose tail is embedded by nothing.
+    ///
+    /// Null when the provider reports no token counts, in which case there is no ceiling
+    /// to clamp to and the configured size stands.
+    /// </summary>
+    public int? ContextTokens { get; set; }
+
     public DateTime MeasuredUtc { get; set; }
 }
 

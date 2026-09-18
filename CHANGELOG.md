@@ -82,6 +82,32 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Fixed
 
+- **Chunks were larger than the model that had to read them.** A chunk size is set in
+  tokens and enforced in characters, and two conversions between the two were wrong in the
+  same direction. The size was not capped at the model's context, so this library ran 2,065
+  tokens against a model that reads 2,048. The character conversion used a flat 4 where the
+  probe had measured 3.8 for that model, asking for 5% more characters than the token budget
+  it claimed to enforce. Together, 8,260 characters of a model whose context is nearer 7,780
+  of them: Ollama returns a vector for the part it read, so the tail of every full-size chunk
+  was embedded by nothing. One re-index logged 235 truncation warnings.
+
+  The chunk size is now capped at the model's measured context, and the conversion uses the
+  ratio measured for that model. A set already inside both, which includes the 768-token
+  default on every model here, is unchanged. An unmeasured model keeps the configured size
+  and the flat 4. The effective budget is part of the chunking fingerprint, so re-probing a
+  model into a different budget re-chunks the corpus instead of leaving chunks sized for a
+  number no longer in force.
+
+  The probe measured the model's context on every run and then discarded it; it is now
+  stored on the measurement, which is what the cap reads.
+
+- **A code listing in an EPUB or HTML file was extracted as a single line.** The walker
+  collapses source whitespace, which is right everywhere except inside `<pre>`, where the
+  whitespace is what the author was preserving. `if (a) {` / four spaces / `b();` / `}` came
+  out as `if (a) { b(); }`. The listing stayed findable, which is why it went unnoticed, but
+  it was unreadable in a search result, and the chunker splits on lines, so a long listing
+  was one line it could not split at all.
+
 - **A PDF's page numbers were being indexed as text.** Counted across this corpus, PDFs
   produced 99 bare numbers per 1,000 extracted blocks against 13 from the EPUBs of the same
   titles, so roughly one extracted block in ten was a page number. Each becomes a line of
@@ -203,6 +229,14 @@ with no section here fails its release rather than publishing an undescribed one
   large text.
 
 ### ⚠️ Upgrading
+
+- One migration, `ModelContextTokens`, applied at startup. Widening only: one nullable
+  column on the measurements table. It is empty until each model is probed again, and an
+  empty value means the chunk size is not capped, which is the behaviour before this change.
+  **Re-probe each embedding model from the Models screen** to get the cap.
+
+- The chunker version moves 4 to 5 and the extractor version 5 to 6, so **every file
+  re-extracts, re-chunks and re-embeds on the next index run**.
 
 - The extractor version moves 4 to 5, so **every PDF re-extracts, re-chunks and re-embeds on
   the next index run**. Other formats are untouched and their cached text still matches.

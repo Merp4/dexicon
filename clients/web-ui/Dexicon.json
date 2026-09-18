@@ -2531,6 +2531,7 @@
           "recommendedChunkChars",
           "recommendedChunkTokens",
           "charsPerToken",
+          "contextTokens",
           "embedCalls",
           "tookMs",
           "summary"
@@ -2571,6 +2572,13 @@
               "number"
             ],
             "format": "double"
+          },
+          "contextTokens": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
           },
           "embedCalls": {
             "type": "integer",

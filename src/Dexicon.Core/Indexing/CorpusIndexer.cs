@@ -92,18 +92,32 @@ public sealed class CorpusIndexer(
                 // file in it, and they are part of the staleness key for all of them.
                 var templates = await profiles.ForAsync(set.Target(), ct);
 
+                // The same, for what the model measured about itself. The chunk budget is
+                // reconciled against it here rather than per file, and a set whose model
+                // was never probed gets the configured size unchanged.
+                var measured = await db.ModelMeasurements.AsNoTracking()
+                    .FirstOrDefaultAsync(mm => mm.Provider == set.EmbeddingProvider
+                                            && mm.Model == set.EmbeddingModel, ct);
+                var chunking = set.Options(measured);
+
+                if (chunking.ChunkSizeTokens != set.ChunkSize)
+                    log.LogWarning(
+                        "Chunk set {Set}: size {Configured:N0} tokens exceeds what {Model} reads "
+                        + "in one go, chunking at {Effective:N0}",
+                        set.Name, set.ChunkSize, set.EmbeddingModel, chunking.ChunkSizeTokens);
+
                 foreach (var source in corpus.Sources)
                 {
                     var full = job.Kind is JobKind.Full or JobKind.Rebuild;
 
                     if (source.Kind == SourceKind.Workspace)
                     {
-                        await IndexWorkspaceSourceAsync(corpus, set, templates, source, job, progress, full,
+                        await IndexWorkspaceSourceAsync(corpus, set, templates, chunking, source, job, progress, full,
                             onEmbeddingFailure: () => embeddingFailed = true, ct);
                     }
                     else
                     {
-                        await IndexUploadSourceAsync(corpus, set, templates, source, job, progress, full,
+                        await IndexUploadSourceAsync(corpus, set, templates, chunking, source, job, progress, full,
                             onEmbeddingFailure: () => embeddingFailed = true, ct);
                     }
                 }
@@ -159,7 +173,7 @@ public sealed class CorpusIndexer(
     /// settings change.
     /// </summary>
     private async Task IndexUploadSourceAsync(Corpus corpus, ChunkSet set, ModelTemplates templates,
-        Source source, IndexJob job,
+        ChunkOptions chunking, Source source, IndexJob job,
         IProgress<IndexProgress>? progress, bool full, Action onEmbeddingFailure, CancellationToken ct)
     {
         var attachments = await db.Files
@@ -203,7 +217,7 @@ public sealed class CorpusIndexer(
                     file.ExtractedChars = 0;
                     // Hash IS recorded: an empty extraction is a settled outcome, not a
                     // failure to retry. Re-uploading the file is what changes it.
-                    state.ContentHash = ChunkingFingerprint(set, cached.Sha256, templates);
+                    state.ContentHash = ChunkingFingerprint(set, cached.Sha256, templates, chunking);
                     state.IndexedUtc = DateTime.UtcNow;
                     job.FilesSkipped++;
                     continue;
@@ -212,7 +226,7 @@ public sealed class CorpusIndexer(
                 // The fingerprint mixes the blob hash WITH the corpus's chunk settings,
                 // so changing chunk size or boundary mode makes every attachment look
                 // changed and re-chunks it, without touching the bytes.
-                var fingerprint = ChunkingFingerprint(set, cached.Sha256, templates);
+                var fingerprint = ChunkingFingerprint(set, cached.Sha256, templates, chunking);
                 if (!full && state.ContentHash == fingerprint && state.Status == FileStatus.Indexed)
                 {
                     job.FilesSkipped++;
@@ -229,7 +243,7 @@ public sealed class CorpusIndexer(
                 // nothing useful in extracted PDF text, so the set's boundary mode is
                 // overridden here while everything else about the set is honoured.
                 var pieces = CodeChunker.Chunk(file.RelativePath, cached.Text,
-                    set.Options() with { BoundaryMode = "blank-line" }, extracted);
+                    chunking with { BoundaryMode = "blank-line" }, extracted);
 
                 var chunks = pieces.Select(p => new Chunk
                 {
@@ -361,8 +375,19 @@ public sealed class CorpusIndexer(
     /// existing chunk in place while every new query used the new framing, leaving the
     /// two sides of a retrieval disagreeing with no error raised.
     /// </param>
+    /// <summary>
+    /// The set's own settings, with no model measurement to reconcile them against. The
+    /// indexing paths all pass the reconciled options; this is for callers that have only
+    /// a set. If the two ever disagree the effect is a file that looks changed and is
+    /// chunked again, never a stale chunk kept as current.
+    /// </summary>
     internal static string ChunkingFingerprint(ChunkSet set, string blobSha, ModelTemplates templates) =>
-        HashContent($"{blobSha}|{set.ChunkSize}|{set.ChunkOverlap}|{set.BoundaryMode}|" +
+        ChunkingFingerprint(set, blobSha, templates, set.Options());
+
+    internal static string ChunkingFingerprint(
+        ChunkSet set, string blobSha, ModelTemplates templates, ChunkOptions chunking) =>
+        HashContent($"{blobSha}|{chunking.ChunkSizeTokens}|{chunking.OverlapTokens}|" +
+                    $"{chunking.CharsPerToken}|{set.BoundaryMode}|" +
                     $"{set.CustomBoundaryPattern}|{set.UnitAware}|{set.SentenceAware}|{set.HeadingContext}|" +
                     $"{set.EmbeddingProvider}|{set.EmbeddingModel}|t{templates.Fingerprint}|" +
                     $"x{ExtractorVersions.Current}|c{CodeChunker.Version}");
@@ -397,6 +422,7 @@ public sealed class CorpusIndexer(
     }
 
     private async Task IndexWorkspaceSourceAsync(Corpus corpus, ChunkSet set, ModelTemplates templates,
+        ChunkOptions chunking,
         Source source, IndexJob job,
         IProgress<IndexProgress>? progress, bool full, Action onEmbeddingFailure, CancellationToken ct)
     {
@@ -497,7 +523,7 @@ public sealed class CorpusIndexer(
                 // file looking unchanged, so a refresh re-chunked nothing and the new
                 // setting had no effect. Mixing the settings in marks precisely the
                 // affected files as stale, and no others.
-                var hash = ChunkingFingerprint(set, HashContent(content), templates);
+                var hash = ChunkingFingerprint(set, HashContent(content), templates, chunking);
 
                 if (!full && states.TryGetValue(candidate.RelativePath, out var existing)
                           && existing.ContentHash == hash && existing.Status == FileStatus.Indexed)
@@ -531,9 +557,9 @@ public sealed class CorpusIndexer(
                 // A document is chunked as prose regardless of its extension: applying a
                 // C# member-boundary regex to extracted PDF text finds nothing useful.
                 var pieces = extractor is null
-                    ? CodeChunker.Chunk(candidate.RelativePath, content, set.Options(), extracted)
+                    ? CodeChunker.Chunk(candidate.RelativePath, content, chunking, extracted)
                     : CodeChunker.Chunk(candidate.RelativePath, content,
-                        set.Options() with { BoundaryMode = "blank-line" }, extracted);
+                        chunking with { BoundaryMode = "blank-line" }, extracted);
 
                 if (pieces.Count == 0)
                 {

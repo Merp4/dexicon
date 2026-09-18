@@ -35,6 +35,18 @@ public sealed record TextChunk
 public sealed record ChunkOptions
 {
     public int ChunkSizeTokens { get; init; } = 768;
+
+    /// <summary>
+    /// Characters per token for the model this text will be embedded with, measured by
+    /// the probe. Defaults to <see cref="CodeChunker.CharsPerToken"/>, which is what an
+    /// unmeasured model gets and what every caller got before the ratio was measured.
+    ///
+    /// The conversion has to use the model's own number. On embeddinggemma the measured
+    /// ratio is 3.8 and the constant is 4, so a 2,065-token budget asked for 8,260
+    /// characters where the model reads 2,174 tokens of them against a 2,048-token
+    /// context: the chunker was over by 5% before any text was looked at.
+    /// </summary>
+    public double CharsPerToken { get; init; } = CodeChunker.CharsPerToken;
     public int OverlapTokens { get; init; } = 100;
     public string BoundaryMode { get; init; } = "language-aware";
     public string? CustomBoundaryPattern { get; init; }
@@ -84,8 +96,11 @@ public static class CodeChunker
     /// 4: a boundary is only used as a split point when it leaves a chunk worth having.
     ///    Text with a boundary early and then a long stretch without one produced chunks
     ///    a few hundred characters long, one line apart, by the thousand.
+    /// 5: the token-to-character conversion uses the model's measured ratio rather than
+    ///    a flat 4, and a chunk size above the model's context is clamped to it, so a
+    ///    chunk is no longer larger than the model that has to read it.
     /// </summary>
-    public const int Version = 4;
+    public const int Version = 5;
 
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(500);
 
@@ -122,8 +137,8 @@ public static class CodeChunker
 
         var language = LanguageMap.Detect(relativePath);
         var lines = SplitLines(content);
-        var maxChars = options.ChunkSizeTokens * CharsPerToken;
-        var overlapChars = options.OverlapTokens * CharsPerToken;
+        var maxChars = (int)(options.ChunkSizeTokens * options.CharsPerToken);
+        var overlapChars = (int)(options.OverlapTokens * options.CharsPerToken);
 
         var boundaries = ResolveBoundaries(
             options.BoundaryMode, language, options.CustomBoundaryPattern, lines).ToHashSet();
