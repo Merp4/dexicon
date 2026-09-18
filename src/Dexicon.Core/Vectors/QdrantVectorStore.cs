@@ -380,8 +380,17 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
 
         var sw = Stopwatch.StartNew();
         var filter = BuildFilter(query);
-        var limit = (ulong)Math.Clamp(query.Limit, 1, 50);
-        var prefetchLimit = (ulong)Math.Min(query.Limit * 4, 200);
+        // 50 was the API's cap on what a CALLER may ask for, applied again here to an
+        // internal number that is deliberately larger. Search over-fetches so that
+        // collapsing duplicate documents can promote the next distinct one, and this
+        // silently threw that away: asking for ten distinct titles returned 6.5 on a
+        // corpus at 2,065 tokens and 3.7 on the same corpus at 1,365, because the finer
+        // chunking put more chunks of one book into the same 50 candidates.
+        //
+        // The caller's limit is still clamped, where a caller's input belongs: the search
+        // endpoint and the MCP tool both bound it to 50 before it ever reaches here.
+        var limit = (ulong)Math.Clamp(query.Limit, 1, 500);
+        var prefetchLimit = (ulong)Math.Min(query.Limit * 4, 800);
 
         var mode = query.Mode;
         var degradedReason = (string?)null;

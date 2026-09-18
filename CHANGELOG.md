@@ -48,6 +48,17 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Fixed
 
+- **Collapsing duplicate documents returned fewer results than were asked for.** Search
+  over-fetches so that dropping a near-duplicate can promote the next distinct document, and
+  two ceilings quietly threw that away. The vector store clamped every request to 50 — a
+  bound that belongs on what a *caller* may ask for, and which the search endpoint and the
+  MCP tool already apply — and the over-fetch itself was a fixed four times the limit,
+  which is too few when a document has many chunks.
+
+  How far it has to reach depends on the chunk size. Measured on one corpus held two ways,
+  asking for ten: at 2,065 tokens it returned **6.5**, and the same books at 1,365 tokens
+  returned **3.7**. With both ceilings lifted, the first returns **10 of 10**.
+
 - **Each source's indexing summary reported the whole job's counts.** The log line took the
   job's running totals, which accumulate across every source and every chunk set, so each
   source in turn was credited with all the work done so far: `books/orly` owns one file and
