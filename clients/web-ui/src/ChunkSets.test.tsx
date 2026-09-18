@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ChunkSetsPanel } from './ChunkSets';
+import { ChunkSetsPanel, ModelsView } from './ChunkSets';
 import type { ChunkSet, Corpus, EmbeddingModelInfo } from './api';
 
 /**
@@ -20,12 +20,14 @@ import type { ChunkSet, Corpus, EmbeddingModelInfo } from './api';
 // The panel asks the server which models exist. Mocked: this is a test of what the
 // component renders, not of the network.
 const listEmbeddingModels = vi.fn();
+const probeEmbeddingModel = vi.fn();
 const listEmbeddingProviders = vi.fn();
 
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
   api: {
     listEmbeddingModels: (...args: unknown[]) => listEmbeddingModels(...args),
+    probeEmbeddingModel: (...args: unknown[]) => probeEmbeddingModel(...args),
     listEmbeddingProviders: (...args: unknown[]) => listEmbeddingProviders(...args),
   },
 }));
@@ -349,5 +351,81 @@ describe('the chunk set list', () => {
     expect(confirmSpy).not.toHaveBeenCalled();
 
     confirmSpy.mockRestore();
+  });
+});
+
+/**
+ * Measuring a model's limits, when the embedding service is busy.
+ *
+ * The probe embeds two dozen inputs one after another, and the embedding service answers
+ * indexing first, so on a corpus that is mid-reindex it can run for the better part of an
+ * hour. It had no deadline and no feedback: the button showed a spinner that never ended,
+ * which is indistinguishable from a hang, and the only way out was to reload the page. The
+ * server gave up at 499 with nobody watching.
+ */
+describe('measuring a model', () => {
+  async function openModels() {
+    const user = userEvent.setup();
+    // ModelsView lists the models of a provider, so it needs one; the shared default has
+    // an empty provider list because the panel under test elsewhere does not.
+    listEmbeddingProviders.mockResolvedValue({
+      default: 'ollama',
+      providers: [{ name: 'ollama', kind: 'ollama', managed: true, configured: true, detail: null }],
+    });
+    render(<ModelsView />);
+    await screen.findAllByRole('button', { name: /Test limits/ });
+    return user;
+  }
+
+  /** The first model's button. The list holds two, and this is about one of them. */
+  const testLimits = () => screen.getAllByRole('button', { name: /Test limits/ })[0];
+
+  it('says how long it has been measuring, rather than spinning in silence', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      probeEmbeddingModel.mockReturnValue(new Promise(() => {}));   // never settles
+      const user = await openModels();
+
+      await user.click(testLimits());
+
+      expect(await screen.findByRole('button', { name: /Stop \(0s\)/ })).toBeInTheDocument();
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(await screen.findByRole('button', { name: /Stop \(3s\)/ })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('can be stopped, and stopping is not reported as a failure', async () => {
+    // The only way out used to be reloading the page.
+    let abortSignal: AbortSignal | undefined;
+    probeEmbeddingModel.mockImplementation((_m: string, _p: string, signal: AbortSignal) => {
+      abortSignal = signal;
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('aborted')));
+      });
+    });
+
+    const user = await openModels();
+    await user.click(testLimits());
+    await user.click(await screen.findByRole('button', { name: /Stop \(/ }));
+
+    expect(abortSignal?.aborted).toBe(true);
+    // Back to a button you can press again.
+    await waitFor(() => expect(testLimits()).toBeEnabled());
+    // Stopping something you started is not an error to put on the screen.
+    expect(screen.queryByText(/aborted/i)).not.toBeInTheDocument();
+  });
+
+  it('surfaces why a probe timed out instead of leaving the spinner up', async () => {
+    probeEmbeddingModel.mockRejectedValue(
+      new Error('No answer within 90s. The probe embeds two dozen inputs, and the embedding '
+        + 'service answers indexing first, so this usually means an index job is running.'));
+
+    const user = await openModels();
+    await user.click(testLimits());
+
+    expect(await screen.findByText(/index job is running/)).toBeInTheDocument();
+    await waitFor(() => expect(testLimits()).toBeEnabled());
   });
 });

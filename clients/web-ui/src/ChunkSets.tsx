@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import {
   api,
   getToken,
@@ -553,6 +553,13 @@ export function ModelsView() {
   const [pull, setPull] = useState<ModelPullEvent | null>(null);
 
   const [probing, setProbing] = useState<string | null>(null);
+
+  // Seconds the probe has been running, and the handle to stop it. A spinner that never
+  // ends and never says how long it has been going is indistinguishable from a hang, and
+  // this one can legitimately take a minute: it embeds two dozen inputs, and the embedding
+  // service answers indexing first.
+  const [probeSeconds, setProbeSeconds] = useState(0);
+  const probeAbort = useRef<AbortController | null>(null);
   const [probed, setProbed] = useState<Record<string, ModelCapabilities>>({});
   const [editingProfile, setEditingProfile] = useState<EmbeddingModelInfo | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
@@ -637,10 +644,16 @@ export function ModelsView() {
   };
 
   const probe = async (model: string) => {
+    const abort = new AbortController();
+    probeAbort.current = abort;
     setProbing(model);
+    setProbeSeconds(0);
     setError(null);
+
+    const ticking = setInterval(() => setProbeSeconds((s) => s + 1), 1000);
+
     try {
-      const capabilities = await api.probeEmbeddingModel(model, provider);
+      const capabilities = await api.probeEmbeddingModel(model, provider, abort.signal);
       setProbed((all) => ({ ...all, [model]: capabilities }));
 
       // The probe is now SAVED, so the row itself changes: a model that said
@@ -649,8 +662,11 @@ export function ModelsView() {
       // unmeasured model until someone happened to reload.
       await refresh();
     } catch (e) {
-      setError(e);
+      // Stopping something you started is not an error to report back to you.
+      if (!abort.signal.aborted) setError(e);
     } finally {
+      clearInterval(ticking);
+      probeAbort.current = null;
       setProbing(null);
     }
   };
@@ -847,13 +863,23 @@ export function ModelsView() {
                       Framing
                     </Button>
 
-                    <Button
-                      disabled={probing !== null}
-                      title="Measure what this model actually accepts, without indexing anything"
-                      onClick={() => void probe(m.name)}
-                    >
-                      {probing === m.name ? <Spinner /> : 'Test limits'}
-                    </Button>
+                    {probing === m.name ? (
+                      <Button
+                        title="Stop measuring"
+                        onClick={() => probeAbort.current?.abort()}
+                      >
+                        <Spinner />
+                        Stop ({probeSeconds}s)
+                      </Button>
+                    ) : (
+                      <Button
+                        disabled={probing !== null}
+                        title="Measure what this model actually accepts, without indexing anything"
+                        onClick={() => void probe(m.name)}
+                      >
+                        Test limits
+                      </Button>
+                    )}
 
                     {managed && (
                       <Button
