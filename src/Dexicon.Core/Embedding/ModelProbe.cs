@@ -124,10 +124,10 @@ public sealed class ModelProbe(IEmbeddingService embeddings, ILogger<ModelProbe>
         var errors = await ErrorsOnOverlongInput(target, ct);
         calls++;
 
-        // Two thirds of the measured limit. The measurement is in characters and the
-        // model counts tokens, and the ratio varies with the text, since code and CJK are
-        // denser than English prose, so the headroom absorbs a bad estimate rather
-        // than pretending the number is exact.
+        // Two thirds of the measured limit, in characters. This one keeps its headroom:
+        // it is what a caller with no token counts has to work from, and there the ratio
+        // varies with the text, since code and CJK are denser than English prose, so the
+        // headroom absorbs a bad estimate rather than pretending the number is exact.
         var budget = low * 2 / 3;
 
         // The same boundary, counted in the unit the model actually enforces.
@@ -239,18 +239,34 @@ public sealed class ModelProbe(IEmbeddingService embeddings, ILogger<ModelProbe>
         double? charsPerToken = null) =>
         new(target.Provider, target.Model, dimensions, limit, truncates,
             budgetChars,
-            // Two thirds of the context, in tokens, when the context could be counted. The
-            // same headroom as the character budget and for the same reason, but arrived at
-            // without a trip through a ratio measured on different text.
+            // The context itself, when the context could be counted.
             //
-            // Falling back to chars over a ratio keeps a number for providers that report
-            // no token counts, where an estimate is all there is.
-            contextTokens is { } ctx
-                ? ctx * 2 / 3
-                : (int)(budgetChars / (charsPerToken ?? Indexing.CodeChunker.CharsPerToken)),
+            // This was two thirds of it, headroom against the chunker converting tokens to
+            // characters with a flat 4 that nothing checked. The chunker now converts with
+            // the ratio measured here and the size is capped at the context, so the headroom
+            // is enforced rather than recommended, and recommending it again is paying twice.
+            //
+            // The retrieval cost of paying twice was measured on a 96-book library: two
+            // thirds is 1,365 tokens on this model, which converts to 5,187 characters, and
+            // a run at 5,460 characters retrieved much worse than one at 7,480. The UI puts
+            // this number straight into the chunk size field of every new corpus.
+            //
+            // Falling back to chars over a ratio keeps a number for providers that report no
+            // token counts. That one stays at two thirds: with no context there is no cap,
+            // and an estimate with headroom is all there is.
+            RecommendedTokens(contextTokens, budgetChars, charsPerToken),
             charsPerToken,
             contextTokens,
             calls, started.ElapsedMilliseconds, summary);
+
+    /// <summary>
+    /// The chunk size to suggest for this model, in tokens. Named and internal so the
+    /// choice can be asserted directly rather than inferred from a probe run.
+    /// </summary>
+    internal static int RecommendedTokens(int? contextTokens, int budgetChars, double? charsPerToken) =>
+        contextTokens is { } ctx
+            ? ctx
+            : (int)(budgetChars / (charsPerToken ?? Indexing.CodeChunker.CharsPerToken));
 
     /// <summary>
     /// Characters per token, measured with the model's own tokenizer.

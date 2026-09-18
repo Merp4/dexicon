@@ -82,6 +82,19 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Fixed
 
+- **The recommended chunk size pointed below a configuration already measured as worse.**
+  The probe suggested two thirds of the model's context, and the UI puts that number
+  straight into the chunk size field of every new corpus. The two thirds was headroom
+  against a chunker that converted tokens to characters with a flat 4 and had nothing
+  checking the result. That conversion now uses the measured ratio and the size is capped at
+  the context, so the headroom is enforced; recommending it as well charged for it twice.
+
+  On this model two thirds is 1,365 tokens, which the measured ratio makes 5,187 characters.
+  Measured over a 96-book library, a run at 5,460 characters retrieved much worse than one
+  at 7,480, while 7,480 and 8,260 were indistinguishable. The recommendation is now the
+  context itself. A provider that reports no token counts has no context to cap against, and
+  its character estimate keeps the two thirds.
+
 - **Chunks were larger than the model that had to read them.** A chunk size is set in
   tokens and enforced in characters, and two conversions between the two were wrong in the
   same direction. The size was not capped at the model's context, so this library ran 2,065
