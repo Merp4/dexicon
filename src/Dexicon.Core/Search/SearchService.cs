@@ -139,7 +139,15 @@ public sealed class SearchService(
                 Mode = request.Mode,
                 // Over-fetched when duplicates may be collapsed, so dropping one promotes
                 // the next distinct hit instead of returning fewer results than asked for.
-                Limit = request.DistinctTitles ? Math.Min(request.Limit * 4, 200) : request.Limit,
+                //
+                // How far it has to reach depends on how many chunks a document has, and
+                // that is decided by the chunk size. Four times the limit starved whichever
+                // set was cut finest: measured over six queries asking for ten, a set at
+                // 2,065 tokens returned 6.5 and the same corpus at 1,365 returned 3.7,
+                // because its 189 chunks per file crowded the candidates with repeats. The
+                // multiple is the fix's weak point and it is a heuristic, so it is a
+                // generous one and the response still says when it came up short.
+                Limit = request.DistinctTitles ? Math.Min(request.Limit * 16, 400) : request.Limit,
                 SourceIds = sourceIds,
                 PathPrefix = request.PathPrefix,
                 Language = request.Language,
