@@ -38,7 +38,7 @@ POST /collections/dexicon__ollama__embeddinggemma__768/points/query
                  "values":  [2.0, 1.0, ...] },
       "using": "sparse", "limit": 40, "filter": { "$scope": "..." } }
   ],
-  "query": { "fusion": "rrf" },
+  "query": { "fusion": "dbsf" },
   "filter": { "$scope": "..." },
   "limit": 10,
   "with_payload": true
@@ -55,17 +55,23 @@ where `$scope` expands to
 ] }
 ```
 
-**Why RRF rather than weighted score fusion.** Dense cosine scores and BM25 scores live on
-different scales, and the weight that balances them is corpus-dependent and drifts as
-content changes. RRF reads rank rather than magnitude, so it requires no tuning and
-cannot be mis-weighted. DBSF is available as a configuration option where
-distribution-normalised scores are wanted; it is not the default. It replaces a
-client-side weighted fusion requiring a `SemanticWeight` value that could not be set from
-evidence. See
-[D-06](decisions.md#d-06-rrf-fusion-server-side).
+**Why DBSF rather than RRF or a weighted merge.** Dense cosine scores and BM25 scores live
+on different scales, and a weight that balances them is corpus-dependent and drifts as
+content changes, so a `SemanticWeight` knob was rejected: nobody could set it from evidence.
 
-**Prefetch limit is 4× the requested limit** (capped at 200). Fusion needs enough candidates
-from each retriever to have something to fuse.
+RRF avoids the knob by reading rank rather than magnitude, and that was the default until it
+was measured. Rank alone cannot express that one list is worse than the other, so a lexical
+match at rank 3 counted for as much as a semantic match at rank 3: a question about
+event-driven architecture returned a chapter on C# delegates, the word "event" being in all
+of them. DBSF normalises each list's scores before combining, so a weak match contributes in
+proportion to how weak it is — and it has no weight either, so the original objection does
+not apply to it. Measured better on conceptual questions, on verbatim passages and on exact
+identifiers; the numbers are in [D-06](decisions.md#d-06-score-fusion-server-side).
+
+**Prefetch limit is 4× the requested limit** (capped at 800), and the requested limit is
+itself over-fetched when near-duplicate documents are being collapsed. Fusion needs enough
+candidates from each retriever to have something to fuse, and collapsing needs spare
+candidates to promote.
 
 ### Verified in the M0 spike (2026-09-16)
 
