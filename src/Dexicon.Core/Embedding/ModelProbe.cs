@@ -40,6 +40,7 @@ public sealed record ModelCapabilities(
     int RecommendedChunkChars,
     int RecommendedChunkTokens,
     double? CharsPerToken,
+    int? ContextTokens,
     int EmbedCalls,
     long TookMs,
     string Summary);
@@ -248,6 +249,7 @@ public sealed class ModelProbe(IEmbeddingService embeddings, ILogger<ModelProbe>
                 ? ctx * 2 / 3
                 : (int)(budgetChars / (charsPerToken ?? Indexing.CodeChunker.CharsPerToken)),
             charsPerToken,
+            contextTokens,
             calls, started.ElapsedMilliseconds, summary);
 
     /// <summary>

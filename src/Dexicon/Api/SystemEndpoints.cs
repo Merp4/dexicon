@@ -544,6 +544,7 @@ public static class SystemEndpoints
                 row.RecommendedChunkChars = caps.RecommendedChunkChars;
                 row.RecommendedChunkTokens = caps.RecommendedChunkTokens;
                 row.CharsPerToken = caps.CharsPerToken;
+                row.ContextTokens = caps.ContextTokens;
                 row.MeasuredUtc = DateTime.UtcNow;
                 await db.SaveChangesAsync(ct);
 
