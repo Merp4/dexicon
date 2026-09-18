@@ -168,7 +168,8 @@ public sealed class EmbeddingService(
         // ModelId per call. This is the whole reason a generator is cached per provider
         // instead of per model: a chunk set picks its model at runtime and stores it in
         // the catalogue, so nothing resolved at startup can know about it.
-        var generationOptions = new EmbeddingGenerationOptions { ModelId = target.Model };
+        var generationOptions = Options(target, truncate: false);
+        var truncating = false;
 
         Exception? last = null;
         for (var attempt = 0; attempt <= _ollama.MaxRetries; attempt++)
@@ -193,6 +194,26 @@ public sealed class EmbeddingService(
             {
                 throw;   // the caller gave up; not a provider failure and not retryable
             }
+            catch (Exception ex) when (!truncating && IsTooLong(ex))
+            {
+                // The input is longer than the model's context. Ollama would silently
+                // shorten it and return a vector for text nobody chose, so we ask it not
+                // to; this is that refusal arriving.
+                //
+                // Not a transient failure: the same input fails the same way every time,
+                // so the backoff loop above has nothing to offer it. Embed it truncated
+                // instead, which is a worse vector for that chunk rather than a failed
+                // file, and say so loudly enough to be fixed. The chunk size is the fix,
+                // and the chunk set form warns about it before anyone gets here.
+                truncating = true;
+                generationOptions = Options(target, truncate: true);
+
+                log.LogWarning(
+                    "{Target}: input longer than the model's context, so it was embedded "
+                    + "TRUNCATED and the end of it is not represented. Longest of {Count} "
+                    + "input(s): {Chars:N0} chars. Reduce the chunk size for this set.",
+                    target, batch.Length, batch.Max(b => b.Length));
+            }
             catch (Exception ex)
             {
                 // Intentionally broad. Each provider SDK throws its own exception types
@@ -208,5 +229,42 @@ public sealed class EmbeddingService(
 
         throw new EmbeddingUnavailableException(
             $"Embedding failed after {_ollama.MaxRetries + 1} attempts against {target}: {last?.Message}", last);
+    }
+
+    /// <summary>
+    /// Ask the provider to refuse over-long input rather than shorten it.
+    ///
+    /// Ollama's <c>/api/embed</c> truncates the end of anything past the context window and
+    /// returns a vector, with nothing in the response to say it happened
+    /// (ollama/ollama#14259). That is the failure this project exists to avoid: the missing
+    /// text is reported as indexed, search never matches it, and nothing anywhere is red.
+    ///
+    /// The key is ignored by providers that do not know it, so this needs no branch on
+    /// which one is in use.
+    /// </summary>
+    private static EmbeddingGenerationOptions Options(EmbeddingTarget target, bool truncate) =>
+        new()
+        {
+            ModelId = target.Model,
+            AdditionalProperties = new AdditionalPropertiesDictionary { ["truncate"] = truncate },
+        };
+
+    /// <summary>
+    /// Whether a provider refused because the input was longer than its context.
+    ///
+    /// Matched on the message, because the SDKs give no code for it and each provider
+    /// words it differently. A miss here costs a retry that fails the same way, not a
+    /// wrong answer, which is the right direction for a guess to be wrong in.
+    /// </summary>
+    private static bool IsTooLong(Exception ex)
+    {
+        var message = ex.Message;
+
+        return message.Contains("context length", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("context window", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("maximum context", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("too long", StringComparison.OrdinalIgnoreCase)
+            || (message.Contains("exceeds", StringComparison.OrdinalIgnoreCase)
+                && message.Contains("token", StringComparison.OrdinalIgnoreCase));
     }
 }
