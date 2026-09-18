@@ -15,6 +15,15 @@ namespace Dexicon.Api;
 
 public static class SystemEndpoints
 {
+    /// <summary>
+    /// How long a model probe may run before it is given up on.
+    ///
+    /// Long enough for two dozen embeds against an idle CPU backend, short enough that a
+    /// busy one is reported rather than waited out. The probe has no partial answer, so a
+    /// longer deadline buys nothing but a later failure.
+    /// </summary>
+    internal static readonly TimeSpan ProbeDeadline = TimeSpan.FromSeconds(90);
+
     public static void MapSearchEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapPost("/api/search", async (SearchApiRequest body, RequestContext rc, SearchService search,
@@ -494,9 +503,17 @@ public static class SystemEndpoints
                 string.IsNullOrWhiteSpace(body.Provider) ? opts.Value.Embedding.Provider : body.Provider.Trim(),
                 body.Model.Trim());
 
+            // The probe is two dozen sequential embed calls, each with the embedding
+            // client's own 120 s timeout, so on a backend that is busy indexing it can run
+            // for the better part of an hour. It has no partial answer to give, so grinding
+            // is only a slower way to fail: bounded here, where the reason is known, rather
+            // than left to whatever the caller does about a request that never returns.
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            deadline.CancelAfter(ProbeDeadline);
+
             try
             {
-                var caps = await probe.RunAsync(target, ct);
+                var caps = await probe.RunAsync(target, deadline.Token);
 
                 // Remembered, because a measurement that has to be taken again is a
                 // measurement nobody takes. Two dozen embed calls to learn a number that
@@ -527,6 +544,17 @@ public static class SystemEndpoints
             catch (EmbeddingUnavailableException ex)
             {
                 return Results.Problem(title: "Provider unavailable", detail: ex.Message, statusCode: 503);
+            }
+            // Ours, not the caller's: a client that went away is not a timeout, and
+            // reporting it as one would put an error on a screen nobody is looking at.
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested && !ct.IsCancellationRequested)
+            {
+                return Results.Problem(
+                    title: "The model probe timed out",
+                    detail: $"No answer within {ProbeDeadline.TotalSeconds:F0}s. The probe embeds two dozen inputs, "
+                          + "and the embedding service answers indexing first, so this usually means an index job is "
+                          + "running. Check index_status or the Jobs view, and probe again when it has finished.",
+                    statusCode: 504);
             }
         }).Produces<Dexicon.Core.Embedding.ModelCapabilities>().WithTags("System");
 

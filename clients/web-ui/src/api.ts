@@ -293,8 +293,13 @@ export const api = {
   listEmbeddingModels: (provider?: string) =>
     call(() => getApiEmbeddingModels({ query: provider ? { provider } : {} })),
 
-  probeEmbeddingModel: (model: string, provider?: string) =>
-    call(() => postApiEmbeddingModelsProbe({ body: { model, provider } satisfies ProbeModelRequest })),
+  /** Takes a signal: the probe embeds two dozen inputs and can legitimately run for a
+   *  minute, so the caller has to be able to stop waiting. */
+  probeEmbeddingModel: (model: string, provider?: string, signal?: AbortSignal) =>
+    call(() => postApiEmbeddingModelsProbe({
+      body: { model, provider } satisfies ProbeModelRequest,
+      signal,
+    })),
 
   saveModelProfile: (body: SaveModelProfileRequest) =>
     call(() => putApiEmbeddingModelsProfile({ body })),

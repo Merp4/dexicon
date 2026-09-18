@@ -48,6 +48,17 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Fixed
 
+- **A model probe could spin forever with nothing to show for it.** The probe embeds two
+  dozen inputs one after another, and the embedding service answers indexing first, so
+  during a reindex it can run for the better part of an hour. It had no deadline and the
+  button had no feedback: a spinner that never ends is indistinguishable from a hang, and
+  the only way out was to reload the page.
+
+  The endpoint now gives up after 90 seconds with an error that says why and what to do
+  about it, since the probe has no partial answer and grinding on is only a slower way to
+  fail. The button shows how long it has been running and can be stopped, and stopping is
+  not reported back as a failure.
+
 - **A file reachable from two sources was indexed twice.** A source covers its whole tree,
   so adding one above an existing source made everything beneath reachable from both, and
   file identity is (source, relative path), so each copy was a separate row, chunking and
