@@ -87,12 +87,20 @@ The one that matters.
       "source": { "type": "string", "description": "Restrict to one source of the corpus, by root path as list_corpora reports it, e.g. orly/AI. A parent matches everything beneath it." },
       "path_prefix": { "type": "string", "description": "Restrict to files under this path, e.g. src/Auth/. Relative to the source root, not the corpus." },
       "language":    { "type": "string", "description": "Restrict to one language, e.g. csharp, python." },
-      "symbol":      { "type": "string", "description": "Restrict to chunks declaring this symbol." }
+      "symbol":      { "type": "string", "description": "Restrict to chunks declaring this symbol." },
+      "max_chars_per_hit": { "type": "integer", "default": 1500,
+                  "description": "Characters of each result, centred on the matching passage. 0 returns whole chunks." },
+      "distinct_titles":   { "type": "boolean", "default": true,
+                  "description": "Collapse results that are the same document in another format." }
     },
     "required": ["query"]
   }
 }
 ```
+
+Each result is a window centred on the matching passage rather than the whole chunk, and
+one result per document by default; both are described in [05](05-search.md), along with
+what they were measured to cost and why the window is centred rather than cut from the head.
 
 Returns the contract in [05](05-search.md), rendered as structured content plus a compact
 text block. The text block is what most clients show the model, so it is formatted for

@@ -21,6 +21,28 @@ public sealed record SearchRequest
 
     /// <summary>A source root path to restrict to, e.g. `orly/AI`. Null searches them all.</summary>
     public string? Source { get; init; }
+
+    /// <summary>
+    /// Characters of each hit to return, centred on what matched. Zero returns whole
+    /// chunks, which is what this did before it was measured: five results averaged 40,797
+    /// characters, roughly 10,200 tokens, because the chunk is sized for retrieval rather
+    /// than for reading.
+    /// </summary>
+    public int MaxCharsPerHit { get; init; } = DefaultMaxCharsPerHit;
+
+    /// <summary>
+    /// Enough to carry the matched passage and its surroundings. At this size, 88% of hits
+    /// in the measured corpus have their first matching term inside the window, and it is
+    /// centred on the match rather than taken from the head, which is what makes the rest
+    /// land too.
+    /// </summary>
+    public const int DefaultMaxCharsPerHit = 1500;
+
+    /// <summary>
+    /// Collapse hits that are the same document in another format. Off returns both, which
+    /// is what comparing two extractors on one title needs.
+    /// </summary>
+    public bool DistinctTitles { get; init; } = true;
 }
 
 public sealed record SearchResult
@@ -115,7 +137,9 @@ public sealed class SearchService(
                 ChunkSetIds = chunkSetIds,
                 CollectionName = group.Key,
                 Mode = request.Mode,
-                Limit = request.Limit,
+                // Over-fetched when duplicates may be collapsed, so dropping one promotes
+                // the next distinct hit instead of returning fewer results than asked for.
+                Limit = request.DistinctTitles ? Math.Min(request.Limit * 4, 200) : request.Limit,
                 SourceIds = sourceIds,
                 PathPrefix = request.PathPrefix,
                 Language = request.Language,
@@ -137,7 +161,26 @@ public sealed class SearchService(
             }
         }
 
-        var ordered = hits.OrderByDescending(h => h.Score).Take(request.Limit).ToList();
+        // Ordered, then made distinct, then cut to the limit. Dropping a duplicate has to
+        // promote the next distinct hit rather than leave a gap, so the limit is applied
+        // last; the vector query over-fetches above for the same reason.
+        var ranked = hits.OrderByDescending(h => h.Score);
+
+        var ordered = request.DistinctTitles
+            ? SearchPresentation.DistinctByTitle(ranked, request.Limit).ToList()
+            : ranked.Take(request.Limit).ToList();
+
+        // Collapsing can return fewer results than were asked for, when the corpus simply
+        // does not hold that many distinct documents on the subject. Silently short is the
+        // one thing that reads as a fault, so it is said.
+        var collapsed = request.DistinctTitles && ordered.Count < request.Limit
+            && hits.Count > ordered.Count;
+
+        // After ranking, never before: the whole chunk is what was embedded and what
+        // scored, and windowing before the merge would rank hits on a preview.
+        if (request.MaxCharsPerHit > 0)
+            foreach (var hit in ordered)
+                hit.Content = SearchPresentation.Window(hit.Content, request.Query, request.MaxCharsPerHit);
 
         // An agent that searches a half-built index and gets nothing concludes the code
         // does not exist. Telling it the index is incomplete costs one sentence.
@@ -146,9 +189,14 @@ public sealed class SearchService(
         var indexing = scope.Targets
             .Where(t => t.Set.State == CorpusState.Indexing)
             .Select(t => t.QualifiedName).ToList();
-        var note = indexing.Count > 0
-            ? $"Corpus {string.Join(", ", indexing.Select(n => $"'{n}'"))} is still indexing; results are incomplete."
-            : null;
+        var notes = new List<string>();
+        if (indexing.Count > 0)
+            notes.Add($"Corpus {string.Join(", ", indexing.Select(n => $"'{n}'"))} is still indexing; results are incomplete.");
+        if (collapsed)
+            notes.Add($"{ordered.Count} of {request.Limit} asked for: the rest were the same documents again. "
+                      + "Pass distinct_titles=false to see every copy.");
+
+        var note = notes.Count > 0 ? string.Join(" ", notes) : null;
 
         return new SearchResult
         {

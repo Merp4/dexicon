@@ -71,7 +71,14 @@ public sealed record SearchHit
     public int? Page { get; init; }
     public string? Section { get; init; }
     public IReadOnlyList<string> Symbols { get; init; } = [];
-    public required string Content { get; init; }
+
+    /// <summary>
+    /// The chunk's text, replaced after ranking by a window centred on what matched. The
+    /// whole chunk is what was embedded and what scored; what comes back is what is worth
+    /// an agent's context, and those are not the same size.
+    /// </summary>
+    public required string Content { get; set; }
+
     public float Score { get; init; }
 
     /// <summary>

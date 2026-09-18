@@ -420,10 +420,25 @@ public sealed class CorpusIndexer(
             filters.IncludeGlobs, filters.ExcludeGlobs, filters.MaxFileBytes,
             options.Value.Indexing.DocumentMaxBytes);
 
+        // The inventory is made distinct ACROSS sources here. A source covers its whole
+        // tree, so one added above another makes every file beneath reachable twice, and
+        // identity being (source, relative path) would index each of them twice over. The
+        // most specific source owns a file; this one keeps what the deeper ones do not
+        // claim. Not recorded as skipped, because these files are indexed, just not here.
+        var shadowed = SourceScope.ShadowedPrefixes(corpus.Sources, source);
+        var files = shadowed.Count == 0
+            ? walk.Files
+            : walk.Files.Where(f => !SourceScope.IsShadowed(f.RelativePath, shadowed)).ToList();
+
+        if (files.Count != walk.Files.Count)
+            log.LogInformation(
+                "Source {Source}: {Owned} of {Found} files; {Shadowed} belong to a more specific source",
+                source.RootPath, files.Count, walk.Files.Count, walk.Files.Count - files.Count);
+
         // += , not =. A job covers every chunk set, and each set walks the tree again, so
         // an assignment here reported the files of one pass against the work done by all
         // of them: a corpus with two sets showed "24 / 12" and a progress bar past 100%.
-        job.FilesTotal += walk.Files.Count;
+        job.FilesTotal += files.Count;
         job.Phase = "extract";
         await db.SaveChangesAsync(ct);
         Report(progress, job, null);
@@ -449,7 +464,7 @@ public sealed class CorpusIndexer(
             job.FilesSkipped++;
         }
 
-        foreach (var candidate in walk.Files)
+        foreach (var candidate in files)
         {
             ct.ThrowIfCancellationRequested();
             seen.Add(candidate.RelativePath);

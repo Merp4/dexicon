@@ -383,7 +383,18 @@ public sealed record SearchApiRequest(
     string? PathPrefix = null,
     string? Source = null,
     string? Language = null,
-    string? Symbol = null);
+    string? Symbol = null,
+    /// <summary>
+    /// Characters of each hit to return, centred on what matched. Null takes the default;
+    /// 0 returns whole chunks, which is what a reader comparing two extractions wants and
+    /// what an agent almost never does.
+    /// </summary>
+    int? MaxCharsPerHit = null,
+    /// <summary>
+    /// Collapse hits that are the same document in another format. Null defaults to true;
+    /// false returns both, which is how two extractors get compared on one title.
+    /// </summary>
+    bool? DistinctTitles = null);
 
 public sealed record CreateTenantRequest(string Id, string? DisplayName = null);
 

@@ -39,6 +39,10 @@ public sealed class DexiconTools
         [Description("Restrict to one source of the corpus, by its root path as list_corpora reports it, e.g. orly/AI. A parent matches everything beneath it.")] string? source = null,
         [Description("Restrict to one language, e.g. csharp, python, typescript.")] string? language = null,
         [Description("Restrict to chunks declaring this symbol, e.g. TokenService.")] string? symbol = null,
+        [Description("Characters of each result to return, centred on the matching passage. The default is enough to read the match in context; raise it when a hit is clearly the right passage and you need more of it, or use get_context. 0 returns whole chunks, which on a book corpus is about 8,000 characters each.")]
+        int maxCharsPerHit = SearchRequest.DefaultMaxCharsPerHit,
+        [Description("Collapse results that are the same document in another format, e.g. a book held as both PDF and EPUB. On by default. Turn it off to compare how the two were extracted.")]
+        bool distinctTitles = true,
         CancellationToken ct = default)
     {
         Require(rc, Scopes.Search);
@@ -56,6 +60,8 @@ public sealed class DexiconTools
                 Source = source,
                 Language = language,
                 Symbol = symbol,
+                MaxCharsPerHit = Math.Clamp(maxCharsPerHit, 0, 100_000),
+                DistinctTitles = distinctTitles,
             }, ct);
         }
         catch (ScopeResolutionException ex)

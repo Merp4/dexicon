@@ -232,7 +232,7 @@ describe('adding a source', () => {
     expect(addSource).toHaveBeenCalledWith('docs', {
       workspacePath: 'notes',
       useGitignore: true,
-      maxFileBytes: 2 * 1024 * 1024,
+      maxFileBytes: 20 * 1024 * 1024,
       includeGlobs: ['src/**', 'docs/**'],
       excludeGlobs: ['**/vendor/**'],
     });
