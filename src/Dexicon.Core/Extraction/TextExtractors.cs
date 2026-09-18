@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text;
+using System.Text.RegularExpressions;
 using AngleSharp.Dom;
 using AngleSharp.Html.Parser;
 using DocumentFormat.OpenXml.Packaging;
@@ -60,8 +61,10 @@ public static class ExtractorVersions
     ///    failing. Books that cached as a failure now have text.
     /// 4: PDFs are read by layout rather than by content-stream order, so a paragraph is
     ///    one line as it already is for EPUB and HTML, and columns no longer interleave.
+    /// 5: A page number alone in a PDF's top or bottom margin is furniture, not text, and
+    ///    is dropped. About one extracted block in ten was one.
     /// </summary>
-    public const int Current = 4;
+    public const int Current = 5;
 }
 
 
@@ -105,7 +108,7 @@ public static class ExtractorRegistry
 /// handed it a paragraph spread over ten short lines. Layout costs about 1.2x the time:
 /// 2,444 ms against 2,122 ms for that book, 5.8 ms a page.
 /// </summary>
-public sealed class PdfTextExtractor : ITextExtractor
+public sealed partial class PdfTextExtractor : ITextExtractor
 {
     public bool CanHandle(string extension) => extension == ".pdf";
 
@@ -189,9 +192,41 @@ public sealed class PdfTextExtractor : ITextExtractor
         foreach (var block in UnsupervisedReadingOrderDetector.Instance.Get(blocks))
         {
             var line = block.Text.ReplaceLineEndings(" ").Trim();
-            if (line.Length > 0) yield return line;
+            if (line.Length == 0) continue;
+            if (IsPageNumber(line, block.BoundingBox.Centroid.Y, page.Height)) continue;
+
+            yield return line;
         }
     }
+
+    /// <summary>
+    /// A page number alone in a margin, which is furniture rather than text.
+    ///
+    /// Measured over this corpus: 99 bare numbers per 1,000 extracted blocks in PDFs
+    /// against 13 in the EPUBs of the same books. Each is a line of its own, so a passage
+    /// spanning a page break extracts as "…end of the section. 247 Chapter 9 begins…",
+    /// which appears in no edition of the book.
+    ///
+    /// Position decides, not the digits: a bare number in the body of a page is a table
+    /// cell, a numbered list item or a line of code, so only the top and bottom margins
+    /// are considered.
+    /// </summary>
+    private static bool IsPageNumber(string line, double centreY, double pageHeight)
+    {
+        if (line.Length > 8 || pageHeight <= 0) return false;
+
+        // Arabic for the body, lowercase roman for front matter. Anchored, so "Chapter 4"
+        // and "4 ways to fail" both stay.
+        if (!PageNumberPattern().IsMatch(line)) return false;
+
+        // PdfPig's origin is the bottom-left, so the bottom margin is a low Y and the top
+        // margin a high one.
+        var margin = pageHeight * 0.08;
+        return centreY <= margin || centreY >= pageHeight - margin;
+    }
+
+    [GeneratedRegex(@"^(\d{1,4}|[ivxlcdm]{1,7})$", RegexOptions.CultureInvariant)]
+    private static partial Regex PageNumberPattern();
 }
 
 public sealed class DocxTextExtractor : ITextExtractor
