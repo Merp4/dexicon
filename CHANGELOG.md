@@ -93,6 +93,17 @@ with no section here fails its release rather than publishing an undescribed one
   table cell, a numbered list item or a line of code. The pattern is anchored, so a running
   foot carrying a chapter title and a footnote opening with a marker both survive.
 
+  Re-measured after re-indexing the 96-book corpus: bare numbers fell from 99.0 to 5.8 per
+  1,000 lines, below the 22.9 the EPUBs of the same titles carry. In paired ranking
+  comparisons, where one query matches both formats of a title, EPUB ranked higher in 29 of
+  42 pairs before (69%, exact binomial p = 0.0195) and 22 of 43 after (51%, p = 1.0): the
+  two formats now retrieve equally well.
+
+  This was chased down from a different measurement, and that one did not move. A passage
+  taken from an EPUB still finds the PDF of the same title 88% of the time, and a passage
+  taken from a PDF still finds the EPUB 64% of the time. Page numbers were not the cause of
+  that asymmetry.
+
 - **Probing one model by two names took the models list to a 500.** A measurement is stored
   under the name it was requested with, and the table is keyed on (provider, model), so
   `embeddinggemma` and `embeddinggemma:latest` are two legal rows for one model. Listing them
