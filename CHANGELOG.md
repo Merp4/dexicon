@@ -48,6 +48,20 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Fixed
 
+- **The chunk-size recommendation overshot the model's context.** `Test limits` measures the
+  character ceiling with its own filler — four repeated words, which tokenizes about as well
+  as text ever does — and measures characters-per-token separately, averaged over prose,
+  code and JSON. It then divided the first by the second, which applies a density correction
+  twice in opposite directions and cancels out the third it had deliberately left spare.
+
+  Against `embeddinggemma` it recommended **2,065 tokens for a 2,048-token context**, and
+  about 4% of real embeds were clamped by a number that was supposed to have headroom. The
+  token figure is now counted in tokens, from the same text the ceiling was measured on:
+  **1,365**, which is two thirds of the context. The character budget is unchanged.
+
+  A chunk budget is in tokens and the limit is in tokens, so the conversion had no business
+  being in the middle of it.
+
 - **Over-long input was embedded truncated, and recorded as fully indexed.** Ollama's
   `/api/embed` shortens anything past the model's context and returns a vector, with no
   field in the response to say it happened
