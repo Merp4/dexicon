@@ -100,7 +100,8 @@ public sealed class ModelProbe(IEmbeddingService embeddings, ILogger<ModelProbe>
         if (reachesTail)
         {
             var recommendedChars = CeilingChars / 2;
-            return Done(target, dimensions, null, false, recommendedChars, calls, started,
+            // No ceiling found, so there is no context to count: the estimate stands.
+            return Done(target, dimensions, null, false, recommendedChars, calls, started, null,
                 $"Accepted {CeilingChars:N0} characters with the end still affecting the vector. " +
                 "No practical limit found; chunk size is a retrieval choice here, not a constraint.",
                 charsPerToken);
@@ -128,11 +129,25 @@ public sealed class ModelProbe(IEmbeddingService embeddings, ILogger<ModelProbe>
         // than pretending the number is exact.
         var budget = low * 2 / 3;
 
+        // The same boundary, counted in the unit the model actually enforces.
+        //
+        // `low` is the ceiling in characters OF THE FILLER, which is four repeated words
+        // and so tokenizes about as well as text ever does. Converting it with a ratio
+        // measured on other text applies a density correction twice in opposite
+        // directions, and the headroom above cancels out: on embeddinggemma that reported
+        // 2,065 tokens against a 2,048-token context, and about 4% of real embeds were
+        // clamped by a recommendation that was supposed to have a third to spare.
+        //
+        // A chunk budget is in tokens and the limit is in tokens, so the conversion has no
+        // business being in the middle of it.
+        var contextTokens = await embeddings.CountTokensAsync(target, Filler(low), ct);
+        calls++;
+
         log.LogInformation(
             "{Target}: accepts ~{Limit:N0} chars, {Behaviour} beyond it, recommending {Budget:N0}",
             target, low, errors ? "errors" : "truncates silently", budget);
 
-        return Done(target, dimensions, low, !errors, budget, calls, started,
+        return Done(target, dimensions, low, !errors, budget, calls, started, contextTokens,
             errors
                 ? $"Accepts about {low:N0} characters of prose and rejects more, which is the safe " +
                   "behaviour: an over-long chunk fails rather than being shortened without notice. " +
@@ -219,14 +234,19 @@ public sealed class ModelProbe(IEmbeddingService embeddings, ILogger<ModelProbe>
 
     private static ModelCapabilities Done(
         EmbeddingTarget target, int dimensions, int? limit, bool truncates, int budgetChars,
-        int calls, System.Diagnostics.Stopwatch started, string summary,
+        int calls, System.Diagnostics.Stopwatch started, int? contextTokens, string summary,
         double? charsPerToken = null) =>
         new(target.Provider, target.Model, dimensions, limit, truncates,
             budgetChars,
-            // Tokens, by the MEASURED ratio when there is one. Dividing by a flat 4 is how
-            // a recommendation in "tokens" came to mean characters/4 regardless of what
-            // the model does with them.
-            (int)(budgetChars / (charsPerToken ?? Indexing.CodeChunker.CharsPerToken)),
+            // Two thirds of the context, in tokens, when the context could be counted. The
+            // same headroom as the character budget and for the same reason, but arrived at
+            // without a trip through a ratio measured on different text.
+            //
+            // Falling back to chars over a ratio keeps a number for providers that report
+            // no token counts, where an estimate is all there is.
+            contextTokens is { } ctx
+                ? ctx * 2 / 3
+                : (int)(budgetChars / (charsPerToken ?? Indexing.CodeChunker.CharsPerToken)),
             charsPerToken,
             calls, started.ElapsedMilliseconds, summary);
 

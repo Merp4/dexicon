@@ -53,11 +53,12 @@ public sealed class ModelProbeTests
         // the densest of them.
         capabilities.RecommendedChunkChars.ShouldBeLessThan(capabilities.MaxInputChars!.Value);
 
-        // And the conversion to tokens uses the ratio this model was MEASURED at, not the
-        // 4 the chunker assumes. Asserting against the constant was the old test, and it
-        // passed for a number that meant characters-over-four whatever the model did.
-        capabilities.RecommendedChunkTokens
-            .ShouldBe((int)(capabilities.RecommendedChunkChars / capabilities.CharsPerToken!.Value));
+        // And the token figure keeps headroom under the model's own context, counted in
+        // tokens. It used to be the character budget divided by a ratio measured on other
+        // text, which applied a density correction a second time and cancelled the
+        // headroom out.
+        var contextTokens = await model.CountTokensAsync(Target, new string('x', capabilities.MaxInputChars!.Value));
+        capabilities.RecommendedChunkTokens.ShouldBeLessThan(contextTokens!.Value);
     }
 
     [Fact]
@@ -130,17 +131,95 @@ public sealed class ModelProbeTests
     }
 
     [Fact]
-    public async Task TheTokenRecommendationUsesTheMeasuredRatio()
+    public async Task TheTokenRecommendationIsCountedInTokens()
     {
-        // The recommendation is in tokens, so it has to be divided by the ratio that was
-        // measured. Dividing by 4 regardless is how a number labelled "tokens" came to
-        // mean characters over four whatever the model does with them.
+        // A chunk budget is in tokens and the limit the model enforces is in tokens, so
+        // the conversion has no business being in the middle of it.
         var model = new TruncatingModel(limit: 4_000, errorsOnOverflow: false);
 
         var caps = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
 
-        var expected = (int)(caps.RecommendedChunkChars / caps.CharsPerToken!.Value);
-        caps.RecommendedChunkTokens.ShouldBe(expected);
+        // Two thirds of the context, the same headroom the character budget gets.
+        var contextTokens = (await model.CountTokensAsync(Target, new string('x', caps.MaxInputChars!.Value)))!.Value;
+        caps.RecommendedChunkTokens.ShouldBe(contextTokens * 2 / 3);
+    }
+
+    [Fact]
+    public async Task TheRecommendationSurvivesATokenizerThatIsNotUniform()
+    {
+        // The regression. The character ceiling is measured on the probe's filler, four
+        // repeated words, which tokenizes about as well as text ever does; chars-per-token
+        // is averaged over prose, code and JSON, which is far denser. Dividing the first by
+        // the second applied a density correction twice in opposite directions and the
+        // headroom cancelled: against `embeddinggemma` it recommended 2,065 tokens for a
+        // 2,048-token context, and about 4% of real embeds were clamped.
+        //
+        // The old stub could not show this, because it charged three characters a token for
+        // every input alike. A real tokenizer does not.
+        var model = new WordishModel(limit: 12_000);
+
+        var caps = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
+
+        var contextTokens = (await model.CountTokensAsync(Target, Filler(caps.MaxInputChars!.Value)))!.Value;
+
+        // The recommendation has to fit the context with room to spare, whatever the text.
+        caps.RecommendedChunkTokens.ShouldBeLessThan(contextTokens);
+        caps.RecommendedChunkTokens.ShouldBeLessThanOrEqualTo(contextTokens * 2 / 3);
+
+        // And the old arithmetic would not have. Kept as an assertion rather than a comment
+        // so the bug cannot quietly return.
+        var oldWay = (int)(caps.RecommendedChunkChars / caps.CharsPerToken!.Value);
+        oldWay.ShouldBeGreaterThan(caps.RecommendedChunkTokens);
+    }
+
+    /// <summary>The probe's own filler, so a test can count tokens of the same text it measured.</summary>
+    private static string Filler(int length)
+    {
+        const string word = "alpha beta gamma delta ";
+        var text = new System.Text.StringBuilder(length + word.Length);
+        while (text.Length < length) text.Append(word);
+        return text.ToString(0, length);
+    }
+
+    /// <summary>
+    /// A tokenizer whose density depends on the text, the way every real one does: a word
+    /// is a token, and each run of punctuation is another. Repetitive prose comes out near
+    /// six characters a token; JSON comes out near two.
+    /// </summary>
+    private sealed class WordishModel(int limit, int dimensions = 768) : IEmbeddingService
+    {
+        public int KnownDimensions(EmbeddingTarget target) => 0;
+
+        public Task<int> ProbeDimensionsAsync(EmbeddingTarget target, CancellationToken ct = default) =>
+            Task.FromResult(dimensions);
+
+        public Task<int?> CountTokensAsync(
+            EmbeddingTarget target, string text, CancellationToken ct = default) =>
+            Task.FromResult<int?>(Math.Max(1, Tokens(text)));
+
+        private static int Tokens(string text)
+        {
+            var words = text.Split([' ', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries).Length;
+            var punctuation = text.Count(c => !char.IsLetterOrDigit(c) && !char.IsWhiteSpace(c));
+            return words + punctuation;
+        }
+
+        public Task<IReadOnlyList<float[]>> EmbedAsync(
+            EmbeddingTarget target, EmbedPurpose purpose, IReadOnlyList<string> inputs,
+            CancellationToken ct = default)
+        {
+            var vectors = new List<float[]>();
+
+            foreach (var input in inputs)
+            {
+                // Truncated at the limit, silently, exactly as Ollama does by default.
+                var seen = input.Length <= limit ? input : input[..limit];
+                var rng = new Random(seen.GetHashCode(StringComparison.Ordinal));
+                vectors.Add([.. Enumerable.Range(0, dimensions).Select(_ => (float)rng.NextDouble())]);
+            }
+
+            return Task.FromResult<IReadOnlyList<float[]>>(vectors);
+        }
     }
 
     [Fact]
