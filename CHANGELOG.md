@@ -69,6 +69,17 @@ with no section here fails its release rather than publishing an undescribed one
   find `DEXICON__INDEXING__DOCUMENTMAXBYTES` at any rank. `D-06` is revised with the
   measurement, having previously rejected this on reasoning alone.
 
+### Added
+
+- **The screen is in the URL.** `#/corpora`, `#/corpora/books`, `#/settings`. Reload,
+  bookmark and the back button all work from it; before, a reload landed on Search whatever
+  you were reading, and the back button did nothing.
+
+  A fragment rather than a path, because the app is served by the same origin as the API and
+  every path but `/` needs a token: a real path would 401 on exactly the reload this fixes.
+  An unrecognised fragment lands on Search and rewrites itself rather than showing a blank
+  page.
+
 ### Fixed
 
 - **Probing one model by two names took the models list to a 500.** A measurement is stored
