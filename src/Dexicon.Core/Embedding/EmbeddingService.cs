@@ -40,8 +40,10 @@ public interface IEmbeddingService
     /// embed call; providers that report nothing get null, and callers fall back to an
     /// estimate rather than pretending.
     ///
-    /// Far too slow to call per chunk. It exists to CALIBRATE: measure the
-    /// characters-per-token ratio once per model, then let the chunker count characters.
+    /// Far too slow to call per chunk. It exists to CALIBRATE: the ratio is measured once
+    /// per model by the probe, and three times per file by TextDensity for a file that is
+    /// about to be chunked, after which the chunker counts characters. Three calls against
+    /// a file that costs hundreds of embeds is affordable; one per chunk is not.
     /// </remarks>
     Task<int?> CountTokensAsync(EmbeddingTarget target, string text, CancellationToken ct = default);
 

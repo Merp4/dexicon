@@ -82,6 +82,24 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Fixed
 
+- **A file denser than its model's average had its chunks truncated.** Capping the chunk
+  size at the model's context took truncation warnings from 235 to 220 over a 96-book
+  library, which is most of the defect left standing. The cap fixed the budget; it did not
+  fix the assumption under it, that one characters-per-token ratio describes a whole
+  library. Measured, that ratio runs from 2.93 in the code-heavy chapters of a programming
+  book to 5.94 in plain prose, a factor of two. The model's own measured 3.80 is an average
+  over prose, code and JSON, so it sits above the dense end and those files overflowed.
+
+  No single budget solves this. Sizing the library for its densest content means 5,997
+  characters, and 5,460 retrieved measurably worse than 7,480, so it would trade a loss
+  across every chunk to protect about 1.7% of them.
+
+  The ratio is now measured per file as well as per model: three windows spread through a
+  file, the densest wins, and the file is chunked at `min(model, file)`. A file at or above
+  the model's ratio is untouched, so the cost falls only where it buys something. Measured
+  only for a file about to be chunked, never for one the fingerprint says is unchanged, so
+  an incremental refresh that finds nothing to do still costs zero embedding calls.
+
 - **The recommended chunk size pointed below a configuration already measured as worse.**
   The probe suggested two thirds of the model's context, and the UI puts that number
   straight into the chunk size field of every new corpus. The two thirds was headroom
@@ -248,7 +266,7 @@ with no section here fails its release rather than publishing an undescribed one
   empty value means the chunk size is not capped, which is the behaviour before this change.
   **Re-probe each embedding model from the Models screen** to get the cap.
 
-- The chunker version moves 4 to 5 and the extractor version 5 to 6, so **every file
+- The chunker version moves 4 to 6 and the extractor version 5 to 6, so **every file
   re-extracts, re-chunks and re-embeds on the next index run**.
 
 - The extractor version moves 4 to 5, so **every PDF re-extracts, re-chunks and re-embeds on
