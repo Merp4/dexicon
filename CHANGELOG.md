@@ -99,10 +99,17 @@ with no section here fails its release rather than publishing an undescribed one
   42 pairs before (69%, exact binomial p = 0.0195) and 22 of 43 after (51%, p = 1.0): the
   two formats now retrieve equally well.
 
-  This was chased down from a different measurement, and that one did not move. A passage
-  taken from an EPUB still finds the PDF of the same title 88% of the time, and a passage
-  taken from a PDF still finds the EPUB 64% of the time. Page numbers were not the cause of
-  that asymmetry.
+  A second measurement was reported here as an unexplained asymmetry: a passage taken from
+  an EPUB found the PDF of the same title 88% of the time, where a passage from a PDF found
+  the EPUB 64% of the time. That was the measurement, not the extraction. It drew its probes
+  from whatever the queries returned without requiring the other format to exist, and 19 of
+  the 55 PDF titles in the library have no EPUB at all, so those probes could not succeed
+  however good the text was. The 64% sat one point under the 65% ceiling composition
+  imposed.
+
+  Restricted to the 36 titles held in both formats, the two directions are the same:
+  **EPUB finds the PDF 15 of 16 times, PDF finds the EPUB 15 of 16 times, 94% either way.**
+  There is no fidelity asymmetry between the formats and there was nothing left to explain.
 
 - **Probing one model by two names took the models list to a 500.** A measurement is stored
   under the name it was requested with, and the table is keyed on (provider, model), so

@@ -167,6 +167,33 @@ file, the job and the corpus all reported success.
 Newlines here are not cosmetic. They are what makes text chunkable, and what makes a line
 number in a search result mean anything.
 
+### How the two extractions compare, measured
+
+A library holding 36 titles as both a PDF and an EPUB makes the two paths comparable
+directly: same book, same chunker, same model, so extraction is the only variable.
+
+| | PDF | EPUB |
+|---|---|---|
+| a passage from this format finds the other | 15/16 (94%) | 15/16 (94%) |
+| its code lines found in the other's text | 73% | 72% |
+| its table rows found in the other's text | 56% | 62% |
+| mean chunk size, code-shaped | 8,040 chars | — |
+| mean chunk size, prose | 8,043 chars | — |
+
+Neither format carries content the other loses, and code chunks are not larger than prose
+chunks. Tables and code listings were the suspected weakness of reading a PDF by layout;
+they are not.
+
+One thing both paths do share: a code listing arrives as a single line. The HTML walker
+collapses whitespace inside `<pre>` along with everything else, and PdfPig's blocks have
+their internal line breaks collapsed the same way. Listings stay searchable and chunkable
+at the sizes above, so this is recorded rather than fixed.
+
+Take care comparing formats on a library that holds more of one than the other. An earlier
+version of the fidelity measurement drew probes without requiring the other format to
+exist; 19 of 55 PDF titles have no EPUB, and it reported 64% against a ceiling of 65% and
+read it as a defect in PDF extraction.
+
 ### Extraction is cached, and the cache is versioned
 
 Extraction is cached per blob in `blob_texts`: a 437-page PDF costs ~1.8 s to extract and
