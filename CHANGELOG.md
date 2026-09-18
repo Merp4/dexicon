@@ -46,6 +46,29 @@ with no section here fails its release rather than publishing an undescribed one
   extractions of one title needs. Collapsing can return fewer results than were asked for,
   and says so rather than being quietly short.
 
+### Changed
+
+- **Hybrid search fuses on normalised scores rather than on rank.** Reciprocal rank fusion
+  has no weight to mis-set, which reads as a virtue until the two lists differ in quality: a
+  lexical match at rank 3 counts for as much as a semantic match at rank 3, however much
+  worse it is. Asking when to use an event-driven architecture returned a chapter on C#
+  delegates third, because the word "event" is in all of them.
+
+  Distribution-based fusion normalises each list's scores before combining, so a weak lexical
+  match contributes in proportion to how weak it is. It carries no weight either, so the
+  objection that ruled out a client-side weighted merge does not apply. Measured over the
+  96-book library and this repository's own documentation:
+
+  | | RRF | DBSF | semantic only |
+  |---|---|---|---|
+  | conceptual question, precision@3 | 0.62 | **0.88** | 0.92 |
+  | verbatim passage, found in top 5 | 0.94 | **0.97** | 1.00 |
+  | exact identifier, MRR | 0.69 | **0.70** | 0.46 |
+
+  Better on all three, and the last row is why hybrid exists at all: semantic search cannot
+  find `DEXICON__INDEXING__DOCUMENTMAXBYTES` at any rank. `D-06` is revised with the
+  measurement, having previously rejected this on reasoning alone.
+
 ### Fixed
 
 - **Collapsing duplicate documents returned fewer results than were asked for.** Search

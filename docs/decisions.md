@@ -103,26 +103,51 @@ vector, or sparse point structures with awkward filtering).
 
 ---
 
-### D-06 RRF fusion server-side
+### D-06 Score fusion server-side
 
 **Decision.** Hybrid search is one Qdrant Query API call with dense and sparse prefetches
-and `fusion: rrf`. No client-side score merging, no weight parameter.
+and `fusion: dbsf`. No client-side score merging, no weight parameter.
+
+**Revised 2026-09-18.** This said `fusion: rrf` and rejected DBSF below. The rejection was
+reasoning, not measurement, and measurement disagreed with it.
 
 **Why.** Dense cosine and BM25 scores are on incomparable scales, and the weight that
 balances them is corpus-dependent and drifts as content changes. The approach this replaces
 carried a `SemanticWeight` knob defaulted to `0.8` that nobody could set from evidence. RRF
 reads rank, not magnitude: no tuning, nothing to mis-set, and one round trip instead of two.
 
-**Rejected.** Client-side weighted fusion (a tuning knob with
-no way to tune it); DBSF as the default (normalises distributions, which is defensible, but
-it is still score-based and per-query sensitive, so it is available as configuration
-rather than as the default);
-dense-only (exact identifiers and error strings are exactly what embeddings are worst at).
+**Why not RRF, which this used to be.** Reading rank rather than magnitude means there is
+nothing to mis-set, which reads as a virtue until the two lists differ in quality. A lexical
+match at rank 3 of the sparse list then counts for as much as a semantic match at rank 3 of
+the dense one, however much worse it is. Concretely: "when should you use an event-driven
+architecture" returned a chapter on C# delegates third, because the word "event" appears in
+every one of them.
+
+DBSF normalises each list's scores before combining, so a weak lexical match contributes in
+proportion to how weak it is. It has no weight either, so the objection that sank
+client-side fusion does not apply to it.
+
+**Measured 2026-09-18** over the 96-book library and this repository's own documentation:
+
+| | RRF | DBSF | semantic only |
+|---|---|---|---|
+| conceptual question, precision@3 | 0.62 | **0.88** | 0.92 |
+| verbatim passage, found in top 5 | 0.94 | **0.97** | 1.00 |
+| exact identifier, MRR | 0.69 | **0.70** | 0.46 |
+
+Better on all three. The last row is why hybrid exists at all: semantic search cannot find
+`DEXICON__INDEXING__DOCUMENTMAXBYTES` at any rank.
+
+**Rejected.** Client-side weighted fusion (a tuning knob with no way to tune it);
+narrowing the sparse prefetch so weak lexical matches fall off the end (tried first,
+changed nothing, which is what located the problem: the noise is at the TOP of the lexical
+list, not in its tail); dense-only (exact identifiers and error strings are exactly what
+embeddings are worst at).
 
 **Confirmed by M0** (2026-09-16). `Qdrant.Client` 1.19.0 expresses prefetch + fusion in a
-single call, so the fallback to client-side RRF is not needed. Qdrant uses **RRF k=2**;
-every score returned matched `1/(2+r₀)+1/(2+r₁)` to 1e-4, which is proof the fusion is
-rank-based rather than score-based. Worked example in [05](05-search.md).
+single call, so the fallback to client-side fusion is not needed. That spike also verified
+Qdrant's **RRF k=2**: every score matched `1/(2+r₀)+1/(2+r₁)` to 1e-4, which is how the
+fusion was confirmed to be rank-based. Worked example in [05](05-search.md).
 
 ---
 
