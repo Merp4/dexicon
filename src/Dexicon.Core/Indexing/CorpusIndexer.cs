@@ -242,8 +242,9 @@ public sealed class CorpusIndexer(
                 // Documents are chunked as prose: a C# member-boundary regex finds
                 // nothing useful in extracted PDF text, so the set's boundary mode is
                 // overridden here while everything else about the set is honoured.
+                var forFile = await ForFileAsync(chunking, set, cached.Text, file.RelativePath, ct);
                 var pieces = CodeChunker.Chunk(file.RelativePath, cached.Text,
-                    chunking with { BoundaryMode = "blank-line" }, extracted);
+                    forFile with { BoundaryMode = "blank-line" }, extracted);
 
                 var chunks = pieces.Select(p => new Chunk
                 {
@@ -306,6 +307,33 @@ public sealed class CorpusIndexer(
         await db.SaveChangesAsync(ct);
         log.LogInformation("Upload source: {Indexed} indexed, {Skipped} skipped, {Failed} failed",
             job.FilesDone, job.FilesSkipped, job.FilesFailed);
+    }
+
+    /// <summary>
+    /// The set's options narrowed to one file's own token density.
+    ///
+    /// Called only for a file that is about to be chunked, never for one the fingerprint
+    /// says is unchanged. An incremental refresh that finds nothing to do still costs zero
+    /// embedding calls, which is the whole point of having one.
+    ///
+    /// Narrowing only. A file at or above the model's measured ratio keeps the set's
+    /// budget: the ratio is the floor the budget has to survive, and raising it for an
+    /// easy file would spend the headroom that makes the budget safe.
+    /// </summary>
+    private async Task<ChunkOptions> ForFileAsync(
+        ChunkOptions chunking, ChunkSet set, string content, string label, CancellationToken ct)
+    {
+        var density = await TextDensity.MeasureAsync(embedder, set.Target(), content, log, ct);
+
+        if (density is not { } d || d >= chunking.CharsPerToken) return chunking;
+
+        log.LogInformation(
+            "{Label}: {Density:0.00} chars per token against the model's {Model:0.00}, "
+            + "chunking it at {Chars:N0} characters rather than {Was:N0}",
+            label, d, chunking.CharsPerToken,
+            (int)(chunking.ChunkSizeTokens * d), (int)(chunking.ChunkSizeTokens * chunking.CharsPerToken));
+
+        return chunking with { CharsPerToken = d };
     }
 
     /// <summary>
@@ -553,13 +581,14 @@ public sealed class CorpusIndexer(
                 }
 
                 var language = LanguageMap.Detect(candidate.RelativePath);
+                var forFile = await ForFileAsync(chunking, set, content, candidate.RelativePath, ct);
 
                 // A document is chunked as prose regardless of its extension: applying a
                 // C# member-boundary regex to extracted PDF text finds nothing useful.
                 var pieces = extractor is null
-                    ? CodeChunker.Chunk(candidate.RelativePath, content, chunking, extracted)
+                    ? CodeChunker.Chunk(candidate.RelativePath, content, forFile, extracted)
                     : CodeChunker.Chunk(candidate.RelativePath, content,
-                        chunking with { BoundaryMode = "blank-line" }, extracted);
+                        forFile with { BoundaryMode = "blank-line" }, extracted);
 
                 if (pieces.Count == 0)
                 {

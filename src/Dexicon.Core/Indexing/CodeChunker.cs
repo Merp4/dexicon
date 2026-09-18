@@ -99,8 +99,10 @@ public static class CodeChunker
     /// 5: the token-to-character conversion uses the model's measured ratio rather than
     ///    a flat 4, and a chunk size above the model's context is clamped to it, so a
     ///    chunk is no longer larger than the model that has to read it.
+    /// 6: the ratio is measured per file as well as per model, so a file denser than the
+    ///    model's average is chunked to its own density instead of overflowing.
     /// </summary>
-    public const int Version = 5;
+    public const int Version = 6;
 
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(500);
 
