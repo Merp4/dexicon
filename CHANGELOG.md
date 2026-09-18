@@ -82,6 +82,17 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Fixed
 
+- **A PDF's page numbers were being indexed as text.** Counted across this corpus, PDFs
+  produced 99 bare numbers per 1,000 extracted blocks against 13 from the EPUBs of the same
+  titles, so roughly one extracted block in ten was a page number. Each becomes a line of
+  its own, so a passage carried over a page break was embedded as "...the section ends here.
+  247 Chapter 9 opens with...", a sentence in no edition of the book.
+
+  Position decides, not the digits: only a bare arabic or lowercase-roman number whose block
+  sits in the top or bottom 8% of the page is dropped. The same digits in the body are a
+  table cell, a numbered list item or a line of code. The pattern is anchored, so a running
+  foot carrying a chapter title and a footnote opening with a marker both survive.
+
 - **Probing one model by two names took the models list to a 500.** A measurement is stored
   under the name it was requested with, and the table is keyed on (provider, model), so
   `embeddinggemma` and `embeddinggemma:latest` are two legal rows for one model. Listing them
@@ -174,6 +185,9 @@ with no section here fails its release rather than publishing an undescribed one
   large text.
 
 ### ⚠️ Upgrading
+
+- The extractor version moves 4 to 5, so **every PDF re-extracts, re-chunks and re-embeds on
+  the next index run**. Other formats are untouched and their cached text still matches.
 
 - One migration, `SourceFilterInheritance`, applied at startup. Widening only: a source's
   filter columns become nullable and a corpus gains four default columns. Every existing
