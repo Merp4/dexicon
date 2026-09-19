@@ -141,11 +141,11 @@ public sealed class ModelProbeTests
 
         var caps = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
 
-        // The context itself. The headroom that used to be held back here is now enforced
-        // by the chunker, which caps the size at this number and converts to characters
-        // with the measured ratio rather than a flat 4.
+        // Most of the context, with the rest left as margin: the chunker converts to
+        // characters with a measured ratio, and a chunk aimed at the ceiling goes over
+        // whenever that estimate is a little high.
         var contextTokens = (await model.CountTokensAsync(Target, new string('x', caps.MaxInputChars!.Value)))!.Value;
-        caps.RecommendedChunkTokens.ShouldBe(contextTokens);
+        caps.RecommendedChunkTokens.ShouldBe(Dexicon.Core.Indexing.CodeChunker.UsableContext(contextTokens));
     }
 
     [Fact]

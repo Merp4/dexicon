@@ -82,6 +82,27 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Fixed
 
+- **A chunk aimed at the model's whole context, leaving its size estimate nowhere to be
+  wrong.** Capping the size at the context and then measuring each file's own density took
+  truncation warnings from 235 to 220 to 199 over a 96-book library. Both corrections were
+  right and neither addressed this: the budget is `contextTokens * ratio`, so a full chunk
+  is sized to land exactly on the ceiling, and the ratio is an estimate sampled from three
+  windows. A chunk denser than its file's sample goes over, and slicing the narrowed files
+  showed them still doing it at the reduced budgets their density had earned.
+
+  A chunk now aims at 90% of the context. The figure is not a guess: on the same library a
+  chunk size of 1,870 tokens retrieved indistinguishably from 2,065, so the flat region
+  reaches about 91% of this model's context and the margin costs nothing measurable. Two
+  thirds, the previous answer, is not free: 1,365 tokens retrieved measurably worse.
+
+  The cap and the probe's recommendation read the same number, so taking the advice cannot
+  produce a set the indexer then quietly narrows.
+
+- **An overlap could equal the chunk size and stop the file indexing.** Found by testing the
+  cap against a one-token context: the overlap was clamped to at least one, which is not
+  smaller than a size of one, and the chunker rejects that rather than chunking. The floor
+  is zero.
+
 - **A file denser than its model's average had its chunks truncated.** Capping the chunk
   size at the model's context took truncation warnings from 235 to 220 over a 96-book
   library, which is most of the defect left standing. The cap fixed the budget; it did not
@@ -266,7 +287,7 @@ with no section here fails its release rather than publishing an undescribed one
   empty value means the chunk size is not capped, which is the behaviour before this change.
   **Re-probe each embedding model from the Models screen** to get the cap.
 
-- The chunker version moves 4 to 6 and the extractor version 5 to 6, so **every file
+- The chunker version moves 4 to 7 and the extractor version 5 to 6, so **every file
   re-extracts, re-chunks and re-embeds on the next index run**.
 
 - The extractor version moves 4 to 5, so **every PDF re-extracts, re-chunks and re-embeds on

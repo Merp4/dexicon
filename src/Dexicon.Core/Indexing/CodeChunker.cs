@@ -79,6 +79,29 @@ public static class CodeChunker
     public const int CharsPerToken = 4;
 
     /// <summary>
+    /// The share of a model's context a chunk is allowed to aim at. The rest is margin.
+    ///
+    /// Everything upstream of this is an estimate: the characters-per-token ratio is
+    /// measured on samples, and a chunk denser than its sample overflows. Aiming at the
+    /// whole context leaves that error nowhere to go, so it lands as truncation. Sizing a
+    /// corpus at exactly its model's 2,048 tokens still truncated about 1.5% of chunks,
+    /// with the dense files doing it even at the reduced budgets their own density earned.
+    ///
+    /// 0.9 rather than a guess: on a 96-book library a chunk size of 1,870 tokens retrieved
+    /// indistinguishably from 2,065, so the top of the flat region is about 91% of this
+    /// model's context and the margin is free. Two thirds was the previous answer and is
+    /// not free: 1,365 tokens retrieved measurably worse.
+    /// </summary>
+    public const double ContextShare = 0.9;
+
+    /// <summary>
+    /// The most tokens a chunk should aim at, given what the model will read. At least one,
+    /// so a model reporting a tiny context cannot produce a budget of zero.
+    /// </summary>
+    public static int UsableContext(int contextTokens) =>
+        Math.Max(1, (int)(contextTokens * ContextShare));
+
+    /// <summary>
     /// Bumped whenever chunking OUTPUT changes for the same input and settings. Part of
     /// the chunking fingerprint, so a corpus re-chunks itself after an algorithm change.
     ///
@@ -101,8 +124,10 @@ public static class CodeChunker
     ///    chunk is no longer larger than the model that has to read it.
     /// 6: the ratio is measured per file as well as per model, so a file denser than the
     ///    model's average is chunked to its own density instead of overflowing.
+    /// 7: a chunk aims at 90% of the model's context rather than all of it, so an error in
+    ///    the ratio has somewhere to go other than the model's truncation.
     /// </summary>
-    public const int Version = 6;
+    public const int Version = 7;
 
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(500);
 
