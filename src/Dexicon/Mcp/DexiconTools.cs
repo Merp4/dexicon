@@ -50,7 +50,7 @@ public sealed class DexiconTools
         SearchResult result;
         try
         {
-            result = await search.SearchAsync(rc.RequireTenant(), new SearchRequest
+            result = await search.SearchAsync(rc.RequirePrincipal(), new SearchRequest
             {
                 Query = query,
                 Corpus = corpus,
@@ -149,16 +149,18 @@ public sealed class DexiconTools
         CancellationToken ct = default)
     {
         Require(rc, Scopes.Search);
-        var tenant = rc.RequireTenant();
-        var visible = await scopes.VisibleAsync(tenant, ct);
+        var principal = rc.RequirePrincipal();
+        var visible = await scopes.VisibleAsync(principal, ct);
 
         if (visible.Count == 0)
-            return $"No corpora are visible to tenant '{tenant}'. Create one in the Dexicon UI first.";
+            return $"Key '{principal.Name}' can reach no corpora. Create one in the Dexicon UI, " +
+                   "or map this key to one under Access.";
 
         var sb = new StringBuilder(
-            $"{visible.Count} {(visible.Count == 1 ? "corpus" : "corpora")} visible to '{tenant}':\n");
+            $"{visible.Count} {(visible.Count == 1 ? "corpus" : "corpora")} " +
+            $"reachable by '{principal.Name}':\n");
         foreach (var c in visible)
-            sb.Append(RenderCorpus(await CorpusEndpoints.Summarise(db, c, tenant, opts.Value.Indexing, ct)));
+            sb.Append(RenderCorpus(await CorpusEndpoints.Summarise(db, c, opts.Value.Indexing, ct)));
         return sb.ToString();
     }
 
@@ -179,9 +181,7 @@ public sealed class DexiconTools
     internal static string RenderCorpus(CorpusSummary s)
     {
         var sb = new StringBuilder();
-        sb.Append($"\n- {s.Name}");
-        if (!s.Owned) sb.Append(" (shared)");
-        sb.Append('\n');
+        sb.Append($"\n- {s.Name}\n");
 
         // What it is, before what it is made of.
         sb.Append(s.Description is { Length: > 0 }
@@ -238,7 +238,7 @@ public sealed class DexiconTools
         ScopedCorpus target;
         try
         {
-            var scope = await scopes.ResolveReadableAsync(rc.RequireTenant(), [corpus], ct);
+            var scope = await scopes.ResolveReadableAsync(rc.RequirePrincipal(), [corpus], ct);
             target = scope.Targets[0];
         }
         catch (ScopeResolutionException ex) { throw new McpException(ex.Message); }
@@ -442,7 +442,7 @@ public sealed class DexiconTools
         Require(rc, Scopes.Ingest);
 
         Corpus target;
-        try { target = await scopes.ResolveWritableAsync(rc.RequireTenant(), corpus, ct); }
+        try { target = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), corpus, ct); }
         catch (ScopeResolutionException ex) { throw new McpException(ex.Message); }
 
         var job = await queue.EnqueueAsync(target.Id, full ? JobKind.Full : JobKind.Refresh, ct: ct);
@@ -463,25 +463,25 @@ public sealed class DexiconTools
         CancellationToken ct = default)
     {
         Require(rc, Scopes.Search);
-        var tenant = rc.RequireTenant();
+        var principal = rc.RequirePrincipal();
 
         List<Corpus> targets;
         if (string.IsNullOrWhiteSpace(corpus))
         {
-            targets = await scopes.VisibleAsync(tenant, ct);
+            targets = await scopes.VisibleAsync(principal, ct);
         }
         else
         {
-            try { targets = (await scopes.ResolveReadableAsync(tenant, [corpus], ct)).Corpora.ToList(); }
+            try { targets = (await scopes.ResolveReadableAsync(principal, [corpus], ct)).Corpora.ToList(); }
             catch (ScopeResolutionException ex) { throw new McpException(ex.Message); }
         }
 
-        if (targets.Count == 0) return $"No corpora visible to tenant '{tenant}'.";
+        if (targets.Count == 0) return $"Key '{principal.Name}' can reach no corpora.";
 
         var sb = new StringBuilder();
         foreach (var c in targets)
         {
-            var summary = await CorpusEndpoints.Summarise(db, c, tenant, opts.Value.Indexing, ct);
+            var summary = await CorpusEndpoints.Summarise(db, c, opts.Value.Indexing, ct);
             // By QueuedUtc, not StartedUtc: a job that has been QUEUED but not yet started
             // is the latest news about this corpus, and ordering on StartedUtc reported
             // the previous job instead -- so index_status said "succeeded" to an agent

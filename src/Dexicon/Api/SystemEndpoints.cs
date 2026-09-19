@@ -33,7 +33,7 @@ public static class SystemEndpoints
             if (string.IsNullOrWhiteSpace(body.Query))
                 return Results.Problem(title: "Query is required", statusCode: 400);
 
-            var result = await search.SearchAsync(rc.RequireTenant(), new SearchRequest
+            var result = await search.SearchAsync(rc.RequirePrincipal(), new SearchRequest
             {
                 Query = body.Query,
                 Corpus = body.Corpus,
@@ -61,7 +61,7 @@ public static class SystemEndpoints
             CatalogDbContext db, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
-            var visible = await scopes.VisibleAsync(rc.RequireTenant(), ct);
+            var visible = await scopes.VisibleAsync(rc.RequirePrincipal(), ct);
             var ids = visible.Select(c => c.Id).ToList();
 
             var q = db.Jobs.Where(j => ids.Contains(j.CorpusId));
@@ -84,7 +84,7 @@ public static class SystemEndpoints
             var job = await db.Jobs.FirstOrDefaultAsync(j => j.Id == id, ct);
             if (job is null) return Results.NotFound();
 
-            var visible = await scopes.VisibleAsync(rc.RequireTenant(), ct);
+            var visible = await scopes.VisibleAsync(rc.RequirePrincipal(), ct);
             if (!visible.Exists(c => c.Id == job.CorpusId)) return Results.NotFound();
 
             return Results.Ok(job.ToSummary());
@@ -107,7 +107,7 @@ public static class SystemEndpoints
                 return;
             }
 
-            var visible = await scopes.VisibleAsync(rc.RequireTenant(), ct);
+            var visible = await scopes.VisibleAsync(rc.RequirePrincipal(), ct);
             var visibleIds = visible.Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
 
             ctx.Response.Headers.ContentType = "text/event-stream";
@@ -135,8 +135,8 @@ public static class SystemEndpoints
                     }
 
                     var progress = await next;
-                    // Events are tenant-scoped: another tenant's indexing progress is
-                    // not this caller's business, and its corpus ids are not either.
+                    // Scoped to what this caller can reach: a corpus their key is not
+                    // mapped to is not their business, and its id is not either.
                     if (!visibleIds.Contains(progress.CorpusId)) continue;
 
                     var json = JsonSerializer.Serialize(progress, JsonOptions.Web);
@@ -190,55 +190,43 @@ public static class SystemEndpoints
 
     public static void MapAdminEndpoints(this IEndpointRouteBuilder app)
     {
-        var g = app.MapGroup("/api/tenants").WithTags("Tenants");
+        var g = app.MapGroup("/api/session").WithTags("Session");
 
-        g.MapGet("/", async (RequestContext rc, CatalogDbContext db, CancellationToken ct) =>
+        // Anonymous by necessity: signing in cannot require being signed in. The throttle
+        // below is what stands between this and a guessing loop, together with the 600k
+        // PBKDF2 iterations each attempt costs. See docs/decisions.md D-28.
+        g.MapPost("/", async (SignInRequest body, TokenService tokens, AdminSessions sessions,
+            LoginThrottle throttle, ILoggerFactory logs, CancellationToken ct) =>
         {
-            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var tenants = await db.Tenants.OrderBy(t => t.Id).ToListAsync(ct);
-            return Results.Ok(tenants.Select(t =>
-                new TenantSummary(t.Id, t.DisplayName, t.CreatedUtc, t.Disabled)));
-        }).Produces<IReadOnlyList<TenantSummary>>();
+            var log = logs.CreateLogger("Dexicon.SignIn");
 
-        g.MapPost("/", async (CreateTenantRequest body, RequestContext rc, CatalogDbContext db,
-            CancellationToken ct) =>
-        {
-            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+            // Waited before the attempt is judged, so a correct password presented in the
+            // middle of an attack waits too. Charging only failures would let an attacker
+            // probe at full speed by never being right.
+            await throttle.WaitAsync(ct);
 
-            var id = body.Id?.Trim().ToLowerInvariant() ?? "";
-            if (!System.Text.RegularExpressions.Regex.IsMatch(id, "^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$"))
+            if (!await tokens.VerifyPasswordAsync(body.Password, ct))
+            {
+                throttle.RecordFailure();
+                log.LogWarning("Failed admin sign-in. {Failures} consecutive, next attempt delayed {Delay}",
+                    throttle.Failures, throttle.Delay());
                 return Results.Problem(
-                    title: "Invalid tenant id",
-                    detail: "Use 3-40 characters: lowercase letters, digits and hyphens, not starting or ending with a hyphen.",
-                    statusCode: 400);
+                    title: "Incorrect password", statusCode: StatusCodes.Status401Unauthorized);
+            }
 
-            if (await db.Tenants.AnyAsync(t => t.Id == id, ct))
-                return Results.Problem(title: "Tenant already exists", statusCode: 409);
+            throttle.Reset();
+            var session = sessions.Issue();
+            log.LogInformation("Admin signed in; session expires {ExpiresUtc:O}", session.ExpiresUtc);
+            return Results.Ok(new SignInResponse(session.Presented, session.ExpiresUtc));
+        }).Produces<SignInResponse>();
 
-            var tenant = new Tenant { Id = id, DisplayName = body.DisplayName ?? id, CreatedUtc = DateTime.UtcNow };
-            db.Tenants.Add(tenant);
-            await db.SaveChangesAsync(ct);
-            return Results.Created($"/api/tenants/{id}", new { tenant.Id, tenant.DisplayName, tenant.CreatedUtc });
-        });
-
-        g.MapDelete("/{id}", async (string id, RequestContext rc, CatalogDbContext db, CancellationToken ct) =>
+        // Revokes only a session whose value the caller already holds, so it needs no
+        // scope of its own.
+        g.MapDelete("/", (HttpContext ctx, AdminSessions sessions) =>
         {
-            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-
-            var tenant = await db.Tenants.FirstOrDefaultAsync(t => t.Id == id, ct);
-            if (tenant is null) return Results.NotFound();
-
-            // Refused while it owns corpora. An implicit cascade over someone's whole
-            // index is not a thing a button should do.
-            var owned = await db.Corpora.CountAsync(c => c.TenantId == id, ct);
-            if (owned > 0)
-                return Results.Problem(
-                    title: "Tenant still owns corpora",
-                    detail: $"Tenant '{id}' owns {owned} {(owned == 1 ? "corpus" : "corpora")}. Delete or move them first.",
-                    statusCode: 409);
-
-            db.Tenants.Remove(tenant);
-            await db.SaveChangesAsync(ct);
+            var header = ctx.Request.Headers.Authorization.FirstOrDefault();
+            if (header is not null && header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                sessions.Revoke(header["Bearer ".Length..].Trim());
             return Results.NoContent();
         });
 
@@ -247,31 +235,39 @@ public static class SystemEndpoints
         t.MapGet("/", async (RequestContext rc, CatalogDbContext db, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var tenant = rc.RequireTenant();
-            var rows = await db.Tokens.Where(x => x.TenantId == tenant)
+            var rows = await db.Tokens.Include(x => x.Corpora)
                 .OrderByDescending(x => x.CreatedUtc).ToListAsync(ct);
             return Results.Ok(rows.Select(x => x.ToSummary()));
         }).Produces<IReadOnlyList<TokenSummary>>();
 
         t.MapPost("/", async (CreateTokenRequest body, RequestContext rc, TokenService tokens,
-            IOptions<DexiconOptions> opts, CancellationToken ct) =>
+            CatalogDbContext db, IOptions<DexiconOptions> opts, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var tenant = rc.RequireTenant();
 
             if (string.IsNullOrWhiteSpace(body.Name))
                 return Results.Problem(title: "Name is required", statusCode: 400);
 
             var requested = body.Scopes is { Count: > 0 } ? body.Scopes : [Scopes.Search];
-            var unknown = requested.Where(s => !Scopes.All.Contains(s, StringComparer.OrdinalIgnoreCase)).ToList();
+            var unknown = requested
+                .Where(s => !Scopes.Issuable.Contains(s, StringComparer.OrdinalIgnoreCase)).ToList();
             if (unknown.Count > 0)
                 return Results.Problem(
                     title: "Unknown scope",
-                    detail: $"{string.Join(", ", unknown)}. Valid scopes: {string.Join(", ", Scopes.All)}.",
+                    detail: $"{string.Join(", ", unknown)}. A key may hold " +
+                            $"{string.Join(" or ", Scopes.Issuable)}. Administration is the password's, " +
+                            "so that no credential in an agent's configuration can delete a corpus.",
                     statusCode: 400);
 
             var expires = body.ExpiresInDays is { } d and > 0 ? DateTime.UtcNow.AddDays(d) : (DateTime?)null;
-            var (row, issued) = await tokens.CreateAsync(tenant, body.Name.Trim(), requested, expires, ct);
+            var (row, issued) = await tokens.CreateAsync(body.Name.Trim(), requested, expires, ct);
+
+            if (body.CorpusIds is { Count: > 0 })
+            {
+                var denied2 = await MapCorporaAsync(db, row.Id, body.CorpusIds, ct);
+                if (denied2 is not null) return denied2;
+                await db.Entry(row).Collection(x => x.Corpora).LoadAsync(ct);
+            }
 
             // The highest-value thing on the page: the step between installed and working.
             var command =
@@ -285,13 +281,65 @@ public static class SystemEndpoints
             CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var revoked = await tokens.RevokeAsync(id, rc.RequireTenant(), ct);
+            var revoked = await tokens.RevokeAsync(id, ct);
             if (!revoked) return Results.NotFound();
 
             // Revocation must be effective immediately, not after the principal cache TTL.
             evictor.EvictPrincipals();
             return Results.NoContent();
         });
+
+        // Replaces the mapping outright rather than patching it, because the UI edits the
+        // whole set of ticks at once and a partial update would need a way to say "leave
+        // that one alone" that is indistinguishable from "untick it".
+        //
+        // No cache to evict: the mapping is read per request, never cached on the
+        // principal, so the agent's next call already sees this.
+        t.MapPut("/{id}/corpora", async (string id, UpdateTokenCorporaRequest body, RequestContext rc,
+            CatalogDbContext db, CancellationToken ct) =>
+        {
+            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+
+            var token = await db.Tokens.Include(x => x.Corpora).FirstOrDefaultAsync(x => x.Id == id, ct);
+            if (token is null) return Results.NotFound();
+
+            var refused = await MapCorporaAsync(db, id, body.CorpusIds, ct);
+            if (refused is not null) return refused;
+
+            await db.Entry(token).Collection(x => x.Corpora).LoadAsync(ct);
+            return Results.Ok(token.ToSummary());
+        }).Produces<TokenSummary>();
+    }
+
+    /// <summary>
+    /// Replace a key's corpus mapping. Returns a problem result when an id does not exist,
+    /// and null on success.
+    ///
+    /// An unknown id is refused rather than dropped. Silently ignoring one would leave the
+    /// key mapped to fewer corpora than the operator ticked, and an empty mapping means
+    /// every corpus, so the failure mode of dropping the last one is the opposite of what
+    /// was asked for.
+    /// </summary>
+    private static async Task<IResult?> MapCorporaAsync(
+        CatalogDbContext db, string tokenId, IReadOnlyList<string> corpusIds, CancellationToken ct)
+    {
+        var wanted = corpusIds.Distinct(StringComparer.Ordinal).ToList();
+
+        var known = await db.Corpora.Where(c => wanted.Contains(c.Id)).Select(c => c.Id).ToListAsync(ct);
+        var unknown = wanted.Except(known, StringComparer.Ordinal).ToList();
+        if (unknown.Count > 0)
+            return Results.Problem(
+                title: "Unknown corpus",
+                detail: $"No corpus with id {string.Join(", ", unknown)}. The mapping was not changed.",
+                statusCode: 400);
+
+        var existing = await db.TokenCorpora.Where(tc => tc.TokenId == tokenId).ToListAsync(ct);
+        db.TokenCorpora.RemoveRange(existing);
+        foreach (var corpusId in wanted)
+            db.TokenCorpora.Add(new TokenCorpus { TokenId = tokenId, CorpusId = corpusId });
+
+        await db.SaveChangesAsync(ct);
+        return null;
     }
 
     public static void MapHealthEndpoints(this IEndpointRouteBuilder app)
@@ -681,9 +729,10 @@ public static class SystemEndpoints
 
         app.MapGet("/healthz", async (RequestContext rc, IVectorStore vectors, IEmbeddingService embedder,
             IModelCatalog catalog, IEmbeddingGeneratorFactory factory, CatalogDbContext db,
-            IMemoryCache cache, IOptions<DexiconOptions> opts, CancellationToken ct) =>
+            ScopeResolver scopes, IMemoryCache cache, IOptions<DexiconOptions> opts, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
+            var visible = await scopes.VisibleAsync(rc.RequirePrincipal(), ct);
 
             var qdrant = await vectors.PingAsync(ct);
             var target = new EmbeddingTarget(opts.Value.Embedding.Provider, opts.Value.Embedding.Model);
@@ -707,7 +756,8 @@ public static class SystemEndpoints
                     target.Provider, target.Model, dims, embeddingError),
                 await db.Corpora.CountAsync(ct),
                 activeJob?.ToSummary(),
-                await MissingModelsAsync(db, catalog, cache, rc.RequireTenant(), ct)));
+                await MissingModelsAsync(db, catalog, cache, visible.Select(c => c.Id).ToList(),
+                    rc.RequirePrincipal().TokenId, ct)));
         }).Produces<HealthResponse>().WithTags("Health");
     }
 
@@ -739,22 +789,23 @@ public static class SystemEndpoints
     /// <summary>
     /// Chunk sets whose model the provider no longer has.
     ///
-    /// Scoped to the caller's tenant: the corpora count above is a number and gives away
-    /// nothing, but a set names its corpus, and another tenant's corpus names are not this
-    /// caller's to see.
+    /// Scoped to what the caller can reach: the corpora count above is a number and gives
+    /// away nothing, but a set names its corpus, and a corpus a key is not mapped to is not
+    /// that key's to see.
     ///
     /// Cached, because <c>/healthz</c> is polled every fifteen seconds per open tab and
     /// this costs a listing per provider. A minute is short enough that pulling a model
     /// back clears the warning while you are still looking at the screen.
     /// </summary>
     internal static async Task<IReadOnlyList<MissingModel>> MissingModelsAsync(
-        CatalogDbContext db, IModelCatalog catalog, IMemoryCache cache, string tenantId, CancellationToken ct)
+        CatalogDbContext db, IModelCatalog catalog, IMemoryCache cache,
+        IReadOnlyList<string> corpusIds, string cacheScope, CancellationToken ct)
     {
-        var key = $"health-missing-models::{tenantId}";
+        var key = $"health-missing-models::{cacheScope}";
         if (cache.TryGetValue(key, out IReadOnlyList<MissingModel>? cached) && cached is not null) return cached;
 
         var sets = await db.ChunkSets
-            .Where(s => s.Corpus!.TenantId == tenantId)
+            .Where(s => corpusIds.Contains(s.CorpusId))
             .Select(s => new { s.EmbeddingProvider, s.EmbeddingModel, Corpus = s.Corpus!.Name, s.Name })
             .ToListAsync(ct);
 

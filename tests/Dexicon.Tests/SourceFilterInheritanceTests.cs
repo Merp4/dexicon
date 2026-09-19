@@ -28,7 +28,7 @@ public sealed class SourceFilterInheritanceTests
         string? include = null, string? exclude = null) =>
         new()
         {
-            Id = "c", TenantId = "t", Name = "books", CreatedUtc = DateTime.UtcNow,
+            Id = "c", Name = "books", CreatedUtc = DateTime.UtcNow,
             DefaultUseGitignore = useGitignore,
             DefaultMaxFileBytes = maxFileBytes,
             DefaultIncludeGlobs = include,

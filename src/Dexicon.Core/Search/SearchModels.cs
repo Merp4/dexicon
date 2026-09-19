@@ -10,7 +10,6 @@ public sealed record Chunk
     /// <summary>Which chunk set produced this. The corpus stays the tenant key.</summary>
     public required string ChunkSetId { get; init; }
 
-    public required string TenantId { get; init; }
     public required string SourceId { get; init; }
     public required string FilePath { get; init; }
     public required string FileHash { get; init; }

@@ -126,11 +126,10 @@ public sealed class SecretHygieneTests
         await using var db = new CatalogDbContext(
             new DbContextOptionsBuilder<CatalogDbContext>().UseSqlite(conn).Options);
         await db.Database.EnsureCreatedAsync();
-        db.Tenants.Add(new Tenant { Id = "t", DisplayName = "t", CreatedUtc = DateTime.UtcNow });
         await db.SaveChangesAsync();
 
         var service = new TokenService(db, TimeProvider.System);
-        var (row, issued) = await service.CreateAsync("t", "test", [Scopes.Search], null);
+        var (row, issued) = await service.CreateAsync("test", [Scopes.Search], null);
 
         issued.Presented.ShouldStartWith("dex_");
 
@@ -155,38 +154,37 @@ public sealed class SecretHygieneTests
         await using var db = new CatalogDbContext(
             new DbContextOptionsBuilder<CatalogDbContext>().UseSqlite(conn).Options);
         await db.Database.EnsureCreatedAsync();
-        db.Tenants.Add(new Tenant { Id = "t", DisplayName = "t", CreatedUtc = DateTime.UtcNow });
         await db.SaveChangesAsync();
 
         var service = new TokenService(db, TimeProvider.System);
 
-        var (_, live) = await service.CreateAsync("t", "live", [Scopes.Search], null);
-        (await service.RevokeAsync((await service.VerifyAsync(live.Presented))!.TokenId, "t")).ShouldBeTrue();
+        var (_, live) = await service.CreateAsync("live", [Scopes.Search], null);
+        (await service.RevokeAsync((await service.VerifyAsync(live.Presented))!.TokenId)).ShouldBeTrue();
         (await service.VerifyAsync(live.Presented)).ShouldBeNull("a revoked token must stop working");
 
-        var (_, expired) = await service.CreateAsync("t", "expired", [Scopes.Search],
+        var (_, expired) = await service.CreateAsync("expired", [Scopes.Search],
             DateTime.UtcNow.AddSeconds(-1));
         (await service.VerifyAsync(expired.Presented)).ShouldBeNull("an expired token must stop working");
     }
 
     [Fact]
-    public async Task Token_DisabledTenant_StopsVerifying()
+    public async Task Token_Revoked_StopsVerifying()
     {
+        // Was Token_DisabledTenant_StopsVerifying. A tenant is no longer a thing that can
+        // be disabled, and revocation is now the only way a live key stops working, so it
+        // is the path worth holding down.
         await using var conn = new SqliteConnection("Data Source=:memory:");
         await conn.OpenAsync();
         await using var db = new CatalogDbContext(
             new DbContextOptionsBuilder<CatalogDbContext>().UseSqlite(conn).Options);
         await db.Database.EnsureCreatedAsync();
-        var tenant = new Tenant { Id = "t", DisplayName = "t", CreatedUtc = DateTime.UtcNow };
-        db.Tenants.Add(tenant);
         await db.SaveChangesAsync();
 
         var service = new TokenService(db, TimeProvider.System);
-        var (_, issued) = await service.CreateAsync("t", "x", [Scopes.Search], null);
+        var (row, issued) = await service.CreateAsync("x", [Scopes.Search], null);
         (await service.VerifyAsync(issued.Presented)).ShouldNotBeNull();
 
-        tenant.Disabled = true;
-        await db.SaveChangesAsync();
+        (await service.RevokeAsync(row.Id)).ShouldBeTrue();
         db.ChangeTracker.Clear();
 
         (await service.VerifyAsync(issued.Presented)).ShouldBeNull();
@@ -195,11 +193,11 @@ public sealed class SecretHygieneTests
     [Fact]
     public void Principal_AdminImpliesEveryScope()
     {
-        var admin = new Principal("id", "n", "t", new HashSet<string>(StringComparer.Ordinal) { Scopes.Admin });
+        var admin = new Principal("id", "n", new HashSet<string>(StringComparer.Ordinal) { Scopes.Admin });
         admin.Has(Scopes.Search).ShouldBeTrue();
         admin.Has(Scopes.Ingest).ShouldBeTrue();
 
-        var reader = new Principal("id", "n", "t", new HashSet<string>(StringComparer.Ordinal) { Scopes.Search });
+        var reader = new Principal("id", "n", new HashSet<string>(StringComparer.Ordinal) { Scopes.Search });
         reader.Has(Scopes.Search).ShouldBeTrue();
         reader.Has(Scopes.Ingest).ShouldBeFalse();
         reader.Has(Scopes.Admin).ShouldBeFalse();

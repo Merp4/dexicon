@@ -40,23 +40,22 @@ public sealed class UtcTimestampTests : IAsyncLifetime
     [Fact]
     public async Task TimestampsComeBackFromTheDatabaseTaggedAsUtc()
     {
-        _db.Tenants.Add(new Tenant { Id = "t", DisplayName = "t", CreatedUtc = DateTime.UtcNow });
+        _db.Corpora.Add(new Corpus { Id = "c", Name = "c", CreatedUtc = DateTime.UtcNow });
         await _db.SaveChangesAsync();
         _db.ChangeTracker.Clear();   // force a real materialisation, not the tracked instance
 
-        var tenant = await _db.Tenants.SingleAsync();
+        var corpus = await _db.Corpora.SingleAsync();
 
-        tenant.CreatedUtc.Kind.ShouldBe(DateTimeKind.Utc,
+        corpus.CreatedUtc.Kind.ShouldBe(DateTimeKind.Utc,
             "an Unspecified Kind serialises without a 'Z' and browsers then read it as local time");
     }
 
     [Fact]
     public async Task NullableTimestampsAreAlsoTaggedUtc()
     {
-        _db.Tenants.Add(new Tenant { Id = "t", DisplayName = "t", CreatedUtc = DateTime.UtcNow });
         _db.Corpora.Add(new Corpus
         {
-            Id = "c", TenantId = "t", Name = "c",
+            Id = "c", Name = "c",
             CreatedUtc = DateTime.UtcNow,
             LastIndexedUtc = DateTime.UtcNow,
         });
@@ -72,12 +71,12 @@ public sealed class UtcTimestampTests : IAsyncLifetime
     {
         // The property that actually matters to a browser. Asserting on Kind alone would
         // pass while the wire format stayed ambiguous.
-        _db.Tenants.Add(new Tenant { Id = "t", DisplayName = "t", CreatedUtc = DateTime.UtcNow });
+        _db.Corpora.Add(new Corpus { Id = "c", Name = "c", CreatedUtc = DateTime.UtcNow });
         await _db.SaveChangesAsync();
         _db.ChangeTracker.Clear();
 
-        var tenant = await _db.Tenants.SingleAsync();
-        var json = JsonSerializer.Serialize(new { tenant.CreatedUtc });
+        var corpus = await _db.Corpora.SingleAsync();
+        var json = JsonSerializer.Serialize(new { corpus.CreatedUtc });
 
         // An ISO timestamp without a zone is read as LOCAL time by new Date().
         json.ShouldContain("Z\"");
@@ -89,14 +88,14 @@ public sealed class UtcTimestampTests : IAsyncLifetime
         // Defence against a future `DateTime.Now`: the converter must CONVERT it, not
         // stamp UTC onto a local value and shift the instant.
         var localNow = DateTime.Now;
-        _db.Tenants.Add(new Tenant { Id = "t", DisplayName = "t", CreatedUtc = localNow });
+        _db.Corpora.Add(new Corpus { Id = "c", Name = "c", CreatedUtc = localNow });
         await _db.SaveChangesAsync();
         _db.ChangeTracker.Clear();
 
-        var tenant = await _db.Tenants.SingleAsync();
+        var corpus = await _db.Corpora.SingleAsync();
 
-        tenant.CreatedUtc.Kind.ShouldBe(DateTimeKind.Utc);
-        (tenant.CreatedUtc - localNow.ToUniversalTime()).Duration()
+        corpus.CreatedUtc.Kind.ShouldBe(DateTimeKind.Utc);
+        (corpus.CreatedUtc - localNow.ToUniversalTime()).Duration()
             .ShouldBeLessThan(TimeSpan.FromSeconds(1), "the instant must be preserved, not shifted by the offset");
     }
 
@@ -105,8 +104,8 @@ public sealed class UtcTimestampTests : IAsyncLifetime
     {
         // A naming convention that is actually enforced. `CreatedUtc` tells a reader
         // what they are holding; `Created` invites a `DateTime.Now` next to it.
-        var offenders = typeof(Tenant).Assembly.GetTypes()
-            .Where(t => t.Namespace == typeof(Tenant).Namespace && t.IsClass)
+        var offenders = typeof(Corpus).Assembly.GetTypes()
+            .Where(t => t.Namespace == typeof(Corpus).Namespace && t.IsClass)
             .SelectMany(t => t.GetProperties().Select(p => (Type: t, Prop: p)))
             .Where(x => x.Prop.PropertyType == typeof(DateTime) || x.Prop.PropertyType == typeof(DateTime?))
             .Where(x => !x.Prop.Name.EndsWith("Utc", StringComparison.Ordinal))

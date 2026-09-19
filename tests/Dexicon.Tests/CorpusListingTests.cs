@@ -22,8 +22,7 @@ public class CorpusListingTests
         int failed = 0,
         IReadOnlyList<ChunkSetSummary>? sets = null) =>
         new(
-            Id: "01ABC", Name: name, Description: description, TenantId: "default",
-            Owned: true, Visibility: "private", State: state,
+            Id: "01ABC", Name: name, Description: description, State: state,
             CreatedUtc: DateTime.UnixEpoch, LastIndexedUtc: DateTime.UnixEpoch,
             SourceCount: 1, FileCount: files, ChunkCount: chunks,
             SkippedCount: 0, FailedCount: failed,

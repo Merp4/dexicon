@@ -70,15 +70,16 @@ public sealed class SearchService(
 {
     private static readonly TimeSpan QueryEmbeddingTtl = TimeSpan.FromMinutes(5);
 
-    public async Task<SearchResult> SearchAsync(string tenantId, SearchRequest request, CancellationToken ct = default)
+    public async Task<SearchResult> SearchAsync(
+        Principal principal, SearchRequest request, CancellationToken ct = default)
     {
         var sw = Stopwatch.StartNew();
-        var scope = await scopes.ResolveReadableAsync(tenantId, request.Corpus, ct);
+        var scope = await scopes.ResolveReadableAsync(principal, request.Corpus, ct);
 
         // Belt and braces with the repository guard: if resolution ever returned empty
         // without throwing, this stops it becoming a search over everything.
         if (scope.Corpora.Count == 0)
-            throw new ScopeResolutionException($"Resolved scope for tenant '{tenantId}' was empty.", []);
+            throw new ScopeResolutionException($"Resolved scope for key '{principal.Name}' was empty.", []);
 
         // Qualified, so a result from a non-default set says which set it came from.
         var byId = scope.Targets.ToDictionary(t => t.Corpus.Id, t => t.QualifiedName, StringComparer.Ordinal);

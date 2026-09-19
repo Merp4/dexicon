@@ -250,7 +250,6 @@ public sealed class CorpusIndexer(
                 {
                     CorpusId = corpus.Id,
                     ChunkSetId = set.Id,
-                    TenantId = corpus.TenantId,
                     SourceId = source.Id,
                     FilePath = file.RelativePath,
                     FileHash = fingerprint,
@@ -615,7 +614,6 @@ public sealed class CorpusIndexer(
                 {
                     CorpusId = corpus.Id,
                     ChunkSetId = set.Id,
-                    TenantId = corpus.TenantId,
                     SourceId = source.Id,
                     FilePath = candidate.RelativePath,
                     FileHash = hash,

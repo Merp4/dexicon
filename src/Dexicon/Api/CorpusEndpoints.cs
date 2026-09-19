@@ -21,10 +21,10 @@ public static class CorpusEndpoints
             IOptions<DexiconOptions> opts, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
-            var tenant = rc.RequireTenant();
-            var visible = await scopes.VisibleAsync(tenant, ct);
+            var principal = rc.RequirePrincipal();
+            var visible = await scopes.VisibleAsync(principal, ct);
             var summaries = new List<CorpusSummary>(visible.Count);
-            foreach (var c in visible) summaries.Add(await Summarise(db, c, tenant, opts.Value.Indexing, ct));
+            foreach (var c in visible) summaries.Add(await Summarise(db, c, opts.Value.Indexing, ct));
             return Results.Ok(summaries);
         }).Produces<IReadOnlyList<CorpusSummary>>();
 
@@ -32,9 +32,9 @@ public static class CorpusEndpoints
             CatalogDbContext db, IOptions<DexiconOptions> opts, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
-            var tenant = rc.RequireTenant();
-            var scope = await scopes.ResolveReadableAsync(tenant, [nameOrId], ct);
-            return Results.Ok(await Summarise(db, scope.Corpora[0], tenant, opts.Value.Indexing, ct));
+            var principal = rc.RequirePrincipal();
+            var scope = await scopes.ResolveReadableAsync(principal, [nameOrId], ct);
+            return Results.Ok(await Summarise(db, scope.Corpora[0], opts.Value.Indexing, ct));
         }).Produces<CorpusSummary>();
 
         g.MapPost("/", async (CreateCorpusRequest body, RequestContext rc, CatalogDbContext db,
@@ -42,15 +42,16 @@ public static class CorpusEndpoints
             CorpusIndexer indexer, IndexJobQueue queue, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var tenant = rc.RequireTenant();
+            var principal = rc.RequirePrincipal();
 
             if (string.IsNullOrWhiteSpace(body.Name))
                 return Results.Problem(title: "Name is required", statusCode: 400);
 
-            if (await db.Corpora.AnyAsync(c => c.TenantId == tenant && c.Name == body.Name, ct))
+            if (await db.Corpora.AnyAsync(c => c.Name == body.Name, ct))
                 return Results.Problem(
                     title: "Corpus already exists",
-                    detail: $"Tenant '{tenant}' already has a corpus named '{body.Name}'.",
+                    detail: $"A corpus named '{body.Name}' already exists. Names are unique " +
+                            "because the name is what an agent passes to search_index.",
                     statusCode: 409);
 
             var model = string.IsNullOrWhiteSpace(body.EmbeddingModel)
@@ -86,11 +87,8 @@ public static class CorpusEndpoints
             var corpus = new Corpus
             {
                 Id = Ulid.NewUlid().ToString(),
-                TenantId = tenant,
                 Name = body.Name.Trim(),
                 Description = body.Description,
-                Visibility = string.Equals(body.Visibility, "shared", StringComparison.OrdinalIgnoreCase)
-                    ? CorpusVisibility.Shared : CorpusVisibility.Private,
                 State = CorpusState.Ready,
                 CreatedUtc = DateTime.UtcNow,
             };
@@ -144,7 +142,7 @@ public static class CorpusEndpoints
             if (corpus.Sources.Count > 0)
                 await queue.EnqueueAsync(corpus.Id, JobKind.Full, ct: ct);
 
-            return Results.Created($"/api/corpora/{corpus.Id}", await Summarise(db, corpus, tenant, opts.Value.Indexing, ct));
+            return Results.Created($"/api/corpora/{corpus.Id}", await Summarise(db, corpus, opts.Value.Indexing, ct));
         }).Produces<CorpusSummary>();
 
         g.MapPatch("/{nameOrId}", async (string nameOrId, UpdateCorpusRequest body, RequestContext rc,
@@ -152,24 +150,13 @@ public static class CorpusEndpoints
             IndexJobQueue queue, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var tenant = rc.RequireTenant();
-            var corpus = await scopes.ResolveWritableAsync(tenant, nameOrId, ct);
+            var principal = rc.RequirePrincipal();
+            var corpus = await scopes.ResolveWritableAsync(principal, nameOrId, ct);
 
             // Chunk settings are NOT here any more. They belong to a chunk set, because a
             // corpus can carry several and "the corpus's chunk size" stopped meaning
             // anything the moment that became true. See /api/corpora/{id}/chunk-sets.
             if (body.Description is not null) corpus.Description = body.Description;
-            if (body.Visibility is not null)
-                corpus.Visibility = string.Equals(body.Visibility, "shared", StringComparison.OrdinalIgnoreCase)
-                    ? CorpusVisibility.Shared : CorpusVisibility.Private;
-
-            if (body.GrantTenantIds is not null)
-            {
-                var existing = await db.CorpusGrants.Where(x => x.CorpusId == corpus.Id).ToListAsync(ct);
-                db.CorpusGrants.RemoveRange(existing);
-                foreach (var tid in body.GrantTenantIds.Distinct(StringComparer.OrdinalIgnoreCase))
-                    db.CorpusGrants.Add(new CorpusGrant { CorpusId = corpus.Id, TenantId = tid });
-            }
 
             // Changing what sources inherit changes which files are in the index, so it
             // queues a refresh the way adding a source does. Narrowing a glob removes the
@@ -194,14 +181,14 @@ public static class CorpusEndpoints
 
             if (filtersChanged) await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
 
-            return Results.Ok(new CorpusUpdated(await Summarise(db, corpus, tenant, opts.Value.Indexing, ct)));
+            return Results.Ok(new CorpusUpdated(await Summarise(db, corpus, opts.Value.Indexing, ct)));
         }).Produces<CorpusUpdated>();
 
         g.MapDelete("/{nameOrId}", async (string nameOrId, RequestContext rc, ScopeResolver scopes,
             CatalogDbContext db, IVectorStore vectors, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var corpus = await scopes.ResolveWritableAsync(rc.RequireTenant(), nameOrId, ct);
+            var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
 
             // Per collection, because a corpus mid-migration has sets in two of them and
             // a single delete would leave one half behind with nothing left to name it.
@@ -221,7 +208,7 @@ public static class CorpusEndpoints
             IndexJobQueue queue, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var corpus = await scopes.ResolveWritableAsync(rc.RequireTenant(), nameOrId, ct);
+            var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
 
             try { indexer.ResolveWorkspacePath(body.WorkspacePath); }
             catch (UnauthorizedAccessException ex)
@@ -262,7 +249,7 @@ public static class CorpusEndpoints
             CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var corpus = await scopes.ResolveWritableAsync(rc.RequireTenant(), nameOrId, ct);
+            var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
 
             var source = await db.Sources
                 .FirstOrDefaultAsync(s => s.Id == sourceId && s.CorpusId == corpus.Id, ct);
@@ -305,7 +292,7 @@ public static class CorpusEndpoints
             IOptions<DexiconOptions> opts, IndexJobQueue queue, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var corpus = await scopes.ResolveWritableAsync(rc.RequireTenant(), nameOrId, ct);
+            var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
 
             var source = await db.Sources
                 .FirstOrDefaultAsync(s => s.Id == sourceId && s.CorpusId == corpus.Id, ct);
@@ -347,8 +334,8 @@ public static class CorpusEndpoints
             CatalogDbContext db, IOptions<DexiconOptions> opts, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
-            var tenant = rc.RequireTenant();
-            var scope = await scopes.ResolveReadableAsync(tenant, [nameOrId], ct);
+            var principal = rc.RequirePrincipal();
+            var scope = await scopes.ResolveReadableAsync(principal, [nameOrId], ct);
             var corpus = scope.Corpora[0];
 
             return Results.Ok(await CoverageAsync(db, opts.Value.Indexing, corpus, ct));
@@ -358,7 +345,7 @@ public static class CorpusEndpoints
             ScopeResolver scopes, IndexJobQueue queue, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Ingest) is { } denied) return denied;
-            var corpus = await scopes.ResolveWritableAsync(rc.RequireTenant(), nameOrId, ct);
+            var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
             var job = await queue.EnqueueAsync(corpus.Id, full == true ? JobKind.Full : JobKind.Refresh, ct: ct);
             return Results.Accepted($"/api/jobs/{job.Id}", job.ToSummary());
         }).Produces<JobSummary>();
@@ -368,7 +355,7 @@ public static class CorpusEndpoints
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
             // `books:fine` selects a set here too, exactly as it does in search.
-            var scope = await scopes.ResolveReadableAsync(rc.RequireTenant(), [nameOrId], ct);
+            var scope = await scopes.ResolveReadableAsync(rc.RequirePrincipal(), [nameOrId], ct);
             var target = scope.Targets[0];
             var corpus = target.Corpus;
 
@@ -407,7 +394,7 @@ public static class CorpusEndpoints
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
             if (string.IsNullOrWhiteSpace(path)) return Results.BadRequest(new { error = "path is required" });
 
-            var scope = await scopes.ResolveReadableAsync(rc.RequireTenant(), [nameOrId], ct);
+            var scope = await scopes.ResolveReadableAsync(rc.RequirePrincipal(), [nameOrId], ct);
             var target = scope.Targets[0];
 
             // By FILTER, not by search. An early version of the MCP resource used keyword
@@ -524,7 +511,7 @@ public static class CorpusEndpoints
             gaps.Select(g => new CoverageGap(g.DirectoryRelativePath, g.Files)).ToList());
     }
 
-    internal static async Task<CorpusSummary> Summarise(CatalogDbContext db, Corpus c, string viewerTenant,
+    internal static async Task<CorpusSummary> Summarise(CatalogDbContext db, Corpus c,
         IndexingOptions indexing, CancellationToken ct)
     {
         var sources = await db.Sources.Where(s => s.CorpusId == c.Id).ToListAsync(ct);
@@ -572,9 +559,7 @@ public static class CorpusEndpoints
         var defaultRows = headline is null ? [] : perSet.Where(r => r.ChunkSetId == headline.Id).ToList();
 
         return new CorpusSummary(
-            c.Id, c.Name, c.Description, c.TenantId,
-            Owned: string.Equals(c.TenantId, viewerTenant, StringComparison.OrdinalIgnoreCase),
-            c.Visibility.ToString().ToLowerInvariant(),
+            c.Id, c.Name, c.Description,
             c.State.ToString().ToLowerInvariant(),
             c.CreatedUtc, c.LastIndexedUtc,
             sources.Count,

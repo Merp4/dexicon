@@ -30,9 +30,8 @@ public sealed class CoverageEndpointTests : IAsyncLifetime
             .UseSqlite(_connection).Options);
         await _db.Database.EnsureCreatedAsync();
 
-        _db.Tenants.Add(new Tenant { Id = "t", DisplayName = "t", CreatedUtc = DateTime.UtcNow });
-        _db.Corpora.Add(new Corpus { Id = "c", TenantId = "t", Name = "books", CreatedUtc = DateTime.UtcNow });
-        _db.Corpora.Add(new Corpus { Id = "c2", TenantId = "t", Name = "papers", CreatedUtc = DateTime.UtcNow });
+        _db.Corpora.Add(new Corpus { Id = "c", Name = "books", CreatedUtc = DateTime.UtcNow });
+        _db.Corpora.Add(new Corpus { Id = "c2", Name = "papers", CreatedUtc = DateTime.UtcNow });
         await _db.SaveChangesAsync();
     }
 

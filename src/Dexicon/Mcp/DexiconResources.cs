@@ -20,10 +20,9 @@ namespace Dexicon.Mcp;
 /// picker can let someone attach "this corpus" or "that file" to a conversation without
 /// the model having to guess a search query first. Everything here is read-only.
 ///
-/// Scope resolution is the same as search's, deliberately: a corpus a tenant cannot
-/// search must not become readable merely because it was reached by URI instead. The
-/// tenant boundary is the whole security model, and a second way in is a second way to
-/// get it wrong.
+/// Scope resolution is the same as search's, deliberately: a corpus a key cannot search
+/// must not become readable merely because it was reached by URI instead. What a key can
+/// reach is the whole of the model, and a second way in is a second way to get it wrong.
 /// </summary>
 [McpServerResourceType]
 public sealed class DexiconResources
@@ -43,8 +42,8 @@ public sealed class DexiconResources
         string name,
         CancellationToken ct = default)
     {
-        var (tenant, target) = await ResolveAsync(rc, scopes, name, ct);
-        var summary = await CorpusEndpoints.Summarise(db, target.Corpus, tenant, opts.Value.Indexing, ct);
+        var target = await ResolveAsync(rc, scopes, name, ct);
+        var summary = await CorpusEndpoints.Summarise(db, target.Corpus, opts.Value.Indexing, ct);
         return JsonSerializer.Serialize(summary, JsonOptions.Web);
     }
 
@@ -63,7 +62,7 @@ public sealed class DexiconResources
         string path,
         CancellationToken ct = default)
     {
-        var (_, target) = await ResolveAsync(rc, scopes, name, ct);
+        var target = await ResolveAsync(rc, scopes, name, ct);
         var corpus = target.Corpus;
 
         // Rebuilt from the INDEX, not from disk: an uploaded PDF has no file to read, and
@@ -96,7 +95,7 @@ public sealed class DexiconResources
     /// Authenticate, authorise, and resolve the corpus, in that order and once, so
     /// there is a single place where a resource read can be allowed.
     /// </summary>
-    private static async Task<(string Tenant, ScopedCorpus Target)> ResolveAsync(
+    private static async Task<ScopedCorpus> ResolveAsync(
         RequestContext rc, ScopeResolver scopes, string name, CancellationToken ct)
     {
         var principal = rc.Principal
@@ -105,15 +104,13 @@ public sealed class DexiconResources
 
         if (!principal.Has(Scopes.Search))
             throw new McpException(
-                $"This token has scopes [{string.Join(", ", principal.Scopes)}] and needs '{Scopes.Search}'.");
-
-        var tenant = rc.RequireTenant();
+                $"This key has scopes [{string.Join(", ", principal.Scopes)}] and needs '{Scopes.Search}'.");
 
         try
         {
             // `name` may be `corpus` or `corpus:set`: the same addressing search uses.
-            var scope = await scopes.ResolveReadableAsync(tenant, [name], ct);
-            return (tenant, scope.Targets[0]);
+            var scope = await scopes.ResolveReadableAsync(principal, [name], ct);
+            return scope.Targets[0];
         }
         catch (ScopeResolutionException ex)
         {

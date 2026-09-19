@@ -1,20 +1,12 @@
 namespace Dexicon.Core.Catalog;
 
-/// <summary>The isolation boundary. Every request resolves to exactly one.</summary>
-public sealed class Tenant
-{
-    public required string Id { get; set; }              // slug
-    public required string DisplayName { get; set; }
-    public DateTime CreatedUtc { get; set; }
-    public bool Disabled { get; set; }
-
-    public List<Corpus> Corpora { get; set; } = [];
-    public List<ApiToken> Tokens { get; set; } = [];
-}
-
 /// <summary>
-/// The only credential. Stored as PBKDF2-HMAC-SHA256 with a per-token salt; the
-/// secret itself is shown once at creation and has no retrieval path.
+/// An agent's credential. Stored as PBKDF2-HMAC-SHA256 with a per-token salt; the secret
+/// itself is shown once at creation and has no retrieval path.
+///
+/// A key carries <c>search</c> and optionally <c>ingest</c>, never <c>admin</c>. Admin
+/// comes from the password alone, because an agent's configuration file is the wrong
+/// place to keep a credential that can delete a corpus. See docs/decisions.md D-28.
 /// </summary>
 public sealed class ApiToken
 {
@@ -22,34 +14,74 @@ public sealed class ApiToken
     public required string Name { get; set; }
     public required byte[] TokenHash { get; set; }
     public required byte[] TokenSalt { get; set; }
-    public required string TenantId { get; set; }
-    public Tenant? Tenant { get; set; }
-    public required string Scopes { get; set; }          // csv: search, ingest, admin
+    public required string Scopes { get; set; }          // csv: search, ingest
     public DateTime CreatedUtc { get; set; }
     public DateTime? LastUsedUtc { get; set; }
     public DateTime? ExpiresUtc { get; set; }
     public DateTime? RevokedUtc { get; set; }
 
+    /// <summary>
+    /// The corpora this key may reach. No rows means every corpus, which is what a
+    /// single-user install wants and what keeps the mapping optional rather than a step in
+    /// issuing a key. A key that should reach nothing is revoked, not emptied.
+    ///
+    /// Resolved per request rather than carried on the cached principal: the principal
+    /// cache has a 60-second TTL, and caching the mapping there would make that TTL decide
+    /// how long a change in the UI took to reach the agent.
+    /// </summary>
+    public List<TokenCorpus> Corpora { get; set; } = [];
+
     public bool IsActive(DateTime nowUtc) =>
         RevokedUtc is null && (ExpiresUtc is null || ExpiresUtc > nowUtc);
 }
 
-public enum CorpusVisibility { Private = 0, Shared = 1 }
+/// <summary>
+/// One corpus a key may reach. Rows are added and removed in the UI while everything
+/// keeps running; the next call the agent makes sees the new set.
+/// </summary>
+public sealed class TokenCorpus
+{
+    public required string TokenId { get; set; }
+    public ApiToken? Token { get; set; }
+    public required string CorpusId { get; set; }
+    public Corpus? Corpus { get; set; }
+}
+
+/// <summary>
+/// The administrator's password, hashed exactly as a token's secret is.
+///
+/// One row, because there is one administrator. Several would be user accounts, which
+/// D-10 rejected and D-28 did not reinstate. The row holds no session: a verified
+/// password is exchanged for a short-lived bearer that lives in memory, so nothing
+/// durable ever carries the <c>admin</c> scope.
+/// </summary>
+public sealed class AdminCredential
+{
+    /// <summary>Always <see cref="SingletonId"/>, so the table can hold exactly one row.</summary>
+    public required string Id { get; set; }
+
+    public const string SingletonId = "admin";
+
+    public required byte[] PasswordHash { get; set; }
+    public required byte[] PasswordSalt { get; set; }
+    public DateTime UpdatedUtc { get; set; }
+}
 
 public enum CorpusState { Ready = 0, Indexing = 1, Degraded = 2, Unavailable = 3 }
 
 /// <summary>
-/// A named, searchable body of content owned by one tenant. The unit of visibility,
-/// of reindexing, and of search scope, and the <c>is_tenant</c> key in Qdrant.
+/// A named, searchable body of content. The unit of reindexing and of search scope, and
+/// the <c>is_tenant</c> key in Qdrant.
+///
+/// It has no owner. Which keys may read it is a property of those keys, held in
+/// <see cref="TokenCorpus"/>, so sharing a corpus is listing it against a second key
+/// rather than a visibility setting plus a grant table.
 /// </summary>
 public sealed class Corpus
 {
     public required string Id { get; set; }              // ULID
-    public required string TenantId { get; set; }
-    public Tenant? Tenant { get; set; }
     public required string Name { get; set; }
     public string? Description { get; set; }
-    public CorpusVisibility Visibility { get; set; }
 
     public CorpusState State { get; set; }
     public DateTime CreatedUtc { get; set; }
@@ -70,7 +102,6 @@ public sealed class Corpus
     public int? DefaultMaxFileBytes { get; set; }
 
     public List<Source> Sources { get; set; } = [];
-    public List<CorpusGrant> Grants { get; set; } = [];
     public List<IndexJob> Jobs { get; set; } = [];
 
     /// <summary>
@@ -152,18 +183,6 @@ public sealed class ChunkSet
     public DateTime? LastIndexedUtc { get; set; }
 
     public List<FileChunkState> Files { get; set; } = [];
-}
-
-/// <summary>
-/// Explicit read grants. A <see cref="CorpusVisibility.Shared"/> corpus with no rows
-/// is readable by every tenant; with rows, only by those listed. Private ignores this.
-/// </summary>
-public sealed class CorpusGrant
-{
-    public required string CorpusId { get; set; }
-    public Corpus? Corpus { get; set; }
-    public required string TenantId { get; set; }
-    public Tenant? Tenant { get; set; }
 }
 
 public enum SourceKind { Workspace = 0, Upload = 1 }

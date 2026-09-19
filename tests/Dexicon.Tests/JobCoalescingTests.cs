@@ -33,8 +33,7 @@ public sealed class JobCoalescingTests : IAsyncLifetime
             .UseSqlite(_connection).Options);
         await _db.Database.EnsureCreatedAsync();
 
-        _db.Tenants.Add(new Tenant { Id = "t", DisplayName = "t", CreatedUtc = DateTime.UtcNow });
-        _db.Corpora.Add(new Corpus { Id = "c", TenantId = "t", Name = "c", CreatedUtc = DateTime.UtcNow });
+        _db.Corpora.Add(new Corpus { Id = "c", Name = "c", CreatedUtc = DateTime.UtcNow });
         // A job's ChunkSetId is a foreign key, so the set it names has to exist.
         _db.ChunkSets.Add(new ChunkSet
         {

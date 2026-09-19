@@ -15,6 +15,7 @@ public sealed class DexiconOptions
     public IndexingOptions Indexing { get; init; } = new();
     public UploadOptions Upload { get; init; } = new();
     public BootstrapOptions Bootstrap { get; init; } = new();
+    public AdminOptions Admin { get; init; } = new();
     public StorageOptions Storage { get; init; } = new();
     public LogOptions Log { get; init; } = new();
 }
@@ -147,10 +148,21 @@ public sealed class UploadOptions
 
 public sealed class BootstrapOptions
 {
-    public string Tenant { get; init; } = "default";
-
     /// <summary>Blank generates one on first run and logs it exactly once.</summary>
     public string? Token { get; init; }
+}
+
+/// <summary>
+/// The administrator's credential, which is the only route to the <c>admin</c> scope.
+/// </summary>
+public sealed class AdminOptions
+{
+    /// <summary>
+    /// Blank generates a password on first run and logs it exactly once, the way the
+    /// bootstrap token already works. Set, it is applied on every start, so it is also the
+    /// way back in after a forgotten one.
+    /// </summary>
+    public string? Password { get; init; }
 }
 
 /// <summary>

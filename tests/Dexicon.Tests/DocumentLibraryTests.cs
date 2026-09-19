@@ -33,7 +33,6 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
             .UseSqlite(_connection).Options);
         await _db.Database.EnsureCreatedAsync();
 
-        _db.Tenants.Add(new Tenant { Id = "t", DisplayName = "t", CreatedUtc = DateTime.UtcNow });
         await _db.SaveChangesAsync();
 
         var options = Options.Create(new DexiconOptions { Storage = new StorageOptions { DataPath = _dataPath } });
@@ -53,9 +52,7 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         var c = new Corpus
         {
             Id = $"id-{name}",
-            TenantId = "t",
             Name = name,
-            Visibility = CorpusVisibility.Private,
             State = CorpusState.Ready,
             CreatedUtc = DateTime.UtcNow,
         };
