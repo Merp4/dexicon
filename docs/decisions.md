@@ -84,6 +84,9 @@ and enforced as a `corpus_id` filter. The tenant is not part of the Qdrant filte
 in scope resolution is a leak. That is why three independent guards defend it, one of which
 is the storage layout itself.
 
+**Proposed change.** [D-28](#d-28-an-admin-password-and-scoped-api-keys) would keep `corpus_id` as the
+tenant key and drop the `tenant_id` payload field.
+
 ---
 
 ### D-05 One collection per embedding model
@@ -224,6 +227,10 @@ self-hosted local server they add an authorization server for no gain).
 **The rule:** target selection is explicit, validated and least-privilege; an ambiguous
 target fails fast rather than being inferred.
 
+**Proposed change.** [D-28](#d-28-an-admin-password-and-scoped-api-keys) would keep the credential and
+its storage, drop the tenant binding and `X-Dexicon-Tenant`, make `admin` reachable
+only through a password, and map each key to corpora in the UI.
+
 ---
 
 ### D-11 Five MCP tools
@@ -239,6 +246,10 @@ find things, understand them, and know whether the index is current.
 **Rejected.** Per-format search tools; separate keyword and semantic tools (a `mode`
 parameter, not three tools); admin tools over MCP (tenant and token management belongs in
 the UI, where a human is present).
+
+**Proposed change.** [D-28](#d-28-an-admin-password-and-scoped-api-keys) would make it five tools,
+four of which every key sees: `index_refresh` is listed only for a key granted
+`ingest`.
 
 ---
 
@@ -791,6 +802,135 @@ decision.
 
 ---
 
+### D-28 An admin password and scoped API keys
+
+**Status.** Proposed, 2026-09-19. Not implemented; the rest of this document describes
+shipped behaviour.
+
+**Decision.** Tenancy goes. One admin password authenticates the UI and is the only route to
+the `admin` scope. API keys authenticate agents, carry `search` and optionally `ingest`, and
+are mapped to corpora in the UI through a `TokenCorpus` join table where no rows means every
+corpus. The mapping is read per request rather than cached into the principal, whose
+60-second TTL would otherwise decide how stale a scope change could be. A key that should
+reach nothing is revoked, not mapped to an empty set. `X-Dexicon-Tenant` goes, and no header
+replaces it.
+
+**Why.** The tenant existed so that several agents could share one endpoint and see
+different material, chosen by header. It never could: `ApiToken.TenantId` is a single
+column, so `X-Dexicon-Tenant` can only agree with the token or return 400.
+
+A corpus-selecting header would have worked, and is the wrong shape anyway. A header lives
+in the client's configuration, so changing what an agent reaches means editing that file and
+restarting the client. What an agent should see changes more often than how it connects.
+
+A key is already a stable, authenticated, per-agent identifier that the client never has to
+be told about twice. Mapping the key to corpora server-side puts the control somewhere it
+can be changed while everything keeps running: tick a corpus in the UI, and the next
+`list_corpora` reflects it.
+
+**Scopes.** No key issued in the UI can carry `admin`. Of the four endpoints that required
+`ingest`, three are document-library actions that the UI performs and move to `admin`, which
+leaves `ingest` meaning one thing: this key may reindex the corpora it is mapped to, as
+`POST /api/corpora/{id}/reindex` or the MCP tool `index_refresh`. It is off unless ticked. No
+long-lived administrative credential then sits in an agent's configuration. This closes Q4.
+
+**The password itself.** Seeded from `DEXICON__ADMIN__PASSWORD`, or generated and logged
+once on first run where that is blank, which is what `DEXICON__BOOTSTRAP__TOKEN` already does.
+It is stored hashed in the catalogue rather than read from the environment on each request, so
+it can be changed in the UI without a restart.
+
+Failed attempts are throttled by a delay that doubles and is capped, counted globally rather
+than per caller: there is one password, so there is one thing to guess, and in a single
+container every caller arrives from the same gateway address anyway. A delay and not a
+lockout, because with one shared credential a lockout is a denial of service that anyone able
+to reach the port can inflict on the owner. The counter resets on success and lives in the
+`IMemoryCache` the auth middleware already holds principals in, so a restart clears it, and a
+restart needs host access that defeats this model regardless ([07](07-tenancy-auth.md)). Key
+authentication is not throttled: a 32-byte secret is not guessable, and throttling it would
+let anyone degrade agent traffic by presenting bad bearers.
+
+**The MCP surface varies by key.** A key without `ingest` is not shown `index_refresh`,
+rather than being refused when it calls it: an agent that can see a tool will call it, spend
+a turn on the error, and sometimes retry. `McpRequestFilters.ListToolsFilters` in SDK 2.2.0
+wraps the list-tools pipeline and can modify its response, and `tools/list` carries the
+bearer like every other request, so the principal is available when the list is built.
+
+**What it removes.** `Tenant`, `/api/tenants`, the Tenants panel, and
+`DEXICON__BOOTSTRAP__TENANT`. `Corpus.TenantId` and the `(TenantId, Name)` unique index,
+making corpus names globally unique, which is what an agent passing `corpus: ["books"]`
+already assumes. Today that assumption is wrong in a way nothing reports: `VisibleAsync`
+concatenates owned corpora ahead of shared ones and `ResolveReadableAsync` takes the first
+name match, so a tenant that owns `books` and is also granted someone else's `books` reaches
+only its own, and the shared one has no name that addresses it. `CorpusVisibility` and
+`CorpusGrant`, 27 references across five files under `src/` excluding migrations, plus the
+tests and the Access page that read them. The ownership branch of `ResolveWritableAsync`.
+`CorpusSummary.TenantId`, `.Owned` and `.Visibility`, with the `viewerTenant` parameter
+threaded through `Summarise` to compute `Owned`. The `tenant_id` Qdrant payload field,
+written on every point and read nowhere, which
+[D-04](#d-04-corpus-as-the-qdrant-tenant-key) already records as a plain field.
+
+**Rejected.** A corpus-selecting header, `X-Dexicon-Corpus` (works, and every change to what
+an agent reaches costs a client restart, which is the requirement). An identity or session
+header that the UI maps to corpora (the header is not authenticated, so anyone holding the
+key can claim any identity, making it a label rather than a control, and it still has to be
+configured in the client once). A named mapping that several keys point at, which is a shelf
+(an entity and two join tables to hold a list that each key can hold directly; additive
+later, and worth adding when keys start being kept in sync by hand). Keeping tenancy and
+deleting the header (about thirty lines and a documentation pass, and it leaves the
+requirement unmet). Binding a token to several tenants, which
+[D-10](#d-10-static-tokens-and-a-tenant-header) already describes (the same join table for a
+smaller change, but a tenant is also the write owner, so such a token writes in one tenant
+and not another). A global read-only-MCP setting in the UI (one switch cannot express a
+read-only research agent alongside a maintenance agent that may refresh, and it duplicates a
+control the key already carries). A cookie session for the password (reintroduces the CSRF
+surface that a bearer in `sessionStorage` does not have).
+
+**Assumes.** That what an agent should see changes more often than how that agent connects.
+That is the whole case for a server-side mapping over a header, and it is an observation
+about how the tool gets used rather than a measurement. If a key turns out to be mapped once
+and never edited, a header would have been sufficient and cheaper.
+
+**Cost, accepted.** A password is the first credential here that a human chooses, so it is
+the first that can be guessed. PBKDF2 at 600k iterations and the throttle above are what
+stand in the way, and what remains is that someone able to reach the port can hold the delay
+at its cap and make the owner wait that long to sign in. [07](07-tenancy-auth.md) defers rate
+limiting per token as something to add when someone reports a problem; that stays true of
+keys and stops being true of the password.
+
+A key with no mapping reads every corpus, and a leaked key reads whatever it is mapped to,
+where tenancy confined a leak to one tenant. For one operator on one machine that is the
+right trade, and the mapping is the mitigation when it stops being. Writes lose their owner:
+`ingest` alone governs reindexing. `POST /api/corpora/{id}/documents` stops being reachable
+with a key, so a script that uploads needs the admin session.
+
+**Consequence.** The corpus mapping is live and the tool list is not. The transport is
+stateless ([D-12](#d-12-stateless-streamable-http-mcp-2026-07-28)), with no session id and no
+server-to-client calls, so there is no `notifications/tools/list_changed` to send and a
+client lists on connect and caches. Ticking a corpus lands on the next call; ticking `ingest`
+lands when the client reconnects, and the UI has to say so or the difference reads as a
+defect. `ListToolsResult` carries `CacheScope` and `TimeToLive` in SDK 2.2.0, which would
+narrow that window if clients honour them, untested here.
+
+The password uses the same PBKDF2-HMAC-SHA256 at 600k iterations that tokens use, and is
+exchanged for a short-lived admin-scoped bearer held in `sessionStorage`, so the SPA keeps
+the bearer model it has and gains no cookie. [07](07-tenancy-auth.md) stops being about
+tenancy. The three guards are unchanged, because enforcement is still the `corpus_id` filter,
+the refusal to query on an empty scope, and `hnsw m=0`; they defend a smaller promise.
+`TenantIsolationTests` keeps the unknown-corpus error, the empty-scope throw and the
+unfiltered-query refusal, and loses its sharing cases.
+
+**Revisit if.** Keys start being kept in sync by hand, which is when a named mapping earns
+its entity. Or someone shares an endpoint across a team and wants a corpus only its owner can
+reindex, which is the protection this gives up.
+
+**Supersedes** [D-10](#d-10-static-tokens-and-a-tenant-header) in part: the credential format
+and its storage stand, the tenant binding and `X-Dexicon-Tenant` do not. **Amends**
+[D-04](#d-04-corpus-as-the-qdrant-tenant-key): `corpus_id` remains the `is_tenant` key, and
+the `tenant_id` payload field goes. **Amends** [D-11](#d-11-five-mcp-tools): five tools, four
+of which every key sees.
+
+---
+
 ## Open questions
 
 | # | Question | Needed by | Current lean |
@@ -798,5 +938,5 @@ decision.
 | ~~Q1~~ | ~~Licence — Apache-2.0 or MIT?~~ | — | **Resolved** — Apache-2.0, see [D-14](#d-14-licence) |
 | ~~Q2~~ | ~~Repository name and GHCR namespace~~ | — | **Resolved** — see [D-17](#d-17-name) |
 | ~~Q3~~ | ~~Default embedding model — `nomic-embed-text` or `embeddinggemma`?~~ | — | **Resolved** — `embeddinggemma`, which won both sweeps. See [benchmarks](benchmarks.md) |
-| Q4 | Should `index_refresh` require the `ingest` scope, or be admin-only? | M2 | `ingest` — an agent noticing a stale index and refreshing it is the point |
+| ~~Q4~~ | ~~Should `index_refresh` require the `ingest` scope, or be admin-only?~~ | — | **Resolved** — `ingest`, granted per key and off by default, with the tool hidden from keys that lack it. See [D-28](#d-28-an-admin-password-and-scoped-api-keys) |
 | Q5 | Git history indexing in v1? | M2 scope freeze | No. M5, and only on request |
