@@ -3,7 +3,7 @@
   "info": {
     "title": "Dexicon integration API",
     "description": "The endpoints meant for other software: search, assembled context, the corpora a key can reach, their indexing state, and reindexing. A key with the `search` scope reaches all of these except the reindex endpoint, which needs `ingest`. The rest of the REST surface serves the web UI and is described by the full document rather than this one.",
-    "version": "0.3"
+    "version": "0.4"
   },
   "paths": {
     "/api/search": {
@@ -386,6 +386,13 @@
           "chars": {
             "type": "integer",
             "format": "int32"
+          },
+          "partial": {
+            "type": "boolean"
+          },
+          "omittedChars": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },
@@ -524,6 +531,10 @@
             "type": "boolean"
           },
           "droppedHits": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "partialBlocks": {
             "type": "integer",
             "format": "int32"
           },

@@ -47,6 +47,28 @@ with no section here fails its release rather than publishing an undescribed one
   See [D-30](docs/decisions.md#d-30-skills-and-hooks-install-with-the-client-under-a-dexicon-prefix).
 
 ### Changed
+- **`POST /api/context` cuts its last block to fit rather than returning nothing.** Whole
+  chunks only meant a budget below the smallest matching chunk came back empty with hits
+  behind it, which reads as "nothing matched". Measured on a book corpus, one query's
+  smallest chunk was 2,109 characters, so budgets of 1,500 and 2,000 both returned nothing.
+  It also left the tail of every budget unspent, when the opening of the next result is the
+  cheapest way to see that a variant exists.
+
+  At most one block is cut, always the last, and only when at least 300 characters of it
+  would show. The cut falls on a line boundary, the passage says
+  `… N characters of this chunk not shown …`, and the citation reports the lines actually
+  present rather than the chunk's full span, so a citation is never a claim about text the
+  caller was not given.
+
+  `partialBlocks` on the response, and `partial` with `omittedChars` on each citation, carry
+  it as data. They are separate from `truncated`, which goes on meaning hits were dropped: a
+  budget that lost results and one that shortened them are different things to know. A chunk
+  with no line break inside the budget cannot be cut, so it is dropped as before and the note
+  names the figure that would have fitted.
+
+  The `UserPromptSubmit` hook's default budget drops from 4,000 to 2,000, since it no longer
+  has to clear a whole chunk. See
+  [D-29](docs/decisions.md#d-29-an-integration-document-and-retrieval-in-one-call).
 
 - **The skill is `dexicon-search`, and answers a direct invocation.** It moves to
   `skills/dexicon-search/`, so the slash command moves from `/dexicon` to

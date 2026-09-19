@@ -33,12 +33,12 @@ DEFAULT_MIN_PROMPT_CHARS = 25
 # far too much to paste into every prompt: measured against this project's own index, the
 # default returned 6,963 characters for one query.
 #
-# Nothing is truncated to fit, so a budget below the smallest matching chunk returns an
-# empty passage. On this project's book corpus the smallest chunk for one query measured
-# 2,109 characters, and 1,500 and 2,000 both came back with nothing. 4,000 leaves room for
-# that plus a header. Lower it for a corpus of small chunks; when it comes back quiet, the
-# server's note on stderr names the figure that would have fitted.
-DEFAULT_MAX_CHARS = 4000
+# 4,000 was chosen when a budget under the smallest matching chunk returned nothing at all,
+# so the floor had to clear one whole chunk. The server now cuts its last block to fit, so
+# the floor is gone and the only question left is how much to put in front of every prompt.
+# 2,000 is about five hundred tokens, and what does not fit arrives as the opening of the
+# next result with the rest disclosed.
+DEFAULT_MAX_CHARS = 2000
 
 # Each of these is named after the POST /api/context field it sets. An unset one is left out
 # of the request, so the server's default applies and the hook carries no copy to drift.
