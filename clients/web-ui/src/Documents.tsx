@@ -34,7 +34,8 @@ export function DocumentsView({
   const [lastUpload, setLastUpload] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const writable = corpora.filter((c) => c.owned);
+  // Everything the signed-in admin can see is writable; there is no owner to test.
+  const writable = corpora;
 
   const load = useCallback(async () => {
     try {

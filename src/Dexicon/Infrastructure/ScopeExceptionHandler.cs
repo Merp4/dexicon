@@ -34,9 +34,9 @@ public sealed class ScopeExceptionHandler(ILogger<ScopeExceptionHandler> log) : 
 
         if (status == 0) return false;   // not ours; let the default handler have it
 
-        // An unscoped query reaching the store is a BUG, and the one guard standing
-        // between a scoping mistake and a cross-tenant read. It is the only case here
-        // worth an error-level log.
+        // An unscoped query reaching the store is a bug, and the one guard standing between
+        // a scoping mistake and a key reading a corpus it was never mapped to. It is the
+        // only case here worth an error-level log.
         if (exception is UnscopedQueryException)
             log.LogError(exception, "A query reached the vector store with no corpus scope");
         else

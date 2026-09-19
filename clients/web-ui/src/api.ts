@@ -38,8 +38,9 @@ import {
   getApiCorporaByNameOrIdFiles,
   getApiDocuments,
   getApiDocumentsBySha256Text,
-  getApiTenants,
-  postApiTenants,
+  postApiSession,
+  deleteApiSession,
+  putApiTokensByIdCorpora,
   getApiEmbeddingModels,
   getApiEmbeddingProviders,
   getApiJobs,
@@ -65,8 +66,9 @@ import type {
   AttachDocumentRequest,
   CreateChunkSetRequest,
   CreateCorpusRequest,
-  CreateTenantRequest,
   CreateTokenRequest,
+  SignInRequest,
+  UpdateTokenCorporaRequest,
   JobSummary,
   ProbeModelRequest,
   SaveModelProfileRequest,
@@ -126,7 +128,6 @@ export type {
   ModelCapabilities,
   SearchHit,
   SearchResult,
-  TenantSummary as Tenant,
   TokenSummary,
   WorkspaceListing,
 } from './generated';
@@ -355,18 +356,40 @@ export const api = {
 
   listTokens: () => call(() => getApiTokens()),
 
-  createToken: (name: string, scopes: string[], expiresInDays?: number) =>
-    call(() => postApiTokens({ body: { name, scopes, expiresInDays } satisfies CreateTokenRequest })),
+  createToken: (name: string, scopes: string[], corpusIds?: string[], expiresInDays?: number) =>
+    call(() => postApiTokens({
+      body: { name, scopes, corpusIds, expiresInDays } satisfies CreateTokenRequest,
+    })),
 
   revokeToken: (id: string) => call(() => deleteApiTokensById({ path: { id } })),
 
   browse: (path?: string) =>
     call(() => getApiWorkspaces({ query: path ? { path } : {} })),
 
-  listTenants: () => call(() => getApiTenants()),
+  /**
+   * Exchange the admin password for a session bearer.
+   *
+   * The only anonymous call in the API. What comes back goes into the same
+   * sessionStorage slot a pasted token used to occupy, so everything downstream is
+   * unchanged and there is still no cookie.
+   */
+  signIn: (password: string) =>
+    call(() => postApiSession({ body: { password } satisfies SignInRequest })),
 
-  createTenant: (id: string, displayName?: string) =>
-    call(() => postApiTenants({ body: { id, displayName } satisfies CreateTenantRequest })),
+  signOut: () => call(() => deleteApiSession()),
+
+  /**
+   * Replace which corpora a key may reach. An empty list means every corpus.
+   *
+   * Read per request on the server, so this reaches a running agent on its next call
+   * without it reconnecting. That is the whole reason the mapping lives here rather than
+   * in a header in the agent's own configuration.
+   */
+  setTokenCorpora: (id: string, corpusIds: string[]) =>
+    call(() => putApiTokensByIdCorpora({
+      path: { id },
+      body: { corpusIds } satisfies UpdateTokenCorporaRequest,
+    })),
 };
 
 function authHeaders(): HeadersInit {
