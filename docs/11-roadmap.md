@@ -99,7 +99,7 @@ finding the matched text there.
 | Area | State |
 |---|---|
 | **MCP** | ✅ All five tools live. `tools/list` and `tools/call` verified working with no handshake; Claude Code 2.1.248 connected and searched. |
-| **Tenancy** | ✅ Tokens, scopes, scope resolution, corpus visibility, all three enforcement layers — and the isolation test, shipped in the same commit as the enforcement. |
+| **Tenancy** | ✅ Tokens, scopes, scope resolution, corpus visibility, all three enforcement layers — and the isolation test, shipped in the same commit as the enforcement. Tenancy and corpus visibility were removed in [D-28](decisions.md#d-28-an-admin-password-and-scoped-api-keys); the enforcement layers survived and now hold down key scoping. |
 | **Hybrid search** | ✅ Server-side RRF, sparse encoding with identifier splitting, filters, audible degradation. |
 | **Ingestion** | ✅ Language-aware chunking, PDF/DOCX/PPTX/EPUB/HTML extraction with page provenance, incremental refresh, per-file status, backoff. ✅ **Uploads**, with a content-addressed blob store and cached extraction — so one document can be attached to several corpora and chunked differently in each. |
 | **Documents** | ✅ Library view, drag-and-drop upload, attach-to-another-corpus, extracted-text inspection, per-corpus chunking editor. |
@@ -273,6 +273,7 @@ answer to "what about…" is "yes, here, later" rather than an argument.
 | ~~Additional embedding providers~~ | **Done.** OpenAI and Azure OpenAI ship; adding another is a registration. |
 | Persisted audit table | A deployment that needs an audit trail outliving container logs. |
 | ~~Integration OpenAPI document and `POST /api/context`~~ | **Done.** See [D-29](decisions.md#d-29-an-integration-document-and-retrieval-in-one-call) and [13](13-integration.md). |
+| Skill and hook installation from `install-mcp.ps1` | Shape fixed in [D-30](decisions.md#d-30-skills-and-hooks-install-with-the-client-under-a-dexicon-prefix). Starts when the manual copy into `.claude/skills/` costs someone a session. |
 
 ---
 

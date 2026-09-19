@@ -9,6 +9,18 @@ Semantic and keyword search over corpora someone has chosen to index: source tre
 manuals, books. Dexicon is a **remote MCP server**; if its tools are not present, it is not
 connected, and nothing in this file applies.
 
+## Invoked directly
+
+A slash invocation is a request to search now, not to read guidance. Take the text after the
+command as the query, run `search_index` over every visible corpus unless that text names
+one, and report the hits with their paths and line numbers. With nothing after it, run
+`list_corpora` and say what is indexed.
+
+The rest of this file is for deciding when to search without being asked, and does not need
+repeating back.
+
+## The tools
+
 Start with `list_corpora`. It returns the names you are allowed to pass, their sizes, and
 their state — and those names are the only legal values for `search_index`'s `corpus`.
 Guessing one wastes a call.

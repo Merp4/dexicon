@@ -122,7 +122,7 @@ the project's own bridge network.
 
 This is not fastidiousness. Qdrant's stock configuration has **no authentication**, so a
 published 6333 is an open read/write door to every corpus, and no amount of
-application-layer tenancy ([07](07-auth.md)) survives it. `QDRANT_API_KEY` is
+application-layer key scoping ([07](07-auth.md)) survives it. `QDRANT_API_KEY` is
 supported and recommended for anything beyond one trusted machine.
 
 It also avoids a collision that will otherwise happen on any developer machine: 6333, 6334

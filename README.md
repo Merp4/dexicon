@@ -68,7 +68,10 @@ Zed. `./scripts/install-mcp.ps1` generates these configurations.
   from a partially built index.
 - **Incremental refresh.** Content-hashed. A change to a chunker or extractor increments a
   version and reprocesses only the affected files.
-- **Multi-tenancy.** Tokens, scopes and per-corpus visibility, enforced at three layers.
+- **An admin password, and keys scoped to corpora.** The password is the only route to
+  administration and is never held by an agent. Each API key reaches the corpora ticked for
+  it in the UI, re-read per request, so changing what an agent can see does not mean
+  restarting it. Enforced at three layers.
 - **State reporting.** A partially built index, a skipped file and an empty corpus are each
   distinguishable from a search that returns no results.
 - **An HTTP API for scripts.** `POST /api/context` returns one assembled, cited passage
@@ -78,7 +81,7 @@ Zed. `./scripts/install-mcp.ps1` generates these configurations.
 
 ## Status
 
-Pre-1.0. The current release is [`0.2.2`](CHANGELOG.md), published as
+Pre-1.0. The current release is [`0.4.0`](CHANGELOG.md), published as
 `ghcr.io/merp4/dexicon`.
 
 Default settings are derived from measurement: 81 retrieval configurations evaluated over
@@ -114,7 +117,7 @@ Begin with [01 — Overview](docs/01-overview.md) for scope and non-goals, or
 [12 — Connecting an agent](docs/12-clients.md) for client configuration.
 
 The numbered documents in [docs/](docs/) cover architecture, the data model, ingestion,
-search, the MCP surface, tenancy, the UI, deployment, security and
+search, the MCP surface, authentication, the UI, deployment, security and
 [the integration API](docs/13-integration.md).
 [Decisions](docs/decisions.md) records design choices and the alternatives considered,
 [benchmarks](docs/benchmarks.md) the evaluations behind the default settings,

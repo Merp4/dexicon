@@ -1046,6 +1046,103 @@ stay with the password. Not decided here.
 
 ---
 
+### D-30 Skills and hooks install with the client, under a dexicon prefix
+
+**Decision.** `scripts/install-mcp.ps1` becomes the one entry point for everything Dexicon
+writes into someone else's configuration: the MCP registration it already does, the agent
+skill, and two hooks. It gains `-What skill|hooks|mcp|all`, an upgrade path and an
+uninstall. Every artefact it writes is named `dexicon-`: the skill directory becomes
+`skills/dexicon-search/`, and the hooks are `dexicon-corpora.sh` and `dexicon-context.sh`.
+The two hooks are `SessionStart`, which announces the corpora, and `UserPromptSubmit`,
+which retrieves a passage for the prompt. Both read their settings from one file the
+installer writes. `PostToolUse` reindexing is rejected.
+
+**Why the installer owns them.** The skill is written and good, and nothing installs it.
+[12](12-clients.md) says to copy `skills/dexicon/SKILL.md` into `.claude/skills/` by hand,
+the README does not mention it at all, and nothing can tell whether the copy in a given
+directory is current. Connecting an agent gives it the tools; the skill is what makes it
+reach for them, so an install path that stops at MCP registration delivers the half that
+does nothing on its own.
+
+**Why the prefix.** `~/.claude/skills/` and `~/.claude/hooks/` are shared namespaces owned
+by the user, not by us. A bare `dexicon` skill is unambiguous only until someone installs a
+second tool with the same idea, and the prefix makes uninstall a matter of naming what we
+own rather than guessing. It is the settled convention among tools that install into these
+directories; [rtk](https://github.com/rtk-ai/rtk) is one worked example.
+
+**The directory name is the slash command.** A skill is user-invocable as `/<directory>`
+unless its front matter says otherwise, so the rename moves `/dexicon` to `/dexicon-search`,
+and that is the visible cost of the prefix. It also exposes something the skill does not
+currently do: invoked directly it loads guidance written for the model to read, and then
+stops. The installed skill takes an argument, so `/dexicon-search how are refresh tokens
+revoked` runs the search and reports the hits, while the guidance stays where it is for the
+model to pick up on its own. Neither `disable-model-invocation` nor `user-invocable` is set,
+so both routes stay open.
+
+**The hooks talk to a server, not a local binary.** Dexicon runs in a container, so a hook
+speaks HTTP to the endpoints
+[D-29](#d-29-an-integration-document-and-retrieval-in-one-call) published for exactly this
+caller, `POST /api/context` and `GET /api/corpora`, and needs a bearer token to do it. Three
+things follow. The token is a `search`-scoped key under
+[D-28](#d-28-an-admin-password-and-scoped-api-keys), never the admin password, so a hook
+cannot reindex or delete anything. It does not go in the hook script, which lives in a
+directory the user reads and backs up. And the call costs real time: measured against this
+project's own index of 15,213 chunks, `POST /api/context` returned in 738 ms warm, while a
+cold search on the same instance took 5,028 ms.
+
+**Configuration is one file, and it is the file that holds the token.** The installer writes
+`~/.claude/dexicon-hooks.env`; both hooks source it, and it is the only thing either of them
+reads. `DEXICON_URL`, `DEXICON_TOKEN` and a timeout cover the connection. `POST /api/context`
+already takes the knobs worth turning, so the file names them after the fields rather than
+inventing a second vocabulary: `DEXICON_CONTEXT_MAX_CHARS`, `DEXICON_CONTEXT_LIMIT`,
+`DEXICON_CONTEXT_MODE`, `DEXICON_CONTEXT_NEIGHBOURS`, and `DEXICON_CONTEXT_CORPUS`, which
+points the per-prompt hook at one corpus while the agent's own searches still reach
+everything. An unset key is not sent at all, so the server's default applies and the hook
+does not carry a second copy of it to drift from. Editing that file is the whole
+configuration story: nothing to change inside a script the installer overwrites on upgrade.
+
+**Why `SessionStart` is the safe one and `UserPromptSubmit` is opt-in.** `SessionStart`
+fires once and lists corpora, which is a catalogue read with no embedding in it. It answers
+the failure this project keeps hitting, an agent that does not search because it does not
+know what is indexed, at a cost paid once per session. `UserPromptSubmit` fires on every
+prompt and runs a hybrid search, so the cold figure above lands on the user's first message
+of the day. It is worth having and it is not worth having on by default.
+
+**Fail open, and never exit 2.** On `UserPromptSubmit`, exit code 2 blocks the prompt **and
+erases it**, so a hook that failed loudly would destroy what the user typed because the
+search index was unreachable. Every path exits 0: no `curl`, no `jq`, no configuration file,
+a refused or timed-out request, a 401, malformed JSON. A short connect timeout is part of
+the contract, not a nicety, because the failure being guarded against is a server that
+accepts the connection and then does not answer. Plain stdout is added as context on both
+events, so the hooks emit text and do not construct `hookSpecificOutput` themselves.
+
+**Versioned artefacts.** Each installed file carries `# dexicon-hook-version: N` on its
+second line, and the skill carries the same in its front matter, so the installer can tell
+an old copy from a current one, and either of those from a file the user has edited and
+wants left alone. Without it, upgrading means overwriting someone's changes or asking a
+question the installer has no way to answer.
+
+**Rejected.** `PostToolUse` reindexing after `Edit` and `Write`: the server already refreshes
+on a schedule, so this narrows a staleness window rather than closing a gap, and it makes
+every file the agent touches queue work on a machine that may be embedding already. A hook
+that rewrites or denies a tool call: a search index that silently redirected `Grep` to
+`search_index` would be answering a different question from the one asked, and the skill
+already says when each is right. Bundling the token into the hook script. A configuration
+file per hook, or settings edited inside the scripts. A bare `dexicon` skill name (above).
+Shipping hooks for every client in [12](12-clients.md): the hook APIs differ per client and
+each one is a maintenance commitment, so Claude Code first, and a second client only when
+someone asks.
+
+**Revisit if.** The `UserPromptSubmit` hook proves useful enough to default on, which needs
+a relevance floor Dexicon does not currently expose: `POST /api/context` reports `usedChars`,
+`truncated` and `droppedHits`, but no score, so a hook cannot yet tell a good passage from
+the best of a bad set. Fused RRF rank is ordering, not magnitude, so the figure would have to
+be chosen and measured the way the chunk ratio was in
+[D-27](#d-27-a-chunk-budget-is-characters-and-the-ratio-is-measured). A `minScore` parameter,
+or returning the fused score, is the smaller change that would make the default defensible.
+
+---
+
 ## Open questions
 
 | # | Question | Needed by | Current lean |
