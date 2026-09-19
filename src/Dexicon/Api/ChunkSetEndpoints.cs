@@ -1,12 +1,12 @@
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
-using Microsoft.Extensions.Options;
 using Dexicon.Core.Embedding;
 using Dexicon.Core.Indexing;
 using Dexicon.Core.Vectors;
 using Dexicon.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Dexicon.Api;
 
@@ -33,10 +33,10 @@ public static class ChunkSetEndpoints
             CatalogDbContext db, IOptions<DexiconOptions> opts, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
-            var tenant = rc.RequireTenant();
-            var scope = await scopes.ResolveReadableAsync(tenant, [nameOrId], ct);
+            var principal = rc.RequirePrincipal();
+            var scope = await scopes.ResolveReadableAsync(principal, [nameOrId], ct);
 
-            var summary = await CorpusEndpoints.Summarise(db, scope.Targets[0].Corpus, tenant, opts.Value.Indexing, ct);
+            var summary = await CorpusEndpoints.Summarise(db, scope.Targets[0].Corpus, opts.Value.Indexing, ct);
             return Results.Ok(summary.ChunkSets);
         }).Produces<IReadOnlyList<ChunkSetSummary>>();
 
@@ -45,8 +45,8 @@ public static class ChunkSetEndpoints
             IndexJobQueue queue, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var tenant = rc.RequireTenant();
-            var corpus = await scopes.ResolveWritableAsync(tenant, nameOrId, ct);
+            var principal = rc.RequirePrincipal();
+            var corpus = await scopes.ResolveWritableAsync(principal, nameOrId, ct);
 
             if (string.IsNullOrWhiteSpace(body.Name))
                 return Results.Problem(title: "A chunk set name is required", statusCode: 400);
@@ -144,8 +144,8 @@ public static class ChunkSetEndpoints
             CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var tenant = rc.RequireTenant();
-            var corpus = await scopes.ResolveWritableAsync(tenant, nameOrId, ct);
+            var principal = rc.RequirePrincipal();
+            var corpus = await scopes.ResolveWritableAsync(principal, nameOrId, ct);
 
             var set = await FindSet(db, corpus, setName, ct);
             if (set is null) return NotFound(corpus, setName);
@@ -189,8 +189,8 @@ public static class ChunkSetEndpoints
             ScopeResolver scopes, CatalogDbContext db, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var tenant = rc.RequireTenant();
-            var corpus = await scopes.ResolveWritableAsync(tenant, nameOrId, ct);
+            var principal = rc.RequirePrincipal();
+            var corpus = await scopes.ResolveWritableAsync(principal, nameOrId, ct);
 
             await db.Entry(corpus).Collection(c => c.ChunkSets).LoadAsync(ct);
             var set = corpus.ChunkSets.FirstOrDefault(s =>
@@ -223,8 +223,8 @@ public static class ChunkSetEndpoints
             ScopeResolver scopes, CatalogDbContext db, IVectorStore vectors, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var tenant = rc.RequireTenant();
-            var corpus = await scopes.ResolveWritableAsync(tenant, nameOrId, ct);
+            var principal = rc.RequirePrincipal();
+            var corpus = await scopes.ResolveWritableAsync(principal, nameOrId, ct);
 
             await db.Entry(corpus).Collection(c => c.ChunkSets).LoadAsync(ct);
             var set = corpus.ChunkSets.FirstOrDefault(s =>

@@ -64,7 +64,7 @@ public static class DocumentEndpoints
             var bodySize = http.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>();
             if (bodySize is { IsReadOnly: false }) bodySize.MaxRequestBodySize = null;
 
-            var corpus = await scopes.ResolveWritableAsync(rc.RequireTenant(), nameOrId, ct);
+            var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
             var form = await http.ReadFormAsync(ct);
             if (form.Files.Count == 0)
                 return Results.Problem(title: "No files in the request", statusCode: 400);
@@ -111,7 +111,7 @@ public static class DocumentEndpoints
             DocumentService documents, CatalogDbContext db, IndexJobQueue queue, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Ingest) is { } denied) return denied;
-            var corpus = await scopes.ResolveWritableAsync(rc.RequireTenant(), nameOrId, ct);
+            var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
 
             var blob = await db.Blobs.FirstOrDefaultAsync(b => b.Sha256 == body.Sha256, ct);
             if (blob is null) return Results.Problem(title: "No such document", statusCode: 404);
@@ -136,7 +136,7 @@ public static class DocumentEndpoints
             DocumentService documents, IVectorStoreCleanup cleanup, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Ingest) is { } denied) return denied;
-            var corpus = await scopes.ResolveWritableAsync(rc.RequireTenant(), nameOrId, ct);
+            var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
 
             var removed = await cleanup.RemoveAttachmentAsync(corpus, fileId, documents, ct);
             return removed ? Results.NoContent() : Results.NotFound();
@@ -148,7 +148,7 @@ public static class DocumentEndpoints
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
 
-            var visible = await scopes.VisibleAsync(rc.RequireTenant(), ct);   // includes ChunkSets
+            var visible = await scopes.VisibleAsync(rc.RequirePrincipal(), ct);   // includes ChunkSets
             var corpusById = visible.ToDictionary(c => c.Id, StringComparer.Ordinal);
             var corpusIds = corpusById.Keys.ToList();
 
@@ -215,7 +215,7 @@ public static class DocumentEndpoints
 
             // Authorisation is by attachment: you can read the text of a document only
             // if it is attached to a corpus you can see. A bare hash grants nothing.
-            var visible = (await scopes.VisibleAsync(rc.RequireTenant(), ct)).Select(c => c.Id).ToList();
+            var visible = (await scopes.VisibleAsync(rc.RequirePrincipal(), ct)).Select(c => c.Id).ToList();
             var attached = await db.Files
                 .Include(f => f.Source)
                 .AnyAsync(f => f.BlobSha256 == sha256 && visible.Contains(f.Source!.CorpusId), ct);

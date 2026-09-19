@@ -23,15 +23,26 @@ public sealed class ChunkRecommendationTests
 {
     private static ChunkSet Set(int size) => new()
     {
-        Id = "s", CorpusId = "c", Name = "default", ChunkSize = size, ChunkOverlap = 100,
-        BoundaryMode = "blank-line", EmbeddingProvider = "ollama",
-        EmbeddingModel = "m", EmbeddingDimensions = 768, CollectionName = "c",
+        Id = "s",
+        CorpusId = "c",
+        Name = "default",
+        ChunkSize = size,
+        ChunkOverlap = 100,
+        BoundaryMode = "blank-line",
+        EmbeddingProvider = "ollama",
+        EmbeddingModel = "m",
+        EmbeddingDimensions = 768,
+        CollectionName = "c",
     };
 
     private static EmbeddingModelMeasurement Measured(int context, double ratio) => new()
     {
-        Provider = "ollama", Model = "m", ContextTokens = context,
-        CharsPerToken = ratio, Dimensions = 768, MeasuredUtc = DateTime.UtcNow,
+        Provider = "ollama",
+        Model = "m",
+        ContextTokens = context,
+        CharsPerToken = ratio,
+        Dimensions = 768,
+        MeasuredUtc = DateTime.UtcNow,
     };
 
     [Fact]

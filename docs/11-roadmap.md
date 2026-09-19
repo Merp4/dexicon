@@ -58,7 +58,9 @@ back into the affected document. The spike code is deleted.
 **Done when:** *open the file at the line and find the matched text there.* Verified: a
 corpus over `docs/` indexed 12 files into 148 chunks, and a hybrid search for
 *"how does tenant isolation get enforced"* returned `07-tenancy-auth.md:22-40`, the
-location of `### Tenant` in the file.
+location of `### Tenant` in the file as it stood then. Both the file and the heading were
+renamed when [D-28](decisions.md#d-28-an-admin-password-and-scoped-api-keys) removed
+tenancy; the measurement is left as it was taken.
 
 Two defects were found by running it rather than by reading it, and both are the kind that
 only surface in use:
@@ -178,7 +180,8 @@ without asking a question.* That has not been attempted, so M2 is not closed.
   Verified by connecting Claude Code and using it for real work for a day.
 - **Tenancy**: tenants, tokens, scope resolution, corpus visibility, all three enforcement
   layers, and the isolation test, which lands in the same commit as the enforcement
-  ([07](07-tenancy-auth.md)).
+  (07). Tenancy was removed in D-28; the three enforcement layers and their test
+  survived it and now hold down key scoping ([07](07-auth.md)).
 - **Hybrid search**: sparse encoding with identifier splitting, RRF fusion, filters,
   degradation behaviour ([05](05-search.md)).
 - **Ingestion**: language-aware chunking, all document loaders, uploads, blob store,

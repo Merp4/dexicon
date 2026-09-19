@@ -33,7 +33,6 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
             .UseSqlite(_connection).Options);
         await _db.Database.EnsureCreatedAsync();
 
-        _db.Tenants.Add(new Tenant { Id = "t", DisplayName = "t", CreatedUtc = DateTime.UtcNow });
         await _db.SaveChangesAsync();
 
         var options = Options.Create(new DexiconOptions { Storage = new StorageOptions { DataPath = _dataPath } });
@@ -53,9 +52,7 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         var c = new Corpus
         {
             Id = $"id-{name}",
-            TenantId = "t",
             Name = name,
-            Visibility = CorpusVisibility.Private,
             State = CorpusState.Ready,
             CreatedUtc = DateTime.UtcNow,
         };
@@ -67,20 +64,20 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
 
     private static ChunkSet AddSet(Corpus c, string name, int chunkSize, int overlap,
         string boundary = "blank-line", bool isDefault = false, string model = "nomic-embed-text") => new()
-    {
-        Id = $"set-{c.Id}-{name}",
-        CorpusId = c.Id,
-        Name = name,
-        EmbeddingModel = model,
-        EmbeddingDimensions = 768,
-        CollectionName = $"dexicon__{model}__768",
-        ChunkSize = chunkSize,
-        ChunkOverlap = overlap,
-        BoundaryMode = boundary,
-        IsDefault = isDefault,
-        State = CorpusState.Ready,
-        CreatedUtc = DateTime.UtcNow,
-    };
+        {
+            Id = $"set-{c.Id}-{name}",
+            CorpusId = c.Id,
+            Name = name,
+            EmbeddingModel = model,
+            EmbeddingDimensions = 768,
+            CollectionName = $"dexicon__{model}__768",
+            ChunkSize = chunkSize,
+            ChunkOverlap = overlap,
+            BoundaryMode = boundary,
+            IsDefault = isDefault,
+            State = CorpusState.Ready,
+            CreatedUtc = DateTime.UtcNow,
+        };
 
     /// <summary>The corpus's default set: what an unqualified search reaches.</summary>
     private static ChunkSet DefaultSet(Corpus c) => c.ChunkSets.First(s => s.IsDefault);

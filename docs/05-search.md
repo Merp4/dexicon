@@ -10,7 +10,7 @@ search(query, scope, mode, limit, filters)
 - **`scope`** — one or more corpus names or ids. Resolved against the caller's visible set.
   **Never optional in effect:** if the caller names nothing, the scope becomes every corpus
   they can see; if that set is empty, the request is an error, not an empty search. See
-  [07](07-tenancy-auth.md).
+  [07](07-auth.md).
 - **`mode`** — `hybrid` (default) | `semantic` | `keyword`.
 - **`limit`** — 1–50, default 10.
 - **`filters`** — optional: `source`, `path_prefix`, `language`, `symbol`, `media_type`.
@@ -220,7 +220,7 @@ file faster anyway; this path exists for uploads and for agents without filesyst
 |---|---|
 | Query embedding (`nomic-embed-text`, warm) | 15–40 ms |
 | Sparse encoding (in-process) | < 1 ms |
-| Qdrant hybrid query, 400k points, tenant-indexed | 20–80 ms |
+| Qdrant hybrid query, 400k points, corpus-indexed | 20–80 ms |
 | Total p95 | **< 400 ms** |
 
 A cold Ollama, with the model not resident, adds seconds. Readiness on `/healthz` reports whether

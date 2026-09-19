@@ -17,13 +17,10 @@ public sealed record CreateCorpusRequest(
     int? ChunkSize = null,
     int? ChunkOverlap = null,
     string? BoundaryMode = null,
-    string? Visibility = null,
     string? WorkspacePath = null);
 
 public sealed record UpdateCorpusRequest(
     string? Description = null,
-    string? Visibility = null,
-    IReadOnlyList<string>? GrantTenantIds = null,
     /// <summary>
     /// Filters every source inherits. Sent, it REPLACES all four: they are edited together
     /// on one form, and a partial update would need a way to say "leave that one alone"
@@ -131,8 +128,6 @@ public sealed record EmbeddingModelList(
     IReadOnlyList<EmbeddingModelInfo> Models, string? Note);
 
 public sealed record EmbeddingProviderList(string Default, IReadOnlyList<EmbeddingProviderInfo> Providers);
-
-public sealed record TenantSummary(string Id, string DisplayName, DateTime CreatedUtc, bool Disabled);
 
 public sealed record HealthDependency(bool Reachable, string Endpoint);
 
@@ -242,9 +237,6 @@ public sealed record CorpusSummary(
     string Id,
     string Name,
     string? Description,
-    string TenantId,
-    bool Owned,
-    string Visibility,
     string State,
     DateTime CreatedUtc,
     DateTime? LastIndexedUtc,
@@ -396,13 +388,29 @@ public sealed record SearchApiRequest(
     /// </summary>
     bool? DistinctTitles = null);
 
-public sealed record CreateTenantRequest(string Id, string? DisplayName = null);
+public sealed record CreateTokenRequest(
+    string Name,
+    IReadOnlyList<string>? Scopes = null,
+    int? ExpiresInDays = null,
+    /// <summary>
+    /// Corpus ids this key may reach. Omitted or empty means every corpus, which is what a
+    /// single-user install wants. Editable afterwards, and read per request, so a change
+    /// here reaches the agent on its next call without it reconnecting.
+    /// </summary>
+    IReadOnlyList<string>? CorpusIds = null);
 
-public sealed record CreateTokenRequest(string Name, IReadOnlyList<string>? Scopes = null, int? ExpiresInDays = null);
+/// <summary>Replaces a key's corpus mapping outright. An empty list means every corpus.</summary>
+public sealed record UpdateTokenCorporaRequest(IReadOnlyList<string> CorpusIds);
 
 public sealed record TokenSummary(
-    string Id, string Name, string TenantId, string Scopes,
-    DateTime CreatedUtc, DateTime? LastUsedUtc, DateTime? ExpiresUtc, DateTime? RevokedUtc);
+    string Id, string Name, string Scopes,
+    DateTime CreatedUtc, DateTime? LastUsedUtc, DateTime? ExpiresUtc, DateTime? RevokedUtc,
+    /// <summary>Empty means every corpus, which is not the same as none.</summary>
+    IReadOnlyList<string> CorpusIds);
+
+public sealed record SignInRequest(string Password);
+
+public sealed record SignInResponse(string Token, DateTime ExpiresUtc);
 
 public sealed record CreatedTokenResponse(TokenSummary Token, string Secret, string McpAddCommand);
 
@@ -483,7 +491,8 @@ public static class Mapping
             j.Error, j.QueuedUtc, j.StartedUtc, j.FinishedUtc);
 
     public static TokenSummary ToSummary(this ApiToken t) =>
-        new(t.Id, t.Name, t.TenantId, t.Scopes, t.CreatedUtc, t.LastUsedUtc, t.ExpiresUtc, t.RevokedUtc);
+        new(t.Id, t.Name, t.Scopes, t.CreatedUtc, t.LastUsedUtc, t.ExpiresUtc, t.RevokedUtc,
+            [.. t.Corpora.Select(c => c.CorpusId).Order(StringComparer.Ordinal)]);
 
     public static SearchMode ParseMode(string? mode) => mode?.ToLowerInvariant() switch
     {

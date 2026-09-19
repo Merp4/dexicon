@@ -17,7 +17,7 @@ public sealed class ScopeResolutionException(string message, IReadOnlyList<strin
 
 /// <summary>
 /// One corpus in a resolved scope, together with the chunk set the caller will actually
-/// search. The corpus is the authorisation and tenancy unit; the set is the vector space.
+/// search. The corpus is the authorisation unit; the set is the vector space.
 /// </summary>
 public sealed record ScopedCorpus(Corpus Corpus, ChunkSet Set)
 {
@@ -35,9 +35,9 @@ public sealed record ResolvedScope(IReadOnlyList<ScopedCorpus> Targets)
 
     /// <summary>
     /// A collection is one vector space, so a scope spanning two embedding models is two
-    /// queries. Grouped by the CHUNK SET's collection: with sets, two corpora can share a
-    /// model while one of them is mid-migration to another, and each is searched in the
-    /// space its own set actually lives in.
+    /// queries. Grouped by the chunk set's collection: two corpora can share a model while
+    /// one of them is mid-migration to another, and each is searched in the space its own
+    /// set actually lives in.
     /// </summary>
     public IEnumerable<IGrouping<string, ScopedCorpus>> ByCollection =>
         Targets.GroupBy(t => t.Set.CollectionName, StringComparer.Ordinal);
@@ -45,8 +45,8 @@ public sealed record ResolvedScope(IReadOnlyList<ScopedCorpus> Targets)
 
 /// <summary>
 /// The authorization boundary. One function, one place, called by every read path.
-/// See docs/07-tenancy-auth.md. This is the application-level guard; the repository
-/// refuses an unfiltered query, and the storage layout makes one useless.
+/// See docs/07-auth.md. This is the application-level guard; the repository refuses an
+/// unfiltered query, and the storage layout makes one useless.
 /// </summary>
 public sealed class ScopeResolver(CatalogDbContext db)
 {
@@ -98,9 +98,9 @@ public sealed class ScopeResolver(CatalogDbContext db)
     }
 
     public async Task<ResolvedScope> ResolveReadableAsync(
-        string tenantId, IReadOnlyList<string>? requestedNamesOrIds, CancellationToken ct = default)
+        Principal principal, IReadOnlyList<string>? requestedNamesOrIds, CancellationToken ct = default)
     {
-        var visible = await VisibleAsync(tenantId, ct);
+        var visible = await VisibleAsync(principal, ct);
 
         if (requestedNamesOrIds is { Count: > 0 })
         {
@@ -145,8 +145,8 @@ public sealed class ScopeResolver(CatalogDbContext db)
                 throw new ScopeResolutionException(
                     $"Unknown corpus {string.Join(", ", unknown.Select(u => $"'{u}'"))}. " +
                     (names.Count == 0
-                        ? $"Tenant '{tenantId}' can see no corpora at all."
-                        : $"Visible corpora: {string.Join(", ", names)}."),
+                        ? $"Key '{principal.Name}' can reach no corpora at all."
+                        : $"Corpora this key can reach: {string.Join(", ", names)}."),
                     names);
             }
 
@@ -155,10 +155,10 @@ public sealed class ScopeResolver(CatalogDbContext db)
 
         if (visible.Count == 0)
             throw new ScopeResolutionException(
-                $"No corpora are visible to tenant '{tenantId}'. Create one in the UI, " +
-                "or check the X-Dexicon-Tenant header.", []);
+                $"Key '{principal.Name}' can reach no corpora. Create one in the UI, or check " +
+                "which corpora this key is mapped to under Access.", []);
 
-        // Unqualified scope is every visible corpus at its DEFAULT set. A corpus whose
+        // Unqualified scope is every reachable corpus at its DEFAULT set. A corpus whose
         // replacement set is still backfilling keeps serving from the live one.
         var all = visible
             .Select(c => (Corpus: c, Set: DefaultSetOf(c)))
@@ -168,7 +168,7 @@ public sealed class ScopeResolver(CatalogDbContext db)
 
         if (all.Count == 0)
             throw new ScopeResolutionException(
-                $"Tenant '{tenantId}' can see {visible.Count} " +
+                $"Key '{principal.Name}' can reach {visible.Count} " +
                 $"{(visible.Count == 1 ? "corpus" : "corpora")}, but none has a chunk set. " +
                 "Nothing is indexed yet.", visible.Select(c => c.Name).ToList());
 
@@ -194,46 +194,58 @@ public sealed class ScopeResolver(CatalogDbContext db)
         ?? c.ChunkSets.OrderBy(s => s.Id, StringComparer.Ordinal).FirstOrDefault();
 
     /// <summary>
-    /// Owned by the tenant, plus shared corpora granted to it, plus shared corpora with
-    /// no grants at all (which means "shared with everyone").
+    /// The corpora this principal may reach.
+    ///
+    /// An admin session reaches everything: it is the operator, and the UI has to list a
+    /// corpus in order to map a key to it. A key reaches the corpora mapped to it, or
+    /// everything when nothing is mapped, which is what keeps a single-user install from
+    /// having to configure anything.
+    ///
+    /// Read from the catalogue on every call. Caching this on the principal would put it
+    /// behind that cache's 60-second TTL, and an operator who ticks a corpus and watches an
+    /// agent keep missing it for a minute concludes the feature is broken.
     /// </summary>
-    public async Task<List<Corpus>> VisibleAsync(string tenantId, CancellationToken ct = default)
+    public async Task<List<Corpus>> VisibleAsync(Principal principal, CancellationToken ct = default)
     {
-        var owned = await db.Corpora
-            .Include(c => c.ChunkSets)
-            .Where(c => c.TenantId == tenantId).ToListAsync(ct);
+        if (principal.Has(Scopes.Admin))
+            return await db.Corpora.Include(c => c.ChunkSets)
+                .OrderBy(c => c.Name).ToListAsync(ct);
 
-        var shared = await db.Corpora
-            .Include(c => c.Grants)
-            .Include(c => c.ChunkSets)
-            .Where(c => c.TenantId != tenantId && c.Visibility == CorpusVisibility.Shared)
+        var mapped = await db.TokenCorpora
+            .Where(tc => tc.TokenId == principal.TokenId)
+            .Select(tc => tc.CorpusId)
             .ToListAsync(ct);
 
-        var readable = shared.Where(c => c.Grants.Count == 0 || c.Grants.Exists(g => g.TenantId == tenantId));
+        var q = db.Corpora.Include(c => c.ChunkSets).AsQueryable();
+        if (mapped.Count > 0) q = q.Where(c => mapped.Contains(c.Id));
 
-        return owned.Concat(readable).OrderBy(c => c.Name, StringComparer.Ordinal).ToList();
+        return await q.OrderBy(c => c.Name).ToListAsync(ct);
     }
 
     /// <summary>
-    /// Writes are always owner-only, whatever the visibility. Sharing is read-only
-    /// sharing and there is no setting that changes that.
+    /// The corpus a write targets, resolved within what the caller can reach.
+    ///
+    /// There is no owner to check any more, so this narrows and never widens: the scope
+    /// guard at the endpoint decides whether the caller may write at all, and this decides
+    /// which corpus they meant. Both are required, and neither substitutes for the other.
     /// </summary>
-    public async Task<Corpus> ResolveWritableAsync(string tenantId, string nameOrId, CancellationToken ct = default)
+    public async Task<Corpus> ResolveWritableAsync(
+        Principal principal, string nameOrId, CancellationToken ct = default)
     {
-        var corpus = await db.Corpora.FirstOrDefaultAsync(
-            c => c.TenantId == tenantId && (c.Name == nameOrId || c.Id == nameOrId), ct);
+        var visible = await VisibleAsync(principal, ct);
+
+        var corpus = visible.FirstOrDefault(c =>
+            string.Equals(c.Name, nameOrId, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(c.Id, nameOrId, StringComparison.Ordinal));
 
         if (corpus is not null) return corpus;
 
-        var visible = await VisibleAsync(tenantId, ct);
-        var sharedMatch = visible.FirstOrDefault(c =>
-            string.Equals(c.Name, nameOrId, StringComparison.OrdinalIgnoreCase) || c.Id == nameOrId);
-
+        var names = visible.Select(c => c.Name).Order(StringComparer.Ordinal).ToList();
         throw new ScopeResolutionException(
-            sharedMatch is not null
-                ? $"Corpus '{nameOrId}' is shared with tenant '{tenantId}' but owned by '{sharedMatch.TenantId}'. " +
-                  "Sharing grants read access only."
-                : $"Tenant '{tenantId}' owns no corpus named '{nameOrId}'.",
-            visible.Select(c => c.Name).ToList());
+            $"No corpus named '{nameOrId}' is reachable by key '{principal.Name}'. " +
+            (names.Count == 0
+                ? "It is mapped to no corpora that exist."
+                : $"Corpora this key can reach: {string.Join(", ", names)}."),
+            names);
     }
 }

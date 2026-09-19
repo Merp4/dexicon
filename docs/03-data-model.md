@@ -15,8 +15,8 @@ catalogue is authoritative and Qdrant is a derived view that can be rebuilt from
 
 | Concept | Definition |
 |---|---|
-| **Tenant** | The isolation boundary. A slug (`^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$`). Every request resolves to exactly one. |
-| **Corpus** | A named, searchable body of content owned by one tenant. The unit of visibility, of tenancy, and of search scope. |
+| **Key** | An agent's credential. Carries `search` and optionally `ingest`, never `admin`, and maps to the corpora it may reach. |
+| **Corpus** | A named, searchable body of content. The unit of reindexing and of search scope. It has no owner: which keys reach it is a property of those keys. |
 | **Chunk set** | One way of cutting and embedding a corpus: a model, a vector space, a chunking strategy. A corpus carries one or more, over the same documents. Addressed as `corpus:set`. |
 | **Source** | Where a corpus gets its content: a `workspace` mount path, or `upload` (files pushed through the UI/API). A corpus has one or more. |
 | **Blob** | An uploaded document's bytes, content-addressed by SHA-256. Carries no name. |
@@ -52,11 +52,13 @@ indexed in one set and still pending in another.
 
 ```sql
 -- Identity ------------------------------------------------------------------
-CREATE TABLE tenants (
-  id            TEXT PRIMARY KEY,           -- slug
-  display_name  TEXT NOT NULL,
-  created_utc   TEXT NOT NULL,
-  disabled      INTEGER NOT NULL DEFAULT 0
+-- One row. The only route to the admin scope, so nothing that can delete a corpus
+-- ever lives in an agent's configuration file. See 07-auth.md.
+CREATE TABLE admin_credential (
+  id             TEXT PRIMARY KEY,          -- always 'admin'
+  password_hash  BLOB NOT NULL,             -- see 10-security-secrets.md
+  password_salt  BLOB NOT NULL,
+  updated_utc    TEXT NOT NULL
 );
 
 CREATE TABLE tokens (
@@ -64,26 +66,35 @@ CREATE TABLE tokens (
   name          TEXT NOT NULL,
   token_hash    BLOB NOT NULL,              -- see 10-security-secrets.md
   token_salt    BLOB NOT NULL,
-  tenant_id     TEXT NOT NULL REFERENCES tenants(id),
-  scopes        TEXT NOT NULL,              -- csv: search, ingest, admin
+  scopes        TEXT NOT NULL,              -- csv: search, ingest. Never admin.
   created_utc   TEXT NOT NULL,
   last_used_utc TEXT,
   expires_utc   TEXT,
   revoked_utc   TEXT
 );
-CREATE INDEX ix_tokens_tenant ON tokens(tenant_id);
+
+-- What a key reaches. NO ROWS MEANS EVERY CORPUS, which is what keeps a single-user
+-- install from having to configure anything; a key that should reach nothing is
+-- revoked instead. Read per request rather than cached on the principal, so an edit
+-- in the UI reaches the agent on its next call.
+CREATE TABLE token_corpora (
+  token_id   TEXT NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
+  corpus_id  TEXT NOT NULL REFERENCES corpora(id) ON DELETE CASCADE,
+  PRIMARY KEY (token_id, corpus_id)
+);
+CREATE INDEX ix_token_corpora_corpus ON token_corpora(corpus_id);
 
 -- Content -------------------------------------------------------------------
 CREATE TABLE corpora (
   id                   TEXT PRIMARY KEY,    -- ULID
-  tenant_id            TEXT NOT NULL REFERENCES tenants(id),
   name                 TEXT NOT NULL,
   description          TEXT,
-  visibility           TEXT NOT NULL,       -- private | shared
   state                TEXT NOT NULL,       -- ready | indexing | degraded | unavailable
   created_utc          TEXT NOT NULL,
   last_indexed_utc     TEXT,
-  UNIQUE (tenant_id, name)
+  -- Globally unique, because the name is what an agent passes to search_index and it
+  -- has to resolve to one corpus.
+  UNIQUE (name)
 );
 
 -- One way of cutting and embedding this corpus. Several may exist over the same
@@ -113,14 +124,6 @@ CREATE TABLE chunk_sets (
   created_utc             TEXT NOT NULL,
   last_indexed_utc        TEXT,
   UNIQUE (corpus_id, name)
-);
-
--- Explicit grants. A corpus with visibility 'shared' and no rows here is readable by
--- every tenant; with rows, only by the tenants listed. 'private' ignores this table.
-CREATE TABLE corpus_grants (
-  corpus_id  TEXT NOT NULL REFERENCES corpora(id) ON DELETE CASCADE,
-  tenant_id  TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  PRIMARY KEY (corpus_id, tenant_id)
 );
 
 CREATE TABLE sources (
@@ -227,7 +230,7 @@ is a feature that does not exist.
 
 ### Naming
 
-One collection **per provider, embedding model and dimensionality**, shared by all tenants:
+One collection **per provider, embedding model and dimensionality**, shared by every corpus:
 
 ```
 dexicon__{provider_slug}__{model_slug}__{dimensions}
@@ -272,13 +275,13 @@ existing sets where they are rather than moving them underneath a running system
 }
 ```
 
-`m: 0` disables the global HNSW graph; `payload_m: 16` builds a graph **per tenant value**
+`m: 0` disables the global HNSW graph; `payload_m: 16` builds a graph **per corpus**
 instead. Combined with the payload index below, this is Qdrant's recommended many-tenant
 layout. This has one significant consequence:
 
 > **An unfiltered query against this collection has no index to use.** It degrades to brute
 > force. Forgetting the scope filter is therefore both *blocked* (by the guard in
-> [07](07-tenancy-auth.md)) and *slow*. Two independent mechanisms, on purpose.
+> [07](07-auth.md)) and *slow*. Two independent mechanisms, on purpose.
 
 **Measured** in the M0 spike, 2026-09-16. 50,007 points across 20 corpora, Qdrant
 1.16.3, collection reporting `m=0, payload_m=16` server-side, status `Green`, all vectors
@@ -291,7 +294,7 @@ indexed:
 
 Two caveats. The gap is a factor of two rather than a hard barrier: it is a deterrent and
 a signal, not a safety mechanism. The application and repository guards in
-[07](07-tenancy-auth.md) are what prevent a leak. And it will
+[07](07-auth.md) are what prevent a leak. And it will
 widen with corpus size: 50k points is small enough that a brute-force scan is still cheap.
 
 Isolation itself was verified too: a query embedded from another
@@ -310,11 +313,13 @@ points from that corpus when filtered to a different one.
 { "field_name": "content",   "field_schema": "text"    }
 ```
 
-**`corpus_id` is the `is_tenant` field, not `tenant_id`.** A corpus belongs to exactly one
-tenant, is never split across tenants, and is what every query filters on, so
-co-locating storage by corpus is finer-grained than by tenant and matches the
-access pattern. `tenant_id` is still carried in the payload for auditing and for bulk
-deletes when a tenant is removed. See [D-04](decisions.md#d-04-corpus-as-the-qdrant-tenant-key).
+**`corpus_id` is the `is_tenant` field.** It is what every query filters on, so
+co-locating storage by corpus matches the access pattern exactly. Qdrant's name for the
+key is historical here: there are no tenants, and there is no `tenant_id` in the payload.
+It used to be written on every point and read by nothing, which is a field that invites
+someone to filter on it. Removed by
+[D-28](decisions.md#d-28-an-admin-password-and-scoped-api-keys). See
+[D-04](decisions.md#d-04-corpus-as-the-qdrant-tenant-key).
 
 **`chunk_set_id` is an ordinary filter, not a second tenant key.** It narrows *within* a
 corpus's partition, which `corpus_id` has already selected, so it needs no co-location of
@@ -330,7 +335,6 @@ same index to overwrite each other, without error, and only for the paths they s
   "kind":        "chunk",            // chunk | file_marker
   "corpus_id":    "01JD...",         // scope key — indexed, is_tenant
   "chunk_set_id": "01JD...",         // which chunking produced this — indexed, ordinary filter
-  "tenant_id":    "acme",            // owning tenant, audit + bulk delete
   "source_id":   "01JD...",
   "file_path":   "src/Auth/TokenService.cs",   // relative to source root
   "file_hash":   "a1b2c3...",        // lets a reindex detect staleness without a catalog hit
@@ -363,7 +367,6 @@ built from uploads may have no file to open.
 
 - Corpus, source, file, job, token ids: **ULID** — sortable, URL-safe, no coordination.
 - Qdrant point ids: **UUIDv5**, derived as above. Never random.
-- Tenant ids: **operator-chosen slug**. They appear in headers and UI; readability wins.
 - Paths: always forward slashes, always relative to the source root, never absolute. An
   absolute host path in a payload is a leak.
 
@@ -375,7 +378,7 @@ built from uploads may have no file to open.
 | Delete source | Chunks deleted by `source_id` filter; rows cascade. |
 | Delete chunk set | Chunks deleted by `chunk_set_id` filter; state rows cascade. Refused for the default set, and for the only set — a corpus with no sets is a corpus nothing can search. |
 | Delete corpus | Chunks deleted by `corpus_id` filter, once per distinct collection its sets occupy; rows cascade; grants cascade. |
-| Delete tenant | Refused while it owns corpora. The operator must move or delete them first — an implicit cascade over someone's whole index is not a thing a button should do. |
+| Delete corpus | Cascades to its sources, files, chunk sets and the rows mapping keys to it. A key mapped only to that corpus is left mapped to nothing, which means every corpus; revoke it instead if that is not wanted. |
 | Change embedding model | Not an edit, and not a corpus-level act at all. Add a chunk set on the new model; it backfills while the live set keeps serving; promote when complete; drop the old set. See [D-21](decisions.md#d-21-chunk-sets-not-corpus-level-chunking). |
 
 ## Storage budget

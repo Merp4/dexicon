@@ -9,12 +9,11 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Qdrant.Client;
 using Qdrant.Client.Grpc;
-
+using QdrantVectors = Qdrant.Client.Grpc.Vectors;
+using SearchResponse = Dexicon.Core.Search.SearchResponse;
 // Qdrant's generated gRPC types collide by name with ours. Alias rather than
 // fully-qualify at every use site, so the domain names stay readable.
 using SparseVector = Dexicon.Core.Search.SparseVector;
-using SearchResponse = Dexicon.Core.Search.SearchResponse;
-using QdrantVectors = Qdrant.Client.Grpc.Vectors;
 
 namespace Dexicon.Core.Vectors;
 
@@ -223,7 +222,6 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
             p.Payload.Add("kind", "chunk");
             p.Payload.Add("corpus_id", c.CorpusId);
             p.Payload.Add("chunk_set_id", c.ChunkSetId);
-            p.Payload.Add("tenant_id", c.TenantId);
             p.Payload.Add("source_id", c.SourceId);
             p.Payload.Add("file_path", c.FilePath);
             p.Payload.Add("file_hash", c.FileHash);

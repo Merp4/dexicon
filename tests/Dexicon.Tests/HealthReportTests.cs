@@ -37,10 +37,8 @@ public sealed class HealthReportTests : IAsyncLifetime
             .UseSqlite(_connection).Options);
         await _db.Database.EnsureCreatedAsync();
 
-        _db.Tenants.Add(new Tenant { Id = "t", DisplayName = "t", CreatedUtc = DateTime.UtcNow });
-        _db.Tenants.Add(new Tenant { Id = "other", DisplayName = "other", CreatedUtc = DateTime.UtcNow });
-        _db.Corpora.Add(new Corpus { Id = "c", TenantId = "t", Name = "books", CreatedUtc = DateTime.UtcNow });
-        _db.Corpora.Add(new Corpus { Id = "c2", TenantId = "other", Name = "theirs", CreatedUtc = DateTime.UtcNow });
+        _db.Corpora.Add(new Corpus { Id = "c", Name = "books", CreatedUtc = DateTime.UtcNow });
+        _db.Corpora.Add(new Corpus { Id = "c2", Name = "theirs", CreatedUtc = DateTime.UtcNow });
         await _db.SaveChangesAsync();
     }
 
@@ -54,16 +52,25 @@ public sealed class HealthReportTests : IAsyncLifetime
     {
         _db.ChunkSets.Add(new ChunkSet
         {
-            Id = id, CorpusId = corpusId, Name = name, EmbeddingModel = model,
-            EmbeddingProvider = provider, CollectionName = $"dexicon_{id}",
-            BoundaryMode = "blank-line", CreatedUtc = DateTime.UtcNow,
+            Id = id,
+            CorpusId = corpusId,
+            Name = name,
+            EmbeddingModel = model,
+            EmbeddingProvider = provider,
+            CollectionName = $"dexicon_{id}",
+            BoundaryMode = "blank-line",
+            CreatedUtc = DateTime.UtcNow,
         });
         await _db.SaveChangesAsync();
     }
 
     private static Task<IReadOnlyList<MissingModel>> Missing(
-        CatalogDbContext db, IModelCatalog catalog, string tenant = "t") =>
-        SystemEndpoints.MissingModelsAsync(db, catalog, new MemoryCache(new MemoryCacheOptions()), tenant, default);
+        CatalogDbContext db, IModelCatalog catalog, params string[] corpusIds) =>
+        SystemEndpoints.MissingModelsAsync(
+            db, catalog, new MemoryCache(new MemoryCacheOptions()),
+            corpusIds.Length == 0 ? ["c"] : corpusIds,
+            // A fresh scope per call, so one test's cached answer cannot satisfy another's.
+            Guid.NewGuid().ToString(), default);
 
     // ── Which endpoint the report names ──────────────────────────────────────
 
@@ -165,7 +172,7 @@ public sealed class HealthReportTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AnotherTenantsCorpusIsNeverNamed()
+    public async Task ACorpusOutsideTheScopeIsNeverNamed()
     {
         // The corpora count above this is a number and gives nothing away. A set names its
         // corpus, and that name is not this caller's to see.

@@ -1,8 +1,8 @@
+using Dexicon.Core.Configuration;
 using Dexicon.Core.Embedding;
 using Dexicon.Core.Vectors;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using Dexicon.Core.Configuration;
 
 namespace Dexicon.Tests;
 

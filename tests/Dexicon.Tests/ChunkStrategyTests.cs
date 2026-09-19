@@ -35,7 +35,10 @@ public sealed class ChunkStrategyTests
     {
         var chunks = CodeChunker.Chunk("doc.md", Doc, new ChunkOptions
         {
-            ChunkSizeTokens = 32, OverlapTokens = 0, BoundaryMode = "blank-line", HeadingContext = true,
+            ChunkSizeTokens = 32,
+            OverlapTokens = 0,
+            BoundaryMode = "blank-line",
+            HeadingContext = true,
         });
 
         var deep = chunks.First(c => c.Content.Contains("costs the chunk count", StringComparison.Ordinal));
@@ -56,7 +59,10 @@ public sealed class ChunkStrategyTests
 
         var chunks = CodeChunker.Chunk("doc.md", Doc, new ChunkOptions
         {
-            ChunkSizeTokens = 32, OverlapTokens = 0, BoundaryMode = "blank-line", HeadingContext = true,
+            ChunkSizeTokens = 32,
+            OverlapTokens = 0,
+            BoundaryMode = "blank-line",
+            HeadingContext = true,
         });
 
         // The property that the bug broke: a chunk's trail can only mention headings at or
@@ -86,7 +92,9 @@ public sealed class ChunkStrategyTests
     {
         var chunks = CodeChunker.Chunk("doc.md", Doc, new ChunkOptions
         {
-            ChunkSizeTokens = 32, OverlapTokens = 0, BoundaryMode = "blank-line",
+            ChunkSizeTokens = 32,
+            OverlapTokens = 0,
+            BoundaryMode = "blank-line",
         });
 
         chunks.ShouldAllBe(c => c.EmbedText == c.Content);
@@ -113,12 +121,17 @@ public sealed class ChunkStrategyTests
         // test would pass without the feature doing anything.
         var withUnits = CodeChunker.Chunk("book.pdf", text, new ChunkOptions
         {
-            ChunkSizeTokens = 512, OverlapTokens = 0, BoundaryMode = "none", UnitAware = true,
+            ChunkSizeTokens = 512,
+            OverlapTokens = 0,
+            BoundaryMode = "none",
+            UnitAware = true,
         }, extracted);
 
         var withoutUnits = CodeChunker.Chunk("book.pdf", text, new ChunkOptions
         {
-            ChunkSizeTokens = 512, OverlapTokens = 0, BoundaryMode = "none",
+            ChunkSizeTokens = 512,
+            OverlapTokens = 0,
+            BoundaryMode = "none",
         }, extracted);
 
         withUnits.Count.ShouldBeGreaterThan(withoutUnits.Count,
@@ -152,7 +165,10 @@ public sealed class ChunkStrategyTests
 
         var chunks = CodeChunker.Chunk("prose.txt", line, new ChunkOptions
         {
-            ChunkSizeTokens = 40, OverlapTokens = 0, BoundaryMode = "none", SentenceAware = true,
+            ChunkSizeTokens = 40,
+            OverlapTokens = 0,
+            BoundaryMode = "none",
+            SentenceAware = true,
         });
 
         chunks.Count.ShouldBeGreaterThan(1);
@@ -171,7 +187,10 @@ public sealed class ChunkStrategyTests
 
         var chunks = CodeChunker.Chunk("blob.txt", blob, new ChunkOptions
         {
-            ChunkSizeTokens = 40, OverlapTokens = 0, BoundaryMode = "none", SentenceAware = true,
+            ChunkSizeTokens = 40,
+            OverlapTokens = 0,
+            BoundaryMode = "none",
+            SentenceAware = true,
         });
 
         chunks.Count.ShouldBeGreaterThan(3);
@@ -185,7 +204,10 @@ public sealed class ChunkStrategyTests
 
         var chunks = CodeChunker.Chunk("prose.txt", line, new ChunkOptions
         {
-            ChunkSizeTokens = 40, OverlapTokens = 0, BoundaryMode = "none", SentenceAware = true,
+            ChunkSizeTokens = 40,
+            OverlapTokens = 0,
+            BoundaryMode = "none",
+            SentenceAware = true,
         });
 
         var seen = string.Concat(chunks.Select(c => c.Content)).Replace(" ", "", StringComparison.Ordinal);

@@ -13,6 +13,7 @@ import {
   type IndexedFileText,
   type Job,
   type SearchResult,
+  type TokenSummary,
 } from './api';
 import {
   Badge, Button, CardButton, Checkbox, Chip, CopyButton, Empty, ErrorBanner, Field, Input, Modal,
@@ -56,11 +57,18 @@ const ALL_CORPORA = ':all';
  */
 export default function App() {
   const [token, setTok] = useState<string | null>(getToken());
-  if (!token) return <TokenGate onToken={(t) => { setToken(t); setTok(t); }} />;
-  return <Shell onSignOut={() => { setToken(null); setTok(null); }} />;
+  if (!token) return <SignInGate onToken={(t) => { setToken(t); setTok(t); }} />;
+  return <Shell onSignOut={() => { void api.signOut(); setToken(null); setTok(null); }} />;
 }
 
-function TokenGate({ onToken }: { onToken: (t: string) => void }) {
+/**
+ * The password, exchanged for a session bearer.
+ *
+ * It used to take a pasted API token, which meant the first thing a new install asked of
+ * someone was to grep a 60-character secret out of a container log. The key model stayed;
+ * it is now for agents, and administration is this.
+ */
+function SignInGate({ onToken }: { onToken: (t: string) => void }) {
   const [value, setValue] = useState('');
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -69,10 +77,12 @@ function TokenGate({ onToken }: { onToken: (t: string) => void }) {
     e.preventDefault();
     setBusy(true);
     setError(null);
-    setToken(value.trim());
     try {
-      await api.health();
-      onToken(value.trim());
+      // Anonymous, so the stale bearer of a previous session must not be sent with it.
+      setToken(null);
+      const session = await api.signIn(value);
+      setToken(session.token);
+      onToken(session.token);
     } catch (err) {
       setToken(null);
       setError(err);
@@ -86,18 +96,17 @@ function TokenGate({ onToken }: { onToken: (t: string) => void }) {
       <form onSubmit={submit} className="card p-6 w-[100%] max-w-[480px]">
         <h1 className="mt-0 mx-0 mb-1 text-xl">Dexicon</h1>
         <p className="dim mt-0 mx-0 mb-5 text-sm">
-          Paste an API token to continue.
+          Sign in to continue.
         </p>
 
         <Field
-          label="API token"
-          hint="On a fresh install the bootstrap token is printed once in the container log: docker compose logs dexicon | grep bootstrap"
+          label="Admin password"
+          hint="On a fresh install it is printed once in the container log: docker compose logs dexicon | grep 'admin password'. Set DEXICON__ADMIN__PASSWORD to pin your own."
         >
           <Input
-            className="font-mono"
             type="password"
-            autoComplete="off"
-            placeholder="dex_…"
+            autoComplete="current-password"
+            autoFocus
             value={value}
             onChange={(e) => setValue(e.target.value)}
           />
@@ -674,8 +683,6 @@ export function CorporaView({
                 <div className="flex gap-2 items-center flex-wrap">
                   <strong>{c.name}</strong>
                   <Badge tone={stateTone(c.state)}>{c.state}</Badge>
-                  {c.visibility === 'shared' && <Badge tone="accent">shared</Badge>}
-                  {!c.owned && <Badge>read-only</Badge>}
                   <span className="flex-1" />
                   <span className="dim text-xs" title={localTime(c.lastIndexedUtc)}>indexed {relativeTime(c.lastIndexedUtc)}</span>
                 </div>
@@ -912,20 +919,16 @@ export function CorpusDetail({
         <h1 className="m-0 text-lg">{corpus.name}</h1>
         <Badge tone={stateTone(corpus.state)}>{corpus.state}</Badge>
         <span className="flex-1" />
-        {corpus.owned && (
-          <>
-            <Button onClick={async () => { try { await api.reindex(corpus.name); } catch (e) { onError(e); } }}><RefreshCw />Refresh</Button>
-            <Button onClick={async () => { try { await api.reindex(corpus.name, true); } catch (e) { onError(e); } }}><RotateCcw />Full reindex</Button>
-            <Button variant="danger" onClick={() => setConfirmDelete(true)}><Trash2 />Delete</Button>
-          </>
-        )}
+        <Button onClick={async () => { try { await api.reindex(corpus.name); } catch (e) { onError(e); } }}><RefreshCw />Refresh</Button>
+        <Button onClick={async () => { try { await api.reindex(corpus.name, true); } catch (e) { onError(e); } }}><RotateCcw />Full reindex</Button>
+        <Button variant="danger" onClick={() => setConfirmDelete(true)}><Trash2 />Delete</Button>
       </div>
 
       {job?.phase && <div className="card p-3.5"><ProgressBar job={job} /></div>}
 
       <CoverageNotice
         gaps={gaps}
-        canAddSource={corpus.owned}
+        canAddSource
         onAddSource={(path) => setAddingSource({ path })}
       />
 
@@ -970,7 +973,7 @@ export function CorpusDetail({
                   {/* Adding a folder was one click; removing one meant deleting the whole
                       corpus and rebuilding it, losing its chunk sets, its history and every
                       other source with it. A path typed wrong is not worth that. */}
-                  {corpus.owned && s.kind === 'workspace' && (
+                  {s.kind === 'workspace' && (
                     <Button
                       variant="ghost"
                       size="icon-xs"
@@ -980,21 +983,19 @@ export function CorpusDetail({
                       <SlidersHorizontal />
                     </Button>
                   )}
-                  {corpus.owned && (
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label={`Remove source ${s.rootPath ?? s.kind}`}
-                      onClick={() => setRemovingSource(s)}
-                    >
-                      <Trash2 />
-                    </Button>
-                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={`Remove source ${s.rootPath ?? s.kind}`}
+                    onClick={() => setRemovingSource(s)}
+                  >
+                    <Trash2 />
+                  </Button>
                 </span>
               ))}
             </span>
           )}
-          {corpus.owned && (
+          {(
             <span className="mt-1.5 flex flex-wrap gap-2">
               <Button className="px-2 py-0.5 text-xs" onClick={() => setAddingSource({ path: '' })}>
                 <Plus />
@@ -1014,23 +1015,6 @@ export function CorpusDetail({
           <span className="dim">
             {' '}is the default set below. Name another with <span className="mono">corpus:set</span>.
           </span>
-        </Row>
-        <Row label="Visibility">
-          {corpus.visibility}
-          {corpus.owned && (
-            <Button
-              className="ml-2 py-0.5 px-2 text-xs"
-              onClick={async () => {
-                try {
-                  await api.updateCorpus(corpus.name, { visibility: corpus.visibility === 'shared' ? 'private' : 'shared' });
-                  await load();
-                  await onRefresh();
-                } catch (e) { onError(e); }
-              }}
-            >
-              Make {corpus.visibility === 'shared' ? 'private' : 'shared'}
-            </Button>
-          )}
         </Row>
         <Row label="Contents">
           {corpus.fileCount.toLocaleString()} files · {corpus.chunkCount.toLocaleString()} chunks
@@ -1958,34 +1942,38 @@ function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: Record<
 
 function AccessView({ onError }: { onError: (e: unknown) => void }) {
   const [tokens, setTokens] = useState<Awaited<ReturnType<typeof api.listTokens>>>([]);
-  const [tenants, setTenants] = useState<Awaited<ReturnType<typeof api.listTenants>>>([]);
+  const [corpora, setCorpora] = useState<Corpus[]>([]);
   const [creating, setCreating] = useState(false);
+  const [mapping, setMapping] = useState<TokenSummary | null>(null);
   const [issued, setIssued] = useState<Awaited<ReturnType<typeof api.createToken>> | null>(null);
 
   const load = useCallback(async () => {
     try {
       setTokens(await api.listTokens());
-      setTenants(await api.listTenants());
+      // Needed to render a mapping as names rather than ids, and to offer the ticks.
+      setCorpora(await api.listCorpora());
     } catch (e) { onError(e); }
   }, [onError]);
+
+  const nameOf = useCallback(
+    (id: string) => corpora.find((c) => c.id === id)?.name ?? id,
+    [corpora],
+  );
 
   useEffect(() => { void load(); }, [load]);
 
   return (
     <div className="grid gap-5">
-      {/* The nav calls this Access and the page called itself Tokens, so the heading
-          contradicted the thing you clicked to get here. Tokens and Tenants are its two
-          sections, and now read as two. */}
       <h1 className="m-0 text-lg">Access</h1>
 
       <section>
         <div className="flex justify-between items-center mb-3">
-          <h2 className="mt-0 mx-0 mb-0 text-base">Tokens</h2>
-          <Button variant="primary" onClick={() => setCreating(true)}><Plus />New token</Button>
+          <h2 className="mt-0 mx-0 mb-0 text-base">API keys</h2>
+          <Button variant="primary" onClick={() => setCreating(true)}><Plus />New key</Button>
         </div>
 
         {tokens.length === 0 ? (
-          <Empty title="No tokens" hint="A token is the only credential. Create one to connect an agent." />
+          <Empty title="No keys" hint="A key is how an agent authenticates. Create one per agent, then choose what it can reach." />
         ) : (
           <div className="card">
             {tokens.map((t, i) => (
@@ -2004,37 +1992,43 @@ function AccessView({ onError }: { onError: (e: unknown) => void }) {
                     Revoke
                   </Button>
                 )}
+
+                {/* Its own row, because it is the thing that changes most often. No rows
+                    means every corpus, which is not the same as none: a key that should
+                    reach nothing is revoked. */}
+                <div className="basis-[100%] flex flex-wrap items-center gap-1.5 text-xs">
+                  <span className="dim">Reaches</span>
+                  {t.corpusIds.length === 0
+                    ? <Badge>every corpus</Badge>
+                    : t.corpusIds.map((id) => <Badge key={id}>{nameOf(id)}</Badge>)}
+                  {!t.revokedUtc && (
+                    <Button onClick={() => setMapping(t)}>Change</Button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
         )}
         <p className="dim text-xs mt-2">
-          Secrets are shown once, at creation, and are stored only as a PBKDF2 hash. There is no way to recover one.
+          Secrets are shown once, at creation, and are stored only as a PBKDF2 hash. There is no way to
+          recover one. Changing what a key reaches takes effect on that agent's next call; granting
+          ingest is listed to it when its client next reconnects.
         </p>
       </section>
 
-      <section>
-        <h2 className="mt-0 mx-0 mb-3 text-base">Tenants</h2>
-        <div className="card">
-          {tenants.map((t, i: number) => (
-            <div
-              key={t.id}
-              className={cn('flex items-center gap-2.5 px-3 py-2.5', i && 'border-t border-border')}
-            >
-              <code className="mono text-sm">{t.id}</code>
-              {t.disabled && <Badge tone="danger">disabled</Badge>}
-              <span className="flex-1" />
-              <span className="dim text-xs" title={localTime(t.createdUtc)}>created {relativeTime(t.createdUtc)}</span>
-            </div>
-          ))}
-        </div>
-        <p className="dim text-xs mt-2">
-          A tenant is the isolation boundary. Sharing a corpus grants read access only; writes are always owner-only.
-        </p>
-      </section>
+      {mapping && (
+        <CorpusMappingModal
+          token={mapping}
+          corpora={corpora}
+          onClose={() => setMapping(null)}
+          onSaved={async () => { setMapping(null); await load(); }}
+          onError={onError}
+        />
+      )}
 
       {creating && (
         <CreateTokenModal
+          corpora={corpora}
           onClose={() => setCreating(false)}
           onCreated={async (t) => { setCreating(false); setIssued(t); await load(); }}
           onError={onError}
@@ -2065,35 +2059,130 @@ function AccessView({ onError }: { onError: (e: unknown) => void }) {
   );
 }
 
-function CreateTokenModal({ onClose, onCreated, onError }: { onClose: () => void; onCreated: (t: Awaited<ReturnType<typeof api.createToken>>) => Promise<void>; onError: (e: unknown) => void }) {
+/**
+ * Which corpora a key may reach.
+ *
+ * Replaces the mapping outright rather than patching it, because the whole set of ticks is
+ * edited at once and a partial update would need a way to say "leave that one alone" that
+ * is indistinguishable from "untick it".
+ */
+function CorpusMappingModal({ token, corpora, onClose, onSaved, onError }: {
+  token: TokenSummary;
+  corpora: Corpus[];
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+  onError: (e: unknown) => void;
+}) {
+  const [picked, setPicked] = useState<string[]>(token.corpusIds);
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <Modal title={`What ${token.name} can reach`} onClose={onClose}>
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          try { await api.setTokenCorpora(token.id, picked); await onSaved(); }
+          catch (err) { onError(err); setBusy(false); }
+        }}
+      >
+        {corpora.length === 0 ? (
+          <Empty title="No corpora" hint="Create one first, then come back and tick it." />
+        ) : (
+          <div className="flex gap-1.5 flex-wrap">
+            {corpora.map((c) => (
+              <Chip
+                key={c.id}
+                type="button"
+                active={picked.includes(c.id)}
+                onClick={() => setPicked((prev) =>
+                  prev.includes(c.id) ? prev.filter((x) => x !== c.id) : [...prev, c.id])}
+              >
+                {picked.includes(c.id) && <Check />}
+                {c.name}
+              </Chip>
+            ))}
+          </div>
+        )}
+
+        <p className="dim text-xs mt-3 mb-0">
+          {picked.length === 0
+            ? 'Nothing ticked means every corpus, including ones created later. To stop a key reaching anything, revoke it.'
+            : `${picked.length} of ${corpora.length}. The agent sees the change on its next call.`}
+        </p>
+
+        <div className="flex gap-2 justify-end mt-4">
+          <Button type="button" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" type="submit" disabled={busy}>
+            {busy ? <Spinner /> : null} Save
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function CreateTokenModal({ onClose, onCreated, onError, corpora }: {
+  onClose: () => void;
+  onCreated: (t: Awaited<ReturnType<typeof api.createToken>>) => Promise<void>;
+  onError: (e: unknown) => void;
+  corpora: Corpus[];
+}) {
   const [name, setName] = useState('');
   const [scopes, setScopes] = useState<string[]>(['search']);
+  const [picked, setPicked] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
   const toggle = (s: string) => setScopes((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
 
   return (
-    <Modal title="New token" onClose={onClose}>
+    <Modal title="New key" onClose={onClose}>
       <form
         onSubmit={async (e) => {
           e.preventDefault();
           setBusy(true);
-          try { await onCreated(await api.createToken(name, scopes)); }
+          try { await onCreated(await api.createToken(name, scopes, picked)); }
           catch (err) { onError(err); setBusy(false); }
         }}
       >
-        <Field label="Name" hint="What this token is for. It appears in the audit log.">
+        <Field label="Name" hint="Which agent this is for. It appears in the audit log.">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="claude-code" autoFocus />
         </Field>
-        <Field label="Scopes" hint="search reads; ingest can trigger reindexing; admin manages tenants, corpora and tokens.">
+        <Field
+          label="Scopes"
+          hint="search reads; ingest lets the agent trigger a reindex, and is what puts index_refresh on its MCP tool list. Administration is the password's, so a key cannot hold it."
+        >
           <div className="flex gap-1.5 flex-wrap">
-            {['search', 'ingest', 'admin'].map((s) => (
+            {['search', 'ingest'].map((s) => (
               <Chip key={s} type="button" active={scopes.includes(s)} onClick={() => toggle(s)}>
                 {scopes.includes(s) && <Check />}
                 {s}
               </Chip>
             ))}
           </div>
+        </Field>
+        <Field
+          label="Corpora"
+          hint="What this agent can search. Tick none for every corpus. Changeable afterwards without reissuing the key."
+        >
+          {corpora.length === 0 ? (
+            <p className="dim text-xs m-0">No corpora yet. The key will reach every corpus you create.</p>
+          ) : (
+            <div className="flex gap-1.5 flex-wrap">
+              {corpora.map((c) => (
+                <Chip
+                  key={c.id}
+                  type="button"
+                  active={picked.includes(c.id)}
+                  onClick={() => setPicked((prev) =>
+                    prev.includes(c.id) ? prev.filter((x) => x !== c.id) : [...prev, c.id])}
+                >
+                  {picked.includes(c.id) && <Check />}
+                  {c.name}
+                </Chip>
+              ))}
+            </div>
+          )}
         </Field>
         <div className="flex gap-2 justify-end mt-4">
           <Button type="button" onClick={onClose}>Cancel</Button>

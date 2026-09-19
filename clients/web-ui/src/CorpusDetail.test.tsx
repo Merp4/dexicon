@@ -57,9 +57,6 @@ function corpus(over: Partial<Corpus> = {}): Corpus {
     id: 'c1',
     name: 'docs',
     description: null,
-    tenantId: 'default',
-    owned: true,
-    visibility: 'private',
     state: 'ready',
     createdUtc: new Date().toISOString(),
     lastIndexedUtc: new Date().toISOString(),
@@ -149,17 +146,6 @@ describe('the sources a corpus reads', () => {
     render(<CorpusDetail {...props} />);
 
     expect(await screen.findByText(/none: add one, or upload documents/)).toBeInTheDocument();
-  });
-
-  it('offers no add button on a corpus you do not own', async () => {
-    // Shared grants read access; writes are always owner-only, and a button that 403s is
-    // worse than no button.
-    getCorpus.mockResolvedValue(corpus({ owned: false }));
-
-    render(<CorpusDetail {...props} />);
-
-    await screen.findByText('api-repo');
-    expect(screen.queryByRole('button', { name: /add source/i })).not.toBeInTheDocument();
   });
 });
 
@@ -426,17 +412,6 @@ describe('files no source covers', () => {
     expect(within(dialog).getByText(/Indexing/)).toBeInTheDocument();
   });
 
-  it('offers no button on a corpus the viewer cannot change', async () => {
-    getCorpus.mockResolvedValue(corpus({ owned: false }));
-    coverage.mockResolvedValue({ gaps: [gap()] });
-
-    render(<CorpusDetail {...props} />);
-
-    // Still worth telling a reader the results are incomplete; the fix is not theirs.
-    expect(await screen.findByText(/covered by no source/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Add a source on/ })).not.toBeInTheDocument();
-  });
-
   it('keeps the page when the endpoint is missing or fails', async () => {
     // The dev loop serves this UI against whatever container is up, which can predate the
     // endpoint entirely. A missing warning is not a broken page, and onError would put a
@@ -606,14 +581,6 @@ describe('editing a source filter', () => {
     expect(cap.validity.stepMismatch).toBe(false);
     expect(cap.checkValidity()).toBe(true);
     expect(cap.form!.checkValidity()).toBe(true);
-  });
-
-  it('offers no edit button on a corpus you do not own', async () => {
-    getCorpus.mockResolvedValue({ ...owning(), owned: false });
-    render(<CorpusDetail {...props} />);
-
-    await screen.findByText('books/orly/AI');
-    expect(screen.queryByRole('button', { name: /Edit filters/ })).not.toBeInTheDocument();
   });
 });
 

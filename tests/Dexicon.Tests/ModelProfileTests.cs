@@ -182,10 +182,16 @@ public sealed class ModelProfileTests : IAsyncLifetime
         // the framing is part of the staleness key, and editing a profile re-indexes.
         var set = new ChunkSet
         {
-            Id = "s", CorpusId = "c", Name = "default",
-            EmbeddingProvider = "ollama", EmbeddingModel = "nomic-embed-text",
-            EmbeddingDimensions = 768, CollectionName = "x",
-            ChunkSize = 768, ChunkOverlap = 100, BoundaryMode = "none",
+            Id = "s",
+            CorpusId = "c",
+            Name = "default",
+            EmbeddingProvider = "ollama",
+            EmbeddingModel = "nomic-embed-text",
+            EmbeddingDimensions = 768,
+            CollectionName = "x",
+            ChunkSize = 768,
+            ChunkOverlap = 100,
+            BoundaryMode = "none",
             CreatedUtc = DateTime.UtcNow,
         };
 
@@ -203,10 +209,16 @@ public sealed class ModelProfileTests : IAsyncLifetime
         // every refresh would re-embed the entire corpus.
         var set = new ChunkSet
         {
-            Id = "s", CorpusId = "c", Name = "default",
-            EmbeddingProvider = "ollama", EmbeddingModel = "nomic-embed-text",
-            EmbeddingDimensions = 768, CollectionName = "x",
-            ChunkSize = 768, ChunkOverlap = 100, BoundaryMode = "none",
+            Id = "s",
+            CorpusId = "c",
+            Name = "default",
+            EmbeddingProvider = "ollama",
+            EmbeddingModel = "nomic-embed-text",
+            EmbeddingDimensions = 768,
+            CollectionName = "x",
+            ChunkSize = 768,
+            ChunkOverlap = 100,
+            BoundaryMode = "none",
             CreatedUtc = DateTime.UtcNow,
         };
 

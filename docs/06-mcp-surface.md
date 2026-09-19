@@ -30,11 +30,10 @@ listed in the message, which every client handles today.
 ```bash
 claude mcp add --transport http dexicon http://localhost:8477/mcp \
   --header "Authorization: Bearer ${DEXICON_TOKEN}" \
-  --header "X-Dexicon-Tenant: my-project"
 ```
 
-The tenant header is optional when the token is bound to exactly one tenant, which is the
-normal local-development case. See [07](07-tenancy-auth.md).
+No other header is needed. Which corpora the key reaches is set in the UI, which is the
+normal local-development case. See [07](07-auth.md).
 
 ## Naming a corpus and a chunk set
 
@@ -210,8 +209,8 @@ Resources are for **browsing**; tools are for asking questions. A client with a 
 picker can attach "this corpus" or "that file" to a conversation without the model having
 to guess a search query first.
 
-Both use the same scope resolution as search. A corpus a tenant cannot search must not
-become readable because it was reached by URI instead: the tenant boundary is the security
+Both use the same scope resolution as search. A corpus a key cannot search must not
+become readable because it was reached by URI instead: what a key reaches is the security
 model, and a second route into it is a second opportunity for error.
 
 File text is reconstructed **from the index**, not read from disk. An uploaded PDF has no
@@ -232,7 +231,7 @@ on, not a stack trace to display.
 | Condition | Message shape |
 |---|---|
 | Unknown corpus | `Unknown corpus 'api'. Visible corpora: api-repo, rfc-library.` |
-| No visible corpora | `No corpora are visible to tenant 'my-project'. Create one in the UI, or check the X-Dexicon-Tenant header.` |
+| No reachable corpora | `Key 'claude-code' can reach no corpora. Create one in the Dexicon UI, or map this key to one under Access.` |
 | Embeddings down, hybrid asked | Results returned with `degraded: true` — not an error. |
 | Dimension mismatch | `Corpus 'api-repo' was indexed with nomic-embed-text (768 dims); the configured model produces 1024. Rebuild the corpus or restore the original model.` |
 | Indexing in progress, no results | Results plus a note: `corpus 'api-repo' is 12% indexed; results are incomplete.` |

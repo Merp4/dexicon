@@ -31,7 +31,7 @@ Three containers. Dexicon is the only one we build.
 ```
 
 **Why one container for UI + API + MCP + indexer.** The alternative, a separate indexer
-sidecar, is worthwhile when the indexer runs inside a per-tenant container with a different
+sidecar, is worthwhile when the indexer runs inside a per-customer container with a different
 security boundary. Dexicon has no such boundary: it is a single-operator tool on one
 machine. Separating the indexer would add a control API, a token, a network hop and an
 additional failure mode without benefit. See
@@ -44,7 +44,7 @@ additional failure mode without benefit. See
 | `Api` | ASP.NET Core minimal API | REST for the SPA; SSE for progress |
 | `Mcp` | `ModelContextProtocol.AspNetCore`, stateless | Tool surface for agents ([06](06-mcp-surface.md)) |
 | `IndexingService` | `BackgroundService` + bounded channel | Runs one indexing job at a time; emits progress events |
-| `Catalog` | EF Core + SQLite | Tenants, corpora, sources, files, jobs, tokens |
+| `Catalog` | EF Core + SQLite | Corpora, sources, files, jobs, keys and what each reaches |
 | `VectorStore` | `Qdrant.Client` (gRPC) | Collection lifecycle, upsert, query |
 | `Embedder` | `IEmbeddingProvider` → Ollama | Dense vectors; batching, retry, backoff |
 | `SparseEncoder` | in-process | Term-frequency sparse vectors for BM25 ([05](05-search.md)) |
@@ -76,11 +76,11 @@ all are permissive, which matters for open-sourcing.
 
 ```
 MCP client ──POST /mcp {tools/call search_index}──▶ Mcp
-    │  headers: Authorization: Bearer <token>, X-Dexicon-Tenant: <slug>
+    │  header: Authorization: Bearer <key>
     ▼
 AuthN: token → principal            (SQLite, hashed lookup, cached)
     ▼
-Scope resolution: principal + tenant + requested corpora
+Scope resolution: principal + its mapped corpora + requested corpora
     → concrete list of visible corpus ids           (SQLite)
     → EMPTY LIST IS A HARD ERROR, never "all"
     ▼

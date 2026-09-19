@@ -28,10 +28,9 @@ public sealed class SourceScopedSearchTests : IDisposable
         _db.Database.EnsureCreated();
 
         // Sources have a foreign key to their corpus, and a corpus to its tenant.
-        _db.Tenants.Add(new Tenant { Id = "default", DisplayName = "default", CreatedUtc = DateTime.UtcNow });
         _db.Corpora.AddRange(
-            new Corpus { Id = "books", TenantId = "default", Name = "books", CreatedUtc = DateTime.UtcNow },
-            new Corpus { Id = "code", TenantId = "default", Name = "code", CreatedUtc = DateTime.UtcNow });
+            new Corpus { Id = "books", Name = "books", CreatedUtc = DateTime.UtcNow },
+            new Corpus { Id = "code", Name = "code", CreatedUtc = DateTime.UtcNow });
         _db.SaveChanges();
 
         _db.Sources.AddRange(
@@ -48,8 +47,11 @@ public sealed class SourceScopedSearchTests : IDisposable
 
     private static Source Source(string id, string corpusId, string root) => new()
     {
-        Id = id, CorpusId = corpusId, Kind = SourceKind.Workspace,
-        RootPath = root, CreatedUtc = DateTime.UtcNow,
+        Id = id,
+        CorpusId = corpusId,
+        Kind = SourceKind.Workspace,
+        RootPath = root,
+        CreatedUtc = DateTime.UtcNow,
     };
 
     [Fact]

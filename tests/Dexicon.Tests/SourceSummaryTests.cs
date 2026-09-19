@@ -19,7 +19,7 @@ public sealed class SourceSummaryTests
 {
     /// <summary>A corpus that sets no defaults, so a source's own values are what resolve.</summary>
     private static readonly Corpus Corpus =
-        new() { Id = "c1", TenantId = "t", Name = "docs", CreatedUtc = DateTime.UtcNow };
+        new() { Id = "c1", Name = "docs", CreatedUtc = DateTime.UtcNow };
 
     private static readonly IndexingOptions Configured = new() { MaxFileBytes = 262_144 };
 

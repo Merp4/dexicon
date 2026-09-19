@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using Microsoft.OpenApi;
+using ModelContextProtocol.Server;
 using Serilog;
 using Serilog.Events;
 
@@ -66,8 +67,9 @@ builder.Services.AddOpenApi(o => o.AddDocumentTransformer((doc, _, _) =>
     {
         Title = "Dexicon",
         Version = ThisAssembly.ApiVersion,
-        Description = "Semantic indexing and search. Every endpoint requires a bearer token; "
-                    + "the tenant comes from the token, or from X-Dexicon-Tenant where the token allows it.",
+        Description = "Semantic indexing and search. Every endpoint except sign-in requires a "
+                    + "bearer: an agent's API key, which reaches the corpora it is mapped to, or an "
+                    + "admin session obtained by posting the password to /api/session.",
     };
 
     // The prose above said this; the document did not. A generated client reads the
@@ -140,6 +142,9 @@ builder.Services.AddSingleton<IVectorStore, QdrantVectorStore>();
 builder.Services.AddSingleton<IndexProgressBroadcaster>();
 builder.Services.AddSingleton<IMemoryCacheEvictor, MemoryCacheEvictor>();
 
+builder.Services.AddSingleton<AdminSessions>();
+builder.Services.AddSingleton<LoginThrottle>();
+
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<ScopeResolver>();
 builder.Services.AddScoped<SearchService>();
@@ -160,6 +165,29 @@ builder.Services
     .WithHttpTransport(o => o.Stateless = true)
     .WithTools<DexiconTools>()
     .WithResources<DexiconResources>();
+
+// A key without `ingest` is not shown `index_refresh` at all, rather than being refused
+// when it calls it: an agent that can see a tool will call it, spend a turn on the error,
+// and sometimes retry. `tools/list` carries the bearer like every other request, so the
+// principal is available here. See docs/decisions.md D-28.
+//
+// The list is not live. The transport is stateless, so there is no
+// notifications/tools/list_changed to send, and a client lists on connect and caches:
+// granting `ingest` reaches an agent when it reconnects, whereas mapping a corpus reaches
+// it on the next call.
+builder.Services.Configure<McpServerOptions>(o =>
+    o.Filters.Request.ListToolsFilters.Add(next => async (ctx, ct) =>
+    {
+        var result = await next(ctx, ct);
+
+        // Fully qualified: ModelContextProtocol.Server.RequestContext<T> is the filter's own
+        // context type and shadows ours at this call site.
+        var principal = ctx.Services?.GetService<Dexicon.Infrastructure.RequestContext>()?.Principal;
+        if (principal is null || principal.Has(Scopes.Ingest)) return result;
+
+        result.Tools = [.. result.Tools.Where(t => t.Name != "index_refresh")];
+        return result;
+    }));
 
 builder.WebHost.ConfigureKestrel(k => k.AddServerHeader = false);
 

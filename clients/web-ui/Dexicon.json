@@ -2,7 +2,7 @@
   "openapi": "3.1.1",
   "info": {
     "title": "Dexicon",
-    "description": "Semantic indexing and search. Every endpoint requires a bearer token; the tenant comes from the token, or from X-Dexicon-Tenant where the token allows it.",
+    "description": "Semantic indexing and search. Every endpoint except sign-in requires a bearer: an agent's API key, which reaches the corpora it is mapped to, or an admin session obtained by posting the password to /api/session.",
     "version": "0.3"
   },
   "paths": {
@@ -1085,36 +1085,16 @@
         }
       }
     },
-    "/api/tenants": {
-      "get": {
-        "tags": [
-          "Tenants"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/TenantSummary"
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
+    "/api/session": {
       "post": {
         "tags": [
-          "Tenants"
+          "Session"
         ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CreateTenantRequest"
+                "$ref": "#/components/schemas/SignInRequest"
               }
             }
           },
@@ -1122,31 +1102,28 @@
         },
         "responses": {
           "200": {
-            "description": "OK"
-          }
-        }
-      }
-    },
-    "/api/tenants/{id}": {
-      "delete": {
-        "tags": [
-          "Tenants"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignInResponse"
+                }
+              }
             }
           }
+        },
+        "security": [ ]
+      },
+      "delete": {
+        "tags": [
+          "Session"
         ],
         "responses": {
           "200": {
             "description": "OK"
           }
-        }
+        },
+        "security": [ ]
       }
     },
     "/api/tokens": {
@@ -1216,6 +1193,45 @@
         "responses": {
           "200": {
             "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/tokens/{id}/corpora": {
+      "put": {
+        "tags": [
+          "Tokens"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTokenCorporaRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenSummary"
+                }
+              }
+            }
           }
         }
       }
@@ -1531,9 +1547,6 @@
           "id",
           "name",
           "description",
-          "tenantId",
-          "owned",
-          "visibility",
           "state",
           "createdUtc",
           "lastIndexedUtc",
@@ -1558,15 +1571,6 @@
               "null",
               "string"
             ]
-          },
-          "tenantId": {
-            "type": "string"
-          },
-          "owned": {
-            "type": "boolean"
-          },
-          "visibility": {
-            "type": "string"
           },
           "state": {
             "type": "string"
@@ -1795,30 +1799,7 @@
               "string"
             ]
           },
-          "visibility": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
           "workspacePath": {
-            "type": [
-              "null",
-              "string"
-            ]
-          }
-        }
-      },
-      "CreateTenantRequest": {
-        "required": [
-          "id"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "displayName": {
             "type": [
               "null",
               "string"
@@ -1850,6 +1831,15 @@
               "integer"
             ],
             "format": "int32"
+          },
+          "corpusIds": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -2952,6 +2942,33 @@
           }
         }
       },
+      "SignInRequest": {
+        "required": [
+          "password"
+        ],
+        "type": "object",
+        "properties": {
+          "password": {
+            "type": "string"
+          }
+        }
+      },
+      "SignInResponse": {
+        "required": [
+          "token",
+          "expiresUtc"
+        ],
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "expiresUtc": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "SourceAdded": {
         "required": [
           "source",
@@ -3070,40 +3087,16 @@
           }
         }
       },
-      "TenantSummary": {
-        "required": [
-          "id",
-          "displayName",
-          "createdUtc",
-          "disabled"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "displayName": {
-            "type": "string"
-          },
-          "createdUtc": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "disabled": {
-            "type": "boolean"
-          }
-        }
-      },
       "TokenSummary": {
         "required": [
           "id",
           "name",
-          "tenantId",
           "scopes",
           "createdUtc",
           "lastUsedUtc",
           "expiresUtc",
-          "revokedUtc"
+          "revokedUtc",
+          "corpusIds"
         ],
         "type": "object",
         "properties": {
@@ -3111,9 +3104,6 @@
             "type": "string"
           },
           "name": {
-            "type": "string"
-          },
-          "tenantId": {
             "type": "string"
           },
           "scopes": {
@@ -3143,6 +3133,12 @@
               "string"
             ],
             "format": "date-time"
+          },
+          "corpusIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -3210,21 +3206,6 @@
               "string"
             ]
           },
-          "visibility": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "grantTenantIds": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
           "defaults": {
             "oneOf": [
               {
@@ -3276,6 +3257,20 @@
               "null",
               "array"
             ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "UpdateTokenCorporaRequest": {
+        "required": [
+          "corpusIds"
+        ],
+        "type": "object",
+        "properties": {
+          "corpusIds": {
+            "type": "array",
             "items": {
               "type": "string"
             }
@@ -3465,7 +3460,7 @@
       "name": "Jobs"
     },
     {
-      "name": "Tenants"
+      "name": "Session"
     },
     {
       "name": "Tokens"

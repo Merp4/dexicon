@@ -24,11 +24,11 @@ the real ceiling and whether the model truncates or errors.
 
 Three causes, in the order to check:
 
-1. **The token has no `search` scope.** `list_corpora` returns
-   `This token has scopes [ingest] and needs 'search'`. Issue one that does.
-2. **The corpora belong to another tenant.** A token is bound to one tenant, and a corpus
-   is private to its own unless shared. `list_corpora` says
-   `No corpora are visible to tenant 'x'`.
+1. **The key has no `search` scope.** `list_corpora` returns
+   `This key has scopes [ingest] and needs 'search'`. Issue one that does.
+2. **The key is not mapped to them.** A key reaches the corpora ticked against it under
+   Access, or every corpus when nothing is ticked. `list_corpora` says
+   `Key 'x' can reach no corpora`. Tick one, and the next call sees it.
 3. **There genuinely are none yet**, because the first index has not run. The UI shows the
    job; `index_status` reports it too.
 
@@ -74,11 +74,13 @@ Mounts are read-only by design; Dexicon does not write to source trees.
   out.
 - **Lost the bootstrap token**: it is printed once, on first run only. Set
   `DEXICON_BOOTSTRAP_TOKEN` in `.env` to a value of your choosing and restart. It is
-  adopted with full scopes. Without that escape hatch the only recovery is deleting the
+  adopted with `search` and `ingest`, which is everything a key may hold. Without that
+  escape hatch the only recovery is deleting the
   catalogue, which deletes every corpus with it.
 
-Note the **tenant header**: a request whose `X-Dexicon-Tenant` names a tenant the token
-does not own is refused with `Tenant mismatch`, not 401. The message names both.
+Note that a lost **admin password** is recovered the same way: set
+`DEXICON_ADMIN_PASSWORD` in `.env` and restart, since a configured value is applied on
+every start.
 
 ---
 

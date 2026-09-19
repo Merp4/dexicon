@@ -28,7 +28,9 @@ public sealed class SourceFilterInheritanceTests
         string? include = null, string? exclude = null) =>
         new()
         {
-            Id = "c", TenantId = "t", Name = "books", CreatedUtc = DateTime.UtcNow,
+            Id = "c",
+            Name = "books",
+            CreatedUtc = DateTime.UtcNow,
             DefaultUseGitignore = useGitignore,
             DefaultMaxFileBytes = maxFileBytes,
             DefaultIncludeGlobs = include,
@@ -40,7 +42,10 @@ public sealed class SourceFilterInheritanceTests
         string? include = null, string? exclude = null) =>
         new()
         {
-            Id = "s", CorpusId = "c", Kind = SourceKind.Workspace, RootPath = "books/orly/AI",
+            Id = "s",
+            CorpusId = "c",
+            Kind = SourceKind.Workspace,
+            RootPath = "books/orly/AI",
             CreatedUtc = DateTime.UtcNow,
             UseGitignore = useGitignore,
             MaxFileBytes = maxFileBytes,
@@ -181,7 +186,10 @@ public sealed class SourceFilterUpdateTests
 {
     private static Source Source() => new()
     {
-        Id = "s", CorpusId = "c", Kind = SourceKind.Workspace, RootPath = "books/orly/AI",
+        Id = "s",
+        CorpusId = "c",
+        Kind = SourceKind.Workspace,
+        RootPath = "books/orly/AI",
         CreatedUtc = DateTime.UtcNow,
         UseGitignore = false,
         MaxFileBytes = 64 * 1024 * 1024,

@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Security.Cryptography;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
@@ -52,7 +53,7 @@ public static class Bootstrapper
 
         await ReconcileOrphanedJobsAsync(db, log);
         await VerifyDependenciesAsync(sp, log, options);
-        await EnsureTenantAsync(db, log, options);
+        await EnsureAdminPasswordAsync(sp, log, options);
         await EnsureBootstrapTokenAsync(sp, db, log, options);
         await PurgeLegacyChunksAsync(sp, db, log);
     }
@@ -158,25 +159,47 @@ public static class Bootstrapper
         }
     }
 
-    private static async Task EnsureTenantAsync(CatalogDbContext db, ILogger log, DexiconOptions options)
+    /// <summary>
+    /// Ensure there is an admin password, because the UI cannot be reached without one.
+    ///
+    /// Configured, or generated and printed once, which is what the bootstrap token has
+    /// always done. Stored hashed in the catalogue rather than read from the environment on
+    /// each request, so it can be changed in the UI without a restart.
+    /// </summary>
+    private static async Task EnsureAdminPasswordAsync(
+        IServiceProvider sp, ILogger log, DexiconOptions options)
     {
-        var id = options.Bootstrap.Tenant.Trim().ToLowerInvariant();
-        if (await db.Tenants.AnyAsync(t => t.Id == id)) return;
+        var tokens = sp.GetRequiredService<TokenService>();
 
-        db.Tenants.Add(new Tenant
+        if (options.Admin.Password is { Length: > 0 } configured)
         {
-            Id = id,
-            DisplayName = id,
-            CreatedUtc = DateTime.UtcNow,
-        });
-        await db.SaveChangesAsync();
-        log.LogInformation("Created bootstrap tenant '{Tenant}'", id);
+            // Rewritten on every start, so changing the variable changes the password and
+            // an operator locked out by a forgotten one has a way back in.
+            await tokens.SetPasswordAsync(configured);
+            log.LogInformation("Admin password set from DEXICON__ADMIN__PASSWORD.");
+            return;
+        }
+
+        if (await tokens.HasPasswordAsync()) return;
+
+        var generated = Convert.ToBase64String(RandomNumberGenerator.GetBytes(18))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        await tokens.SetPasswordAsync(generated);
+
+        log.LogWarning(
+            "\n" +
+            "  ┌───────────────────────────────────────────────────────────────────────┐\n" +
+            "  │  Dexicon admin password: shown once, copy it now                      │\n" +
+            "  └───────────────────────────────────────────────────────────────────────┘\n" +
+            "  {Password}\n\n" +
+            "  Sign in at the web UI with this. Set DEXICON__ADMIN__PASSWORD to pin your\n" +
+            "  own, or change it in the UI once you are in.\n",
+            generated);
     }
 
     private static async Task EnsureBootstrapTokenAsync(
         IServiceProvider sp, CatalogDbContext db, ILogger log, DexiconOptions options)
     {
-        var tenantId = options.Bootstrap.Tenant.Trim().ToLowerInvariant();
         var tokens = sp.GetRequiredService<TokenService>();
 
         // A pinned bootstrap token, for scripted setup and CI, and the recovery path
@@ -189,16 +212,18 @@ public static class Bootstrapper
         {
             if (await tokens.VerifyAsync(pinned) is not null) return;
 
-            await tokens.AdoptAsync(tenantId, "bootstrap (pinned)", Scopes.All, pinned);
+            await tokens.AdoptAsync("bootstrap (pinned)", Scopes.Issuable, pinned);
             log.LogWarning(
                 "Adopted the bootstrap token from DEXICON__BOOTSTRAP__TOKEN. It is a SECRET: " +
                 "it lives in your .env, which is gitignored and must never be committed.");
             return;
         }
 
-        if (await db.Tokens.AnyAsync(t => t.TenantId == tenantId && t.RevokedUtc == null)) return;
+        if (await db.Tokens.AnyAsync(t => t.RevokedUtc == null)) return;
 
-        var (_, issued) = await tokens.CreateAsync(tenantId, "bootstrap", Scopes.All, expiresUtc: null);
+        // Issuable, not All: a key cannot carry admin, so the bootstrap key is a search and
+        // ingest key and administration happens with the password.
+        var (_, issued) = await tokens.CreateAsync("bootstrap", Scopes.Issuable, expiresUtc: null);
 
         // A log line is an acceptable delivery channel for a value that is about to be
         // rotated; a config file is not. Printed exactly once, on first run only.

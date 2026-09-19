@@ -21,7 +21,7 @@ A single service that:
    `file:line` provenance.
 3. **Serves** that search to agents over MCP (streamable HTTP) and to humans over a small
    web UI.
-4. **Partitions** everything by tenant, so one deployment can serve several projects,
+4. **Scopes** every key to the corpora it is mapped to, so one deployment can serve several agents,
    people, or agent identities without them seeing each other's content.
 
 ## Who it is for
@@ -29,7 +29,7 @@ A single service that:
 - **Primary**: a developer running Claude Code against local repositories who wants
   semantic recall over the code, the docs, and the reference PDFs, on their own hardware,
   with nothing leaving the machine.
-- **Secondary**: a small team running one shared Dexicon, each project a tenant, some
+- **Secondary**: a small team running one shared Dexicon, a key per agent, some
   reference material shared across all of them.
 
 ## Scope
@@ -39,9 +39,9 @@ A single service that:
 - Recursive workspace indexing from read-only bind mounts, with gitignore-aware filtering
   and content-hash incremental refresh.
 - File upload and ingestion for the document formats listed above.
-- Hybrid semantic + keyword search, tenant- and corpus-scoped.
+- Hybrid semantic + keyword search, scoped to what the calling key can reach.
 - MCP server (streamable HTTP) exposing search and catalogue tools.
-- Web UI for corpora, tenants, visibility, tokens, indexing control, and a search playground.
+- Web UI for corpora, API keys and what each reaches, indexing control, and a search playground.
 - Docker Compose bringing up Dexicon + Qdrant + Ollama.
 
 **Out of scope.** Permanently, unless re-argued.
@@ -53,7 +53,7 @@ A single service that:
 | OCR of scanned PDFs | Needs a vision model and a GPU budget. Text-layer PDFs only; say so plainly when a PDF yields nothing. |
 | Graph/AST-level code understanding | Chunk-level retrieval is the target. Symbol extraction is metadata, not a call graph. |
 | Cloud embedding providers | Local-first is the product. An `IEmbeddingProvider` seam exists; no hosted implementation ships. |
-| SSO / OIDC / user accounts | Tokens and a tenant header are the auth model. See [07](07-tenancy-auth.md). |
+| SSO / OIDC / user accounts | An admin password and API keys are the auth model. See [07](07-auth.md). |
 | Horizontal scaling, HA, sharding | One container, one Qdrant. If you outgrow it, you outgrew Dexicon. |
 
 ## Design principles
@@ -61,7 +61,7 @@ A single service that:
 These are recorded here because they constrain later design choices.
 
 1. **A search that cannot name its scope is an error, not a broad search.** There is no
-   "search everything" path. See [05](05-search.md) and [07](07-tenancy-auth.md).
+   "search everything" path. See [05](05-search.md) and [07](07-auth.md).
 2. **The embedding model is part of the collection's identity.** Changing model or
    dimensions means a new collection and a rebuild, never a silent mismatch.
 3. **Degradation must be audible.** Every fallback (keyword-only because embeddings are
@@ -82,5 +82,5 @@ Dexicon v1 is done when, on a clean machine:
   and `search_index` returns relevant chunks from a repository indexed through the UI.
 - A 50k-file repository indexes without manual intervention, and a subsequent refresh that
   touches ten files re-embeds ten files.
-- A second tenant cannot retrieve the first tenant's content through any surface, proven by
+- A key cannot retrieve content from a corpus it is not mapped to, through any surface, proven by
   a test that asserts it.

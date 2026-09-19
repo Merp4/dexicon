@@ -33,17 +33,20 @@ cp .env.example .env
 docker compose up -d
 ```
 
-The first start downloads an embedding model of a few hundred megabytes. The bootstrap
-token is printed once:
+The first start downloads an embedding model of a few hundred megabytes. The admin
+password is printed once:
 
 ```bash
-docker compose logs dexicon | grep bootstrap
+docker compose logs dexicon | grep "admin password"
 ```
 
-Open <http://127.0.0.1:8477>, enter the token, and create a corpus pointing at a directory
-under `./workspaces`, which is mounted read-only.
+Open <http://127.0.0.1:8477>, sign in with it, and create a corpus pointing at a directory
+under `./workspaces`, which is mounted read-only. Set `DEXICON__ADMIN__PASSWORD` to pin
+your own, or change it in the UI.
 
-To connect an agent, issue a token under **Access**:
+To connect an agent, issue a key under **Access** and tick which corpora it may reach.
+Leaving them all unticked means every corpus, and the ticks can be changed later without
+restarting the agent:
 
 ```bash
 claude mcp add --transport http dexicon http://localhost:8477/mcp \

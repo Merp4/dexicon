@@ -10,14 +10,14 @@ namespace Dexicon.Core.Catalog;
 /// </summary>
 public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options) : DbContext(options)
 {
-    public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<ApiToken> Tokens => Set<ApiToken>();
+    public DbSet<TokenCorpus> TokenCorpora => Set<TokenCorpus>();
+    public DbSet<AdminCredential> AdminCredentials => Set<AdminCredential>();
     public DbSet<Corpus> Corpora => Set<Corpus>();
     public DbSet<ChunkSet> ChunkSets => Set<ChunkSet>();
     public DbSet<EmbeddingModelProfile> ModelProfiles => Set<EmbeddingModelProfile>();
     public DbSet<EmbeddingModelMeasurement> ModelMeasurements => Set<EmbeddingModelMeasurement>();
     public DbSet<FileChunkState> FileChunkStates => Set<FileChunkState>();
-    public DbSet<CorpusGrant> CorpusGrants => Set<CorpusGrant>();
     public DbSet<Source> Sources => Set<Source>();
     public DbSet<IndexedFile> Files => Set<IndexedFile>();
     public DbSet<Blob> Blobs => Set<Blob>();
@@ -55,14 +55,6 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        modelBuilder.Entity<Tenant>(e =>
-        {
-            e.ToTable("tenants");
-            e.HasKey(x => x.Id);
-            e.Property(x => x.Id).HasMaxLength(40);
-            e.Property(x => x.DisplayName).HasMaxLength(200).IsRequired();
-        });
-
         modelBuilder.Entity<ApiToken>(e =>
         {
             e.ToTable("tokens");
@@ -70,9 +62,29 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             e.Property(x => x.Id).HasMaxLength(40);
             e.Property(x => x.Name).HasMaxLength(200).IsRequired();
             e.Property(x => x.Scopes).HasMaxLength(200).IsRequired();
-            e.HasOne(x => x.Tenant).WithMany(t => t.Tokens)
-                .HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Cascade);
-            e.HasIndex(x => x.TenantId);
+        });
+
+        modelBuilder.Entity<TokenCorpus>(e =>
+        {
+            e.ToTable("token_corpora");
+            e.HasKey(x => new { x.TokenId, x.CorpusId });
+            e.Property(x => x.TokenId).HasMaxLength(40);
+            e.Property(x => x.CorpusId).HasMaxLength(40);
+            e.HasOne(x => x.Token).WithMany(t => t.Corpora)
+                .HasForeignKey(x => x.TokenId).OnDelete(DeleteBehavior.Cascade);
+            // Cascade, so deleting a corpus does not leave a key mapped to a corpus that
+            // no longer exists, which would read as "restricted to nothing" and is instead
+            // indistinguishable from "mapped to everything" once the last row goes.
+            e.HasOne(x => x.Corpus).WithMany()
+                .HasForeignKey(x => x.CorpusId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => x.CorpusId);
+        });
+
+        modelBuilder.Entity<AdminCredential>(e =>
+        {
+            e.ToTable("admin_credential");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasMaxLength(20);
         });
 
         modelBuilder.Entity<Corpus>(e =>
@@ -81,13 +93,11 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).HasMaxLength(40);
             e.Property(x => x.Name).HasMaxLength(200).IsRequired();
-            e.Property(x => x.Visibility).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.State).HasConversion<string>().HasMaxLength(20);
-            e.HasOne(x => x.Tenant).WithMany(t => t.Corpora)
-                .HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
-            // A tenant cannot have two corpora with the same name; the name is what
-            // an agent passes to search_index, so it has to resolve unambiguously.
-            e.HasIndex(x => new { x.TenantId, x.Name }).IsUnique();
+            // Globally unique, because the name is what an agent passes to search_index
+            // and it has to resolve to one corpus. Scoping the index by owner is what let
+            // two corpora share a name, of which a caller could only ever address one.
+            e.HasIndex(x => x.Name).IsUnique();
         });
 
         modelBuilder.Entity<EmbeddingModelProfile>(e =>
@@ -144,16 +154,6 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
                 .HasForeignKey(x => x.ChunkSetId).OnDelete(DeleteBehavior.Cascade);
             // The indexer's hot read: "what does this set still have to do?"
             e.HasIndex(x => new { x.ChunkSetId, x.Status });
-        });
-
-        modelBuilder.Entity<CorpusGrant>(e =>
-        {
-            e.ToTable("corpus_grants");
-            e.HasKey(x => new { x.CorpusId, x.TenantId });
-            e.HasOne(x => x.Corpus).WithMany(c => c.Grants)
-                .HasForeignKey(x => x.CorpusId).OnDelete(DeleteBehavior.Cascade);
-            e.HasOne(x => x.Tenant).WithMany()
-                .HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<Source>(e =>
