@@ -17,7 +17,6 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
-using Microsoft.OpenApi;
 using ModelContextProtocol.Server;
 using Serilog;
 using Serilog.Events;
@@ -61,59 +60,10 @@ builder.Services.AddProblemDetails();
 // Describes the REST surface so the web client's types can be generated from it rather
 // than hand-maintained. api.ts had already drifted from the C# contracts more than once:
 // chunk sets landed and the Corpus interface still carried fields the server had dropped.
-builder.Services.AddOpenApi(o => o.AddDocumentTransformer((doc, _, _) =>
-{
-    doc.Info = new()
-    {
-        Title = "Dexicon",
-        Version = ThisAssembly.ApiVersion,
-        Description = "Semantic indexing and search. Every endpoint except sign-in requires a "
-                    + "bearer: an agent's API key, which reaches the corpora it is mapped to, or an "
-                    + "admin session obtained by posting the password to /api/session.",
-    };
-
-    // The prose above said this; the document did not. A generated client reads the
-    // document, not the description, and only attaches credentials to operations that
-    // declare a security requirement, so with none declared the web UI's own client
-    // sent every request anonymously and the server answered "Missing credentials",
-    // which the UI reported to people as a bad token.
-    doc.Components ??= new();
-    doc.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
-    doc.Components.SecuritySchemes["bearer"] = new OpenApiSecurityScheme
-    {
-        Type = SecuritySchemeType.Http,
-        Scheme = "bearer",
-        Description = "A Dexicon API token: `Authorization: Bearer dex_…`.",
-    };
-
-    // Applied to the whole document rather than per operation: the few anonymous
-    // endpoints are the health probes, and claiming they need a token is a far smaller
-    // error than claiming the rest do not.
-    doc.Security =
-    [
-        new OpenApiSecurityRequirement
-        {
-            [new OpenApiSecuritySchemeReference("bearer", doc)] = [],
-        },
-    ];
-
-    return Task.CompletedTask;
-})
-.AddOperationTransformer((operation, context, _) =>
-{
-    // The document-wide requirement above is right for almost everything, and wrong for
-    // the container probes, which is what Docker's HEALTHCHECK calls, without a token.
-    // An empty `security` on an operation means "this one needs none", and the list comes
-    // from the middleware that actually enforces it rather than a copy that can drift.
-    var path = "/" + (context.Description.RelativePath ?? string.Empty).TrimEnd('/');
-
-    if (DexiconAuthMiddleware.IsAnonymous(path))
-    {
-        operation.Security = [];
-    }
-
-    return Task.CompletedTask;
-}));
+//
+// Two documents: the full surface, and the subset other software is invited to depend on.
+// See Infrastructure/OpenApiDocuments.
+builder.Services.AddDexiconOpenApi(ThisAssembly.ApiVersion);
 builder.Services.AddExceptionHandler<ScopeExceptionHandler>();
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
@@ -148,6 +98,7 @@ builder.Services.AddSingleton<LoginThrottle>();
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<ScopeResolver>();
 builder.Services.AddScoped<SearchService>();
+builder.Services.AddScoped<ContextService>();
 builder.Services.AddScoped<CorpusIndexer>();
 builder.Services.AddScoped<DocumentService>();
 builder.Services.AddScoped<IVectorStoreCleanup, VectorStoreCleanup>();
@@ -218,6 +169,7 @@ app.UseDexiconAuth();
 
 app.MapHealthEndpoints();
 app.MapSearchEndpoints();
+app.MapContextEndpoints();
 app.MapCorpusEndpoints();
 app.MapChunkSetEndpoints();
 app.MapDocumentEndpoints();
@@ -226,6 +178,31 @@ app.MapEventEndpoints();
 app.MapWorkspaceEndpoints();
 app.MapAdminEndpoints();
 app.MapMcp("/mcp");
+
+// The integration document, served by the instance that implements it.
+//
+// Only that one. The framework's own template maps this in Development alone, to avoid
+// exposing the surface in production, and that reasoning holds for the full document:
+// it describes the workspace browser, the model endpoints and sign-in, and its consumer
+// is a build-time code generator that reads the committed file. The integration document
+// has a consumer here that the file cannot serve — an integrator generating a client
+// against the instance they are actually talking to, at whatever version it is running,
+// rather than against a checkout that may be ahead of it.
+//
+// Authenticated like everything else, which is the remedy the OpenAPI documentation
+// gives for the exposure the dev-only default is avoiding: DexiconAuthMiddleware denies
+// by default, and this path is not on its anonymous list. Authentication only, with no
+// scope of its own: a contract is not data, and a key holding any scope at all can
+// already see the endpoints it describes.
+//
+// The document is regenerated per request. At seven paths, for a caller that fetches it
+// once per code generation, that is cheaper than a cache to invalidate.
+app.MapOpenApi($"/openapi/{{documentName:regex(^{OpenApiDocuments.Integration}$)}}.json");
+
+// Anything else under /openapi/ is a name that is not published. Without this the SPA
+// fallback answers /openapi/v1.json with the index page and a 200, which reads to an
+// integrator as a document they failed to parse rather than one that is not served.
+app.Map("/openapi/{**rest}", () => Results.NotFound()).ExcludeFromDescription();
 
 // SPA fallback. The built UI is not in source control (see .gitignore): the container
 // image builds it, and `dev.ps1 ui` builds it locally. When it is absent, as after a

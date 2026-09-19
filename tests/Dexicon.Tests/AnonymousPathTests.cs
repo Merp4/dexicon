@@ -38,6 +38,10 @@ public sealed class AnonymousPathTests
     [InlineData("/api/tokens")]
     [InlineData("/api/workspaces")]
     [InlineData("/mcp")]
+    // The integration OpenAPI document. Served by the running instance so an integrator
+    // can generate a client against the version it is actually running, and behind the
+    // same credential as the endpoints it describes.
+    [InlineData("/openapi/integration.json")]
     // Not a prefix match: nothing may open the family by looking like a member of it.
     [InlineData("/healthz/live/../../api/corpora")]
     [InlineData("/assets")]

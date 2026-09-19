@@ -41,7 +41,7 @@ additional failure mode without benefit. See
 
 | Component | Kind | Responsibility |
 |---|---|---|
-| `Api` | ASP.NET Core minimal API | REST for the SPA; SSE for progress |
+| `Api` | ASP.NET Core minimal API | REST for the SPA and for integrations ([13](13-integration.md)); SSE for progress |
 | `Mcp` | `ModelContextProtocol.AspNetCore`, stateless | Tool surface for agents ([06](06-mcp-surface.md)) |
 | `IndexingService` | `BackgroundService` + bounded channel | Runs one indexing job at a time; emits progress events |
 | `Catalog` | EF Core + SQLite | Corpora, sources, files, jobs, keys and what each reaches |

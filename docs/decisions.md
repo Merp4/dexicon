@@ -1008,14 +1008,35 @@ reindex returning the terminal job state. A separate port or process for the int
 API ([D-01](#d-01-single-container) stands; a second listener adds a boundary that does not
 exist here). `maxTokens` (above). Promoting the whole REST surface to a contract (above).
 
-**Not built.** The shape is recorded here so the roadmap row is a build task rather than a
-design one. No code has changed.
+**As built.** `POST /api/context`, and `Dexicon_integration.json` generated beside
+`Dexicon.json` in `clients/web-ui`. Both documents come from one build and carry the same
+`major.minor`; CI checks both against the code. Assembly is a pure function over ranked
+hits, so the budget arithmetic is tested without a vector store, and `Stitch` moved from
+the MCP tool class into `Core/Search/Passage` where its four callers can reach it.
 
-**Open.** Whether a running instance serves the integration document. `Dexicon.csproj`
-generates at build time and serves nothing, so that the API surface is not exposed
-anonymously in order to describe itself. Serving this one document behind the existing
-bearer check would let a consumer generate a client against a live instance without
-reopening that.
+One detail is not obvious and cost a regression in the making: giving an endpoint a group
+name removes it from every OTHER document under the stock `ShouldInclude` rule, so the
+full document, which the web client is generated from, would have lost search, corpora and
+jobs the moment they were selected into the integration one. The full document now takes
+every endpoint explicitly, and a test asserts that it still does.
+
+**Resolved: the running instance serves the integration document, and only that one.**
+The framework's template maps `MapOpenApi` in Development alone, "to minimize the risk of
+exposing sensitive information and reduce the vulnerabilities in production", and the
+OpenAPI documentation's own remedy where the document is wanted anyway is to apply an
+authorization check. The objection recorded here was to exposing the surface
+*anonymously*, and `DexiconAuthMiddleware` denies by default, so `/openapi/integration.json`
+is behind a bearer without an entry being added anywhere. Authentication and no scope: a
+contract is not data, and any key at all can already reach the endpoints it describes.
+
+The full document stays build-time only. Its consumer is a code generator reading the
+committed file, and it describes the workspace browser, the model endpoints and sign-in.
+`/openapi/v1.json` is a 404, explicitly rather than by omission, because the SPA fallback
+would otherwise answer it with the index page and a 200.
+
+What the served copy adds over the committed one is the version of the instance actually
+answering. An operator can be running an image older than the checkout a consumer
+generated from, and nothing in the file says so.
 
 **Revisit if.** A pipeline needs to create corpora rather than search and refresh them.
 [D-28](#d-28-an-admin-password-and-scoped-api-keys) keeps `admin` off issuable keys, so that

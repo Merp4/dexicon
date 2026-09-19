@@ -207,35 +207,6 @@
         }
       }
     },
-    "/api/search": {
-      "post": {
-        "tags": [
-          "Search"
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SearchApiRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SearchResult"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/events": {
       "get": {
         "tags": [
@@ -277,26 +248,6 @@
       }
     },
     "/api/corpora": {
-      "get": {
-        "tags": [
-          "Corpora"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/CorpusSummary"
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
       "post": {
         "tags": [
           "Corpora"
@@ -323,22 +274,10 @@
             }
           }
         }
-      }
-    },
-    "/api/corpora/{nameOrId}": {
+      },
       "get": {
         "tags": [
           "Corpora"
-        ],
-        "parameters": [
-          {
-            "name": "nameOrId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
         ],
         "responses": {
           "200": {
@@ -346,13 +285,18 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CorpusSummary"
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CorpusSummary"
+                  }
                 }
               }
             }
           }
         }
-      },
+      }
+    },
+    "/api/corpora/{nameOrId}": {
       "patch": {
         "tags": [
           "Corpora"
@@ -407,6 +351,33 @@
         "responses": {
           "200": {
             "description": "OK"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Corpora"
+        ],
+        "parameters": [
+          {
+            "name": "nameOrId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpusSummary"
+                }
+              }
+            }
           }
         }
       }
@@ -547,42 +518,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CoverageReport"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/corpora/{nameOrId}/reindex": {
-      "post": {
-        "tags": [
-          "Corpora"
-        ],
-        "parameters": [
-          {
-            "name": "nameOrId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "full",
-            "in": "query",
-            "schema": {
-              "type": "boolean"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/JobSummary"
                 }
               }
             }
@@ -1017,74 +952,6 @@
         }
       }
     },
-    "/api/jobs": {
-      "get": {
-        "tags": [
-          "Jobs"
-        ],
-        "parameters": [
-          {
-            "name": "corpusId",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "schema": {
-              "type": "integer",
-              "format": "int32"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/JobSummary"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/jobs/{id}": {
-      "get": {
-        "tags": [
-          "Jobs"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/JobSummary"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/session": {
       "post": {
         "tags": [
@@ -1229,6 +1096,168 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TokenSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/search": {
+      "post": {
+        "tags": [
+          "Search"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchApiRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/context": {
+      "post": {
+        "tags": [
+          "Search"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContextApiRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/corpora/{nameOrId}/reindex": {
+      "post": {
+        "tags": [
+          "Corpora"
+        ],
+        "parameters": [
+          {
+            "name": "nameOrId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "full",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs": {
+      "get": {
+        "tags": [
+          "Jobs"
+        ],
+        "parameters": [
+          {
+            "name": "corpusId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JobSummary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{id}": {
+      "get": {
+        "tags": [
+          "Jobs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSummary"
                 }
               }
             }
@@ -1489,6 +1518,210 @@
                 "$ref": "#/components/schemas/JobSummary"
               }
             ]
+          }
+        }
+      },
+      "Citation": {
+        "required": [
+          "corpus",
+          "filePath",
+          "location"
+        ],
+        "type": "object",
+        "properties": {
+          "corpus": {
+            "type": "string"
+          },
+          "sourceRoot": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "filePath": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "startLine": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "endLine": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "page": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "section": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "score": {
+            "type": "number",
+            "format": "float"
+          },
+          "chars": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "ContextApiRequest": {
+        "required": [
+          "query"
+        ],
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "corpus": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "mode": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "limit": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "pathPrefix": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "source": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "language": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "symbol": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "maxChars": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "neighbours": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "lineNumbers": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "distinctTitles": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          }
+        }
+      },
+      "ContextResult": {
+        "required": [
+          "query",
+          "mode",
+          "scope",
+          "context",
+          "citations"
+        ],
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/SearchMode"
+          },
+          "degraded": {
+            "type": "boolean"
+          },
+          "degradedReason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "scope": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScopeEntry"
+            }
+          },
+          "context": {
+            "type": "string"
+          },
+          "citations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            }
+          },
+          "usedChars": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "maxChars": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "droppedHits": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "note": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "tookMs": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -3439,9 +3672,6 @@
       "name": "System"
     },
     {
-      "name": "Search"
-    },
-    {
       "name": "Events"
     },
     {
@@ -3457,13 +3687,16 @@
       "name": "Documents"
     },
     {
-      "name": "Jobs"
-    },
-    {
       "name": "Session"
     },
     {
       "name": "Tokens"
+    },
+    {
+      "name": "Search"
+    },
+    {
+      "name": "Jobs"
     }
   ]
 }

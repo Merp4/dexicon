@@ -18,6 +18,34 @@ with no section here fails its release rather than publishing an undescribed one
 
 ## Unreleased
 
+### Added
+
+- **An HTTP API for scripts, and `POST /api/context`.** The REST surface already took the
+  same keys and the same per-corpus scoping as MCP; what it lacked was a shape for a
+  caller with no agent loop. Search returns ranked hits with a preview of each, so
+  assembling something worth putting in a prompt meant a call per hit and joining the
+  overlapping chunks afterwards. `POST /api/context` runs the search, takes whole chunks,
+  joins the ones belonging to the same file, and stops at a stated budget, returning the
+  passage and a citation per block of it.
+
+  The budget is characters. No tokenizer ships, and the model reading the passage is not
+  the model that embedded it, so a token figure would be an estimate presented as a
+  budget. `truncated`, `droppedHits` and `degraded` say what the passage is missing and
+  why, which matters when nothing reads it before it reaches a prompt.
+
+  The endpoints meant for other software are now described by their own OpenAPI document,
+  `clients/web-ui/Dexicon_integration.json`, generated beside the full one. The full
+  document also describes the workspace browser, the model probe and the sign-in
+  endpoint, so publishing it whole as an integration contract would have committed the
+  project to the shape of the UI. See [docs/13](docs/13-integration.md) and D-29.
+
+  A running instance serves that document at `/openapi/integration.json`, behind the same
+  bearer as the endpoints it describes, so a client can be generated against the version
+  actually answering rather than against a checkout that may be ahead of it. No other
+  document name is served.
+
+  There is no outbound webhook, deliberately.
+
 ### Changed
 
 - **Nothing is minted on first run, and the password is what gets printed.** The

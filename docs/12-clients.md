@@ -11,6 +11,10 @@ header  Authorization: Bearer dex_…
 That one line is the whole integration. Everything below is the same fact written in each
 client's own dialect, plus the two clients that need a bridge and the reasons why.
 
+For a caller with no agent loop — a git hook, a CI step, a shell script — the same key
+reaches an HTTP API instead, including one call that returns an assembled, cited passage
+for a query. See [13](13-integration.md).
+
 `./scripts/install-mcp.ps1` generates any of these; see [Installer](#installer).
 
 > **Where the key comes from.** Issue it on the **Access** screen, which is also where

@@ -71,6 +71,10 @@ Zed. `./scripts/install-mcp.ps1` generates these configurations.
 - **Multi-tenancy.** Tokens, scopes and per-corpus visibility, enforced at three layers.
 - **State reporting.** A partially built index, a skipped file and an empty corpus are each
   distinguishable from a search that returns no results.
+- **An HTTP API for scripts.** `POST /api/context` returns one assembled, cited passage
+  within a character budget, for hooks and CI steps that have no agent loop to fetch
+  results with. Described by its own OpenAPI document; see
+  [13](docs/13-integration.md).
 
 ## Status
 
@@ -110,7 +114,8 @@ Begin with [01 — Overview](docs/01-overview.md) for scope and non-goals, or
 [12 — Connecting an agent](docs/12-clients.md) for client configuration.
 
 The numbered documents in [docs/](docs/) cover architecture, the data model, ingestion,
-search, the MCP surface, tenancy, the UI, deployment and security.
+search, the MCP surface, tenancy, the UI, deployment, security and
+[the integration API](docs/13-integration.md).
 [Decisions](docs/decisions.md) records design choices and the alternatives considered,
 [benchmarks](docs/benchmarks.md) the evaluations behind the default settings,
 [troubleshooting](docs/troubleshooting.md) common problems, and
