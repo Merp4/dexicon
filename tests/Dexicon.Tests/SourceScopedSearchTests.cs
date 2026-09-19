@@ -47,8 +47,11 @@ public sealed class SourceScopedSearchTests : IDisposable
 
     private static Source Source(string id, string corpusId, string root) => new()
     {
-        Id = id, CorpusId = corpusId, Kind = SourceKind.Workspace,
-        RootPath = root, CreatedUtc = DateTime.UtcNow,
+        Id = id,
+        CorpusId = corpusId,
+        Kind = SourceKind.Workspace,
+        RootPath = root,
+        CreatedUtc = DateTime.UtcNow,
     };
 
     [Fact]

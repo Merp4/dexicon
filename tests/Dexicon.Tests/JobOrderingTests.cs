@@ -30,7 +30,8 @@ public sealed class JobOrderingTests : IAsyncLifetime
         // Jobs belong to a corpus; without one every insert trips the foreign key.
         _db.Corpora.Add(new Corpus
         {
-            Id = "c", Name = "c",
+            Id = "c",
+            Name = "c",
             CreatedUtc = DateTime.UtcNow,
         });
         await _db.SaveChangesAsync();

@@ -40,7 +40,8 @@ public sealed class CoverageEndpointTests : IAsyncLifetime
         await _db.DisposeAsync();
         await _connection.DisposeAsync();
         try { Directory.Delete(_root, recursive: true); }
-        catch (IOException) { } catch (UnauthorizedAccessException) { }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private void Write(string relative, string content = "text")
@@ -149,8 +150,11 @@ public sealed class CoverageEndpointTests : IAsyncLifetime
         await AddSource("c", "books/orly/AI");
         _db.Sources.Add(new Source
         {
-            Id = "upload", CorpusId = "c", Kind = SourceKind.Upload,
-            RootPath = null, CreatedUtc = DateTime.UtcNow,
+            Id = "upload",
+            CorpusId = "c",
+            Kind = SourceKind.Upload,
+            RootPath = null,
+            CreatedUtc = DateTime.UtcNow,
         });
         await _db.SaveChangesAsync();
 

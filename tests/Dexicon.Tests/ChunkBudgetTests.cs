@@ -23,18 +23,26 @@ public sealed class ChunkBudgetTests
 {
     private static ChunkSet Set(int size, int overlap = 100) => new()
     {
-        Id = "set", CorpusId = "corpus", Name = "default",
-        ChunkSize = size, ChunkOverlap = overlap,
+        Id = "set",
+        CorpusId = "corpus",
+        Name = "default",
+        ChunkSize = size,
+        ChunkOverlap = overlap,
         BoundaryMode = "blank-line",
-        EmbeddingProvider = "ollama", EmbeddingModel = "embeddinggemma",
-        EmbeddingDimensions = 768, CollectionName = "c",
+        EmbeddingProvider = "ollama",
+        EmbeddingModel = "embeddinggemma",
+        EmbeddingDimensions = 768,
+        CollectionName = "c",
     };
 
     private static EmbeddingModelMeasurement Measured(int? context, double? ratio) => new()
     {
-        Provider = "ollama", Model = "embeddinggemma",
-        ContextTokens = context, CharsPerToken = ratio,
-        Dimensions = 768, MeasuredUtc = DateTime.UtcNow,
+        Provider = "ollama",
+        Model = "embeddinggemma",
+        ContextTokens = context,
+        CharsPerToken = ratio,
+        Dimensions = 768,
+        MeasuredUtc = DateTime.UtcNow,
     };
 
     [Fact]

@@ -1,12 +1,12 @@
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
-using Microsoft.Extensions.Options;
 using Dexicon.Core.Embedding;
 using Dexicon.Core.Indexing;
 using Dexicon.Core.Vectors;
 using Dexicon.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Dexicon.Api;
 

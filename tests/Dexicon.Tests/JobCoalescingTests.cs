@@ -37,8 +37,12 @@ public sealed class JobCoalescingTests : IAsyncLifetime
         // A job's ChunkSetId is a foreign key, so the set it names has to exist.
         _db.ChunkSets.Add(new ChunkSet
         {
-            Id = "set-2", CorpusId = "c", Name = "second", EmbeddingModel = "embeddinggemma",
-            CollectionName = "dexicon_second", BoundaryMode = "blank-line",
+            Id = "set-2",
+            CorpusId = "c",
+            Name = "second",
+            EmbeddingModel = "embeddinggemma",
+            CollectionName = "dexicon_second",
+            BoundaryMode = "blank-line",
             CreatedUtc = DateTime.UtcNow,
         });
         await _db.SaveChangesAsync();
@@ -56,8 +60,12 @@ public sealed class JobCoalescingTests : IAsyncLifetime
     {
         var job = new IndexJob
         {
-            Id = Ulid.NewUlid().ToString(), CorpusId = "c", ChunkSetId = null,
-            Kind = JobKind.Refresh, State = state, QueuedUtc = DateTime.UtcNow.AddMinutes(-1),
+            Id = Ulid.NewUlid().ToString(),
+            CorpusId = "c",
+            ChunkSetId = null,
+            Kind = JobKind.Refresh,
+            State = state,
+            QueuedUtc = DateTime.UtcNow.AddMinutes(-1),
             StartedUtc = state == JobState.Running ? DateTime.UtcNow.AddMinutes(-1) : null,
         };
         _db.Jobs.Add(job);

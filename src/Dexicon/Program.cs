@@ -11,7 +11,6 @@ using Dexicon.Core.Search;
 using Dexicon.Core.Vectors;
 using Dexicon.Infrastructure;
 using Dexicon.Mcp;
-using ModelContextProtocol.Server;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http.Features;
@@ -19,6 +18,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using Microsoft.OpenApi;
+using ModelContextProtocol.Server;
 using Serilog;
 using Serilog.Events;
 

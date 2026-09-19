@@ -52,9 +52,14 @@ public sealed class HealthReportTests : IAsyncLifetime
     {
         _db.ChunkSets.Add(new ChunkSet
         {
-            Id = id, CorpusId = corpusId, Name = name, EmbeddingModel = model,
-            EmbeddingProvider = provider, CollectionName = $"dexicon_{id}",
-            BoundaryMode = "blank-line", CreatedUtc = DateTime.UtcNow,
+            Id = id,
+            CorpusId = corpusId,
+            Name = name,
+            EmbeddingModel = model,
+            EmbeddingProvider = provider,
+            CollectionName = $"dexicon_{id}",
+            BoundaryMode = "blank-line",
+            CreatedUtc = DateTime.UtcNow,
         });
         await _db.SaveChangesAsync();
     }

@@ -4,10 +4,10 @@ using Dexicon.Api;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
-using Microsoft.Extensions.Options;
 using Dexicon.Core.Search;
 using Dexicon.Core.Vectors;
 using Dexicon.Infrastructure;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 

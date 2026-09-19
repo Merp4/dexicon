@@ -20,10 +20,14 @@ public class SourceAmbiguityTests
     private static SearchHit Chunk(string sourceId, int index, int startLine, string content) =>
         new()
         {
-            CorpusId = "corpus", SourceId = sourceId,
+            CorpusId = "corpus",
+            SourceId = sourceId,
             FilePath = "Logic For Dummies, 2nd Edition.pdf",
-            StartLine = startLine, EndLine = startLine + 9,
-            ChunkIndex = index, Content = content, Score = 0f,
+            StartLine = startLine,
+            EndLine = startLine + 9,
+            ChunkIndex = index,
+            Content = content,
+            Score = 0f,
         };
 
     [Fact]

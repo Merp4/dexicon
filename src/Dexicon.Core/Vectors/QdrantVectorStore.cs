@@ -9,12 +9,11 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Qdrant.Client;
 using Qdrant.Client.Grpc;
-
+using QdrantVectors = Qdrant.Client.Grpc.Vectors;
+using SearchResponse = Dexicon.Core.Search.SearchResponse;
 // Qdrant's generated gRPC types collide by name with ours. Alias rather than
 // fully-qualify at every use site, so the domain names stay readable.
 using SparseVector = Dexicon.Core.Search.SparseVector;
-using SearchResponse = Dexicon.Core.Search.SearchResponse;
-using QdrantVectors = Qdrant.Client.Grpc.Vectors;
 
 namespace Dexicon.Core.Vectors;
 

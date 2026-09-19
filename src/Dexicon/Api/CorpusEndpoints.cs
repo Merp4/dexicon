@@ -1,11 +1,11 @@
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
-using Dexicon.Mcp;
 using Dexicon.Core.Configuration;
 using Dexicon.Core.Embedding;
 using Dexicon.Core.Indexing;
 using Dexicon.Core.Vectors;
 using Dexicon.Infrastructure;
+using Dexicon.Mcp;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 

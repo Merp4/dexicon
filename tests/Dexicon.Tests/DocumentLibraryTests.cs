@@ -64,20 +64,20 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
 
     private static ChunkSet AddSet(Corpus c, string name, int chunkSize, int overlap,
         string boundary = "blank-line", bool isDefault = false, string model = "nomic-embed-text") => new()
-    {
-        Id = $"set-{c.Id}-{name}",
-        CorpusId = c.Id,
-        Name = name,
-        EmbeddingModel = model,
-        EmbeddingDimensions = 768,
-        CollectionName = $"dexicon__{model}__768",
-        ChunkSize = chunkSize,
-        ChunkOverlap = overlap,
-        BoundaryMode = boundary,
-        IsDefault = isDefault,
-        State = CorpusState.Ready,
-        CreatedUtc = DateTime.UtcNow,
-    };
+        {
+            Id = $"set-{c.Id}-{name}",
+            CorpusId = c.Id,
+            Name = name,
+            EmbeddingModel = model,
+            EmbeddingDimensions = 768,
+            CollectionName = $"dexicon__{model}__768",
+            ChunkSize = chunkSize,
+            ChunkOverlap = overlap,
+            BoundaryMode = boundary,
+            IsDefault = isDefault,
+            State = CorpusState.Ready,
+            CreatedUtc = DateTime.UtcNow,
+        };
 
     /// <summary>The corpus's default set: what an unqualified search reaches.</summary>
     private static ChunkSet DefaultSet(Corpus c) => c.ChunkSets.First(s => s.IsDefault);

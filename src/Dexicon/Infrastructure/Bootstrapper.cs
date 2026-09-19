@@ -1,5 +1,5 @@
-using System.Security.Cryptography;
 using System.Reflection;
+using System.Security.Cryptography;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
