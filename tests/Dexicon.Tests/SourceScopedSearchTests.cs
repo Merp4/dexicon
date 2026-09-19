@@ -102,10 +102,36 @@ public sealed class SourceScopedSearchTests : IDisposable
     public async Task An_unknown_folder_says_what_there_is()
     {
         // A silent empty result set is indistinguishable from "nothing matched your query".
+        //
+        // This asserted only that the message repeated the bad path, which is what the name
+        // already promised it did not stop at. The roots were in VisibleNames and in no
+        // message, so a caller who guessed wrong could only guess again: found by using the
+        // MCP surface and guessing wrong.
         var error = await Should.ThrowAsync<ScopeResolutionException>(
             () => _scopes.SourceIdsAsync(["books"], "books/orly/Rust"));
 
         error.Message.ShouldContain("books/orly/Rust");
+
+        // Every root, in the message itself: that is what a caller who guessed wrong reads.
+        foreach (var root in new[] { "books/orly/AI", "books/orly/Philosophy", "books/orly/Architecture" })
+            error.Message.ShouldContain(root);
+
+        error.VisibleNames.ShouldBe(["books/orly/AI", "books/orly/Architecture", "books/orly/Philosophy"]);
+    }
+
+    [Fact]
+    public async Task A_corpus_of_uploads_alone_says_so_rather_than_listing_nothing()
+    {
+        // "Sources: ." would read as a formatting bug. An upload has no path, so there is
+        // genuinely nothing to suggest, and saying that is the useful answer.
+        _db.Sources.RemoveRange(_db.Sources.Where(x => x.CorpusId == "books" && x.RootPath != null));
+        await _db.SaveChangesAsync();
+
+        var error = await Should.ThrowAsync<ScopeResolutionException>(
+            () => _scopes.SourceIdsAsync(["books"], "books/orly/AI"));
+
+        error.Message.ShouldContain("no workspace sources at all");
+        error.VisibleNames.ShouldBeEmpty();
     }
 
     [Fact]
