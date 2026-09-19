@@ -23,6 +23,23 @@ vi.mock('./api', async (importOriginal) => {
 
 const corpora = [{ id: 'c1', name: 'docs' }, { id: 'c2', name: 'api-repo' }] as Corpus[];
 
+type Hit = SearchResult['hits'][number];
+
+function hit(over: Partial<Hit> = {}): Hit {
+  return {
+    corpusId: 'c1',
+    corpusName: 'docs',
+    filePath: '04-ingestion.md',
+    startLine: 228,
+    endLine: 265,
+    content: 'Chunk size, overlap, boundary mode and the embedding model belong to a chunk set.',
+    score: 0.8,
+    location: '04-ingestion.md:228-265',
+    symbols: [],
+    ...over,
+  } as unknown as Hit;
+}
+
 function result(over: Partial<SearchResult> = {}): SearchResult {
   return {
     query: 'chunk sets',
@@ -30,19 +47,7 @@ function result(over: Partial<SearchResult> = {}): SearchResult {
     degraded: false,
     degradedReason: null,
     scope: [{ id: 'c1', name: 'docs', state: 'Ready' }],
-    hits: [
-      {
-        corpusId: 'c1',
-        corpusName: 'docs',
-        filePath: '04-ingestion.md',
-        startLine: 228,
-        endLine: 265,
-        content: 'Chunk size, overlap, boundary mode and the embedding model belong to a chunk set.',
-        score: 0.8,
-        location: '04-ingestion.md:228-265',
-        symbols: [],
-      },
-    ],
+    hits: [hit()],
     tookMs: 257,
     note: null,
     ...over,
@@ -103,6 +108,53 @@ describe('searching', () => {
     await user.type(screen.getByPlaceholderText(/Ask a question/), 'chunk sets{Enter}');
 
     await waitFor(() => expect(search).toHaveBeenCalledOnce());
+  });
+});
+
+describe('marking why a hit matched', () => {
+  it('marks the query terms in the passage', async () => {
+    // A hit is up to 1,500 characters. Returning it unmarked hands over the haystack and
+    // the assurance that the needle is in it.
+    search.mockResolvedValue(result({ query: 'overlap boundary' }));
+    await searchFor('overlap boundary');
+
+    const marked = (await screen.findAllByText('overlap')).map((n) => n.tagName);
+    expect(marked).toContain('MARK');
+    expect(screen.getAllByText('boundary').map((n) => n.tagName)).toContain('MARK');
+  });
+
+  it('does not mark the stopwords', async () => {
+    // "chunking strategy and overlap size" over the books corpus produced 133 marks, 47 of
+    // them "and". Marking a word that is in every passage marks the passage.
+    search.mockResolvedValue(result({ query: 'overlap and the boundary' }));
+    await searchFor('overlap and the boundary');
+
+    const marks = document.querySelectorAll('mark');
+    expect(marks.length).toBeGreaterThan(0);
+    expect([...marks].map((m) => m.textContent?.toLowerCase())).not.toContain('and');
+    expect([...marks].map((m) => m.textContent?.toLowerCase())).not.toContain('the');
+  });
+
+  it('sets prose in the body face and code in monospace', async () => {
+    // `pre` is monospace in the UA stylesheet, so the prose branch has to say font-sans or
+    // a page of a book arrives in 14px monospace regardless of the class it was given.
+    search.mockResolvedValue(result({ hits: [hit({ language: 'markdown' })] }));
+    await searchFor('chunk sets');
+
+    await screen.findByText('04-ingestion.md:228-265');
+    const prose = document.querySelector('pre')!;
+    expect(prose.className).toMatch(/font-sans/);
+    expect(prose.className).not.toMatch(/\bmono\b/);
+  });
+
+  it('keeps monospace for a code chunk', async () => {
+    search.mockResolvedValue(result({ hits: [hit({ language: 'csharp' })] }));
+    await searchFor('chunk sets');
+
+    await screen.findByText('04-ingestion.md:228-265');
+    const code = document.querySelector('pre')!;
+    expect(code.className).toMatch(/\bmono\b/);
+    expect(code.className).not.toMatch(/font-sans/);
   });
 });
 

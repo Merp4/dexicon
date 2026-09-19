@@ -424,6 +424,130 @@ export function HealthDots({ health, connected, stale }: { health: Health | null
   );
 }
 
+// ── Snippets ────────────────────────────────────────────────────────────────
+
+/**
+ * Languages whose chunks are code, and are therefore worth the monospace.
+ *
+ * Everything else is prose, which monospace actively harms: this corpus is ~15,000 chunks
+ * of book, and a page of Designing Data-Intensive Applications set in 12px monospace is
+ * slower to read than the same page anywhere else. A path or an identifier keeps it,
+ * because column alignment and character distinction are the point there.
+ */
+const CODE_LANGUAGES = new Set([
+  'csharp', 'typescript', 'javascript', 'tsx', 'jsx', 'python', 'go', 'rust', 'java',
+  'cpp', 'c', 'sql', 'json', 'yaml', 'yml', 'xml', 'html', 'css', 'scss', 'shell',
+  'bash', 'powershell', 'ruby', 'php', 'kotlin', 'swift', 'scala', 'toml', 'ini',
+  'dockerfile', 'makefile', 'diff',
+]);
+
+function isProse(language?: string | null): boolean {
+  return !language || !CODE_LANGUAGES.has(language.toLowerCase());
+}
+
+/**
+ * Whether a file's NAME is a title rather than a path.
+ *
+ * By extension, because this decides how to set the name itself and the name is all there
+ * is at that point. "A Project Guide to UX Design - For User Experience Designers in the
+ * Field or in the Making, 3rd Edition.epub" is a sentence; in 12px monospace with
+ * break-all it wrapped as "3rd Editio / n.epub".
+ */
+const DOCUMENT_EXTENSIONS = /\.(pdf|epub|docx?|pptx?|md|markdown|txt|rtf)$/i;
+
+function isDocumentName(path: string): boolean {
+  return DOCUMENT_EXTENSIONS.test(path) && !path.includes('/');
+}
+
+const REGEX_SPECIALS = /[.*+?^${}()|[\]\\]/g;
+
+/**
+ * Words common enough that marking them marks the passage.
+ *
+ * "chunking strategy and overlap size" over the books corpus produced 133 marks, 47 of
+ * them the word "and". A three-character floor does not separate these on its own: "API",
+ * "RRF" and "PDF" all clear it and all carry the query.
+ */
+const STOPWORDS = new Set([
+  'and', 'the', 'for', 'are', 'but', 'not', 'was', 'were', 'you', 'your', 'all', 'any',
+  'can', 'has', 'had', 'its', 'our', 'out', 'own', 'how', 'why', 'who',
+  'that', 'this', 'with', 'from', 'they', 'them', 'their', 'there', 'then', 'than',
+  'have', 'what', 'when', 'where', 'which', 'while', 'will', 'would', 'should',
+  'about', 'into', 'over', 'some', 'such', 'only', 'other', 'been', 'being',
+  'does', 'did', 'each', 'more', 'most', 'much', 'very', 'just', 'also', 'here',
+]);
+
+/**
+ * Split text into alternating non-match / match segments for the query's terms.
+ *
+ * Terms of three characters or more, minus the stopwords. `split` with ONE capture group
+ * returns matches at the odd indices, which is what the caller relies on.
+ */
+function splitOnTerms(text: string, query: string): string[] {
+  const terms = [...new Set((query.toLowerCase().match(/[\p{L}\p{N}_]{3,}/gu) ?? []))]
+    .filter((t) => !STOPWORDS.has(t));
+  if (terms.length === 0) return [text];
+
+  const pattern = terms
+    .sort((a, b) => b.length - a.length)   // longest first, so "corpus_id" wins over "corpus"
+    .map((t) => t.replace(REGEX_SPECIALS, '\\$&'))
+    .join('|');
+
+  try {
+    return text.split(new RegExp(`(${pattern})`, 'giu'));
+  } catch {
+    // A term that survives escaping and still will not compile must not lose the snippet.
+    return [text];
+  }
+}
+
+/**
+ * A search hit's passage.
+ *
+ * Marks the query's terms, because the alternative is handing someone 1,500 characters and
+ * letting them find the reason themselves. The mark is amber rather than the accent, which
+ * already means "default" and "in use" elsewhere in this UI.
+ */
+function Snippet({ content, language, query }: { content: string; language?: string | null; query: string }) {
+  const prose = isProse(language);
+  const parts = splitOnTerms(content, query);
+
+  return (
+    <pre
+      className={cn(
+        'm-0 max-h-[340px] overflow-x-auto rounded-md bg-muted px-3 py-2.5 break-words whitespace-pre-wrap',
+        // font-sans explicitly: <pre> is monospace in the UA stylesheet, so setting only
+        // the size and the leading left the book pages in 14px monospace.
+        prose ? 'font-sans text-sm leading-relaxed' : 'mono text-xs',
+      )}
+    >
+      {parts.map((part, i) =>
+        i % 2 === 1
+          ? <mark key={i} className="rounded-[2px] bg-[var(--mark-bg)] px-[0.1em] text-[var(--mark-text)]">{part}</mark>
+          : part,
+      )}
+    </pre>
+  );
+}
+
+/** Shown while a search runs. See the comment at its use. */
+function SearchSkeleton({ count = 3 }: { count?: number }) {
+  return (
+    <div className="grid gap-3" aria-hidden>
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i} className="card p-3.5">
+          <div className="mb-2 h-4 w-1/2 animate-pulse rounded bg-muted" />
+          <div className="grid gap-1.5 rounded-md bg-muted px-3 py-2.5">
+            <div className="h-3 w-full animate-pulse rounded bg-[var(--border)]" />
+            <div className="h-3 w-[92%] animate-pulse rounded bg-[var(--border)]" />
+            <div className="h-3 w-[78%] animate-pulse rounded bg-[var(--border)]" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Search ──────────────────────────────────────────────────────────────────
 
 export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (e: unknown) => void }) {
@@ -504,7 +628,7 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
             onValueChange={(v) => setScope(v === ALL_CORPORA ? [] : [v])}
             aria-label="Corpus scope"
           >
-            <SelectItem value={ALL_CORPORA}>All visible corpora</SelectItem>
+            <SelectItem value={ALL_CORPORA}>All corpora</SelectItem>
             {corpora.map((c) => (
               <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
             ))}
@@ -542,7 +666,14 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
           line saying the index was still building looked like a label on it. */}
       {result?.note && <Notice tone="warn">{result.note}</Notice>}
 
-      {result && (
+      {/* A search over 15,000 chunks measured 5.4 s on this machine, and the only sign it
+          was running was a spinner inside the button. At that length a spinner reads as a
+          hung page; cards in the shape of the answer read as work in progress. The previous
+          result is hidden rather than left underneath, because a header reading "10 results
+          · 5028 ms" over passages from the last query is a stale answer to the new one. */}
+      {busy && <SearchSkeleton />}
+
+      {result && !busy && (
         <>
           <div className="flex items-center gap-2.5 text-sm flex-wrap">
             <span className="dim">
@@ -589,8 +720,16 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
                       one line on a desktop. At phone width there is not room, and without
                       it Copy path and Open sat 80px past the right edge of the page. */}
                   <header className="flex flex-wrap gap-2.5 items-center mb-2">
-                    <code className="mono truncate text-sm font-semibold" title={h.location ?? undefined}>
-                      {h.location}
+                    {/* The fragment and the section label are the same fact. `book.pdf#page=198`
+                        beside a `Page 198` badge spent two slots of one glance on one number, so
+                        the fragment is dropped from the DISPLAY when a section is shown. The full
+                        citation stays on the title attribute and in Copy path, which is what
+                        anyone actually takes away. */}
+                    <code
+                      className="mono truncate text-sm font-semibold"
+                      title={h.location ?? undefined}
+                    >
+                      {h.section ? (h.location ?? '').split('#')[0] : h.location}
                     </code>
                     {h.section && <span className="dim shrink-0 text-xs">· {h.section}</span>}
                     <span className="flex-1" />
@@ -613,9 +752,7 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
                       </Button>
                     )}
                   </header>
-                  <pre className="mono m-0 max-h-[340px] overflow-x-auto rounded-md bg-muted px-3 py-2.5 text-xs break-words whitespace-pre-wrap">
-                    {h.content}
-                  </pre>
+                  <Snippet content={h.content} language={h.language} query={result.query} />
                 </article>
               ))}
             </div>
@@ -690,7 +827,7 @@ export function CorporaView({
                 {c.description && <p className="dim mt-1.5 mx-0 mb-0 text-sm">{c.description}</p>}
 
                 <div className="dim mt-2 text-xs flex gap-3.5 flex-wrap">
-                  <span>{c.fileCount.toLocaleString()} files</span>
+                  <span>{c.fileCount.toLocaleString()} {c.fileCount === 1 ? 'file' : 'files'}</span>
                   <span>{c.chunkCount.toLocaleString()} chunks</span>
                   {c.skippedCount > 0 && <span>{c.skippedCount.toLocaleString()} skipped</span>}
                   {c.failedCount > 0 && <span className="text-[var(--danger-text)]">{c.failedCount.toLocaleString()} failed</span>}
@@ -871,6 +1008,7 @@ export function CorpusDetail({
   const [corpus, setCorpus] = useState<Corpus | null>(null);
   const [files, setFiles] = useState<IndexedFile[]>([]);
   const [filter, setFilter] = useState<string>('');
+  const [nameFilter, setNameFilter] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [removingSource, setRemovingSource] = useState<Corpus['sources'][number] | null>(null);
   const [addingSource, setAddingSource] = useState<{ path: string } | null>(null);
@@ -911,6 +1049,12 @@ export function CorpusDetail({
   if (!corpus) return <Empty title="Loading…" />;
 
   const problems = files.filter((f) => f.status !== 'indexed');
+
+  // Client-side: the list is already here, capped at 300, and a round trip per keystroke
+  // would be slower than filtering what is on the page.
+  const shown = nameFilter.trim()
+    ? files.filter((f) => f.relativePath.toLowerCase().includes(nameFilter.trim().toLowerCase()))
+    : files;
 
   return (
     <div className="grid gap-4">
@@ -957,7 +1101,9 @@ export function CorpusDetail({
                       is invisible in a corpus-level count. */}
                   {corpus.sources.length > 1 && (
                     <span className={s.fileCount ? 'dim text-xs' : 'text-xs text-[var(--warn-text)]'}>
-                      {s.fileCount ? `${s.fileCount.toLocaleString()} files` : 'no files'}
+                      {s.fileCount
+                        ? `${s.fileCount.toLocaleString()} ${s.fileCount === 1 ? 'file' : 'files'}`
+                        : 'no files'}
                     </span>
                   )}
                   <span className="dim text-xs">
@@ -1017,7 +1163,8 @@ export function CorpusDetail({
           </span>
         </Row>
         <Row label="Contents">
-          {corpus.fileCount.toLocaleString()} files · {corpus.chunkCount.toLocaleString()} chunks
+          {corpus.fileCount.toLocaleString()} {corpus.fileCount === 1 ? 'file' : 'files'}
+          {' · '}{corpus.chunkCount.toLocaleString()} chunks
           {corpus.skippedCount > 0 && ` · ${corpus.skippedCount} skipped`}
           {corpus.failedCount > 0 && ` · ${corpus.failedCount} failed`}
         </Row>
@@ -1039,14 +1186,29 @@ export function CorpusDetail({
               { value: 'failed', label: 'failed' },
             ]}
           />
+          {/* Ninety-six books, alphabetical, each present twice as PDF and EPUB. Narrowing
+              by status does not help when you know the title and want that one row. */}
+          <Input
+            type="search"
+            value={nameFilter}
+            onChange={(e) => setNameFilter(e.target.value)}
+            placeholder="Filter by name…"
+            aria-label="Filter files by name"
+            className="h-8 w-[220px] text-sm"
+          />
           {problems.length > 0 && <span className="dim text-xs">{problems.length} need attention</span>}
         </div>
 
         {files.length === 0 ? (
           <Empty title="No files" hint="Run a refresh to index this corpus." />
+        ) : shown.length === 0 ? (
+          <Empty
+            title="No file matches that"
+            hint={`${files.length.toLocaleString()} ${files.length === 1 ? 'file' : 'files'} in this view. Clear the filter to see them.`}
+          />
         ) : (
           <div className="card overflow-hidden">
-            {files.slice(0, 300).map((f, i) => (
+            {shown.slice(0, 300).map((f, i) => (
               <div
                 key={f.id}
                 className={cn(
@@ -1058,7 +1220,13 @@ export function CorpusDetail({
                     is the screen telling you it knows something it will not say. */}
                 <button
                   type="button"
-                  className="mono min-w-[220px] flex-1 text-left text-xs break-all underline-offset-2 hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+                  className={cn(
+                    'min-w-[220px] flex-1 text-left underline-offset-2 hover:underline',
+                    'focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none',
+                    // break-all is right for a path, where any character is a fair place to
+                    // wrap, and wrong for a title, where it breaks mid-word.
+                    isDocumentName(f.relativePath) ? 'text-sm break-words' : 'mono text-xs break-all',
+                  )}
                   onClick={() => setViewing({ path: f.relativePath })}
                 >
                   {f.relativePath}
@@ -1071,9 +1239,9 @@ export function CorpusDetail({
             ))}
             {/* The list stopped at 300 and said nothing, so a corpus of 4,000 files looked
                 like a corpus of 300. Narrow the status filter to reach the rest. */}
-            {files.length > 300 && (
+            {shown.length > 300 && (
               <div className="dim border-t border-border px-3 py-2 text-xs">
-                Showing the first 300 of {files.length.toLocaleString()} files.
+                Showing the first 300 of {shown.length.toLocaleString()} files.
               </div>
             )}
           </div>
@@ -1809,7 +1977,7 @@ function RemoveSourceModal({ corpus, source, onClose, onRemoved, onError }: {
           index that no longer exists. Say what it costs and take one click. */}
       <p className="mt-0 text-sm">
         {source.fileCount
-          ? `Its ${source.fileCount.toLocaleString()} files leave the index immediately, in every chunk set of ${corpus.name}.`
+          ? `Its ${source.fileCount.toLocaleString()} ${source.fileCount === 1 ? 'file leaves' : 'files leave'} the index immediately, in every chunk set of ${corpus.name}.`
           : `It has no indexed files, so nothing leaves the index.`}
         {' '}The folder on disk is untouched; Dexicon only ever reads it. Adding it again
         re-indexes from scratch.
@@ -1863,7 +2031,37 @@ function DeleteCorpusModal({ corpus, onClose, onDeleted, onError }: { corpus: Co
 
 // ── Jobs ────────────────────────────────────────────────────────────────────
 
-function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: Record<string, Job & { currentFile?: string }>; onError: (e: unknown) => void }) {
+/**
+ * A scheduled refresh that found nothing to do.
+ *
+ * DEXICON__INDEXING__REFRESHMINUTES runs one per corpus per interval, and on an unchanged
+ * tree every one of them indexes nothing. Ten identical "0 indexed, 30 skipped, 0 chunks"
+ * cards is the list telling you at length that nothing happened, and the run that did
+ * something is below the fold.
+ */
+function isNoOp(j: Job): boolean {
+  return j.state === 'succeeded' && j.filesDone === 0 && j.chunksWritten === 0;
+}
+
+/** Consecutive no-ops collapse into one entry; anything that did something stays its own. */
+function groupRuns(jobs: Job[]): ({ kind: 'job'; job: Job } | { kind: 'quiet'; jobs: Job[] })[] {
+  const out: ({ kind: 'job'; job: Job } | { kind: 'quiet'; jobs: Job[] })[] = [];
+
+  for (const job of jobs) {
+    if (!isNoOp(job)) {
+      out.push({ kind: 'job', job });
+      continue;
+    }
+    const last = out[out.length - 1];
+    if (last?.kind === 'quiet') last.jobs.push(job);
+    else out.push({ kind: 'quiet', jobs: [job] });
+  }
+
+  // One on its own is not a run, and a summary of it would be longer than the card.
+  return out.map((e) => (e.kind === 'quiet' && e.jobs.length === 1 ? { kind: 'job' as const, job: e.jobs[0] } : e));
+}
+
+export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: Record<string, Job & { currentFile?: string }>; onError: (e: unknown) => void }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const names = useMemo(() => Object.fromEntries(corpora.map((c) => [c.id, c.name])), [corpora]);
 
@@ -1890,7 +2088,27 @@ function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: Record<
   return (
     <div className="grid gap-4">
       <h1 className="m-0 text-lg">Jobs</h1>
-      {jobs.map((j) => {
+      {groupRuns(jobs).map((entry) => {
+        if (entry.kind === 'quiet') {
+          const newest = entry.jobs[0];
+          const oldest = entry.jobs[entry.jobs.length - 1];
+          const corpora = [...new Set(entry.jobs.map((j) => names[j.corpusId] ?? j.corpusId))];
+          return (
+            <div key={`quiet-${newest.id}`} className="card flex flex-wrap items-center gap-2.5 px-3.5 py-2.5">
+              <span className="dim text-sm">
+                {entry.jobs.length} scheduled {entry.jobs.length === 1 ? 'refresh' : 'refreshes'} found
+                nothing to do
+              </span>
+              <Badge>{corpora.join(', ')}</Badge>
+              <span className="flex-1" />
+              <span className="dim text-xs" title={localTime(oldest.queuedUtc)}>
+                {relativeTime(oldest.queuedUtc)} to {relativeTime(newest.finishedUtc ?? newest.queuedUtc)}
+              </span>
+            </div>
+          );
+        }
+
+        const j = entry.job;
         const merged = live[j.corpusId]?.id === j.id ? live[j.corpusId] : j;
         return (
           <div key={j.id} className="card p-3.5">
