@@ -104,6 +104,12 @@ public static class ContextAssembler
     /// </summary>
     private const int MinPartialChars = 300;
 
+    /// <summary>
+    /// Room for the "… N characters … not shown …" line, charged against the budget like
+    /// the text it describes. Generous: the figure is at most a few digits wide.
+    /// </summary>
+    private const int DisclosureAllowance = 64;
+
     /// <param name="candidates">Hits in rank order, best first.</param>
     /// <param name="maxChars">The budget for the whole passage.</param>
     /// <param name="lineNumbers">Prefix each line with its number in the file.</param>
@@ -144,7 +150,8 @@ public static class ContextAssembler
                 // if there is enough for a glimpse worth reading, and stop: anything after
                 // this is a worse match, and a passage ending in several fragments is a
                 // list of beginnings rather than something to read.
-                var room = maxChars - spent - HeaderAllowance;
+                var remaining = maxChars - spent;
+                var room = remaining - HeaderAllowance - DisclosureAllowance;
 
                 // Decided here, not at rendering, and it has to include whether the cut
                 // yields anything: a chunk with no line break inside the budget produces no
@@ -152,9 +159,9 @@ public static class ContextAssembler
                 // nor the rejected cost the note is written from.
                 var first = added.OrderBy(p => p.ChunkIndex).First();
                 if (existing is null && partial is null && room >= MinPartialChars
-                    && CutToLines(first.Content, room).Lines > 0)
+                    && CutToLines(first.Content, room, lineNumbers).Lines > 0)
                 {
-                    block.CutTo(room);
+                    block.CutTo(remaining);
                     byKey[key] = block;
                     blocks.Add(block);
                     block.Add(added, hit.Score);
@@ -202,13 +209,22 @@ public static class ContextAssembler
             if (pieces.Count == 0) continue;
 
             var omitted = 0;
-            if (block.Cut is int room)
+            if (block.Cut is int remaining)
             {
                 // One piece, so the rendered text is contiguous and the last line shown can
                 // be counted. Stitching several would interleave gap markers and make the
                 // citation's end line a guess.
                 var first = pieces[0];
-                var (shown, lines) = CutToLines(first.Content, room);
+
+                // Measured against what will actually be written, not the header estimate
+                // used during selection. A long filename makes a header well over the
+                // allowance, and the disclosure line is charged too: budgeting for neither
+                // put an 8,000-character request 52 characters over.
+                var provisional = Header(block.Hit, Locate(block.Hit, first.StartLine, first.EndLine),
+                    first.StartLine, first.EndLine, spansSources);
+                var room = remaining - provisional.Length - 1 - DisclosureAllowance;
+
+                var (shown, lines) = CutToLines(first.Content, room, lineNumbers);
                 if (lines == 0) continue;
 
                 omitted = first.Content.Length - shown.Length;
@@ -312,12 +328,26 @@ public static class ContextAssembler
     /// already over the budget yields nothing, and the caller drops the block rather than
     /// printing a header over an empty body.
     /// </summary>
-    internal static (string Text, int Lines) CutToLines(string content, int budget)
+    internal static (string Text, int Lines) CutToLines(string content, int budget, bool lineNumbers = true)
     {
         if (budget <= 0) return ("", 0);
         if (content.Length <= budget) return (content, CountLines(content));
 
-        var cut = content.LastIndexOf('\n', Math.Min(budget, content.Length - 1));
+        var ceiling = Math.Min(budget, content.Length - 1);
+        var cut = content.LastIndexOf('\n', ceiling);
+
+        // A chunk of a book is often one long paragraph, and the last newline inside the
+        // budget can be near its start: measured live, a 1,500-character budget kept 243
+        // characters and dropped 6,765. Without line numbers nothing depends on a line
+        // being whole, so a word boundary is used instead when the line cut would waste
+        // most of what was allowed. With them, the line has to stay whole or its number is
+        // a lie, and a short passage is the price.
+        if (!lineNumbers && cut < ceiling / 2)
+        {
+            var word = content.LastIndexOf(' ', ceiling);
+            if (word > cut) return (content[..word], CountLines(content[..word]));
+        }
+
         if (cut <= 0) return ("", 0);
 
         var text = content[..cut];
