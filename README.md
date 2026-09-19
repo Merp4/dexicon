@@ -41,7 +41,7 @@ docker compose logs dexicon | grep "admin password"
 ```
 
 Open <http://127.0.0.1:8477>, sign in with it, and create a corpus pointing at a directory
-under `./workspaces`, which is mounted read-only. Set `DEXICON__ADMIN__PASSWORD` to pin
+under `./workspaces`, which is mounted read-only. Set `DEXICON_ADMIN_PASSWORD` in `.env` to pin
 your own, or change it in the UI.
 
 To connect an agent, issue a key under **Access** and tick which corpora it may reach.

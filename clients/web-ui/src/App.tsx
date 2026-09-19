@@ -101,7 +101,7 @@ function SignInGate({ onToken }: { onToken: (t: string) => void }) {
 
         <Field
           label="Admin password"
-          hint="On a fresh install it is printed once in the container log: docker compose logs dexicon | grep 'admin password'. Set DEXICON__ADMIN__PASSWORD to pin your own."
+          hint="On a fresh install it is printed once in the container log: docker compose logs dexicon | grep 'admin password'. Set DEXICON_ADMIN_PASSWORD in .env to pin your own."
         >
           <Input
             type="password"

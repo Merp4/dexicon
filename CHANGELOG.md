@@ -20,6 +20,26 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Changed
 
+- **Nothing is minted on first run, and the password is what gets printed.** The
+  generated bootstrap key existed because a token was the only credential: it was how you
+  reached the UI, so one had to exist before you could do anything. The admin password is
+  that now, and printing a second secret beside it invited pasting the wrong one into the
+  sign-in form.
+
+  Creating the key in the UI is also the only way to choose what it reaches. At first run
+  there is no corpus to choose, so a minted key could only ever reach everything.
+
+  `DEXICON_BOOTSTRAP_TOKEN` still works when set: a pinned key for scripted setup and CI,
+  adopted with `search` and `ingest`. `scripts/dev.ps1` gains a `password` command, and
+  its `token` command now says where keys come from instead of reporting nothing found.
+
+- **Keys issued before D-28 stored a scope they could not use.** `TokenService` strips
+  `admin` when it builds a principal, so such a key was already refused every admin
+  endpoint, but the row kept the value and the Access page reads the raw column. Found by
+  migrating a real catalogue and asking the running server: `GET /api/tokens` returned 403
+  "This token has [search, ingest] and needs admin" while the row said
+  `search,ingest,admin`. A data-only migration strips it wherever it appears.
+
 - **An admin password and API keys scoped to corpora, replacing tenancy.** The tenant was
   built so several agents could share one endpoint and see different material, chosen by
   `X-Dexicon-Tenant`. It never could: a token was bound to exactly one tenant, so the header

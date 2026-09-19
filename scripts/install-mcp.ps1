@@ -15,7 +15,7 @@
   claude-code | cursor | vscode | windsurf | cline | claude-desktop | zed
 
 .PARAMETER Token
-  A Dexicon API token. If omitted, DEXICON_BOOTSTRAP_TOKEN is read from the repo's .env when
+  A Dexicon API key. If omitted, DEXICON_BOOTSTRAP_TOKEN is read from the repo's .env when
   it has a value. Never generated — a credential this script invented would be one nobody
   chose, and it would not work.
 
@@ -172,15 +172,17 @@ if (-not $Token) { $Token = Read-TokenFromEnv }
 if (-not $Token) {
   Die @"
 
-No token, and this script will not invent one.
+No key, and this script will not invent one.
 
   Pass -Token dex_..., or set DEXICON_BOOTSTRAP_TOKEN in .env.
 
-The bootstrap token is printed once, on first run:
-  docker compose logs dexicon | Select-String "bootstrap token"
+Issue one on the Access screen, which is also where you tick the corpora it may reach.
+Nothing is minted on first run; what is printed once is the admin password that signs
+you in:
+  docker compose logs dexicon | Select-String "admin password"
 
-Better still, issue a scoped token in the Access screen and use that. A search-only token
-cannot delete a corpus, and an agent rarely needs to.
+A search-only key cannot reindex, and no key can carry admin, so none of them can delete
+a corpus.
 "@
 }
 

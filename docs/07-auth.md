@@ -29,7 +29,8 @@ Two credentials, and they do different jobs.
 One password for the install. It is the only route to the `admin` scope, so nothing that
 can delete a corpus or mint a key ever sits in an agent's configuration file.
 
-- Seeded from `DEXICON__ADMIN__PASSWORD`, or generated and printed once to the container log
+- Seeded from `DEXICON__ADMIN__PASSWORD`, which is `DEXICON_ADMIN_PASSWORD` in `.env`,
+  or generated and printed once to the container log
   on first run. Set, it is applied on every start, which is also the way back in after a
   forgotten one.
 - Stored as **PBKDF2-HMAC-SHA256, 600 000 iterations, 32-byte salt**, verified in constant

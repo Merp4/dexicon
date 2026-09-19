@@ -19,7 +19,8 @@
   stop     stop the app only
   down     stop the app and the dependency containers
   logs     tail the app log
-  token    print the bootstrap token from the log
+  password print the admin password from the log (first run only)
+  token    print a pinned bootstrap key from the log, if one was adopted
   reset    stop, delete the local catalogue and Qdrant collections, start fresh
   ui       build the SPA and copy it into wwwroot (the container does this at image build)
   test     stop the app, run the test suite, and put the app back as it was
@@ -134,10 +135,34 @@ switch ($Command) {
     finally { Pop-Location }
   }
   'logs' { Get-Content $logFile -Tail 60 -ErrorAction SilentlyContinue }
+  'password' {
+    # The banner frames the value on its own line, so the line after it is the password.
+    # Matching the frame rather than the value: the password is plain alphanumeric and a
+    # pattern loose enough to catch it would catch half the log with it.
+    $lines = Get-Content $logFile -ErrorAction SilentlyContinue
+    $i = ($lines | Select-String -Pattern 'Dexicon admin password' | Select-Object -First 1).LineNumber
+    $value = if ($i) { ($lines[$i..($i + 2)] | Where-Object { $_.Trim() } | Select-Object -First 1).Trim() }
+    if ($value) {
+      $value
+    } else {
+      Write-Warning @'
+No admin password in the log. It is printed once, on first run only, and only when
+DEXICON_ADMIN_PASSWORD is blank. If it is set in .env, that is the password.
+'@
+    }
+  }
   'token' {
     $m = Select-String -Path $logFile -Pattern 'dex_[A-Za-z0-9_-]+' -ErrorAction SilentlyContinue |
       Select-Object -First 1
-    if ($m) { $m.Matches[0].Value } else { Write-Warning 'No bootstrap token in the log. It is printed once, on first run only.' }
+    if ($m) {
+      $m.Matches[0].Value
+    } else {
+      Write-Warning @'
+No key in the log, and none is minted on first run any more. Sign in at the web UI and
+issue one under Access, which is also where you choose the corpora it reaches. For
+scripted setup, set DEXICON_BOOTSTRAP_TOKEN in .env and restart.
+'@
+    }
   }
   'reset' {
     Stop-Dexicon

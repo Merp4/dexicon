@@ -570,7 +570,7 @@ public sealed class DexiconTools
 
         if (!principal.Has(scope))
             throw new McpException(
-                $"This token has scopes [{string.Join(", ", principal.Scopes)}] and needs '{scope}'. " +
+                $"This key has scopes [{string.Join(", ", principal.Scopes)}] and needs '{scope}'. " +
                 "Issue a token with that scope in the Dexicon UI.");
     }
 }

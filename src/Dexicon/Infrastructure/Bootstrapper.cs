@@ -26,7 +26,7 @@ public static class Bootstrapper
     /// Main, and it runs it all the way into <c>app.RunAsync()</c> before intercepting,
     /// so there is no host lifecycle hook early enough to use, and the check has to be
     /// explicit. Without it a build performs first-run setup: creates directories,
-    /// migrates a database, contacts Qdrant and Ollama, and mints a bootstrap token. On CI
+    /// migrates a database, contacts Qdrant and Ollama, and sets an admin password. On CI
     /// that failed outright ("Access to the path '/data' is denied") and turned every
     /// build red; where it had not failed it was doing all of that silently.
     ///
@@ -192,7 +192,7 @@ public static class Bootstrapper
             "  │  Dexicon admin password: shown once, copy it now                      │\n" +
             "  └───────────────────────────────────────────────────────────────────────┘\n" +
             "  {Password}\n\n" +
-            "  Sign in at the web UI with this. Set DEXICON__ADMIN__PASSWORD to pin your\n" +
+            "  Sign in at the web UI with this. Set DEXICON_ADMIN_PASSWORD in your .env to\n" +
             "  own, or change it in the UI once you are in.\n",
             generated);
     }
@@ -202,9 +202,8 @@ public static class Bootstrapper
     {
         var tokens = sp.GetRequiredService<TokenService>();
 
-        // A pinned bootstrap token, for scripted setup and CI, and the recovery path
-        // when someone loses the one-time printed value. Without this the only recovery
-        // from a lost token is deleting the catalogue, which also deletes every corpus.
+        // A pinned key, for scripted setup and CI: somewhere that has to reach the MCP
+        // surface with a known credential and no browser to create one in.
         //
         // .env.example has documented this since the first commit; nothing implemented
         // it, so setting DEXICON__BOOTSTRAP__TOKEN did precisely nothing.
@@ -214,27 +213,26 @@ public static class Bootstrapper
 
             await tokens.AdoptAsync("bootstrap (pinned)", Scopes.Issuable, pinned);
             log.LogWarning(
-                "Adopted the bootstrap token from DEXICON__BOOTSTRAP__TOKEN. It is a SECRET: " +
+                "Adopted the bootstrap key from DEXICON__BOOTSTRAP__TOKEN. It is a SECRET: " +
                 "it lives in your .env, which is gitignored and must never be committed.");
             return;
         }
 
         if (await db.Tokens.AnyAsync(t => t.RevokedUtc == null)) return;
 
-        // Issuable, not All: a key cannot carry admin, so the bootstrap key is a search and
-        // ingest key and administration happens with the password.
-        var (_, issued) = await tokens.CreateAsync("bootstrap", Scopes.Issuable, expiresUtc: null);
-
-        // A log line is an acceptable delivery channel for a value that is about to be
-        // rotated; a config file is not. Printed exactly once, on first run only.
-        log.LogWarning(
-            "\n" +
-            "  ┌───────────────────────────────────────────────────────────────────────┐\n" +
-            "  │  Dexicon bootstrap token: shown once, copy it now                     │\n" +
-            "  └───────────────────────────────────────────────────────────────────────┘\n" +
-            "  {Token}\n\n" +
-            "  claude mcp add --transport http dexicon http://localhost:8477/mcp \\\n" +
-            "    --header \"Authorization: Bearer {Token}\"\n",
-            issued.Presented, issued.Presented);
+        // Nothing is minted on a blank value any more, and the reason is D-28 rather than
+        // tidiness. The generated key existed because a token was the only credential: it
+        // was how you reached the UI, so one had to exist before you could do anything.
+        // The password is that now, and printing a second secret beside it on first run
+        // mostly invites pasting the wrong one into the sign-in form.
+        //
+        // Creating the key in the UI is also the only way to choose what it reaches. At
+        // first run there is no corpus to choose, so a minted key can only ever reach
+        // everything, which is the opposite of what D-28 is for.
+        log.LogInformation(
+            "No API key exists yet. Sign in at the web UI and create one under Access, " +
+            "which gives you the corpora it may reach and a ready-to-paste " +
+            "`claude mcp add` command. For scripted setup with no browser, set " +
+            "DEXICON__BOOTSTRAP__TOKEN to a value of your own instead.");
     }
 }

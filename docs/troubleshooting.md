@@ -72,15 +72,15 @@ Mounts are read-only by design; Dexicon does not write to source trees.
 - **No token**: `Provide a token: Authorization: Bearer dex_…`.
 - **Revoked or expired**: revocation takes effect immediately; there is no cache to wait
   out.
-- **Lost the bootstrap token**: it is printed once, on first run only. Set
-  `DEXICON_BOOTSTRAP_TOKEN` in `.env` to a value of your choosing and restart. It is
-  adopted with `search` and `ingest`, which is everything a key may hold. Without that
-  escape hatch the only recovery is deleting the
-  catalogue, which deletes every corpus with it.
-
-Note that a lost **admin password** is recovered the same way: set
-`DEXICON_ADMIN_PASSWORD` in `.env` and restart, since a configured value is applied on
-every start.
+- **Lost a key**: there is nothing to recover. Sign in and issue another under
+  **Access**, then revoke the old one. A key's secret is stored only as a PBKDF2 hash.
+- **Lost the admin password**: set `DEXICON_ADMIN_PASSWORD` in `.env` and restart. A
+  configured value is applied on every start, which is what makes it the way back in.
+  Without that the only recovery is deleting the catalogue, which deletes every corpus
+  with it.
+- **Pasted a key into the sign-in form**: the UI takes the password, not a key. A key
+  authenticates but can never carry `admin`, so it would load the shell and then be
+  refused on every screen.
 
 ---
 

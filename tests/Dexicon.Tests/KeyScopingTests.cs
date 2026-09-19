@@ -269,8 +269,7 @@ public sealed class AdminPasswordTests : IAsyncLifetime
     [Fact]
     public void TheThrottleGrowsThenCapsAndResetsOnSuccess()
     {
-        var cache = new MemoryCache(new MemoryCacheOptions());
-        var throttle = new LoginThrottle(cache, TimeProvider.System);
+        var throttle = new LoginThrottle(TimeProvider.System);
 
         // The first attempts are free, so a typo costs nothing.
         throttle.Delay().ShouldBe(TimeSpan.Zero);
@@ -297,10 +296,28 @@ public sealed class AdminPasswordTests : IAsyncLifetime
     }
 
     [Fact]
+    public void SessionsAndTheThrottleDoNotShareTheCacheRevocationClears()
+    {
+        // Revoking a key calls IMemoryCacheEvictor.EvictPrincipals, which clears the shared
+        // IMemoryCache outright because MemoryCache has no prefix scan. While sessions lived
+        // in that cache, revoking any key signed the operator out mid-action: the browser
+        // reported "Invalid credentials" for a request it had just made successfully.
+        //
+        // Pinned structurally rather than behaviourally. Neither type can be handed the
+        // shared cache any more, so the collision cannot be reintroduced by a caller.
+        foreach (var type in new[] { typeof(AdminSessions), typeof(LoginThrottle) })
+        {
+            var parameters = type.GetConstructors().Single().GetParameters();
+            parameters.ShouldNotContain(
+                p => typeof(IMemoryCache).IsAssignableFrom(p.ParameterType),
+                $"{type.Name} must own its store; sharing it means a key revocation wipes it");
+        }
+    }
+
+    [Fact]
     public void ASessionVerifiesOnlyItsOwnValueAndOnlyUntilRevoked()
     {
-        var cache = new MemoryCache(new MemoryCacheOptions());
-        var sessions = new AdminSessions(cache, TimeProvider.System);
+        var sessions = new AdminSessions(TimeProvider.System);
 
         var session = sessions.Issue();
         session.Presented.ShouldStartWith(AdminSessions.Prefix);

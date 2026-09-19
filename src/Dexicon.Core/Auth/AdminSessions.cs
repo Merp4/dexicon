@@ -13,8 +13,21 @@ namespace Dexicon.Core.Auth;
 /// bearer model it already had and gains no cookie, and with no cookie there is no CSRF
 /// surface to reason about. See docs/decisions.md D-28.
 /// </summary>
-public sealed class AdminSessions(IMemoryCache cache, TimeProvider clock)
+public sealed class AdminSessions(TimeProvider clock) : IDisposable
 {
+    /// <summary>
+    /// Its own store, not the shared <see cref="IMemoryCache"/>.
+    ///
+    /// Revoking a key calls <c>IMemoryCacheEvictor.EvictPrincipals</c>, which clears the
+    /// shared cache outright because MemoryCache has no prefix scan. That was harmless
+    /// while the cache held nothing but 60-second principals. With sessions in it, revoking
+    /// any key signed the operator out of the UI mid-action, and the browser reported
+    /// "Invalid credentials" for something it had just done successfully.
+    /// </summary>
+    private readonly MemoryCache _cache = new(new MemoryCacheOptions());
+
+    public void Dispose() => _cache.Dispose();
+
     /// <summary>
     /// Distinct from <c>dex_</c> so the middleware can tell a session from a key by
     /// inspection, and so a session value pasted into an agent's configuration fails
@@ -35,7 +48,7 @@ public sealed class AdminSessions(IMemoryCache cache, TimeProvider clock)
         var presented = Prefix + secret;
         var expires = clock.GetUtcNow().UtcDateTime + Lifetime;
 
-        cache.Set(KeyFor(presented), expires, Lifetime);
+        _cache.Set(KeyFor(presented), expires, Lifetime);
         return new Session(presented, expires);
     }
 
@@ -50,7 +63,7 @@ public sealed class AdminSessions(IMemoryCache cache, TimeProvider clock)
     {
         if (string.IsNullOrEmpty(presented)) return null;
         if (!presented.StartsWith(Prefix, StringComparison.Ordinal)) return null;
-        if (!cache.TryGetValue(KeyFor(presented), out DateTime expires)) return null;
+        if (!_cache.TryGetValue(KeyFor(presented), out DateTime expires)) return null;
         if (expires <= clock.GetUtcNow().UtcDateTime) return null;
 
         return new Principal("admin-session", "admin", new HashSet<string>(StringComparer.Ordinal) { Scopes.Admin });
@@ -60,7 +73,7 @@ public sealed class AdminSessions(IMemoryCache cache, TimeProvider clock)
     public void Revoke(string? presented)
     {
         if (string.IsNullOrEmpty(presented)) return;
-        cache.Remove(KeyFor(presented));
+        _cache.Remove(KeyFor(presented));
     }
 
     /// <summary>
@@ -85,9 +98,18 @@ public sealed class AdminSessions(IMemoryCache cache, TimeProvider clock)
 /// Held in memory, so a restart clears it. That is a real limit and an acceptable one: a
 /// restart needs host access, and host access already defeats this model (docs/07).
 /// </summary>
-public sealed class LoginThrottle(IMemoryCache cache, TimeProvider clock)
+public sealed class LoginThrottle(TimeProvider clock) : IDisposable
 {
     private const string CacheKey = "admin-login-failures";
+
+    /// <summary>
+    /// Its own store, for the same reason as <see cref="AdminSessions"/>, and one of its
+    /// own: a failed-sign-in counter that an unrelated admin action resets is a counter an
+    /// attacker can have cleared for them.
+    /// </summary>
+    private readonly MemoryCache _cache = new(new MemoryCacheOptions());
+
+    public void Dispose() => _cache.Dispose();
 
     /// <summary>Attempts allowed at full speed before the delay starts growing.</summary>
     public const int Free = 2;
@@ -97,7 +119,7 @@ public sealed class LoginThrottle(IMemoryCache cache, TimeProvider clock)
     /// <summary>A counter idle for this long is forgotten, so a typo today costs nothing tomorrow.</summary>
     private static readonly TimeSpan Window = TimeSpan.FromMinutes(15);
 
-    public int Failures => cache.TryGetValue(CacheKey, out int n) ? n : 0;
+    public int Failures => _cache.TryGetValue(CacheKey, out int n) ? n : 0;
 
     /// <summary>
     /// How long to wait before answering the next attempt. Doubles per failure beyond
@@ -112,10 +134,10 @@ public sealed class LoginThrottle(IMemoryCache cache, TimeProvider clock)
         return seconds >= Cap.TotalSeconds ? Cap : TimeSpan.FromSeconds(seconds);
     }
 
-    public void RecordFailure() => cache.Set(CacheKey, Failures + 1, Window);
+    public void RecordFailure() => _cache.Set(CacheKey, Failures + 1, Window);
 
     /// <summary>A correct password clears the counter, so the operator is never left waiting.</summary>
-    public void Reset() => cache.Remove(CacheKey);
+    public void Reset() => _cache.Remove(CacheKey);
 
     /// <summary>
     /// Wait out the current delay. Cancellation is the caller's request aborting, which
