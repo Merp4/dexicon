@@ -1133,6 +1133,32 @@ Shipping hooks for every client in [12](12-clients.md): the hook APIs differ per
 each one is a maintenance commitment, so Claude Code first, and a second client only when
 someone asks.
 
+**As built.** Python, not shell. The entry said `dexicon-corpora.sh` and
+`dexicon-context.sh`, following the shape hooks usually take; the first draft of those was
+written, and on this machine it exited 0 and printed nothing, because `jq` is not installed
+on a stock Windows box and the hook had just been told to fail quietly. A hook silent for a
+missing dependency and silent for a genuine empty result cannot be told apart by the person
+running it. The standard library does HTTP and JSON with nothing to install, `scripts/`
+already ships four Python programs, and the quoting hazards of assembling JSON in shell go
+with it. The files are `dexicon-corpora.py`, `dexicon-context.py` and a shared
+`dexicon_hook_lib.py`, and every failure path now warns on stderr as well as exiting 0.
+
+Two figures moved a default. The server's `maxChars` default of 8,000 returned 6,963
+characters for one query, which is too much to put in front of every prompt, so the hook
+sets 4,000 and says why it differs rather than inheriting. The entry's rule that an unset
+key is not sent still holds for every other field. And nothing is truncated to fit: a budget
+under the smallest matching chunk returns an empty passage, measured at 2,109 characters for
+one query on the book corpus, with 1,500 and 2,000 both returning nothing. The server
+already composes a note naming the figure that would have fitted, so the hook prints that
+rather than inventing a worse one: on stderr when there is no passage, and into the model's
+context when there is, since "still indexing; results are incomplete" is something the
+reader needs.
+
+`Get-Interpreter` runs each candidate rather than trusting `Get-Command`. Windows ships a
+zero-byte `python3.exe` in WindowsApps that opens the Microsoft Store when no Python is
+installed, and `Get-Command` finds it either way, which would install a hook that cannot
+start.
+
 **Revisit if.** The `UserPromptSubmit` hook proves useful enough to default on, which needs
 a relevance floor Dexicon does not currently expose: `POST /api/context` reports `usedChars`,
 `truncated` and `droppedHits`, but no score, so a hook cannot yet tell a good passage from

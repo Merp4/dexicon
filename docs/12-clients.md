@@ -232,6 +232,18 @@ failing with a syntax error.
 Connecting gives an agent the tools. It does not tell it *when* to reach for them, and an
 agent that never searches is indistinguishable from one that cannot.
 
-`skills/dexicon/SKILL.md` covers that: what the corpora are for, when semantic search beats
-grep, how `corpus:set` addresses a chunking, and when to follow a hit with `get_context`.
-Copy it into `.claude/skills/` in a project, or point your harness at it.
+`skills/dexicon-search/SKILL.md` covers that: what the corpora are for, when semantic search
+beats grep, how `corpus:set` addresses a chunking, and when to follow a hit with
+`get_context`.
+
+```powershell
+./scripts/install-mcp.ps1 -What skill
+```
+
+That copies it to `~/.claude/skills/dexicon-search/`, or into a project with `-Scope
+project`. Copying the directory by hand works just as well; the installer exists so that a
+later version can replace it, and so `-Uninstall` knows what to take away.
+
+It is invocable both ways. Claude reaches for it on its own, from the `description` in its
+front matter, and `/dexicon-search how are refresh tokens revoked` runs that search
+directly.
