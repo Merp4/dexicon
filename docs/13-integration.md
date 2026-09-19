@@ -62,36 +62,40 @@ server-side and returns one passage.
 curl -s http://127.0.0.1:8477/api/context \
   -H "Authorization: Bearer $DEXICON_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"query":"how does promotion work","corpus":["docs"],"maxChars":6000}'
+  -d '{"query":"how does chunk set promotion work","corpus":["docs"],"maxChars":4000}'
 ```
 
 ```json
 {
-  "query": "how does promotion work",
+  "query": "how does chunk set promotion work",
   "mode": "Hybrid",
-  "context": "docs/04-ingestion.md:228-265 (corpus: docs)\nA chunk set is promoted …",
+  "context": "04-ingestion.md:353-390 (corpus: docs) · Embedding providers\n…",
   "citations": [
     {
       "corpus": "docs",
-      "filePath": "docs/04-ingestion.md",
-      "location": "docs/04-ingestion.md:228-265",
-      "startLine": 228,
-      "endLine": 265,
-      "score": 0.81,
-      "chars": 1840
+      "filePath": "04-ingestion.md",
+      "location": "04-ingestion.md:353-390",
+      "startLine": 353,
+      "endLine": 390,
+      "section": "Embedding providers",
+      "score": 1.924,
+      "chars": 2027
     }
   ],
-  "usedChars": 5820,
-  "maxChars": 6000,
+  "usedChars": 3581,
+  "maxChars": 4000,
   "truncated": true,
-  "droppedHits": 2,
+  "droppedHits": 8,
   "degraded": false,
-  "note": null
+  "tookMs": 15
 }
 ```
 
 `context` is the passage, ready to paste into a prompt. `citations` says where each block
-of it came from, in the same order.
+of it came from, in the same order. A file path is relative to its source root rather than
+to the corpus, so a corpus with several sources also carries `sourceRoot`, and the block
+headers name it when the passage spans more than one. Null fields are omitted, so `note`
+and `degradedReason` are absent rather than null when there is nothing to report.
 
 **Request**
 
@@ -121,7 +125,8 @@ case where nothing fitted:
 
 ```json
 { "context": "", "citations": [],
-  "note": "No result fitted a budget of 500 characters; the smallest is 8,142. Raise maxChars, or narrow the query." }
+  "droppedHits": 10,
+  "note": "No result fitted a budget of 300 characters; the smallest is 3,847. Raise maxChars, or narrow the query." }
 ```
 
 **Reading around a hit.** `neighbours` adds whole chunks either side of each match, which

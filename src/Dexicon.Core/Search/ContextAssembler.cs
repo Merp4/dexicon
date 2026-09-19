@@ -122,6 +122,14 @@ public static class ContextAssembler
         var sb = new StringBuilder();
         var citations = new List<Citation>(blocks.Count);
 
+        // Only when it tells the reader something. A corpus with one source would print
+        // "(corpus: docs · in docs)" on every block; a corpus with ten needs it, because
+        // a file path is relative to its source root and two of its books share one.
+        // The citation carries the root either way.
+        var spansSources = blocks
+            .Select(b => b.Hit.SourceRoot).Where(r => r is { Length: > 0 })
+            .Distinct(StringComparer.Ordinal).Count() > 1;
+
         // Best first. Truncation drops the worst matches, so the caller that reads only
         // the start of the passage reads the strongest part of it.
         foreach (var block in blocks.OrderByDescending(b => b.Score))
@@ -132,7 +140,7 @@ public static class ContextAssembler
             var startLine = pieces.Min(p => p.StartLine);
             var endLine = pieces.Max(p => p.EndLine);
             var location = Locate(block.Hit, startLine, endLine);
-            var header = Header(block.Hit, location, startLine, endLine);
+            var header = Header(block.Hit, location, startLine, endLine, spansSources);
             var body = Passage.Stitch(pieces.Select(p => (p.StartLine, p.EndLine, p.Content)), lineNumbers);
 
             if (sb.Length > 0) sb.Append('\n');
@@ -184,7 +192,8 @@ public static class ContextAssembler
         : startLine == endLine ? $"{hit.FilePath}:{startLine}"
         : $"{hit.FilePath}:{startLine}-{endLine}";
 
-    private static string Header(SearchHit hit, string location, int startLine, int endLine)
+    private static string Header(
+        SearchHit hit, string location, int startLine, int endLine, bool spansSources)
     {
         var sb = new StringBuilder(location);
 
@@ -193,7 +202,7 @@ public static class ContextAssembler
         if (hit.Page is not null) sb.Append($" · lines {startLine}-{endLine}");
 
         sb.Append($" (corpus: {hit.CorpusName ?? hit.CorpusId}");
-        if (hit.SourceRoot is { Length: > 0 } root) sb.Append($" · in {root}");
+        if (spansSources && hit.SourceRoot is { Length: > 0 } root) sb.Append($" · in {root}");
         sb.Append(')');
 
         if (hit.Section is { Length: > 0 } section) sb.Append($" · {section}");

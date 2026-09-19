@@ -113,6 +113,23 @@ public sealed class ContextAssemblyTests
     }
 
     [Fact]
+    public void OneSourceRootIsNotRepeatedInEveryHeader()
+    {
+        // Found by calling the endpoint: a corpus with a single source rendered
+        // "(corpus: docs · in docs)" on every block, which tells the reader nothing.
+        var result = ContextAssembler.Assemble(
+        [
+            Alone(Hit(path: "a.md", sourceRoot: "docs", score: 0.9f)),
+            Alone(Hit(path: "b.md", sourceRoot: "docs", score: 0.8f)),
+        ], maxChars: 8_000, lineNumbers: false);
+
+        result.Text.ShouldNotContain("· in docs");
+
+        // The citation still carries it, because a consumer resolving the path needs it.
+        result.Citations[0].SourceRoot.ShouldBe("docs");
+    }
+
+    [Fact]
     public void AHitThatDoesNotFitIsDroppedAndCounted()
     {
         var big = new string('x', 3_000);
