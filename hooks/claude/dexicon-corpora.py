@@ -34,8 +34,14 @@ DEFAULT_DESCRIPTION_CHARS = 180
 
 
 def shorten(text: str, limit: int) -> str:
-    """Cut at a word boundary, and say that it was cut."""
-    if limit <= 0 or len(text) <= limit:
+    """Cut at a word boundary, and say that it was cut.
+
+    A limit of 0 omits the description. Reading it as "no limit" would make the one value
+    someone sets to turn descriptions off the value that prints them in full.
+    """
+    if limit <= 0:
+        return ""
+    if len(text) <= limit:
         return text
     cut = text[:limit].rsplit(" ", 1)[0].rstrip(" ,.;:-")
     return (cut or text[:limit]) + "..."
@@ -75,9 +81,9 @@ def main() -> int:
             )
         except (KeyError, TypeError, ValueError):
             continue
-        description = " ".join((c.get("description") or "").split())
+        description = shorten(" ".join((c.get("description") or "").split()), description_chars)
         if description:
-            line += " - " + shorten(description, description_chars)
+            line += " - " + description
         lines.append(line)
 
     if not lines:

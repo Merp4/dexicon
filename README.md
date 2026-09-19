@@ -56,6 +56,18 @@ claude mcp add --transport http dexicon http://localhost:8477/mcp \
 [docs/12](docs/12-clients.md) covers Cursor, VS Code, Windsurf, Cline, Claude Desktop and
 Zed. `./scripts/install-mcp.ps1` generates these configurations.
 
+Connecting gives an agent the tools; it does not tell it when to reach for them. For Claude
+Code the same script installs a skill that does, and a hook that says what is indexed at the
+start of a session:
+
+```powershell
+./scripts/install-mcp.ps1 -What all -WhatIf   # show the plan
+./scripts/install-mcp.ps1 -What all           # skill, hooks and MCP
+```
+
+`-Uninstall` takes it back out. [hooks/claude](hooks/claude/README.md) describes both hooks,
+including the per-prompt one that is installed but left switched off.
+
 ## Features
 
 - **Hybrid retrieval.** Dense and sparse vectors in a single Qdrant query with server-side

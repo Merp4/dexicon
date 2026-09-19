@@ -16,6 +16,48 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## Unreleased
+
+### Added
+
+- **The skill and two hooks install with the client.** `scripts/install-mcp.ps1` gains
+  `-What skill|hooks|mcp|all` and `-Uninstall`, so the agent skill is no longer a file to
+  copy by hand. It merges into `settings.json` rather than replacing it, backs it up first,
+  and removes only entries it can name.
+
+  `dexicon-corpora.py` runs on `SessionStart` and says what is indexed, which answers the
+  failure where an agent does not search because it does not know anything is there. It
+  costs one catalogue read.
+
+  `dexicon-context.py` runs on `UserPromptSubmit` and retrieves one cited passage through
+  `POST /api/context`. It is installed but **not** registered unless `-WithContextHook` is
+  passed: it searches on every message, and measured against 15,213 chunks, a query the
+  embedder has not seen costs about 5.4 seconds against 300 to 470 milliseconds for a
+  repeat.
+
+  Both are configured from one file, `~/.claude/dexicon-hooks.env`, which also holds the
+  key. Its keys are named after the `POST /api/context` fields they set, and an unset one is
+  not sent, so the server's default applies rather than the hook carrying a copy of it.
+
+  Both exit 0 on every path and report faults on stderr. On `UserPromptSubmit` an exit code
+  of 2 blocks the prompt and erases it, so a hook failing because the index was unreachable
+  would delete what had just been typed. A missing dependency and a genuine empty result are
+  reported differently, because a hook silent for both is one nobody can debug.
+
+  See [D-30](docs/decisions.md#d-30-skills-and-hooks-install-with-the-client-under-a-dexicon-prefix).
+
+### Changed
+
+- **The skill is `dexicon-search`, and answers a direct invocation.** It moves to
+  `skills/dexicon-search/`, so the slash command moves from `/dexicon` to
+  `/dexicon-search`. `~/.claude/skills/` is a namespace the user owns, and a bare `dexicon`
+  is unambiguous only until a second tool wants the same name.
+
+  Invoked directly it used to load guidance written for the model and stop. It now takes the
+  text after the command as a query and searches, and lists the corpora when given nothing.
+
+---
+
 ## 0.4.0 — 2026-09-19
 
 ### Added
