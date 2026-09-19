@@ -2,6 +2,7 @@ using Dexicon.Core.Configuration;
 using Dexicon.Core.Embedding;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -165,7 +166,8 @@ public sealed class EmbeddingProviderTests
 
     private static EmbeddingService Service(
         IEmbeddingGenerator<string, Embedding<float>> generator,
-        IMemoryCache? cache = null, int batchSize = 32, int maxConcurrency = 4)
+        IMemoryCache? cache = null, int batchSize = 32, int maxConcurrency = 4,
+        ILogger<EmbeddingService>? log = null, int maxRetries = 0)
     {
         var options = Options.Create(new DexiconOptions
         {
@@ -182,7 +184,7 @@ public sealed class EmbeddingProviderTests
                 },
             },
             // No retries: a test that waits out a backoff is a test nobody runs.
-            Ollama = new OllamaOptions { MaxRetries = 0 },
+            Ollama = new OllamaOptions { MaxRetries = maxRetries },
         });
 
         return new EmbeddingService(
@@ -192,7 +194,179 @@ public sealed class EmbeddingProviderTests
             new NoProfiles(),
             options,
             cache ?? new MemoryCache(new MemoryCacheOptions()),
-            NullLogger<EmbeddingService>.Instance);
+            log ?? NullLogger<EmbeddingService>.Instance);
+    }
+
+    // ── Naming what lost its text ────────────────────────────────────────────
+
+    [Fact]
+    public async Task TheTruncationWarningNamesWhatWasTruncated()
+    {
+        // Over-long input is embedded truncated rather than failing the file, which is the
+        // right trade and useless to act on if the log will not say whose text it was. A
+        // run reporting 123 of these named no file at all: 123 chunks with their tails
+        // dropped and no way to find out which documents they came from.
+        var log = new CapturingLogger();
+        var service = Service(new RefusesLongInput(limit: 10), log: log);
+
+        await service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Document,
+            [new string('x', 50)], source: "books/deep-learning.pdf chunks 41-72");
+
+        var warning = log.Warnings.ShouldHaveSingleItem();
+        warning.ShouldContain("books/deep-learning.pdf chunks 41-72");
+        warning.ShouldContain("TRUNCATED");
+    }
+
+    [Fact]
+    public async Task AnUnnamedCallerStillProducesAReadableWarning()
+    {
+        // Search and the probe embed without a source, and a log line reading "  was
+        // embedded TRUNCATED" helps nobody.
+        var log = new CapturingLogger();
+        var service = Service(new RefusesLongInput(limit: 10), log: log);
+
+        await service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Document,
+            [new string('x', 50)]);
+
+        log.Warnings.ShouldHaveSingleItem().ShouldContain("an unnamed input");
+    }
+
+    [Fact]
+    public async Task TheInputIsStillEmbeddedAfterBeingNamed()
+    {
+        // The naming is for the log. The caller still gets its vector, because a failed
+        // file is worse than a shortened chunk.
+        var service = Service(new RefusesLongInput(limit: 10));
+
+        var vectors = await service.EmbedAsync(new EmbeddingTarget(Provider, "m"),
+            EmbedPurpose.Document, [new string('x', 50)], source: "a.pdf");
+
+        vectors.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ShorteningTheChunkDoesNotSpendTheRetryBudget()
+    {
+        // With retries configured off, the degraded attempt used to have nowhere to run, so
+        // over-long input failed the file: the opposite of what this path is for, and
+        // invisible until a test asked for it.
+        var service = Service(new RefusesLongInput(limit: 10), maxRetries: 0);
+
+        var vectors = await service.EmbedAsync(new EmbeddingTarget(Provider, "m"),
+            EmbedPurpose.Document, [new string('x', 50)], source: "a.pdf");
+
+        vectors.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ATransientFailureStillExhaustsTheBudgetAndThrows()
+    {
+        // The other side of it: the extra attempt is for shortening, not a free retry for
+        // an embedder that is simply down. Asserted on the CALL COUNT, because throwing
+        // either way cannot tell one extra attempt from none.
+        var generator = new AlwaysFails();
+        var service = Service(generator, maxRetries: 0);
+
+        await Should.ThrowAsync<EmbeddingUnavailableException>(
+            () => service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Document, ["x"]));
+
+        generator.Calls.ShouldBe(1, "no retries configured, and this failure is not an over-long input");
+    }
+
+    [Fact]
+    public async Task ATransientFailureStillGetsItsConfiguredRetries()
+    {
+        var generator = new AlwaysFails();
+        var service = Service(generator, maxRetries: 2);
+
+        await Should.ThrowAsync<EmbeddingUnavailableException>(
+            () => service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Document, ["x"]));
+
+        generator.Calls.ShouldBe(3, "the first attempt plus two retries, and no extra");
+    }
+
+    [Fact]
+    public async Task ShorteningHappensImmediatelyRatherThanAfterABackoff()
+    {
+        // The backoff exists for an embedder under strain. Over-long input is not that:
+        // the retry is certain to be made and certain to differ, so waiting half a second
+        // in front of it buys nothing. Across a run with a hundred such batches it is a
+        // minute of indexing spent waiting for a call that was always going to be made.
+        //
+        // Timed between the generator's own two calls rather than around the whole
+        // operation, so the measurement does not include the test's own setup.
+        var generator = new RefusesLongInput(limit: 10);
+        var service = Service(generator, maxRetries: 2);
+
+        await service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Document,
+            [new string('x', 50)], source: "a.pdf");
+
+        generator.CallTimes.Count.ShouldBe(2, "one refusal and one shortened retry");
+        var gap = generator.CallTimes[1] - generator.CallTimes[0];
+        gap.ShouldBeLessThan(TimeSpan.FromMilliseconds(250),
+            "the first backoff is 500ms plus jitter, so anything under 250ms means none was taken");
+    }
+
+    private sealed class AlwaysFails : IEmbeddingGenerator<string, Embedding<float>>
+    {
+        private int _calls;
+        public int Calls => Volatile.Read(ref _calls);
+
+        public Task<GeneratedEmbeddings<Embedding<float>>> GenerateAsync(
+            IEnumerable<string> values, EmbeddingGenerationOptions? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _calls);
+            throw new HttpRequestException("connection refused");
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public void Dispose() { }
+    }
+
+    /// <summary>
+    /// Refuses anything past <paramref name="limit"/> characters unless asked to truncate,
+    /// which is how Ollama behaves once `truncate: false` is sent.
+    /// </summary>
+    private sealed class RefusesLongInput(int limit) : IEmbeddingGenerator<string, Embedding<float>>
+    {
+        public List<DateTime> CallTimes { get; } = [];
+
+        public Task<GeneratedEmbeddings<Embedding<float>>> GenerateAsync(
+            IEnumerable<string> values, EmbeddingGenerationOptions? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            lock (CallTimes) CallTimes.Add(DateTime.UtcNow);
+
+            var truncate = options?.AdditionalProperties?.TryGetValue("truncate", out var v) == true
+                           && v is true;
+            var list = values.ToList();
+
+            if (!truncate && list.Any(s => s.Length > limit))
+                throw new InvalidOperationException(
+                    "input length exceeds maximum context length for this model");
+
+            return Task.FromResult(new GeneratedEmbeddings<Embedding<float>>(
+                list.Select(_ => new Embedding<float>(new float[8]))));
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public void Dispose() { }
+    }
+
+    /// <summary>Keeps warnings so a test can read what was actually written.</summary>
+    private sealed class CapturingLogger : ILogger<EmbeddingService>
+    {
+        public List<string> Warnings { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel level, EventId id, TState state, Exception? ex,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (level == LogLevel.Warning) Warnings.Add(formatter(state, ex));
+        }
     }
 
     /// <summary>No task framing: text reaches the generator exactly as it was passed.</summary>

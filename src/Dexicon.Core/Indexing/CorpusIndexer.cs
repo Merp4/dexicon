@@ -363,8 +363,12 @@ public sealed class CorpusIndexer(
 
             // TextToEmbed, not Content: a set with heading context embeds each chunk under
             // its heading trail while storing the chunk verbatim.
+            // The batch is one file's chunks, so the label describes it exactly. The range
+            // narrows it to the batch rather than the whole book, which for a 400-chunk PDF
+            // is the difference between a lead and a shrug.
             var embeddings = await embedder.EmbedAsync(
-                set.Target(), EmbedPurpose.Document, batch.Select(c => c.TextToEmbed).ToList(), ct);
+                set.Target(), EmbedPurpose.Document, batch.Select(c => c.TextToEmbed).ToList(),
+                source: $"{label} chunks {offset + 1}-{through}", ct: ct);
 
             job.Phase = "upsert";
             await vectors.UpsertAsync(set.CollectionName, batch, embeddings, ct);
