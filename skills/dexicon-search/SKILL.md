@@ -1,5 +1,6 @@
 ---
-name: dexicon
+# dexicon-skill-version: 1
+name: dexicon-search
 description: Search indexed code and documents by meaning using the Dexicon MCP server. Use when looking for where something is implemented, how a concept is handled, or what a document says about a topic — anything where you know the idea but not the term. Also covers reading an indexed file back and diagnosing an empty result.
 ---
 

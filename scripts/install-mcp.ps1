@@ -46,7 +46,17 @@ param(
   [string]$Project = '.',
   [string]$Url = 'http://localhost:8477/mcp',
   [string]$Name = 'dexicon',
-  [switch]$List
+  [switch]$List,
+
+  # mcp registers the server, as this script always has. skill and hooks install into
+  # .claude/, and are Claude Code only. all does the three together.
+  [ValidateSet('mcp', 'skill', 'hooks', 'all')][string]$What = 'mcp',
+
+  # The per-prompt hook searches on every message and a query it has not embedded before
+  # costs seconds. Installed either way; registered only when this is passed.
+  [switch]$WithContextHook,
+
+  [switch]$Uninstall
 )
 
 $ErrorActionPreference = 'Stop'
@@ -134,6 +144,317 @@ function Hide-Token([string]$text, [string]$token) {
   if (-not $token) { return $text }
   $text -replace [regex]::Escape($token), 'dex_***'
 }
+
+# ── The skill and the hooks ──────────────────────────────────────────────────
+# Everything below installs into `.claude/`, which belongs to the user. Two rules hold
+# throughout: name what we own so uninstall never has to guess, and read a version marker
+# before overwriting so an edited copy can be left alone.
+
+$SkillName = 'dexicon-search'
+$HookFiles = @('dexicon-corpora.py', 'dexicon-context.py', 'dexicon_hook_lib.py')
+$ConfigName = 'dexicon-hooks.env'
+
+function Get-BaseUrl([string]$mcpUrl) {
+  # -Url names the MCP endpoint. The hooks call the REST API beside it.
+  ($mcpUrl -replace '/mcp/?$', '')
+}
+
+function Get-ClaudeHome([string]$scope, [string]$projectDir) {
+  if ($scope -eq 'user') { Join-Path $HOME '.claude' } else { Join-Path $projectDir '.claude' }
+}
+
+function Get-Interpreter {
+  <#
+    Resolved once, at install time, and written into settings.json: deciding it at run time
+    would mean a shebang, which Windows does not honour.
+
+    Each candidate is RUN, not just found. Windows ships a zero-byte `python3.exe` alias in
+    WindowsApps that opens the Microsoft Store when no Python is installed, and
+    `Get-Command` finds it either way. Taking it on trust installs a hook that cannot start,
+    and hooks are built to fail quietly.
+  #>
+  foreach ($c in @('python3', 'python')) {
+    $cmd = Get-Command $c -ErrorAction SilentlyContinue
+    if (-not $cmd) { continue }
+    try {
+      $probe = & $cmd.Source -c 'import sys; print(sys.version_info[0])' 2>$null
+      if ($LASTEXITCODE -eq 0 -and $probe -eq '3') { return $cmd.Source }
+      Info "skipping $($cmd.Source): not a working Python 3"
+    }
+    catch {
+      Info "skipping $($cmd.Source): would not run"
+    }
+  }
+  $null
+}
+
+function Get-MarkerVersion([string]$path, [string]$marker) {
+  if (-not (Test-Path $path)) { return $null }
+  $line = Select-String -LiteralPath $path -Pattern "$marker(?::\s*)(\d+)" -List
+  if ($line) { [int]$line.Matches[0].Groups[1].Value } else { $null }
+}
+
+function Copy-Versioned([string]$from, [string]$to, [string]$marker) {
+  <#
+    Copy unless the target is the same version or newer, or has lost its marker. A file with
+    no marker is one someone edited or wrote themselves, and overwriting it silently is how
+    an installer earns a reputation.
+  #>
+  $ours = Get-MarkerVersion $from $marker
+  $theirs = Get-MarkerVersion $to $marker
+  $leaf = Split-Path -Leaf $to
+
+  if ((Test-Path $to) -and $null -eq $theirs) {
+    Warn "  $leaf has no $marker marker; leaving it alone. Delete it to take this version."
+    return $false
+  }
+  if ($null -ne $theirs -and $theirs -ge $ours) {
+    Info "$leaf already at version $theirs"
+    return $false
+  }
+
+  New-Item -ItemType Directory -Force (Split-Path -Parent $to) | Out-Null
+  Copy-Item -LiteralPath $from -Destination $to -Force
+  if ($null -eq $theirs) { Info "installed  $leaf (version $ours)" }
+  else { Info "upgraded   $leaf ($theirs -> $ours)" }
+  $true
+}
+
+function Install-Skill([string]$claudeHome) {
+  $src = Join-Path $repoRoot "skills/$SkillName/SKILL.md"
+  if (-not (Test-Path $src)) { Die "  cannot find $src" }
+
+  $dest = Join-Path $claudeHome "skills/$SkillName/SKILL.md"
+  if (-not $PSCmdlet.ShouldProcess($dest, 'install skill')) {
+    Info "would install $dest"; return
+  }
+
+  [void](Copy-Versioned $src $dest 'dexicon-skill-version')
+  Info "skill    $dest"
+  Info "invoke   /$SkillName <query>, or let Claude reach for it on its own"
+}
+
+function Write-HookConfig([string]$path, [string]$token, [string]$baseUrl) {
+  <#
+    One file: the connection, the credential and every knob. Named after the
+    POST /api/context fields so there is no second vocabulary. Commented-out lines are the
+    documentation -- an unset key is not sent, so the server's own default applies.
+  #>
+  if (Test-Path $path) {
+    Info "config   $path (kept; delete it to regenerate)"
+    return
+  }
+
+  $lines = @(
+    '# Dexicon hooks. Read by dexicon-corpora.py and dexicon-context.py.',
+    '# An unset key is not sent, so the server default applies.',
+    '',
+    "DEXICON_URL=$baseUrl",
+    "DEXICON_TOKEN=$token",
+    '',
+    '# Seconds. Covers connect and read: a server that accepts the connection and then',
+    '# does not answer is the failure worth guarding against.',
+    'DEXICON_TIMEOUT=5',
+    '',
+    '# POST /api/context, used by the UserPromptSubmit hook.',
+    '# maxChars: nothing is truncated to fit, so a budget under the smallest matching',
+    '# chunk returns an empty passage and says so on stderr. The hook defaults to 4000.',
+    '#DEXICON_CONTEXT_MAX_CHARS=4000',
+    '#DEXICON_CONTEXT_LIMIT=10',
+    '#DEXICON_CONTEXT_MODE=hybrid',
+    '#DEXICON_CONTEXT_NEIGHBOURS=1',
+    '',
+    '# Comma-separated. Narrows the per-prompt hook without narrowing the key, so the',
+    '# agent''s own searches still reach every corpus.',
+    '#DEXICON_CONTEXT_CORPUS=docs',
+    '',
+    '# Prompts shorter than this are not worth a search. "ok", "yes", "carry on".',
+    '#DEXICON_CONTEXT_MIN_PROMPT_CHARS=25',
+    '',
+    '# SessionStart: characters of each corpus description to announce.',
+    '#DEXICON_CORPORA_DESCRIPTION_CHARS=180'
+  )
+
+  New-Item -ItemType Directory -Force (Split-Path -Parent $path) | Out-Null
+  Set-Content -LiteralPath $path -Value $lines -Encoding utf8
+  Info "config   $path"
+}
+
+function Add-HookEntry([hashtable]$hooks, [string]$eventName, [string]$command) {
+  <#
+    Claude Code takes { matcher?, hooks: [ { type, command } ] } per event. Ours is added
+    beside anything already registered, and replaced rather than duplicated on a re-run --
+    matched on the command containing our file name, since the interpreter path can move.
+  #>
+  if (-not $hooks.Contains($eventName)) { $hooks[$eventName] = @() }
+
+  $leaf = Split-Path -Leaf ($command -split '"' | Where-Object { $_ -match '\.py$' } | Select-Object -First 1)
+  if (-not $leaf) { $leaf = $eventName }
+
+  $kept = @($hooks[$eventName] | Where-Object {
+      $json = $_ | ConvertTo-Json -Depth 10 -Compress
+      $json -notmatch [regex]::Escape($leaf)
+    })
+
+  $hooks[$eventName] = $kept + @(@{ hooks = @(@{ type = 'command'; command = $command }) })
+}
+
+function Install-Hooks([string]$claudeHome, [string]$token, [string]$baseUrl, [bool]$withContext) {
+  $interpreter = Get-Interpreter
+  if (-not $interpreter) {
+    Die @"
+
+  No python3 or python on PATH, and the hooks are Python.
+
+  They use only the standard library, so any Python 3 will do. Install one, or skip the
+  hooks with -What skill.
+"@
+  }
+
+  $hookDir = Join-Path $claudeHome 'hooks'
+  $configPath = Join-Path $claudeHome $ConfigName
+  $settingsPath = Join-Path $claudeHome 'settings.json'
+
+  if (-not $PSCmdlet.ShouldProcess($hookDir, 'install hooks')) {
+    Info "would install $($HookFiles -join ', ') to $hookDir"
+    Info "would write   $configPath"
+    Info "would register SessionStart$(if ($withContext) { ' and UserPromptSubmit' }) in $settingsPath"
+    return
+  }
+
+  foreach ($f in $HookFiles) {
+    $src = Join-Path $repoRoot "hooks/claude/$f"
+    if (-not (Test-Path $src)) { Die "  cannot find $src" }
+    [void](Copy-Versioned $src (Join-Path $hookDir $f) 'dexicon-hook-version')
+  }
+
+  Write-HookConfig $configPath $token $baseUrl
+
+  # ── settings.json ──────────────────────────────────────────────────────────
+  $settings = [ordered]@{}
+  if (Test-Path $settingsPath) {
+    $raw = Get-Content $settingsPath -Raw
+    if ($raw.Trim()) {
+      try { $settings = $raw | ConvertFrom-Json -AsHashtable }
+      catch { Die "`n  $settingsPath is not valid JSON, so this script will not touch it." }
+    }
+    $backup = "$settingsPath.$(Get-Date -Format yyyyMMddHHmmss).bak"
+    Copy-Item $settingsPath $backup
+    Info "backed up  $(Split-Path -Leaf $backup)"
+  }
+
+  if (-not $settings.Contains('hooks')) { $settings['hooks'] = @{} }
+  $hooks = $settings['hooks']
+
+  Add-HookEntry $hooks 'SessionStart' "`"$interpreter`" `"$(Join-Path $hookDir 'dexicon-corpora.py')`""
+
+  if ($withContext) {
+    Add-HookEntry $hooks 'UserPromptSubmit' "`"$interpreter`" `"$(Join-Path $hookDir 'dexicon-context.py')`""
+  }
+  elseif ($hooks.Contains('UserPromptSubmit')) {
+    $hooks['UserPromptSubmit'] = @($hooks['UserPromptSubmit'] | Where-Object {
+        ($_ | ConvertTo-Json -Depth 10 -Compress) -notmatch 'dexicon-context\.py'
+      })
+    if (-not $hooks['UserPromptSubmit']) { $hooks.Remove('UserPromptSubmit') }
+  }
+
+  Set-Content -LiteralPath $settingsPath -Value ($settings | ConvertTo-Json -Depth 10) -Encoding utf8
+  Ok "`nHooks installed for Claude Code"
+  Info "settings $settingsPath"
+  Info "session  dexicon-corpora.py  announces the corpora once per session"
+
+  if ($withContext) {
+    Warn "`n  UserPromptSubmit is now live: every prompt runs a search."
+    Info "A query it has not embedded before costs seconds, not milliseconds. Remove the"
+    Info "UserPromptSubmit entry, or re-run without -WithContextHook, to turn it off."
+  }
+  else {
+    Info "prompt   dexicon-context.py  installed but NOT registered; add -WithContextHook"
+  }
+
+  Info "`nEdit $ConfigName to change the budget, the mode or which corpora it reaches."
+  Info "Restart Claude Code to pick the hooks up."
+}
+
+function Uninstall-Artefacts([string]$claudeHome) {
+  $settingsPath = Join-Path $claudeHome 'settings.json'
+  $targets = @(
+    (Join-Path $claudeHome "skills/$SkillName"),
+    (Join-Path $claudeHome $ConfigName)
+  ) + ($HookFiles | ForEach-Object { Join-Path $claudeHome "hooks/$_" })
+
+  $present = @($targets | Where-Object { Test-Path $_ })
+  $hasEntry = (Test-Path $settingsPath) -and ((Get-Content $settingsPath -Raw) -match 'dexicon-(corpora|context)\.py')
+
+  if (-not $present -and -not $hasEntry) {
+    Info "`nNothing of Dexicon's found under $claudeHome"
+    return
+  }
+
+  Write-Host "`nWould remove:"
+  $present | ForEach-Object { Info $_ }
+  if ($hasEntry) { Info "the Dexicon hook entries in $settingsPath" }
+
+  if (-not $PSCmdlet.ShouldProcess($claudeHome, 'remove the Dexicon skill, hooks and config')) { return }
+
+  foreach ($t in $present) { Remove-Item -LiteralPath $t -Recurse -Force; Info "removed  $t" }
+
+  if ($hasEntry) {
+    $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json -AsHashtable
+    $backup = "$settingsPath.$(Get-Date -Format yyyyMMddHHmmss).bak"
+    Copy-Item $settingsPath $backup
+    Info "backed up  $(Split-Path -Leaf $backup)"
+
+    foreach ($e in @('SessionStart', 'UserPromptSubmit')) {
+      if (-not $settings['hooks'].Contains($e)) { continue }
+      $settings['hooks'][$e] = @($settings['hooks'][$e] | Where-Object {
+          ($_ | ConvertTo-Json -Depth 10 -Compress) -notmatch 'dexicon-(corpora|context)\.py'
+        })
+      if (-not $settings['hooks'][$e]) { $settings['hooks'].Remove($e) }
+    }
+    if (-not $settings['hooks'].Count) { $settings.Remove('hooks') }
+
+    Set-Content -LiteralPath $settingsPath -Value ($settings | ConvertTo-Json -Depth 10) -Encoding utf8
+    Info "removed  the hook entries from settings.json"
+  }
+
+  Ok "`nRemoved. The API key still exists; revoke it on the Access screen if it was only for this."
+  Info "Restart Claude Code.`n"
+}
+
+# ── What to install ──────────────────────────────────────────────────────────
+$claudeProject = (Resolve-Path -LiteralPath $Project -ErrorAction SilentlyContinue)?.Path
+if (-not $claudeProject) { $claudeProject = $Project }
+$claudeHome = Get-ClaudeHome $Scope $claudeProject
+
+if ($Uninstall) {
+  Uninstall-Artefacts $claudeHome
+  exit 0
+}
+
+# The skill and the hooks are Claude Code's, so -What all does not need to be told.
+if ($What -eq 'all' -and -not $Client) { $Client = 'claude-code' }
+
+if ($What -in @('skill', 'all')) { Install-Skill $claudeHome }
+
+if ($What -in @('hooks', 'all')) {
+  if (-not $Token) { $Token = Read-TokenFromEnv }
+  if (-not $Token) {
+    Die @"
+
+No key, and this script will not invent one.
+
+  Pass -Token dex_..., or set DEXICON_BOOTSTRAP_TOKEN in .env.
+
+The hooks read, so a key with `search` alone is enough and is what they should have.
+Issue one on the Access screen and tick the corpora it may reach.
+"@
+  }
+  Install-Hooks $claudeHome $Token (Get-BaseUrl $Url) $WithContextHook.IsPresent
+}
+
+# mcp and all carry on into the client configuration; the other two are done.
+if ($What -in @('skill', 'hooks')) { exit 0 }
 
 # ── Listing ──────────────────────────────────────────────────────────────────
 if ($List -or -not $Client) {
