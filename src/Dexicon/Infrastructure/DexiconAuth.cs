@@ -165,7 +165,8 @@ public static class AuthExtensions
             ? null
             : Results.Problem(
                 title: "Insufficient scope",
-                detail: $"This token has [{string.Join(", ", principal.Scopes)}] and needs '{scope}'.",
+                detail: $"This key has [{string.Join(", ", principal.Scopes)}] and needs '{scope}'. " +
+                        "Administration is the password's; sign in to the UI for it.",
                 statusCode: StatusCodes.Status403Forbidden);
     }
 }
