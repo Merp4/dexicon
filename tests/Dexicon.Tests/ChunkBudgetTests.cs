@@ -38,10 +38,41 @@ public sealed class ChunkBudgetTests
     };
 
     [Fact]
-    public void ASizeAboveTheModelsContextIsCappedAtIt()
+    public void ASizeAboveTheModelsContextIsCappedBelowIt()
     {
         // The configuration this shipped with, against the model it shipped against.
-        Set(2065).Options(Measured(2048, 3.8)).ChunkSizeTokens.ShouldBe(2048);
+        Set(2065).Options(Measured(2048, 3.8)).ChunkSizeTokens
+            .ShouldBe(CodeChunker.UsableContext(2048));
+    }
+
+    [Fact]
+    public void TheCapLeavesMarginRatherThanLandingOnTheCeiling()
+    {
+        // The property, stated without the constant. Capping AT the context was the first
+        // answer: it stopped a chunk being larger than the model and still truncated about
+        // 1.5% of them, because the ratio that sizes the chunk is an estimate and a chunk
+        // aimed at the ceiling goes over whenever the estimate is a little high.
+        var capped = Set(100_000).Options(Measured(2048, 3.8)).ChunkSizeTokens;
+
+        capped.ShouldBeLessThan(2048);
+        capped.ShouldBeGreaterThan(1365, "two thirds was measured as much worse for retrieval");
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(5)]
+    [InlineData(10)]
+    public void ATinyContextStillLeavesAChunkToBuild(int context)
+    {
+        // Nine tenths of a very small number rounds to nothing, and a budget of zero
+        // characters is a chunker that produces no chunks and a file that indexes as empty.
+        // The margin is a reduction, never a cancellation.
+        CodeChunker.UsableContext(context).ShouldBeGreaterThan(0);
+
+        var o = Set(2065).Options(Measured(context, 3.8));
+        o.ChunkSizeTokens.ShouldBeGreaterThan(0);
+        o.OverlapTokens.ShouldBeLessThan(o.ChunkSizeTokens);
+        Should.NotThrow(() => CodeChunker.Chunk("a.txt", Prose(5_000), o));
     }
 
     [Fact]

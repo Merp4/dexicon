@@ -239,17 +239,19 @@ public sealed class ModelProbe(IEmbeddingService embeddings, ILogger<ModelProbe>
         double? charsPerToken = null) =>
         new(target.Provider, target.Model, dimensions, limit, truncates,
             budgetChars,
-            // The context itself, when the context could be counted.
+            // Most of the context, when the context could be counted, leaving the rest
+            // as margin for the estimate that sizes the chunk.
             //
-            // This was two thirds of it, headroom against the chunker converting tokens to
-            // characters with a flat 4 that nothing checked. The chunker now converts with
-            // the ratio measured here and the size is capped at the context, so the headroom
-            // is enforced rather than recommended, and recommending it again is paying twice.
+            // Two thirds was the first answer and costs retrieval: on a 96-book library it
+            // is 1,365 tokens, which converts to 5,187 characters, and 5,460 characters
+            // retrieved much worse than 7,480. The whole context was the second answer and
+            // leaves no margin at all, so an over-estimated ratio lands as truncation.
             //
-            // The retrieval cost of paying twice was measured on a 96-book library: two
-            // thirds is 1,365 tokens on this model, which converts to 5,187 characters, and
-            // a run at 5,460 characters retrieved much worse than one at 7,480. The UI puts
-            // this number straight into the chunk size field of every new corpus.
+            // The same comparison gives the number between them: 1,870 tokens retrieved
+            // indistinguishably from 2,065, so the flat region reaches about 91% of this
+            // model's context and a margin of that size is free. The UI puts this straight
+            // into the chunk size field of every new corpus, so it has to be a size worth
+            // having and not merely a safe one.
             //
             // Falling back to chars over a ratio keeps a number for providers that report no
             // token counts. That one stays at two thirds: with no context there is no cap,
@@ -265,7 +267,7 @@ public sealed class ModelProbe(IEmbeddingService embeddings, ILogger<ModelProbe>
     /// </summary>
     internal static int RecommendedTokens(int? contextTokens, int budgetChars, double? charsPerToken) =>
         contextTokens is { } ctx
-            ? ctx
+            ? Indexing.CodeChunker.UsableContext(ctx)
             : (int)(budgetChars / (charsPerToken ?? Indexing.CodeChunker.CharsPerToken));
 
     /// <summary>

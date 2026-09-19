@@ -35,10 +35,22 @@ public sealed class ChunkRecommendationTests
     };
 
     [Fact]
-    public void TheRecommendationIsTheContext()
+    public void TheRecommendationIsMostOfTheContext()
     {
         ModelProbe.RecommendedTokens(contextTokens: 2048, budgetChars: 7850, charsPerToken: 3.8)
-            .ShouldBe(2048);
+            .ShouldBe(CodeChunker.UsableContext(2048));
+    }
+
+    [Fact]
+    public void ItSitsBetweenTheTwoAnswersThatWereWrong()
+    {
+        // Two thirds costs retrieval and the whole context leaves no margin. The same
+        // comparison that rejected the first gives the bound on the second: 1,870 tokens
+        // retrieved indistinguishably from 2,065, so the flat region reaches about 91%.
+        var rec = ModelProbe.RecommendedTokens(2048, 7850, 3.8);
+
+        rec.ShouldBeGreaterThan(2048 * 2 / 3, "two thirds retrieved measurably worse");
+        rec.ShouldBeLessThan(2048, "the whole context leaves the ratio estimate nowhere to be wrong");
     }
 
     [Fact]
@@ -49,6 +61,8 @@ public sealed class ChunkRecommendationTests
         // without a budget quietly smaller than the one configured.
         var recommended = ModelProbe.RecommendedTokens(2048, 7850, 3.8);
 
+        // The cap and the recommendation read the same number, so taking the advice cannot
+        // produce a set the indexer then quietly narrows.
         Set(recommended).Options(Measured(2048, 3.8)).ChunkSizeTokens.ShouldBe(recommended);
     }
 
