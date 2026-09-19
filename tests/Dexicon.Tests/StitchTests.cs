@@ -1,4 +1,4 @@
-using Dexicon.Mcp;
+using Dexicon.Core.Search;
 
 namespace Dexicon.Tests;
 
@@ -19,7 +19,7 @@ public sealed class StitchTests
     public void OverlappingChunksAreJoinedWithoutRepeatingTheSharedLines()
     {
         // Two chunks that share lines 8-10, exactly as the chunker emits them.
-        var stitched = DexiconTools.Stitch(
+        var stitched = Passage.Stitch(
         [
             (1, 10, Lines(1, 10)),
             (8, 20, Lines(8, 20)),
@@ -32,7 +32,7 @@ public sealed class StitchTests
     [Fact]
     public void ThreeWayOverlapStillProducesTheFileOnce()
     {
-        var stitched = DexiconTools.Stitch(
+        var stitched = Passage.Stitch(
         [
             (1, 10, Lines(1, 10)),
             (6, 15, Lines(6, 15)),
@@ -46,7 +46,7 @@ public sealed class StitchTests
     [Fact]
     public void AChunkFullyContainedInAnotherIsDropped()
     {
-        var stitched = DexiconTools.Stitch(
+        var stitched = Passage.Stitch(
         [
             (1, 30, Lines(1, 30)),
             (5, 12, Lines(5, 12)),   // already covered
@@ -62,7 +62,7 @@ public sealed class StitchTests
     {
         // The dangerous case. Line 11 is NOT line 41, and a model reading them adjacent
         // would reason about code that does not exist.
-        var stitched = DexiconTools.Stitch(
+        var stitched = Passage.Stitch(
         [
             (1, 10, Lines(1, 10)),
             (41, 50, Lines(41, 50)),
@@ -77,7 +77,7 @@ public sealed class StitchTests
     public void ExactlyAdjacentChunksAreNotTreatedAsAGap()
     {
         // 1-10 then 11-20 is contiguous; a marker here would be noise.
-        var stitched = DexiconTools.Stitch([(1, 10, Lines(1, 10)), (11, 20, Lines(11, 20))]);
+        var stitched = Passage.Stitch([(1, 10, Lines(1, 10)), (11, 20, Lines(11, 20))]);
 
         stitched.ShouldNotContain("not indexed");
         stitched.TrimEnd('\n').Split('\n')
@@ -87,11 +87,11 @@ public sealed class StitchTests
     [Fact]
     public void ASingleChunkComesBackVerbatim()
     {
-        DexiconTools.Stitch([(1, 3, "alpha\nbeta\ngamma")]).ShouldBe("alpha\nbeta\ngamma\n");
+        Passage.Stitch([(1, 3, "alpha\nbeta\ngamma")]).ShouldBe("alpha\nbeta\ngamma\n");
     }
 
     [Fact]
-    public void NoChunksProducesNothing() => DexiconTools.Stitch([]).ShouldBe("");
+    public void NoChunksProducesNothing() => Passage.Stitch([]).ShouldBe("");
 
     /// <summary>
     /// The property that matters most: chunk a file, stitch it back, get the file.
@@ -113,7 +113,7 @@ public sealed class StitchTests
 
         var chunks = Dexicon.Core.Indexing.CodeChunker.Chunk("notes.md", source, size, overlap, mode);
 
-        var stitched = DexiconTools.Stitch(
+        var stitched = Passage.Stitch(
             chunks.OrderBy(c => c.Index).Select(c => (c.StartLine, c.EndLine, c.Content)));
 
         stitched.ShouldNotContain("not indexed", Case.Sensitive,
@@ -127,7 +127,7 @@ public sealed class StitchTests
         // The chunker splits a line longer than the whole budget, so several chunks can
         // report the SAME single line. Line-based de-overlapping cannot tell those apart
         // because by line each one is "already emitted", and dropped all but the first.
-        var stitched = DexiconTools.Stitch(
+        var stitched = Passage.Stitch(
         [
             (1, 1, "alpha beta gamma"),
             (1, 1, "gamma delta epsilon"),
@@ -141,7 +141,7 @@ public sealed class StitchTests
     [Fact]
     public void TheSharedTextBetweenTwoSlicesAppearsOnce()
     {
-        var stitched = DexiconTools.Stitch([(1, 1, "the quick brown fox"), (1, 1, "brown fox jumps over")]);
+        var stitched = Passage.Stitch([(1, 1, "the quick brown fox"), (1, 1, "brown fox jumps over")]);
 
         stitched.Trim().ShouldBe("the quick brown fox jumps over");
     }
@@ -151,7 +151,7 @@ public sealed class StitchTests
     {
         // A line with no spaces splits with no overlap configured; nothing is shared, and
         // nothing may be silently dropped on the assumption that something was.
-        var stitched = DexiconTools.Stitch([(1, 1, "aaaa"), (1, 1, "bbbb")]);
+        var stitched = Passage.Stitch([(1, 1, "aaaa"), (1, 1, "bbbb")]);
 
         stitched.Trim().ShouldBe("aaaabbbb");
     }
@@ -159,7 +159,7 @@ public sealed class StitchTests
     [Fact]
     public void SameLineSlicesDoNotSuppressTheNextRealLine()
     {
-        var stitched = DexiconTools.Stitch(
+        var stitched = Passage.Stitch(
         [
             (1, 1, "one two"),
             (1, 1, "two three"),

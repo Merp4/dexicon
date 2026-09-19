@@ -69,11 +69,12 @@ jobs:
       - name: Test
         run: dotnet test --no-build --configuration Release --logger "console;verbosity=normal"
 
-      # The build writes clients/web-ui/Dexicon.json, and the UI's TypeScript client is
-      # generated from that file — including inside the Docker image, which copies the
-      # COMMITTED one. So a contract change with an uncommitted document produces an
-      # image whose UI is typed against the previous API, and nothing else notices.
-      - name: The committed OpenAPI document matches the code
+      # The build writes clients/web-ui/Dexicon.json and, beside it, the integration
+      # document. The UI's TypeScript client is generated from the first of them,
+      # including inside the Docker image, which copies the COMMITTED one. So a contract
+      # change with an uncommitted document produces an image whose UI is typed against
+      # the previous API, and nothing else notices.
+      - name: The committed OpenAPI documents match the code
         run: |
           # Compared with `info.version` set aside, because that field is STAMPED by
           # MinVer from the git tag rather than authored, and on a release it is the one
@@ -87,13 +88,22 @@ jobs:
           # schemas the UI's TypeScript client is generated from, including inside the
           # image, which copies the committed document. A drift in any of those still
           # fails here; a version that has not been tagged yet does not.
-          jq -S '.info.version = "stamped"' clients/web-ui/Dexicon.json > /tmp/built.json
-          git show HEAD:clients/web-ui/Dexicon.json             | jq -S '.info.version = "stamped"' > /tmp/committed.json
-          if ! diff -q /tmp/committed.json /tmp/built.json > /dev/null; then
-            echo "::error::clients/web-ui/Dexicon.json is stale. Run a build and commit it."
-            diff /tmp/committed.json /tmp/built.json || true
-            exit 1
-          fi
+          #
+          # Both documents. The full one is what the UI's client is generated from; the
+          # integration subset is what other software is invited to depend on, and a
+          # check naming only the first would let the published contract drift while
+          # reporting success. See docs/decisions.md D-29.
+          status=0
+          for doc in clients/web-ui/Dexicon.json clients/web-ui/Dexicon_integration.json; do
+            jq -S '.info.version = "stamped"' "$doc"          > /tmp/built.json
+            git show "HEAD:$doc" | jq -S '.info.version = "stamped"' > /tmp/committed.json
+            if ! diff -q /tmp/committed.json /tmp/built.json > /dev/null; then
+              echo "::error::$doc is stale. Run a build and commit it."
+              diff /tmp/committed.json /tmp/built.json || true
+              status=1
+            fi
+          done
+          exit $status
 
       - name: Install UI dependencies
         working-directory: clients/web-ui

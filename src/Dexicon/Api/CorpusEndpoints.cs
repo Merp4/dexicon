@@ -3,6 +3,7 @@ using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
 using Dexicon.Core.Embedding;
 using Dexicon.Core.Indexing;
+using Dexicon.Core.Search;
 using Dexicon.Core.Vectors;
 using Dexicon.Infrastructure;
 using Dexicon.Mcp;
@@ -26,7 +27,7 @@ public static class CorpusEndpoints
             var summaries = new List<CorpusSummary>(visible.Count);
             foreach (var c in visible) summaries.Add(await Summarise(db, c, opts.Value.Indexing, ct));
             return Results.Ok(summaries);
-        }).Produces<IReadOnlyList<CorpusSummary>>();
+        }).Produces<IReadOnlyList<CorpusSummary>>().WithGroupName(OpenApiDocuments.Integration);
 
         g.MapGet("/{nameOrId}", async (string nameOrId, RequestContext rc, ScopeResolver scopes,
             CatalogDbContext db, IOptions<DexiconOptions> opts, CancellationToken ct) =>
@@ -35,7 +36,7 @@ public static class CorpusEndpoints
             var principal = rc.RequirePrincipal();
             var scope = await scopes.ResolveReadableAsync(principal, [nameOrId], ct);
             return Results.Ok(await Summarise(db, scope.Corpora[0], opts.Value.Indexing, ct));
-        }).Produces<CorpusSummary>();
+        }).Produces<CorpusSummary>().WithGroupName(OpenApiDocuments.Integration);
 
         g.MapPost("/", async (CreateCorpusRequest body, RequestContext rc, CatalogDbContext db,
             IVectorStore vectors, IEmbeddingService embedder, IOptions<DexiconOptions> opts,
@@ -348,7 +349,7 @@ public static class CorpusEndpoints
             var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
             var job = await queue.EnqueueAsync(corpus.Id, full == true ? JobKind.Full : JobKind.Refresh, ct: ct);
             return Results.Accepted($"/api/jobs/{job.Id}", job.ToSummary());
-        }).Produces<JobSummary>();
+        }).Produces<JobSummary>().WithGroupName(OpenApiDocuments.Integration);
 
         g.MapGet("/{nameOrId}/files", async (string nameOrId, string? status, int? limit, int? offset,
             RequestContext rc, ScopeResolver scopes, CatalogDbContext db, CancellationToken ct) =>
@@ -414,7 +415,7 @@ public static class CorpusEndpoints
             }
 
             var pieces = chunks.Select(c => (c.StartLine, c.EndLine, c.Content)).ToList();
-            var text = DexiconTools.Stitch(pieces, lineNumbers: false);
+            var text = Passage.Stitch(pieces, lineNumbers: false);
 
             // The marker Stitch writes where the index is missing lines. Counted here so a
             // caller can say "3 gaps" without reading the text for it.

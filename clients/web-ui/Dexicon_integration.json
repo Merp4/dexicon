@@ -1,0 +1,1104 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "Dexicon integration API",
+    "description": "The endpoints meant for other software: search, assembled context, the corpora a key can reach, their indexing state, and reindexing. A key with the `search` scope reaches all of these except the reindex endpoint, which needs `ingest`. The rest of the REST surface serves the web UI and is described by the full document rather than this one.",
+    "version": "0.3"
+  },
+  "paths": {
+    "/api/search": {
+      "post": {
+        "tags": [
+          "Search"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchApiRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/context": {
+      "post": {
+        "tags": [
+          "Search"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContextApiRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/corpora": {
+      "get": {
+        "tags": [
+          "Corpora"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CorpusSummary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/corpora/{nameOrId}": {
+      "get": {
+        "tags": [
+          "Corpora"
+        ],
+        "parameters": [
+          {
+            "name": "nameOrId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpusSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/corpora/{nameOrId}/reindex": {
+      "post": {
+        "tags": [
+          "Corpora"
+        ],
+        "parameters": [
+          {
+            "name": "nameOrId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "full",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs": {
+      "get": {
+        "tags": [
+          "Jobs"
+        ],
+        "parameters": [
+          {
+            "name": "corpusId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JobSummary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{id}": {
+      "get": {
+        "tags": [
+          "Jobs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ChunkSetSummary": {
+        "required": [
+          "id",
+          "name",
+          "description",
+          "embeddingProvider",
+          "embeddingModel",
+          "embeddingDimensions",
+          "collectionName",
+          "chunkSize",
+          "chunkOverlap",
+          "boundaryMode",
+          "customBoundaryPattern",
+          "unitAware",
+          "sentenceAware",
+          "headingContext",
+          "isDefault",
+          "state",
+          "fileCount",
+          "chunkCount",
+          "pendingCount",
+          "failedCount",
+          "createdUtc",
+          "lastIndexedUtc"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "embeddingProvider": {
+            "type": "string"
+          },
+          "embeddingModel": {
+            "type": "string"
+          },
+          "embeddingDimensions": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "collectionName": {
+            "type": "string"
+          },
+          "chunkSize": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "chunkOverlap": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "boundaryMode": {
+            "type": "string"
+          },
+          "customBoundaryPattern": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "unitAware": {
+            "type": "boolean"
+          },
+          "sentenceAware": {
+            "type": "boolean"
+          },
+          "headingContext": {
+            "type": "boolean"
+          },
+          "isDefault": {
+            "type": "boolean"
+          },
+          "state": {
+            "type": "string"
+          },
+          "fileCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "chunkCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pendingCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "failedCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "createdUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastIndexedUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "Citation": {
+        "required": [
+          "corpus",
+          "filePath",
+          "location"
+        ],
+        "type": "object",
+        "properties": {
+          "corpus": {
+            "type": "string"
+          },
+          "sourceRoot": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "filePath": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "startLine": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "endLine": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "page": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "section": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "score": {
+            "type": "number",
+            "format": "float"
+          },
+          "chars": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "ContextApiRequest": {
+        "required": [
+          "query"
+        ],
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "corpus": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "mode": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "limit": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "pathPrefix": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "source": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "language": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "symbol": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "maxChars": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "neighbours": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "lineNumbers": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "distinctTitles": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          }
+        }
+      },
+      "ContextResult": {
+        "required": [
+          "query",
+          "mode",
+          "scope",
+          "context",
+          "citations"
+        ],
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/SearchMode"
+          },
+          "degraded": {
+            "type": "boolean"
+          },
+          "degradedReason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "scope": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScopeEntry"
+            }
+          },
+          "context": {
+            "type": "string"
+          },
+          "citations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            }
+          },
+          "usedChars": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "maxChars": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "droppedHits": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "note": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "tookMs": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "CorpusDefaults": {
+        "required": [
+          "useGitignore",
+          "maxFileBytes",
+          "includeGlobs",
+          "excludeGlobs"
+        ],
+        "type": "object",
+        "properties": {
+          "useGitignore": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "maxFileBytes": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "includeGlobs": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "excludeGlobs": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "CorpusState": {
+        "enum": [
+          "Ready",
+          "Indexing",
+          "Degraded",
+          "Unavailable"
+        ]
+      },
+      "CorpusSummary": {
+        "required": [
+          "id",
+          "name",
+          "description",
+          "state",
+          "createdUtc",
+          "lastIndexedUtc",
+          "sourceCount",
+          "fileCount",
+          "chunkCount",
+          "skippedCount",
+          "failedCount",
+          "sources",
+          "chunkSets"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "state": {
+            "type": "string"
+          },
+          "createdUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastIndexedUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "sourceCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "fileCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "chunkCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "skippedCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "failedCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceSummary"
+            }
+          },
+          "chunkSets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChunkSetSummary"
+            }
+          },
+          "defaults": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CorpusDefaults"
+              }
+            ]
+          }
+        }
+      },
+      "JobSummary": {
+        "required": [
+          "id",
+          "corpusId",
+          "chunkSetId",
+          "kind",
+          "state",
+          "phase",
+          "filesTotal",
+          "filesDone",
+          "filesSkipped",
+          "filesFailed",
+          "chunksWritten",
+          "error",
+          "queuedUtc",
+          "startedUtc",
+          "finishedUtc"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "corpusId": {
+            "type": "string"
+          },
+          "chunkSetId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "kind": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "phase": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "filesTotal": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "filesDone": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "filesSkipped": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "filesFailed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "chunksWritten": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "queuedUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "startedUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "finishedUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "ScopeEntry": {
+        "required": [
+          "id",
+          "name",
+          "state"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/CorpusState"
+          }
+        }
+      },
+      "SearchApiRequest": {
+        "required": [
+          "query"
+        ],
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "corpus": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "mode": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "limit": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "pathPrefix": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "source": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "language": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "symbol": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "maxCharsPerHit": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "distinctTitles": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          }
+        }
+      },
+      "SearchHit": {
+        "required": [
+          "corpusId",
+          "filePath",
+          "content"
+        ],
+        "type": "object",
+        "properties": {
+          "corpusId": {
+            "type": "string"
+          },
+          "corpusName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "sourceId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "sourceRoot": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "filePath": {
+            "type": "string"
+          },
+          "language": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "startLine": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "endLine": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "chunkIndex": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "page": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "section": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "symbols": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "content": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number",
+            "format": "float"
+          },
+          "location": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "SearchMode": {
+        "enum": [
+          "Hybrid",
+          "Semantic",
+          "Keyword"
+        ]
+      },
+      "SearchResult": {
+        "required": [
+          "query",
+          "mode",
+          "scope",
+          "hits"
+        ],
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/SearchMode"
+          },
+          "degraded": {
+            "type": "boolean"
+          },
+          "degradedReason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "scope": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScopeEntry"
+            }
+          },
+          "hits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            }
+          },
+          "tookMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "note": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "SourceSummary": {
+        "required": [
+          "id",
+          "kind",
+          "rootPath",
+          "useGitignore",
+          "maxFileBytes",
+          "includeGlobs",
+          "excludeGlobs"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "rootPath": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "useGitignore": {
+            "type": "boolean"
+          },
+          "maxFileBytes": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "includeGlobs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "excludeGlobs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "fileCount": {
+            "type": "integer",
+            "format": "int32",
+            "default": 0
+          },
+          "ownUseGitignore": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "ownMaxFileBytes": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "ownIncludeGlobs": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "ownExcludeGlobs": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "description": "A Dexicon API token: `Authorization: Bearer dex_…`.",
+        "scheme": "bearer"
+      }
+    }
+  },
+  "security": [
+    {
+      "bearer": [ ]
+    }
+  ],
+  "tags": [
+    {
+      "name": "Search"
+    },
+    {
+      "name": "Corpora"
+    },
+    {
+      "name": "Jobs"
+    }
+  ]
+}

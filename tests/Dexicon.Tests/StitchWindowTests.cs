@@ -1,4 +1,4 @@
-using Dexicon.Mcp;
+using Dexicon.Core.Search;
 using Shouldly;
 
 namespace Dexicon.Tests;
@@ -23,7 +23,7 @@ public sealed class StitchWindowTests
     [Fact]
     public void AWindowTrimsToTheLinesAsked()
     {
-        var stitched = DexiconTools.Stitch([(1, 40, Lines(1, 40))], window: (18, 22));
+        var stitched = Passage.Stitch([(1, 40, Lines(1, 40))], window: (18, 22));
 
         Emitted(stitched).ShouldBe(["line 18", "line 19", "line 20", "line 21", "line 22"]);
     }
@@ -33,7 +33,7 @@ public sealed class StitchWindowTests
     {
         // The default has to stay as it was: Stitch is also used where the whole passage
         // is wanted.
-        var stitched = DexiconTools.Stitch([(1, 40, Lines(1, 40))]);
+        var stitched = Passage.Stitch([(1, 40, Lines(1, 40))]);
 
         Emitted(stitched).Length.ShouldBe(40);
     }
@@ -43,7 +43,7 @@ public sealed class StitchWindowTests
     {
         // The numbers are the file's, not the passage's. Counting down from the top of a
         // trimmed passage is the arithmetic this exists to prevent.
-        var stitched = DexiconTools.Stitch(
+        var stitched = Passage.Stitch(
             [(1, 40, Lines(1, 40))], lineNumbers: true, window: (18, 20));
 
         Emitted(stitched).ShouldBe(["18: line 18", "19: line 19", "20: line 20"]);
@@ -52,7 +52,7 @@ public sealed class StitchWindowTests
     [Fact]
     public void AWindowSpanningTwoOverlappingChunksStillDeOverlaps()
     {
-        var stitched = DexiconTools.Stitch(
+        var stitched = Passage.Stitch(
         [
             (1, 10, Lines(1, 10)),
             (8, 20, Lines(8, 20)),
@@ -66,7 +66,7 @@ public sealed class StitchWindowTests
     {
         // The passage the caller asked for is contiguous; a gap elsewhere in the file is
         // not their problem and the marker would be noise.
-        var stitched = DexiconTools.Stitch(
+        var stitched = Passage.Stitch(
         [
             (1, 10, Lines(1, 10)),
             (20, 30, Lines(20, 30)),
@@ -81,7 +81,7 @@ public sealed class StitchWindowTests
     {
         // Still disclosed, because the caller's passage really does have a hole in it,
         // but reported as the part of the hole they asked for.
-        var stitched = DexiconTools.Stitch(
+        var stitched = Passage.Stitch(
         [
             (1, 10, Lines(1, 10)),
             (20, 30, Lines(20, 30)),
@@ -96,7 +96,7 @@ public sealed class StitchWindowTests
     [Fact]
     public void AWindowOutsideTheChunksEmitsNothing()
     {
-        var stitched = DexiconTools.Stitch([(1, 10, Lines(1, 10))], window: (50, 60));
+        var stitched = Passage.Stitch([(1, 10, Lines(1, 10))], window: (50, 60));
 
         Emitted(stitched).ShouldBeEmpty();
     }

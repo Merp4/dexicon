@@ -50,7 +50,54 @@ public static class SystemEndpoints
             }, ct);
 
             return Results.Ok(result);
-        }).Produces<Dexicon.Core.Search.SearchResult>().WithTags("Search");
+        }).Produces<Dexicon.Core.Search.SearchResult>().WithTags("Search")
+          .WithGroupName(OpenApiDocuments.Integration);
+    }
+
+    /// <summary>
+    /// One assembled passage for a query, rather than a page of hits to fetch separately.
+    ///
+    /// The MCP surface deliberately does not have this: an agent already has search_index
+    /// and get_context, and a sixth tool definition is context every agent pays for on
+    /// every turn. What has no agent loop is a hook, a CI step or a shell script, and for
+    /// those the two-call shape is a round trip per hit. See docs/decisions.md D-29.
+    /// </summary>
+    public static void MapContextEndpoints(this IEndpointRouteBuilder app)
+    {
+        app.MapPost("/api/context", async (ContextApiRequest body, RequestContext rc, ContextService context,
+            CancellationToken ct) =>
+        {
+            if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
+            if (string.IsNullOrWhiteSpace(body.Query))
+                return Results.Problem(title: "Query is required", statusCode: 400);
+
+            var result = await context.BuildAsync(rc.RequirePrincipal(), new ContextRequest
+            {
+                Query = body.Query,
+                Corpus = body.Corpus,
+                Mode = Mapping.ParseMode(body.Mode),
+                Limit = Math.Clamp(body.Limit ?? 10, 1, 50),
+                PathPrefix = body.PathPrefix,
+                Source = body.Source,
+                Language = body.Language,
+                Symbol = body.Symbol,
+
+                // No lower bound worth enforcing: a budget too small for one chunk returns
+                // an empty passage and a note saying what the smallest one costs, which is
+                // more use than a number the caller did not choose.
+                MaxChars = Math.Clamp(body.MaxChars ?? ContextRequest.DefaultMaxChars, 1, 200_000),
+
+                // Each neighbour is a whole chunk, and every one of them competes with a
+                // further hit for the same budget. Five either side of ten hits is already
+                // a hundred chunks asking to fit.
+                Neighbours = Math.Clamp(body.Neighbours ?? 0, 0, 5),
+                LineNumbers = body.LineNumbers ?? false,
+                DistinctTitles = body.DistinctTitles ?? true,
+            }, ct);
+
+            return Results.Ok(result);
+        }).Produces<ContextResult>().WithTags("Search")
+          .WithGroupName(OpenApiDocuments.Integration);
     }
 
     public static void MapJobEndpoints(this IEndpointRouteBuilder app)
@@ -75,7 +122,7 @@ public static class SystemEndpoints
                 .Take(Math.Clamp(limit ?? 50, 1, 200)).ToListAsync(ct);
 
             return Results.Ok(jobs.Select(j => j.ToSummary()));
-        }).Produces<IReadOnlyList<JobSummary>>();
+        }).Produces<IReadOnlyList<JobSummary>>().WithGroupName(OpenApiDocuments.Integration);
 
         g.MapGet("/{id}", async (string id, RequestContext rc, ScopeResolver scopes, CatalogDbContext db,
             CancellationToken ct) =>
@@ -88,7 +135,7 @@ public static class SystemEndpoints
             if (!visible.Exists(c => c.Id == job.CorpusId)) return Results.NotFound();
 
             return Results.Ok(job.ToSummary());
-        }).Produces<JobSummary>();
+        }).Produces<JobSummary>().WithGroupName(OpenApiDocuments.Integration);
     }
 
     /// <summary>

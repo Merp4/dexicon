@@ -1,4 +1,4 @@
-using Dexicon.Mcp;
+using Dexicon.Core.Search;
 
 namespace Dexicon.Tests;
 
@@ -20,7 +20,7 @@ public sealed class LineNumberedContextTests
     public void NumbersAreTheFilesOwn_NotThePositionInTheOutput()
     {
         // The passage starts at line 40. Numbering from 1 would be confidently wrong.
-        var stitched = DexiconTools.Stitch([(40, 44, Lines(40, 44))], lineNumbers: true);
+        var stitched = Passage.Stitch([(40, 44, Lines(40, 44))], lineNumbers: true);
 
         stitched.TrimEnd('\n').Split('\n').ShouldBe(
         [
@@ -37,7 +37,7 @@ public sealed class LineNumberedContextTests
     {
         // The second chunk repeats lines 8-10. They are dropped, and line 11 must still be
         // numbered 11, which is the off-by-one this file exists to guard.
-        var stitched = DexiconTools.Stitch(
+        var stitched = Passage.Stitch(
         [
             (1, 10, Lines(1, 10)),
             (8, 20, Lines(8, 20)),
@@ -58,7 +58,7 @@ public sealed class LineNumberedContextTests
     {
         // The marker stands for lines that are NOT there. Numbering it would give a line
         // number to a line that does not exist.
-        var stitched = DexiconTools.Stitch(
+        var stitched = Passage.Stitch(
         [
             (1, 5, Lines(1, 5)),
             (20, 24, Lines(20, 24)),
@@ -75,7 +75,7 @@ public sealed class LineNumberedContextTests
     {
         // The corpus-file resource reconstructs a file and shares this code. A file read
         // back should be the file, not a listing of it.
-        DexiconTools.Stitch([(1, 2, Lines(1, 2))]).ShouldBe("line 1\nline 2\n");
+        Passage.Stitch([(1, 2, Lines(1, 2))]).ShouldBe("line 1\nline 2\n");
     }
 
     [Fact]
@@ -84,7 +84,7 @@ public sealed class LineNumberedContextTests
         // A line longer than the whole chunk budget is split across chunks, each honestly
         // reporting the same line. It is one line, so it gets one number, not one per
         // slice, which would invent lines that are not in the file.
-        var stitched = DexiconTools.Stitch(
+        var stitched = Passage.Stitch(
         [
             (1, 1, "the quick brown fox"),
             (1, 1, "brown fox jumps over"),

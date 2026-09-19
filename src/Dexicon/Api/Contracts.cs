@@ -388,6 +388,33 @@ public sealed record SearchApiRequest(
     /// </summary>
     bool? DistinctTitles = null);
 
+/// <summary>
+/// One assembled passage for a query, for a caller with no agent loop. The filters are
+/// the search filters; what differs is the budget, which governs the whole passage rather
+/// than each hit. See docs/decisions.md D-29.
+/// </summary>
+public sealed record ContextApiRequest(
+    string Query,
+    IReadOnlyList<string>? Corpus = null,
+    string? Mode = null,
+    /// <summary>Hits to consider. What reaches the passage is decided by the budget.</summary>
+    int? Limit = null,
+    string? PathPrefix = null,
+    string? Source = null,
+    string? Language = null,
+    string? Symbol = null,
+    /// <summary>
+    /// Characters for the whole passage, headers included. Null takes the default. A
+    /// budget smaller than one chunk returns nothing and says so rather than returning
+    /// the middle of a passage.
+    /// </summary>
+    int? MaxChars = null,
+    /// <summary>Chunks to include either side of each hit, for reading past what matched.</summary>
+    int? Neighbours = null,
+    /// <summary>Prefix each line with its number in the file. Off by default.</summary>
+    bool? LineNumbers = null,
+    bool? DistinctTitles = null);
+
 public sealed record CreateTokenRequest(
     string Name,
     IReadOnlyList<string>? Scopes = null,

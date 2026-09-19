@@ -87,7 +87,7 @@ public sealed class DexiconResources
 
         var sb = new StringBuilder();
         sb.Append(path).Append(" (corpus: ").Append(corpus.Name).Append(")\n\n");
-        sb.Append(DexiconTools.Stitch(pieces));
+        sb.Append(Passage.Stitch(pieces));
         return sb.ToString();
     }
 

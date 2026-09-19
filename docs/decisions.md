@@ -1008,8 +1008,17 @@ reindex returning the terminal job state. A separate port or process for the int
 API ([D-01](#d-01-single-container) stands; a second listener adds a boundary that does not
 exist here). `maxTokens` (above). Promoting the whole REST surface to a contract (above).
 
-**Not built.** The shape is recorded here so the roadmap row is a build task rather than a
-design one. No code has changed.
+**As built.** `POST /api/context`, and `Dexicon_integration.json` generated beside
+`Dexicon.json` in `clients/web-ui`. Both documents come from one build and carry the same
+`major.minor`; CI checks both against the code. Assembly is a pure function over ranked
+hits, so the budget arithmetic is tested without a vector store, and `Stitch` moved from
+the MCP tool class into `Core/Search/Passage` where its four callers can reach it.
+
+One detail is not obvious and cost a regression in the making: giving an endpoint a group
+name removes it from every OTHER document under the stock `ShouldInclude` rule, so the
+full document, which the web client is generated from, would have lost search, corpora and
+jobs the moment they were selected into the integration one. The full document now takes
+every endpoint explicitly, and a test asserts that it still does.
 
 **Open.** Whether a running instance serves the integration document. `Dexicon.csproj`
 generates at build time and serves nothing, so that the API surface is not exposed

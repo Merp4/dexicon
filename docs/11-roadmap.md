@@ -272,7 +272,7 @@ answer to "what about…" is "yes, here, later" rather than an argument.
 | Watch mode / push-based reindex | Polling proving too slow in practice, with a number. |
 | ~~Additional embedding providers~~ | **Done.** OpenAI and Azure OpenAI ship; adding another is a registration. |
 | Persisted audit table | A deployment that needs an audit trail outliving container logs. |
-| Integration OpenAPI document and `POST /api/context` | Shape fixed in [D-29](decisions.md#d-29-an-integration-document-and-retrieval-in-one-call). Starts when a hook, CI step or script needs retrieval without an agent loop. |
+| ~~Integration OpenAPI document and `POST /api/context`~~ | **Done.** See [D-29](decisions.md#d-29-an-integration-document-and-retrieval-in-one-call) and [13](13-integration.md). |
 
 ---
 
