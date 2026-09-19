@@ -17,7 +17,11 @@ import urllib.request
 
 DEFAULT_URL = "http://localhost:8477"
 DEFAULT_CONNECT_TIMEOUT = 2.0
-DEFAULT_TIMEOUT = 5.0
+# Above the cold cost, not near it. A query the embedder has not seen measured about
+# 5.4 seconds on a 15,213-chunk index, so a 5-second timeout failed on exactly the case
+# the per-prompt hook exists to serve. A server that is down is caught by the connect
+# timeout in two, so this is only paid when one is answering slowly.
+DEFAULT_TIMEOUT = 10.0
 
 CONFIG_ENV = "DEXICON_HOOKS_ENV"
 DEFAULT_CONFIG = os.path.join(os.path.expanduser("~"), ".claude", "dexicon-hooks.env")

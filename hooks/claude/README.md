@@ -37,7 +37,7 @@ at all, so the server's own default applies rather than the hook carrying a copy
 |---|---|
 | `DEXICON_URL` | Where the server is. The REST base, not the `/mcp` endpoint |
 | `DEXICON_TOKEN` | A `search`-scoped key. Never the admin password |
-| `DEXICON_TIMEOUT` | Seconds, covering connect and read |
+| `DEXICON_TIMEOUT` | Seconds, covering connect and read. Defaults to 10, above the measured cold-query cost |
 | `DEXICON_CONTEXT_MAX_CHARS` | `maxChars` |
 | `DEXICON_CONTEXT_LIMIT` | `limit` |
 | `DEXICON_CONTEXT_MODE` | `mode` |
