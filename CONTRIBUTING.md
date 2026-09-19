@@ -34,8 +34,8 @@ git config core.hooksPath .githooks
 ## What a good change looks like
 
 **Record why in the code, not only what.** The codebase carries comments explaining
-decisions that would otherwise look arbitrary: why `corpus_id` is the Qdrant tenant key
-rather than `tenant_id`, why the embedding model is a per-call argument, why a unit
+decisions that would otherwise look arbitrary: why `corpus_id` carries Qdrant's
+`is_tenant` index, why the embedding model is a per-call argument, why a unit
 boundary forces a split when nothing else does. Each of those followed a defect or a
 design discussion. If a change encodes a decision, record the alternative that was
 rejected.

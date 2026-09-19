@@ -40,7 +40,7 @@ services:
       DEXICON__QDRANT__ENDPOINT:   http://dexicon-qdrant:6334
       DEXICON__OLLAMA__ENDPOINT:   http://dexicon-ollama:11434
       DEXICON__EMBEDDING__MODEL:   ${DEXICON_EMBEDDING_MODEL:-embeddinggemma}
-      DEXICON__BOOTSTRAP__TENANT:  ${DEXICON_BOOTSTRAP_TENANT:-default}
+      DEXICON__ADMIN__PASSWORD:    ${DEXICON_ADMIN_PASSWORD:-}
       DEXICON__BOOTSTRAP__TOKEN:   ${DEXICON_BOOTSTRAP_TOKEN:-}   # blank = generate and log once
     volumes:
       - dexicon_data:/data
@@ -120,8 +120,8 @@ default.** Qdrant and Ollama have no `ports:` mapping at all; they are reachable
 the project's own bridge network.
 
 This is not fastidiousness. Qdrant's stock configuration has **no authentication**, so a
-published 6333 is an open read/write door to every tenant's content, and no amount of
-application-layer tenancy ([07](07-tenancy-auth.md)) survives it. `QDRANT_API_KEY` is
+published 6333 is an open read/write door to every corpus, and no amount of
+application-layer tenancy ([07](07-auth.md)) survives it. `QDRANT_API_KEY` is
 supported and recommended for anything beyond one trusted machine.
 
 It also avoids a collision that will otherwise happen on any developer machine: 6333, 6334
@@ -273,7 +273,7 @@ Everything has a working default except `WORKSPACE_ROOT`.
 | `DEXICON__INDEXING__DOCUMENTMAXBYTES` | `536870912` | Size cap for extracted formats (PDF, EPUB, DOCX, PPTX). 512 MB. A memory decision — extraction holds the document's text. |
 | `DEXICON__INDEXING__REFRESHMINUTES` | `0` | Automatic refresh interval in minutes. `0` = manual only. |
 | `DEXICON__UPLOAD__MAXFILEBYTES` | `209715200` | 200 MB. |
-| `DEXICON__BOOTSTRAP__TENANT` | `default` | Created on first run. |
+| `DEXICON__ADMIN__PASSWORD` | _(generated)_ | The admin password. Blank generates one on first run and prints it to the log once. Set, it is applied on every start, which is the way back in after a forgotten one. |
 | `DEXICON__BOOTSTRAP__TOKEN` | *(empty)* | Blank generates one and logs it once. |
 | `DEXICON__LOG__LEVEL` | `Information` | |
 

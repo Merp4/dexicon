@@ -69,6 +69,38 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Changed
 
+- **An admin password and API keys scoped to corpora, replacing tenancy.** The tenant was
+  built so several agents could share one endpoint and see different material, chosen by
+  `X-Dexicon-Tenant`. It never could: a token was bound to exactly one tenant, so the header
+  could only agree with it or return 400. `Tenant`, `CorpusVisibility`, `CorpusGrant`, the
+  header and the write-only `tenant_id` Qdrant payload field are all gone.
+
+  Administration is now one password, the only route to the `admin` scope, exchanged at
+  `POST /api/session` for a short-lived bearer held in memory. Nothing durable carries
+  `admin`, so no credential in an agent's configuration can delete a corpus. Failed
+  sign-ins are throttled by a delay that doubles and caps at 30 seconds, counted globally
+  because there is one password and one thing to guess; a delay rather than a lockout,
+  because with a shared credential a lockout is a denial of service anyone able to reach
+  the port could inflict on the owner.
+
+  An agent's key maps to corpora in the UI, read per request rather than cached on the
+  principal, so ticking a corpus reaches the agent on its next call rather than after the
+  60-second principal TTL or a client restart. No rows means every corpus; a key that
+  should reach nothing is revoked. Corpus names are now unique across the install, which
+  is what an agent passing `corpus: ["books"]` already assumed: previously a tenant that
+  owned `books` and was also granted someone else's `books` reached only its own, and the
+  other had no name that addressed it.
+
+  `index_refresh` is filtered out of `tools/list` for a key without `ingest` rather than
+  refused when called, because an agent that can see a tool will call it and spend a turn
+  on the error. Document upload, attach and detach move from `ingest` to `admin`, leaving
+  `ingest` meaning reindexing alone, which closes Q4.
+
+  Migrating an existing catalogue renames colliding corpus names, keeping the oldest and
+  suffixing the rest. See [D-28](docs/decisions.md#d-28-an-admin-password-and-scoped-api-keys)
+  for what was rejected, including a corpus-selecting header, an identity header the UI
+  maps, and a named mapping several keys share.
+
 - **A search result is a window onto the matching passage, not the whole chunk.** Measured
   over eight questions against a 95-book library, five results each, a search returned a
   mean of 40,797 characters, about 10,200 tokens: the chunk is sized for retrieval, at

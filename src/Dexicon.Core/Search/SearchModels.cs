@@ -153,14 +153,14 @@ public sealed record SearchResponse
 
 /// <summary>
 /// Raised when a search reaches the vector store without a corpus scope. This is the
-/// repository-level half of the three-layer guard in docs/07-tenancy-auth.md: the
+/// repository-level half of the three-layer guard in docs/07-auth.md: the
 /// application resolves scope and throws on empty, this refuses to issue the query at
 /// all, and the storage layout (hnsw m=0) makes an unfiltered query useless anyway.
 /// </summary>
 public sealed class UnscopedQueryException(string caller)
     : InvalidOperationException(
         $"{caller} attempted a vector query with no corpus_id filter. There is no code path " +
-        "that searches every corpus; resolve an authorised scope first. See docs/07-tenancy-auth.md.");
+        "that searches every corpus; resolve an authorised scope first. See docs/07-auth.md.");
 
 /// <summary>
 /// Raised when the embedding model's dimensionality does not match what the collection

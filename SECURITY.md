@@ -27,17 +27,19 @@ Stated plainly, because a policy that implies more than it delivers is worse tha
 admits its limits. How each line below is enforced is in
 [docs/10-security-secrets.md](docs/10-security-secrets.md).
 
-**Defended.** One tenant reading another's content through the API, MCP, UI, or a guessed
-identifier. Secrets reaching the repository, the logs, or an error response. Dexicon writing
+**Defended.** A key reading a corpus it is not mapped to, through the API, MCP, UI, or a
+guessed identifier. Guessing the admin password, which is throttled by a doubling delay on
+top of 600k PBKDF2 iterations per attempt. Secrets reaching the repository, the logs, or an error response. Dexicon writing
 to your source tree, because workspace mounts are read-only. A malformed document taking the
 service down.
 
 **Not defended.** Anyone with access to the Docker socket, the data volume, or a published
-Qdrant port. A malicious tenant holding a valid `admin` token. Side channels (timing,
+Qdrant port. Anyone holding the admin password, which reaches every corpus by design. Side
+channels (timing,
 per-corpus chunk counts) that might reveal that content exists without revealing what it
 is.
 
-**Dexicon is a local developer tool with tenant separation. It is not a multi-tenant SaaS
+**Dexicon is a local developer tool with per-key scoping. It is not a multi-tenant SaaS
 boundary**, and describing it as one would invite uses it cannot carry. If you are
 considering exposing it to untrusted users, that is the sentence to read twice.
 
@@ -47,18 +49,19 @@ Dexicon assumes it is reachable only by people you trust:
 
 - The app binds to `127.0.0.1` by default. Qdrant and Ollama publish **no ports at all**:
   Qdrant's stock configuration has no authentication, so a published `6333` is an open
-  read/write door to every tenant's content regardless of what the application enforces.
-- API tokens are stored as PBKDF2-HMAC-SHA256 with a per-token salt. The secret is shown
-  once at creation and has no retrieval path. A lost token is replaced, not recovered, or
+  read/write door to every corpus regardless of what the application enforces.
+- The admin password and every API key are stored as PBKDF2-HMAC-SHA256 with a per-credential
+  salt. A key's secret is shown once at creation and has no retrieval path. A lost key is
+  replaced, not recovered, or
   recovered through `DEXICON_BOOTSTRAP_TOKEN`, which is an escape hatch documented in
   [docs/09-deployment.md](docs/09-deployment.md).
 - Embedding provider API keys are read from the environment, never from the catalogue.
   Configuration names the variable; the value stays outside the file.
 
-If you put Dexicon behind a reverse proxy on a shared network, the tenant header
-(`X-Dexicon-Tenant`) becomes something the proxy must control. Dexicon trusts the token
-first (a header asking for a tenant the token does not own is refused), but the
-deployment is yours to reason about.
+If you put Dexicon behind a reverse proxy on a shared network, note that it trusts no
+request header for identity: a caller is whoever their bearer says they are, and there is
+no header a proxy could set to change that. The deployment is still yours to reason about,
+and the admin session is the credential worth protecting, since it reaches everything.
 
 ## Things that are not vulnerabilities
 
@@ -67,6 +70,7 @@ So that a report is not wasted work:
 - **The default Qdrant API key in `docker-compose.yml`.** It is not a secret, is documented
   as not being one, and exists because an *empty* `QDRANT__SERVICE__API_KEY` turns
   authentication on with a key nothing can present. The port is never published.
-- **Search results revealing that content exists.** Within a tenant, that is the product.
+- **Search results revealing that content exists.** Within what a key reaches, that is the
+  product.
 - **An `admin` token doing administrative things.** Scopes are a capability boundary, not a
   defence against the holder.

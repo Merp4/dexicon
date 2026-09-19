@@ -79,13 +79,14 @@ filter on the field that actually selects); a collection per tenant or per corpu
 documents this as rarely efficient, citing per-collection overhead, a 1000-collection ceiling,
 and it puts collection lifecycle on the hot path of corpus creation).
 
-**Consequence.** Authorization is resolved in SQLite ([07](07-tenancy-auth.md))
+**Consequence.** Authorization is resolved in SQLite ([07](07-auth.md))
 and enforced as a `corpus_id` filter. The tenant is not part of the Qdrant filter, so a bug
 in scope resolution is a leak. That is why three independent guards defend it, one of which
 is the storage layout itself.
 
-**Proposed change.** [D-28](#d-28-an-admin-password-and-scoped-api-keys) would keep `corpus_id` as the
-tenant key and drop the `tenant_id` payload field.
+**Amended by** [D-28](#d-28-an-admin-password-and-scoped-api-keys): `corpus_id` remains the
+`is_tenant` key and the `tenant_id` payload field is gone. Qdrant's name for the index
+outlived the concept.
 
 ---
 
@@ -227,9 +228,10 @@ self-hosted local server they add an authorization server for no gain).
 **The rule:** target selection is explicit, validated and least-privilege; an ambiguous
 target fails fast rather than being inferred.
 
-**Proposed change.** [D-28](#d-28-an-admin-password-and-scoped-api-keys) would keep the credential and
-its storage, drop the tenant binding and `X-Dexicon-Tenant`, make `admin` reachable
-only through a password, and map each key to corpora in the UI.
+**Superseded in part by** [D-28](#d-28-an-admin-password-and-scoped-api-keys): the
+credential format and its storage stand. The tenant binding and `X-Dexicon-Tenant` are
+gone, `admin` is reachable only through a password, and each key maps to corpora in the
+UI.
 
 ---
 
@@ -247,9 +249,8 @@ find things, understand them, and know whether the index is current.
 parameter, not three tools); admin tools over MCP (tenant and token management belongs in
 the UI, where a human is present).
 
-**Proposed change.** [D-28](#d-28-an-admin-password-and-scoped-api-keys) would make it five tools,
-four of which every key sees: `index_refresh` is listed only for a key granted
-`ingest`.
+**Amended by** [D-28](#d-28-an-admin-password-and-scoped-api-keys): five tools, four of
+which every key sees. `index_refresh` is listed only for a key granted `ingest`.
 
 ---
 
@@ -804,8 +805,7 @@ decision.
 
 ### D-28 An admin password and scoped API keys
 
-**Status.** Proposed, 2026-09-19. Not implemented; the rest of this document describes
-shipped behaviour.
+**Status.** Accepted and implemented, 2026-09-19.
 
 **Decision.** Tenancy goes. One admin password authenticates the UI and is the only route to
 the `admin` scope. API keys authenticate agents, carry `search` and optionally `ingest`, and
@@ -815,12 +815,12 @@ corpus. The mapping is read per request rather than cached into the principal, w
 reach nothing is revoked, not mapped to an empty set. `X-Dexicon-Tenant` goes, and no header
 replaces it.
 
-**Why.** The tenant did two things: it was the isolation boundary [07](07-tenancy-auth.md)
+**Why.** The tenant did two things: it was the isolation boundary [07](07-auth.md)
 describes, and it was how several agents were to share one endpoint and see different
 material, chosen by header. The second never worked: `ApiToken.TenantId` is a single column,
 so `X-Dexicon-Tenant` can only agree with the token or return 400. The first is a boundary
 this tool does not have, since anyone reaching the Qdrant port or the data volume reads
-everything regardless, which [07](07-tenancy-auth.md) says in its opening paragraph.
+everything regardless, which [07](07-auth.md) says in its opening paragraph.
 
 A corpus-selecting header would have worked, and the choice between it and a server-side
 mapping is about where the control lives. A header sits on the far side of the connection, in
@@ -832,7 +832,7 @@ where it is cheapest to change.
 
 That trade has a real cost on the other side: a header in a client's configuration file is in
 version control, and a catalogue row is not. Editing a mapping is an authenticated request
-like any other and lands on the audit line [07](07-tenancy-auth.md) describes, but a log is
+like any other and lands on the audit line [07](07-auth.md) describes, but a log is
 not a diff and cannot be replayed onto a fresh machine.
 
 A key is already a stable, authenticated, per-agent identifier that the client never has to
@@ -856,7 +856,7 @@ container every caller arrives from the same gateway address anyway. A delay and
 lockout, because with one shared credential a lockout is a denial of service that anyone able
 to reach the port can inflict on the owner. The counter resets on success and lives in the
 `IMemoryCache` the auth middleware already holds principals in, so a restart clears it, and a
-restart needs host access that defeats this model regardless ([07](07-tenancy-auth.md)). Key
+restart needs host access that defeats this model regardless ([07](07-auth.md)). Key
 authentication is not throttled: a 32-byte secret is not guessable, and throttling it would
 let anyone degrade agent traffic by presenting bad bearers.
 
@@ -914,7 +914,7 @@ adding an agent rather than an administrative chore.
 **Cost, accepted.** A password is the first credential here that a human chooses, so it is
 the first that can be guessed. PBKDF2 at 600k iterations and the throttle above are what
 stand in the way, and what remains is that someone able to reach the port can hold the delay
-at its cap and make the owner wait that long to sign in. [07](07-tenancy-auth.md) defers rate
+at its cap and make the owner wait that long to sign in. [07](07-auth.md) defers rate
 limiting per token as something to add when someone reports a problem; that stays true of
 keys and stops being true of the password.
 
@@ -934,7 +934,7 @@ narrow that window if clients honour them, untested here.
 
 The password uses the same PBKDF2-HMAC-SHA256 at 600k iterations that tokens use, and is
 exchanged for a short-lived admin-scoped bearer held in `sessionStorage`, so the SPA keeps
-the bearer model it has and gains no cookie. [07](07-tenancy-auth.md) stops being about
+the bearer model it has and gains no cookie. [07](07-auth.md) stops being about
 tenancy. The three guards are unchanged, because enforcement is still the `corpus_id` filter,
 the refusal to query on an empty scope, and `hnsw m=0`; they defend a smaller promise.
 `TenantIsolationTests` keeps the unknown-corpus error, the empty-scope throw and the
