@@ -16,7 +16,7 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
-## Unreleased
+## 0.5.0 — 2026-09-19
 
 ### Added
 
@@ -55,10 +55,16 @@ with no section here fails its release rather than publishing an undescribed one
   cheapest way to see that a variant exists.
 
   At most one block is cut, always the last, and only when at least 300 characters of it
-  would show. The cut falls on a line boundary, the passage says
-  `… N characters of this chunk not shown …`, and the citation reports the lines actually
-  present rather than the chunk's full span, so a citation is never a claim about text the
-  caller was not given.
+  would show. The passage says `… N characters of this chunk not shown …`, and the
+  citation reports the lines actually present rather than the chunk's full span, so a
+  citation is never a claim about text the caller was not given.
+
+  Where the cut falls depends on whether line numbers were asked for. With them it is a
+  line boundary, because half a line carries the wrong number. Without them it is a word
+  boundary when a line boundary would waste more than half the budget: a chunk of a book
+  is often one paragraph, and on a real index that kept 243 characters of a 1,500
+  character budget. The budget is measured against the header actually written rather
+  than an estimate of it, so a request is answered within what it asked for.
 
   `partialBlocks` on the response, and `partial` with `omittedChars` on each citation, carry
   it as data. They are separate from `truncated`, which goes on meaning hits were dropped: a
