@@ -352,7 +352,24 @@ DEXICON_TAG=0.2.2 docker compose up -d
    the version from the tag, so tagging first produces a tag whose own release build fails
    on a document still naming the previous version. This applies once per minor version;
    every `0.2.x` after the first produces the same `0.2` and nothing changes.
+
+   On a minor bump the build has to be told the version. MinVer auto-increments the PATCH,
+   so a plain build after `v0.2.3` reports `0.2.4-alpha…` and writes the `0.2` being moved
+   away from:
+
+   ```bash
+   dotnet build -p:MinVerVersionOverride=0.3.0
+   ```
+
 3. **Tag and push.** That publishes the image and creates the GitHub Release.
+
+Between step 2 and step 3 the committed document names the new minor while an untagged
+build of the same commit produces the old one. CI compares the two with `info.version`
+set aside for exactly that reason, so the release commit passes its own checks; the
+comparison still covers the paths and schemas the generated client is typed against. It
+did not always: comparing the stamped version deadlocked `0.3.0`, because the check could
+not pass until the tag existed and the tag could not exist until a merge that a required
+status check refuses.
 
 Releases on GitHub start at `0.2.3`. `0.1.0` through `0.2.2` predate the step that creates
 them and exist as tags, images and `CHANGELOG.md` entries only.

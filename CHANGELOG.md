@@ -16,7 +16,56 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
-## Unreleased
+## 0.3.0 — 2026-09-19
+
+### ⚠️ Upgrading
+
+- One migration, `ModelContextTokens`, applied at startup. Widening only: one nullable
+  column on the measurements table. It is empty until each model is probed again, and an
+  empty value means the chunk size is not capped, which is the behaviour before this change.
+  **Re-probe each embedding model from the Models screen** to get the cap.
+
+- The chunker version moves 4 to 7 and the extractor version 5 to 6, so **every file
+  re-extracts, re-chunks and re-embeds on the next index run**.
+
+- The extractor version moves 4 to 5, so **every PDF re-extracts, re-chunks and re-embeds on
+  the next index run**. Other formats are untouched and their cached text still matches.
+
+- One migration, `SourceFilterInheritance`, applied at startup. Widening only: a source's
+  filter columns become nullable and a corpus gains four default columns. Every existing
+  source keeps the value it had, so it stays an explicit override and indexes exactly as
+  before. Nothing re-indexes on upgrade.
+
+### Added
+
+- **The screen is in the URL.** `#/corpora`, `#/corpora/books`, `#/settings`. Reload,
+  bookmark and the back button all work from it; before, a reload landed on Search whatever
+  you were reading, and the back button did nothing.
+
+  A fragment rather than a path, because the app is served by the same origin as the API and
+  every path but `/` needs a token: a real path would 401 on exactly the reload this fixes.
+  An unrecognised fragment lands on Search and rewrites itself rather than showing a blank
+  page.
+
+- **A source's filters can be changed after it was added, and a corpus can set defaults
+  they inherit.** They were write-once: set when the folder was added and unreachable
+  afterwards, so changing one glob meant deleting the source, which drops its files from
+  every chunk set, then re-adding it and re-embedding the folder from scratch. Nobody
+  iterates on a filter at that price. Ten folders under one parent also carried ten copies
+  of the same two globs, set one at a time.
+
+  Filters now resolve through three layers, narrowest first: the source's own value, the
+  corpus default, then the configured value. Each field resolves on its own, and
+  inheritance is live, so changing a corpus default moves every source that has not
+  overridden that field.
+
+  An unset field inherits; an empty glob list is a decision, meaning "none, whatever the
+  corpus says". The difference is what lets a source under a corpus that excludes
+  `**/*.pdf` say it wants those PDFs after all. `PATCH /api/corpora/{name}/sources/{id}`
+  leaves omitted fields alone and takes a `clear` list to return one to the default, named
+  rather than inferred from a null, because JSON cannot distinguish an absent property from
+  an explicit null. `PATCH /api/corpora/{name}` takes the defaults. Both queue a refresh,
+  and only when something actually moved.
 
 ### Changed
 
@@ -46,8 +95,6 @@ with no section here fails its release rather than publishing an undescribed one
   extractions of one title needs. Collapsing can return fewer results than were asked for,
   and says so rather than being quietly short.
 
-### Changed
-
 - **Hybrid search fuses on normalised scores rather than on rank.** Reciprocal rank fusion
   has no weight to mis-set, which reads as a virtue until the two lists differ in quality: a
   lexical match at rank 3 counts for as much as a semantic match at rank 3, however much
@@ -68,17 +115,6 @@ with no section here fails its release rather than publishing an undescribed one
   Better on all three, and the last row is why hybrid exists at all: semantic search cannot
   find `DEXICON__INDEXING__DOCUMENTMAXBYTES` at any rank. `D-06` is revised with the
   measurement, having previously rejected this on reasoning alone.
-
-### Added
-
-- **The screen is in the URL.** `#/corpora`, `#/corpora/books`, `#/settings`. Reload,
-  bookmark and the back button all work from it; before, a reload landed on Search whatever
-  you were reading, and the back button did nothing.
-
-  A fragment rather than a path, because the app is served by the same origin as the API and
-  every path but `/` needs a token: a real path would 401 on exactly the reload this fixes.
-  An unrecognised fragment lands on Search and rewrites itself rather than showing a blank
-  page.
 
 ### Fixed
 
@@ -292,48 +328,6 @@ with no section here fails its release rather than publishing an undescribed one
   only — PDFs, EPUBs and the other document formats are measured against
   `DEXICON__INDEXING__DOCUMENTMAXBYTES` instead — so the old default excluded nothing but
   large text.
-
-### ⚠️ Upgrading
-
-- One migration, `ModelContextTokens`, applied at startup. Widening only: one nullable
-  column on the measurements table. It is empty until each model is probed again, and an
-  empty value means the chunk size is not capped, which is the behaviour before this change.
-  **Re-probe each embedding model from the Models screen** to get the cap.
-
-- The chunker version moves 4 to 7 and the extractor version 5 to 6, so **every file
-  re-extracts, re-chunks and re-embeds on the next index run**.
-
-- The extractor version moves 4 to 5, so **every PDF re-extracts, re-chunks and re-embeds on
-  the next index run**. Other formats are untouched and their cached text still matches.
-
-- One migration, `SourceFilterInheritance`, applied at startup. Widening only: a source's
-  filter columns become nullable and a corpus gains four default columns. Every existing
-  source keeps the value it had, so it stays an explicit override and indexes exactly as
-  before. Nothing re-indexes on upgrade.
-
-### Added
-
-- **A source's filters can be changed after it was added, and a corpus can set defaults
-  they inherit.** They were write-once: set when the folder was added and unreachable
-  afterwards, so changing one glob meant deleting the source, which drops its files from
-  every chunk set, then re-adding it and re-embedding the folder from scratch. Nobody
-  iterates on a filter at that price. Ten folders under one parent also carried ten copies
-  of the same two globs, set one at a time.
-
-  Filters now resolve through three layers, narrowest first: the source's own value, the
-  corpus default, then the configured value. Each field resolves on its own, and
-  inheritance is live, so changing a corpus default moves every source that has not
-  overridden that field.
-
-  An unset field inherits; an empty glob list is a decision, meaning "none, whatever the
-  corpus says". The difference is what lets a source under a corpus that excludes
-  `**/*.pdf` say it wants those PDFs after all. `PATCH /api/corpora/{name}/sources/{id}`
-  leaves omitted fields alone and takes a `clear` list to return one to the default, named
-  rather than inferred from a null, because JSON cannot distinguish an absent property from
-  an explicit null. `PATCH /api/corpora/{name}` takes the defaults. Both queue a refresh,
-  and only when something actually moved.
-
-### Fixed
 
 - **A size cap that was not a round number of megabytes could not be saved.** The Add
   source form set `step` on its size input, which makes the browser reject anything off
