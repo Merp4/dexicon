@@ -174,6 +174,31 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     return () => clearInterval(id);
   }, [refreshCorpora, onSignOut]);
 
+  // Seed from the jobs listing, because the stream only carries what happens NEXT.
+  // Opening the page during an index showed the corpus badge saying "indexing" with no
+  // progress under it until the next event arrived, which during extraction of a large
+  // PDF is tens of seconds of a page that looks stuck.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const jobs = await api.listJobs();
+        if (cancelled) return;
+        const running = jobs.filter((j) => j.state === 'running' || j.state === 'queued');
+        if (running.length === 0) return;
+        // Only where the stream has said nothing yet: an event is fresher than a poll.
+        setLive((prev) => {
+          const next = { ...prev };
+          for (const j of running) next[j.corpusId] ??= j;
+          return next;
+        });
+      } catch {
+        // The bar is a convenience. Failing to seed it is not worth an error banner.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   useEffect(
     () =>
       subscribeToProgress(
@@ -183,6 +208,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           if (p.state && !['running', 'queued'].includes(String(p.phase ?? ''))) void refreshCorpora();
         },
         () => setConnected(false),
+        () => setConnected(true),
       ),
     [refreshCorpora],
   );
