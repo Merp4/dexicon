@@ -273,6 +273,7 @@ answer to "what about…" is "yes, here, later" rather than an argument.
 | ~~Additional embedding providers~~ | **Done.** OpenAI and Azure OpenAI ship; adding another is a registration. |
 | Persisted audit table | A deployment that needs an audit trail outliving container logs. |
 | ~~Integration OpenAPI document and `POST /api/context`~~ | **Done.** See [D-29](decisions.md#d-29-an-integration-document-and-retrieval-in-one-call) and [13](13-integration.md). |
+| Skill and hook installation from `install-mcp.ps1` | Shape fixed in [D-30](decisions.md#d-30-skills-and-hooks-install-with-the-client-under-a-dexicon-prefix). Starts when the manual copy into `.claude/skills/` costs someone a session. |
 
 ---
 
