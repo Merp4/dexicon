@@ -16,7 +16,44 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
-## Unreleased
+## 0.4.0 — 2026-09-19
+
+### Added
+
+- **A search result marks the terms that matched it.** A hit is up to 1,500 characters and
+  nothing on the card said which part answered the query. Terms of three characters or more
+  are marked, minus a stopword list: `chunking strategy and overlap size` over a shelf of
+  books produced 133 marks, 47 of them the word "and". Amber rather than the accent blue,
+  which already means "default" and "in use" elsewhere in this UI.
+
+- **The file list of a corpus can be filtered by name.** It was 96 alphabetical titles, each
+  present twice as PDF and EPUB, and the status tabs do not narrow that when every file is
+  indexed. Filtering is client-side over the list already on the page, which is capped at
+  300 rows; the cap now counts the filtered list rather than the whole one.
+
+- **A skeleton while a search runs.** A search over roughly 15,000 chunks measured 5,028 ms
+  with no sign of progress but a spinner inside the button, which at that length reads as a
+  hung page.
+
+### Changed
+
+- **Prose is set in the body face, and only code keeps the monospace.** Every passage
+  rendered in 12px monospace, including book text, which is slower to read than the same
+  page set anywhere else. A chunk whose language is a programming language keeps it, because
+  alignment and character distinction are the point there.
+
+  Scheduled refreshes that indexed nothing now collapse into one line naming the corpora and
+  the span. `DEXICON__INDEXING__REFRESHMINUTES` runs one per corpus per interval, so an
+  unchanged tree fills the Jobs screen with identical "0 indexed, 0 chunks" cards and pushes
+  the run that did something below the fold. A run that indexed anything, a failed run, and
+  a lone quiet run each keep their own card: nothing indexed and nothing written is also
+  what a failure looks like.
+
+  Smaller corrections in the same pass. A document title wraps as a sentence rather than
+  mid-word, while a path keeps monospace and breaks anywhere. `book.pdf#page=198` no longer
+  sits beside a `Page 198` badge saying the same thing, though the full citation stays in
+  Copy path. "All visible corpora" reads "All corpora", visibility having gone with tenancy.
+  File counts pluralise.
 
 ### Added
 
