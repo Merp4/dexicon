@@ -364,9 +364,12 @@ DEXICON_TAG=0.2.2 docker compose up -d
 3. **Tag and push.** That publishes the image and creates the GitHub Release.
 
 Between step 2 and step 3 the committed document names the new minor while an untagged
-build of the same commit produces the old one, so **that commit's own CI run fails the
-staleness check**. Push the tag and re-run it: with the tag in place MinVer reports the
-release version and the check passes. A patch release meets none of this.
+build of the same commit produces the old one. CI compares the two with `info.version`
+set aside for exactly that reason, so the release commit passes its own checks; the
+comparison still covers the paths and schemas the generated client is typed against. It
+did not always: comparing the stamped version deadlocked `0.3.0`, because the check could
+not pass until the tag existed and the tag could not exist until a merge that a required
+status check refuses.
 
 Releases on GitHub start at `0.2.3`. `0.1.0` through `0.2.2` predate the step that creates
 them and exist as tags, images and `CHANGELOG.md` entries only.
