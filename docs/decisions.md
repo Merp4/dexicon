@@ -955,6 +955,76 @@ of which every key sees.
 
 ---
 
+### D-29 An integration document, and retrieval in one call
+
+**Decision.** The REST surface gains a second OpenAPI document, `integration`, describing a
+named subset: `POST /api/search`, `POST /api/context`, `GET /api/corpora`,
+`GET /api/corpora/{nameOrId}`, `POST /api/corpora/{nameOrId}/reindex`, `GET /api/jobs` and
+`GET /api/jobs/{id}`. `Dexicon.json` goes on describing everything and goes on generating
+the web client. `POST /api/context` is new: one call returning an assembled, cited passage
+for a query, budgeted in characters. Outbound webhooks are rejected.
+
+**Why a second document.** [02](02-architecture.md) describes the REST API as serving the
+SPA, and that description is the only thing that makes it internal: `/api/search` already
+takes the same `dex_` bearer, the same `search` scope and the same per-corpus mapping as
+MCP. What the current document cannot carry is a stability promise, because it also
+describes `/api/workspaces`, the model probe, pull and delete, `/api/session` and the SSE
+stream, which are the admin screens' own plumbing. Publishing it whole as an integration
+contract commits the project to the shape of the UI. A subset is a promise that can be
+kept, and it carries its own version.
+
+**Mechanism.** `AddOpenApi("integration")` alongside the default registration, with
+`WithGroupName` on the endpoints that belong to it. Build-time generation writes
+`clients/web-ui/Dexicon_integration.json` beside `Dexicon.json`: a document not named `v1`
+takes the suffix. The staleness check in `ci.yml` names `Dexicon.json` by path and has to
+name both, or the second document drifts without failing anything.
+
+**Why a context endpoint.** `search_index` and `/api/search` are shaped for a caller with
+an agent loop: ranked hits, a character cap per hit, and a second call to `get_context`
+when a hit needs its surroundings. A hook, a CI step or a shell script has no loop.
+Assembling a passage from those two today costs a round trip per hit and repeats
+client-side the de-overlapping the server already does in `DexiconTools.Stitch`, including
+its disclosure of gaps as `… lines N-M not indexed …`. One call returns the passage, its
+citations, and what it had to leave out.
+
+**Why characters, not tokens.** No tokenizer ships
+([D-16](#d-16-approximate-token-counting),
+[D-27](#d-27-a-chunk-budget-is-characters-and-the-ratio-is-measured)), and the consumer's
+model is not the embedding model, so a `maxTokens` parameter would be an estimate in the
+shape of a budget. The request takes `maxChars`; the response reports `usedChars`,
+`truncated` and how many hits were dropped. `degraded` is carried through from the search
+result, so a script about to paste keyword-fallback text into a prompt can tell that is
+what it holds.
+
+**Why not a sixth MCP tool.** [D-11](#d-11-five-mcp-tools). An agent already has
+`search_index` and `get_context`, and a tool definition is context every agent pays for on
+every turn, including the ones that would never call this.
+
+**Rejected.** Outbound webhooks: an operator-supplied URL POSTed to from inside the
+container is an SSRF path, and it brings signing, retry and a dead-letter story for a
+question `/api/events` and `GET /api/jobs` already answer for any caller that can hold a
+connection or poll. If polling proves too slow, the cheaper answer is a `wait` parameter on
+reindex returning the terminal job state. A separate port or process for the integration
+API ([D-01](#d-01-single-container) stands; a second listener adds a boundary that does not
+exist here). `maxTokens` (above). Promoting the whole REST surface to a contract (above).
+
+**Not built.** The shape is recorded here so the roadmap row is a build task rather than a
+design one. No code has changed.
+
+**Open.** Whether a running instance serves the integration document. `Dexicon.csproj`
+generates at build time and serves nothing, so that the API surface is not exposed
+anonymously in order to describe itself. Serving this one document behind the existing
+bearer check would let a consumer generate a client against a live instance without
+reopening that.
+
+**Revisit if.** A pipeline needs to create corpora rather than search and refresh them.
+[D-28](#d-28-an-admin-password-and-scoped-api-keys) keeps `admin` off issuable keys, so that
+case means the admin password in CI. The narrower answer would be a `manage` scope covering
+corpus, source and chunk-set changes while key minting, the password and model management
+stay with the password. Not decided here.
+
+---
+
 ## Open questions
 
 | # | Question | Needed by | Current lean |
