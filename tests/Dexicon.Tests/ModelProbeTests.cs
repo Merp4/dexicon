@@ -210,7 +210,7 @@ public sealed class ModelProbeTests
         }
 
         public Task<IReadOnlyList<float[]>> EmbedAsync(
-            EmbeddingTarget target, EmbedPurpose purpose, IReadOnlyList<string> inputs,
+            EmbeddingTarget target, EmbedPurpose purpose, IReadOnlyList<string> inputs, string? source = null,
             CancellationToken ct = default)
         {
             var vectors = new List<float[]>();
@@ -252,7 +252,7 @@ public sealed class ModelProbeTests
             Task.FromResult<int?>(null);
 
         public Task<IReadOnlyList<float[]>> EmbedAsync(
-            EmbeddingTarget target, EmbedPurpose purpose, IReadOnlyList<string> inputs,
+            EmbeddingTarget target, EmbedPurpose purpose, IReadOnlyList<string> inputs, string? source = null,
             CancellationToken ct = default)
         {
             var rng = new Random(7);
@@ -285,7 +285,7 @@ public sealed class ModelProbeTests
             Task.FromResult<int?>(Math.Max(1, text.Length / 3));
 
         public Task<IReadOnlyList<float[]>> EmbedAsync(
-            EmbeddingTarget target, EmbedPurpose purpose, IReadOnlyList<string> inputs,
+            EmbeddingTarget target, EmbedPurpose purpose, IReadOnlyList<string> inputs, string? source = null,
             CancellationToken ct = default)
         {
             // The probe must always ask for Raw: a task template would add characters of

@@ -82,6 +82,19 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Fixed
 
+- **The truncation warning named no file.** Over-long input is embedded shortened rather
+  than failing the file, which is the right trade and useless to act on if the log will not
+  say whose text it was. One run reported 123 of them: 123 chunks with their tails dropped
+  and no way to find out which documents they came from. Every batch is one file's chunks,
+  so the warning now names the file and the range within it.
+
+- **Shortening a chunk was spent from the retry budget.** The degraded attempt ran inside
+  the loop meant for a struggling embedder, so a caller with retries turned off had nowhere
+  to make it and the file failed instead: the opposite of what the path exists for. It also
+  waited out a backoff first, half a second in front of a call certain to be made and
+  certain to differ. The attempt is now its own, and immediate. A transient failure still
+  gets exactly its configured retries and no more.
+
 - **A chunk aimed at the model's whole context, leaving its size estimate nowhere to be
   wrong.** Capping the size at the context and then measuring each file's own density took
   truncation warnings from 235 to 220 to 199 over a 96-book library. Both corrections were

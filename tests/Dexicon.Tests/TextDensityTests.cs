@@ -38,7 +38,7 @@ public sealed class TextDensityTests
         }
 
         public Task<IReadOnlyList<float[]>> EmbedAsync(EmbeddingTarget t, EmbedPurpose p,
-            IReadOnlyList<string> inputs, CancellationToken ct = default) =>
+            IReadOnlyList<string> inputs, string? source = null, CancellationToken ct = default) =>
             throw new NotSupportedException("measuring density must not embed");
 
         public Task<int> ProbeDimensionsAsync(EmbeddingTarget t, CancellationToken ct = default) =>

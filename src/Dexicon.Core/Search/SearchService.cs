@@ -232,7 +232,7 @@ public sealed class SearchService(
         var key = $"qemb::{target}::{query}";
         if (cache.TryGetValue(key, out float[]? cached) && cached is not null) return cached;
 
-        var vector = (await embedder.EmbedAsync(target, EmbedPurpose.Query, [query], ct))[0];
+        var vector = (await embedder.EmbedAsync(target, EmbedPurpose.Query, [query], ct: ct))[0];
         cache.Set(key, vector, QueryEmbeddingTtl);
         return vector;
     }

@@ -47,9 +47,18 @@ public interface IEmbeddingService
     /// </remarks>
     Task<int?> CountTokensAsync(EmbeddingTarget target, string text, CancellationToken ct = default);
 
+    /// <param name="source">
+    /// What this batch of inputs is, for the log. Every caller that embeds documents does
+    /// so a file at a time, so one label describes the whole batch exactly and no guessing
+    /// about which input it was is needed.
+    ///
+    /// It exists because the over-long warning named no file. A run reporting 123 of them
+    /// said 123 chunks had their tails dropped and gave no way to find out whose, which is
+    /// the difference between a number and a defect someone can act on.
+    /// </param>
     Task<IReadOnlyList<float[]>> EmbedAsync(
         EmbeddingTarget target, EmbedPurpose purpose, IReadOnlyList<string> inputs,
-        CancellationToken ct = default);
+        string? source = null, CancellationToken ct = default);
 
     /// <summary>Ask the model its dimensionality. Cached; costs one short embed on a miss.</summary>
     Task<int> ProbeDimensionsAsync(EmbeddingTarget target, CancellationToken ct = default);
@@ -88,7 +97,7 @@ public sealed class EmbeddingService(
         if (cache.TryGetValue(DimensionsKey(target), out int cached) && cached > 0) return cached;
 
         // Raw: a dimension probe is a measurement of the model, not a document.
-        var vectors = await EmbedAsync(target, EmbedPurpose.Raw, ["dimension probe"], ct);
+        var vectors = await EmbedAsync(target, EmbedPurpose.Raw, ["dimension probe"], ct: ct);
         var dimensions = vectors[0].Length;
 
         cache.Set(DimensionsKey(target), dimensions, DimensionsTtl);
@@ -120,7 +129,7 @@ public sealed class EmbeddingService(
 
     public async Task<IReadOnlyList<float[]>> EmbedAsync(
         EmbeddingTarget target, EmbedPurpose purpose, IReadOnlyList<string> inputs,
-        CancellationToken ct = default)
+        string? source = null, CancellationToken ct = default)
     {
         if (inputs.Count == 0) return [];
         if (string.IsNullOrWhiteSpace(target.Model))
@@ -151,7 +160,7 @@ public sealed class EmbeddingService(
                     // Indexed, not appended: results must come back in INPUT order, and
                     // parallel completion says nothing about order. A chunk paired with
                     // its neighbour's vector is an unfalsifiable search-quality bug.
-                    results[index] = await GenerateAsync(generator, target, batch, ct);
+                    results[index] = await GenerateAsync(generator, target, batch, source, ct);
                 }
                 finally { gate.Release(); }
             }));
@@ -165,7 +174,7 @@ public sealed class EmbeddingService(
 
     private async Task<float[][]> GenerateAsync(
         IEmbeddingGenerator<string, Embedding<float>> generator,
-        EmbeddingTarget target, string[] batch, CancellationToken ct)
+        EmbeddingTarget target, string[] batch, string? source, CancellationToken ct)
     {
         // ModelId per call. This is the whole reason a generator is cached per provider
         // instead of per model: a chunk set picks its model at runtime and stores it in
@@ -173,16 +182,28 @@ public sealed class EmbeddingService(
         var generationOptions = Options(target, truncate: false);
         var truncating = false;
 
+        // The degraded attempt is not spent from the retry budget, and does not wait.
+        //
+        // Over-long input is not transient: the same input fails the same way every time,
+        // so the budget for a struggling embedder has nothing to do with it. Taking the
+        // attempt from that budget meant a caller configured with no retries got a FAILED
+        // FILE where this path exists to give it a shortened chunk, and the backoff put a
+        // quarter-second in front of a call that was always going to be made.
+        var degraded = 0;
+        var retryNow = false;
+
         Exception? last = null;
-        for (var attempt = 0; attempt <= _ollama.MaxRetries; attempt++)
+        for (var attempt = 0; attempt <= _ollama.MaxRetries + degraded; attempt++)
         {
-            if (attempt > 0)
+            if (attempt > 0 && !retryNow)
             {
                 // Jittered backoff. A retry storm against a struggling embedder is how a
                 // slow embedding service becomes an unavailable one.
                 var delay = TimeSpan.FromMilliseconds(250 * Math.Pow(2, attempt) + Random.Shared.Next(0, 250));
                 await Task.Delay(delay, ct);
             }
+
+            retryNow = false;
 
             try
             {
@@ -208,13 +229,17 @@ public sealed class EmbeddingService(
                 // file, and say so loudly enough to be fixed. The chunk size is the fix,
                 // and the chunk set form warns about it before anyone gets here.
                 truncating = true;
+                degraded = 1;
+                retryNow = true;
                 generationOptions = Options(target, truncate: true);
 
                 log.LogWarning(
-                    "{Target}: input longer than the model's context, so it was embedded "
-                    + "TRUNCATED and the end of it is not represented. Longest of {Count} "
-                    + "input(s): {Chars:N0} chars. Reduce the chunk size for this set.",
-                    target, batch.Length, batch.Max(b => b.Length));
+                    "{Target}: {Source} was embedded TRUNCATED because an input is longer "
+                    + "than the model's context, so the end of it is not represented. "
+                    + "Longest of {Count} input(s): {Chars:N0} chars. Reduce the chunk size "
+                    + "for this set.",
+                    target, source ?? "an unnamed input", batch.Length,
+                    batch.Max(b => b.Length));
             }
             catch (Exception ex)
             {
