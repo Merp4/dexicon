@@ -90,9 +90,20 @@ public sealed class ScopeResolver(CatalogDbContext db)
             .ToList();
 
         if (matched.Count == 0)
+        {
+            // The roots go in the MESSAGE, not only in VisibleNames. A caller that guessed
+            // wrong is told what to guess instead, which is what the corpus-level error has
+            // always done; this one carried the same list and printed none of it, so the
+            // only way forward was another guess.
+            var roots = rooted.Select(s => s.RootPath!).Distinct().Order(StringComparer.Ordinal).ToList();
+
             throw new ScopeResolutionException(
-                $"No source at '{rootPath}' in the corpora searched.",
-                [.. rooted.Select(s => s.RootPath!).Distinct().Order(StringComparer.Ordinal)]);
+                $"No source at '{rootPath}' in the corpora searched. " +
+                (roots.Count == 0
+                    ? "They have no workspace sources at all; only uploaded documents, which have no path."
+                    : $"Sources: {string.Join(", ", roots)}. A parent matches everything beneath it."),
+                roots);
+        }
 
         return matched;
     }
