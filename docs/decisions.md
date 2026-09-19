@@ -815,18 +815,29 @@ corpus. The mapping is read per request rather than cached into the principal, w
 reach nothing is revoked, not mapped to an empty set. `X-Dexicon-Tenant` goes, and no header
 replaces it.
 
-**Why.** The tenant existed so that several agents could share one endpoint and see
-different material, chosen by header. It never could: `ApiToken.TenantId` is a single
-column, so `X-Dexicon-Tenant` can only agree with the token or return 400.
+**Why.** The tenant did two things: it was the isolation boundary [07](07-tenancy-auth.md)
+describes, and it was how several agents were to share one endpoint and see different
+material, chosen by header. The second never worked: `ApiToken.TenantId` is a single column,
+so `X-Dexicon-Tenant` can only agree with the token or return 400. The first is a boundary
+this tool does not have, since anyone reaching the Qdrant port or the data volume reads
+everything regardless, which [07](07-tenancy-auth.md) says in its opening paragraph.
 
-A corpus-selecting header would have worked, and is the wrong shape anyway. A header lives
-in the client's configuration, so changing what an agent reaches means editing that file and
-restarting the client. What an agent should see changes more often than how it connects.
+A corpus-selecting header would have worked, and the choice between it and a server-side
+mapping is about where the control lives. A header sits on the far side of the connection, in
+as many copies as there are agents, on whatever machines those agents run on, and changing it
+costs a reconnect on the clients [12](12-clients.md) lists, though that varies by client. A
+mapping sits in one place, next to the corpora it names, and changes while everything is
+running. What an agent should see changes more often than how it connects, so it belongs
+where it is cheapest to change.
+
+That trade has a real cost on the other side: a header in a client's configuration file is in
+version control, and a catalogue row is not. Editing a mapping is an authenticated request
+like any other and lands on the audit line [07](07-tenancy-auth.md) describes, but a log is
+not a diff and cannot be replayed onto a fresh machine.
 
 A key is already a stable, authenticated, per-agent identifier that the client never has to
-be told about twice. Mapping the key to corpora server-side puts the control somewhere it
-can be changed while everything keeps running: tick a corpus in the UI, and the next
-`list_corpora` reflects it.
+be told about twice, which makes it the thing to hang the mapping on. Tick a corpus in the
+UI, and the next `list_corpora` reflects it.
 
 **Scopes.** No key issued in the UI can carry `admin`. Of the four endpoints that required
 `ingest`, three are document-library actions that the UI performs and move to `admin`, which
@@ -883,12 +894,22 @@ smaller change, but a tenant is also the write owner, so such a token writes in 
 and not another). A global read-only-MCP setting in the UI (one switch cannot express a
 read-only research agent alongside a maintenance agent that may refresh, and it duplicates a
 control the key already carries). A cookie session for the password (reintroduces the CSRF
-surface that a bearer in `sessionStorage` does not have).
+surface that a bearer in `sessionStorage` does not have). No default scope at all, with every
+call naming its corpus and `list_corpora` returning everything (needs no mapping and no
+header, and gives an agent both a longer tool result on every turn and nothing to fall back
+on when it omits the argument). Mapping keys to chunk sets rather than corpora (`corpus:set`
+already names a set per call and an unqualified name already means the default set, so this
+would duplicate that while forcing default-set resolution to consult the mapping too; a key
+pinned to one embedding is better expressed as a flag on the mapping row).
 
 **Assumes.** That what an agent should see changes more often than how that agent connects.
 That is the whole case for a server-side mapping over a header, and it is an observation
 about how the tool gets used rather than a measurement. If a key turns out to be mapped once
 and never edited, a header would have been sufficient and cheaper.
+
+It also assumes a key per agent. Two agents sharing one key share its mapping and cannot be
+given different material, so the UI has to make issuing a key the obvious thing to do when
+adding an agent rather than an administrative chore.
 
 **Cost, accepted.** A password is the first credential here that a human chooses, so it is
 the first that can be guessed. PBKDF2 at 600k iterations and the throttle above are what
@@ -921,7 +942,10 @@ unfiltered-query refusal, and loses its sharing cases.
 
 **Revisit if.** Keys start being kept in sync by hand, which is when a named mapping earns
 its entity. Or someone shares an endpoint across a team and wants a corpus only its owner can
-reindex, which is the protection this gives up.
+reindex, which is the protection this gives up. Or a deployment has to be reproducible from
+configuration, on a fresh machine or from a compose file, at which point a mapping that exists
+only as catalogue rows is the wrong side of the trade above and wants an export or a
+declarative form.
 
 **Supersedes** [D-10](#d-10-static-tokens-and-a-tenant-header) in part: the credential format
 and its storage stand, the tenant binding and `X-Dexicon-Tenant` do not. **Amends**
