@@ -375,46 +375,86 @@ function authHeaders(): HeadersInit {
 }
 
 /**
- * Live indexing progress.
+ * Live indexing progress, for as long as the page is open.
  *
  * `fetch` rather than `EventSource`, which cannot carry an Authorization header, and the
  * token is intentionally not a cookie.
+ *
+ * RECONNECTS. The first version read the stream once: a normal end broke the loop without
+ * telling anyone, and an error reported itself and then stopped. Either way progress went
+ * quiet for the life of the page while the header still said "connected", and the only
+ * cure was a reload. Every server restart did it, which is why it looked intermittent.
+ *
+ * `onOpen` exists because the header offers to say "reconnecting" and nothing could ever
+ * take that back.
  */
 export function subscribeToProgress(
   onProgress: (p: JobSummary & { currentFile?: string }) => void,
   onError?: () => void,
+  onOpen?: () => void,
 ): () => void {
   const controller = new AbortController();
+  const { signal } = controller;
 
   void (async () => {
-    try {
-      const res = await fetch('/api/events', {
-        headers: authHeaders(),
-        signal: controller.signal,
-      });
-      if (!res.ok || !res.body) throw new Error(`events: ${res.status}`);
+    let attempt = 0;
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
+    while (!signal.aborted) {
+      try {
+        const res = await fetch('/api/events', { headers: authHeaders(), signal });
+        if (!res.ok || !res.body) throw new Error(`events: ${res.status}`);
 
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
+        attempt = 0;
+        onOpen?.();
 
-        buffer += decoder.decode(value, { stream: true });
-        const frames = buffer.split('\n\n');
-        buffer = frames.pop() ?? '';
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-        for (const frame of frames) {
-          const line = frame.split('\n').find((l) => l.startsWith('data: '));
-          if (line) onProgress(JSON.parse(line.slice(6)));
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const frames = buffer.split('\n\n');
+          buffer = frames.pop() ?? '';
+
+          for (const frame of frames) {
+            const line = frame.split('\n').find((l) => l.startsWith('data: '));
+            if (line) onProgress(JSON.parse(line.slice(6)));
+          }
         }
+
+        // The stream ended on its own. Not an error, and not a reason to stop: a server
+        // that restarted mid-index has progress to report the moment it is back.
+        if (!signal.aborted) onError?.();
+      } catch (e) {
+        if ((e as Error).name === 'AbortError' || signal.aborted) return;
+        onError?.();
       }
-    } catch (e) {
-      if ((e as Error).name !== 'AbortError') onError?.();
+
+      if (signal.aborted) return;
+
+      // Backoff with jitter, capped. A page left open against a server that is down must
+      // not spend the night retrying every 500ms.
+      const delay = Math.min(30_000, 500 * 2 ** attempt) + Math.random() * 250;
+      attempt += 1;
+      await wait(delay, signal);
     }
   })();
 
   return () => controller.abort();
+}
+
+/** A delay that gives up when the caller does, so unsubscribing is immediate. */
+function wait(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    signal.addEventListener('abort', finish, { once: true });
+  });
 }
