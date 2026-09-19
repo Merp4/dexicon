@@ -179,6 +179,31 @@ app.MapWorkspaceEndpoints();
 app.MapAdminEndpoints();
 app.MapMcp("/mcp");
 
+// The integration document, served by the instance that implements it.
+//
+// Only that one. The framework's own template maps this in Development alone, to avoid
+// exposing the surface in production, and that reasoning holds for the full document:
+// it describes the workspace browser, the model endpoints and sign-in, and its consumer
+// is a build-time code generator that reads the committed file. The integration document
+// has a consumer here that the file cannot serve — an integrator generating a client
+// against the instance they are actually talking to, at whatever version it is running,
+// rather than against a checkout that may be ahead of it.
+//
+// Authenticated like everything else, which is the remedy the OpenAPI documentation
+// gives for the exposure the dev-only default is avoiding: DexiconAuthMiddleware denies
+// by default, and this path is not on its anonymous list. Authentication only, with no
+// scope of its own: a contract is not data, and a key holding any scope at all can
+// already see the endpoints it describes.
+//
+// The document is regenerated per request. At seven paths, for a caller that fetches it
+// once per code generation, that is cheaper than a cache to invalidate.
+app.MapOpenApi($"/openapi/{{documentName:regex(^{OpenApiDocuments.Integration}$)}}.json");
+
+// Anything else under /openapi/ is a name that is not published. Without this the SPA
+// fallback answers /openapi/v1.json with the index page and a 200, which reads to an
+// integrator as a document they failed to parse rather than one that is not served.
+app.Map("/openapi/{**rest}", () => Results.NotFound()).ExcludeFromDescription();
+
 // SPA fallback. The built UI is not in source control (see .gitignore): the container
 // image builds it, and `dev.ps1 ui` builds it locally. When it is absent, as after a
 // bare `dotnet run` on a fresh clone, say so in words rather than 404ing, and say how to

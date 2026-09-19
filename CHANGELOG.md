@@ -39,6 +39,11 @@ with no section here fails its release rather than publishing an undescribed one
   endpoint, so publishing it whole as an integration contract would have committed the
   project to the shape of the UI. See [docs/13](docs/13-integration.md) and D-29.
 
+  A running instance serves that document at `/openapi/integration.json`, behind the same
+  bearer as the endpoints it describes, so a client can be generated against the version
+  actually answering rather than against a checkout that may be ahead of it. No other
+  document name is served.
+
   There is no outbound webhook, deliberately.
 
 ### Changed

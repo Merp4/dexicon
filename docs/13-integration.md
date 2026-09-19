@@ -24,6 +24,22 @@ workspace browser, the model probe, the sign-in endpoint and the progress stream
 exist to serve the web UI and change with it. Both carry the same `major.minor` version,
 and CI fails when either has drifted from the code ([D-29](decisions.md#d-29-an-integration-document-and-retrieval-in-one-call)).
 
+A running instance also serves its own integration document, behind the same bearer as
+everything else:
+
+```bash
+curl -s http://127.0.0.1:8477/openapi/integration.json   -H "Authorization: Bearer $DEXICON_TOKEN" -o dexicon.json
+```
+
+Generate against this rather than the committed file when the instance may not be the
+revision you have checked out. No other document name is served: `/openapi/v1.json` is a
+404, because the full surface is the UI's contract rather than yours.
+
+The `info.version` there is the version of the **running build**. A release image carries
+its tag, so a 0.4.x instance reports `0.4`. An `edge` or a hand-built image reports `0.0`,
+which is the Dockerfile saying the build is not a release rather than a version to compare
+against.
+
 | Endpoint | Scope | For |
 |---|---|---|
 | `POST /api/context` | `search` | One assembled passage for a query |

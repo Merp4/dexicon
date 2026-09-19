@@ -1020,11 +1020,23 @@ full document, which the web client is generated from, would have lost search, c
 jobs the moment they were selected into the integration one. The full document now takes
 every endpoint explicitly, and a test asserts that it still does.
 
-**Open.** Whether a running instance serves the integration document. `Dexicon.csproj`
-generates at build time and serves nothing, so that the API surface is not exposed
-anonymously in order to describe itself. Serving this one document behind the existing
-bearer check would let a consumer generate a client against a live instance without
-reopening that.
+**Resolved: the running instance serves the integration document, and only that one.**
+The framework's template maps `MapOpenApi` in Development alone, "to minimize the risk of
+exposing sensitive information and reduce the vulnerabilities in production", and the
+OpenAPI documentation's own remedy where the document is wanted anyway is to apply an
+authorization check. The objection recorded here was to exposing the surface
+*anonymously*, and `DexiconAuthMiddleware` denies by default, so `/openapi/integration.json`
+is behind a bearer without an entry being added anywhere. Authentication and no scope: a
+contract is not data, and any key at all can already reach the endpoints it describes.
+
+The full document stays build-time only. Its consumer is a code generator reading the
+committed file, and it describes the workspace browser, the model endpoints and sign-in.
+`/openapi/v1.json` is a 404, explicitly rather than by omission, because the SPA fallback
+would otherwise answer it with the index page and a 200.
+
+What the served copy adds over the committed one is the version of the instance actually
+answering. An operator can be running an image older than the checkout a consumer
+generated from, and nothing in the file says so.
 
 **Revisit if.** A pipeline needs to create corpora rather than search and refresh them.
 [D-28](#d-28-an-admin-password-and-scoped-api-keys) keeps `admin` off issuable keys, so that
