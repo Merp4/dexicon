@@ -304,10 +304,56 @@ public sealed class ContextAssemblyTests
         var result = ContextAssembler.Assemble(
             [Alone(Hit(start: 1, end: 400))], maxChars: 900, lineNumbers: false);
 
-        // The disclosure line is added after the cut, so allow for it rather than
-        // pretending the figure is exact.
-        result.UsedChars.ShouldBeLessThan(1_100);
+        // Honoured, not approximately honoured. This asserted "under 1,100" for a 900
+        // budget before the live check found an 8,000 request answered with 8,052: the
+        // header and the disclosure line were both being written outside the budget.
+        result.UsedChars.ShouldBeLessThanOrEqualTo(900);
         result.UsedChars.ShouldBeGreaterThan(300);
+    }
+
+    [Theory]
+    [InlineData(700)]
+    [InlineData(900)]
+    [InlineData(1_500)]
+    [InlineData(4_000)]
+    public void ACutBlockStaysInsideTheBudget(int budget)
+    {
+        // A long filename makes a header well over the 80-character estimate used while
+        // selecting, and the disclosure line is charged too.
+        var name = "Adaptive Code via C# - Agile coding with design patterns and SOLID principles.pdf";
+        var result = ContextAssembler.Assemble(
+            [Alone(Hit(path: name, start: 1, end: 600))], maxChars: budget, lineNumbers: false);
+
+        result.UsedChars.ShouldBeLessThanOrEqualTo(budget);
+    }
+
+    [Fact]
+    public void WithoutLineNumbersALongParagraphCutsOnAWord()
+    {
+        // A chunk of a book is often one paragraph. Cutting at the last newline kept 243
+        // characters of a 1,500 budget on the live index; nothing depends on a whole line
+        // when the numbers are not being printed.
+        var paragraph = "first\n" + string.Join(' ', Enumerable.Repeat("word", 2_000));
+
+        var result = ContextAssembler.Assemble(
+            [Alone(Hit(content: paragraph))], maxChars: 1_500, lineNumbers: false);
+
+        result.PartialBlocks.ShouldBe(1);
+        result.UsedChars.ShouldBeGreaterThan(900);
+        result.UsedChars.ShouldBeLessThanOrEqualTo(1_500);
+    }
+
+    [Fact]
+    public void WithLineNumbersTheLineStaysWhole()
+    {
+        // Here half a line would carry the wrong number, so a short passage is the price.
+        var paragraph = "first\n" + string.Join(' ', Enumerable.Repeat("word", 2_000));
+
+        var result = ContextAssembler.Assemble(
+            [Alone(Hit(content: paragraph))], maxChars: 1_500, lineNumbers: true);
+
+        foreach (var line in result.Text.Split('\n').Where(l => l.Contains("word")))
+            line.ShouldNotEndWith("wor");
     }
 
     [Fact]
