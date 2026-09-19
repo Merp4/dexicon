@@ -178,7 +178,7 @@ Covered operationally in [09](09-deployment.md); the security-relevant points:
 - `/workspaces` mounted **read-only**, so Dexicon cannot write to source trees.
 - No Docker socket. Ever. There is no feature that needs it.
 - Qdrant and Ollama are not published to the host in the default compose file. Qdrant with
-  no API key on an exposed port bypasses the entire tenancy model.
+  no API key on an exposed port bypasses per-corpus scoping entirely.
 - No outbound network calls at runtime other than Qdrant and Ollama. No telemetry, no
   update check, no model download at request time.
 

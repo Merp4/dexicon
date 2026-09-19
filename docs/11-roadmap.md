@@ -99,7 +99,7 @@ finding the matched text there.
 | Area | State |
 |---|---|
 | **MCP** | ✅ All five tools live. `tools/list` and `tools/call` verified working with no handshake; Claude Code 2.1.248 connected and searched. |
-| **Tenancy** | ✅ Tokens, scopes, scope resolution, corpus visibility, all three enforcement layers — and the isolation test, shipped in the same commit as the enforcement. |
+| **Tenancy** | ✅ Tokens, scopes, scope resolution, corpus visibility, all three enforcement layers — and the isolation test, shipped in the same commit as the enforcement. Tenancy and corpus visibility were removed in [D-28](decisions.md#d-28-an-admin-password-and-scoped-api-keys); the enforcement layers survived and now hold down key scoping. |
 | **Hybrid search** | ✅ Server-side RRF, sparse encoding with identifier splitting, filters, audible degradation. |
 | **Ingestion** | ✅ Language-aware chunking, PDF/DOCX/PPTX/EPUB/HTML extraction with page provenance, incremental refresh, per-file status, backoff. ✅ **Uploads**, with a content-addressed blob store and cached extraction — so one document can be attached to several corpora and chunked differently in each. |
 | **Documents** | ✅ Library view, drag-and-drop upload, attach-to-another-corpus, extracted-text inspection, per-corpus chunking editor. |
