@@ -16,6 +16,26 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## 0.5.1 — 2026-09-19
+
+### Fixed
+
+- **The hooks' default timeout was below the cost of the query they exist to run.** The
+  installed configuration set `DEXICON_TIMEOUT=5`, and a query the embedder has not seen
+  was measured at about 5.4 seconds on a 15,213-chunk index, so the `UserPromptSubmit`
+  hook timed out on exactly the case it is for. The default is now 10 seconds.
+
+  A server that is down is still caught by the two-second connect timeout, so the longer
+  value is only paid when one is answering slowly. The figure was already in
+  `hooks/claude/README.md` as the reason the per-prompt hook ships switched off; it had
+  not been carried into the timeout beside it.
+
+  An existing installation keeps the file it has. Change `DEXICON_TIMEOUT` in
+  `~/.claude/dexicon-hooks.env`, or delete the file and re-run
+  `install-mcp.ps1 -What hooks` to regenerate it.
+
+---
+
 ## 0.5.0 — 2026-09-19
 
 ### Added
