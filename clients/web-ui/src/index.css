@@ -38,6 +38,10 @@
   --warn-text: oklch(47% 0.11 75);
   --danger-text: oklch(48% 0.17 25);
   --accent-text: oklch(48% 0.15 255);
+  /* Search-match highlight. Amber rather than the accent, which already means
+     "default" and "in use": a hit's matched words are a third thing. */
+  --mark-bg: oklch(89% 0.14 95);
+  --mark-text: oklch(28% 0.07 95);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -58,6 +62,8 @@
     --warn-text: oklch(84% 0.13 75);
     --danger-text: oklch(76% 0.15 25);
     --accent-text: oklch(80% 0.12 255);
+    --mark-bg: oklch(47% 0.12 95);
+    --mark-text: oklch(96% 0.03 95);
   }
 }
 
@@ -78,6 +84,8 @@
   --warn-text: oklch(84% 0.13 75);
   --danger-text: oklch(76% 0.15 25);
   --accent-text: oklch(80% 0.12 255);
+  --mark-bg: oklch(47% 0.12 95);
+  --mark-text: oklch(96% 0.03 95);
 }
 
 /* ── shadcn's vocabulary, spoken in Dexicon's palette ──────────────────────────

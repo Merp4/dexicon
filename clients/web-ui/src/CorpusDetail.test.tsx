@@ -339,6 +339,62 @@ describe('removing a source', () => {
  * The notice is only worth having if it stays quiet, so most of these are about when it
  * does not appear.
  */
+describe('finding one file among many', () => {
+  const file = (relativePath: string, id: string) => ({
+    id,
+    relativePath,
+    status: 'indexed',
+    chunkCount: 40,
+    sizeBytes: 1024,
+    statusDetail: null,
+  });
+
+  const shelf = [
+    file('Designing Data-Intensive Applications, 2nd Edition.epub', 'f1'),
+    file('Designing Data-Intensive Applications, 2nd Edition.pdf', 'f2'),
+    file('Fundamentals of Software Architecture.pdf', 'f3'),
+    file('src/Dexicon.Core/Auth/ScopeResolver.cs', 'f4'),
+  ];
+
+  beforeEach(() => listFiles.mockResolvedValue({ files: shelf }));
+
+  it('narrows a shelf of books to the one being looked for', async () => {
+    // Ninety-six titles, alphabetical, each present twice. The status tabs do not help
+    // when every one of them is indexed and you want a particular book.
+    const user = userEvent.setup();
+    render(<CorpusDetail {...props} />);
+
+    await user.type(await screen.findByLabelText('Filter files by name'), 'data-intensive');
+
+    expect(screen.getAllByRole('button', { name: /Designing Data-Intensive/ })).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: /Fundamentals/ })).not.toBeInTheDocument();
+  });
+
+  it('says how many it is hiding rather than looking like an empty corpus', async () => {
+    const user = userEvent.setup();
+    render(<CorpusDetail {...props} />);
+
+    await user.type(await screen.findByLabelText('Filter files by name'), 'zzzz');
+
+    expect(screen.getByText('No file matches that')).toBeInTheDocument();
+    expect(screen.getByText(/4 files in this view/)).toBeInTheDocument();
+  });
+
+  it('sets a document title in the body face and a path in monospace', async () => {
+    // "…in the Field or in the Making, 3rd Edition.epub" wrapped as "3rd Editio / n.epub":
+    // break-all is right for a path and wrong for a sentence.
+    render(<CorpusDetail {...props} />);
+
+    const book = await screen.findByRole('button', { name: /Fundamentals of Software/ });
+    expect(book.className).toMatch(/break-words/);
+    expect(book.className).not.toMatch(/\bmono\b/);
+
+    const path = screen.getByRole('button', { name: /ScopeResolver\.cs/ });
+    expect(path.className).toMatch(/\bmono\b/);
+    expect(path.className).toMatch(/break-all/);
+  });
+});
+
 describe('files no source covers', () => {
   const gap = (over: Partial<{ directory: string; files: string[] }> = {}) => ({
     directory: 'books/orly',
