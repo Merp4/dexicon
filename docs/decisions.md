@@ -1038,6 +1038,28 @@ What the served copy adds over the committed one is the version of the instance 
 answering. An operator can be running an image older than the checkout a consumer
 generated from, and nothing in the file says so.
 
+**Amended 2026-09-19: the last block may be cut.** Whole chunks only meant a budget below
+the smallest matching chunk returned nothing at all. Measured on this project's book corpus,
+one query's smallest chunk was 2,109 characters, so budgets of 1,500 and 2,000 both came back
+empty with ten hits behind them, which reads as "nothing matched". It also left the tail of
+every budget unspent, when the opening of the next result is the cheapest way to see that a
+variant exists.
+
+The last block may now be cut. At most one, always last, never in the middle, and only when
+at least 300 characters of it would show, below which a citation and two lines of prose cost
+more to read than they return. The cut falls on a line boundary, because a chunk may be
+rendered with its line numbers and half a line has the wrong one. The passage says
+`… N characters of this chunk not shown …` in the same register as `Stitch`'s gap
+disclosure, and the citation reports the lines actually present rather than the chunk's full
+span, so a citation is never a claim about text the caller was not given.
+
+`partialBlocks` on the response and `partial` with `omittedChars` on each citation carry it
+as data. They are separate from `truncated`, which goes on meaning that hits were dropped: a
+budget that lost results and one that shortened them are different things to know, and one
+flag covering both could be acted on for neither. A chunk with no line break inside the
+budget cannot be cut, so it is dropped as before and the note names the figure that would
+have fitted.
+
 **Revisit if.** A pipeline needs to create corpora rather than search and refresh them.
 [D-28](#d-28-an-admin-password-and-scoped-api-keys) keeps `admin` off issuable keys, so that
 case means the admin password in CI. The narrower answer would be a `manage` scope covering

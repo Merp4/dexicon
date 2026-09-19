@@ -236,4 +236,162 @@ public sealed class ContextAssemblyTests
         result.Text.ShouldContain("line 3");
         result.Text.ShouldContain("line 28");
     }
+
+    // ── The last block may be cut ────────────────────────────────────────────
+    //
+    // Whole chunks alone meant a budget under the smallest match returned nothing, which
+    // reads as "no results" when ten matched, and left the tail of the budget unspent.
+
+    [Fact]
+    public void ABudgetUnderTheChunkNowReturnsItsOpening()
+    {
+        // 200 lines is roughly 1,800 characters; the budget fits a few hundred of them.
+        var result = ContextAssembler.Assemble(
+            [Alone(Hit(start: 1, end: 200))], maxChars: 500, lineNumbers: false);
+
+        result.Text.ShouldNotBeEmpty();
+        result.Citations.Count.ShouldBe(1);
+        result.PartialBlocks.ShouldBe(1);
+        result.Citations[0].Partial.ShouldBeTrue();
+        result.Citations[0].OmittedChars.ShouldBeGreaterThan(0);
+    }
+
+    [Fact]
+    public void ACutBlockSaysSoInThePassageItself()
+    {
+        // The flags do not travel: the text is what gets pasted into a prompt.
+        var result = ContextAssembler.Assemble(
+            [Alone(Hit(start: 1, end: 200))], maxChars: 500, lineNumbers: false);
+
+        result.Text.ShouldContain("characters of this chunk not shown");
+        result.Note.ShouldNotBeNull();
+        result.Note.ShouldContain("cut to fit");
+    }
+
+    [Fact]
+    public void ACutBlockCitesTheLinesItActuallyHas()
+    {
+        // The whole point of narrowing: a citation must never claim text the caller was
+        // not given, or quoting it back produces a range nobody can check.
+        var result = ContextAssembler.Assemble(
+            [Alone(Hit(start: 1, end: 200))], maxChars: 500, lineNumbers: false);
+
+        var citation = result.Citations[0];
+        citation.EndLine.ShouldBeLessThan(200);
+        citation.StartLine.ShouldBe(1);
+        result.Text.ShouldContain($"line {citation.EndLine}");
+        result.Text.ShouldNotContain($"line {citation.EndLine + 1}");
+    }
+
+    [Fact]
+    public void ACutFallsOnALineBoundary()
+    {
+        // A chunk is read as text and may be rendered with its line numbers, so half a
+        // line is a fragment whose number is wrong.
+        var result = ContextAssembler.Assemble(
+            [Alone(Hit(start: 1, end: 200))], maxChars: 600, lineNumbers: false);
+
+        var body = result.Text.Split('\n')
+            .Where(l => l.StartsWith("line ", StringComparison.Ordinal));
+
+        foreach (var line in body)
+            line.ShouldMatch(@"^line \d+$");
+    }
+
+    [Fact]
+    public void TheBudgetIsStillHonoured()
+    {
+        var result = ContextAssembler.Assemble(
+            [Alone(Hit(start: 1, end: 400))], maxChars: 900, lineNumbers: false);
+
+        // The disclosure line is added after the cut, so allow for it rather than
+        // pretending the figure is exact.
+        result.UsedChars.ShouldBeLessThan(1_100);
+        result.UsedChars.ShouldBeGreaterThan(300);
+    }
+
+    [Fact]
+    public void OnlyOneBlockIsCut_AndItComesLast()
+    {
+        // A passage ending in several fragments is a list of beginnings, not something to
+        // read, so the run stops at the first cut.
+        var result = ContextAssembler.Assemble(
+            [
+                Alone(Hit(path: "a.md", start: 1, end: 20, score: 0.9f)),
+                Alone(Hit(path: "b.md", start: 1, end: 200, score: 0.8f)),
+                Alone(Hit(path: "c.md", start: 1, end: 200, score: 0.7f)),
+            ],
+            maxChars: 900, lineNumbers: false);
+
+        result.PartialBlocks.ShouldBe(1);
+        result.Citations.Count(c => c.Partial).ShouldBe(1);
+        result.Citations[^1].Partial.ShouldBeTrue();
+        result.Citations[0].Partial.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AWholeChunkThatFitsIsNeverCut()
+    {
+        var result = ContextAssembler.Assemble(
+            [Alone(Hit(start: 1, end: 10))], maxChars: 8_000, lineNumbers: false);
+
+        result.PartialBlocks.ShouldBe(0);
+        result.Citations[0].Partial.ShouldBeFalse();
+        result.Citations[0].OmittedChars.ShouldBe(0);
+        result.Text.ShouldNotContain("not shown");
+    }
+
+    [Fact]
+    public void TooLittleRoomDropsRatherThanTeases()
+    {
+        // Under the floor the caller gets a citation, a filename and two lines of prose,
+        // which costs more to read than it returns.
+        var result = ContextAssembler.Assemble(
+            [Alone(Hit(start: 1, end: 200))], maxChars: 200, lineNumbers: false);
+
+        result.Text.ShouldBeEmpty();
+        result.PartialBlocks.ShouldBe(0);
+        result.DroppedHits.ShouldBe(1);
+        result.Note.ShouldNotBeNull();
+        result.Note.ShouldContain("Raise maxChars");
+    }
+
+    [Fact]
+    public void CuttingIsSeparateFromDropping()
+    {
+        // `truncated` says hits were dropped; `partialBlocks` says one was shortened. A
+        // caller acts on them differently, so one flag covering both would serve neither.
+        var result = ContextAssembler.Assemble(
+            [Alone(Hit(start: 1, end: 400))], maxChars: 900, lineNumbers: false);
+
+        result.PartialBlocks.ShouldBe(1);
+        result.DroppedHits.ShouldBe(0);
+        result.Truncated.ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void ANonPositiveBudgetYieldsNothing(int budget)
+    {
+        var result = ContextAssembler.Assemble(
+            [Alone(Hit(start: 1, end: 200))], maxChars: budget, lineNumbers: false);
+
+        result.Text.ShouldBeEmpty();
+        result.PartialBlocks.ShouldBe(0);
+    }
+
+    [Fact]
+    public void AChunkWithNoLineBreakCannotBeCut()
+    {
+        // Nothing to cut on, so it is dropped and the note names the cost, rather than the
+        // run losing both the block and the figure it would have reported.
+        var result = ContextAssembler.Assemble(
+            [Alone(Hit(content: new string('x', 9_000)))], maxChars: 2_000, lineNumbers: false);
+
+        result.Text.ShouldBeEmpty();
+        result.PartialBlocks.ShouldBe(0);
+        result.Note.ShouldNotBeNull();
+        result.Note.ShouldContain("9,080");
+    }
 }

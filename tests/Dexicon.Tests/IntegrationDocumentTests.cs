@@ -79,6 +79,31 @@ public sealed class IntegrationDocumentTests
     }
 
     [Fact]
+    public void TheContextResponseDeclaresWhatItLeftOut()
+    {
+        // A passage can now be cut to fit, so a caller has to be able to tell a whole block
+        // from a shortened one without reading the prose. These fields are the contract
+        // that makes the disclosure machine-readable, and losing one would be silent.
+        var schema = Document("Dexicon_integration.json")
+            .GetProperty("components").GetProperty("schemas");
+
+        var result = schema.GetProperty("ContextResult").GetProperty("properties")
+            .EnumerateObject().Select(p => p.Name).ToList();
+
+        result.ShouldContain("partialBlocks");
+        result.ShouldContain("truncated");
+        result.ShouldContain("droppedHits");
+
+        var citation = schema.GetProperty("Citation").GetProperty("properties")
+            .EnumerateObject().Select(p => p.Name).ToList();
+
+        citation.ShouldContain("partial");
+        citation.ShouldContain("omittedChars");
+        citation.ShouldContain("startLine");
+        citation.ShouldContain("endLine");
+    }
+
+    [Fact]
     public void TheFullDocumentStillDescribesTheIntegrationEndpoints()
     {
         // The regression this exists for: a group name removes an endpoint from every

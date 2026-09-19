@@ -52,21 +52,22 @@ agent's own `search_index` calls still reach everything.
 Anything already in the environment wins over the file, so a single run can be pointed
 elsewhere without editing it.
 
-## The budget, and why a small one returns nothing
+## The budget, and what a small one gives you
 
-Nothing is truncated to fit. The unit is a whole chunk, because half a passage under a
-citation claiming to be the passage reads as complete and is not. A budget below the
-smallest matching chunk therefore returns an empty passage, and the server says so:
+The unit is a whole chunk, except for the last block, which the server cuts to fit. It
+falls on a line boundary, the passage says `… N characters of this chunk not shown …`, and
+the citation reports the lines actually present rather than the chunk's full span. The
+response carries `partialBlocks`, and each citation carries `partial` and `omittedChars`,
+separately from `truncated`, which goes on meaning hits were dropped.
 
-```
-No result fitted a budget of 1,500 characters; the smallest is 2,109.
-Raise maxChars, or narrow the query.
-```
+So the tail of the budget shows the opening of the next result rather than going unspent.
+The hook defaults to 2,000 rather than the server's 8,000: 8,000 returned 6,963 characters
+for one query here, which is too much to put in front of every prompt.
 
-The hook prints that on stderr, where it is visible to whoever set the budget and does not
-become model context. Measured on this project's own index, `maxChars` of 1,500 and 2,000
-both returned nothing and 4,000 returned a passage, which is why the hook defaults to
-4,000 rather than inheriting the server's 8,000.
+A budget under about 380 characters still returns nothing, since below that a citation and
+two lines of prose cost more than they return. The server then says which budget would have
+fitted, and the hook prints that on stderr where it reaches whoever set it and does not
+become model context.
 
 ## Why the per-prompt hook is off by default
 

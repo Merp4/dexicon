@@ -65,6 +65,13 @@ public sealed record ContextResult
 
     public int DroppedHits { get; init; }
 
+    /// <summary>
+    /// Blocks whose chunk was cut to fit, at most one and always the last. Distinct from
+    /// <see cref="Truncated"/>: results dropped and results shortened are different facts,
+    /// and a caller can act on each.
+    /// </summary>
+    public int PartialBlocks { get; init; }
+
     /// <summary>Why the passage is shorter or emptier than the query suggests it should be.</summary>
     public string? Note { get; init; }
 
@@ -126,6 +133,7 @@ public sealed class ContextService(SearchService search, ScopeResolver scopes, I
             MaxChars = request.MaxChars,
             Truncated = assembled.Truncated,
             DroppedHits = assembled.DroppedHits,
+            PartialBlocks = assembled.PartialBlocks,
             Note = notes.Any() ? string.Join(" ", notes) : null,
             TookMs = sw.ElapsedMilliseconds,
         };
