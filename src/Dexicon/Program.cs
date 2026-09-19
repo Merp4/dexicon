@@ -300,8 +300,12 @@ internal sealed class MemoryCacheEvictor(IMemoryCache cache) : IMemoryCacheEvict
     public void EvictPrincipals()
     {
         // MemoryCache has no prefix-scan, and the principal TTL is 60s, so the blunt
-        // instrument is the correct one: revocation is rare and correctness beats a
-        // few re-verifications.
+        // instrument is the correct one: revocation is rare and correctness beats a few
+        // re-verifications.
+        //
+        // It is only correct while this cache holds nothing but principals. Admin sessions
+        // and the sign-in throttle each keep their own store for exactly that reason;
+        // putting them here signed the operator out whenever they revoked a key.
         if (cache is MemoryCache mc) mc.Clear();
     }
 }

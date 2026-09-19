@@ -192,7 +192,7 @@ public static class Bootstrapper
             "  │  Dexicon admin password: shown once, copy it now                      │\n" +
             "  └───────────────────────────────────────────────────────────────────────┘\n" +
             "  {Password}\n\n" +
-            "  Sign in at the web UI with this. Set DEXICON__ADMIN__PASSWORD to pin your\n" +
+            "  Sign in at the web UI with this. Set DEXICON_ADMIN_PASSWORD in your .env to\n" +
             "  own, or change it in the UI once you are in.\n",
             generated);
     }
