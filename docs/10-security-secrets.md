@@ -84,24 +84,33 @@ Each guard is verified by **breaking the value and watching it go red**, then re
 A guard that has never failed has not been shown to work. The failure mode is a check
 that matches the wrong thing and is mistaken for coverage.
 
-## Signing in without handling the token (development only)
+## Signing in without handling the password (development only)
 
 Testing the UI end to end means being signed in, and the two obvious ways there are both
-bad. A person pastes the token into the form every session; or whatever is driving the
+bad. A person types the password into the form every session; or whatever is driving the
 browser reads it out of `.env` and types it, which puts a live credential into a
 transcript, a shell history and a log.
 
-`scripts/dev-token.py` is the third way. The token goes from `.env` to the page directly
-and nothing in between renders it; the operator sees a nonce and a byte count.
+`scripts/dev-token.py` is the third way. It reads `DEXICON_ADMIN_PASSWORD` from `.env`,
+exchanges it for a session at `/api/session` **inside the script**, and hands only that
+session to the page. The password never leaves the process, and what does reach the browser
+expires on its own and can be revoked. Nothing in between renders either value; the
+operator sees a nonce and a byte count.
 
 ```bash
 python scripts/dev-token.py
 ```
 
-It verifies the token against the running server first (a stale `.env` otherwise produces
-a page that loads and 401s on every request, which reads as a bug in the app), then prints
-a one-line snippet to run in the console of a Dexicon tab. The page stores it exactly where
-the sign-in form would: `sessionStorage['dexicon.token']`.
+It proves the session carries `admin` before handing it over, by calling an admin-only
+endpoint. That check is the point: an API key authenticates but can never hold `admin`
+([D-28](decisions.md#d-28-an-admin-password-and-scoped-api-keys)), so a browser holding one
+loads the shell and then 403s on every screen worth testing, which reads as a bug in the
+app rather than a wrong credential. It then prints a one-line snippet to run in the console
+of a Dexicon tab, and the page stores the session exactly where the sign-in form would:
+`sessionStorage['dexicon.token']`.
+
+A wrong password is answered slowly, because the endpoint throttles by a doubling delay:
+up to 30 seconds is the guard working, not the script hanging.
 
 What constrains it:
 
