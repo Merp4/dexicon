@@ -6,11 +6,12 @@
 git clone https://github.com/Merp4/dexicon && cd dexicon
 cp .env.example .env          # edit WORKSPACE_ROOT to point at your code
 docker compose up -d
-docker compose logs dexicon | grep "bootstrap token"
+docker compose logs dexicon | grep "admin password"
 ```
 
-Open http://localhost:8477, paste the bootstrap token, add a corpus pointing at a folder
-under `/workspaces`, wait for the first index, then wire up your agent:
+Open http://localhost:8477, sign in with that password, add a corpus pointing at a folder
+under `/workspaces`, and wait for the first index. Then issue a key under **Access**,
+ticking the corpora it may reach. The dialog hands you the command:
 
 ```bash
 claude mcp add --transport http dexicon http://localhost:8477/mcp \
