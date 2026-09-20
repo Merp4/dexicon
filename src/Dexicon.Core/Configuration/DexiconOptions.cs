@@ -158,8 +158,9 @@ public sealed class IndexingOptions
     public int ExtractionTimeoutSeconds { get; init; } = 300;
 
     /// <summary>
-    /// Chunk size in tokens for a NEW corpus. An existing chunk set stores its own, so
-    /// changing this migrates nothing and costs no reindex.
+    /// Chunk size in tokens for a new corpus, and for a new chunk set with nothing to
+    /// inherit from. An existing set stores its own and reads it back, so changing this
+    /// migrates nothing and costs no reindex.
     ///
     /// 256, measured. Scored on whether the text handed back contains the answer, rather
     /// than on which file ranked first, 256-token chunks answered 0.527 of 55 questions
@@ -178,8 +179,9 @@ public sealed class IndexingOptions
     public int ChunkSize { get; init; } = 256;
 
     /// <summary>
-    /// Overlap in tokens for a NEW corpus. Held at the same eighth of the chunk size the
-    /// previous default was, so this change moves one variable rather than two.
+    /// Overlap in tokens, on the same terms as the size above: a new corpus, or a new
+    /// chunk set with nothing to inherit from. Held at the same eighth of the chunk size
+    /// the previous default was, so this change moves one variable rather than two.
     ///
     /// The same measurement swept overlap and found nothing to gain: at 256 tokens it
     /// scored 0.527 with no overlap against 0.473 with 100, and identically at a wider

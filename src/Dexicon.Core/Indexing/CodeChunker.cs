@@ -28,8 +28,7 @@ public sealed record TextChunk
 }
 
 /// <summary>
-/// How one chunk set cuts text. Grouped into a record rather than passed as five
-/// positional arguments, because the set of knobs grows and a call site reading
+/// How one chunk set cuts text. Grouped into a record rather than passed positionally, because the set of knobs grows and a call site reading
 /// <c>(256, 32, "blank-line", null, false, true, true)</c> tells a reader nothing.
 /// </summary>
 public sealed record ChunkOptions

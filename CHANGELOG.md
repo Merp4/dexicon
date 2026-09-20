@@ -58,7 +58,10 @@ with no section here fails its release rather than publishing an undescribed one
   applies to newly created corpora only; add a set on the new size, or rebuild, to apply it
   to content already indexed. Overlap moves with it to 32, the same eighth of the chunk the
   old default was, so the size changed and the ratio did not. Both are now settable:
-  `DEXICON_INDEXING_CHUNKSIZE` and `DEXICON_INDEXING_CHUNKOVERLAP`.
+  `DEXICON_INDEXING_CHUNKSIZE` and `DEXICON_INDEXING_CHUNKOVERLAP` in `.env`, which
+  compose maps onto the `DEXICON__INDEXING__CHUNKSIZE` and
+  `DEXICON__INDEXING__CHUNKOVERLAP` the app binds. A deployment not using compose sets
+  the double-underscore form directly.
 
   See [D-31](docs/decisions.md#d-31-a-chunk-is-an-index-entry-and-the-model-decides-how-big-it-can-be)
   and its amendment.
