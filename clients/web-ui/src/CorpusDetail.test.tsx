@@ -413,7 +413,15 @@ describe('finding one file among many', () => {
     file('src/Dexicon.Core/Auth/ScopeResolver.cs', 'f4'),
   ];
 
-  beforeEach(() => listFiles.mockResolvedValue({ files: shelf }));
+  // Answers the query rather than returning the shelf whatever is asked, because the
+  // filtering is the server's now. A mock that ignores `name` would let a component
+  // that never sends it pass.
+  beforeEach(() => listFiles.mockImplementation((_: string, opts: { name?: string } = {}) => {
+    const matched = opts.name
+      ? shelf.filter((f) => f.relativePath.toLowerCase().includes(opts.name!.toLowerCase()))
+      : shelf;
+    return Promise.resolve({ total: matched.length, chunkSet: 'default', files: matched });
+  }));
 
   it('narrows a shelf of books to the one being looked for', async () => {
     // Ninety-six titles, alphabetical, each present twice. The status tabs do not help
@@ -423,18 +431,23 @@ describe('finding one file among many', () => {
 
     await user.type(await screen.findByLabelText('Filter files by name'), 'data-intensive');
 
-    expect(screen.getAllByRole('button', { name: /Designing Data-Intensive/ })).toHaveLength(2);
-    expect(screen.queryByRole('button', { name: /Fundamentals/ })).not.toBeInTheDocument();
+    // Both inside the wait. The titles that survive the filter are on screen before the
+    // refetch as well, so asserting them first and the absence afterwards passes while
+    // the debounced query is still in flight.
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: /Designing Data-Intensive/ })).toHaveLength(2);
+      expect(screen.queryByRole('button', { name: /Fundamentals/ })).not.toBeInTheDocument();
+    });
   });
 
-  it('says how many it is hiding rather than looking like an empty corpus', async () => {
+  it('says the whole corpus was searched rather than looking like an empty one', async () => {
     const user = userEvent.setup();
     render(<CorpusDetail {...props} />);
 
     await user.type(await screen.findByLabelText('Filter files by name'), 'zzzz');
 
-    expect(screen.getByText('No file matches that')).toBeInTheDocument();
-    expect(screen.getByText(/4 files in this view/)).toBeInTheDocument();
+    expect(await screen.findByText('No file matches that')).toBeInTheDocument();
+    expect(screen.getByText(/Searched all 12 files in this corpus/)).toBeInTheDocument();
   });
 
   it('sets a document title in the body face and a path in monospace', async () => {
@@ -744,16 +757,18 @@ describe('the corpus default filters', () => {
 
 
 /**
- * A corpus of 190 files showed 100 of them and said nothing.
+ * A corpus of 190 files showed 100 of them and said nothing, and a 27,000-file one
+ * showed 300.
  *
- * Three limits, none agreeing. The endpoint pages at 100 when the caller asks for no
- * limit, and the caller asked for none. The list renders at most 300 of what it holds.
- * The notice fired above 300 of the FETCHED rows, which could never happen, because only
- * 100 ever arrived - a guard that cannot fire is the same as no guard, and this one never
- * had.
+ * Three limits disagreed and the one guard against it could never fire: the API paged at
+ * 100 when asked for no limit, the list rendered at most 300 of what it held, and the
+ * notice wanted more than 300 FETCHED rows. The visible symptom was a file that had just
+ * been added being absent from the list while indexed, searchable and returned by the
+ * API.
  *
- * The visible symptom was a file the user had just added being absent from the list while
- * being indexed, searchable, and returned by the API.
+ * A better notice was the first fix and the wrong one. Filtering and ordering a page can
+ * only ever see that page, so a name that IS in the corpus still came back as no match.
+ * The server decides both, and the page can be left.
  */
 describe('the file list', () => {
   const file = (relativePath: string) => ({
@@ -769,92 +784,107 @@ describe('the file list', () => {
     indexedUtc: new Date().toISOString(),
   });
 
-  it('asks for more than the endpoint would page to by default', async () => {
-    render(<CorpusDetail {...props} />);
+  const page = (count: number, total: number, from = 0) => ({
+    total,
+    chunkSet: 'default',
+    files: Array.from({ length: count }, (_, i) => file(`book-${from + i}.pdf`)),
+  });
 
+  /** The options object the component passed on its most recent fetch. */
+  const lastQuery = () => listFiles.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+
+  it('asks for one page rather than everything', async () => {
+    listFiles.mockResolvedValue(page(100, 27033));
+
+    render(<CorpusDetail {...props} />);
     await waitFor(() => expect(listFiles).toHaveBeenCalled());
 
-    // Third argument is the limit. Without one the endpoint returns 100 and the page has
-    // no way to know there were more.
-    expect(listFiles.mock.calls[0][2]).toBeGreaterThan(100);
+    expect(lastQuery().limit).toBe(100);
+    expect(lastQuery().offset).toBe(0);
   });
 
-  it('says how many it is showing when it does not have all of them', async () => {
-    listFiles.mockResolvedValue({
-      total: 190,
-      chunkSet: 'default',
-      files: Array.from({ length: 100 }, (_, i) => file(`book-${i}.pdf`)),
-    });
+  it('says which page of how many matches it is showing', async () => {
+    listFiles.mockResolvedValue(page(100, 27033));
 
     render(<CorpusDetail {...props} />);
 
-    expect(await screen.findByText(/Showing 100 of 190 files/)).toBeInTheDocument();
-    expect(screen.getByText(/90 are not loaded/)).toBeInTheDocument();
-  });
-
-  it('says nothing when it has all of them', async () => {
-    listFiles.mockResolvedValue({
-      total: 3,
-      chunkSet: 'default',
-      files: ['a.pdf', 'b.pdf', 'c.pdf'].map(file),
-    });
-
-    render(<CorpusDetail {...props} />);
-
-    await screen.findByRole('button', { name: 'a.pdf' });
-    expect(screen.queryByText(/Showing/)).not.toBeInTheDocument();
-  });
-
-  it('warns that the name filter only searches what was loaded', async () => {
-    // Otherwise typing a name that IS in the corpus and seeing nothing reads as the file
-    // being absent, which is exactly the report this came from.
-    listFiles.mockResolvedValue({
-      total: 190,
-      chunkSet: 'default',
-      files: Array.from({ length: 100 }, (_, i) => file(`book-${i}.pdf`)),
-    });
-
-    render(<CorpusDetail {...props} />);
-
-    expect(await screen.findByText(/the name filter does not search them/)).toBeInTheDocument();
+    expect(await screen.findByText(/1–100 of 27,033/)).toBeInTheDocument();
   });
 
   /**
-   * The case the whole change exists for, and the one the first version missed: the
-   * notice lived inside the arm that renders rows, so a filter matching nothing returned
-   * the empty state and said nothing about the files it had not searched.
+   * The point of the change. A client-side filter searches the rows it fetched, so on a
+   * corpus larger than a page a file that exists reads as one that does not.
    */
-  it('says the search was partial when the filter matches none of the loaded rows', async () => {
-    listFiles.mockResolvedValue({
-      total: 190,
-      chunkSet: 'default',
-      files: Array.from({ length: 100 }, (_, i) => file(`book-${i}.pdf`)),
-    });
-
+  it('sends the name filter to the server instead of filtering the page', async () => {
+    listFiles.mockResolvedValue(page(100, 27033));
     render(<CorpusDetail {...props} />);
     await screen.findByRole('button', { name: 'book-0.pdf' });
 
     await userEvent.type(screen.getByLabelText('Filter files by name'), 'papers');
 
-    expect(await screen.findByText('No file matches that')).toBeInTheDocument();
-    expect(screen.getByText(/were not searched/)).toBeInTheDocument();
-    expect(screen.getByText(/90 are not loaded/)).toBeInTheDocument();
+    await waitFor(() => expect(lastQuery().name).toBe('papers'));
+  });
+
+  it('returns to the first page when the filter changes', async () => {
+    listFiles.mockResolvedValue(page(100, 27033));
+    render(<CorpusDetail {...props} />);
+    await screen.findByRole('button', { name: 'book-0.pdf' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await waitFor(() => expect(lastQuery().offset).toBe(100));
+
+    await userEvent.type(screen.getByLabelText('Filter files by name'), 'papers');
+
+    // Paging arithmetic over a different result set lands somewhere arbitrary, and an
+    // empty page reads as no matches.
+    await waitFor(() => expect(lastQuery().offset).toBe(0));
+  });
+
+  it('pages forward and back', async () => {
+    listFiles.mockResolvedValue(page(100, 250));
+    render(<CorpusDetail {...props} />);
+    await screen.findByRole('button', { name: 'book-0.pdf' });
+
+    expect(screen.getByRole('button', { name: 'Previous' })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await waitFor(() => expect(lastQuery().offset).toBe(100));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Previous' }));
+    await waitFor(() => expect(lastQuery().offset).toBe(0));
+  });
+
+  it('stops paging at the end', async () => {
+    listFiles.mockResolvedValue(page(40, 40));
+
+    render(<CorpusDetail {...props} />);
+    await screen.findByRole('button', { name: 'book-0.pdf' });
+
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Previous' })).toBeDisabled();
+  });
+
+  it('sorts on the server', async () => {
+    listFiles.mockResolvedValue(page(100, 27033));
+    render(<CorpusDetail {...props} />);
+    await screen.findByRole('button', { name: 'book-0.pdf' });
+
+    await userEvent.click(screen.getByRole('radio', { name: 'size' }));
+
+    await waitFor(() => expect(lastQuery().sort).toBe('size'));
   });
 
   /**
-   * Narrowing by status fetches a different page, so it reaches the unloaded rows only
-   * when those rows have a different status. On an all-indexed corpus it changes
-   * nothing, and a remedy that does not work is worse than none.
+   * "No match" now means the whole corpus was searched, which is the difference between
+   * a file being absent and being on another page.
    */
-  it('does not promise that narrowing by status reaches the unloaded files', async () => {
-    listFiles.mockResolvedValue({
-      total: 190,
-      chunkSet: 'default',
-      files: Array.from({ length: 100 }, (_, i) => file(`book-${i}.pdf`)),
-    });
+  it('says the whole corpus was searched when nothing matches', async () => {
+    listFiles.mockResolvedValue({ total: 0, chunkSet: 'default', files: [] });
 
     render(<CorpusDetail {...props} />);
+    await userEvent.type(await screen.findByLabelText('Filter files by name'), 'zzz');
 
-    expect(await screen.findByText(/only if they differ in status/)).toBeInTheDocument();
+    expect(await screen.findByText('No file matches that')).toBeInTheDocument();
+    expect(screen.getByText(/Searched all 12 files in this corpus/)).toBeInTheDocument();
   });
 });

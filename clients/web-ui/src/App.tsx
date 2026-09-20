@@ -1000,16 +1000,11 @@ function CreateCorpusModal({ onClose, onCreated, onError }: { onClose: () => voi
   );
 }
 
-/** Rows rendered at once. Named, because the slice and the notice must agree. */
-const FileRowCap = 300;
-
 /**
- * How many rows to ask for. The endpoint pages at 100 when asked for nothing and clamps
- * at 1,000, so asking is the difference between a complete list and a page of one. Said
- * here rather than left to the client's default, because the page is what knows it wants
- * all of them.
+ * Rows per page. What is fetched IS what is rendered: the two were different numbers
+ * before, and neither was the one that actually truncated the list.
  */
-const FileFetchLimit = 1000;
+const FilePageSize = 100;
 
 export function CorpusDetail({
   name,
@@ -1026,9 +1021,15 @@ export function CorpusDetail({
 }) {
   const [corpus, setCorpus] = useState<Corpus | null>(null);
   const [files, setFiles] = useState<IndexedFile[]>([]);
-  // What the corpus HAS, against what was fetched. Without it the page cannot tell a
-  // complete list from one page of it, and neither could the notice below.
+  // What the query matched, which is what the paging arithmetic is over. Not the
+  // corpus's file count: with a name filter those are different numbers.
   const [totalFiles, setTotalFiles] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const [sort, setSort] = useState('path');
+
+  // Debounced, because this now costs a round trip per change rather than a filter over
+  // an array. 250ms is below the point a keystroke feels unacknowledged.
+  const [nameQuery, setNameQuery] = useState('');
   const [filter, setFilter] = useState<string>('');
   const [nameFilter, setNameFilter] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -1044,7 +1045,13 @@ export function CorpusDetail({
     try {
       const c = await api.getCorpus(name);
       setCorpus(c);
-      const f = await api.listFiles(name, filter || undefined, FileFetchLimit);
+      const f = await api.listFiles(name, {
+        status: filter || undefined,
+        name: nameQuery || undefined,
+        sort,
+        limit: FilePageSize,
+        offset,
+      });
       setFiles(f.files);
       setTotalFiles(f.total);
 
@@ -1060,9 +1067,22 @@ export function CorpusDetail({
     } catch (e) {
       onError(e);
     }
-  }, [name, filter, onError]);
+  }, [name, filter, nameQuery, sort, offset, onError]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // The typed value becomes the query after a pause. Every change that alters WHICH
+  // rows match also returns to the first page: paging arithmetic over a different
+  // result set lands somewhere arbitrary, and an empty page reads as no matches.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setNameQuery((q) => (q === nameFilter.trim() ? q : nameFilter.trim()));
+      setOffset(0);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [nameFilter]);
+
+  useEffect(() => { setOffset(0); }, [filter, sort]);
 
   const job = corpus ? live[corpus.id] : undefined;
 
@@ -1078,17 +1098,15 @@ export function CorpusDetail({
 
   const problems = files.filter((f) => f.status !== 'indexed');
 
-  // Client-side: the list is already here and a round trip per keystroke would be slower
-  // than filtering what is on the page. It therefore searches only what was FETCHED,
-  // which the notice under the list says when that is not everything.
-  const shown = nameFilter.trim()
-    ? files.filter((f) => f.relativePath.toLowerCase().includes(nameFilter.trim().toLowerCase()))
-    : files;
+  // The server decided both which rows match and their order, so this is the page and
+  // nothing filters or slices it again. Doing either here is what limited a search to
+  // the rows that happened to have been fetched.
+  const shown = files;
 
-  // What the corpus has that this page does not. Named because three places need it and
-  // one of them is the empty state, which is where an unloaded file reads as a missing
-  // one.
-  const unloaded = Math.max(0, totalFiles - files.length);
+  const pageFrom = totalFiles === 0 ? 0 : offset + 1;
+  const pageTo = offset + files.length;
+  const morePages = pageTo < totalFiles;
+  const settling = nameFilter.trim() !== nameQuery;
 
   return (
     <div className="grid gap-4">
@@ -1245,32 +1263,30 @@ export function CorpusDetail({
             aria-label="Filter files by name"
             className="h-8 w-[220px] text-sm"
           />
+          <Segmented
+            label="Sort files by"
+            value={sort}
+            onChange={setSort}
+            options={[
+              { value: 'path', label: 'name' },
+              { value: 'size', label: 'size' },
+              { value: 'chunks', label: 'chunks' },
+              { value: 'status', label: 'status' },
+            ]}
+          />
           {problems.length > 0 && <span className="dim text-xs">{problems.length} need attention</span>}
         </div>
 
-        {/* Two caps, and for a long time neither was reachable while a third was silent.
-            The API pages at 100 unless asked otherwise, the list renders at most
-            FileRowCap of what it holds, and the notice fired above 300 of the FETCHED
-            rows - which could not happen, because only 100 ever arrived. A 190-file
-            corpus showed 100 rows and said nothing, and a file just added to it was one
-            of the 90 that never reached the browser.
-
-            OUTSIDE the three arms below, because it belongs most to the one that shows
-            no rows at all: a name that matches nothing loaded is exactly how an unloaded
-            file reads as an absent one, and a notice living with the rows is not there
-            to say so. */}
-        {files.length === 0 ? (
+        {files.length === 0 && totalFiles === 0 && !nameQuery && !filter ? (
           <Empty title="No files" hint="Run a refresh to index this corpus." />
-        ) : shown.length === 0 ? (
+        ) : files.length === 0 ? (
           <Empty
             title="No file matches that"
-            hint={unloaded > 0
-              ? `Searched the ${files.length.toLocaleString()} loaded of ${totalFiles.toLocaleString()} files. The other ${unloaded.toLocaleString()} were not searched.`
-              : `${files.length.toLocaleString()} ${files.length === 1 ? 'file' : 'files'} in this view. Clear the filter to see them.`}
+            hint={`Searched all ${corpus.fileCount.toLocaleString()} files in this corpus. Clear the filter to see them.`}
           />
         ) : (
           <div className="card overflow-hidden">
-            {shown.slice(0, FileRowCap).map((f, i) => (
+            {shown.map((f, i) => (
               <div
                 key={f.id}
                 className={cn(
@@ -1278,15 +1294,16 @@ export function CorpusDetail({
                   i && 'border-t border-border',
                 )}
               >
-                {/* The row is the affordance. A file you can see listed and cannot open
-                    is the screen telling you it knows something it will not say. */}
+                {/* A path, not a title. Two sources of one corpus can hold the same file
+                    name, so showing only the name is the screen telling you it knows
+                    something it will not say. */}
                 <button
                   type="button"
                   className={cn(
                     'min-w-[220px] flex-1 text-left underline-offset-2 hover:underline',
                     'focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none',
-                    // break-all is right for a path, where any character is a fair place to
-                    // wrap, and wrong for a title, where it breaks mid-word.
+                    // break-all is right for a path, where any character is a fair place
+                    // to wrap, and wrong for a title, where it breaks mid-word.
                     isDocumentName(f.relativePath) ? 'text-sm break-words' : 'mono text-xs break-all',
                   )}
                   onClick={() => setViewing({ path: f.relativePath })}
@@ -1302,15 +1319,30 @@ export function CorpusDetail({
           </div>
         )}
 
-        {(unloaded > 0 || shown.length > FileRowCap) && (
-          <div className="dim mt-2 rounded-md border border-border px-3 py-2 text-xs">
-            Showing {Math.min(shown.length, FileRowCap).toLocaleString()} of{' '}
-            {(nameFilter.trim() ? shown.length : totalFiles).toLocaleString()} files.
-            {unloaded > 0 && (
-              <> {unloaded.toLocaleString()} are not loaded and the name filter does not
-                search them. Filtering by status requests a different page, which reaches
-                them only if they differ in status.</>
-            )}
+        {/* The list showed 100 of 190 and said nothing, and the guard against that could
+            not fire: the API paged at 100, the list rendered at most 300 of what it held,
+            and the notice wanted more than 300 FETCHED rows, which could not happen. The
+            fix is not a better notice but a page you can leave — the server now decides
+            which rows match and in what order, so every file is reachable. */}
+        {totalFiles > 0 && (
+          <div className="dim mt-2 flex items-center gap-2 text-xs">
+            <span>
+              {pageFrom.toLocaleString()}–{pageTo.toLocaleString()} of{' '}
+              {totalFiles.toLocaleString()}
+              {(nameQuery || filter) && ' matching'}
+              {settling && ' · filtering…'}
+            </span>
+            <span className="flex-1" />
+            <Button
+              className="h-7 px-2"
+              disabled={offset === 0}
+              onClick={() => setOffset(Math.max(0, offset - FilePageSize))}
+            >
+              Previous
+            </Button>
+            <Button className="h-7 px-2" disabled={!morePages} onClick={() => setOffset(pageTo)}>
+              Next
+            </Button>
           </div>
         )}
       </div>

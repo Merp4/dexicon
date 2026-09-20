@@ -253,14 +253,26 @@ export const api = {
     call(() => getApiCorporaByNameOrIdCoverage({ path: { nameOrId } })),
 
   /**
-   * The endpoint pages at 100 when asked for no limit, which is how a 190-file corpus
-   * came to show 100 rows with nothing saying so. The cap it clamps to is 1,000; the
-   * caller compares what it got against `total` and says when there is more.
+   * One page of a corpus's files.
+   *
+   * `name` and `sort` go to the server rather than being applied to what came back: a
+   * client can only filter what it fetched, so on a corpus larger than one page a name
+   * that IS in the corpus came back as no match. The endpoint pages at 100 when asked
+   * for no limit and clamps at 1,000.
    */
-  listFiles: (nameOrId: string, status?: string, limit = 1000) =>
+  listFiles: (
+    nameOrId: string,
+    opts: { status?: string; name?: string; sort?: string; limit?: number; offset?: number } = {},
+  ) =>
     call(() => getApiCorporaByNameOrIdFiles({
       path: { nameOrId },
-      query: { limit, ...(status ? { status } : {}) },
+      query: {
+        limit: opts.limit ?? 100,
+        offset: opts.offset ?? 0,
+        ...(opts.status ? { status: opts.status } : {}),
+        ...(opts.name ? { name: opts.name } : {}),
+        ...(opts.sort ? { sort: opts.sort } : {}),
+      },
     })),
 
   /** One indexed file, stitched back together from its chunks. */

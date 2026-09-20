@@ -94,6 +94,21 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Changed
 
+- **The file list pages, filters and sorts on the server.** Disclosing that a list was
+  truncated was the first fix and the wrong one: a client can only filter and order the
+  rows it fetched, so on a corpus larger than one page a name that IS in the corpus still
+  came back as no match.
+
+  `GET /api/corpora/{name}/files` gains `name` and `sort` beside the `status`, `limit` and
+  `offset` it already had, and the page steps through with Previous and Next rather than
+  stopping at a cap. `sort` takes `path`, `size`, `chunks` or `status`, each on a second
+  key, because every one of those has ties in a real corpus and paging an unstable order
+  repeats one row and skips another.
+
+  The name is a plain substring matched without case, with `%` and `_` escaped: they are
+  characters a caller typed, and unescaped the first matches every file and reads as the
+  filter doing nothing.
+
 - **The Files list shows every file, and says so when it cannot.** A 190-file corpus
   showed 100 rows with nothing indicating the rest existed, so a file added that morning
   was indexed, searchable, returned by the API, and absent from the screen.
