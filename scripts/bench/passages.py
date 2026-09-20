@@ -130,22 +130,50 @@ def plan():
     return SETS
 
 
-def token():
-    if value := os.environ.get("DEXICON_TOKEN"):
+def env_value(name):
+    """A variable from the environment, or from the .env beside the repo."""
+    if value := os.environ.get(name):
         return value
     env = ROOT / ".env"
     if env.exists():
         for line in env.read_text(encoding="utf-8").splitlines():
-            if line.startswith("DEXICON_BOOTSTRAP_TOKEN="):
+            if line.startswith(f"{name}="):
                 if value := line.split("=", 1)[1].strip():
                     return value
-    raise SystemExit("No token. Set DEXICON_TOKEN or DEXICON_BOOTSTRAP_TOKEN in .env.")
+    return None
 
 
-def call(method, path, body=None, timeout=180):
+def token():
+    """An admin bearer, because this builds and deletes a corpus.
+
+    An API key cannot do that. D-28 made `admin` the password's alone and stripped it from
+    keys, so a bootstrap token gets `[search, ingest]` and a 403 naming the missing scope
+    on the first POST. Signing in is what the API intends for administration, and it is
+    what the error message says to do.
+
+    DEXICON_TOKEN still wins when set, for a caller that has its own bearer.
+    """
+    if value := os.environ.get("DEXICON_TOKEN_ADMIN"):
+        return value
+
+    if password := env_value("DEXICON_ADMIN_PASSWORD"):
+        session = call("POST", "/api/session", {"password": password}, admin=False)
+        if session and (bearer := session.get("token")):
+            return bearer
+        raise SystemExit("Signing in with DEXICON_ADMIN_PASSWORD returned no token.")
+
+    raise SystemExit(
+        "No admin credential. This builds and deletes a corpus, which needs the admin "
+        "password: set DEXICON_ADMIN_PASSWORD in .env, or DEXICON_TOKEN_ADMIN to a "
+        "session bearer. An API key cannot do it — see D-28.")
+
+
+def call(method, path, body=None, timeout=180, admin=True):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(BASE + path, data=data, method=method)
-    req.add_header("Authorization", f"Bearer {TOKEN}")
+    # Sign-in is the one call made before there is a bearer to send.
+    if admin and TOKEN:
+        req.add_header("Authorization", f"Bearer {TOKEN}")
     if data:
         req.add_header("Content-Type", "application/json")
     try:
