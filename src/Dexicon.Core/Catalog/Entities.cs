@@ -88,6 +88,24 @@ public sealed class Corpus
     public DateTime? LastIndexedUtc { get; set; }
 
     /// <summary>
+    /// Who is working this corpus, and until when. Taken and released by
+    /// <see cref="Indexing.CorpusLeases"/>; nothing else writes them.
+    ///
+    /// Two passes now want a corpus: an index job and a discovery sweep, on separate lanes
+    /// (D-32). Reading <see cref="State"/> to decide between them cannot exclude either,
+    /// because it is set inside the indexer once a job is already running, so a sweep that
+    /// reads it and then starts can be overtaken by a job starting in the gap. A claim is
+    /// one conditional update whose row count says whether it was won.
+    ///
+    /// <see cref="HeldUntilUtc"/> is renewed while the holder runs rather than set to a
+    /// guess at how long the work will take. A crashed holder becomes reclaimable once it
+    /// stops renewing, and nothing anywhere has to predict how long indexing a library of
+    /// this size takes.
+    /// </summary>
+    public string? HeldBy { get; set; }
+    public DateTime? HeldUntilUtc { get; set; }
+
+    /// <summary>
     /// Filters every source of this corpus inherits unless it sets its own. Stored as the
     /// same shapes a source stores, so resolution is a coalesce and nothing has to
     /// translate between two representations.

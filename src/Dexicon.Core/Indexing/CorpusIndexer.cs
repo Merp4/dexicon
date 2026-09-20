@@ -616,29 +616,15 @@ public sealed class CorpusIndexer(
             return;
         }
 
-        // Through SourceFilters, not off the source: a null field there means the source
-        // has no opinion and the corpus default applies. Reading the columns directly
-        // indexed a source by its own emptiness.
-        var filters = SourceFilters.Resolve(corpus, source, _indexing);
+        // The same walk the sweep uses, so the inventory it records and the files this
+        // indexes are one answer rather than two that have to agree.
+        var walk = WorkspaceDiscovery.Walk(corpus, source, root, _indexing);
+        var files = walk.Owned;
 
-        var walk = WorkspaceWalker.Walk(root, filters.UseGitignore,
-            filters.IncludeGlobs, filters.ExcludeGlobs, filters.MaxFileBytes,
-            options.Value.Indexing.DocumentMaxBytes);
-
-        // The inventory is made distinct ACROSS sources here. A source covers its whole
-        // tree, so one added above another makes every file beneath reachable twice, and
-        // identity being (source, relative path) would index each of them twice over. The
-        // most specific source owns a file; this one keeps what the deeper ones do not
-        // claim. Not recorded as skipped, because these files are indexed, just not here.
-        var shadowed = SourceScope.ShadowedPrefixes(corpus.Sources, source);
-        var files = shadowed.Count == 0
-            ? walk.Files
-            : walk.Files.Where(f => !SourceScope.IsShadowed(f.RelativePath, shadowed)).ToList();
-
-        if (files.Count != walk.Files.Count)
+        if (walk.ShadowedCount > 0)
             log.LogInformation(
                 "Source {Source}: {Owned} of {Found} files; {Shadowed} belong to a more specific source",
-                source.RootPath, files.Count, walk.Files.Count, walk.Files.Count - files.Count);
+                source.RootPath, files.Count, files.Count + walk.ShadowedCount, walk.ShadowedCount);
 
         // += , not =. A job covers every chunk set, and each set walks the tree again, so
         // an assignment here reported the files of one pass against the work done by all
@@ -664,7 +650,7 @@ public sealed class CorpusIndexer(
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var sinceFlush = System.Diagnostics.Stopwatch.StartNew();
 
-        foreach (var skip in walk.SkippedFiles)
+        foreach (var skip in walk.Skipped)
         {
             seen.Add(skip.RelativePath);
             var (_, state) = Track(known, states, set, source.Id, skip.RelativePath);
@@ -907,17 +893,8 @@ public sealed class CorpusIndexer(
     /// it. A relative path with <c>..</c>, or an absolute one, must not be able to reach
     /// the container filesystem.
     /// </summary>
-    public string ResolveWorkspacePath(string? relative)
-    {
-        var root = Path.GetFullPath(_indexing.WorkspaceRoot);
-        var combined = Path.GetFullPath(Path.Combine(root, relative ?? string.Empty));
-
-        if (!IsInside(combined, root))
-            throw new UnauthorizedAccessException(
-                $"Workspace path '{relative}' resolves outside {_indexing.WorkspaceRoot} and was refused.");
-
-        return combined;
-    }
+    public string ResolveWorkspacePath(string? relative) =>
+        WorkspaceDiscovery.Resolve(_indexing.WorkspaceRoot, relative);
 
     /// <summary>
     /// Whether a resolved path is the root or sits beneath it.

@@ -1,0 +1,169 @@
+using Dexicon.Core.Catalog;
+using Dexicon.Core.Configuration;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+namespace Dexicon.Core.Indexing;
+
+/// <param name="Swept">Files the sources own, whether or not they were already known.</param>
+/// <param name="Added">Rows written that did not exist before.</param>
+/// <param name="Skipped">The corpus was held by another pass and nothing was walked.</param>
+public sealed record SweepResult(int Swept, int Added, bool Skipped, string? Reason = null);
+
+/// <summary>
+/// Walks a corpus and records what is in it, without extracting, chunking or embedding.
+///
+/// The half that answers "what is in here", separated from the half that costs real time.
+/// Measured on the library this was written for: statting all 1,804 files through the
+/// container's bind mount is about two seconds, against 773ms to extract a single ordinary
+/// PDF from it. Queuing the first behind the second is what made a newly added corpus read
+/// as empty for as long as another corpus took to index. See D-32.
+///
+/// It only ever ADDS. Removing a file that has vanished means removing its vectors from
+/// every set's collection, and the shared <see cref="IndexedFile"/> row can only go once
+/// the last set has let go; a sweep touches no collections, so a sweep that deleted rows
+/// would strand the vectors those rows named. There is deliberately no exemption for rows
+/// that merely look empty either: <see cref="FileStatus.Pending"/> is not evidence that a
+/// file has no vectors, because the upsert runs before the status is written and the save
+/// is throttled, so a crash between them leaves a durable Pending beside vectors that
+/// exist. Indexing remains the only pass that removes anything.
+/// </summary>
+public sealed class CorpusSweeper(
+    CatalogDbContext db,
+    CorpusLeases leases,
+    IOptions<DexiconOptions> options,
+    ILogger<CorpusSweeper> log)
+{
+    /// <summary>
+    /// Rows per save. Small enough that no single write holds the catalogue's one writer
+    /// long enough to matter to an index job running beside it, which is the sweep's half
+    /// of the bargain the busy timeout makes.
+    /// </summary>
+    private const int BatchSize = 200;
+
+    private readonly IndexingOptions _indexing = options.Value.Indexing;
+
+    public async Task<SweepResult> SweepAsync(string corpusId, CancellationToken ct)
+    {
+        var corpus = await db.Corpora.Include(c => c.Sources)
+            .FirstOrDefaultAsync(c => c.Id == corpusId, ct);
+        if (corpus is null) return new SweepResult(0, 0, Skipped: true, "no such corpus");
+
+        // Taken, not checked. The corpus state is set inside the indexer once a job is
+        // already running, so reading it leaves a gap for a job to start in.
+        await using var hold = await leases.TryAcquireAsync(corpusId, $"sweep-{Ulid.NewUlid()}", ct);
+        if (hold is null)
+        {
+            log.LogInformation("Corpus {Corpus} is held by another pass; not sweeping", corpus.Name);
+            return new SweepResult(0, 0, Skipped: true, "the corpus is being indexed");
+        }
+
+        var swept = 0;
+        var added = 0;
+
+        foreach (var source in corpus.Sources.Where(s => s.Kind == SourceKind.Workspace))
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var root = WorkspaceDiscovery.Resolve(_indexing.WorkspaceRoot, source.RootPath);
+            if (!Directory.Exists(root))
+            {
+                // Not an error and not destructive: the inventory a previous sweep wrote
+                // stays, because a mount being away is an operational condition rather
+                // than a statement that the files are gone.
+                log.LogWarning("Source {Source} is not available; leaving its inventory alone",
+                    source.RootPath);
+                continue;
+            }
+
+            var found = WorkspaceDiscovery.Walk(corpus, source, root, _indexing);
+            swept += found.Owned.Count;
+            added += await RecordAsync(corpus, source, found.Owned, ct);
+        }
+
+        await db.SaveChangesAsync(ct);
+        log.LogInformation("Swept {Corpus}: {Swept} files, {Added} new", corpus.Name, swept, added);
+        return new SweepResult(swept, added, Skipped: false);
+    }
+
+    /// <summary>
+    /// Writes the rows a file needs to be visible: one <see cref="IndexedFile"/> for the
+    /// file, and one <see cref="FileChunkState"/> per chunk set, because the status is a
+    /// property of a file AS CUT BY a set. A corpus carrying two sets therefore gets two
+    /// rows per file, which is also what indexing would have written.
+    /// </summary>
+    private async Task<int> RecordAsync(
+        Corpus corpus, Source source, IReadOnlyList<WorkspaceWalker.Candidate> owned,
+        CancellationToken ct)
+    {
+        var known = await db.Files.Where(f => f.SourceId == source.Id)
+            .ToDictionaryAsync(f => f.RelativePath, f => f, StringComparer.Ordinal, ct);
+
+        var sets = corpus.ChunkSets.Count > 0
+            ? corpus.ChunkSets
+            : await db.ChunkSets.Where(s => s.CorpusId == corpus.Id).ToListAsync(ct);
+
+        var fileIds = known.Values.Select(f => f.Id).ToList();
+        var states = (await db.FileChunkStates
+                .Where(s => fileIds.Contains(s.FileId))
+                .ToListAsync(ct))
+            .ToHashSet(FileSetComparer.Instance);
+
+        var added = 0;
+        var sinceSave = 0;
+
+        foreach (var candidate in owned)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (!known.TryGetValue(candidate.RelativePath, out var file))
+            {
+                file = new IndexedFile
+                {
+                    Id = Ulid.NewUlid().ToString(),
+                    SourceId = source.Id,
+                    RelativePath = candidate.RelativePath,
+                    SizeBytes = candidate.SizeBytes,
+                };
+                known[candidate.RelativePath] = file;
+                db.Files.Add(file);
+                added++;
+                sinceSave++;
+            }
+
+            foreach (var set in sets)
+            {
+                var probe = new FileChunkState { FileId = file.Id, ChunkSetId = set.Id };
+                if (states.Contains(probe)) continue;
+
+                // Pending: discovered, not yet chunked. Never overwrites an existing
+                // status, so a file this sweep rediscovers keeps whatever indexing made
+                // of it.
+                probe.Status = FileStatus.Pending;
+                db.FileChunkStates.Add(probe);
+                states.Add(probe);
+                sinceSave++;
+            }
+
+            if (sinceSave < BatchSize) continue;
+            await db.SaveChangesAsync(ct);
+            sinceSave = 0;
+        }
+
+        return added;
+    }
+
+    /// <summary>Identity of a per-set state row, which is its composite key.</summary>
+    private sealed class FileSetComparer : IEqualityComparer<FileChunkState>
+    {
+        public static readonly FileSetComparer Instance = new();
+
+        public bool Equals(FileChunkState? a, FileChunkState? b) =>
+            a is not null && b is not null
+            && string.Equals(a.FileId, b.FileId, StringComparison.Ordinal)
+            && string.Equals(a.ChunkSetId, b.ChunkSetId, StringComparison.Ordinal);
+
+        public int GetHashCode(FileChunkState s) => HashCode.Combine(s.FileId, s.ChunkSetId);
+    }
+}
