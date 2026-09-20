@@ -71,6 +71,10 @@ public sealed class CorpusIndexer(
         var callerCancelled = ct;
         CorpusLeases.Hold? hold = null;
 
+        // A deferred job did not run and must not be marked finished: it is still Queued,
+        // which is what the worker reads to know to put it back.
+        var deferred = false;
+
         try
         {
             // Inside the try, because everything that can go wrong here has to end up on
@@ -82,7 +86,19 @@ public sealed class CorpusIndexer(
             // Held for the whole job, so a sweep is turned away at the door rather than
             // walking the rows this is writing. Renewed in the background, so a job that
             // runs for hours keeps it without anything predicting how long it will take.
-            hold = await WaitForLeaseAsync(corpus.Id, $"index-{job.Id}", corpus.Name, ct);
+            hold = await TryTakeLeaseAsync(corpus.Id, $"index-{job.Id}", ct);
+            if (hold is null)
+            {
+                // Someone else has the corpus, so this job is not runnable yet. It stays
+                // Queued and the worker puts it back: parking here would hold the single
+                // indexing reader, so one corpus being swept would stop every other from
+                // indexing at all.
+                deferred = true;
+                log.LogInformation(
+                    "Corpus {Corpus} is held by another pass; deferring job {JobId}",
+                    corpus.Name, job.Id);
+                return job;
+            }
 
             // Losing the lease ends the job. Carrying on would mean writing beside
             // whoever now holds the corpus, which is the overlap the lease exists for.
@@ -187,20 +203,26 @@ public sealed class CorpusIndexer(
         {
             try
             {
-                job.Phase = null;
-                job.FinishedUtc = DateTime.UtcNow;
-
-                // Nothing about the corpus or its sets is written by a job that does not
-                // own it. Detaching rather than reverting, because the tracked values came
-                // from this job's own work and the holder's are whatever is in the row.
-                if (!Holds(hold))
+                // A deferred job never ran, so it is not finished: it stays Queued with no
+                // finish time, which is what the worker reads to know to put it back.
+                if (!deferred)
                 {
-                    db.Entry(corpus).State = EntityState.Detached;
-                    foreach (var s in targets) db.Entry(s).State = EntityState.Detached;
-                }
+                    job.Phase = null;
+                    job.FinishedUtc = DateTime.UtcNow;
 
-                await db.SaveChangesAsync(CancellationToken.None);
-                Report(progress, job, null);
+                    // Nothing about the corpus or its sets is written by a job that does
+                    // not own it. Detaching rather than reverting, because the tracked
+                    // values came from this job's own work and the holder's are whatever
+                    // is in the row.
+                    if (!Holds(hold))
+                    {
+                        db.Entry(corpus).State = EntityState.Detached;
+                        foreach (var s in targets) db.Entry(s).State = EntityState.Detached;
+                    }
+
+                    await db.SaveChangesAsync(CancellationToken.None);
+                    Report(progress, job, null);
+                }
             }
             finally
             {
@@ -959,44 +981,29 @@ public sealed class CorpusIndexer(
         hold is not null && !hold.Lost.IsCancellationRequested;
 
     /// <summary>
-    /// Take the corpus, giving a sweep already holding it a chance to finish first.
+    /// Take the corpus, or give up quickly and let the job be put back.
     ///
-    /// A sweep is a walk and some rows, seconds on the library this was written against,
-    /// so the job waits rather than failing immediately. It waits twice the lease, past the
-    /// point where a holder that stopped renewing would have lapsed, so anything still
-    /// there is alive and working.
+    /// Short on purpose. The indexing queue has one reader, so waiting here does not wait
+    /// for this corpus alone: it stops every other corpus indexing for as long as the wait
+    /// lasts. A sweep of a code repository was measured at 6m37s, which is a long time to
+    /// stop unrelated work for.
     ///
-    /// Then it throws, and the job is recorded as failed with that reason. It does NOT
-    /// proceed without the lease: indexing beside a sweep is the overlap the lease exists
-    /// to prevent, and carrying on regardless would make it a suggestion. A job that could
-    /// not take the corpus has not been decided against, it has been blocked, and the
-    /// scheduled refresh will bring it back.
+    /// A few seconds, because the common case is a sweep that has just started or is about
+    /// to finish, and returning immediately would bounce the job round the queue for no
+    /// reason. Longer than that is the worker's problem, not this method's.
     /// </summary>
-    private async Task<CorpusLeases.Hold> WaitForLeaseAsync(
-        string corpusId, string holder, string corpusName, CancellationToken ct)
+    private async Task<CorpusLeases.Hold?> TryTakeLeaseAsync(
+        string corpusId, string holder, CancellationToken ct)
     {
-        var waited = TimeSpan.Zero;
-        var limit = leases.Lease * 2;
-        var step = TimeSpan.FromSeconds(1);
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
 
         while (true)
         {
             var hold = await leases.TryAcquireAsync(corpusId, holder, ct);
-            if (hold is not null)
-            {
-                if (waited > TimeSpan.Zero)
-                    log.LogInformation("Waited {Seconds:N0}s for corpus {Corpus}",
-                        waited.TotalSeconds, corpusName);
-                return hold;
-            }
+            if (hold is not null) return hold;
+            if (DateTime.UtcNow >= deadline) return null;
 
-            if (waited >= limit)
-                throw new InvalidOperationException(
-                    $"Corpus '{corpusName}' is still held by another pass after "
-                    + $"{limit.TotalSeconds:N0}s, so this job did not run. It will be retried.");
-
-            await Task.Delay(step, ct);
-            waited += step;
+            await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
         }
     }
 
