@@ -94,6 +94,19 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Changed
 
+- **The Files list shows every file, and says so when it cannot.** A 190-file corpus
+  showed 100 rows with nothing indicating the rest existed, so a file added that morning
+  was indexed, searchable, returned by the API, and absent from the screen.
+
+  Three limits disagreed. `GET /api/corpora/{name}/files` pages at 100 when asked for no
+  limit, and the web client asked for none. The list renders at most 300 of what it
+  holds. The notice fired above 300 of the FETCHED rows, which could not happen, because
+  only 100 ever arrived — a guard that cannot fire is the same as no guard.
+
+  The page now asks for the endpoint's maximum and states what it is showing against the
+  `total` the response has carried all along, including that the name filter only
+  searches the rows it loaded.
+
 - **A new corpus is chunked at 256 tokens rather than 768.** Measured, not chosen:
   scored on whether the text handed back contains the answer rather than on which file
   ranked first, 256-token chunks answered 0.527 of 55 questions against 0.291 for 768 at a
