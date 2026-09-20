@@ -102,8 +102,10 @@ public sealed class WorkspaceContainmentTests
     /// store, no embedder, so the rest is left null rather than mocked. If that stops
     /// being true this throws a NullReferenceException, which is the right way to find out.
     /// </summary>
-    private static CorpusIndexer IndexerRootedAt(string root) =>
-        new(null!, null!, null!, null!, null!, null!,
-            Options.Create(new DexiconOptions { Indexing = new IndexingOptions { WorkspaceRoot = root } }),
-            null!);
+    private static CorpusIndexer IndexerRootedAt(string root)
+    {
+        var options = Options.Create(
+            new DexiconOptions { Indexing = new IndexingOptions { WorkspaceRoot = root } });
+        return new(null!, null!, null!, null!, null!, null!, new IndexingLimits(options), options, null!);
+    }
 }

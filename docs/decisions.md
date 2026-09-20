@@ -1366,8 +1366,13 @@ beside its indexed one rather than folding the two together.
 **Why.** A corpus added while another was indexing read as empty. A newly added source
 repository showed "0 files, 0 chunks, never indexed" with a valid source and 109 entries
 visible under it, because its job sat behind a reindex of roughly 1,800 PDFs on a queue
-that runs one job at a time. Nothing was broken and nothing said so: the only way to learn what a corpus
-contains was to wait for the expensive work to reach it.
+that ran one job at a time. Nothing was broken and nothing said so: the only way to learn
+what a corpus contains was to wait for the expensive work to reach it.
+
+That queue now runs several jobs at once (`MaxConcurrentCorpora`), which removes the
+waiting this entry was written about but not the reason for the entry: discovery is
+cheap, indexing is not, and a corpus should report what it holds without an embedding
+pass having to reach it.
 
 The two costs are not comparable. Statting all 1,804 files of that library through the
 container's 9p mount takes 2.08s, against 773ms to extract one ordinary 204 KB PDF from it

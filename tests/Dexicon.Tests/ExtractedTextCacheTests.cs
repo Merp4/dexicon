@@ -64,9 +64,12 @@ public sealed class ExtractedTextCacheTests : IDisposable
     /// test reaches none of it, and standing up a vector store and an embedding provider
     /// to check a cache would test neither.
     /// </summary>
-    private static CorpusIndexer Indexer(CatalogDbContext db) =>
-        new(db, null!, null!, null!, null!, null!,
-            Options.Create(new DexiconOptions()), NullLogger<CorpusIndexer>.Instance);
+    private static CorpusIndexer Indexer(CatalogDbContext db)
+    {
+        var options = Options.Create(new DexiconOptions());
+        return new(db, null!, null!, null!, null!, null!, new IndexingLimits(options), options,
+            NullLogger<CorpusIndexer>.Instance);
+    }
 
     private WorkspaceWalker.Candidate File(string name, string bytes)
     {

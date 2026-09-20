@@ -56,6 +56,20 @@ public sealed class EmbeddingOptions
     /// <summary>Which configured provider new chunk sets use by default.</summary>
     public string Provider { get; init; } = "ollama";
 
+    /// <summary>
+    /// Embedding requests in flight at once, PER PROVIDER and across every job.
+    ///
+    /// Per provider because the limit describes an endpoint: one Ollama admitting four
+    /// sequences says nothing about what an OpenAI deployment will take. Across every
+    /// job because it describes that endpoint and not a caller — this was a semaphore
+    /// constructed inside each call, so it bounded one embed and nothing else, and two
+    /// corpora indexing at once would have sent twice this number with the setting
+    /// reading 4.
+    ///
+    /// Matched to <c>OLLAMA_NUM_PARALLEL</c> for an Ollama deployment. Measured
+    /// A/B/A/B against a running index: 49.8% and 50.4% of the runner's time busy at 1,
+    /// against 78.0% and 80.3% at 4.
+    /// </summary>
     public int MaxConcurrency { get; init; } = 4;
 
     /// <summary>Chunks per embedding request.</summary>
@@ -192,6 +206,32 @@ public sealed class IndexingOptions
     /// </summary>
     public int ChunkOverlap { get; init; } = 32;
     public string BoundaryMode { get; init; } = "language-aware";
+
+    /// <summary>
+    /// How many corpora may be indexed at once.
+    ///
+    /// The queue was one job at a time for the life of the process, so a corpus that
+    /// takes hours owned the machine: a 1,834-file library measured 13.7 hours to
+    /// refresh, and a sixteen-file corpus queued behind it waited all of that. Nothing
+    /// about the work required it. Two jobs on ONE corpus are still excluded, by the
+    /// lease rather than by the queue, which is where that exclusion belongs.
+    ///
+    /// Raising this does not multiply the load on the embedding endpoint or the
+    /// filesystem, because those are bounded separately below. It multiplies the number
+    /// of catalogue connections and the memory held by in-flight documents, which is
+    /// what to watch if you raise it a long way.
+    /// </summary>
+    public int MaxConcurrentCorpora { get; init; } = 4;
+
+    /// <summary>
+    /// How many files may be extracted at once, across every job.
+    ///
+    /// Extraction is CPU-bound parsing: PdfPig laying out a page, the OpenXML readers
+    /// walking a package. The limit is the machine's, not a corpus's, which is why it is
+    /// counted across jobs rather than within one. A corpus indexing alone may use all of
+    /// it; four indexing together share it.
+    /// </summary>
+    public int MaxConcurrentExtractions { get; init; } = 4;
 
     /// <summary>0 disables automatic refresh; the UI button and MCP tool still work.</summary>
     public int RefreshMinutes { get; init; }

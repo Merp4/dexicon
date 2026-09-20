@@ -111,6 +111,9 @@ builder.Services.AddScoped<ScopeResolver>();
 builder.Services.AddScoped<SearchService>();
 builder.Services.AddScoped<ContextService>();
 builder.Services.AddScoped<CorpusIndexer>();
+// A singleton, because what it counts belongs to the machine and the endpoints rather
+// than to a caller. Scoped, it would be one limit per request and describe nothing.
+builder.Services.AddSingleton<IndexingLimits>();
 builder.Services.AddScoped<DocumentService>();
 builder.Services.AddScoped<DocumentReader>();
 builder.Services.AddScoped<IVectorStoreCleanup, VectorStoreCleanup>();

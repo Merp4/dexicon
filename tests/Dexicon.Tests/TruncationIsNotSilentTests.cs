@@ -1,5 +1,6 @@
 using Dexicon.Core.Configuration;
 using Dexicon.Core.Embedding;
+using Dexicon.Core.Indexing;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -175,7 +176,7 @@ internal static class TestEmbedding
         });
 
         return new EmbeddingService(
-            new OneGenerator(generator), new NoProfiles(), options,
+            new OneGenerator(generator), new NoProfiles(), options, new IndexingLimits(options),
             new MemoryCache(new MemoryCacheOptions()), NullLogger<EmbeddingService>.Instance);
     }
 

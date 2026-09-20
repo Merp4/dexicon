@@ -101,6 +101,7 @@ public sealed class EmbeddingService(
     IEmbeddingGeneratorFactory factory,
     IModelProfiles profiles,
     IOptions<DexiconOptions> options,
+    Indexing.IndexingLimits limits,
     IMemoryCache cache,
     ILogger<EmbeddingService> log) : IEmbeddingService
 {
@@ -176,23 +177,24 @@ public sealed class EmbeddingService(
         var batches = inputs.Chunk(Math.Max(1, _embedding.BatchSize)).ToList();
         var results = new float[batches.Count][][];
 
-        var gate = new SemaphoreSlim(Math.Max(1, _embedding.MaxConcurrency));
-        try
+        // The endpoint's limit, shared by every caller, not one constructed here per
+        // call. Built per call it bounded this batch set and nothing else, so two
+        // corpora indexing at once sent twice the configured number and the setting
+        // described neither. A corpus indexing alone still gets all of it.
+        var gate = limits.EmbeddingFor(target);
+
+        await Task.WhenAll(batches.Select(async (batch, index) =>
         {
-            await Task.WhenAll(batches.Select(async (batch, index) =>
+            await gate.WaitAsync(ct);
+            try
             {
-                await gate.WaitAsync(ct);
-                try
-                {
-                    // Indexed, not appended: results must come back in INPUT order, and
-                    // parallel completion says nothing about order. A chunk paired with
-                    // its neighbour's vector is an unfalsifiable search-quality bug.
-                    results[index] = await GenerateAsync(generator, target, batch, source, ct);
-                }
-                finally { gate.Release(); }
-            }));
-        }
-        finally { gate.Dispose(); }
+                // Indexed, not appended: results must come back in INPUT order, and
+                // parallel completion says nothing about order. A chunk paired with
+                // its neighbour's vector is an unfalsifiable search-quality bug.
+                results[index] = await GenerateAsync(generator, target, batch, source, ct);
+            }
+            finally { gate.Release(); }
+        }));
 
         var all = new List<float[]>(inputs.Count);
         foreach (var batch in results) all.AddRange(batch);

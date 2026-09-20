@@ -46,6 +46,7 @@ public sealed class CorpusIndexer(
     IModelProfiles profiles,
     DocumentService documents,
     CorpusLeases leases,
+    IndexingLimits limits,
     IOptions<DexiconOptions> options,
     ILogger<CorpusIndexer> log)
 {
@@ -1178,16 +1179,29 @@ public sealed class CorpusIndexer(
 
         stream.Position = 0;
 
-        // Every read the extractor makes passes through the deadline, which is the only
-        // way to interrupt one: Extract is synchronous and the libraries under it take no
-        // cancellation token.
-        var extracted = _indexing.ExtractionTimeoutSeconds > 0
-            ? extractor.Extract(
-                new DeadlineStream(stream,
-                    TimeSpan.FromSeconds(_indexing.ExtractionTimeoutSeconds),
-                    candidate.RelativePath),
-                candidate.RelativePath)
-            : extractor.Extract(stream, candidate.RelativePath);
+        // Held across the parse only, and taken after the cache has been consulted: a
+        // hit costs a hash and a row read, and queueing those behind other corpora's
+        // parsing would make the cache slower than the work it replaces.
+        //
+        // The deadline clock starts inside the permit for the same reason it starts
+        // after the hash — it budgets the parse, and time spent waiting for a machine
+        // that is busy is not the file being slow.
+        await limits.Extractions.WaitAsync(ct);
+        ExtractedText extracted;
+        try
+        {
+            // Every read the extractor makes passes through the deadline, which is the
+            // only way to interrupt one: Extract is synchronous and the libraries under
+            // it take no cancellation token.
+            extracted = _indexing.ExtractionTimeoutSeconds > 0
+                ? extractor.Extract(
+                    new DeadlineStream(stream,
+                        TimeSpan.FromSeconds(_indexing.ExtractionTimeoutSeconds),
+                        candidate.RelativePath),
+                    candidate.RelativePath)
+                : extractor.Extract(stream, candidate.RelativePath);
+        }
+        finally { limits.Extractions.Release(); }
 
         if (cached is not null)
             // Same bytes, same extractor, older version: the row is overwritten rather
