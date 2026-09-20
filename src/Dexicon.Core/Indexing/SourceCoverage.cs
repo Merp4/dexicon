@@ -7,8 +7,8 @@ namespace Dexicon.Core.Indexing;
 /// A corpus indexes the roots it was given and reports on the files inside them. A file
 /// outside every root is not skipped, not failed and not counted: it is absent, and
 /// absence has no row. Searching for it returns other documents, which reads exactly like
-/// a ranking result. A real library had a book sitting in <c>orly/</c> while every source
-/// was <c>orly/&lt;topic&gt;/</c>; a keyword search on its exact title returned four other
+/// a ranking result. A real library had a book sitting in <c>manuals/</c> while every source
+/// was <c>manuals/&lt;topic&gt;/</c>; a keyword search on its exact title returned four other
 /// books and nothing said why.
 ///
 /// Reporting every uncovered file under the root would be noise: a corpus that indexes

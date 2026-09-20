@@ -134,16 +134,16 @@ public sealed class SearchRenderTests
     [Fact]
     public void Two_sources_holding_one_filename_are_told_apart()
     {
-        // The books corpus has sources orly/AI and orly/Philosophy, and BOTH contain
-        // "Logic For Dummies, 2nd Edition.pdf". Rendered without their folders the two
+        // The books corpus has sources manuals/AI and manuals/Philosophy, and BOTH contain
+        // "Installation Guide, 2nd Edition.pdf". Rendered without their folders the two
         // results are identical down to the path, and an agent citing one may be quoting
         // the other.
         var text = DexiconTools.Render(Result(
-            Hit("Logic For Dummies, 2nd Edition.pdf", page: 40, sourceRoot: "orly/AI"),
-            Hit("Logic For Dummies, 2nd Edition.pdf", page: 61, sourceRoot: "orly/Philosophy")));
+            Hit("Installation Guide, 2nd Edition.pdf", page: 40, sourceRoot: "manuals/AI"),
+            Hit("Installation Guide, 2nd Edition.pdf", page: 61, sourceRoot: "manuals/Philosophy")));
 
-        text.ShouldContain("in orly/AI");
-        text.ShouldContain("in orly/Philosophy");
+        text.ShouldContain("in manuals/AI");
+        text.ShouldContain("in manuals/Philosophy");
     }
 
     [Fact]
@@ -152,9 +152,9 @@ public sealed class SearchRenderTests
         // Noise that never disambiguates anything is still noise, and every token of it is
         // read by something paying per token.
         var text = DexiconTools.Render(Result(
-            Hit("a.pdf", sourceRoot: "orly/AI"),
-            Hit("b.pdf", sourceRoot: "orly/AI")));
+            Hit("a.pdf", sourceRoot: "manuals/AI"),
+            Hit("b.pdf", sourceRoot: "manuals/AI")));
 
-        text.ShouldNotContain("in orly/AI");
+        text.ShouldNotContain("in manuals/AI");
     }
 }

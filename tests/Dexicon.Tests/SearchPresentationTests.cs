@@ -140,7 +140,7 @@ public sealed class SearchPresentationWindowTests
 /// </summary>
 public sealed class SearchPresentationDistinctTests
 {
-    private static SearchHit Hit(string path, float score, string? sourceRoot = "orly/AI") => new()
+    private static SearchHit Hit(string path, float score, string? sourceRoot = "manuals/AI") => new()
     {
         CorpusId = "c",
         FilePath = path,
@@ -203,8 +203,8 @@ public sealed class SearchPresentationDistinctTests
         // Collapsing on the name alone would hide one book behind another.
         var hits = new[]
         {
-            Hit("Logic For Dummies.pdf", 0.9f, sourceRoot: "orly/AI"),
-            Hit("Logic For Dummies.pdf", 0.8f, sourceRoot: "orly/Philosophy"),
+            Hit("Installation Guide.pdf", 0.9f, sourceRoot: "manuals/AI"),
+            Hit("Installation Guide.pdf", 0.8f, sourceRoot: "manuals/Philosophy"),
         };
 
         SearchPresentation.DistinctByTitle(hits, 5).Count.ShouldBe(2);

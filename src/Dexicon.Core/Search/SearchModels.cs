@@ -43,14 +43,14 @@ public sealed record SearchHit
 
     /// <summary>
     /// Which source this chunk came from. A file_path is relative to its source root, so
-    /// within a corpus it is NOT unique: two sources holding "Logic For Dummies.pdf" are
+    /// within a corpus it is NOT unique: two sources holding "Installation Guide.pdf" are
     /// two different books sharing one path. Null only for points written before this was
     /// read back, which are indistinguishable anyway.
     /// </summary>
     public string? SourceId { get; init; }
 
     /// <summary>
-    /// The root path of the source this came from, e.g. `orly/AI`. Filled in after the
+    /// The root path of the source this came from, e.g. `manuals/AI`. Filled in after the
     /// vector query, because the payload stores the id and a person needs the folder.
     /// </summary>
     public string? SourceRoot { get; set; }
@@ -132,7 +132,7 @@ public sealed record SearchQuery
     ///
     /// The only way to narrow a multi-source corpus by WHERE content came from. PathPrefix
     /// cannot do it: file_path is relative to a source root, so a corpus with a source at
-    /// `orly/Architecture` stores its books as bare filenames and no prefix matches the
+    /// `manuals/Architecture` stores its books as bare filenames and no prefix matches the
     /// folder they live in.
     /// </summary>
     public IReadOnlyList<string>? SourceIds { get; init; }

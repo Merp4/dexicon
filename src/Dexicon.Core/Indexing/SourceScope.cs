@@ -83,7 +83,7 @@ public static class SourceScope
 
     /// <summary>
     /// Whether <paramref name="candidate"/> is inside <paramref name="root"/>, on a
-    /// separator boundary. `books/orlyx` is not inside `books/orly`, however much of the
+    /// separator boundary. `books/manualsx` is not inside `books/manuals`, however much of the
     /// string the two share; the same test the workspace boundary uses, and for the same
     /// reason.
     /// </summary>

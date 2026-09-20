@@ -204,7 +204,7 @@ public static class SearchPresentation
 
     /// <summary>
     /// What makes two hits the same document. The source root is part of it: a file path is
-    /// relative to its source, so two sources holding "Logic For Dummies.pdf" are two
+    /// relative to its source, so two sources holding "Installation Guide.pdf" are two
     /// different books, and collapsing them would hide one behind the other.
     /// </summary>
     internal static string TitleKey(SearchHit hit)

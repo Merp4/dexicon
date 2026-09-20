@@ -16,7 +16,7 @@ public sealed record Citation
     /// <summary>The corpus as the caller may name it again: `books`, or `books:fine`.</summary>
     public required string Corpus { get; init; }
 
-    /// <summary>The source root, e.g. `orly/AI`. Null for a corpus with one source.</summary>
+    /// <summary>The source root, e.g. `manuals/AI`. Null for a corpus with one source.</summary>
     public string? SourceRoot { get; init; }
 
     public required string FilePath { get; init; }

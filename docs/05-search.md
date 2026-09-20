@@ -16,9 +16,9 @@ search(query, scope, mode, limit, filters)
 - **`filters`** — optional: `source`, `path_prefix`, `language`, `symbol`, `media_type`.
 
   `source` narrows to one source of a corpus, named by its root path as `list_corpora`
-  reports it (`orly/AI`); a parent folder matches everything beneath it. It is the only
+  reports it (`manuals/AI`); a parent folder matches everything beneath it. It is the only
   way to narrow by *where* content came from, because `path_prefix` matches `file_path`,
-  which is relative to a source root: a corpus with a source at `orly/AI` stores its
+  which is relative to a source root: a corpus with a source at `manuals/AI` stores its
   files as bare names, and no prefix matches the folder they live in. Resolution runs
   against the already-authorised scope, so naming a source can only narrow a search,
   never reach into a corpus the caller cannot see.

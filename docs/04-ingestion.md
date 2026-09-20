@@ -31,7 +31,7 @@ Discovery walks the tree and applies, **in order**:
 ### One file, one source
 
 A source covers its whole tree, so a corpus can hold two sources where one sits above the
-other: `books/orly` above `books/orly/AI`, or the workspace root above `docs`. Every file
+other: `books/manuals` above `books/manuals/AI`, or the workspace root above `docs`. Every file
 under the deeper one is then reachable from both.
 
 File identity is (source, relative path), so without care each copy is a separate row, a

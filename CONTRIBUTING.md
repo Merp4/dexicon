@@ -85,6 +85,29 @@ full history with rules for the `dex_` token format and provider API keys.
 If you believe you have committed a secret, report it immediately rather than force
 pushing: a secret that has reached a remote must be rotated, not concealed.
 
+## What you index is not yours to publish
+
+Everything here is public. What Dexicon indexes usually is not: a private library, a
+third-party repository, someone's source tree. None of that belongs in a commit, a
+comment, a test fixture, a changelog entry or a pull request.
+
+Measurements from a real index are worth having, and the rule is about names rather than
+numbers. Keep the figure, drop what identifies the content:
+
+- **Yes.** "a 1,834-document corpus", "a 27,000-file repository", "an intact 84 MB PDF at
+  13.4s", "the matched line was absent from 43 of 55 queries".
+- **No.** Document titles, author names, publishers, the name of a third-party repository
+  or project, directory layouts from a real mount, the corpus names on your own machine.
+
+Examples in comments, docs and fixtures should be invented. Naming a real book to
+illustrate two sources sharing a filename works just as well with a made-up one, and a
+made-up one cannot be read as an endorsement or an association.
+
+This applies most easily to the place it is easiest to forget: pasting a probe's output
+into a pull request, which is exactly where raw evidence is most valuable and least
+reviewed. Anonymise it there before it is published, not afterwards — an edit removes a
+PR body from view, not from anyone's inbox.
+
 ## Reporting a vulnerability
 
 Privately, through the process in [SECURITY.md](SECURITY.md), not a public issue.

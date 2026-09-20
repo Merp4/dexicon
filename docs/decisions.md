@@ -1363,10 +1363,10 @@ lane, so a sweep of one corpus does not wait for another corpus to finish indexi
 that has been swept and not yet indexed is `Pending`, and a corpus reports that count
 beside its indexed one rather than folding the two together.
 
-**Why.** A corpus added while another was indexing read as empty. `mcptoolbox` showed
-"0 files, 0 chunks, never indexed" with a valid source and 109 entries visible under it,
-because its job sat behind a `tpn` reindex of roughly 1,800 PDFs on a queue that runs one
-job at a time. Nothing was broken and nothing said so: the only way to learn what a corpus
+**Why.** A corpus added while another was indexing read as empty. A newly added source
+repository showed "0 files, 0 chunks, never indexed" with a valid source and 109 entries
+visible under it, because its job sat behind a reindex of roughly 1,800 PDFs on a queue
+that runs one job at a time. Nothing was broken and nothing said so: the only way to learn what a corpus
 contains was to wait for the expensive work to reach it.
 
 The two costs are not comparable. Statting all 1,804 files of that library through the

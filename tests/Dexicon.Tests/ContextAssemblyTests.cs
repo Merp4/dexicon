@@ -102,14 +102,14 @@ public sealed class ContextAssemblyTests
         // produces a passage that reads as continuous and is not.
         var result = ContextAssembler.Assemble(
         [
-            Alone(Hit(path: "logic.pdf", sourceId: "ai", sourceRoot: "orly/AI", score: 0.9f)),
-            Alone(Hit(path: "logic.pdf", sourceId: "phil", sourceRoot: "orly/Philosophy", score: 0.8f)),
+            Alone(Hit(path: "logic.pdf", sourceId: "ai", sourceRoot: "manuals/AI", score: 0.9f)),
+            Alone(Hit(path: "logic.pdf", sourceId: "phil", sourceRoot: "manuals/Philosophy", score: 0.8f)),
         ], maxChars: 8_000, lineNumbers: false);
 
         result.Citations.Count.ShouldBe(2);
-        result.Citations.Select(c => c.SourceRoot).ShouldBe(["orly/AI", "orly/Philosophy"]);
-        result.Text.ShouldContain("in orly/AI");
-        result.Text.ShouldContain("in orly/Philosophy");
+        result.Citations.Select(c => c.SourceRoot).ShouldBe(["manuals/AI", "manuals/Philosophy"]);
+        result.Text.ShouldContain("in manuals/AI");
+        result.Text.ShouldContain("in manuals/Philosophy");
     }
 
     [Fact]

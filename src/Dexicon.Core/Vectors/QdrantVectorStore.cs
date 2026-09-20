@@ -32,7 +32,7 @@ public interface IVectorStore
     ///
     /// <paramref name="sourceId"/> is not optional and not decoration. A chunk's
     /// file_path is relative to its source root, not to the corpus: a corpus with sources
-    /// `AI/` and `Philosophy/` that both contain "Logic For Dummies.pdf" writes two sets of
+    /// `AI/` and `Philosophy/` that both contain "Installation Guide.pdf" writes two sets of
     /// chunks with the same file_path and the same chunk_set_id. Deleting on that pair
     /// alone removes both, and an incremental refresh only rewrites the one whose file
     /// changed. The other silently disappears from the index until a full reindex.

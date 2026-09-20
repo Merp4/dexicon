@@ -711,7 +711,7 @@ public sealed class CorpusIndexer(
 
         // The job's counters accumulate across every source and every set, so this pass's
         // own numbers are the difference either side of it. Logging the running totals
-        // reported the whole job against each source in turn: `books/orly` owns one file
+        // reported the whole job against each source in turn: `books/manuals` owns one file
         // and its line said "96 indexed".
         var startedWith = (job.FilesDone, job.FilesSkipped, job.FilesFailed);
         await db.SaveChangesAsync(ct);
