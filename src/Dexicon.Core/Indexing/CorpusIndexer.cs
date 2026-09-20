@@ -162,27 +162,54 @@ public sealed class CorpusIndexer(
         catch (OperationCanceledException) when (callerCancelled.IsCancellationRequested)
         {
             job.State = JobState.Cancelled;
-            corpus.State = CorpusState.Ready;
-            foreach (var s in targets) s.State = CorpusState.Ready;
+            if (Holds(hold))
+            {
+                corpus.State = CorpusState.Ready;
+                foreach (var s in targets) s.State = CorpusState.Ready;
+            }
         }
         catch (Exception ex)
         {
             log.LogError(ex, "Indexing job {JobId} for corpus {Corpus} failed", jobId, corpus.Name);
             job.State = JobState.Failed;
             job.Error = ex.Message;
-            corpus.State = CorpusState.Degraded;
-            foreach (var s in targets) s.State = CorpusState.Degraded;
+
+            // Only while this job still owns the corpus. A job that never got the lease,
+            // or lost it, would otherwise mark a corpus someone else is working as
+            // degraded, and the save below would make that the record.
+            if (Holds(hold))
+            {
+                corpus.State = CorpusState.Degraded;
+                foreach (var s in targets) s.State = CorpusState.Degraded;
+            }
         }
         finally
         {
-            // Released after the outcome is written, so the corpus is free only once this
-            // job has finished saying what happened to it.
-            job.Phase = null;
-            job.FinishedUtc = DateTime.UtcNow;
-            await db.SaveChangesAsync(CancellationToken.None);
-            Report(progress, job, null);
+            try
+            {
+                job.Phase = null;
+                job.FinishedUtc = DateTime.UtcNow;
 
-            if (hold is not null) await hold.DisposeAsync();
+                // Nothing about the corpus or its sets is written by a job that does not
+                // own it. Detaching rather than reverting, because the tracked values came
+                // from this job's own work and the holder's are whatever is in the row.
+                if (!Holds(hold))
+                {
+                    db.Entry(corpus).State = EntityState.Detached;
+                    foreach (var s in targets) db.Entry(s).State = EntityState.Detached;
+                }
+
+                await db.SaveChangesAsync(CancellationToken.None);
+                Report(progress, job, null);
+            }
+            finally
+            {
+                // Inner, so a failing save cannot skip it. Leaking a hold leaves the
+                // renewal task extending a lease for a job nobody is running, and the
+                // corpus is then blocked until the process ends rather than for the
+                // expiry.
+                if (hold is not null) await hold.DisposeAsync();
+            }
         }
 
         log.LogInformation(
@@ -937,6 +964,14 @@ public sealed class CorpusIndexer(
     /// not take the corpus has not been decided against, it has been blocked, and the
     /// scheduled refresh will bring it back.
     /// </summary>
+    /// <summary>
+    /// Whether this job still owns the corpus, which is what licenses it to write shared
+    /// state. Null means the lease was never taken; a cancelled token means it was taken
+    /// from us while we worked.
+    /// </summary>
+    private static bool Holds(CorpusLeases.Hold? hold) =>
+        hold is not null && !hold.Lost.IsCancellationRequested;
+
     private async Task<CorpusLeases.Hold> WaitForLeaseAsync(
         string corpusId, string holder, string corpusName, CancellationToken ct)
     {

@@ -176,9 +176,12 @@ public sealed class CorpusLeases
             catch (OperationCanceledException) { /* disposed, which is the normal exit */ }
             catch (Exception ex)
             {
-                // The renewal loop failing must not take the work down with it. The lease
-                // lapses instead, which is the safe direction.
+                // Signalled, not just logged. Stopping renewal without saying so left the
+                // holder working against a lease that then lapsed, while another pass
+                // claimed the row: the exclusion gone with only a warning to show for it.
+                // Anything that ends renewal ends the claim this can vouch for.
                 _log.LogWarning(ex, "Renewing the lease on {Corpus} failed", CorpusId);
+                await _lost.CancelAsync();
             }
         }
 
@@ -199,7 +202,20 @@ public sealed class CorpusLeases
 
             // Only our own hold, and only if we still have it: releasing after losing it
             // would clear the row for whoever took it.
-            if (!IsLost) await _owner.ReleaseAsync(CorpusId, Holder);
+            //
+            // A failure here is swallowed deliberately. Dispose runs on the way out of a
+            // job that has already recorded its outcome, and throwing would replace that
+            // outcome with this one; the lease lapses on its own within its expiry, which
+            // is exactly what the expiry is for.
+            try
+            {
+                if (!IsLost) await _owner.ReleaseAsync(CorpusId, Holder);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Releasing the lease on {Corpus} failed; it will lapse",
+                    CorpusId);
+            }
 
             _stop.Dispose();
             _lost.Dispose();
