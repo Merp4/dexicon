@@ -31,6 +31,20 @@ Reported per chunk size, because the claim is specifically that SMALL locators p
 assembly beat large chunks. A configuration wins by answering more queries with the same
 number of characters.
 
+OVERLAP. Also swept, for two reasons. Overlap exists so a passage crossing a boundary sits
+wholly inside at least one chunk, and nothing here has ever measured whether that earns
+its cost: at 50% it doubles the chunk count, the vectors and the embedding time. And it
+decides whether a relevance profile over a document is worth building at all — counting
+how many of a file's returned windows cover each line is only a signal when windows
+overlap, so if overlap does not move recall here, there is nothing for that idea to stand
+on.
+
+What this does NOT measure is the split path. `CorpusIndexer.Split` divides a refused
+chunk into halves that abut with no overlap, so the configured overlap is honoured by the
+chunker and silently ignored by the splitter. A split only fires when the model refuses,
+which this corpus is too small to provoke, so the arm below bounds how much that gap could
+cost rather than measuring it.
+
 WHAT IT DOES NOT MEASURE. Whether the passage reads well, whether it is the best passage,
 or anything about queries nobody asked. Containment is a floor: text holding the answer
 can still be padded with noise, and this will not say so. It is a fair comparison BETWEEN
@@ -58,9 +72,28 @@ BASE = os.environ.get("DEXICON_URL", "http://127.0.0.1:8477")
 
 BENCH_CORPUS = "bench-passages"
 
-# The sizes the question is about: D-31's case is that small locators plus assembly beat
-# a large chunk returned whole. 768 is today's default and is the thing to beat.
-CHUNK_SIZES = [256, 768]
+# The shipped default, in tokens, whatever the chunk size. That is 39% of a 256-token
+# chunk and 13% of a 768-token one: one setting meaning two quite different things, which
+# is part of what this is here to show.
+SHIPPED_OVERLAP = 100
+
+# (size, overlap) pairs, written out rather than generated from fractions, because the
+# fractions produced near-duplicates at one size and missed the shipped setting at the
+# other. Each point below answers something:
+#
+#   0    the control. Does overlap earn its cost at all?
+#   100  what actually ships today, scored rather than interpolated.
+#   384  half of 768, which doubles the chunk count, the vectors and the embedding time.
+#
+# 256 gets no half-size point: 128 is so close to the shipped 100 that the pair would
+# cost a full index to distinguish 39% from 50%. Its high-overlap end is already 100.
+SETS = [
+    (256, 0),
+    (256, SHIPPED_OVERLAP),
+    (768, 0),
+    (768, SHIPPED_OVERLAP),
+    (768, 384),
+]
 
 # Budgets in characters, applied identically to both arms. 1,500 is the shipped
 # max_chars_per_hit; 6,000 is roughly what an agent will tolerate for one call.
@@ -68,6 +101,16 @@ BUDGETS = [1_500, 6_000]
 
 LIMIT = 10
 TOKEN = None
+
+
+def plan():
+    """The sets to build, minus any the chunker would refuse to produce."""
+    # CodeChunker rejects overlap >= size, and stalls into near-duplicate fragments
+    # unless a chunk is at least twice the overlap. Asserted rather than filtered: every
+    # pair above is deliberate, so one that cannot be built is a mistake in the list.
+    for size, overlap in SETS:
+        assert overlap * 2 <= size, f"overlap {overlap} is too large for size {size}"
+    return SETS
 
 
 def token():
@@ -228,11 +271,14 @@ def main():
     if not check(spec):
         raise SystemExit("ground truth is not sound; refusing to score against it")
 
+    sets_to_build = plan()
+
     print(f"\ncorpus      ./{spec['corpus']}")
-    print(f"chunk sizes {CHUNK_SIZES}")
+    print(f"sets        {', '.join(f'size {s} overlap {o}' for s, o in sets_to_build)}")
     print(f"budgets     {BUDGETS} characters, applied to both arms")
     print(f"queries     {len(queries)}")
-    print(f"\n{len(CHUNK_SIZES)} sets, {len(CHUNK_SIZES) * len(BUDGETS) * 2 * len(queries):,} calls\n")
+    print(f"\n{len(sets_to_build)} sets, "
+          f"{len(sets_to_build) * len(BUDGETS) * 2 * len(queries):,} calls\n")
 
     if args.dry_run:
         return 0
@@ -243,46 +289,50 @@ def main():
         print(f"removing a previous {BENCH_CORPUS}")
         call("DELETE", f"/api/corpora/{BENCH_CORPUS}")
 
-    first, rest = CHUNK_SIZES[0], CHUNK_SIZES[1:]
+    (first_size, first_overlap), rest = sets_to_build[0], sets_to_build[1:]
     print(f"creating {BENCH_CORPUS} over ./{spec['corpus']}")
     call("POST", "/api/corpora", {
         "name": BENCH_CORPUS,
         "description": "D-31 passage evaluation. Built and deleted by scripts/bench/passages.py.",
-        "chunkSize": first,
-        "chunkOverlap": max(1, first // 8),
+        "chunkSize": first_size,
+        "chunkOverlap": first_overlap,
         "boundaryMode": "language-aware",
         "workspacePath": spec["corpus"],
     })
     wait_for_chunks("initial index", "default")
-    built = [(first, call("GET", f"/api/corpora/{BENCH_CORPUS}/chunk-sets")[0]["name"])]
+    built = [(first_size, first_overlap,
+              call("GET", f"/api/corpora/{BENCH_CORPUS}/chunk-sets")[0]["name"])]
 
     results = []
     try:
-        for size in rest:
-            name = f"size-{size}"
+        for size, overlap in rest:
+            name = f"s{size}-o{overlap}"
             print(f"building {name}", flush=True)
             call("POST", f"/api/corpora/{BENCH_CORPUS}/chunk-sets", {
                 "name": name, "chunkSize": size,
-                "chunkOverlap": max(1, size // 8), "boundaryMode": "language-aware",
+                "chunkOverlap": overlap, "boundaryMode": "language-aware",
             })
             print(f"  indexed in {wait_for_chunks(name, name):.0f}s", flush=True)
-            built.append((size, name))
+            built.append((size, overlap, name))
 
         sets = {s["name"]: s for s in call("GET", f"/api/corpora/{BENCH_CORPUS}/chunk-sets")}
         print()
-        for size, name in built:
+        for size, overlap, name in built:
             held = sets.get(name, {}).get("chunkCount", 0)
             if held == 0:
                 raise SystemExit(f"{name} holds no chunks; refusing to score an empty index")
 
             for budget in BUDGETS:
                 arms = score(f"{BENCH_CORPUS}:{name}", queries, budget)
-                results.append({"chunkSize": size, "chunks": held, "budget": budget, **arms})
+                results.append({
+                    "chunkSize": size, "overlap": overlap, "chunks": held,
+                    "budget": budget, **arms,
+                })
                 for arm in ("chunks", "passage"):
                     r = arms[arm]
-                    print(f"  size {size:>4}  budget {budget:>5}  {arm:<8} "
+                    print(f"  size {size:>4} ov {overlap:>3}  budget {budget:>5}  {arm:<8} "
                           f"recall {r['recall']:.3f}  ({r['found']}/{r['queries']})  "
-                          f"mean {r['meanChars']:>6,} chars", flush=True)
+                          f"mean {r['meanChars']:>6,} chars  [{held:,} chunks]", flush=True)
                 print(flush=True)
     finally:
         out = ROOT / "scripts/bench" / args.queries.replace("queries-", "passages-")
