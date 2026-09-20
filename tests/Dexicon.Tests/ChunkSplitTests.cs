@@ -41,27 +41,69 @@ public sealed class ChunkSplitTests
         // less text than its chunk claims is exactly what this replaced.
         var chunk = Make(Lines(40));
 
-        var split = CorpusIndexer.Split(chunk, nextIndex: 99);
+        var split = CorpusIndexer.Split(chunk);
 
         split.ShouldNotBeNull();
         (split.Value.First.Content + split.Value.Second.Content).ShouldBe(chunk.Content);
     }
 
     [Fact]
-    public void TheSecondHalfTakesTheNewIndex()
+    public void SplittingDoesNotNumberTheHalves()
     {
-        // Point identity is (chunk set, source, path, chunk index), so a collision here
-        // would have one half silently overwrite the other.
-        var split = CorpusIndexer.Split(Make(Lines(40), index: 3), nextIndex: 99);
+        // Numbering is the caller's, done in write order, because ChunkIndex is the
+        // ORDERING and neighbour key and not only the point identity. Numbering a tail
+        // here meant the only free index was above every other chunk in the file, which
+        // sorted the tail to the end of its own document and put it outside its own
+        // neighbourhood. EmbedBatchAsync assigns both halves consecutively instead.
+        var split = CorpusIndexer.Split(Make(Lines(40), index: 3));
 
         split!.Value.First.ChunkIndex.ShouldBe(3);
-        split.Value.Second.ChunkIndex.ShouldBe(99);
+        split.Value.Second.ChunkIndex.ShouldBe(3);
+    }
+
+    [Fact]
+    public void ANewlineCutLeavesNoLineInBothHalves()
+    {
+        // The halves used to share the boundary line. Passage.Stitch drops the lines a
+        // chunk shares with the one before it, so the tail's first line vanished from
+        // every assembled passage.
+        var (first, second) = CorpusIndexer.Split(Make(Lines(40), start: 10, end: 49))!.Value;
+
+        first.Content.ShouldEndWith("\n");
+        second.StartLine.ShouldBe(first.EndLine + 1);
+    }
+
+    [Fact]
+    public void ACutInsideALineLeavesBothHalvesOnIt()
+    {
+        // One unbroken run, so there is no line to cut on and both halves genuinely are
+        // on the same line. Subtracting one here would claim a line neither holds.
+        var (first, second) = CorpusIndexer.Split(Make(new string('x', 400), start: 7, end: 7))!.Value;
+
+        first.EndLine.ShouldBe(7);
+        second.StartLine.ShouldBe(7);
+    }
+
+    [Fact]
+    public void ASymbolGoesOnlyToTheHalfThatHoldsIt()
+    {
+        // `symbols` is an exact Qdrant filter. Cloning the parent's list made a search for
+        // a symbol declared at the top of a chunk also return its bottom.
+        var chunk = Make("void Alpha() {}\n" + new string('\n', 40) + "void Omega() {}") with
+        {
+            Symbols = ["Alpha", "Omega"],
+        };
+
+        var (first, second) = CorpusIndexer.Split(chunk)!.Value;
+
+        first.Symbols.ShouldBe(["Alpha"]);
+        second.Symbols.ShouldBe(["Omega"]);
     }
 
     [Fact]
     public void ItCutsOnALineWhenThereIsOne()
     {
-        var split = CorpusIndexer.Split(Make(Lines(40)), nextIndex: 99);
+        var split = CorpusIndexer.Split(Make(Lines(40)));
 
         split!.Value.First.Content.ShouldEndWith("\n");
         split.Value.Second.Content.ShouldStartWith("line ");
@@ -74,7 +116,7 @@ public sealed class ChunkSplitTests
         // A citation must not claim a line the chunk does not hold.
         var chunk = Make(Lines(40), start: 10, end: 49);
 
-        var (first, second) = CorpusIndexer.Split(chunk, 99)!.Value;
+        var (first, second) = CorpusIndexer.Split(chunk)!.Value;
 
         first.StartLine.ShouldBe(10);
         first.EndLine.ShouldBeLessThanOrEqualTo(chunk.EndLine);
@@ -90,7 +132,7 @@ public sealed class ChunkSplitTests
         // old path embedded the opening and dropped the rest under the same id.
         var chunk = Make(new string('x', 9_000), start: 1, end: 1);
 
-        var split = CorpusIndexer.Split(chunk, 99);
+        var split = CorpusIndexer.Split(chunk);
 
         split.ShouldNotBeNull();
         (split.Value.First.Content + split.Value.Second.Content).ShouldBe(chunk.Content);
@@ -104,7 +146,7 @@ public sealed class ChunkSplitTests
         // Both halves are inside the one line they came from, so that is what they report.
         var chunk = Make(new string('x', 9_000), start: 7, end: 7);
 
-        var (first, second) = CorpusIndexer.Split(chunk, 99)!.Value;
+        var (first, second) = CorpusIndexer.Split(chunk)!.Value;
 
         first.StartLine.ShouldBe(7);
         first.EndLine.ShouldBe(7);
@@ -117,7 +159,7 @@ public sealed class ChunkSplitTests
     {
         var chunk = Make(string.Join(' ', Enumerable.Repeat("word", 2_000)), start: 1, end: 1);
 
-        var (first, second) = CorpusIndexer.Split(chunk, 99)!.Value;
+        var (first, second) = CorpusIndexer.Split(chunk)!.Value;
 
         first.Content.ShouldEndWith(" ");
         second.Content.ShouldStartWith("word");
@@ -131,7 +173,7 @@ public sealed class ChunkSplitTests
         var content = Lines(40);
         var chunk = Make(content, embed: "Chapter 3 > Retries\n\n" + content);
 
-        var (first, second) = CorpusIndexer.Split(chunk, 99)!.Value;
+        var (first, second) = CorpusIndexer.Split(chunk)!.Value;
 
         first.EmbedText.ShouldStartWith("Chapter 3 > Retries\n\n");
         second.EmbedText.ShouldStartWith("Chapter 3 > Retries\n\n");
@@ -142,7 +184,7 @@ public sealed class ChunkSplitTests
     [Fact]
     public void WithoutAHeadingTrailTheHalvesEmbedTheirOwnContent()
     {
-        var (first, second) = CorpusIndexer.Split(Make(Lines(40)), 99)!.Value;
+        var (first, second) = CorpusIndexer.Split(Make(Lines(40)))!.Value;
 
         first.EmbedText.ShouldBeEmpty();
         second.EmbedText.ShouldBeEmpty();
@@ -155,7 +197,7 @@ public sealed class ChunkSplitTests
     [InlineData("x")]
     public void NothingToDivideReturnsNull(string content)
     {
-        CorpusIndexer.Split(Make(content, start: 1, end: 1), 99).ShouldBeNull();
+        CorpusIndexer.Split(Make(content, start: 1, end: 1)).ShouldBeNull();
     }
 
     [Fact]
@@ -164,11 +206,10 @@ public sealed class ChunkSplitTests
         // The recursion in EmbedBatchAsync relies on this: a chunk that keeps being
         // refused must keep getting smaller, and must stop rather than loop.
         var chunk = Make(new string('x', 1_000), start: 1, end: 1);
-        var next = 100;
 
         for (var i = 0; i < 20 && chunk.Content.Length > 1; i++)
         {
-            var split = CorpusIndexer.Split(chunk, next++);
+            var split = CorpusIndexer.Split(chunk);
             split.ShouldNotBeNull();
             split.Value.First.Content.Length.ShouldBeLessThan(chunk.Content.Length);
             chunk = split.Value.First;

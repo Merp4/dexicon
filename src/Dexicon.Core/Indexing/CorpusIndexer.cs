@@ -261,14 +261,15 @@ public sealed class CorpusIndexer(
                     Symbols = p.Symbols,
                     ChunkIndex = p.Index,
                     Content = p.Content,
+                    EmbedText = p.EmbedText,
                 }).ToList();
 
-                await EmbedAndUpsertAsync(set, chunks, file.RelativePath, job, progress, sinceFlush, ct);
+                var stored = await EmbedAndUpsertAsync(set, chunks, file.RelativePath, job, progress, sinceFlush, ct);
 
                 state.Status = FileStatus.Indexed;
                 state.StatusDetail = null;
                 state.ContentHash = fingerprint;
-                state.ChunkCount = chunks.Count;
+                state.ChunkCount = stored;
                 state.IndexedUtc = DateTime.UtcNow;
                 file.Language = language;
                 file.ExtractedChars = cached.ExtractedChars;
@@ -315,7 +316,8 @@ public sealed class CorpusIndexer(
     /// minutes with no way to tell a slow job from a hung one. It also caps peak memory
     /// at one batch of vectors instead of all of them. Shared by both source kinds.
     /// </summary>
-    private async Task EmbedAndUpsertAsync(ChunkSet set, List<Chunk> chunks, string label,
+    /// <returns>Chunks actually written, which exceeds <paramref name="chunks"/> when a split occurred.</returns>
+    private async Task<int> EmbedAndUpsertAsync(ChunkSet set, List<Chunk> chunks, string label,
         IndexJob job, IProgress<IndexProgress>? progress, System.Diagnostics.Stopwatch sinceFlush,
         CancellationToken ct)
     {
@@ -323,10 +325,10 @@ public sealed class CorpusIndexer(
         // parallel, while still reporting progress at that granularity.
         var batchSize = Math.Max(1, _embedding.BatchSize) * Math.Max(1, _embedding.MaxConcurrency);
 
-        // Indices for halves produced by a split. The file's points were deleted before
-        // this run, and a point id is (chunk set, source, path, chunk index), so these only
-        // have to be unique within the file being indexed now.
-        var nextIndex = chunks.Count == 0 ? 0 : chunks.Max(c => c.ChunkIndex) + 1;
+        // Chunks are numbered as they are written rather than as they were cut, so a split
+        // puts its halves between their neighbours instead of after the whole file. See
+        // EmbedBatchAsync.
+        var written = 0;
 
         for (var offset = 0; offset < chunks.Count; offset += batchSize)
         {
@@ -337,11 +339,11 @@ public sealed class CorpusIndexer(
             job.Phase = "embed";
             Report(progress, job, $"{label} - chunk {through}/{chunks.Count}");
 
-            var written = await EmbedBatchAsync(
-                set, batch, $"{label} chunks {offset + 1}-{through}", nextIndex, job, ct);
+            var count = await EmbedBatchAsync(
+                set, batch, $"{label} chunks {offset + 1}-{through}", written, job, ct);
 
-            job.ChunksWritten += written.Chunks;
-            nextIndex = written.NextIndex;
+            job.ChunksWritten += count;
+            written += count;
             Report(progress, job, $"{label} - chunk {through}/{chunks.Count}");
 
             // SSE alone is not enough: /api/jobs reads the catalogue, so without a
@@ -353,6 +355,8 @@ public sealed class CorpusIndexer(
                 sinceFlush.Restart();
             }
         }
+
+        return written;
     }
 
     /// <summary>
@@ -365,12 +369,21 @@ public sealed class CorpusIndexer(
     /// is split into two chunks. The recursion ends at text the model accepts, so no vector
     /// is ever stored for less text than its chunk claims. See D-31.
     /// </summary>
-    /// <returns>Chunks written, and the next free chunk index after any splits.</returns>
-    private async Task<(int Chunks, int NextIndex)> EmbedBatchAsync(
-        ChunkSet set, List<Chunk> batch, string source, int nextIndex, IndexJob job,
+    /// <param name="firstIndex">
+    /// The chunk index the first chunk of this batch is written under. Numbering happens
+    /// here rather than at the chunker, because a split adds a chunk and its halves have
+    /// to sit between their neighbours: <c>ChunkIndex</c> is the ORDERING and neighbour
+    /// key as well as part of the point identity. ContextService selects neighbours by
+    /// <c>Math.Abs(c.ChunkIndex - hit.ChunkIndex)</c> and three other sites order by it,
+    /// so a tail numbered above every other chunk in the file would be sorted to the end
+    /// of its own document and fall outside its own neighbourhood.
+    /// </param>
+    /// <returns>Chunks written, which exceeds the batch size when a split occurred.</returns>
+    private async Task<int> EmbedBatchAsync(
+        ChunkSet set, List<Chunk> batch, string source, int firstIndex, IndexJob job,
         CancellationToken ct)
     {
-        if (batch.Count == 0) return (0, nextIndex);
+        if (batch.Count == 0) return 0;
 
         try
         {
@@ -383,8 +396,9 @@ public sealed class CorpusIndexer(
                 source: source, ct: ct);
 
             job.Phase = "upsert";
-            await vectors.UpsertAsync(set.CollectionName, batch, embeddings, ct);
-            return (batch.Count, nextIndex);
+            List<Chunk> numbered = [.. batch.Select((c, i) => c with { ChunkIndex = firstIndex + i })];
+            await vectors.UpsertAsync(set.CollectionName, numbered, embeddings, ct);
+            return batch.Count;
         }
         catch (EmbeddingInputTooLongException) when (batch.Count > 1)
         {
@@ -392,20 +406,22 @@ public sealed class CorpusIndexer(
             // Halving finds it in log2 refusals, each of them cheap.
             var half = batch.Count / 2;
             var left = await EmbedBatchAsync(
-                set, batch.GetRange(0, half), source, nextIndex, job, ct);
+                set, batch.GetRange(0, half), source, firstIndex, job, ct);
             var right = await EmbedBatchAsync(
-                set, batch.GetRange(half, batch.Count - half), source, left.NextIndex, job, ct);
-            return (left.Chunks + right.Chunks, right.NextIndex);
+                set, batch.GetRange(half, batch.Count - half), source, firstIndex + left, job, ct);
+            return left + right;
         }
-        catch (EmbeddingInputTooLongException) when (Split(batch[0], nextIndex) is { } halves)
+        catch (EmbeddingInputTooLongException) when (Split(batch[0]) is { } halves)
         {
             log.LogInformation(
                 "{Source}: chunk {Index} exceeds the model's context and was split at line {Line}",
                 source, batch[0].ChunkIndex, halves.Second.StartLine);
 
-            var left = await EmbedBatchAsync(set, [halves.First], source, nextIndex + 1, job, ct);
-            var right = await EmbedBatchAsync(set, [halves.Second], source, left.NextIndex, job, ct);
-            return (left.Chunks + right.Chunks, right.NextIndex);
+            // Left first, then right at the index after however many the left half needed:
+            // a half can itself be refused and split again, so the count is the offset.
+            var left = await EmbedBatchAsync(set, [halves.First], source, firstIndex, job, ct);
+            var right = await EmbedBatchAsync(set, [halves.Second], source, firstIndex + left, job, ct);
+            return left + right;
         }
     }
 
@@ -424,7 +440,7 @@ public sealed class CorpusIndexer(
     /// a prefix on the content, so dividing the content alone would leave the second half
     /// embedded under text that no longer precedes it.
     /// </summary>
-    internal static (Chunk First, Chunk Second)? Split(Chunk chunk, int nextIndex)
+    internal static (Chunk First, Chunk Second)? Split(Chunk chunk)
     {
         var content = chunk.Content;
         if (content.Length < 2) return null;
@@ -433,7 +449,8 @@ public sealed class CorpusIndexer(
         var ceiling = Math.Min(mid, content.Length - 1);
 
         var cut = content.LastIndexOf('\n', ceiling);
-        if (cut <= 0) cut = content.LastIndexOf(' ', ceiling);
+        var onNewline = cut > 0;
+        if (!onNewline) cut = content.LastIndexOf(' ', ceiling);
         // Neither, so this is one unbroken run: divide it rather than fail the file.
         if (cut <= 0) cut = mid - 1;
 
@@ -447,25 +464,45 @@ public sealed class CorpusIndexer(
             ? chunk.EmbedText[..^content.Length]
             : string.Empty;
 
-        // Where the second half starts, counted from the newlines actually consumed. A
-        // split inside a line leaves both halves on that line, which is what they are on.
-        var boundary = Math.Min(chunk.StartLine + head.Count(c => c == '\n'), chunk.EndLine);
+        // Where the second half starts, counted from the newlines actually consumed.
+        var tailStart = Math.Min(chunk.StartLine + head.Count(c => c == '\n'), chunk.EndLine);
+
+        // On a newline cut the head ENDS the line it consumed, so the tail opens the next
+        // one and the head must not claim it too. Giving both the same line made their
+        // ranges overlap, and Passage.Stitch drops the lines a chunk shares with the one
+        // before it: the tail's first line disappeared from every assembled passage. Any
+        // other cut leaves both halves inside one line, which is the line they share.
+        var headEnd = onNewline ? Math.Max(chunk.StartLine, tailStart - 1) : tailStart;
 
         return (
             chunk with
             {
                 Content = head,
                 EmbedText = prefix.Length > 0 ? prefix + head : string.Empty,
-                EndLine = boundary,
+                EndLine = headEnd,
+                Symbols = SymbolsIn(chunk.Symbols, head),
             },
             chunk with
             {
-                ChunkIndex = nextIndex,
                 Content = tail,
                 EmbedText = prefix.Length > 0 ? prefix + tail : string.Empty,
-                StartLine = boundary,
+                StartLine = tailStart,
+                Symbols = SymbolsIn(chunk.Symbols, tail),
             });
     }
+
+    /// <summary>
+    /// The symbols of the whole chunk that survive into one half of it.
+    ///
+    /// `symbols` is an exact Qdrant filter, so carrying the parent's list into both halves
+    /// makes a search for a symbol declared at the top of a chunk also return its bottom.
+    /// Matching on the text is coarser than re-parsing the half, and errs the safe way: a
+    /// name the half does not contain cannot be in it.
+    /// </summary>
+    private static IReadOnlyList<string> SymbolsIn(IReadOnlyList<string> symbols, string half) =>
+        symbols.Count == 0
+            ? symbols
+            : [.. symbols.Where(s => half.Contains(s, StringComparison.Ordinal))];
 
     /// <summary>
     /// Identity of "this blob, chunked THIS way". Two corpora holding the same document
@@ -706,6 +743,7 @@ public sealed class CorpusIndexer(
                     Symbols = p.Symbols,
                     ChunkIndex = p.Index,
                     Content = p.Content,
+                    EmbedText = p.EmbedText,
                 }).ToList();
 
                 // Embed and upsert in batches rather than in one go. A 500-page PDF is
@@ -715,13 +753,13 @@ public sealed class CorpusIndexer(
                 // the phase still reading "extract" because it was set but never reported
                 // before the long call. Batching also caps peak memory at one batch of
                 // vectors instead of all of them.
-                await EmbedAndUpsertAsync(set, chunks, candidate.RelativePath, job, progress, sinceFlush, ct);
+                var stored = await EmbedAndUpsertAsync(set, chunks, candidate.RelativePath, job, progress, sinceFlush, ct);
 
                 var (okFile, okState) = Track(known, states, set, source.Id, candidate.RelativePath);
                 okState.Status = FileStatus.Indexed;
                 okState.StatusDetail = null;
                 okState.ContentHash = hash;          // written ONLY here, on success
-                okState.ChunkCount = chunks.Count;
+                okState.ChunkCount = stored;
                 okState.IndexedUtc = DateTime.UtcNow;
                 okFile.SizeBytes = candidate.SizeBytes;
                 okFile.Language = language;

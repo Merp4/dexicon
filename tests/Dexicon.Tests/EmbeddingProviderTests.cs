@@ -288,7 +288,13 @@ public sealed class EmbeddingProviderTests
         // The backoff exists for an embedder under strain. Over-long input is not that: it
         // fails identically every time, so it is reported at once rather than waited on.
         // Across a run with a hundred such batches the wait alone was a minute of indexing.
-        var service = Service(new RefusesLongInput(limit: 10));
+        //
+        // maxRetries is passed explicitly because the fixture defaults it to 0, and with no
+        // retries configured there is no backoff to bypass: the assertion below held
+        // whatever the code did. Two retries cost 250*2^n + jitter each, so at least
+        // 1,500 ms if a refusal ever enters the loop. TheBackoffIsRealWhenItApplies is the
+        // control for that number.
+        var service = Service(new RefusesLongInput(limit: 10), maxRetries: 2);
 
         var started = System.Diagnostics.Stopwatch.StartNew();
         await Should.ThrowAsync<EmbeddingInputTooLongException>(() =>
@@ -296,6 +302,21 @@ public sealed class EmbeddingProviderTests
                 [new string('x', 50)], source: "a.pdf"));
 
         started.ElapsedMilliseconds.ShouldBeLessThan(200);
+    }
+
+    [Fact]
+    public async Task TheBackoffIsRealWhenItApplies()
+    {
+        // Without this, the test above passes equally well if retries stop happening at
+        // all, and the thing it claims to measure is gone with nothing to notice.
+        var service = Service(new AlwaysFails(), maxRetries: 2);
+
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        await Should.ThrowAsync<EmbeddingUnavailableException>(() =>
+            service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Document,
+                [new string('x', 5)], source: "a.pdf"));
+
+        started.ElapsedMilliseconds.ShouldBeGreaterThan(1_000);
     }
 
     private sealed class AlwaysFails : IEmbeddingGenerator<string, Embedding<float>>

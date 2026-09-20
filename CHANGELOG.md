@@ -40,6 +40,37 @@ with no section here fails its release rather than publishing an undescribed one
 
   See [D-31](docs/decisions.md#d-31-a-chunk-is-an-index-entry-and-the-model-decides-how-big-it-can-be).
 
+- **The chunking version goes to 8, so every corpus re-chunks once.** The per-file ratio
+  narrowed a file's cut but was computed after the staleness key and never entered it, so
+  removing it changed what a file produces while leaving the key identical. Files measured
+  denser than their model's average, which was most of them, would otherwise have been
+  skipped as unchanged and kept chunks no code path can produce.
+
+### Fixed
+
+- **A split chunk is numbered in file order.** `ChunkIndex` is the ordering and neighbour
+  key, not only part of the point identity: `ContextService` selects neighbours by the
+  distance between indices, and four sites order by it. A split took the next index above
+  every chunk in the file, which sorted the tail to the end of its own document and put it
+  outside its own neighbourhood. Chunks are now numbered as they are written.
+
+- **A split on a line no longer loses that line.** The head claimed the line the tail
+  opens, and `Passage.Stitch` drops the lines a chunk shares with the one before it, so
+  the tail's first line was missing from every assembled passage. A cut inside a line
+  still leaves both halves on it, because that is where they are.
+
+- **Each half keeps only the symbols it holds.** `symbols` is an exact filter, so copying
+  the parent's list made a search for a symbol declared at the top of a chunk return its
+  bottom as well.
+
+- **A file's chunk count is what was stored.** It was the pre-split list, so a file that
+  split reported fewer chunks in the UI than Qdrant held.
+
+- **Heading context reaches a stored vector.** `EmbedText` was never copied out of the
+  chunker into an indexed chunk, so a set with heading context embedded plain content and
+  the setting did nothing. Longstanding, found reviewing the split path, which re-applies
+  a prefix that was always empty.
+
 ---
 
 ## 0.5.1 — 2026-09-19
