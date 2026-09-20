@@ -16,6 +16,78 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## Unreleased
+
+### Changed
+
+- **A chunk too long for the model is split, not truncated.** The provider is asked not to
+  truncate, so it refuses an over-long input. That refusal used to be answered by embedding
+  the chunk truncated: a vector for the opening of the chunk, stored under the whole
+  chunk's id, so its tail was unreachable by meaning and nothing downstream could tell. One
+  index run produced 212 of those across 74 files.
+
+  The refusal is now reported to the indexer, which halves the batch to find the chunk
+  responsible and splits that chunk in two, repeating until the model accepts what it is
+  given. A line boundary is preferred; a word boundary and then the midpoint are used where
+  there is no line to cut on, which is what a minified file or a PDF page extracted as one
+  line looks like. No vector is stored for less text than its chunk claims.
+
+- **Per-file token density measurement is gone.** `TextDensity` embedded three
+  3,000-character windows per file to estimate a characters-per-token ratio, about six
+  seconds a file, to predict what the refusal states exactly for about 350 ms. The refusal
+  is flat in input size, so rejecting a whole book costs less than embedding one chunk of
+  it. Chunk sizing now uses the set's configured size, and the refusal corrects it.
+
+  See [D-31](docs/decisions.md#d-31-a-chunk-is-an-index-entry-and-the-model-decides-how-big-it-can-be).
+
+- **The chunking version goes to 8, so every corpus re-chunks once.** The per-file ratio
+  narrowed a file's cut but was computed after the staleness key and never entered it, so
+  removing it changed what a file produces while leaving the key identical. Files measured
+  denser than their model's average, which was most of them, would otherwise have been
+  skipped as unchanged and kept chunks no code path can produce.
+
+### Fixed
+
+- **A split chunk is numbered in file order.** `ChunkIndex` is the ordering and neighbour
+  key, not only part of the point identity: `ContextService` selects neighbours by the
+  distance between indices, and four sites order by it. A split took the next index above
+  every chunk in the file, which sorted the tail to the end of its own document and put it
+  outside its own neighbourhood. Chunks are now numbered as they are written.
+
+- **A split on a line no longer loses that line.** The head claimed the line the tail
+  opens, and `Passage.Stitch` drops the lines a chunk shares with the one before it, so
+  the tail's first line was missing from every assembled passage. A cut inside a line
+  still leaves both halves on it, because that is where they are.
+
+- **Each half keeps only the symbols it holds.** `symbols` is an exact filter, so copying
+  the parent's list made a search for a symbol declared at the top of a chunk return its
+  bottom as well.
+
+- **A file's chunk count is what was stored.** It was the pre-split list, so a file that
+  split reported fewer chunks in the UI than Qdrant held.
+
+- **Heading context reaches a stored vector.** `EmbedText` was never copied out of the
+  chunker into an indexed chunk, so a set with heading context embedded plain content and
+  the setting did nothing. Longstanding, found reviewing the split path, which re-applies
+  a prefix that was always empty.
+
+- **A refusal reaches the code that already handled an embed not happening.**
+  `EmbeddingInputTooLongException` was a sibling of `EmbeddingUnavailableException`, and
+  three callers written against the base type silently stopped covering the refusal:
+  search returned 500 on an over-long query instead of falling back to keyword, the model
+  probe aborted on exactly the models that refuse rather than truncate, and the indexer
+  failed the whole job instead of skipping a file whose chunk could not be divided. It is
+  a subtype now, caught ahead of the base by anyone who can act on the difference.
+
+- **A split on a line no longer inserts a blank one.** A chunk's content holds its lines
+  newline-separated and never newline-terminated: measured over the chunker, no piece
+  begins or ends with one, and `Passage.Stitch` supplies the terminator. Keeping the
+  separator on the head made that chunk the only one carrying its own, which stitched as a
+  blank line numbered the same as the tail's first real line. The separator now belongs to
+  neither half, and a round-trip through `Stitch` holds it.
+
+---
+
 ## 0.5.1 — 2026-09-19
 
 ### Fixed

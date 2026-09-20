@@ -1288,8 +1288,12 @@ settles, and it cannot act until after the chunk it would have sized. A fixed fr
 the context as a ceiling: the same prediction with a margin on it. Keeping `TextDensity`
 beside the recursion: two mechanisms for one decision is how the next inconsistency arrives.
 
-**Consequences.** Chunk boundaries move, so the chunking fingerprint changes and every
-corpus re-chunks and re-embeds once, the same cost as an extractor version bump.
+**Consequences.** Chunk boundaries move, so every corpus re-chunks and re-embeds once,
+the same cost as an extractor version bump. That happens because `CodeChunker.Version` goes
+to 8, not on its own: the per-file ratio narrowed the cut but was computed after the
+fingerprint and never entered it, so the key for a file whose density differed from its
+model's average is identical before and after. Without the bump those files, which were
+most of them, would be skipped as unchanged and keep chunks no code path can produce.
 
 Two claims here are not yet measured and should not be reported as though they were. The
 benchmark scores file rank, which is the right metric for a locator, but nothing has scored
