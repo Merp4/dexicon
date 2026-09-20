@@ -20,6 +20,28 @@ public sealed class IndexJobQueue(CatalogDbContext db, ILogger<IndexJobQueue> lo
     public static ChannelReader<string> Reader => Pending.Reader;
 
     /// <summary>
+    /// Put a job back after a pause, without blocking the caller.
+    ///
+    /// The pause is so a job whose corpus is busy does not spin round an otherwise empty
+    /// queue; it is not a guess at how long the other pass will take, because the job is
+    /// simply tried again after it. Detached on purpose: the worker must be free to take
+    /// the next job immediately, which is the whole point of deferring.
+    /// </summary>
+    internal static void RequeueLater(string jobId, ILogger log, CancellationToken ct)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(15), ct);
+                if (!Pending.Writer.TryWrite(jobId))
+                    log.LogWarning("Could not re-queue deferred job {JobId}", jobId);
+            }
+            catch (OperationCanceledException) { /* shutting down */ }
+        }, ct);
+    }
+
+    /// <summary>
     /// Enqueue a job for a corpus. Queuing a refresh for a corpus that already has one
     /// pending is a no-op returning the existing id, since two identical scans in a row
     /// is wasted work rather than throughput.
@@ -94,7 +116,12 @@ public sealed class IndexingBackgroundService(
                 using var scope = scopes.CreateScope();
                 var indexer = scope.ServiceProvider.GetRequiredService<CorpusIndexer>();
                 var progress = new Progress<IndexProgress>(broadcaster.Publish);
-                await indexer.RunAsync(jobId, progress, stoppingToken);
+                var job = await indexer.RunAsync(jobId, progress, stoppingToken);
+
+                // Still Queued means it never ran, because its corpus was held by the
+                // discovery lane. Put it back and take the next one: the alternative is
+                // this reader waiting, which stops every other corpus too.
+                if (job.State == JobState.Queued) IndexJobQueue.RequeueLater(jobId, log, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
