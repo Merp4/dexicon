@@ -62,15 +62,24 @@ public sealed class CorpusLeases(IServiceScopeFactory scopes, ILogger<CorpusLeas
         return rows == 1;
     }
 
-    /// <summary>Extend, but only while still ours: a lease that lapsed is not reclaimed silently.</summary>
+    /// <summary>
+    /// Extend, but only while the lease is still ours AND has not already lapsed.
+    ///
+    /// Matching the holder alone is not enough. A holder whose renewal is late is
+    /// indistinguishable from a dead one, and the expiry exists so the corpus falls free;
+    /// letting it renew afterwards would resurrect a claim that had already lapsed and
+    /// could hold the corpus indefinitely, which is the recovery this is supposed to
+    /// provide failing quietly.
+    /// </summary>
     private async Task<bool> RenewAsync(string corpusId, string holder, CancellationToken ct)
     {
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
 
+        var now = DateTime.UtcNow;
         var rows = await db.Corpora
-            .Where(c => c.Id == corpusId && c.HeldBy == holder)
-            .ExecuteUpdateAsync(u => u.SetProperty(c => c.HeldUntilUtc, DateTime.UtcNow + Lease), ct);
+            .Where(c => c.Id == corpusId && c.HeldBy == holder && c.HeldUntilUtc > now)
+            .ExecuteUpdateAsync(u => u.SetProperty(c => c.HeldUntilUtc, now + Lease), ct);
 
         return rows == 1;
     }

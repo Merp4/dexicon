@@ -179,6 +179,37 @@ public sealed class CorpusLeaseTests : IDisposable
     }
 
     [Fact]
+    public async Task ALapsedHolderCannotRenewItsWayBackIn()
+    {
+        // Matching the holder alone is not enough. A holder whose renewal is late is
+        // indistinguishable from a dead one, and the expiry exists so the corpus falls
+        // free; letting it renew afterwards resurrects a claim that already lapsed and can
+        // hold the corpus indefinitely, which is the recovery failing quietly.
+        var id = await CorpusAsync();
+        var leases = Leases();
+
+        var hold = await leases.TryAcquireAsync(id, "slow-holder", default);
+        hold.ShouldNotBeNull();
+
+        using (var scope = _services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            var c = await db.Corpora.FirstAsync(x => x.Id == id);
+            c.HeldUntilUtc = DateTime.UtcNow.AddSeconds(-1);   // its renewal did not arrive
+            await db.SaveChangesAsync();
+        }
+
+        // Someone else takes it, as they are entitled to.
+        await using var taker = await leases.TryAcquireAsync(id, "sweep-1", default);
+        taker.ShouldNotBeNull();
+        (await RowAsync(id)).Holder.ShouldBe("sweep-1");
+
+        // The lapsed holder letting go must not disturb the new one.
+        await hold.DisposeAsync();
+        (await RowAsync(id)).Holder.ShouldBe("sweep-1");
+    }
+
+    [Fact]
     public async Task TwoDifferentCorporaDoNotExcludeEachOther()
     {
         // A sweep of one corpus while another indexes is the entire point of the lanes.

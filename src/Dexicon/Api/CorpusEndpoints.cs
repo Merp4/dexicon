@@ -40,7 +40,7 @@ public static class CorpusEndpoints
 
         g.MapPost("/", async (CreateCorpusRequest body, RequestContext rc, CatalogDbContext db,
             IVectorStore vectors, IEmbeddingService embedder, IOptions<DexiconOptions> opts,
-            CorpusIndexer indexer, IndexJobQueue queue, CancellationToken ct) =>
+            CorpusIndexer indexer, IndexJobQueue queue, SweepQueue sweeps, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             var principal = rc.RequirePrincipal();
@@ -141,7 +141,14 @@ public static class CorpusEndpoints
             // zero that reads like "this folder had nothing in it": the first thing a new
             // user does appears to do nothing until someone thinks to press Refresh.
             if (corpus.Sources.Count > 0)
+            {
                 await queue.EnqueueAsync(corpus.Id, JobKind.Full, ct: ct);
+
+                // And a sweep, which is the case D-32 was written for: a corpus created
+                // while another is indexing would otherwise report nothing at all until
+                // the job above reached the front of the queue.
+                sweeps.Enqueue(corpus.Id);
+            }
 
             return Results.Created($"/api/corpora/{corpus.Id}", await Summarise(db, corpus, opts.Value.Indexing, ct));
         }).Produces<CorpusSummary>();

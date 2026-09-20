@@ -71,11 +71,7 @@ public sealed class CorpusIndexer(
         // Not fatal when it cannot be taken: the queue already refuses a second job per
         // corpus, so this is a sweep in progress, and a sweep is short. Waiting for it is
         // better than failing a job the user asked for.
-        await using var hold = await WaitForLeaseAsync(corpus.Id, $"index-{job.Id}", ct);
-        if (hold is null)
-            log.LogWarning(
-                "Indexing {Corpus} without the lease: it is held elsewhere and did not free up",
-                corpus.Name);
+        await using var hold = await WaitForLeaseAsync(corpus.Id, $"index-{job.Id}", corpus.Name, ct);
 
         job.State = JobState.Running;
         job.StartedUtc = DateTime.UtcNow;
@@ -915,24 +911,41 @@ public sealed class CorpusIndexer(
     /// Take the corpus, giving a sweep already holding it a chance to finish first.
     ///
     /// A sweep is a walk and some rows, seconds on the library this was written against,
-    /// so the job waits rather than failing. It gives up after
-    /// <see cref="CorpusLeases.Lease"/>, by which point a holder that has not finished has
-    /// also stopped renewing and its claim has lapsed, so waiting longer cannot help.
-    /// Returning null means indexing proceeds anyway: the alternative is refusing work the
-    /// user asked for because a two-second walk would not yield.
+    /// so the job waits rather than failing immediately. It waits twice
+    /// <see cref="CorpusLeases.Lease"/>, which is past the point where a holder that has
+    /// stopped renewing would have lapsed, so anything still there is alive and working.
+    ///
+    /// Then it throws, and the job is recorded as failed with that reason. It does NOT
+    /// proceed without the lease: indexing beside a sweep is the overlap the lease exists
+    /// to prevent, and carrying on regardless would make it a suggestion. A job that could
+    /// not take the corpus has not been decided against, it has been blocked, and the
+    /// scheduled refresh will bring it back.
     /// </summary>
-    private async Task<CorpusLeases.Hold?> WaitForLeaseAsync(
-        string corpusId, string holder, CancellationToken ct)
+    private async Task<CorpusLeases.Hold> WaitForLeaseAsync(
+        string corpusId, string holder, string corpusName, CancellationToken ct)
     {
-        var deadline = DateTime.UtcNow + CorpusLeases.Lease;
+        var waited = TimeSpan.Zero;
+        var limit = CorpusLeases.Lease * 2;
+        var step = TimeSpan.FromSeconds(1);
 
         while (true)
         {
             var hold = await leases.TryAcquireAsync(corpusId, holder, ct);
-            if (hold is not null) return hold;
-            if (DateTime.UtcNow >= deadline) return null;
+            if (hold is not null)
+            {
+                if (waited > TimeSpan.Zero)
+                    log.LogInformation("Waited {Seconds:N0}s for corpus {Corpus}",
+                        waited.TotalSeconds, corpusName);
+                return hold;
+            }
 
-            await Task.Delay(TimeSpan.FromSeconds(1), ct);
+            if (waited >= limit)
+                throw new InvalidOperationException(
+                    $"Corpus '{corpusName}' is still held by another pass after "
+                    + $"{limit.TotalSeconds:N0}s, so this job did not run. It will be retried.");
+
+            await Task.Delay(step, ct);
+            waited += step;
         }
     }
 
