@@ -157,8 +157,40 @@ public sealed class IndexingOptions
     /// </summary>
     public int ExtractionTimeoutSeconds { get; init; } = 300;
 
-    public int ChunkSize { get; init; } = 768;
-    public int ChunkOverlap { get; init; } = 100;
+    /// <summary>
+    /// Chunk size in tokens for a new corpus, and for a new chunk set with nothing to
+    /// inherit from. An existing set stores its own and reads it back, so changing this
+    /// migrates nothing and costs no reindex.
+    ///
+    /// 256, measured. Scored on whether the text handed back contains the answer, rather
+    /// than on which file ranked first, 256-token chunks answered 0.527 of 55 questions
+    /// against 0.291 for 768 at a 1,500-character budget, converging at 6,000 (0.600
+    /// against 0.582). A smaller chunk points at a narrower part of a document and more of
+    /// them fit in a caller's budget, and at a tight budget that is most of the difference.
+    ///
+    /// The retrieval sweep found this before and set it aside twice, because a file split
+    /// finer has more chances to land one chunk in the top ten and that flatters a file-rank
+    /// metric. It is only flattery if the chunk is what the caller receives; scored on what
+    /// the caller reads, it holds. See D-31 and its amendment.
+    ///
+    /// 256 is the smallest size demonstrated. Below it is untested, and there is a floor
+    /// where a chunk carries too little to embed distinctively.
+    /// </summary>
+    public int ChunkSize { get; init; } = 256;
+
+    /// <summary>
+    /// Overlap in tokens, on the same terms as the size above: a new corpus, or a new
+    /// chunk set with nothing to inherit from. Held at the same eighth of the chunk size
+    /// the previous default was, so this change moves one variable rather than two.
+    ///
+    /// The same measurement swept overlap and found nothing to gain: at 256 tokens it
+    /// scored 0.527 with no overlap against 0.473 with 100, and identically at a wider
+    /// budget. That difference is 29 answers against 26 out of 55, which is noise, so this
+    /// is not evidence for removing overlap — only that there is no case for carrying more
+    /// of it. At 256 tokens the old flat 100 would have been 39% rather than 13%, inflating
+    /// the chunk count by about two thirds for no measured return.
+    /// </summary>
+    public int ChunkOverlap { get; init; } = 32;
     public string BoundaryMode { get; init; } = "language-aware";
 
     /// <summary>0 disables automatic refresh; the UI button and MCP tool still work.</summary>
