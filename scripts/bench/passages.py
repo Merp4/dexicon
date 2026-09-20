@@ -201,6 +201,8 @@ def check(spec):
         return False
 
     print("every answer span occurs exactly once, in its expected file")
+    print("  this proves a span DISCRIMINATES, not that it is the answer: a unique span")
+    print("  can still be the wrong fact, and fifteen of these were before review")
     return True
 
 

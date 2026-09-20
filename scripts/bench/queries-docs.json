@@ -1,6 +1,6 @@
 {
   "corpus": "docs",
-  "note": "Each query must have ONE file that answers it. A question whose answer is genuinely spread across three files measures the query set, not the model — so `why` records what makes the target unambiguous, and is there to be argued with.\n\n`answer` is a short literal from the expected file that any passage actually answering the query must contain. Lifted from the document, not from anything retrieval returned, and kept short and single-line so it cannot straddle a chunk boundary and favour assembly by construction. scripts/bench/passages.py --check asserts each one occurs exactly once across the whole corpus.",
+  "note": "Each query must have ONE file that answers it. A question whose answer is genuinely spread across three files measures the query set, not the model — so `why` records what makes the target unambiguous, and is there to be argued with.\n\n`answer` is a short literal from the expected file that any passage actually answering the query must contain. Lifted from the document, not from anything retrieval returned, and kept short and single-line so it cannot straddle a chunk boundary and favour assembly by construction. scripts/bench/passages.py --check asserts each one occurs exactly once across the whole corpus, which proves a span discriminates and NOT that it is the answer. Fifteen spans were unique and still wrong: where a query's answer is a table or a list, they anchored on one row's rationale, so a passage carrying only that row would have scored the query. A sentence answer keeps its sentence; a table or list answer anchors on the section that holds it. That distinction is a reader's job, not the checker's.",
   "queries": [
     {
       "query": "what problem does this project set out to solve",
@@ -18,13 +18,13 @@
       "query": "what is explicitly out of scope",
       "file": "01-overview.md",
       "why": "Non-goals are listed here; other docs describe what IS done.",
-      "answer": "Dexicon retrieves; the agent reasons"
+      "answer": "Permanently, unless re-argued"
     },
     {
       "query": "what runs inside the container and as what process",
       "file": "02-architecture.md",
       "why": "Process layout is an architecture concern; deployment covers the compose topology instead.",
-      "answer": "Runs one indexing job at a time; emits progress events"
+      "answer": "## Process layout inside the container"
     },
     {
       "query": "what happens on the hot path when a search arrives",
@@ -36,7 +36,7 @@
       "query": "what is deliberately absent from the architecture",
       "file": "02-architecture.md",
       "why": "A named section, distinct from 01's scope.",
-      "answer": "Nothing to share between instances, because there is one"
+      "answer": "## What is deliberately absent"
     },
     {
       "query": "how does the system behave when a dependency is down",
@@ -54,7 +54,7 @@
       "query": "what fields are on a stored point payload",
       "file": "03-data-model.md",
       "why": "Payload shape is a data-model concern.",
-      "answer": "lets a reindex detect staleness without a catalog hit"
+      "answer": "\"chunk_index\": 7"
     },
     {
       "query": "how are collections named",
@@ -78,7 +78,7 @@
       "query": "how does an incremental refresh decide a file is unchanged",
       "file": "04-ingestion.md",
       "why": "The staleness fingerprint is an ingestion concern.",
-      "answer": "A refresh over an unchanged tree makes"
+      "answer": "not the content hash alone"
     },
     {
       "query": "how is a line longer than the whole chunk budget handled",
@@ -108,7 +108,7 @@
       "query": "is OCR supported for scanned PDFs",
       "file": "04-ingestion.md",
       "why": "'A note on OCR'.",
-      "answer": "The seam is an `ITextExtractor` per media type"
+      "answer": "Out of scope ([01](01-overview.md))"
     },
     {
       "query": "how are dense and sparse results fused into one ranking",
@@ -120,13 +120,13 @@
       "query": "what does search do when embeddings are unavailable",
       "file": "05-search.md",
       "why": "'Degradation' is a search section; 02 covers failure at the architecture level, so this is the weaker pair in the set.",
-      "answer": "the result is not passed off as a full hybrid search"
+      "answer": "If the embedding service is unavailable"
     },
     {
       "query": "what does a search result actually contain",
       "file": "05-search.md",
       "why": "'Result contract'.",
-      "answer": "ordering is meaningful, magnitude is not"
+      "answer": "## Result contract"
     },
     {
       "query": "how do I get more context around a hit",
@@ -162,7 +162,7 @@
       "query": "what resources can a client browse",
       "file": "06-mcp-surface.md",
       "why": "The dexicon:// resources.",
-      "answer": "tools are for asking questions"
+      "answer": "Corpora are exposed as MCP resources"
     },
     {
       "query": "what does an error look like over MCP",
@@ -192,7 +192,7 @@
       "query": "what is deferred from the auth model and why",
       "file": "07-auth.md",
       "why": "A named section.",
-      "answer": "A local dev tool with three users does not need an identity"
+      "answer": "## What is deferred, and why"
     },
     {
       "query": "what do the two dependency status dots in the header show",
@@ -234,13 +234,13 @@
       "query": "how much disk and memory should I expect to need",
       "file": "09-deployment.md",
       "why": "'Sizing'.",
-      "answer": "First index of a 50 000-file repository on CPU is tens of"
+      "answer": "8 GB + 4 GB VRAM"
     },
     {
       "query": "what do the published image tags mean",
       "file": "09-deployment.md",
       "why": "'Image tags'.",
-      "answer": "Newest patch of that minor"
+      "answer": "## Image tags"
     },
     {
       "query": "can I point it at an Ollama I already run",
@@ -270,7 +270,7 @@
       "query": "how is untrusted input from indexed files handled",
       "file": "10-security-secrets.md",
       "why": "'Input handling'.",
-      "answer": "Bounded decompressed size and entry count"
+      "answer": "## Input handling"
     },
     {
       "query": "what are the delivery milestones",
@@ -282,7 +282,7 @@
       "query": "what is still owed before this is open-source ready",
       "file": "11-roadmap.md",
       "why": "M4's definition of done.",
-      "answer": "the quickstart has been followed on a clean"
+      "answer": "The repository made public"
     },
     {
       "query": "how do I connect Claude Code to this",
@@ -306,7 +306,7 @@
       "query": "which open source licence was chosen and why",
       "file": "decisions.md",
       "why": "D-14, and the rejected alternative.",
-      "answer": "holds the canonical text unmodified"
+      "answer": "**Apache-2.0.** `LICENSE` holds the canonical text"
     },
     {
       "query": "why was client side semantic weighting dropped",
