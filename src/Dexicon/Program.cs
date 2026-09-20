@@ -78,8 +78,19 @@ builder.Services.ConfigureHttpJsonOptions(o =>
     o.SerializerOptions.NumberHandling = JsonNumberHandling.Strict;
 });
 
-builder.Services.AddDbContext<CatalogDbContext>(o =>
-    o.UseSqlite($"Data Source={options.Storage.CatalogPath};Cache=Shared"));
+// No Cache=Shared. It arrived with the walking skeleton and nothing depended on it, and
+// it changes what contention looks like: measured, a second writer blocked out by a lock
+// held longer than the command timeout fails with SQLITE_LOCKED under shared cache and
+// SQLITE_BUSY without it. Only the second is a wait that `busy_timeout` can serve; LOCKED
+// is refused outright however long the caller was willing to wait.
+//
+// The journal mode and busy timeout are applied per connection by SqlitePragmas, because
+// neither can be set in a connection string.
+builder.Services.AddDbContext<CatalogDbContext>((sp, o) =>
+    o.UseSqlite($"Data Source={options.Storage.CatalogPath}")
+     .AddInterceptors(new SqlitePragmas(
+         TimeSpan.FromSeconds(options.Storage.BusyTimeoutSeconds),
+         sp.GetRequiredService<ILogger<SqlitePragmas>>())));
 
 // Singleton: a generator holds a connection and a credential, and the model is a
 // per-call argument, so there is nothing per-request about it.

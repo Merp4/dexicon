@@ -208,6 +208,18 @@ public sealed class StorageOptions
     public string DataPath { get; init; } = "/data";
     public string CatalogFileName { get; init; } = "catalog.db";
 
+    /// <summary>
+    /// How long SQLite waits for a locked catalogue before giving up, applied as
+    /// <c>PRAGMA busy_timeout</c> on every connection.
+    ///
+    /// 30s because that is the provider's own command timeout, so neither gives up before
+    /// the other: below it, SQLite would fail a wait the caller was still prepared to make;
+    /// above it, the caller aborts a wait SQLite was still making. It is a ceiling on
+    /// waiting rather than a prediction of how long a write takes, which is why it is not
+    /// sized against any particular job.
+    /// </summary>
+    public int BusyTimeoutSeconds { get; init; } = 30;
+
     public string CatalogPath => Path.Combine(DataPath, CatalogFileName);
     public string BlobRoot => Path.Combine(DataPath, "blobs");
 }
