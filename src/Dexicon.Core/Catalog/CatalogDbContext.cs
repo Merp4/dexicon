@@ -180,6 +180,9 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
                 .HasForeignKey(x => x.SourceId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(x => new { x.SourceId, x.RelativePath }).IsUnique();
             e.Property(x => x.BlobSha256).HasMaxLength(64);
+            // No foreign key to file_texts: a plain-text file has a hash and no row
+            // there, since reading it is the extraction.
+            e.Property(x => x.Sha256).HasMaxLength(64);
             // Restrict, not Cascade: deleting a blob that corpora still reference would
             // silently empty them. A blob is only removable once nothing attaches it.
             e.HasOne(x => x.Blob).WithMany()

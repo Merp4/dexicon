@@ -60,6 +60,21 @@ with no section here fails its release rather than publishing an undescribed one
   This is also the first place a workspace document exists whole. Chunks carry their own
   text and nothing else did, so the content survived only as pieces.
 
+- **Reading one file returns the document, not its chunks glued back together.** The file
+  viewer, `GET /api/corpora/{name}/file` and the `dexicon://corpus/{name}/file/{path}` MCP
+  resource all reconstructed a file by stitching its stored chunk payloads and marking the
+  lines they could not account for, because those payloads were the only copy of the text.
+  They now read `blob_texts` or `file_texts`, which cannot have holes and does not vary by
+  which chunk set is being looked at. The response says which of the three it used.
+
+  The stitch remains for a code file on a mount, where no text is stored because reading
+  the file is the extraction.
+
+  Reaching the document needs the hash on the file row: `files.sha256` records the bytes
+  each workspace file was indexed from, so `file_texts` can be looked up by path. Without
+  it the cache saves the indexer work and gives a reader nothing. Filled in by the next
+  index pass; a file indexed before it reports no document and falls back to the stitch.
+
 ### Changed
 
 - **A new corpus is chunked at 256 tokens rather than 768.** Measured, not chosen:

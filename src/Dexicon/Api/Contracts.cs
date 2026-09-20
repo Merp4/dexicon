@@ -322,17 +322,20 @@ public sealed record UpdateSourceRequest(
     IReadOnlyList<string>? Clear = null);
 
 /// <summary>
-/// One indexed file, reconstructed from the chunks of one chunk set.
+/// One indexed file: the extracted document where that is stored, and otherwise the
+/// chunks of one chunk set put back together.
 /// </summary>
 /// <remarks>
-/// Rebuilt from the INDEX rather than read from disk, for the same reason the MCP resource
-/// is: an uploaded PDF has no file to read, and the original would in any case differ from
-/// what was indexed. What comes back is what search is actually searching, which is the
-/// thing worth looking at when a result is surprising.
+/// Read from what was EXTRACTED rather than from disk, for the same reason the MCP
+/// resource is: an uploaded PDF has no file to read, and the original would in any case
+/// differ from what was indexed. What comes back is the text search is searching, which
+/// is the thing worth looking at when a result is surprising.
 ///
 /// <paramref name="Gaps"/> is not decoration. Chunks from one pass tile the file, so a gap
 /// means the index really is missing those lines; the text says so inline, and this says
-/// how many times, so a caller can show it without parsing prose.
+/// how many times, so a caller can show it without parsing prose. It is always zero when
+/// <paramref name="Store"/> names a text store, because the document is not being
+/// reassembled from anything.
 /// </remarks>
 public sealed record IndexedFileText(
     string Corpus,
@@ -351,7 +354,13 @@ public sealed record IndexedFileText(
     /// <summary>Length of the whole file's indexed text, so a caller can show progress.</summary>
     int TotalChars = 0,
     /// <summary>Offset to pass for the next window, or null at the end.</summary>
-    int? NextOffset = null);
+    int? NextOffset = null,
+    /// <summary>
+    /// Where the text came from: <c>blob_texts</c>, <c>file_texts</c>, or <c>chunks</c>
+    /// when no document is stored and it was stitched back together. Said out loud
+    /// because the three differ in whether they can have holes.
+    /// </summary>
+    string Store = "chunks");
 
 /// <summary>
 /// A source, and the job now reading it. The job is returned rather than left implicit so

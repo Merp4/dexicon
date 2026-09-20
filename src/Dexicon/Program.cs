@@ -112,6 +112,7 @@ builder.Services.AddScoped<SearchService>();
 builder.Services.AddScoped<ContextService>();
 builder.Services.AddScoped<CorpusIndexer>();
 builder.Services.AddScoped<DocumentService>();
+builder.Services.AddScoped<DocumentReader>();
 builder.Services.AddScoped<IVectorStoreCleanup, VectorStoreCleanup>();
 builder.Services.AddScoped<IndexJobQueue>();
 builder.Services.AddScoped<RequestContext>();

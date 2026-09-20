@@ -148,6 +148,10 @@ CREATE TABLE files (
   -- Upload-sourced files only: the blob this is an attachment OF. Several corpora
   -- can point at one blob and chunk it differently — the point of the split.
   blob_sha256     TEXT REFERENCES blobs(sha256),
+  -- Workspace files: SHA-256 of the bytes as last indexed, which is the key into
+  -- file_texts and so the only way to reach the document whole. No foreign key: a code
+  -- file has a hash and no row there, because reading it is the extraction.
+  sha256          TEXT,
   size_bytes      INTEGER NOT NULL,
   media_type      TEXT,
   language        TEXT,
@@ -215,7 +219,7 @@ CREATE TABLE blob_texts (
 -- This is also the only place a workspace document exists whole. Chunks carry their own
 -- text and nothing else did, so without this the content survives only as pieces.
 CREATE TABLE file_texts (
-  sha256            TEXT PRIMARY KEY,    -- SHA-256 of the file's bytes
+  sha256            TEXT PRIMARY KEY,    -- SHA-256 of the file's bytes; files.sha256
   text              TEXT NOT NULL,
   units_json        TEXT,
   title             TEXT,

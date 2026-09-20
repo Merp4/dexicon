@@ -1,6 +1,7 @@
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
+using Dexicon.Core.Documents;
 using Dexicon.Core.Embedding;
 using Dexicon.Core.Indexing;
 using Dexicon.Core.Search;
@@ -417,7 +418,7 @@ public static class CorpusEndpoints
         // the handle a caller already has is the path, because that is what search returns,
         // and a relative path contains slashes.
         g.MapGet("/{nameOrId}/file", async (string nameOrId, string path, int? start, RequestContext rc,
-            ScopeResolver scopes, IVectorStore vectors, CancellationToken ct) =>
+            ScopeResolver scopes, IVectorStore vectors, DocumentReader documents, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
             if (string.IsNullOrWhiteSpace(path)) return Results.BadRequest(new { error = "path is required" });
@@ -441,12 +442,33 @@ public static class CorpusEndpoints
                 });
             }
 
+            // The document itself where it is stored, and the chunks put back together
+            // where it is not.
+            //
+            // Stitching was the only option while a chunk payload was the only copy of a
+            // workspace file's text: it reassembles the file from the pieces the index
+            // happens to hold and marks the lines it cannot account for. Reading the
+            // extracted text instead returns the document as extracted, which cannot have
+            // holes and does not depend on which chunk set is being looked at.
+            //
+            // Both are resolved before either is used, because the fallback needs the
+            // chunks anyway: they carry the file's first line number.
+            var sources = chunks.Select(c => c.SourceId).Distinct(StringComparer.Ordinal).ToList();
+            var file = sources.Count == 1
+                ? await documents.FileAtAsync(target.Corpus.Id, path, sources[0], ct)
+                : null;
+            var document = file is null ? null : await documents.ForAsync(file, ct);
+
             var pieces = chunks.Select(c => (c.StartLine, c.EndLine, c.Content)).ToList();
-            var text = Passage.Stitch(pieces, lineNumbers: false);
+            var stitched = Passage.Stitch(pieces, lineNumbers: false);
+
+            var text = document?.Text ?? stitched;
+            var store = document?.Store ?? "chunks";
 
             // The marker Stitch writes where the index is missing lines. Counted here so a
-            // caller can say "3 gaps" without reading the text for it.
-            var gaps = text.Split("… lines").Length - 1;
+            // caller can say "3 gaps" without reading the text for it. A document read
+            // whole has none by construction.
+            var gaps = document is null ? stitched.Split("… lines").Length - 1 : 0;
 
             // A WINDOW of the file, not the head of it.
             //
@@ -465,7 +487,11 @@ public static class CorpusEndpoints
 
             // Line numbers for THIS window. Counting newlines before it is exact and cheap;
             // reporting the file's own first line here is what made the header lie.
-            var firstLine = chunks.Min(c => c.StartLine);
+            //
+            // A document starts at line 1 whatever the index holds. The stitch starts at
+            // the first line any chunk covers, which is not the same number when the
+            // opening of the file was never chunked.
+            var firstLine = document is not null ? 1 : chunks.Min(c => c.StartLine);
             var windowStart = firstLine + text.AsSpan(0, offset).Count('\n');
             var windowEnd = windowStart + window.AsSpan().Count('\n');
 
@@ -480,7 +506,8 @@ public static class CorpusEndpoints
                 window,
                 offset,
                 total,
-                more ? offset + window.Length : null));
+                more ? offset + window.Length : null,
+                store));
         }).Produces<IndexedFileText>();
     }
 

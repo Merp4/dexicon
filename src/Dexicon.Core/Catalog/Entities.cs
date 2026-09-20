@@ -259,6 +259,17 @@ public sealed class IndexedFile
     public string? BlobSha256 { get; set; }
     public Blob? Blob { get; set; }
 
+    /// <summary>
+    /// SHA-256 of the file's bytes as last indexed. Set for workspace files, where it is
+    /// the key into <see cref="FileText"/> and therefore the only way to reach the
+    /// document whole; for uploads the blob hash already serves that purpose.
+    ///
+    /// Also what says whether the mount still holds what was indexed. A reader that finds
+    /// a different hash on disk is looking at a file that has changed since, which is a
+    /// fact worth stating rather than quietly serving either version.
+    /// </summary>
+    public string? Sha256 { get; set; }
+
     public long SizeBytes { get; set; }
     public string? MediaType { get; set; }
     public string? Language { get; set; }

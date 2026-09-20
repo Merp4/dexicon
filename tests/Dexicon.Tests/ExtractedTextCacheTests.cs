@@ -82,8 +82,12 @@ public sealed class ExtractedTextCacheTests : IDisposable
         var second = await indexer.ExtractCachedAsync(extractor, file, default);
 
         extractor.Calls.ShouldBe(1);
-        first.Text.ShouldBe("page one");
-        second.Text.ShouldBe("page one");
+        first.Text.Text.ShouldBe("page one");
+        second.Text.Text.ShouldBe("page one");
+
+        // The hash the file row is stamped with, so the cached text is reachable by path.
+        second.Sha256.ShouldBe(first.Sha256);
+        second.Sha256.Length.ShouldBe(64);
     }
 
     [Fact]
@@ -96,7 +100,7 @@ public sealed class ExtractedTextCacheTests : IDisposable
         var file = File("b.epub", "PK zip bytes");
 
         await indexer.ExtractCachedAsync(extractor, file, default);
-        var cached = await indexer.ExtractCachedAsync(extractor, file, default);
+        var (_, cached) = await indexer.ExtractCachedAsync(extractor, file, default);
 
         extractor.Calls.ShouldBe(1);
         cached.Title.ShouldBe("A Book");
@@ -156,7 +160,7 @@ public sealed class ExtractedTextCacheTests : IDisposable
         var result = await indexer.ExtractCachedAsync(fresh, file, default);
 
         fresh.Calls.ShouldBe(1);
-        result.Text.ShouldBe("new text");
+        result.Text.Text.ShouldBe("new text");
 
         var rows = await db.FileTexts.AsNoTracking().ToListAsync();
         rows.Count.ShouldBe(1);   // overwritten, not added beside

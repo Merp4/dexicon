@@ -3,6 +3,7 @@ using System.Text.Json;
 using Dexicon.Api;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
+using Dexicon.Core.Documents;
 using Dexicon.Core.Configuration;
 using Dexicon.Core.Search;
 using Dexicon.Core.Vectors;
@@ -53,11 +54,12 @@ public sealed class DexiconResources
         Title = "Indexed file text",
         MimeType = "text/plain")]
     [System.ComponentModel.Description(
-        "The text of one indexed file, reconstructed from its chunks. Use the file path exactly as search_index reports it.")]
+        "The extracted text of one indexed file, whole. Use the file path exactly as search_index reports it.")]
     public static async Task<string> FileAsync(
         RequestContext rc,
         ScopeResolver scopes,
         IVectorStore vectors,
+        DocumentReader documents,
         string name,
         string path,
         CancellationToken ct = default)
@@ -65,8 +67,8 @@ public sealed class DexiconResources
         var target = await ResolveAsync(rc, scopes, name, ct);
         var corpus = target.Corpus;
 
-        // Rebuilt from the INDEX, not from disk: an uploaded PDF has no file to read, and
-        // the original would in any case differ from what was indexed.
+        // Read from what was EXTRACTED, not from disk: an uploaded PDF has no file to
+        // read, and the original would in any case differ from what was indexed.
         //
         // A FILTER, not a search. Reconstructing a file is a lookup, and an early version
         // of this used keyword search, which let relevance decide which parts of the file
@@ -75,19 +77,25 @@ public sealed class DexiconResources
         var chunks = await vectors.GetFileChunksAsync(
             target.Set.CollectionName, target.Set.Id, path, ct);
 
-        var pieces = chunks
-            .Select(h => (h.StartLine, h.EndLine, h.Content))
-            .ToList();
-
-        if (pieces.Count == 0)
+        if (chunks.Count == 0)
             throw new McpException(
                 $"No indexed file '{path}' in corpus '{corpus.Name}'. " +
                 "Paths are exactly as search_index reports them; browse dexicon://corpus/" +
                 $"{corpus.Name} for what the corpus contains.");
 
+        // The stored document where there is one. Stitching the chunks back together is
+        // the fallback, and it is a reconstruction: it can only return the lines the
+        // index happens to hold, and marks the ones it cannot account for.
+        var sources = chunks.Select(c => c.SourceId).Distinct(StringComparer.Ordinal).ToList();
+        var file = sources.Count == 1
+            ? await documents.FileAtAsync(corpus.Id, path, sources[0], ct)
+            : null;
+        var document = file is null ? null : await documents.ForAsync(file, ct);
+
         var sb = new StringBuilder();
         sb.Append(path).Append(" (corpus: ").Append(corpus.Name).Append(")\n\n");
-        sb.Append(Passage.Stitch(pieces));
+        sb.Append(document?.Text
+            ?? Passage.Stitch(chunks.Select(h => (h.StartLine, h.EndLine, h.Content))));
         return sb.ToString();
     }
 

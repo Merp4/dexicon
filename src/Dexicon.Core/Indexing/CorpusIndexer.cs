@@ -747,11 +747,23 @@ public sealed class CorpusIndexer(
             {
                 var extractor = ExtractorRegistry.For(candidate.RelativePath);
 
-                // Plain text and code are read, not cached: the read IS the extraction,
-                // so a cache would hold a second copy of the tree to save a file read.
-                var extracted = extractor is null
-                    ? new ExtractedText(await ReadTextAsync(candidate.FullPath, ct), [])
-                    : await ExtractCachedAsync(extractor, candidate, ct);
+                string fileSha;
+                ExtractedText extracted;
+
+                if (extractor is null)
+                {
+                    // Plain text and code. The text is not cached, because the read IS the
+                    // extraction and a cache would hold a second copy of the tree to save
+                    // a file read. The hash is still taken: it goes on the file row, so a
+                    // reader can tell whether what is on the mount is what was indexed.
+                    var read = await HashAndReadTextAsync(candidate.FullPath, ct);
+                    fileSha = read.Sha256;
+                    extracted = new ExtractedText(read.Text, []);
+                }
+                else
+                {
+                    (fileSha, extracted) = await ExtractCachedAsync(extractor, candidate, ct);
+                }
 
                 var content = extracted.Text;
 
@@ -784,6 +796,7 @@ public sealed class CorpusIndexer(
                     emptyState.ChunkCount = 0;
                     emptyState.IndexedUtc = DateTime.UtcNow;
                     emptyFile.SizeBytes = candidate.SizeBytes;
+                    emptyFile.Sha256 = fileSha;
                     emptyFile.ExtractedChars = 0;
                     job.FilesSkipped++;
                     continue;
@@ -850,6 +863,7 @@ public sealed class CorpusIndexer(
                 okState.ChunkCount = stored;
                 okState.IndexedUtc = DateTime.UtcNow;
                 okFile.SizeBytes = candidate.SizeBytes;
+                okFile.Sha256 = fileSha;
                 okFile.Language = language;
                 okFile.MediaType = LanguageMap.MediaType(language);
                 okFile.ExtractedChars = content.Length;
@@ -1124,7 +1138,7 @@ public sealed class CorpusIndexer(
     /// Keying on a hash of the file's bytes breaks that circle, and is why the key is
     /// the bytes rather than the text they produce.
     /// </summary>
-    internal async Task<ExtractedText> ExtractCachedAsync(
+    internal async Task<(string Sha256, ExtractedText Text)> ExtractCachedAsync(
         ITextExtractor extractor, WorkspaceWalker.Candidate candidate, CancellationToken ct)
     {
         var sha = await HashFileAsync(candidate.FullPath, ct);
@@ -1136,7 +1150,7 @@ public sealed class CorpusIndexer(
             .FirstOrDefaultAsync(t => t.Sha256 == sha, ct);
 
         if (cached is not null && cached.ExtractorVersion == ExtractorVersions.Current)
-            return new ExtractedText(cached.Text, UnitsFrom(cached.UnitsJson), cached.Title);
+            return (sha, new ExtractedText(cached.Text, UnitsFrom(cached.UnitsJson), cached.Title));
 
         ExtractedText extracted;
         await using (var stream = File.OpenRead(candidate.FullPath))
@@ -1198,7 +1212,7 @@ public sealed class CorpusIndexer(
                 .SetProperty(t => t.ExtractorVersion, row.ExtractorVersion)
                 .SetProperty(t => t.ExtractedUtc, row.ExtractedUtc)
                 .SetProperty(t => t.EmptyReason, row.EmptyReason), ct);
-            return extracted;
+            return (sha, extracted);
         }
 
         try
@@ -1220,7 +1234,7 @@ public sealed class CorpusIndexer(
             db.Entry(row).State = EntityState.Detached;
         }
 
-        return extracted;
+        return (sha, extracted);
     }
 
     /// <summary>
@@ -1238,10 +1252,21 @@ public sealed class CorpusIndexer(
             ? []
             : JsonSerializer.Deserialize<List<ExtractedUnit>>(json) ?? [];
 
-    /// <summary>BOM, then UTF-8, then Latin-1. Never throws on a file with unusual bytes.</summary>
-    private static async Task<string> ReadTextAsync(string path, CancellationToken ct)
+    /// <summary>
+    /// Text and hash from one read. A workspace tree is often on a bind mount where a
+    /// round trip is the cost that matters, and hashing separately would read every file
+    /// in a 27,000-file repository twice.
+    /// </summary>
+    private static async Task<(string Sha256, string Text)> HashAndReadTextAsync(
+        string path, CancellationToken ct)
     {
         var bytes = await File.ReadAllBytesAsync(path, ct);
+        return (Convert.ToHexStringLower(SHA256.HashData(bytes)), Decode(bytes));
+    }
+
+    /// <summary>BOM, then UTF-8, then Latin-1. Never throws on a file with unusual bytes.</summary>
+    private static string Decode(byte[] bytes)
+    {
         try
         {
             return new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(

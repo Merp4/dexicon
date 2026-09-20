@@ -141,6 +141,9 @@ reported distinctly, because the first is worth retrying and the second is not.
 neighbouring indexed lines, stitched from stored chunks. For when a search hit needs its
 surroundings and the agent cannot open the file itself.
 
+Still from the chunks, unlike the whole-file resource: the window is built from the
+chunks that cover the requested line, so it can only return lines the index holds.
+
 This is also how an agent **reads on**. Chunks overlap and tile the file, so calling it
 again further down the file walks forwards through a document: a search hit in a book,
 then the next few pages of it, without the agent ever holding the file. It reads by
