@@ -55,7 +55,8 @@ public sealed class TruncatedPdfTests
     public void AConformingPdfIsStillRead()
     {
         // The control. A guard that rejects the corpus is worse than the hang it prevents,
-        // and 1,802 of the 1,804 PDFs measured carry %%EOF within their last 2 KB.
+        // and 1,981 of the 1,983 PDFs measured carry both trailer keywords in their last
+        // 4 KB; not one carries %%EOF without startxref.
         var extracted = new PdfTextExtractor().Extract(new MemoryStream(ValidPdf()), "fine.pdf");
 
         extracted.Text.ShouldContain("quick brown fox");
@@ -71,6 +72,7 @@ public sealed class TruncatedPdfTests
             new PdfTextExtractor().Extract(new MemoryStream(truncated), "cut-short.pdf"));
 
         ex.Message.ShouldContain("%%EOF");
+        ex.Message.ShouldContain("startxref");
         ex.Message.ShouldContain("cut-short.pdf");
     }
 
@@ -79,7 +81,7 @@ public sealed class TruncatedPdfTests
     {
         // The whole point. A 5 MB file with no trailer must cost one read of its end, not
         // a walk back through all of it. Padding a valid PDF reproduces the shape of the
-        // real case: plausible bytes, no %%EOF anywhere near the end.
+        // real case: plausible bytes, no trailer anywhere near the end.
         var padded = new byte[5 * 1024 * 1024];
         ValidPdf().CopyTo(padded, 0);
         var stream = new CountingStream(padded);
@@ -103,6 +105,23 @@ public sealed class TruncatedPdfTests
             new PdfTextExtractor().Extract(new MemoryStream(padded), "book.pdf"));
 
         ex.Message.ShouldContain("3,000,000");
+    }
+
+    [Fact]
+    public void AStrayEofMarkerInTheContentIsNotATrailer()
+    {
+        // Those five bytes can sit inside a stream, a comment or a string, so on their own
+        // they are not evidence of a trailer: a file cut mid-stream could carry them and
+        // still reach the recovery scan. The real trailer names the cross-reference table,
+        // so `startxref` has to be there too.
+        var padded = new byte[2_000_000];
+        ValidPdf().CopyTo(padded, 0);
+        "stream ... %%EOF ... endstream"u8.CopyTo(padded.AsSpan(padded.Length - 64));
+
+        var ex = Should.Throw<ExtractionFailedException>(() =>
+            new PdfTextExtractor().Extract(new MemoryStream(padded), "decoy.pdf"));
+
+        ex.Message.ShouldContain("startxref");
     }
 
     [Fact]

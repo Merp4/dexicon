@@ -27,10 +27,12 @@ with no section here fails its release rather than publishing an undescribed one
   those is a round trip: measured at about 6,000 a second against a 68 MiB file, which is
   3.3 hours for that file alone with the index job and its queue stopped behind it.
 
-  The last 4 KB is now checked for `%%EOF` before the file is opened. The same file is
-  refused in 2 ms and recorded as failed with its size. Of the 1,804 PDFs in the library
-  this was found on, 1,802 carry the marker within their last 2 KB and the two that do not
-  are both truncated downloads; an 84 MB PDF that is intact still extracts, in 13 s.
+  The last 4 KB is now checked for the trailer, `startxref` and `%%EOF`, before the file
+  is opened. The same file is refused in 2 ms and recorded as failed with its size. Both
+  keywords rather than the marker alone, because those five bytes can appear inside a
+  stream or a comment: run over the 1,983 PDFs to hand, the check rejects exactly the two
+  truncated downloads and not one other file carries `%%EOF` without `startxref`. An
+  84 MB PDF that is intact still extracts, in 13 s.
 
 - **Extraction has a time budget, so one file can no longer hold a corpus.** `Extract` is
   synchronous and the libraries beneath it take no cancellation token, so an index job's
