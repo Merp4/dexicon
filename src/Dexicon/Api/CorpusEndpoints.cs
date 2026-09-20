@@ -379,7 +379,12 @@ public static class CorpusEndpoints
             return Results.Accepted($"/api/jobs/{job.Id}", job.ToSummary());
         }).Produces<JobSummary>().WithGroupName(OpenApiDocuments.Integration);
 
-        g.MapGet("/{nameOrId}/files", async (string nameOrId, string? status, int? limit, int? offset,
+        // `name` and `sort` are the query's, not the page's. A client can only filter and
+        // order what it has fetched, so on a corpus larger than one page a name that IS
+        // in the corpus came back as no match — which is how a file that had just been
+        // added read as one that was never indexed.
+        g.MapGet("/{nameOrId}/files", async (string nameOrId, string? status, string? name,
+            string? sort, int? limit, int? offset,
             RequestContext rc, ScopeResolver scopes, CatalogDbContext db, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
@@ -390,23 +395,11 @@ public static class CorpusEndpoints
 
             var sourceIds = await db.Sources.Where(s => s.CorpusId == corpus.Id).Select(s => s.Id).ToListAsync(ct);
 
-            // Left join: a file attached before this set existed has no state row yet, and
-            // it is Pending rather than missing. Dropping it would hide exactly the files
-            // a new set still has to do.
-            var q = from f in db.Files.Where(f => sourceIds.Contains(f.SourceId))
-                    join s in db.FileChunkStates.Where(s => s.ChunkSetId == target.Set.Id)
-                        on f.Id equals s.FileId into gj
-                    from s in gj.DefaultIfEmpty()
-                    select new { File = f, State = s };
-
-            if (!string.IsNullOrWhiteSpace(status) && Enum.TryParse<FileStatus>(status, true, out var parsed))
-                q = parsed == FileStatus.Pending
-                    ? q.Where(x => x.State == null || x.State.Status == parsed)
-                    : q.Where(x => x.State != null && x.State.Status == parsed);
-
+            var q = FilesOf(db, sourceIds, target.Set.Id, status, name);
             var total = await q.CountAsync(ct);
-            var rows = await q.OrderBy(x => x.File.RelativePath)
-                .Skip(offset ?? 0).Take(Math.Clamp(limit ?? 100, 1, 1000))
+
+            var rows = await SortFiles(q, sort)
+                .Skip(Math.Max(0, offset ?? 0)).Take(Math.Clamp(limit ?? 100, 1, 1000))
                 .ToListAsync(ct);
 
             return Results.Ok(new FileListResponse(
@@ -521,6 +514,84 @@ public static class CorpusEndpoints
                 store));
         }).Produces<IndexedFileText>();
     }
+
+
+/// <summary>One file, and what one chunk set made of it.</summary>
+    /// <remarks>
+    /// Init properties rather than a positional record: EF projects a member
+    /// initialisation and cannot translate a constructor call inside this left join.
+    /// The build accepts either, so the difference only shows at run time.
+    /// </remarks>
+    internal sealed record FileRow
+    {
+        public required IndexedFile File { get; init; }
+
+        /// <summary>
+        /// Null for a file attached before the set existed. That is Pending rather than
+        /// missing, and dropping it would hide the files a new set still has to do.
+        /// </summary>
+        public FileChunkState? State { get; init; }
+    }
+
+    /// <summary>
+    /// The files of a corpus as one chunk set sees them, narrowed by status and name.
+    ///
+    /// The name is matched HERE rather than by the caller, because a caller can only
+    /// filter the page it fetched: on a corpus larger than one page a name that is in
+    /// the corpus came back as no match, which is how a file that had just been added
+    /// read as one that was never indexed.
+    /// </summary>
+    internal static IQueryable<FileRow> FilesOf(
+        CatalogDbContext db, List<string> sourceIds, string chunkSetId, string? status, string? name)
+    {
+        var q = from f in db.Files.Where(f => sourceIds.Contains(f.SourceId))
+                join s in db.FileChunkStates.Where(s => s.ChunkSetId == chunkSetId)
+                    on f.Id equals s.FileId into gj
+                from s in gj.DefaultIfEmpty()
+                select new FileRow { File = f, State = s };
+
+        if (!string.IsNullOrWhiteSpace(status) && Enum.TryParse<FileStatus>(status, true, out var parsed))
+            q = parsed == FileStatus.Pending
+                ? q.Where(x => x.State == null || x.State.Status == parsed)
+                : q.Where(x => x.State != null && x.State.Status == parsed);
+
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            // LIKE, for the case-insensitivity SQLite gives it over ASCII, with the
+            // pattern characters escaped: a caller typing `%` means the character, and
+            // unescaped it would match every file and read as the filter doing nothing.
+            // Parameterising does not escape them - the wildcard is interpreted from the
+            // parameter's value, not from the SQL text.
+            const string Escape = "\\";
+            var needle = name.Trim()
+                .Replace(Escape, Escape + Escape, StringComparison.Ordinal)
+                .Replace("%", Escape + "%", StringComparison.Ordinal)
+                .Replace("_", Escape + "_", StringComparison.Ordinal);
+            q = q.Where(x => EF.Functions.Like(x.File.RelativePath, $"%{needle}%", Escape));
+        }
+
+        return q;
+    }
+
+    /// <summary>
+    /// Orders a page of files, always on a second key.
+    ///
+    /// The first key is not unique for any of these: two files of the same size, chunk
+    /// count or status would come back in whatever order the database chose, and paging
+    /// an unstable order repeats one row and skips another between pages. A list that
+    /// loses a file while you page through it is the same defect this whole change is
+    /// about, arriving by a different route.
+    /// </summary>
+    internal static IOrderedQueryable<FileRow> SortFiles(IQueryable<FileRow> q, string? sort) =>
+        sort?.ToLowerInvariant() switch
+        {
+            "size" => q.OrderByDescending(x => x.File.SizeBytes).ThenBy(x => x.File.RelativePath),
+            "chunks" => q.OrderByDescending(x => x.State == null ? 0 : x.State.ChunkCount)
+                         .ThenBy(x => x.File.RelativePath),
+            "status" => q.OrderBy(x => x.State == null ? "" : x.State.Status.ToString())
+                         .ThenBy(x => x.File.RelativePath),
+            _ => q.OrderBy(x => x.File.RelativePath).ThenBy(x => x.File.Id),
+        };
 
     /// <summary>
     /// Apply a filter update to a source, returning whether anything actually moved.
