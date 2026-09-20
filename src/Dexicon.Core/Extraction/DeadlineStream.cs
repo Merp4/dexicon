@@ -22,6 +22,11 @@ namespace Dexicon.Core.Extraction;
 ///
 /// The throw is permanent rather than one-shot: a library that catches broadly and
 /// retries meets the same exception on its next read instead of resuming.
+///
+/// It is an inter-read guard, so it bounds a file that keeps reading rather than
+/// wall-clock time in extraction: a read that never returns, or computation inside the
+/// library between two reads, is not covered. See
+/// <see cref="Configuration.IndexingOptions.ExtractionTimeoutSeconds"/>.
 /// </summary>
 public sealed class DeadlineStream(Stream inner, TimeSpan budget, string fileName) : Stream
 {
@@ -90,9 +95,16 @@ public sealed class DeadlineStream(Stream inner, TimeSpan budget, string fileNam
 }
 
 /// <summary>
-/// Raised when a file took longer to read than the extraction budget. Separate from
-/// <see cref="ExtractionFailedException"/> at the throw site so the message can say the
-/// file ran out of time rather than that it could not be parsed, which is what the
-/// generic PDF-open handler would otherwise report.
+/// Raised when a file took longer to read than the extraction budget.
+///
+/// A kind of <see cref="ExtractionFailedException"/> rather than a sibling of it: every
+/// extractor's catch-all is filtered on that type, so as a sibling this was re-wrapped by
+/// the DOCX and PPTX handlers and arrived as "is not a readable .docx", which sent the
+/// indexer down the wrong branch and whoever read the job looking for a damaged document
+/// instead of a slow mount. EPUB happened to propagate it, because its handler salvages
+/// rather than rethrows; that is luck, not design. Subtyping exempts all four at once.
+///
+/// The indexer still catches it by its own name first, so a timeout is logged and counted
+/// as one.
 /// </summary>
-public sealed class ExtractionTimeoutException(string message) : Exception(message);
+public sealed class ExtractionTimeoutException(string message) : ExtractionFailedException(message);

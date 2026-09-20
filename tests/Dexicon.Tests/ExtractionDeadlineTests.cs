@@ -96,6 +96,40 @@ public sealed class ExtractionDeadlineTests
         stream.Length.ShouldBe(1234);
     }
 
+    /// <summary>
+    /// Every extractor filters its catch-all on <see cref="ExtractionFailedException"/>.
+    /// A timeout that was a sibling of that type rather than a subtype was re-wrapped by
+    /// DOCX and PPTX and arrived as "is not a readable .docx", which is both untrue and
+    /// routed to the wrong branch of the indexer. Measured by making the type a sibling
+    /// again: those two cases fail and EPUB does not, because its handler salvages rather
+    /// than rethrows. EPUB is covered here so that stays true rather than staying luck.
+    ///
+    /// The budget is spent before the first read, so what the bytes contain does not
+    /// matter: the reader's first Seek or Read into the archive is the one that throws.
+    /// </summary>
+    [Theory]
+    [InlineData("docx")]
+    [InlineData("pptx")]
+    [InlineData("epub")]
+    public void ATimeoutIsNotReportedAsAnUnreadableFile(string format)
+    {
+        ITextExtractor extractor = format switch
+        {
+            "docx" => new DocxTextExtractor(),
+            "pptx" => new PptxTextExtractor(),
+            _ => new EpubTextExtractor(),
+        };
+        var name = $"book.{format}";
+
+        using var inner = Bytes();
+        var stream = new DeadlineStream(inner, Expired, name);
+
+        var ex = Should.Throw<ExtractionTimeoutException>(() => extractor.Extract(stream, name));
+
+        ex.Message.ShouldNotContain("not a readable");
+        ex.Message.ShouldContain(name);
+    }
+
     [Fact]
     public void ATimeoutEscapesExtractionRatherThanReadingAsACorruptFile()
     {

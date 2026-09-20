@@ -42,6 +42,11 @@ with no section here fails its release rather than publishing an undescribed one
   recorded as failed with no content hash, so a later refresh retries it. Set by
   `DEXICON_INDEXING_EXTRACTIONTIMEOUTSECONDS`, default 300, 0 to disable.
 
+  The clock is read between operations on the file, so this bounds a file that keeps
+  reading rather than wall-clock time in extraction. A single read that never returns, or
+  a long stretch of computation inside the library, passes unchecked; bounding those needs
+  process isolation, and the option says so where it is declared.
+
 ---
 
 ## 0.5.1 — 2026-09-19

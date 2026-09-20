@@ -30,7 +30,14 @@ public sealed record ExtractedUnit(int Number, int StartOffset, string? Label = 
 /// Raised when a file is a recognised format that cannot be read: encrypted, DRM'd,
 /// or structurally broken. Distinct from "produced no text", which is not an error.
 /// </summary>
-public sealed class ExtractionFailedException(string message, Exception? inner = null)
+/// <remarks>
+/// Not sealed, so <see cref="ExtractionTimeoutException"/> can be one of these. Every
+/// extractor's catch-all is filtered on this type, and a timeout that was a sibling
+/// rather than a subtype was re-wrapped by three of them and reported as a corrupt file.
+/// Making the relationship carry the exemption means a new extractor gets it by copying
+/// the filter its neighbours already use.
+/// </remarks>
+public class ExtractionFailedException(string message, Exception? inner = null)
     : Exception(message, inner);
 
 /// <summary>
@@ -145,7 +152,7 @@ public sealed partial class PdfTextExtractor : ITextExtractor
         {
             document = PdfDocument.Open(source);
         }
-        catch (Exception ex) when (ex is not ExtractionTimeoutException)
+        catch (Exception ex) when (ex is not ExtractionFailedException)
         {
             buffered?.Dispose();
             throw new ExtractionFailedException(
