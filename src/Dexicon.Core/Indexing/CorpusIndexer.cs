@@ -364,40 +364,65 @@ public sealed class CorpusIndexer(
     ///
     /// The refusal is the only exact statement about the model's limit available here, and
     /// it costs about 350 ms flat whatever the input size, against seconds for an accepted
-    /// embed. That makes it cheap enough to size by rather than predict around: a batch
-    /// that is refused is halved and each half retried, and a single chunk that is refused
-    /// is split into two chunks. The recursion ends at text the model accepts, so no vector
+    /// embed. That makes it cheap enough to size by rather than predict around. The
+    /// dividing itself is <see cref="DivideAndWriteAsync"/>; this supplies the writing.
+    /// </summary>
+    private Task<int> EmbedBatchAsync(
+        ChunkSet set, List<Chunk> batch, string source, int firstIndex, IndexJob job,
+        CancellationToken ct) =>
+        DivideAndWriteAsync(batch, firstIndex,
+            write: async numbered =>
+            {
+                job.Phase = "embed";
+
+                // TextToEmbed, not Content: a set with heading context embeds each chunk
+                // under its heading trail while storing the chunk verbatim.
+                var embeddings = await embedder.EmbedAsync(
+                    set.Target(), EmbedPurpose.Document,
+                    numbered.Select(c => c.TextToEmbed).ToList(), source: source, ct: ct);
+
+                job.Phase = "upsert";
+                await vectors.UpsertAsync(set.CollectionName, numbered, embeddings, ct);
+            },
+            onSplit: (original, second) => log.LogInformation(
+                "{Source}: chunk {Index} exceeds the model's context and was split at line {Line}",
+                source, original.ChunkIndex, second.StartLine));
+
+    /// <summary>
+    /// Write a batch, halving it and then splitting a single chunk for as long as the model
+    /// refuses what it is given. The recursion ends at text the model accepts, so no vector
     /// is ever stored for less text than its chunk claims. See D-31.
+    ///
+    /// Separated from the embedding and upsert it drives because the index arithmetic is
+    /// the subtle part and the plumbing is not: a fake <paramref name="write"/> that refuses
+    /// anything over a length exercises halving, recursive splitting, write-order numbering
+    /// and the returned count without a catalogue, a vector store or a model.
     /// </summary>
     /// <param name="firstIndex">
     /// The chunk index the first chunk of this batch is written under. Numbering happens
-    /// here rather than at the chunker, because a split adds a chunk and its halves have
-    /// to sit between their neighbours: <c>ChunkIndex</c> is the ORDERING and neighbour
-    /// key as well as part of the point identity. ContextService selects neighbours by
-    /// <c>Math.Abs(c.ChunkIndex - hit.ChunkIndex)</c> and three other sites order by it,
-    /// so a tail numbered above every other chunk in the file would be sorted to the end
-    /// of its own document and fall outside its own neighbourhood.
+    /// here rather than at the chunker, because a split adds a chunk and its halves have to
+    /// sit between their neighbours: <c>ChunkIndex</c> is the ORDERING and neighbour key as
+    /// well as part of the point identity. ContextService selects neighbours by
+    /// <c>Math.Abs(c.ChunkIndex - hit.ChunkIndex)</c> and three other sites order by it, so
+    /// a tail numbered above every other chunk in the file would be sorted to the end of
+    /// its own document and fall outside its own neighbourhood.
+    /// </param>
+    /// <param name="write">
+    /// Stores the batch under the consecutive indices already assigned to it, or throws
+    /// <see cref="EmbeddingInputTooLongException"/> if the model will not read one of them.
     /// </param>
     /// <returns>Chunks written, which exceeds the batch size when a split occurred.</returns>
-    private async Task<int> EmbedBatchAsync(
-        ChunkSet set, List<Chunk> batch, string source, int firstIndex, IndexJob job,
-        CancellationToken ct)
+    internal static async Task<int> DivideAndWriteAsync(
+        List<Chunk> batch, int firstIndex,
+        Func<List<Chunk>, Task> write,
+        Action<Chunk, Chunk>? onSplit = null)
     {
         if (batch.Count == 0) return 0;
 
         try
         {
-            job.Phase = "embed";
-
-            // TextToEmbed, not Content: a set with heading context embeds each chunk under
-            // its heading trail while storing the chunk verbatim.
-            var embeddings = await embedder.EmbedAsync(
-                set.Target(), EmbedPurpose.Document, batch.Select(c => c.TextToEmbed).ToList(),
-                source: source, ct: ct);
-
-            job.Phase = "upsert";
             List<Chunk> numbered = [.. batch.Select((c, i) => c with { ChunkIndex = firstIndex + i })];
-            await vectors.UpsertAsync(set.CollectionName, numbered, embeddings, ct);
+            await write(numbered);
             return batch.Count;
         }
         catch (EmbeddingInputTooLongException) when (batch.Count > 1)
@@ -405,22 +430,20 @@ public sealed class CorpusIndexer(
             // Which input was too long is not reported, and asking costs a call per chunk.
             // Halving finds it in log2 refusals, each of them cheap.
             var half = batch.Count / 2;
-            var left = await EmbedBatchAsync(
-                set, batch.GetRange(0, half), source, firstIndex, job, ct);
-            var right = await EmbedBatchAsync(
-                set, batch.GetRange(half, batch.Count - half), source, firstIndex + left, job, ct);
+            var left = await DivideAndWriteAsync(
+                batch.GetRange(0, half), firstIndex, write, onSplit);
+            var right = await DivideAndWriteAsync(
+                batch.GetRange(half, batch.Count - half), firstIndex + left, write, onSplit);
             return left + right;
         }
         catch (EmbeddingInputTooLongException) when (Split(batch[0]) is { } halves)
         {
-            log.LogInformation(
-                "{Source}: chunk {Index} exceeds the model's context and was split at line {Line}",
-                source, batch[0].ChunkIndex, halves.Second.StartLine);
+            onSplit?.Invoke(batch[0], halves.Second);
 
             // Left first, then right at the index after however many the left half needed:
             // a half can itself be refused and split again, so the count is the offset.
-            var left = await EmbedBatchAsync(set, [halves.First], source, firstIndex, job, ct);
-            var right = await EmbedBatchAsync(set, [halves.Second], source, firstIndex + left, job, ct);
+            var left = await DivideAndWriteAsync([halves.First], firstIndex, write, onSplit);
+            var right = await DivideAndWriteAsync([halves.Second], firstIndex + left, write, onSplit);
             return left + right;
         }
     }
@@ -454,7 +477,14 @@ public sealed class CorpusIndexer(
         // Neither, so this is one unbroken run: divide it rather than fail the file.
         if (cut <= 0) cut = mid - 1;
 
-        var head = content[..(cut + 1)];
+        // A chunk's content holds its lines newline-SEPARATED, never newline-terminated:
+        // measured over the chunker, no piece begins or ends with one, and Passage.Stitch
+        // reconstructs a file by appending the terminator itself. So on a line cut the
+        // separator belongs to neither half. Keeping it on the head made that chunk the
+        // only one in the file carrying its own terminator, and Stitch turned it into a
+        // blank line numbered the same as the tail's first real line. Any other cut is
+        // inside a line, where the two halves simply abut.
+        var head = onNewline ? content[..cut] : content[..(cut + 1)];
         var tail = content[(cut + 1)..];
         if (head.Length == 0 || tail.Length == 0) return null;
 
@@ -464,15 +494,15 @@ public sealed class CorpusIndexer(
             ? chunk.EmbedText[..^content.Length]
             : string.Empty;
 
-        // Where the second half starts, counted from the newlines actually consumed.
-        var tailStart = Math.Min(chunk.StartLine + head.Count(c => c == '\n'), chunk.EndLine);
+        // The head's last line, counted from the separators inside it.
+        var headEnd = Math.Min(chunk.StartLine + head.Count(c => c == '\n'), chunk.EndLine);
 
-        // On a newline cut the head ENDS the line it consumed, so the tail opens the next
-        // one and the head must not claim it too. Giving both the same line made their
-        // ranges overlap, and Passage.Stitch drops the lines a chunk shares with the one
-        // before it: the tail's first line disappeared from every assembled passage. Any
-        // other cut leaves both halves inside one line, which is the line they share.
-        var headEnd = onNewline ? Math.Max(chunk.StartLine, tailStart - 1) : tailStart;
+        // On a line cut the tail opens the NEXT line, and the head must not claim it too.
+        // Giving both the same line made their ranges overlap, and Passage.Stitch drops
+        // the lines a chunk shares with the one before it, so the tail's first line
+        // disappeared from every assembled passage. Any other cut leaves both halves
+        // inside one line, which is the line they share.
+        var tailStart = onNewline ? Math.Min(headEnd + 1, chunk.EndLine) : headEnd;
 
         return (
             chunk with

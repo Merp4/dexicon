@@ -39,12 +39,57 @@ public sealed class ChunkSplitTests
     {
         // The property the whole design rests on: splitting never loses text. A vector for
         // less text than its chunk claims is exactly what this replaced.
+        //
+        // On a line cut the halves are joined by the separator rather than butted
+        // together, because a chunk's content is newline-SEPARATED and never
+        // newline-terminated: measured over the chunker, no piece begins or ends with one.
+        // Passage.Stitch supplies it, which StitchingTheHalvesReproducesTheChunk checks
+        // end to end.
         var chunk = Make(Lines(40));
 
         var split = CorpusIndexer.Split(chunk);
 
         split.ShouldNotBeNull();
-        (split.Value.First.Content + split.Value.Second.Content).ShouldBe(chunk.Content);
+        (split.Value.First.Content + "\n" + split.Value.Second.Content).ShouldBe(chunk.Content);
+    }
+
+    [Fact]
+    public void StitchingTheHalvesReproducesTheChunk()
+    {
+        // The end-to-end property, through the code that actually reassembles text. It
+        // catches what asserting on Content alone cannot: a half that carries its own
+        // terminator becomes a blank line here, numbered the same as the tail's first
+        // real line, and a half whose range overlaps its neighbour loses a line entirely.
+        var chunk = Make(Lines(40), start: 1, end: 40);
+
+        var (first, second) = CorpusIndexer.Split(chunk)!.Value;
+        var stitched = Passage.Stitch(
+        [
+            (first.StartLine, first.EndLine, first.Content),
+            (second.StartLine, second.EndLine, second.Content),
+        ]);
+
+        stitched.TrimEnd('\n').ShouldBe(chunk.Content);
+    }
+
+    [Fact]
+    public void StitchingTheHalvesNumbersEveryLineOnce()
+    {
+        // With line numbers on, a stray terminator printed "20: " against nothing and the
+        // tail then printed "20: line 20", so one number named two lines.
+        var chunk = Make(Lines(40), start: 1, end: 40);
+
+        var (first, second) = CorpusIndexer.Split(chunk)!.Value;
+        var stitched = Passage.Stitch(
+        [
+            (first.StartLine, first.EndLine, first.Content),
+            (second.StartLine, second.EndLine, second.Content),
+        ], lineNumbers: true);
+
+        var numbers = stitched.TrimEnd('\n').Split('\n')
+            .Select(l => l.Split(':')[0]).ToList();
+
+        numbers.ShouldBe([.. Enumerable.Range(1, 40).Select(i => i.ToString())]);
     }
 
     [Fact]
@@ -69,7 +114,7 @@ public sealed class ChunkSplitTests
         // every assembled passage.
         var (first, second) = CorpusIndexer.Split(Make(Lines(40), start: 10, end: 49))!.Value;
 
-        first.Content.ShouldEndWith("\n");
+        first.Content.ShouldNotEndWith("\n");
         second.StartLine.ShouldBe(first.EndLine + 1);
     }
 
@@ -105,8 +150,10 @@ public sealed class ChunkSplitTests
     {
         var split = CorpusIndexer.Split(Make(Lines(40)));
 
-        split!.Value.First.Content.ShouldEndWith("\n");
-        split.Value.Second.Content.ShouldStartWith("line ");
+        // The separator goes to neither half, so the head ends on the text of its last
+        // line rather than on the newline after it.
+        split!.Value.First.Content.ShouldEndWith("line 20");
+        split.Value.Second.Content.ShouldStartWith("line 21");
         split.Value.Second.Content.ShouldNotContain("\nline 1\n");
     }
 
@@ -135,6 +182,7 @@ public sealed class ChunkSplitTests
         var split = CorpusIndexer.Split(chunk);
 
         split.ShouldNotBeNull();
+        // No line to cut on, so the halves abut with nothing between them.
         (split.Value.First.Content + split.Value.Second.Content).ShouldBe(chunk.Content);
         split.Value.First.Content.Length.ShouldBeGreaterThan(0);
         split.Value.Second.Content.Length.ShouldBeGreaterThan(0);

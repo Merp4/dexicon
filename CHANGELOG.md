@@ -71,6 +71,21 @@ with no section here fails its release rather than publishing an undescribed one
   the setting did nothing. Longstanding, found reviewing the split path, which re-applies
   a prefix that was always empty.
 
+- **A refusal reaches the code that already handled an embed not happening.**
+  `EmbeddingInputTooLongException` was a sibling of `EmbeddingUnavailableException`, and
+  three callers written against the base type silently stopped covering the refusal:
+  search returned 500 on an over-long query instead of falling back to keyword, the model
+  probe aborted on exactly the models that refuse rather than truncate, and the indexer
+  failed the whole job instead of skipping a file whose chunk could not be divided. It is
+  a subtype now, caught ahead of the base by anyone who can act on the difference.
+
+- **A split on a line no longer inserts a blank one.** A chunk's content holds its lines
+  newline-separated and never newline-terminated: measured over the chunker, no piece
+  begins or ends with one, and `Passage.Stitch` supplies the terminator. Keeping the
+  separator on the head made that chunk the only one carrying its own, which stitched as a
+  blank line numbered the same as the tail's first real line. The separator now belongs to
+  neither half, and a round-trip through `Stitch` holds it.
+
 ---
 
 ## 0.5.1 — 2026-09-19

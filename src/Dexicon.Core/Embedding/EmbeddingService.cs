@@ -67,23 +67,35 @@ public interface IEmbeddingService
     int KnownDimensions(EmbeddingTarget target);
 }
 
-public sealed class EmbeddingUnavailableException(string message, Exception? inner = null)
+/// <remarks>
+/// Not sealed, so <see cref="EmbeddingInputTooLongException"/> can be one of these. Every
+/// caller that copes with an embed not happening already catches this type, and a refusal
+/// that was a sibling instead reached none of them.
+/// </remarks>
+public class EmbeddingUnavailableException(string message, Exception? inner = null)
     : Exception(message, inner);
 
 /// <summary>
 /// An input was longer than the model's context, and the provider refused it.
 ///
-/// Distinct from <see cref="EmbeddingUnavailableException"/> because it is not a fault and
-/// not transient: the same input fails the same way every time, and the answer is to divide
-/// the text rather than to retry it. Only the caller knows how, so the refusal is reported
-/// rather than absorbed.
+/// A KIND of <see cref="EmbeddingUnavailableException"/>, caught ahead of it by anyone who
+/// can act on the difference: it is not a fault and not transient, the same input fails the
+/// same way every time, and the answer is to divide the text rather than retry it. Only the
+/// caller knows how, so the refusal is reported rather than absorbed.
+///
+/// It is a subtype rather than a sibling because everything that already handled an embed
+/// not happening was written against the base type and silently stopped covering the
+/// refusal: SearchService fell back to keyword search and instead returned 500 on an
+/// over-long query, ModelProbe read the refusal as evidence a model does not truncate
+/// silently and instead aborted on exactly the models that behave best, and the indexer
+/// skipped the file and instead failed the whole job. None of them had to change.
 ///
 /// It is also the one exact statement about token limits available to this process. Ollama
 /// exposes no tokenizer, and a local one cannot be shown to match the model that is loaded,
 /// so this is what sizing is built on rather than guarded against. See D-31.
 /// </summary>
 public sealed class EmbeddingInputTooLongException(string message, Exception? inner = null)
-    : Exception(message, inner);
+    : EmbeddingUnavailableException(message, inner);
 
 public sealed class EmbeddingService(
     IEmbeddingGeneratorFactory factory,
