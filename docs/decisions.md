@@ -1306,44 +1306,65 @@ literal from the document that answers it, scoring whether the text handed back 
 it. Both arms answer the same query at the same realised length, because an assembled
 passage wins on recall for free if it is allowed to be larger.
 
-One half of this entry is answered and the other is not, and the first attempt reported both as answered.
+Both halves now have a figure, and the first attempt at this amendment got the second one wrong: it reported a defect in the assembler as a result about assembly.
 
 **The locator half holds.** Scored on what the caller reads rather than on file rank, a
-small chunk is better, and the margin is where the budget is tight:
+small chunk is better, and the margin is where the budget is tight. The passage arm with
+no neighbours, which is what `POST /api/context` returns by default:
 
 | budget | 256 tokens | 768 tokens |
 |---|---|---|
-| 1,500 characters | **0.527** | 0.291 |
+| 1,500 characters | **0.491** | 0.309 |
 | 6,000 characters | **0.600** | 0.582 |
 
 That is the result this entry argued was being discounted for the wrong reason, holding up
-under the metric it said to use.
+under the metric it said to use. It converges at a wide budget, where there is room for
+several whole 768-token chunks and the size stops deciding what fits.
 
-**The assembly half is still unmeasured.** This entry first recorded it as refuted, on a
-run where widening the passage collapsed recall from 0.527 to 0.073. That run was measuring
-a defect. A block too large for the remaining budget is cut down to one piece, and
-`ContextAssembler` took the lowest chunk index rather than the hit's own, so with
-neighbours it returned the chunk furthest BEFORE the match: a top hit at lines 122-165 came
-back as lines 1-30. The matched line was absent from 43 of 55 queries at two neighbours and
-from none at zero, which is the whole of the collapse. Fixed, and afterwards the exclusion
-is 0 of 55 and neighbours score exactly what no neighbours scores.
+**Widening the passage was recorded as refuted, and that run was measuring a defect.**
+It reported recall collapsing from 0.527 to 0.073 as soon as neighbours were asked for. A
+block too large for the remaining budget is cut down to one piece, and `ContextAssembler`
+took the lowest chunk index rather than the hit's own, so with neighbours it returned the
+chunk furthest BEFORE the match: a top hit at lines 122-165 came back as lines 1-30. The
+matched line was absent from 43 of 55 queries at two neighbours and from none at zero,
+which is the whole of the collapse.
 
-So there is no result either way, and the claim is withdrawn rather than softened. What was
-tested was chunk-neighbour expansion inside one shared budget; what this entry proposes is
-that the chunk is an entry point and the caller reads the passage out of the whole
-document. Those are not the same thing, and the second has never been tried.
+Rerun after the fix, the same sweep says something different, and not what the first
+version of this retraction said either. At 256 tokens with no overlap, passage arm:
 
-It could not be, until now: the only copy of a workspace file's extracted text was its
+| budget | no neighbours | two | five |
+|---|---|---|---|
+| 1,500 characters | **0.491** | 0.418 | 0.418 |
+| 6,000 characters | 0.600 | **0.636** | 0.455 |
+
+So widening costs at a tight budget and pays at a wide one. 0.636 is the best figure
+anywhere in the sweep, and at that setting the passage arm beats the chunks arm at the
+same realised length — 0.636 against 0.564 — which is the only place in thirty rows where
+the two come apart in the passage's favour. At five neighbours it falls away again: past
+some width the budget is spent on one document's surroundings rather than on other
+documents.
+
+"Worse at every size and every budget" is therefore refuted by its own corrected
+measurement. What replaces it is narrower: neighbour expansion is worth about two chunks
+either side, and only when the budget can hold them.
+
+This is still not the experiment this entry asks for. What was tested is chunk-neighbour
+expansion inside one shared budget; what the entry proposes is that the chunk is an entry
+point and the caller reads the passage out of the whole document. Until recently that
+could not be tried at all — the only copy of a workspace file's extracted text was its
 chunk payloads, so there was no document to read a window from. `file_texts` gives one,
-and `get_context` reads it, taking the caller's line range out of the document rather
-than the chunks overlapping it. `POST /api/context`, which the benchmark's passage arm
-calls, still assembles from neighbour chunks, so the experiment this entry asks for is now
-possible and still not run.
+and `get_context` reads it, taking the caller's line range out of the document rather than
+the chunks overlapping it. `POST /api/context`, which the benchmark's passage arm calls,
+still expands by chunk neighbours.
 
-**Overlap earns nothing on this corpus.** Swept alongside: 256 tokens is better with no
-overlap than with the shipped 100 at a tight budget (0.527 against 0.473) and identical at
-a wide one, and 768 at half overlap is worse than either (0.491 against 0.582). It doubles
-the chunk count, the vectors and the embedding time for no measured return.
+**Overlap earns nothing at 256 tokens.** Swept alongside, passage arm with no
+neighbours: 256 with no overlap beats 256 with the shipped 100 at both budgets, 0.491
+against 0.418 at 1,500 and 0.600 against 0.564 at 6,000. It costs a chunk count, vectors
+and embedding time, and returns nothing measurable.
+
+At 768 the picture is less clean — overlap 100 edges ahead of none at a wide budget, 0.600
+against 0.582 — but half-overlap is worse than either, 0.473, and 768 is not the size this
+entry recommends. Nothing here argues for carrying more overlap at the size that shipped.
 
 **What the evidence does not cover.** One corpus of 16 documents and 55 queries, on one
 model. Containment is a floor and not a quality score: text holding the answer can still be
@@ -1353,10 +1374,11 @@ therefore was not tested; what shipped is the configured target with the refusal
 And the ground truth is authored, which is its weakest point: 15 of the 55 spans were
 unique and still identified the wrong fact until review and a full re-read caught them.
 
-**Revisit if.** The assembly half still awaits its experiment. It needs `/api/context` to
-assemble from the document rather than from neighbour chunks, and a benchmark arm that
-scores the result. A larger or more varied corpus could also move the size result, which
-rests on 55 questions over 16 documents.
+**Revisit if.** Reading the passage out of the document, rather than out of the chunks
+either side of the hit, still awaits its experiment: it needs `/api/context` to assemble
+that way and a benchmark arm that scores it. The neighbour result above suggests where to
+look, since two chunks either side already pays at a wide budget. A larger or more varied
+corpus could also move the size result, which rests on 55 questions over 16 documents.
 ---
 
 ### D-32 Discovery is its own pass, and does not queue behind indexing
