@@ -242,9 +242,8 @@ public sealed class CorpusIndexer(
                 // Documents are chunked as prose: a C# member-boundary regex finds
                 // nothing useful in extracted PDF text, so the set's boundary mode is
                 // overridden here while everything else about the set is honoured.
-                var forFile = await ForFileAsync(chunking, set, cached.Text, file.RelativePath, ct);
                 var pieces = CodeChunker.Chunk(file.RelativePath, cached.Text,
-                    forFile with { BoundaryMode = "blank-line" }, extracted);
+                    chunking with { BoundaryMode = "blank-line" }, extracted);
 
                 var chunks = pieces.Select(p => new Chunk
                 {
@@ -309,33 +308,6 @@ public sealed class CorpusIndexer(
     }
 
     /// <summary>
-    /// The set's options narrowed to one file's own token density.
-    ///
-    /// Called only for a file that is about to be chunked, never for one the fingerprint
-    /// says is unchanged. An incremental refresh that finds nothing to do still costs zero
-    /// embedding calls, which is the whole point of having one.
-    ///
-    /// Narrowing only. A file at or above the model's measured ratio keeps the set's
-    /// budget: the ratio is the floor the budget has to survive, and raising it for an
-    /// easy file would spend the headroom that makes the budget safe.
-    /// </summary>
-    private async Task<ChunkOptions> ForFileAsync(
-        ChunkOptions chunking, ChunkSet set, string content, string label, CancellationToken ct)
-    {
-        var density = await TextDensity.MeasureAsync(embedder, set.Target(), content, log, ct);
-
-        if (density is not { } d || d >= chunking.CharsPerToken) return chunking;
-
-        log.LogInformation(
-            "{Label}: {Density:0.00} chars per token against the model's {Model:0.00}, "
-            + "chunking it at {Chars:N0} characters rather than {Was:N0}",
-            label, d, chunking.CharsPerToken,
-            (int)(chunking.ChunkSizeTokens * d), (int)(chunking.ChunkSizeTokens * chunking.CharsPerToken));
-
-        return chunking with { CharsPerToken = d };
-    }
-
-    /// <summary>
     /// Embed and upsert a file's chunks in batches, reporting progress between them.
     ///
     /// Batched rather than one call per file, because a 437-page PDF is ONE file
@@ -351,6 +323,11 @@ public sealed class CorpusIndexer(
         // parallel, while still reporting progress at that granularity.
         var batchSize = Math.Max(1, _embedding.BatchSize) * Math.Max(1, _embedding.MaxConcurrency);
 
+        // Indices for halves produced by a split. The file's points were deleted before
+        // this run, and a point id is (chunk set, source, path, chunk index), so these only
+        // have to be unique within the file being indexed now.
+        var nextIndex = chunks.Count == 0 ? 0 : chunks.Max(c => c.ChunkIndex) + 1;
+
         for (var offset = 0; offset < chunks.Count; offset += batchSize)
         {
             ct.ThrowIfCancellationRequested();
@@ -360,19 +337,11 @@ public sealed class CorpusIndexer(
             job.Phase = "embed";
             Report(progress, job, $"{label} - chunk {through}/{chunks.Count}");
 
-            // TextToEmbed, not Content: a set with heading context embeds each chunk under
-            // its heading trail while storing the chunk verbatim.
-            // The batch is one file's chunks, so the label describes it exactly. The range
-            // narrows it to the batch rather than the whole book, which for a 400-chunk PDF
-            // is the difference between a lead and a shrug.
-            var embeddings = await embedder.EmbedAsync(
-                set.Target(), EmbedPurpose.Document, batch.Select(c => c.TextToEmbed).ToList(),
-                source: $"{label} chunks {offset + 1}-{through}", ct: ct);
+            var written = await EmbedBatchAsync(
+                set, batch, $"{label} chunks {offset + 1}-{through}", nextIndex, job, ct);
 
-            job.Phase = "upsert";
-            await vectors.UpsertAsync(set.CollectionName, batch, embeddings, ct);
-
-            job.ChunksWritten += batch.Count;
+            job.ChunksWritten += written.Chunks;
+            nextIndex = written.NextIndex;
             Report(progress, job, $"{label} - chunk {through}/{chunks.Count}");
 
             // SSE alone is not enough: /api/jobs reads the catalogue, so without a
@@ -384,6 +353,118 @@ public sealed class CorpusIndexer(
                 sinceFlush.Restart();
             }
         }
+    }
+
+    /// <summary>
+    /// Embed a batch and upsert it, dividing anything the provider will not accept.
+    ///
+    /// The refusal is the only exact statement about the model's limit available here, and
+    /// it costs about 350 ms flat whatever the input size, against seconds for an accepted
+    /// embed. That makes it cheap enough to size by rather than predict around: a batch
+    /// that is refused is halved and each half retried, and a single chunk that is refused
+    /// is split into two chunks. The recursion ends at text the model accepts, so no vector
+    /// is ever stored for less text than its chunk claims. See D-31.
+    /// </summary>
+    /// <returns>Chunks written, and the next free chunk index after any splits.</returns>
+    private async Task<(int Chunks, int NextIndex)> EmbedBatchAsync(
+        ChunkSet set, List<Chunk> batch, string source, int nextIndex, IndexJob job,
+        CancellationToken ct)
+    {
+        if (batch.Count == 0) return (0, nextIndex);
+
+        try
+        {
+            job.Phase = "embed";
+
+            // TextToEmbed, not Content: a set with heading context embeds each chunk under
+            // its heading trail while storing the chunk verbatim.
+            var embeddings = await embedder.EmbedAsync(
+                set.Target(), EmbedPurpose.Document, batch.Select(c => c.TextToEmbed).ToList(),
+                source: source, ct: ct);
+
+            job.Phase = "upsert";
+            await vectors.UpsertAsync(set.CollectionName, batch, embeddings, ct);
+            return (batch.Count, nextIndex);
+        }
+        catch (EmbeddingInputTooLongException) when (batch.Count > 1)
+        {
+            // Which input was too long is not reported, and asking costs a call per chunk.
+            // Halving finds it in log2 refusals, each of them cheap.
+            var half = batch.Count / 2;
+            var left = await EmbedBatchAsync(
+                set, batch.GetRange(0, half), source, nextIndex, job, ct);
+            var right = await EmbedBatchAsync(
+                set, batch.GetRange(half, batch.Count - half), source, left.NextIndex, job, ct);
+            return (left.Chunks + right.Chunks, right.NextIndex);
+        }
+        catch (EmbeddingInputTooLongException) when (Split(batch[0], nextIndex) is { } halves)
+        {
+            log.LogInformation(
+                "{Source}: chunk {Index} exceeds the model's context and was split at line {Line}",
+                source, batch[0].ChunkIndex, halves.Second.StartLine);
+
+            var left = await EmbedBatchAsync(set, [halves.First], source, nextIndex + 1, job, ct);
+            var right = await EmbedBatchAsync(set, [halves.Second], source, left.NextIndex, job, ct);
+            return (left.Chunks + right.Chunks, right.NextIndex);
+        }
+    }
+
+    /// <summary>
+    /// Divide a chunk near its middle, or null when it is a single character and there is
+    /// nothing to divide.
+    ///
+    /// A line boundary is preferred, because a chunk is read as text and cited by line
+    /// range, and a split mid-line gives both halves a range that is partly wrong. It is
+    /// not always available: a minified file is one line, and a PDF page can extract as
+    /// one. Falling back to a word and then to the midpoint keeps the file indexable, and
+    /// both halves then carry the line range they are genuinely inside, which is the line
+    /// they share.
+    ///
+    /// The heading trail in <see cref="Chunk.EmbedText"/> is re-applied to each half: it is
+    /// a prefix on the content, so dividing the content alone would leave the second half
+    /// embedded under text that no longer precedes it.
+    /// </summary>
+    internal static (Chunk First, Chunk Second)? Split(Chunk chunk, int nextIndex)
+    {
+        var content = chunk.Content;
+        if (content.Length < 2) return null;
+
+        var mid = content.Length / 2;
+        var ceiling = Math.Min(mid, content.Length - 1);
+
+        var cut = content.LastIndexOf('\n', ceiling);
+        if (cut <= 0) cut = content.LastIndexOf(' ', ceiling);
+        // Neither, so this is one unbroken run: divide it rather than fail the file.
+        if (cut <= 0) cut = mid - 1;
+
+        var head = content[..(cut + 1)];
+        var tail = content[(cut + 1)..];
+        if (head.Length == 0 || tail.Length == 0) return null;
+
+        // EmbedText is the heading trail followed by the content, so whatever precedes the
+        // content is the prefix both halves need.
+        var prefix = chunk.EmbedText.Length > content.Length
+            ? chunk.EmbedText[..^content.Length]
+            : string.Empty;
+
+        // Where the second half starts, counted from the newlines actually consumed. A
+        // split inside a line leaves both halves on that line, which is what they are on.
+        var boundary = Math.Min(chunk.StartLine + head.Count(c => c == '\n'), chunk.EndLine);
+
+        return (
+            chunk with
+            {
+                Content = head,
+                EmbedText = prefix.Length > 0 ? prefix + head : string.Empty,
+                EndLine = boundary,
+            },
+            chunk with
+            {
+                ChunkIndex = nextIndex,
+                Content = tail,
+                EmbedText = prefix.Length > 0 ? prefix + tail : string.Empty,
+                StartLine = boundary,
+            });
     }
 
     /// <summary>
@@ -584,14 +665,13 @@ public sealed class CorpusIndexer(
                 }
 
                 var language = LanguageMap.Detect(candidate.RelativePath);
-                var forFile = await ForFileAsync(chunking, set, content, candidate.RelativePath, ct);
 
                 // A document is chunked as prose regardless of its extension: applying a
                 // C# member-boundary regex to extracted PDF text finds nothing useful.
                 var pieces = extractor is null
-                    ? CodeChunker.Chunk(candidate.RelativePath, content, forFile, extracted)
+                    ? CodeChunker.Chunk(candidate.RelativePath, content, chunking, extracted)
                     : CodeChunker.Chunk(candidate.RelativePath, content,
-                        forFile with { BoundaryMode = "blank-line" }, extracted);
+                        chunking with { BoundaryMode = "blank-line" }, extracted);
 
                 if (pieces.Count == 0)
                 {

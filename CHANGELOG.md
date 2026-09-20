@@ -16,6 +16,32 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## Unreleased
+
+### Changed
+
+- **A chunk too long for the model is split, not truncated.** The provider is asked not to
+  truncate, so it refuses an over-long input. That refusal used to be answered by embedding
+  the chunk truncated: a vector for the opening of the chunk, stored under the whole
+  chunk's id, so its tail was unreachable by meaning and nothing downstream could tell. One
+  index run produced 212 of those across 74 files.
+
+  The refusal is now reported to the indexer, which halves the batch to find the chunk
+  responsible and splits that chunk in two, repeating until the model accepts what it is
+  given. A line boundary is preferred; a word boundary and then the midpoint are used where
+  there is no line to cut on, which is what a minified file or a PDF page extracted as one
+  line looks like. No vector is stored for less text than its chunk claims.
+
+- **Per-file token density measurement is gone.** `TextDensity` embedded three
+  3,000-character windows per file to estimate a characters-per-token ratio, about six
+  seconds a file, to predict what the refusal states exactly for about 350 ms. The refusal
+  is flat in input size, so rejecting a whole book costs less than embedding one chunk of
+  it. Chunk sizing now uses the set's configured size, and the refusal corrects it.
+
+  See [D-31](docs/decisions.md#d-31-a-chunk-is-an-index-entry-and-the-model-decides-how-big-it-can-be).
+
+---
+
 ## 0.5.1 — 2026-09-19
 
 ### Fixed
