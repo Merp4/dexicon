@@ -1349,7 +1349,17 @@ same thing without the ambiguity.
 Sweeping a corpus while that same corpus is indexing. Both write `IndexedFile` rows for
 the same source, and the reconcile phase deletes rows for files that have gone. Two
 writers with deletion on one side is a race for no benefit, since the indexing pass is
-walking the tree anyway. A sweep for a corpus that is already indexing is skipped.
+walking the tree anyway.
+
+Excluding them needs a claim, not a look. `CorpusState.Indexing` is set inside `RunAsync`,
+after the job has been taken off the queue, so a sweep that reads the state and then starts
+can be overtaken by an index job that starts in the gap, and both write. The exclusion is
+therefore an atomic per-corpus claim: whichever pass takes it runs, the other does not, and
+taking it is one conditional write rather than a read followed by a write. If that claim
+carries an expiry so a crashed holder cannot block the corpus forever, the expiry has to
+exceed the longest legitimate hold, which for indexing is hours on a library this size. An
+expiry chosen for how long a sweep takes would release the claim under a running index
+job, which is the failure it was added to prevent.
 
 **Consequences.** Two things have to be settled before this lands rather than discovered
 during it.
@@ -1380,13 +1390,19 @@ Indexing stays the only pass that removes anything, and the reason is not symmet
 Deleting a file that has vanished means deleting its vectors from every set's collection,
 and the `IndexedFile` row can only go once the last set has let go of it, which is what
 `CorpusIndexer` already threads carefully. A sweep knows nothing about collections and
-touches none, so a sweep that removed rows would strand the vectors those rows named. It
-therefore only ever adds.
+touches none, so a sweep that removed rows would strand the vectors those rows named. A
+sweep only ever adds.
 
-The exemption: a sweep may drop a row it can prove carries no vectors, meaning one whose
-state is `Pending` for every set in the corpus, because nothing has ever been written for
-it. That is what stops a corpus which is only ever swept from growing a permanent tail of
-files that were discovered, never indexed, and then deleted.
+There is deliberately no exemption for rows that look empty. `Pending` is not evidence
+that a file has no vectors: the upsert runs before the status is set to `Indexed`, and the
+save is throttled to about a second, so a crash between them leaves a durable `Pending`
+beside vectors that exist. A sweep deleting on that reading would strand exactly what the
+rule above exists to protect. Absent and unobserved arrive identically here, and the
+ambiguous one must not drive a delete.
+
+The cost is that a corpus which is only ever swept keeps rows for files that have since
+gone, including ones that were never indexed at all. They are removed the first time it is
+indexed, which is the path every corpus is on anyway.
 
 What remains is that a swept-but-unindexed corpus over-reports: it lists files that have
 since disappeared until an indexing pass for each set has removed them. That is the
