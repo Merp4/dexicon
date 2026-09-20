@@ -218,8 +218,6 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
----
-
 ## 0.5.1 — 2026-09-19
 
 ### Fixed
