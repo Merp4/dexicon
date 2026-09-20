@@ -1375,11 +1375,19 @@ establishes it. A fresh deployment therefore gets rollback journalling, where re
 writers as well, and behaves differently under a concurrent sweep from the machine the
 feature was designed on.
 
-`busy_timeout=0` does not mean the second writer is refused at once. Microsoft.Data.Sqlite
-retries for the command timeout, 30s by default. Measured against a held write transaction,
-a second connection failed after 30,108ms with `SQLite Error 5: 'database is locked'`. The
-cost of contention is not a fast error but a thirty-second stall and then an error, which
-is the worse outcome for a sweep whose whole justification is being the quick half.
+`busy_timeout=0` does not mean the second writer is refused at once, and ordinary
+contention is not visible at all. Microsoft.Data.Sqlite retries a busy database for the
+command timeout, 30s by default, so a lock held for 500ms, which is the shape of a batched
+`SaveChanges`, is waited out in about 600ms with or without any of these settings.
+
+What the settings decide is the behaviour at the two ends of that. Above the command
+timeout the write fails, and `Cache=Shared` decides how: measured against a lock held
+longer than the caller would wait, a shared-cache connection fails with `SQLITE_LOCKED`,
+which no busy timeout can serve, where a private-cache one fails with `SQLITE_BUSY`, which
+one can. Below the ceiling, a busy timeout makes the wait a block inside SQLite instead of
+a retry loop in the provider. So `Cache=Shared` goes, having arrived with the walking
+skeleton with nothing depending on it, and both pragmas are set per connection because
+neither can be expressed in a connection string.
 
 Setting the journal mode and a busy timeout explicitly, and writing the sweep in batched
 transactions, are part of this change rather than a follow-up. The timeout is sized against

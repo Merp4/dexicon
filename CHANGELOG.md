@@ -117,6 +117,31 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## Unreleased
+
+### Changed
+
+- **The catalogue's journal mode and busy timeout are set by Dexicon, not inherited from
+  whatever the database file carries.** Neither was established anywhere: a catalogue
+  created by the connection string reports `journal_mode=delete` and `busy_timeout=0`,
+  while a long-lived one is in WAL because journal mode is persistent in the file. A fresh
+  install and an existing one therefore behaved differently under concurrent access, with
+  nothing in the code to say which you had. WAL is now asked for explicitly and checked; if
+  the filesystem refuses it, which happens on network shares, that is logged rather than
+  passing as success.
+
+  `Cache=Shared` is gone with it. It arrived with the first walking skeleton and nothing
+  depended on it, and it decides how a blocked write fails: measured against a lock held
+  longer than the caller would wait, a shared-cache connection fails with `SQLITE_LOCKED`,
+  which no busy timeout can serve, where a private-cache one fails with `SQLITE_BUSY`,
+  which one can. Ordinary contention is unaffected either way, since a lock held for 500ms
+  is waited out in about 600ms.
+
+  Prerequisite for [D-32](docs/decisions.md). `DEXICON__STORAGE__BUSYTIMEOUTSECONDS`,
+  default 30, matching the provider's own command timeout so neither gives up first.
+
+---
+
 ## 0.5.1 — 2026-09-19
 
 ### Fixed
