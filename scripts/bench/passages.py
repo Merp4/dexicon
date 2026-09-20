@@ -423,7 +423,12 @@ def main():
         # against a server that has just gone away, would replace the indexing or scoring
         # error that brought us here with an HTTP error about the cleanup, and that is the
         # error nobody needs. Same shape as sweep.py.
-        out = ROOT / "scripts/bench" / args.queries.replace("queries-", "passages-")
+        # Never derived by substitution alone. `--queries custom.json` does not contain
+        # "queries-", so a replace is a no-op, the output path becomes the INPUT path, and
+        # the write below destroys the ground truth it was just scored against.
+        stem = pathlib.Path(args.queries).stem
+        stem = stem[len("queries-"):] if stem.startswith("queries-") else stem
+        out = ROOT / "scripts/bench" / f"passages-{stem}.json"
         try:
             out.write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
             print(f"wrote {out.relative_to(ROOT)}")

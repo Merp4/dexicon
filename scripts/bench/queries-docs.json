@@ -54,7 +54,7 @@
       "query": "what fields are on a stored point payload",
       "file": "03-data-model.md",
       "why": "Payload shape is a data-model concern.",
-      "answer": "\"chunk_index\": 7"
+      "answer": "### Point payload"
     },
     {
       "query": "how are collections named",
