@@ -818,4 +818,43 @@ describe('the file list', () => {
 
     expect(await screen.findByText(/the name filter does not search them/)).toBeInTheDocument();
   });
+
+  /**
+   * The case the whole change exists for, and the one the first version missed: the
+   * notice lived inside the arm that renders rows, so a filter matching nothing returned
+   * the empty state and said nothing about the files it had not searched.
+   */
+  it('says the search was partial when the filter matches none of the loaded rows', async () => {
+    listFiles.mockResolvedValue({
+      total: 190,
+      chunkSet: 'default',
+      files: Array.from({ length: 100 }, (_, i) => file(`book-${i}.pdf`)),
+    });
+
+    render(<CorpusDetail {...props} />);
+    await screen.findByRole('button', { name: 'book-0.pdf' });
+
+    await userEvent.type(screen.getByLabelText('Filter files by name'), 'papers');
+
+    expect(await screen.findByText('No file matches that')).toBeInTheDocument();
+    expect(screen.getByText(/were not searched/)).toBeInTheDocument();
+    expect(screen.getByText(/90 are not loaded/)).toBeInTheDocument();
+  });
+
+  /**
+   * Narrowing by status fetches a different page, so it reaches the unloaded rows only
+   * when those rows have a different status. On an all-indexed corpus it changes
+   * nothing, and a remedy that does not work is worse than none.
+   */
+  it('does not promise that narrowing by status reaches the unloaded files', async () => {
+    listFiles.mockResolvedValue({
+      total: 190,
+      chunkSet: 'default',
+      files: Array.from({ length: 100 }, (_, i) => file(`book-${i}.pdf`)),
+    });
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText(/only if they differ in status/)).toBeInTheDocument();
+  });
 });

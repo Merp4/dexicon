@@ -1085,6 +1085,11 @@ export function CorpusDetail({
     ? files.filter((f) => f.relativePath.toLowerCase().includes(nameFilter.trim().toLowerCase()))
     : files;
 
+  // What the corpus has that this page does not. Named because three places need it and
+  // one of them is the empty state, which is where an unloaded file reads as a missing
+  // one.
+  const unloaded = Math.max(0, totalFiles - files.length);
+
   return (
     <div className="grid gap-4">
       <div className="flex gap-2.5 items-center flex-wrap">
@@ -1243,12 +1248,25 @@ export function CorpusDetail({
           {problems.length > 0 && <span className="dim text-xs">{problems.length} need attention</span>}
         </div>
 
+        {/* Two caps, and for a long time neither was reachable while a third was silent.
+            The API pages at 100 unless asked otherwise, the list renders at most
+            FileRowCap of what it holds, and the notice fired above 300 of the FETCHED
+            rows - which could not happen, because only 100 ever arrived. A 190-file
+            corpus showed 100 rows and said nothing, and a file just added to it was one
+            of the 90 that never reached the browser.
+
+            OUTSIDE the three arms below, because it belongs most to the one that shows
+            no rows at all: a name that matches nothing loaded is exactly how an unloaded
+            file reads as an absent one, and a notice living with the rows is not there
+            to say so. */}
         {files.length === 0 ? (
           <Empty title="No files" hint="Run a refresh to index this corpus." />
         ) : shown.length === 0 ? (
           <Empty
             title="No file matches that"
-            hint={`${files.length.toLocaleString()} ${files.length === 1 ? 'file' : 'files'} in this view. Clear the filter to see them.`}
+            hint={unloaded > 0
+              ? `Searched the ${files.length.toLocaleString()} loaded of ${totalFiles.toLocaleString()} files. The other ${unloaded.toLocaleString()} were not searched.`
+              : `${files.length.toLocaleString()} ${files.length === 1 ? 'file' : 'files'} in this view. Clear the filter to see them.`}
           />
         ) : (
           <div className="card overflow-hidden">
@@ -1281,23 +1299,17 @@ export function CorpusDetail({
                 {f.statusDetail && <span className="dim text-xs w-[100%]">↳ {f.statusDetail}</span>}
               </div>
             ))}
-            {/* Two caps, and for a long time neither was reachable while a third was
-                silent. The API pages at 100 unless asked otherwise, this renders at most
-                FileRowCap of what it holds, and the notice fired above 300 of the FETCHED
-                rows - which could not happen, because only 100 ever arrived. A 190-file
-                corpus showed 100 rows and said nothing, and a file just added to it was
-                one of the 90 that never reached the browser.
+          </div>
+        )}
 
-                Stated from `total`, which the response has carried all along. */}
-            {(shown.length > FileRowCap || files.length < totalFiles) && (
-              <div className="dim border-t border-border px-3 py-2 text-xs">
-                Showing {Math.min(shown.length, FileRowCap).toLocaleString()} of{' '}
-                {(nameFilter.trim() ? shown.length : totalFiles).toLocaleString()} files.
-                {files.length < totalFiles && (
-                  <> {(totalFiles - files.length).toLocaleString()} are not loaded, so the
-                    name filter does not search them; narrow by status to reach them.</>
-                )}
-              </div>
+        {(unloaded > 0 || shown.length > FileRowCap) && (
+          <div className="dim mt-2 rounded-md border border-border px-3 py-2 text-xs">
+            Showing {Math.min(shown.length, FileRowCap).toLocaleString()} of{' '}
+            {(nameFilter.trim() ? shown.length : totalFiles).toLocaleString()} files.
+            {unloaded > 0 && (
+              <> {unloaded.toLocaleString()} are not loaded and the name filter does not
+                search them. Filtering by status requests a different page, which reaches
+                them only if they differ in status.</>
             )}
           </div>
         )}
