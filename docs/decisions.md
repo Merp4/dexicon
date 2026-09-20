@@ -1389,10 +1389,11 @@ a retry loop in the provider. So `Cache=Shared` goes, having arrived with the wa
 skeleton with nothing depending on it, and both pragmas are set per connection because
 neither can be expressed in a connection string.
 
-Setting the journal mode and a busy timeout explicitly, and writing the sweep in batched
-transactions, are part of this change rather than a follow-up. The timeout is sized against
-the longest write the other side can hold, not chosen as a round number: it is the batch
-size that makes that bound exist, so the two are picked together or neither is meaningful.
+The journal mode and the busy timeout are a prerequisite: the sweep does not land before
+them. The timeout is a ceiling on how long a caller will wait, not a prediction of how long
+a write takes, so it is not sized against any job. It matches the provider's own command
+timeout, so neither gives up while the other is still willing to wait. Keeping any single
+hold short is the sweep's own job, through batched transactions, and belongs with it.
 
 Indexing stays the only pass that removes anything, and the reason is not symmetry.
 Deleting a file that has vanished means deleting its vectors from every set's collection,
