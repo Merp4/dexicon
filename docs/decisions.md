@@ -1401,8 +1401,10 @@ rule above exists to protect. Absent and unobserved arrive identically here, and
 ambiguous one must not drive a delete.
 
 The cost is that a corpus which is only ever swept keeps rows for files that have since
-gone, including ones that were never indexed at all. They are removed the first time it is
-indexed, which is the path every corpus is on anyway.
+gone, including ones that were never indexed at all. Clearing them is per set, not one
+event: each set's pass removes its own state, and the shared `IndexedFile` row goes only
+once the last set has let go, so a corpus carrying two sets needs an index run of both
+before the row disappears. That is the path every corpus is on anyway.
 
 What remains is that a swept-but-unindexed corpus over-reports: it lists files that have
 since disappeared until an indexing pass for each set has removed them. That is the
