@@ -18,14 +18,22 @@ metric for a locator and says nothing about whether the text handed back contain
 answer. That is the whole disagreement D-31 has with it: "smaller chunks flatter this
 metric" is an objection about passage quality that file rank cannot see.
 
-WHAT IT MEASURES. Answer recall at a fixed character budget. Each query carries a short
-literal from the document that answers it; a delivery is correct when the text returned
-contains that literal. Both arms get the SAME budget, which is the control that matters:
-an assembled passage trivially wins on recall if it is allowed to be larger, so the
-comparison is recall at equal cost, not recall.
+WHAT IT MEASURES. Answer recall at equal cost. Each query carries a short literal from the
+document that answers it; a delivery is correct when the text returned contains that
+literal. An assembled passage trivially wins on recall if it is allowed to be larger, so
+the arms are matched per query on the characters actually returned:
 
-    chunks    the search results' own content, concatenated until the budget is spent
-    passage   POST /api/context with the same budget
+    passage   POST /api/context at the budget, with an explicit neighbour width
+    chunks    the search results' own content, cut to the length the passage arm produced
+
+Matched on realised length rather than on the nominal budget, because the assembler
+charges its block headers and disclosure text against maxChars and the chunks arm pays
+neither. Matching on the budget would quietly hand the chunks arm more answer-bearing
+characters and call it equal.
+
+NEIGHBOURS IS THE POINT. The API defaults it to 0, and at 0 the assembler returns only the
+chunks that ranked as hits — the same retrieval rendered differently, which cannot show
+anything about assembling from a document. It is swept, with 0 kept as the control.
 
 Reported per chunk size, because the claim is specifically that SMALL locators plus
 assembly beat large chunks. A configuration wins by answering more queries with the same
@@ -95,9 +103,18 @@ SETS = [
     (768, 384),
 ]
 
-# Budgets in characters, applied identically to both arms. 1,500 is the shipped
-# max_chars_per_hit; 6,000 is roughly what an agent will tolerate for one call.
+# Budgets in characters. 1,500 is the shipped max_chars_per_hit; 6,000 is roughly what an
+# agent will tolerate for one call. The budget is what the passage arm is given; the
+# chunks arm is then cut to what the passage arm actually produced, so the two are matched
+# on realised length rather than on a number they spend differently.
 BUDGETS = [1_500, 6_000]
+
+# Chunks either side of a hit that the assembler pulls in. This is the dimension the
+# experiment is actually about: at 0 the passage is only the chunks that ranked, which is
+# the same retrieval rendered differently, and D-31's claim is that a SMALL locator plus
+# the document around it beats a large chunk returned whole. 0 is kept as the control that
+# shows what the expansion is worth.
+NEIGHBOURS = [0, 2, 5]
 
 LIMIT = 10
 TOKEN = None
@@ -189,12 +206,32 @@ def check(spec):
 
 # ── the two arms ──────────────────────────────────────────────────────────────
 
-def chunks_arm(target, query, budget):
-    """The search results' own text, taken in rank order until the budget is spent.
+def passage_arm(target, query, budget, neighbours):
+    """What POST /api/context assembles for the query, at the given budget and width.
+
+    `neighbours` is explicit because the API defaults it to 0, and at 0 the assembler
+    returns only the chunks that ranked as hits. That is two renderings of the same
+    retrieval, not a passage taken from the document around the hit, so a sweep that left
+    it at the default could not see the thing D-31 rests on however it came out.
+    """
+    result = call("POST", "/api/context", {
+        "query": query, "corpus": [target], "mode": "hybrid",
+        "limit": LIMIT, "maxChars": budget, "neighbours": neighbours,
+    })
+    return result.get("context") or ""
+
+
+def chunks_arm(target, query, cap):
+    """The search results' own text, in rank order, cut to `cap` characters.
 
     max_chars_per_hit=0 asks for whole chunks, so this is the "returned chunks" arm as it
-    exists today, truncated to the same budget the passage arm gets.
+    exists today. The cap is the length the passage arm actually produced for this same
+    query, not the nominal budget: the assembler charges its block headers and disclosure
+    text against maxChars and this arm pays neither, so matching on the budget would hand
+    this arm more answer-bearing characters and call it equal cost.
     """
+    if cap <= 0:
+        return ""
     result = call("POST", "/api/search", {
         "query": query, "corpus": [target], "mode": "hybrid",
         "limit": LIMIT, "maxCharsPerHit": 0,
@@ -202,49 +239,59 @@ def chunks_arm(target, query, budget):
     out, used = [], 0
     for hit in result["hits"]:
         text = hit.get("content") or ""
-        if used + len(text) > budget:
-            out.append(text[: budget - used])
+        if used + len(text) + 1 > cap:
+            out.append(text[: cap - used])
             break
         out.append(text)
-        used += len(text)
-    return "\n".join(out)
+        used += len(text) + 1        # the newline this join adds is part of the cost
+    return "\n".join(out)[:cap]
 
 
-def passage_arm(target, query, budget):
-    """What POST /api/context assembles for the same query and the same budget."""
-    result = call("POST", "/api/context", {
-        "query": query, "corpus": [target], "mode": "hybrid",
-        "limit": LIMIT, "maxChars": budget,
-    })
-    return result.get("context") or ""
+def score(target, queries, budget, neighbours):
+    """Matched pairs: both arms answer the same query at the same realised length."""
+    found = {"chunks": 0, "passage": 0}
+    chars = {"chunks": 0, "passage": 0}
 
-
-def score(target, queries, budget):
-    rows = {}
-    for name, arm in (("chunks", chunks_arm), ("passage", passage_arm)):
-        found, chars = 0, 0
-        for q in queries:
-            text = arm(target, q["query"], budget)
-            chars += len(text)
+    for q in queries:
+        passage = passage_arm(target, q["query"], budget, neighbours)
+        chunks = chunks_arm(target, q["query"], len(passage))
+        for name, text in (("passage", passage), ("chunks", chunks)):
+            chars[name] += len(text)
             if q["answer"] in text:
-                found += 1
-        rows[name] = {
-            "found": found,
+                found[name] += 1
+
+    return {
+        name: {
+            "found": found[name],
             "queries": len(queries),
-            "recall": round(found / len(queries), 4),
-            "meanChars": round(chars / len(queries)),
+            "recall": round(found[name] / len(queries), 4),
+            "meanChars": round(chars[name] / len(queries)),
         }
-    return rows
+        for name in ("chunks", "passage")
+    }
 
 
 # ── build ─────────────────────────────────────────────────────────────────────
 
 def wait_for_chunks(label, set_name, timeout=1800):
+    """Block until the set is fully indexed, and refuse it if any file failed.
+
+    Nothing pending is not the same as everything indexed: a file can finish in `failed`
+    while chunkCount is healthily positive. Its answer span is then unreachable and every
+    query that needed it scores as a retrieval miss, so the run would report a number for
+    a corpus it never fully read. This corpus is markdown and should never fail a file,
+    which is the point — if one does, something is wrong and the score is not the thing to
+    look at.
+    """
     started = time.time()
     while time.time() - started < timeout:
         sets = call("GET", f"/api/corpora/{BENCH_CORPUS}/chunk-sets")
         me = next((s for s in sets if s["name"] == set_name), None)
         if me and me["chunkCount"] > 0 and me["pendingCount"] == 0:
+            if me.get("failedCount"):
+                raise SystemExit(
+                    f"{label}: {me['failedCount']} file(s) failed to index; "
+                    "refusing to score a corpus that is missing documents")
             return time.time() - started
         time.sleep(2)
     raise SystemExit(f"{label}: no chunks after {timeout}s")
@@ -275,10 +322,11 @@ def main():
 
     print(f"\ncorpus      ./{spec['corpus']}")
     print(f"sets        {', '.join(f'size {s} overlap {o}' for s, o in sets_to_build)}")
-    print(f"budgets     {BUDGETS} characters, applied to both arms")
+    print(f"budgets     {BUDGETS} characters, given to the passage arm")
+    print(f"neighbours  {NEIGHBOURS} chunks either side of a hit")
     print(f"queries     {len(queries)}")
     print(f"\n{len(sets_to_build)} sets, "
-          f"{len(sets_to_build) * len(BUDGETS) * 2 * len(queries):,} calls\n")
+          f"{len(sets_to_build) * len(BUDGETS) * len(NEIGHBOURS) * 2 * len(queries):,} calls\n")
 
     if args.dry_run:
         return 0
@@ -290,21 +338,25 @@ def main():
         call("DELETE", f"/api/corpora/{BENCH_CORPUS}")
 
     (first_size, first_overlap), rest = sets_to_build[0], sets_to_build[1:]
-    print(f"creating {BENCH_CORPUS} over ./{spec['corpus']}")
-    call("POST", "/api/corpora", {
-        "name": BENCH_CORPUS,
-        "description": "D-31 passage evaluation. Built and deleted by scripts/bench/passages.py.",
-        "chunkSize": first_size,
-        "chunkOverlap": first_overlap,
-        "boundaryMode": "language-aware",
-        "workspacePath": spec["corpus"],
-    })
-    wait_for_chunks("initial index", "default")
-    built = [(first_size, first_overlap,
-              call("GET", f"/api/corpora/{BENCH_CORPUS}/chunk-sets")[0]["name"])]
-
     results = []
+
+    # Everything that can create the corpus is inside the cleanup scope. Creating it and
+    # then failing the first index left a partly built bench corpus behind, which the next
+    # run deletes and rebuilds, so the cost of a timeout was paid twice and silently.
     try:
+        print(f"creating {BENCH_CORPUS} over ./{spec['corpus']}")
+        call("POST", "/api/corpora", {
+            "name": BENCH_CORPUS,
+            "description": "D-31 passage evaluation. Built and deleted by scripts/bench/passages.py.",
+            "chunkSize": first_size,
+            "chunkOverlap": first_overlap,
+            "boundaryMode": "language-aware",
+            "workspacePath": spec["corpus"],
+        })
+        wait_for_chunks("initial index", "default")
+        built = [(first_size, first_overlap,
+                  call("GET", f"/api/corpora/{BENCH_CORPUS}/chunk-sets")[0]["name"])]
+
         for size, overlap in rest:
             name = f"s{size}-o{overlap}"
             print(f"building {name}", flush=True)
@@ -323,17 +375,19 @@ def main():
                 raise SystemExit(f"{name} holds no chunks; refusing to score an empty index")
 
             for budget in BUDGETS:
-                arms = score(f"{BENCH_CORPUS}:{name}", queries, budget)
-                results.append({
-                    "chunkSize": size, "overlap": overlap, "chunks": held,
-                    "budget": budget, **arms,
-                })
-                for arm in ("chunks", "passage"):
-                    r = arms[arm]
-                    print(f"  size {size:>4} ov {overlap:>3}  budget {budget:>5}  {arm:<8} "
-                          f"recall {r['recall']:.3f}  ({r['found']}/{r['queries']})  "
-                          f"mean {r['meanChars']:>6,} chars  [{held:,} chunks]", flush=True)
-                print(flush=True)
+                for neighbours in NEIGHBOURS:
+                    arms = score(f"{BENCH_CORPUS}:{name}", queries, budget, neighbours)
+                    results.append({
+                        "chunkSize": size, "overlap": overlap, "chunks": held,
+                        "budget": budget, "neighbours": neighbours, **arms,
+                    })
+                    for arm in ("chunks", "passage"):
+                        r = arms[arm]
+                        print(f"  size {size:>4} ov {overlap:>3}  budget {budget:>5} "
+                              f"nb {neighbours}  {arm:<8} "
+                              f"recall {r['recall']:.3f}  ({r['found']}/{r['queries']})  "
+                              f"mean {r['meanChars']:>6,} chars", flush=True)
+                    print(flush=True)
     finally:
         out = ROOT / "scripts/bench" / args.queries.replace("queries-", "passages-")
         out.write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
