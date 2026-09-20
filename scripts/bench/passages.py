@@ -151,7 +151,9 @@ def token():
     on the first POST. Signing in is what the API intends for administration, and it is
     what the error message says to do.
 
-    DEXICON_TOKEN still wins when set, for a caller that has its own bearer.
+    DEXICON_TOKEN_ADMIN still wins when set, for a caller that already holds a
+    session bearer. Named apart from DEXICON_TOKEN deliberately: that one is an API
+    key elsewhere in this repo, and a key cannot do what this needs.
     """
     if value := os.environ.get("DEXICON_TOKEN_ADMIN"):
         return value
