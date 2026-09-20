@@ -1306,7 +1306,7 @@ literal from the document that answers it, scoring whether the text handed back 
 it. Both arms answer the same query at the same realised length, because an assembled
 passage wins on recall for free if it is allowed to be larger.
 
-The two halves of this entry came apart.
+One half of this entry is answered and the other is not, and the first attempt reported both as answered.
 
 **The locator half holds.** Scored on what the caller reads rather than on file rank, a
 small chunk is better, and the margin is where the budget is tight:
@@ -1319,21 +1319,26 @@ small chunk is better, and the margin is where the budget is tight:
 That is the result this entry argued was being discounted for the wrong reason, holding up
 under the metric it said to use.
 
-**The assembly half does not.** Widening the passage into the document around the hit was
-worse at every size and every budget, and at a tight budget it was catastrophic: 256 tokens
-at 1,500 characters falls from 0.527 with no neighbours to 0.073 with two. The mechanism is
-visible at the endpoint rather than inferred — a probe at 1,500 characters reports
-`droppedHits: 9` and one file cited at every width. The budget is the binding constraint,
-so spending it around the top hit crowds out the other nine documents, and the answer is
-more often in one of those than beside the hit. Breadth beats depth at a fixed cost.
+**The assembly half is still unmeasured.** This entry first recorded it as refuted, on a
+run where widening the passage collapsed recall from 0.527 to 0.073. That run was measuring
+a defect. A block too large for the remaining budget is cut down to one piece, and
+`ContextAssembler` took the lowest chunk index rather than the hit's own, so with
+neighbours it returned the chunk furthest BEFORE the match: a top hit at lines 122-165 came
+back as lines 1-30. The matched line was absent from 43 of 55 queries at two neighbours and
+from none at zero, which is the whole of the collapse. Fixed, and afterwards the exclusion
+is 0 of 55 and neighbours score exactly what no neighbours scores.
 
-Nothing changes in the code, because `Neighbours` already defaults to 0 and the shipped
-behaviour is the one that measures better. What is withdrawn is the direction: retrieval
-should not be rebuilt around assembling from the document, and a caller's budget is better
-spent on more distinct documents than on more text beside one of them. This says nothing
-against `get_context` as an explicit follow-up, where the agent has already chosen the file
-and the line; that is a different call answering a different question, and it was not
-measured here.
+So there is no result either way, and the claim is withdrawn rather than softened. What was
+tested was chunk-neighbour expansion inside one shared budget; what this entry proposes is
+that the chunk is an entry point and the caller reads the passage out of the whole
+document. Those are not the same thing, and the second has never been tried.
+
+It could not be, until now: the only copy of a workspace file's extracted text was its
+chunk payloads, so there was no document to read a window from. `file_texts` gives one,
+and `get_context` reads it, taking the caller's line range out of the document rather
+than the chunks overlapping it. `POST /api/context`, which the benchmark's passage arm
+calls, still assembles from neighbour chunks, so the experiment this entry asks for is now
+possible and still not run.
 
 **Overlap earns nothing on this corpus.** Swept alongside: 256 tokens is better with no
 overlap than with the shipped 100 at a tight budget (0.527 against 0.473) and identical at
@@ -1348,10 +1353,10 @@ therefore was not tested; what shipped is the configured target with the refusal
 And the ground truth is authored, which is its weakest point: 15 of the 55 spans were
 unique and still identified the wrong fact until review and a full re-read caught them.
 
-**Revisit if.** A larger or more varied corpus reverses the assembly result, or a budget
-wide enough to hold several documents AND their surroundings changes the trade-off that
-drives it. The result above is the one this entry named as overturning, and it arrived for
-the half that rested on it.
+**Revisit if.** The assembly half still awaits its experiment. It needs `/api/context` to
+assemble from the document rather than from neighbour chunks, and a benchmark arm that
+scores the result. A larger or more varied corpus could also move the size result, which
+rests on 55 questions over 16 documents.
 ---
 
 ### D-32 Discovery is its own pass, and does not queue behind indexing
