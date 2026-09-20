@@ -951,20 +951,6 @@ public sealed class CorpusIndexer(
         WorkspaceDiscovery.Resolve(_indexing.WorkspaceRoot, relative);
 
     /// <summary>
-    /// Take the corpus, giving a sweep already holding it a chance to finish first.
-    ///
-    /// A sweep is a walk and some rows, seconds on the library this was written against,
-    /// so the job waits rather than failing immediately. It waits twice the lease, which is
-    /// past the point where a holder that has
-    /// stopped renewing would have lapsed, so anything still there is alive and working.
-    ///
-    /// Then it throws, and the job is recorded as failed with that reason. It does NOT
-    /// proceed without the lease: indexing beside a sweep is the overlap the lease exists
-    /// to prevent, and carrying on regardless would make it a suggestion. A job that could
-    /// not take the corpus has not been decided against, it has been blocked, and the
-    /// scheduled refresh will bring it back.
-    /// </summary>
-    /// <summary>
     /// Whether this job still owns the corpus, which is what licenses it to write shared
     /// state. Null means the lease was never taken; a cancelled token means it was taken
     /// from us while we worked.
@@ -972,6 +958,20 @@ public sealed class CorpusIndexer(
     private static bool Holds(CorpusLeases.Hold? hold) =>
         hold is not null && !hold.Lost.IsCancellationRequested;
 
+    /// <summary>
+    /// Take the corpus, giving a sweep already holding it a chance to finish first.
+    ///
+    /// A sweep is a walk and some rows, seconds on the library this was written against,
+    /// so the job waits rather than failing immediately. It waits twice the lease, past the
+    /// point where a holder that stopped renewing would have lapsed, so anything still
+    /// there is alive and working.
+    ///
+    /// Then it throws, and the job is recorded as failed with that reason. It does NOT
+    /// proceed without the lease: indexing beside a sweep is the overlap the lease exists
+    /// to prevent, and carrying on regardless would make it a suggestion. A job that could
+    /// not take the corpus has not been decided against, it has been blocked, and the
+    /// scheduled refresh will bring it back.
+    /// </summary>
     private async Task<CorpusLeases.Hold> WaitForLeaseAsync(
         string corpusId, string holder, string corpusName, CancellationToken ct)
     {

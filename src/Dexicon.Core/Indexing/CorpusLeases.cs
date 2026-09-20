@@ -21,6 +21,20 @@ namespace Dexicon.Core.Indexing;
 /// running index job, which is the failure the lease exists to prevent. Renewal means no
 /// value has to predict a duration, while a holder that dies stops renewing and its lease
 /// falls in after <see cref="Lease"/> rather than never.
+///
+/// WHAT IT IS NOT. This is an advisory lease, not a fencing token. Loss is noticed on the
+/// next renewal, so a holder stalled past its own expiry can still begin a write in the
+/// window before it finds out, and nothing at the write itself checks who holds the corpus.
+/// Fencing that properly means a generation on the claim, carried into every catalogue and
+/// vector write and enforced there, which is a change to the whole write path rather than
+/// to this file.
+///
+/// It is left advisory because of what the two passes actually do. This is one process,
+/// the window is bounded by <see cref="Renew"/>, and it takes that many consecutive missed
+/// renewals to open: a sweep only ever ADDS rows and never overwrites a status, so the
+/// worst an overlap produces is a row the indexer was about to write anyway. If a pass is
+/// ever added that deletes or rewrites under the lease, that reasoning expires with it and
+/// the fence has to be built.
 /// </summary>
 public sealed class CorpusLeases
 {
