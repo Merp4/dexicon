@@ -1352,12 +1352,25 @@ walking the tree anyway. A sweep for a corpus that is already indexing is skippe
 **Consequences.** Two things have to be settled before this lands rather than discovered
 during it.
 
-The catalogue is SQLite, opened as `Data Source=…;Cache=Shared` with no busy timeout set.
-WAL is on, so readers do not block, but there is still one writer at a time and a second
-writer is refused immediately rather than waiting. A sweep writing some 1,800 rows beside
-an indexing job writing chunk states will contend, and the symptom is `database is locked`
-rather than slowness. A busy timeout and batched transactions for the sweep are part of
-this change, not a follow-up.
+The catalogue is SQLite, opened as `Data Source=…;Cache=Shared`. What that produces was
+measured rather than read off the connection string, because the two obvious readings of
+it are both wrong.
+
+A database created by that string reports `journal_mode=delete` and `busy_timeout=0`. This
+machine's catalogue is in WAL anyway: bytes 18 and 19 of its header both read 2. Journal
+mode is persistent once set, so this file carries it and nothing in the startup path
+establishes it. A fresh deployment therefore gets rollback journalling, where readers block
+writers as well, and behaves differently under a concurrent sweep from the machine the
+feature was designed on.
+
+`busy_timeout=0` does not mean the second writer is refused at once. Microsoft.Data.Sqlite
+retries for the command timeout, 30s by default. Measured against a held write transaction,
+a second connection failed after 30,108ms with `SQLite Error 5: 'database is locked'`. The
+cost of contention is not a fast error but a thirty-second stall and then an error, which
+is the worse outcome for a sweep whose whole justification is being the quick half.
+
+Setting the journal mode and a busy timeout explicitly, and writing the sweep in batched
+transactions, are part of this change rather than a follow-up.
 
 Reconcile needs an owner. Indexing currently deletes the rows of files that have
 disappeared. If discovery reconciles too, both do; if only discovery does, a corpus that
