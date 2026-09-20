@@ -44,6 +44,7 @@ public sealed class CorpusIndexer(
     IEmbeddingService embedder,
     IModelProfiles profiles,
     DocumentService documents,
+    CorpusLeases leases,
     IOptions<DexiconOptions> options,
     ILogger<CorpusIndexer> log)
 {
@@ -61,6 +62,20 @@ public sealed class CorpusIndexer(
         var targets = job.ChunkSetId is { Length: > 0 } only
             ? corpus.ChunkSets.Where(s => s.Id == only).ToList()
             : corpus.ChunkSets.ToList();
+
+        // Held for the whole job, so a sweep on the discovery lane is turned away at the
+        // door rather than walking the rows this is writing. Renewed in the background, so
+        // a job that runs for hours keeps it without anything predicting how long it will
+        // take; a job that dies stops renewing and the corpus falls free.
+        //
+        // Not fatal when it cannot be taken: the queue already refuses a second job per
+        // corpus, so this is a sweep in progress, and a sweep is short. Waiting for it is
+        // better than failing a job the user asked for.
+        await using var hold = await WaitForLeaseAsync(corpus.Id, $"index-{job.Id}", ct);
+        if (hold is null)
+            log.LogWarning(
+                "Indexing {Corpus} without the lease: it is held elsewhere and did not free up",
+                corpus.Name);
 
         job.State = JobState.Running;
         job.StartedUtc = DateTime.UtcNow;
@@ -895,6 +910,31 @@ public sealed class CorpusIndexer(
     /// </summary>
     public string ResolveWorkspacePath(string? relative) =>
         WorkspaceDiscovery.Resolve(_indexing.WorkspaceRoot, relative);
+
+    /// <summary>
+    /// Take the corpus, giving a sweep already holding it a chance to finish first.
+    ///
+    /// A sweep is a walk and some rows, seconds on the library this was written against,
+    /// so the job waits rather than failing. It gives up after
+    /// <see cref="CorpusLeases.Lease"/>, by which point a holder that has not finished has
+    /// also stopped renewing and its claim has lapsed, so waiting longer cannot help.
+    /// Returning null means indexing proceeds anyway: the alternative is refusing work the
+    /// user asked for because a two-second walk would not yield.
+    /// </summary>
+    private async Task<CorpusLeases.Hold?> WaitForLeaseAsync(
+        string corpusId, string holder, CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow + CorpusLeases.Lease;
+
+        while (true)
+        {
+            var hold = await leases.TryAcquireAsync(corpusId, holder, ct);
+            if (hold is not null) return hold;
+            if (DateTime.UtcNow >= deadline) return null;
+
+            await Task.Delay(TimeSpan.FromSeconds(1), ct);
+        }
+    }
 
     /// <summary>
     /// Whether a resolved path is the root or sits beneath it.

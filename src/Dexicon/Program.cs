@@ -119,6 +119,15 @@ builder.Services.AddScoped<RequestContext>();
 builder.Services.AddHostedService<IndexingBackgroundService>();
 builder.Services.AddHostedService<ScheduledRefreshService>();
 
+// The discovery lane, deliberately its own worker: a sweep that queued behind indexing
+// would wait for exactly the work it exists to get in front of. See D-32.
+builder.Services.AddScoped<CorpusSweeper>();
+builder.Services.AddSingleton<SweepQueue>();
+builder.Services.AddHostedService<SweepWorker>();
+
+// Singleton: the lease is a row, and the service only takes scopes to reach it.
+builder.Services.AddSingleton<CorpusLeases>();
+
 // ── MCP ──────────────────────────────────────────────────────────────────────
 // Stateless: the 2026-07-28 core removed the handshake and the session id, and
 // Dexicon needs no server-to-client calls. Verified in the M0 spike.

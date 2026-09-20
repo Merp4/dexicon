@@ -245,6 +245,14 @@ public sealed record CorpusSummary(
     int ChunkCount,
     int SkippedCount,
     int FailedCount,
+    /// <summary>
+    /// Discovered by a sweep and not yet indexed. Separate from
+    /// <paramref name="FileCount"/>, which counts only what is searchable: widening that
+    /// one would change what the number means on every screen that shows it beside a chunk
+    /// count. This is what lets a corpus say what is in it before anything has been
+    /// embedded. See D-32.
+    /// </summary>
+    int PendingCount,
     IReadOnlyList<SourceSummary> Sources,
     /// <summary>Every way this corpus is cut. The default one is what search uses.</summary>
     IReadOnlyList<ChunkSetSummary> ChunkSets,
@@ -350,6 +358,12 @@ public sealed record IndexedFileText(
 /// a caller can follow the work it just caused instead of polling and hoping.
 /// </summary>
 public sealed record SourceAdded(SourceSummary Source, JobSummary IndexJob);
+
+/// <param name="Queued">
+/// False when a sweep was already waiting for this corpus. Not a refusal: the sweep
+/// already queued has not started, so it will see whatever the tree holds when it does.
+/// </param>
+public sealed record SweepQueued(string Corpus, bool Queued);
 
 /// <summary>
 /// A source after its filters changed. <paramref name="IndexJob"/> is null when the

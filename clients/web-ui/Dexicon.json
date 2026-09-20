@@ -525,6 +525,35 @@
         }
       }
     },
+    "/api/corpora/{nameOrId}/sweep": {
+      "post": {
+        "tags": [
+          "Corpora"
+        ],
+        "parameters": [
+          {
+            "name": "nameOrId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SweepQueued"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/corpora/{nameOrId}/files": {
       "get": {
         "tags": [
@@ -1799,6 +1828,7 @@
           "chunkCount",
           "skippedCount",
           "failedCount",
+          "pendingCount",
           "sources",
           "chunkSets"
         ],
@@ -1847,6 +1877,10 @@
             "format": "int32"
           },
           "failedCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pendingCount": {
             "type": "integer",
             "format": "int32"
           },
@@ -3328,6 +3362,21 @@
                 "$ref": "#/components/schemas/JobSummary"
               }
             ]
+          }
+        }
+      },
+      "SweepQueued": {
+        "required": [
+          "corpus",
+          "queued"
+        ],
+        "type": "object",
+        "properties": {
+          "corpus": {
+            "type": "string"
+          },
+          "queued": {
+            "type": "boolean"
           }
         }
       },

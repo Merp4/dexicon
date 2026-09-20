@@ -42,6 +42,7 @@ function corpus(name: string, over: Partial<Corpus> = {}): Corpus {
     fileCount: 0,
     chunkCount: 0,
     skippedCount: 0,
+    pendingCount: 0,
     failedCount: 0,
     sources: [],
     chunkSets: [

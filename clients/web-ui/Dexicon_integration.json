@@ -613,6 +613,7 @@
           "chunkCount",
           "skippedCount",
           "failedCount",
+          "pendingCount",
           "sources",
           "chunkSets"
         ],
@@ -661,6 +662,10 @@
             "format": "int32"
           },
           "failedCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pendingCount": {
             "type": "integer",
             "format": "int32"
           },

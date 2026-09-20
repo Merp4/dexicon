@@ -206,7 +206,7 @@ public static class CorpusEndpoints
 
         g.MapPost("/{nameOrId}/sources", async (string nameOrId, AddSourceRequest body, RequestContext rc,
             ScopeResolver scopes, CatalogDbContext db, CorpusIndexer indexer, IOptions<DexiconOptions> opts,
-            IndexJobQueue queue, CancellationToken ct) =>
+            IndexJobQueue queue, SweepQueue sweeps, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
@@ -237,6 +237,12 @@ public static class CorpusEndpoints
             // Refresh rather than a Full, because the corpus's other sources are already
             // indexed and re-embedding them costs real money on a hosted provider.
             var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
+
+            // And a sweep, on its own lane. The job above answers "what is in this folder"
+            // as well, but only once it reaches the front of a queue that may be hours
+            // deep; the sweep answers it in seconds. Adding a folder and being told the
+            // corpus holds nothing is the case D-32 exists for.
+            sweeps.Enqueue(corpus.Id);
 
             return Results.Ok(new SourceAdded(
                 source.ToSummary(corpus, opts.Value.Indexing), job.ToSummary()));
@@ -341,6 +347,20 @@ public static class CorpusEndpoints
 
             return Results.Ok(await CoverageAsync(db, opts.Value.Indexing, corpus, ct));
         }).Produces<CoverageReport>();
+
+        // Discovery on demand. Deliberately not a job: it takes the corpus lease, runs on
+        // the discovery lane and answers in seconds, so there is nothing to poll.
+        g.MapPost("/{nameOrId}/sweep", async (string nameOrId, RequestContext rc,
+            ScopeResolver scopes, SweepQueue sweeps, CancellationToken ct) =>
+        {
+            if (rc.RequireScope(Scopes.Ingest) is { } denied) return denied;
+            var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
+
+            // False means one is already waiting, which is the same answer arriving from
+            // the sweep already queued rather than a refusal.
+            var queued = sweeps.Enqueue(corpus.Id);
+            return Results.Accepted($"/api/corpora/{corpus.Name}", new SweepQueued(corpus.Name, queued));
+        }).Produces<SweepQueued>(StatusCodes.Status202Accepted);
 
         g.MapPost("/{nameOrId}/reindex", async (string nameOrId, bool? full, RequestContext rc,
             ScopeResolver scopes, IndexJobQueue queue, CancellationToken ct) =>
@@ -568,6 +588,7 @@ public static class CorpusEndpoints
             headline?.ChunkCount ?? 0,
             defaultRows.Where(r => r.Status is FileStatus.Skipped or FileStatus.Empty).Sum(r => r.Count),
             headline?.FailedCount ?? 0,
+            headline?.PendingCount ?? 0,
             sources.Select(s => s.ToSummary(c, indexing, filesPerSource.GetValueOrDefault(s.Id))).ToList(),
             setSummaries,
             c.DefaultsOf());

@@ -119,6 +119,32 @@ with no section here fails its release rather than publishing an undescribed one
 
 ## Unreleased
 
+### Added
+
+- **Discovery is its own pass, on its own lane.** A corpus added while another was indexing
+  read as empty: its job sat behind a reindex of ~1,800 PDFs on a queue that runs one job
+  at a time, and nothing said so. A sweep now walks a corpus, applies its filters and
+  shadowing, and records what is there, without extracting, chunking or embedding any of
+  it. Statting that library takes about two seconds against 773ms to extract one ordinary
+  PDF from it, so the cheap half no longer waits for the expensive one.
+
+  It runs when a source is added, and on demand at `POST /api/corpora/{name}/sweep`. A
+  corpus reports what it found as `pendingCount`, beside the file count rather than folded
+  into it, since that one counts what is searchable.
+
+  The sweep only ever adds. Removing a vanished file means removing its vectors from every
+  set's collection, and the shared row only once the last set has let go, which a sweep
+  cannot do; indexing remains the only pass that removes anything. There is no exemption
+  for rows that look empty either, because `Pending` is not evidence that a file has no
+  vectors: the upsert runs before the status is written. See [D-32](docs/decisions.md).
+
+- **A corpus lease, so the two lanes exclude each other.** Taken as one conditional update
+  whose row count is the answer, because reading the corpus state cannot exclude anything:
+  it is set inside the indexer once a job is already running, leaving a gap for the other
+  pass to start in. The expiry is renewed while the holder works rather than set to a guess
+  at how long the work takes, so nothing has to predict that indexing a library runs for
+  hours, while a holder that dies stops renewing and the corpus falls free.
+
 ### Changed
 
 - **The catalogue's journal mode and busy timeout are set by Dexicon, not inherited from

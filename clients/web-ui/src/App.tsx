@@ -829,6 +829,14 @@ export function CorporaView({
                 <div className="dim mt-2 text-xs flex gap-3.5 flex-wrap">
                   <span>{c.fileCount.toLocaleString()} {c.fileCount === 1 ? 'file' : 'files'}</span>
                   <span>{c.chunkCount.toLocaleString()} chunks</span>
+                  {/* Discovered by a sweep and not yet indexed. Separate from the file count,
+                      which is what is searchable: a corpus added while another indexes used to
+                      read as empty until its turn came round. */}
+                  {c.pendingCount > 0 && (
+                    <span title="found by a discovery sweep, not yet indexed">
+                      {c.pendingCount.toLocaleString()} awaiting indexing
+                    </span>
+                  )}
                   {c.skippedCount > 0 && <span>{c.skippedCount.toLocaleString()} skipped</span>}
                   {c.failedCount > 0 && <span className="text-[var(--danger-text)]">{c.failedCount.toLocaleString()} failed</span>}
                   {/* The default set is what this corpus answers to unqualified. */}
