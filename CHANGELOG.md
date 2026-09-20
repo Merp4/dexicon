@@ -16,6 +16,34 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## Unreleased
+
+### Fixed
+
+- **A truncated PDF is refused instead of being searched byte by byte.** A conforming PDF
+  ends with `%%EOF`. One cut short by an interrupted download does not, and has no
+  cross-reference table, so PdfPig rebuilds one by scanning the file backwards for object
+  markers, re-reading a 4 KB block to advance a single byte. Over a bind mount each of
+  those is a round trip: measured at about 6,000 a second against a 68 MiB file, which is
+  3.3 hours for that file alone with the index job and its queue stopped behind it.
+
+  The last 4 KB is now checked for `%%EOF` before the file is opened. The same file is
+  refused in 2 ms and recorded as failed with its size. Of the 1,804 PDFs in the library
+  this was found on, 1,802 carry the marker within their last 2 KB and the two that do not
+  are both truncated downloads; an 84 MB PDF that is intact still extracts, in 13 s.
+
+- **Extraction has a time budget, so one file can no longer hold a corpus.** `Extract` is
+  synchronous and the libraries beneath it take no cancellation token, so an index job's
+  own token could not interrupt one. A single file held a corpus for over two hours with
+  two refresh jobs queued behind it, and only restarting the container ended it.
+
+  Reads now pass through a deadline and throw once it is reached, so the stack unwinds and
+  the thread is returned rather than left running until the process ends. The file is
+  recorded as failed with no content hash, so a later refresh retries it. Set by
+  `DEXICON_INDEXING_EXTRACTIONTIMEOUTSECONDS`, default 300, 0 to disable.
+
+---
+
 ## 0.5.1 — 2026-09-19
 
 ### Fixed

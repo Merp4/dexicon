@@ -138,12 +138,14 @@ public sealed partial class PdfTextExtractor : ITextExtractor
             source = buffered;
         }
 
+        RequireTrailer(source, fileName);
+
         PdfDocument document;
         try
         {
             document = PdfDocument.Open(source);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not ExtractionTimeoutException)
         {
             buffered?.Dispose();
             throw new ExtractionFailedException(
@@ -171,6 +173,54 @@ public sealed partial class PdfTextExtractor : ITextExtractor
         {
             buffered?.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Reject a PDF whose trailer is missing before handing it to PdfPig.
+    ///
+    /// A conforming PDF ends with <c>startxref</c>, a byte offset and <c>%%EOF</c>. A
+    /// download cut short has none of them, and PdfPig's response to a missing
+    /// cross-reference table is to rebuild it by scanning the file backwards for object
+    /// markers. That scan re-reads a 4 KB block to advance a single byte, so its cost is
+    /// quadratic in file size and paid at the mount's latency: on a 68 MB truncated PDF
+    /// over a 9p bind mount it ran for hours without finishing.
+    ///
+    /// The cost here is one read of the last 4 KB. Measured over the 1,804 PDFs of the
+    /// tpn library, 1,802 carry <c>%%EOF</c> within their last 2 KB and the two that do
+    /// not are both truncated downloads, one of them ending mid-dictionary at exactly
+    /// 68 MiB. 4 KB rather than the 1 KB the specification implies, because appended
+    /// signatures and incremental updates leave junk after the marker.
+    ///
+    /// This changes no output for a file that already extracted, so
+    /// <see cref="ExtractorVersions.Current"/> is deliberately not bumped: the cache
+    /// holds text for files that parsed, and these never produced any.
+    /// </summary>
+    private static void RequireTrailer(Stream source, string fileName)
+    {
+        // Not seekable cannot happen here (the caller buffers first), but Length on a
+        // stream that does not support it throws, and a guard must not be the thing that
+        // breaks the path it guards.
+        if (!source.CanSeek) return;
+
+        const int TailBytes = 4096;
+        var length = source.Length;
+        if (length == 0)
+            throw new ExtractionFailedException($"'{fileName}' is empty.");
+
+        var take = (int)Math.Min(TailBytes, length);
+        var tail = new byte[take];
+
+        source.Position = length - take;
+        source.ReadExactly(tail, 0, take);
+        source.Position = 0;
+
+        if (tail.AsSpan().IndexOf("%%EOF"u8) >= 0) return;
+
+        throw new ExtractionFailedException(
+            $"'{fileName}' has no %%EOF marker in its last {take:N0} bytes, so it is "
+            + $"truncated rather than merely unusual. Its {length:N0} bytes were not read: "
+            + "a PDF with no cross-reference table can only be recovered by scanning it "
+            + "backwards a byte at a time, which costs hours on a file this size.");
     }
 
     /// <summary>
