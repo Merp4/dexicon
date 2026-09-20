@@ -119,6 +119,21 @@ with no section here fails its release rather than publishing an undescribed one
 
 ## Unreleased
 
+### Changed
+
+- **The walk skips excluded directories instead of reading them.** It descended into every
+  directory and filtered the files afterwards, so `.git`, `node_modules` and a database's
+  data directory were enumerated in full and then discarded. On the repository that
+  prompted this, 240,704 files were stat'd to keep 27,001; the walk now takes 13.9s where
+  it took 99.4s, for an identical result on both counts. Indexing gains the same, because
+  it shares the walk with discovery.
+
+  Conditional on negation, and deliberately conservative about it. A rule set that
+  re-includes something beneath an excluded directory makes skipping that directory a
+  silent loss rather than an optimisation: the same repository keeps `!.vscode/launch.json`
+  under an always-excluded `.vscode/`. A directory is skipped only where no negation can
+  reach into it, so one narrow exception does not disable pruning for its siblings.
+
 ### Added
 
 - **Discovery is its own pass, on its own lane.** A corpus added while another was indexing
