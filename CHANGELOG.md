@@ -75,6 +75,12 @@ with no section here fails its release rather than publishing an undescribed one
   it the cache saves the indexer work and gives a reader nothing. Filled in by the next
   index pass; a file indexed before it reports no document and falls back to the stitch.
 
+- **`get_context` windows the document, not the chunks around the line.** It selected the
+  chunks overlapping the requested range and stitched them, so the passage was bounded by
+  chunk edges and could carry a gap marker where the index was missing lines. It now takes
+  the range out of the extracted text, which has neither. A path two sources share still
+  goes the old way, with the warning that says which file it chose.
+
 ### Changed
 
 - **A new corpus is chunked at 256 tokens rather than 768.** Measured, not chosen:

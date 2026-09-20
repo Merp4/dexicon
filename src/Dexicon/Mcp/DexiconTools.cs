@@ -4,6 +4,7 @@ using Dexicon.Api;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
+using Dexicon.Core.Documents;
 using Dexicon.Core.Indexing;
 using Dexicon.Core.Search;
 using Dexicon.Core.Vectors;
@@ -219,11 +220,12 @@ public sealed class DexiconTools
     }
 
     [McpServerTool(Name = "get_context")]
-    [Description("Return the indexed lines surrounding a location, stitched together. Use after search_index when a hit needs its surroundings, including reading on past the end of a hit, by centring further down the file.")]
+    [Description("Return the indexed lines surrounding a location. Use after search_index when a hit needs its surroundings, including reading on past the end of a hit, by centring further down the file.")]
     public static async Task<string> GetContextAsync(
         RequestContext rc,
         ScopeResolver scopes,
         IVectorStore vectors,
+        DocumentReader documents,
         [Description("Corpus name, as given by list_corpora.")] string corpus,
         [Description("File path exactly as returned by search_index.")] string filePath,
         [Description("Line number to centre on, as search_index reports it for the hit.")] int aroundLine,
@@ -269,6 +271,31 @@ public sealed class DexiconTools
 
         var lo = Math.Max(1, aroundLine - before);
         var hi = aroundLine + after;
+
+        // Out of the document where there is one, so the window is the caller's range and
+        // not the span of whatever chunks happen to cover it, and so it cannot have a hole
+        // in it. Only where the path resolves to a single file: `ambiguous` means two
+        // sources hold it, and serving one book's text under the other's name is what the
+        // warning below exists for, so that case keeps the chunk path and the warning.
+        if (!ambiguous && chunks.Count > 0)
+        {
+            var file = await documents.FileAtAsync(
+                target.Corpus.Id, filePath, chunks[0].SourceId, ct);
+            var document = file is null ? null : await documents.ForAsync(file, ct);
+
+            if (document is not null)
+            {
+                var (text, gotLo, gotHi) = Passage.Window(document.Text, lo, hi);
+
+                if (gotHi < gotLo)
+                    throw new McpException(
+                        $"'{filePath}' in corpus '{corpus}' has no line {aroundLine}; "
+                        + $"it runs to line {document.Text.AsSpan().Count('\n') + 1}.");
+
+                return $"{filePath}:{gotLo}-{gotHi} (corpus: {corpus})\n\n"
+                     + Passage.Stitch([(gotLo, gotHi, text)], lineNumbers);
+            }
+        }
 
         var pieces = chunks
             .Where(h => h.EndLine >= lo && h.StartLine <= hi)
