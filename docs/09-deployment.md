@@ -269,9 +269,11 @@ Everything has a working default except `WORKSPACE_ROOT`.
 | `QDRANT_API_KEY` | *(empty)* | Set for anything not on a single trusted machine. |
 | `DEXICON__OLLAMA__ENDPOINT` | `http://dexicon-ollama:11434` | Namespaced service name — see "Routing". |
 | `DEXICON__EMBEDDING__MODEL` | `embeddinggemma` | Default for new corpora. Pinned per chunk set at creation, so changing it migrates nothing. |
-| `DEXICON__EMBEDDING__MAXCONCURRENCY` | `4` | Parallel embedding requests. |
+| `DEXICON__EMBEDDING__MAXCONCURRENCY` | `4` | Parallel embedding requests Dexicon issues. Keep it equal to `OLLAMA_NUM_PARALLEL`: sending more than Ollama admits only queues the difference. |
+| `OLLAMA_NUM_PARALLEL` | `4` | How many requests Ollama admits at once. Reaches the **in-stack Ollama container only** — with `docker-compose.external.yml` that service is not started, so set it on your own Ollama instead. Measured against a live index, 50% embedder busy unset against 79% at 4, about 63% more embed calls in the same window. It is not parallel decoding: Ollama pins an embedding model to one sequence either way, so it costs no VRAM and does not change the context each request gets. |
 | `DEXICON__INDEXING__MAXFILEBYTES` | `262144` | Default per-source size cap, for text and code. |
 | `DEXICON__INDEXING__DOCUMENTMAXBYTES` | `536870912` | Size cap for extracted formats (PDF, EPUB, DOCX, PPTX). 512 MB. A memory decision — extraction holds the document's text. |
+| `DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS` | `300` | How long a file may go on reading itself during extraction before it is abandoned and recorded as failed. `0` disables it. Bounds a file that keeps reading, not wall-clock time in extraction. |
 | `DEXICON__INDEXING__REFRESHMINUTES` | `0` | Automatic refresh interval in minutes. `0` = manual only. |
 | `DEXICON__UPLOAD__MAXFILEBYTES` | `209715200` | 200 MB. |
 | `DEXICON__ADMIN__PASSWORD` | _(generated)_ | The admin password. Blank generates one on first run and prints it to the log once. Set, it is applied on every start, which is the way back in after a forgotten one. |
