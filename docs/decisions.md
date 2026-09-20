@@ -1322,10 +1322,12 @@ job at a time. Nothing was broken and nothing said so: the only way to learn wha
 contains was to wait for the expensive work to reach it.
 
 The two costs are not comparable. Statting all 1,804 files of that library through the
-container's 9p mount takes 2.08s. Extracting one ordinary 204 KB PDF from it takes 773ms,
-and an intact 84 MB one takes 13.4s, before anything is embedded. Discovery is roughly
-three orders of magnitude cheaper than the work it is currently queued behind, and it is
-the half that answers "what is in here".
+container's 9p mount takes 2.08s, which is the syscall floor rather than a run of
+`WorkspaceWalker`: the real walk evaluates gitignore, globs and size caps on top, in
+process and against the same syscalls. Extracting one ordinary 204 KB PDF from it takes
+773ms, and an intact 84 MB one takes 13.4s, before anything is embedded. Discovery is
+roughly three orders of magnitude cheaper than the work it is currently queued behind,
+and it is the half that answers "what is in here".
 
 Most of the seam is already cut. `IndexedFile` is the inventory and belongs to a source;
 `FileChunkState` is per file and chunk set and carries the status, a split the entity
@@ -1375,6 +1377,13 @@ transactions, are part of this change rather than a follow-up.
 Reconcile needs an owner. Indexing currently deletes the rows of files that have
 disappeared. If discovery reconciles too, both do; if only discovery does, a corpus that
 is never swept keeps stale rows forever. Naming one is part of the work.
+
+The inventory is one row per file and the status is one row per file and chunk set, so a
+sweep of a corpus carrying two sets writes two `Pending` rows for everything it finds.
+`StatesFor` backfills those during indexing today, which is how a set added to a corpus
+full of documents comes to have rows at all. Whether adding a set now triggers a sweep, or
+indexing keeps that job, is the same question as reconcile in a different place: one writer
+or two.
 
 **Revisit if.** The sweep grows expensive enough to need its own progress and
 cancellation. A tree of a million files is a different problem from 1,804, and at that
