@@ -274,6 +274,7 @@ answer to "what about…" is "yes, here, later" rather than an argument.
 | Persisted audit table | A deployment that needs an audit trail outliving container logs. |
 | ~~Integration OpenAPI document and `POST /api/context`~~ | **Done.** See [D-29](decisions.md#d-29-an-integration-document-and-retrieval-in-one-call) and [13](13-integration.md). |
 | Skill and hook installation from `install-mcp.ps1` | Shape fixed in [D-30](decisions.md#d-30-skills-and-hooks-install-with-the-client-under-a-dexicon-prefix). Starts when the manual copy into `.claude/skills/` costs someone a session. |
+| Chunks as index entries, sized by the provider's refusal | Shape fixed in [D-31](decisions.md#d-31-a-chunk-is-an-index-entry-and-the-model-decides-how-big-it-can-be). Needs a retrieval evaluation that scores assembled passages, not file rank, before it starts. |
 
 ---
 

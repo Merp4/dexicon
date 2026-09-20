@@ -360,6 +360,12 @@ contract, and the documentation says so rather than implying precision it does n
 **Rejected.** Per-model tokenizers (dependency and drift for a rounding error);
 word counting (worse approximation, same class of error).
 
+**Amended by [D-31](#d-31-a-chunk-is-an-index-entry-and-the-model-decides-how-big-it-can-be).** No tokenizer still holds, for a
+firmer reason: parity with the loaded model cannot be shown, and chunking by tokens couples
+the index to a tokenizer. What does not hold is "a rounding error" — one index run logged
+212 truncations across 74 files — nor the character conversion itself, which D-31 replaces
+with the provider's own refusal.
+
 ---
 
 ### D-17 Name
@@ -801,6 +807,12 @@ still divides by 4: using the measured ratio there changes every chunk boundary 
 invalidates every index, so it is a migration rather than a fix, and belongs behind its own
 decision.
 
+**Amended by [D-31](#d-31-a-chunk-is-an-index-entry-and-the-model-decides-how-big-it-can-be).** That decision is
+this one, and it went the other way: rather than chunk by the measured ratio, the ratio
+stops deciding the size at all. The provider's refusal does, which costs about 350 ms
+against the six seconds a file the measurement costs. The ratio remains worth reporting;
+it is no longer worth chunking by.
+
 ---
 
 ### D-28 An admin password and scoped API keys
@@ -1189,6 +1201,105 @@ be chosen and measured the way the chunk ratio was in
 [D-27](#d-27-a-chunk-budget-is-characters-and-the-ratio-is-measured). A `minScore` parameter,
 or returning the fused score, is the smaller change that would make the default defensible.
 
+---
+
+### D-31 A chunk is an index entry, and the model decides how big it can be
+
+**Decision.** A chunk stops being the unit a search returns and becomes the unit a search
+*finds*: a locator into a document. What a caller reads is assembled from the document
+around the hit, at whatever width the caller asks for, which is what `get_context` and
+`POST /api/context` already do.
+
+Sizing follows from that. Splitting starts from the whole document and subdivides at a
+boundary whenever the provider refuses the input, until every piece is accepted. The model
+decides the size, so nothing predicts it. A smaller target may be configured, and then the
+recursion is only the guarantee behind it. `TextDensity` is deleted and `CharsPerToken`
+stops being load-bearing. Amends [D-16](#d-16-approximate-token-counting) and
+[D-27](#d-27-a-chunk-budget-is-characters-and-the-ratio-is-measured).
+
+**What was actually wrong.** The chunk budget is defined in tokens and enforced in
+characters, and everything built on that conversion leaks. One index run logged 212
+truncation warnings across 74 files, 146 of them in `books`. A truncated embedding is not a
+short vector: it is a vector for the opening of a chunk, stored as the vector for the whole
+chunk, so the tail is unreachable by meaning and nothing downstream can tell.
+
+The conversion cannot be made exact from this side. Ollama has no tokenize endpoint;
+`/api/embed` returns vectors and an aggregate `prompt_eval_count` and nothing per token, so
+token boundaries are not observable. A local tokenizer would be exact only if it matched the
+model actually loaded, which cannot be shown: a re-pull at a different quantisation or a
+provider-side template breaks it silently, and that is worse than a ratio, because a ratio
+announces itself as an approximation. It also couples the index to a tokenizer, which is the
+downside AI Engineering names for token-based chunking: change the tokenizer and reindex.
+
+**The refusal is the measurement, and it is nearly free.** `EmbeddingService` already sets
+`truncate: false` so the provider refuses rather than silently shortening. Measured against
+this project's own instance:
+
+| input | outcome | time |
+|---|---|---|
+| 2,000 chars | accepted | 1,429 ms |
+| 8,000 chars | accepted | 4,540 ms |
+| 20,000 chars | refused | 356 ms |
+| 200,000 chars | refused | 449 ms |
+| 600,000 chars | refused | 1,071 ms |
+
+A refusal costs about 350 ms and is flat in input size, because the length is checked before
+any work is done. Rejecting a whole book costs less than embedding one chunk of it. Walking
+a 400,000-character document down to accepted pieces is about six levels, so a couple of
+seconds of refusals against minutes of embedding.
+
+Set against that, `TextDensity` embeds three 3,000-character windows per file to estimate a
+ratio, which is roughly six seconds a file, or about twenty minutes across the 189 files in
+`books` on a full reindex. It spends that to approximate what a 350 ms refusal reports
+exactly, and it still let 146 truncations through in the same corpus. The preventive
+mechanism costs more than the failure it prevents.
+
+**Why the chunk was the wrong unit to tune.** The retrieval benchmark measures "the rank of
+the file that should answer each query... not relevance or passage quality". Its best single
+configuration on documents was `embeddinggemma` at 256 tokens, and that result was set aside
+twice: "smaller chunks flatter this metric: a file split finer has more chances to land one
+chunk in the top ten."
+
+That is only flattery if the chunk is what the caller receives, which makes file rank a
+proxy for passage quality. If the chunk is a locator, landing one in the top ten is not a
+proxy for the job, it is the job, and the measurement was answering the right question all
+along. The same data then says small locators are better, and the reason to discount it was
+the assumption this entry removes.
+
+**What the size is for.** Locator precision, not capacity. A small chunk points at a
+narrower part of a document, and nothing about it needs to approach a context limit, so the
+whole class of overflow stops being reachable in normal operation rather than being guarded
+against. Chunk boundaries also stop being load-bearing for what a caller reads, because the
+passage is reassembled around the hit either way. They remain how the text is stored and
+what a reindex is diffed against.
+
+**The default is self-sizing.** With no configured target, indexing starts from the document
+and subdivides on refusal until every piece is accepted. This needs no knowledge of the
+model, no ratio, no probe and no configuration, and it is correct against a model nobody has
+told it about. A configured target, expected to be small, is a preference for locator
+precision; the recursion sits behind it as the guarantee that a wrong target degrades into
+smaller pieces rather than into truncated vectors.
+
+**Rejected.** Shipping a tokenizer: unprovable parity, and it couples the index to the
+tokenizer. More sample windows in `TextDensity`: a smaller residual on the same class of
+error, at a cost already larger than the error. A feedback loop correcting the ratio from
+`prompt_eval_count`: still a prediction, still a second mechanism for a number the refusal
+settles, and it cannot act until after the chunk it would have sized. A fixed fraction of
+the context as a ceiling: the same prediction with a margin on it. Keeping `TextDensity`
+beside the recursion: two mechanisms for one decision is how the next inconsistency arrives.
+
+**Consequences.** Chunk boundaries move, so the chunking fingerprint changes and every
+corpus re-chunks and re-embeds once, the same cost as an extractor version bump.
+
+Two claims here are not yet measured and should not be reported as though they were. The
+benchmark scores file rank, which is the right metric for a locator, but nothing has scored
+the passages assembled from a document around a small-chunk hit, and that is what the design
+rests on. And there is a floor on smallness where a chunk carries too little meaning to
+embed distinctively: 256 tokens is demonstrated, below that is untested.
+
+**Revisit if.** Assembled passages measure worse than returned chunks on a retrieval
+evaluation that scores passages rather than file rank. That is the experiment this entry
+asks for, and the one result that would overturn it.
 ---
 
 ## Open questions
