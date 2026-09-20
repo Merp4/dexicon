@@ -1322,12 +1322,17 @@ job at a time. Nothing was broken and nothing said so: the only way to learn wha
 contains was to wait for the expensive work to reach it.
 
 The two costs are not comparable. Statting all 1,804 files of that library through the
-container's 9p mount takes 2.08s, which is the syscall floor rather than a run of
-`WorkspaceWalker`: the real walk evaluates gitignore, globs and size caps on top, in
-process and against the same syscalls. Extracting one ordinary 204 KB PDF from it takes
-773ms, and an intact 84 MB one takes 13.4s, before anything is embedded. Discovery is
-roughly three orders of magnitude cheaper than the work it is currently queued behind,
-and it is the half that answers "what is in here".
+container's 9p mount takes 2.08s, against 773ms to extract one ordinary 204 KB PDF from it
+and 13.4s for an intact 84 MB one, before anything is embedded. Discovery is the half that
+answers "what is in here", and it is far cheaper than the half it waits behind.
+
+Cheaper is the claim, not fast. The first sweep of a real code repository took 6m37s: the
+tree was 240,704 files because it carries `.git`, `node_modules` and a database's data
+directory, and `WorkspaceWalker` descends into every directory and filters the files
+afterwards rather than pruning as it goes. Indexing that same tree is still far worse, so
+the ordering this entry argues for holds, but a sweep is not reliably seconds and nothing
+downstream may assume it is. Pruning excluded directories during the walk is the obvious
+repair, and would help indexing by exactly as much.
 
 Most of the seam is already cut. `IndexedFile` is the inventory and belongs to a source;
 `FileChunkState` is per file and chunk set and carries the status, a split the entity

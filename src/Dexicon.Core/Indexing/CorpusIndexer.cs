@@ -959,25 +959,26 @@ public sealed class CorpusIndexer(
         hold is not null && !hold.Lost.IsCancellationRequested;
 
     /// <summary>
-    /// Take the corpus, giving a sweep already holding it a chance to finish first.
+    /// Take the corpus, waiting for whoever holds it to finish.
     ///
-    /// A sweep is a walk and some rows, seconds on the library this was written against,
-    /// so the job waits rather than failing immediately. It waits twice the lease, past the
-    /// point where a holder that stopped renewing would have lapsed, so anything still
-    /// there is alive and working.
+    /// There is no deadline, and that is deliberate. A holder that dies stops renewing and
+    /// its claim lapses, after which the next attempt wins, so this cannot wait forever on
+    /// nothing. A holder that is still renewing is doing real work, and the only honest
+    /// thing to do is wait: giving up would either fail a job because a legitimate sweep
+    /// was running, which is a terminal state written for something the machinery caused,
+    /// or proceed without the lease, which is the overlap it exists to prevent.
     ///
-    /// Then it throws, and the job is recorded as failed with that reason. It does NOT
-    /// proceed without the lease: indexing beside a sweep is the overlap the lease exists
-    /// to prevent, and carrying on regardless would make it a suggestion. A job that could
-    /// not take the corpus has not been decided against, it has been blocked, and the
-    /// scheduled refresh will bring it back.
+    /// The first measurement of a sweep against a real code repository is why. The tree was
+    /// 240,704 files including `.git`, `node_modules` and a database's data directory, and
+    /// enumerating it across the container's bind mount took 6m37s. A bound chosen from the
+    /// flat PDF library this was designed against would have failed that job every time.
     /// </summary>
     private async Task<CorpusLeases.Hold> WaitForLeaseAsync(
         string corpusId, string holder, string corpusName, CancellationToken ct)
     {
         var waited = TimeSpan.Zero;
-        var limit = leases.Lease * 2;
         var step = TimeSpan.FromSeconds(1);
+        var nextReport = TimeSpan.FromSeconds(30);
 
         while (true)
         {
@@ -990,13 +991,15 @@ public sealed class CorpusIndexer(
                 return hold;
             }
 
-            if (waited >= limit)
-                throw new InvalidOperationException(
-                    $"Corpus '{corpusName}' is still held by another pass after "
-                    + $"{limit.TotalSeconds:N0}s, so this job did not run. It will be retried.");
-
             await Task.Delay(step, ct);
             waited += step;
+
+            // Said out loud, so a job that is waiting is not mistaken for one that is
+            // stuck. Silence is what made the queue unreadable in the first place.
+            if (waited < nextReport) continue;
+            log.LogInformation("Still waiting for corpus {Corpus}, held elsewhere for {Seconds:N0}s",
+                corpusName, waited.TotalSeconds);
+            nextReport += TimeSpan.FromSeconds(30);
         }
     }
 

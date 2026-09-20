@@ -30,7 +30,10 @@ namespace Dexicon.Core.Catalog;
 public sealed class SqlitePragmas(TimeSpan busyTimeout, ILogger<SqlitePragmas> log)
     : DbConnectionInterceptor
 {
-    private bool _checked;
+    // Static: a new interceptor is constructed for every DbContext, so an instance flag
+    // never survived and this reported on every connection. The log was a line every few
+    // seconds, which buries everything else.
+    private static int _reported;
 
     public override void ConnectionOpened(DbConnection connection, ConnectionEndEventData eventData)
         => Apply(connection);
@@ -58,8 +61,7 @@ public sealed class SqlitePragmas(TimeSpan busyTimeout, ILogger<SqlitePragmas> l
         // explicitly: WAL is refused on some filesystems, notably network shares, and a
         // silent fall back to rollback journalling is exactly the difference this exists
         // to remove.
-        if (_checked) return;
-        _checked = true;
+        if (Interlocked.Exchange(ref _reported, 1) == 1) return;
 
         var mode = Scalar(sqlite, "PRAGMA journal_mode;");
         var busy = Scalar(sqlite, "PRAGMA busy_timeout;");
