@@ -741,3 +741,120 @@ describe('the corpus default filters', () => {
     expect(within(dialog).getByText(/1 source sets some of its own filters/)).toBeInTheDocument();
   });
 });
+
+
+/**
+ * A corpus of 190 files showed 100 of them and said nothing.
+ *
+ * Three limits, none agreeing. The endpoint pages at 100 when the caller asks for no
+ * limit, and the caller asked for none. The list renders at most 300 of what it holds.
+ * The notice fired above 300 of the FETCHED rows, which could never happen, because only
+ * 100 ever arrived - a guard that cannot fire is the same as no guard, and this one never
+ * had.
+ *
+ * The visible symptom was a file the user had just added being absent from the list while
+ * being indexed, searchable, and returned by the API.
+ */
+describe('the file list', () => {
+  const file = (relativePath: string) => ({
+    id: relativePath,
+    relativePath,
+    status: 'indexed',
+    statusDetail: null,
+    chunkCount: 3,
+    sizeBytes: 1024,
+    language: null,
+    mediaType: null,
+    extractedChars: 100,
+    indexedUtc: new Date().toISOString(),
+  });
+
+  it('asks for more than the endpoint would page to by default', async () => {
+    render(<CorpusDetail {...props} />);
+
+    await waitFor(() => expect(listFiles).toHaveBeenCalled());
+
+    // Third argument is the limit. Without one the endpoint returns 100 and the page has
+    // no way to know there were more.
+    expect(listFiles.mock.calls[0][2]).toBeGreaterThan(100);
+  });
+
+  it('says how many it is showing when it does not have all of them', async () => {
+    listFiles.mockResolvedValue({
+      total: 190,
+      chunkSet: 'default',
+      files: Array.from({ length: 100 }, (_, i) => file(`book-${i}.pdf`)),
+    });
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText(/Showing 100 of 190 files/)).toBeInTheDocument();
+    expect(screen.getByText(/90 are not loaded/)).toBeInTheDocument();
+  });
+
+  it('says nothing when it has all of them', async () => {
+    listFiles.mockResolvedValue({
+      total: 3,
+      chunkSet: 'default',
+      files: ['a.pdf', 'b.pdf', 'c.pdf'].map(file),
+    });
+
+    render(<CorpusDetail {...props} />);
+
+    await screen.findByRole('button', { name: 'a.pdf' });
+    expect(screen.queryByText(/Showing/)).not.toBeInTheDocument();
+  });
+
+  it('warns that the name filter only searches what was loaded', async () => {
+    // Otherwise typing a name that IS in the corpus and seeing nothing reads as the file
+    // being absent, which is exactly the report this came from.
+    listFiles.mockResolvedValue({
+      total: 190,
+      chunkSet: 'default',
+      files: Array.from({ length: 100 }, (_, i) => file(`book-${i}.pdf`)),
+    });
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText(/the name filter does not search them/)).toBeInTheDocument();
+  });
+
+  /**
+   * The case the whole change exists for, and the one the first version missed: the
+   * notice lived inside the arm that renders rows, so a filter matching nothing returned
+   * the empty state and said nothing about the files it had not searched.
+   */
+  it('says the search was partial when the filter matches none of the loaded rows', async () => {
+    listFiles.mockResolvedValue({
+      total: 190,
+      chunkSet: 'default',
+      files: Array.from({ length: 100 }, (_, i) => file(`book-${i}.pdf`)),
+    });
+
+    render(<CorpusDetail {...props} />);
+    await screen.findByRole('button', { name: 'book-0.pdf' });
+
+    await userEvent.type(screen.getByLabelText('Filter files by name'), 'papers');
+
+    expect(await screen.findByText('No file matches that')).toBeInTheDocument();
+    expect(screen.getByText(/were not searched/)).toBeInTheDocument();
+    expect(screen.getByText(/90 are not loaded/)).toBeInTheDocument();
+  });
+
+  /**
+   * Narrowing by status fetches a different page, so it reaches the unloaded rows only
+   * when those rows have a different status. On an all-indexed corpus it changes
+   * nothing, and a remedy that does not work is worse than none.
+   */
+  it('does not promise that narrowing by status reaches the unloaded files', async () => {
+    listFiles.mockResolvedValue({
+      total: 190,
+      chunkSet: 'default',
+      files: Array.from({ length: 100 }, (_, i) => file(`book-${i}.pdf`)),
+    });
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText(/only if they differ in status/)).toBeInTheDocument();
+  });
+});
