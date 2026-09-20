@@ -200,62 +200,59 @@ public sealed class EmbeddingProviderTests
     // ── Naming what lost its text ────────────────────────────────────────────
 
     [Fact]
-    public async Task TheTruncationWarningNamesWhatWasTruncated()
+    public async Task TheRefusalNamesWhatWasTooLong()
     {
-        // Over-long input is embedded truncated rather than failing the file, which is the
-        // right trade and useless to act on if the log will not say whose text it was. A
-        // run reporting 123 of these named no file at all: 123 chunks with their tails
-        // dropped and no way to find out which documents they came from.
-        var log = new CapturingLogger();
-        var service = Service(new RefusesLongInput(limit: 10), log: log);
-
-        await service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Document,
-            [new string('x', 50)], source: "books/deep-learning.pdf chunks 41-72");
-
-        var warning = log.Warnings.ShouldHaveSingleItem();
-        warning.ShouldContain("books/deep-learning.pdf chunks 41-72");
-        warning.ShouldContain("TRUNCATED");
-    }
-
-    [Fact]
-    public async Task AnUnnamedCallerStillProducesAReadableWarning()
-    {
-        // Search and the probe embed without a source, and a log line reading "  was
-        // embedded TRUNCATED" helps nobody.
-        var log = new CapturingLogger();
-        var service = Service(new RefusesLongInput(limit: 10), log: log);
-
-        await service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Document,
-            [new string('x', 50)]);
-
-        log.Warnings.ShouldHaveSingleItem().ShouldContain("an unnamed input");
-    }
-
-    [Fact]
-    public async Task TheInputIsStillEmbeddedAfterBeingNamed()
-    {
-        // The naming is for the log. The caller still gets its vector, because a failed
-        // file is worse than a shortened chunk.
+        // A run reporting 123 of these and naming no file gave nobody anything to act on.
+        // The name travels on the exception now, which is what the indexer logs when it
+        // splits and what surfaces if the split cannot be made.
         var service = Service(new RefusesLongInput(limit: 10));
 
-        var vectors = await service.EmbedAsync(new EmbeddingTarget(Provider, "m"),
-            EmbedPurpose.Document, [new string('x', 50)], source: "a.pdf");
+        var ex = await Should.ThrowAsync<EmbeddingInputTooLongException>(() =>
+            service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Document,
+                [new string('x', 50)], source: "books/deep-learning.pdf chunks 1-32"));
 
-        vectors.Count.ShouldBe(1);
+        ex.Message.ShouldContain("books/deep-learning.pdf chunks 1-32");
+        ex.Message.ShouldContain("50");
     }
 
     [Fact]
-    public async Task ShorteningTheChunkDoesNotSpendTheRetryBudget()
+    public async Task AnUnnamedCallerStillProducesAReadableMessage()
     {
-        // With retries configured off, the degraded attempt used to have nowhere to run, so
-        // over-long input failed the file: the opposite of what this path is for, and
-        // invisible until a test asked for it.
+        // Search and the probe embed without a source, and a message opening " is longer
+        // than the model's context" helps nobody.
+        var service = Service(new RefusesLongInput(limit: 10));
+
+        var ex = await Should.ThrowAsync<EmbeddingInputTooLongException>(() =>
+            service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Document,
+                [new string('x', 50)]));
+
+        ex.Message.ShouldContain("an unnamed input");
+    }
+
+    [Fact]
+    public async Task NoVectorIsReturnedForTextThatWasRefused()
+    {
+        // This used to return a vector for the opening of the input, stored under the whole
+        // chunk's id. The caller can divide the text; this layer cannot, so it says so
+        // rather than inventing a worse answer.
+        var service = Service(new RefusesLongInput(limit: 10));
+
+        await Should.ThrowAsync<EmbeddingInputTooLongException>(() =>
+            service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Document,
+                [new string('x', 50)], source: "a.pdf"));
+    }
+
+    [Fact]
+    public async Task ARefusalIsTheSameWithRetriesTurnedOff()
+    {
+        // It never used the retry budget and must not start: with retries off the old path
+        // had nowhere to run its degraded attempt and failed the file instead. A refusal is
+        // the same answer whatever the budget.
         var service = Service(new RefusesLongInput(limit: 10), maxRetries: 0);
 
-        var vectors = await service.EmbedAsync(new EmbeddingTarget(Provider, "m"),
-            EmbedPurpose.Document, [new string('x', 50)], source: "a.pdf");
-
-        vectors.Count.ShouldBe(1);
+        await Should.ThrowAsync<EmbeddingInputTooLongException>(() =>
+            service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Document,
+                [new string('x', 50)], source: "a.pdf"));
     }
 
     [Fact]
@@ -286,25 +283,40 @@ public sealed class EmbeddingProviderTests
     }
 
     [Fact]
-    public async Task ShorteningHappensImmediatelyRatherThanAfterABackoff()
+    public async Task ARefusalIsNotDelayedByTheBackoff()
     {
-        // The backoff exists for an embedder under strain. Over-long input is not that:
-        // the retry is certain to be made and certain to differ, so waiting half a second
-        // in front of it buys nothing. Across a run with a hundred such batches it is a
-        // minute of indexing spent waiting for a call that was always going to be made.
+        // The backoff exists for an embedder under strain. Over-long input is not that: it
+        // fails identically every time, so it is reported at once rather than waited on.
+        // Across a run with a hundred such batches the wait alone was a minute of indexing.
         //
-        // Timed between the generator's own two calls rather than around the whole
-        // operation, so the measurement does not include the test's own setup.
-        var generator = new RefusesLongInput(limit: 10);
-        var service = Service(generator, maxRetries: 2);
+        // maxRetries is passed explicitly because the fixture defaults it to 0, and with no
+        // retries configured there is no backoff to bypass: the assertion below held
+        // whatever the code did. Two retries cost 250*2^n + jitter each, so at least
+        // 1,500 ms if a refusal ever enters the loop. TheBackoffIsRealWhenItApplies is the
+        // control for that number.
+        var service = Service(new RefusesLongInput(limit: 10), maxRetries: 2);
 
-        await service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Document,
-            [new string('x', 50)], source: "a.pdf");
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        await Should.ThrowAsync<EmbeddingInputTooLongException>(() =>
+            service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Document,
+                [new string('x', 50)], source: "a.pdf"));
 
-        generator.CallTimes.Count.ShouldBe(2, "one refusal and one shortened retry");
-        var gap = generator.CallTimes[1] - generator.CallTimes[0];
-        gap.ShouldBeLessThan(TimeSpan.FromMilliseconds(250),
-            "the first backoff is 500ms plus jitter, so anything under 250ms means none was taken");
+        started.ElapsedMilliseconds.ShouldBeLessThan(200);
+    }
+
+    [Fact]
+    public async Task TheBackoffIsRealWhenItApplies()
+    {
+        // Without this, the test above passes equally well if retries stop happening at
+        // all, and the thing it claims to measure is gone with nothing to notice.
+        var service = Service(new AlwaysFails(), maxRetries: 2);
+
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        await Should.ThrowAsync<EmbeddingUnavailableException>(() =>
+            service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Document,
+                [new string('x', 5)], source: "a.pdf"));
+
+        started.ElapsedMilliseconds.ShouldBeGreaterThan(1_000);
     }
 
     private sealed class AlwaysFails : IEmbeddingGenerator<string, Embedding<float>>

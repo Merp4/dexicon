@@ -126,8 +126,15 @@ public static class CodeChunker
     ///    model's average is chunked to its own density instead of overflowing.
     /// 7: a chunk aims at 90% of the model's context rather than all of it, so an error in
     ///    the ratio has somewhere to go other than the model's truncation.
+    /// 8: per-file density measurement is gone, so a file is cut to the set's ratio and
+    ///    the model's refusal corrects it. Nothing else records that: the per-file ratio
+    ///    narrowed the cut but was computed after the fingerprint and never entered it,
+    ///    so without this bump every file measured denser than its model's average, which
+    ///    was most of them, would keep chunks no code path can produce any more. Heading
+    ///    context also reaches a stored vector for the first time, which moves the
+    ///    vectors of any set that enables it.
     /// </summary>
-    public const int Version = 7;
+    public const int Version = 8;
 
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(500);
 

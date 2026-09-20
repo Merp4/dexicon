@@ -67,8 +67,35 @@ public interface IEmbeddingService
     int KnownDimensions(EmbeddingTarget target);
 }
 
-public sealed class EmbeddingUnavailableException(string message, Exception? inner = null)
+/// <remarks>
+/// Not sealed, so <see cref="EmbeddingInputTooLongException"/> can be one of these. Every
+/// caller that copes with an embed not happening already catches this type, and a refusal
+/// that was a sibling instead reached none of them.
+/// </remarks>
+public class EmbeddingUnavailableException(string message, Exception? inner = null)
     : Exception(message, inner);
+
+/// <summary>
+/// An input was longer than the model's context, and the provider refused it.
+///
+/// A KIND of <see cref="EmbeddingUnavailableException"/>, caught ahead of it by anyone who
+/// can act on the difference: it is not a fault and not transient, the same input fails the
+/// same way every time, and the answer is to divide the text rather than retry it. Only the
+/// caller knows how, so the refusal is reported rather than absorbed.
+///
+/// It is a subtype rather than a sibling because everything that already handled an embed
+/// not happening was written against the base type and silently stopped covering the
+/// refusal: SearchService fell back to keyword search and instead returned 500 on an
+/// over-long query, ModelProbe read the refusal as evidence a model does not truncate
+/// silently and instead aborted on exactly the models that behave best, and the indexer
+/// skipped the file and instead failed the whole job. None of them had to change.
+///
+/// It is also the one exact statement about token limits available to this process. Ollama
+/// exposes no tokenizer, and a local one cannot be shown to match the model that is loaded,
+/// so this is what sizing is built on rather than guarded against. See D-31.
+/// </summary>
+public sealed class EmbeddingInputTooLongException(string message, Exception? inner = null)
+    : EmbeddingUnavailableException(message, inner);
 
 public sealed class EmbeddingService(
     IEmbeddingGeneratorFactory factory,
@@ -180,20 +207,11 @@ public sealed class EmbeddingService(
         // instead of per model: a chunk set picks its model at runtime and stores it in
         // the catalogue, so nothing resolved at startup can know about it.
         var generationOptions = Options(target, truncate: false);
-        var truncating = false;
 
-        // The degraded attempt is not spent from the retry budget, and does not wait.
-        //
-        // Over-long input is not transient: the same input fails the same way every time,
-        // so the budget for a struggling embedder has nothing to do with it. Taking the
-        // attempt from that budget meant a caller configured with no retries got a FAILED
-        // FILE where this path exists to give it a shortened chunk, and the backoff put a
-        // quarter-second in front of a call that was always going to be made.
-        var degraded = 0;
         var retryNow = false;
 
         Exception? last = null;
-        for (var attempt = 0; attempt <= _ollama.MaxRetries + degraded; attempt++)
+        for (var attempt = 0; attempt <= _ollama.MaxRetries; attempt++)
         {
             if (attempt > 0 && !retryNow)
             {
@@ -217,29 +235,26 @@ public sealed class EmbeddingService(
             {
                 throw;   // the caller gave up; not a provider failure and not retryable
             }
-            catch (Exception ex) when (!truncating && IsTooLong(ex))
+            catch (Exception ex) when (IsTooLong(ex))
             {
                 // The input is longer than the model's context. Ollama would silently
                 // shorten it and return a vector for text nobody chose, so we ask it not
                 // to; this is that refusal arriving.
                 //
-                // Not a transient failure: the same input fails the same way every time,
-                // so the backoff loop above has nothing to offer it. Embed it truncated
-                // instead, which is a worse vector for that chunk rather than a failed
-                // file, and say so loudly enough to be fixed. The chunk size is the fix,
-                // and the chunk set form warns about it before anyone gets here.
-                truncating = true;
-                degraded = 1;
-                retryNow = true;
-                generationOptions = Options(target, truncate: true);
-
-                log.LogWarning(
-                    "{Target}: {Source} was embedded TRUNCATED because an input is longer "
-                    + "than the model's context, so the end of it is not represented. "
-                    + "Longest of {Count} input(s): {Chars:N0} chars. Reduce the chunk size "
-                    + "for this set.",
-                    target, source ?? "an unnamed input", batch.Length,
-                    batch.Max(b => b.Length));
+                // Reported, not absorbed. This used to re-embed with truncate:true, which
+                // stored a vector for the opening of a chunk under the chunk's own id: the
+                // tail became unreachable by meaning and nothing downstream could tell.
+                // The caller owns the text and can divide it, so the refusal goes to the
+                // caller. It is also the only exact statement about token limits available
+                // here, and costs about 350 ms flat whatever the input size, so it is
+                // cheap enough to be the mechanism rather than the last resort. See D-31.
+                // Named, for the same reason the warning it replaces was: a run reporting
+                // 123 of these and naming no file gave nobody anything to act on.
+                throw new EmbeddingInputTooLongException(
+                    $"{target}: {source ?? "an unnamed input"} is longer than the model's "
+                    + $"context. Longest of {batch.Length} input(s): "
+                    + $"{batch.Max(b => b.Length):N0} chars.",
+                    ex);
             }
             catch (Exception ex)
             {

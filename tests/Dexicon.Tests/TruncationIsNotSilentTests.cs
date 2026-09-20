@@ -18,10 +18,15 @@ namespace Dexicon.Tests;
 /// 4% of embed calls, because `embeddinggemma` has a 2,048-token context and the chunk set
 /// was cut at 2,065.
 ///
-/// So the request asks the provider to REFUSE instead, and the refusal is handled rather
-/// than retried: the same input fails identically every time, so the backoff loop has
-/// nothing to offer it. Embedding it truncated is a worse vector for one chunk rather than
-/// a failed file, and the warning names what to change.
+/// So the request asks the provider to REFUSE instead, and the refusal is reported rather
+/// than absorbed. It used to be retried with truncation allowed, which stored a vector for
+/// the opening of a chunk under that chunk's own id: the same silent loss, arrived at
+/// deliberately. Only the caller owns the text and can divide it, so the refusal is raised
+/// as <see cref="EmbeddingInputTooLongException"/> and the indexer splits and retries.
+///
+/// It is never retried here. The same input fails identically every time, so the backoff
+/// loop has nothing to offer it, and a refusal costs about 350 ms flat whatever the input
+/// size, which is what makes it cheap enough to size by. See D-31.
 /// </summary>
 public sealed class TruncationIsNotSilentTests
 {
@@ -70,34 +75,45 @@ public sealed class TruncationIsNotSilentTests
     }
 
     [Fact]
-    public async Task ARefusalIsRetriedOnceWithTruncationAllowed()
+    public async Task ARefusalIsReportedRatherThanTruncated()
     {
-        // A worse vector for one chunk, rather than a failed file.
+        // The caller owns the text and can divide it; this layer cannot, and a vector for
+        // part of a chunk stored under the whole chunk's id is the loss being avoided.
         var generator = new FakeGenerator(new InvalidOperationException(
             "input length exceeds maximum context length"));
 
-        var vectors = await Embed(generator);
+        await Should.ThrowAsync<EmbeddingInputTooLongException>(() => Embed(generator));
 
-        vectors.Length.ShouldBe(1);
-        generator.TruncateAsked.ShouldBe([false, true]);
+        // Asked once, and never asked again with truncation allowed.
+        generator.TruncateAsked.ShouldBe([false]);
     }
 
     [Fact]
-    public async Task ItIsNotRetriedWithoutTruncationAgainAndAgain()
+    public async Task ARefusalIsNotRetried()
     {
-        // The same input fails the same way every time, so the backoff loop has nothing to
-        // offer it. Asking twice more would only make the failure slower.
+        // Not transient: the same input fails the same way every time, so spending the
+        // retry budget on it only makes the answer slower.
         var generator = new FakeGenerator(
             new InvalidOperationException("exceeds context window"),
             new InvalidOperationException("exceeds context window"),
             new InvalidOperationException("exceeds context window"));
 
-        await Should.ThrowAsync<EmbeddingUnavailableException>(() => Embed(generator));
+        await Should.ThrowAsync<EmbeddingInputTooLongException>(() => Embed(generator));
 
-        // One refusal, one truncated retry, then the ordinary retry budget: never a second
-        // attempt at the un-truncated input.
-        generator.TruncateAsked[0].ShouldBe(false);
-        generator.TruncateAsked.Skip(1).ShouldAllBe(t => t == true);
+        generator.Calls.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task TheRefusalSaysHowLongTheInputWas()
+    {
+        // The figure is what someone acts on, and it is the only part of the refusal that
+        // survives into the indexer's log when a split is reported.
+        var generator = new FakeGenerator(new InvalidOperationException("exceeds context window"));
+
+        var ex = await Should.ThrowAsync<EmbeddingInputTooLongException>(() => Embed(generator));
+
+        ex.Message.ShouldContain("longer than the model's context");
+        ex.Message.ShouldContain("chars");
     }
 
     [Fact]
@@ -122,9 +138,7 @@ public sealed class TruncationIsNotSilentTests
         // No provider gives a code for this and each words it differently.
         var generator = new FakeGenerator(new InvalidOperationException(message));
 
-        await Embed(generator);
-
-        generator.TruncateAsked.ShouldBe([false, true]);
+        await Should.ThrowAsync<EmbeddingInputTooLongException>(() => Embed(generator));
     }
 
     [Theory]
