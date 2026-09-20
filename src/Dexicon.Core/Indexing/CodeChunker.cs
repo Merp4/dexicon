@@ -30,11 +30,11 @@ public sealed record TextChunk
 /// <summary>
 /// How one chunk set cuts text. Grouped into a record rather than passed as five
 /// positional arguments, because the set of knobs grows and a call site reading
-/// <c>(768, 100, "blank-line", null, false, true, true)</c> tells a reader nothing.
+/// <c>(256, 32, "blank-line", null, false, true, true)</c> tells a reader nothing.
 /// </summary>
 public sealed record ChunkOptions
 {
-    public int ChunkSizeTokens { get; init; } = 768;
+    public int ChunkSizeTokens { get; init; } = 256;
 
     /// <summary>
     /// Characters per token for the model this text will be embedded with, measured by
@@ -47,7 +47,7 @@ public sealed record ChunkOptions
     /// context: the chunker was over by 5% before any text was looked at.
     /// </summary>
     public double CharsPerToken { get; init; } = CodeChunker.CharsPerToken;
-    public int OverlapTokens { get; init; } = 100;
+    public int OverlapTokens { get; init; } = 32;
     public string BoundaryMode { get; init; } = "language-aware";
     public string? CustomBoundaryPattern { get; init; }
 
@@ -142,8 +142,8 @@ public static class CodeChunker
     public static IReadOnlyList<TextChunk> Chunk(
         string relativePath,
         string content,
-        int chunkSizeTokens = 768,
-        int overlapTokens = 100,
+        int chunkSizeTokens = 256,
+        int overlapTokens = 32,
         string boundaryMode = "language-aware",
         string? customBoundaryPattern = null) =>
         Chunk(relativePath, content, new ChunkOptions

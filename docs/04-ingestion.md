@@ -541,8 +541,8 @@ can say *"p. 34"* rather than *"chunk 87"*.
 
 | Setting | Default | Reasoning |
 |---|---|---|
-| `chunk_size` | 768 tokens | Fits comfortably in every candidate embedding model's window; big enough to hold a method with context. |
-| `chunk_overlap` | 100 tokens | ~13%. Enough to survive a boundary landing mid-thought. |
+| `chunk_size` | 256 tokens | Measured. Scored on whether the returned text contains the answer rather than on which file ranked first, 256 answered 0.527 of 55 questions against 0.291 for 768 at a 1,500-character budget, converging at 6,000. A smaller chunk points at a narrower part of a document and more of them fit a caller's budget. See [D-31](decisions.md#d-31-a-chunk-is-an-index-entry-and-the-model-decides-how-big-it-can-be) and its amendment. |
+| `chunk_overlap` | 32 tokens | ~13%, the same share of the chunk the previous default was, so the size moved and this did not. The same measurement found nothing to gain from more: 0.527 with no overlap against 0.473 with 100, which is 29 answers against 26 and therefore noise. |
 | `boundary_mode` | `language-aware` | The reason to run this over grep is chunks that mean something. |
 
 Token counts are approximated at 4 characters per token. Exact tokenization would mean

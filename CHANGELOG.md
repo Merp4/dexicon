@@ -46,6 +46,28 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Changed
 
+- **A new corpus is chunked at 256 tokens rather than 768.** Measured, not chosen:
+  scored on whether the text handed back contains the answer rather than on which file
+  ranked first, 256-token chunks answered 0.527 of 55 questions against 0.291 for 768 at a
+  1,500-character budget, converging at 6,000 (0.600 against 0.582). The retrieval sweep
+  found this twice before and set it aside, because a file split finer has more chances to
+  land one chunk in the top ten and that flatters a file-rank metric. It is only flattery
+  if the chunk is what the caller receives.
+
+  **This costs no reindex.** An existing chunk set stores its own size, so the default
+  applies to newly created corpora only; add a set on the new size, or rebuild, to apply it
+  to content already indexed. Overlap moves with it to 32, the same eighth of the chunk the
+  old default was, so the size changed and the ratio did not. Both are now settable:
+  `DEXICON_INDEXING_CHUNKSIZE` and `DEXICON_INDEXING_CHUNKOVERLAP`.
+
+  See [D-31](docs/decisions.md#d-31-a-chunk-is-an-index-entry-and-the-model-decides-how-big-it-can-be)
+  and its amendment.
+
+- **Adding a chunk set honours the configured defaults.** Size, overlap and boundary mode
+  fell back to a literal `768`/`100`/`language-aware` when the corpus had no set to inherit
+  from, so `DEXICON__INDEXING__CHUNKSIZE` decided the shape of a new corpus and nothing
+  about a set added to one.
+
 - **A chunk too long for the model is split, not truncated.** The provider is asked not to
   truncate, so it refuses an over-long input. That refusal used to be answered by embedding
   the chunk truncated: a vector for the opening of the chunk, stored under the whole

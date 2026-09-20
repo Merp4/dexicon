@@ -42,7 +42,7 @@ public static class ChunkSetEndpoints
 
         g.MapPost("/", async (string nameOrId, CreateChunkSetRequest body, RequestContext rc,
             ScopeResolver scopes, CatalogDbContext db, IVectorStore vectors, IEmbeddingService embedder,
-            IndexJobQueue queue, CancellationToken ct) =>
+            IndexJobQueue queue, IOptions<DexiconOptions> opts, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             var principal = rc.RequirePrincipal();
@@ -65,6 +65,8 @@ public static class ChunkSetEndpoints
                     title: "Chunk set already exists",
                     detail: $"Corpus '{corpus.Name}' already has a set named '{name}'.",
                     statusCode: 409);
+
+            var indexing = opts.Value.Indexing;
 
             // Inherit from the default set, so "the same but on another model" is a
             // two-field request rather than a full restatement of the configuration.
@@ -107,9 +109,13 @@ public static class ChunkSetEndpoints
                 EmbeddingModel = model,
                 EmbeddingDimensions = dims,
                 CollectionName = vectors.CollectionNameFor(target, dims),
-                ChunkSize = body.ChunkSize ?? template?.ChunkSize ?? 768,
-                ChunkOverlap = body.ChunkOverlap ?? template?.ChunkOverlap ?? 100,
-                BoundaryMode = body.BoundaryMode ?? template?.BoundaryMode ?? "language-aware",
+                // Request, then the set this inherits from, then configuration. The
+                // last step was a literal 768/100 here, so DEXICON__INDEXING__CHUNKSIZE
+                // decided the size of a new corpus and nothing about a set added to one
+                // that had none to inherit from.
+                ChunkSize = body.ChunkSize ?? template?.ChunkSize ?? indexing.ChunkSize,
+                ChunkOverlap = body.ChunkOverlap ?? template?.ChunkOverlap ?? indexing.ChunkOverlap,
+                BoundaryMode = body.BoundaryMode ?? template?.BoundaryMode ?? indexing.BoundaryMode,
                 CustomBoundaryPattern = body.CustomBoundaryPattern ?? template?.CustomBoundaryPattern,
                 UnitAware = body.UnitAware ?? template?.UnitAware ?? false,
                 SentenceAware = body.SentenceAware ?? template?.SentenceAware ?? false,
