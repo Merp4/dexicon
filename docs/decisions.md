@@ -1295,15 +1295,63 @@ fingerprint and never entered it, so the key for a file whose density differed f
 model's average is identical before and after. Without the bump those files, which were
 most of them, would be skipped as unchanged and keep chunks no code path can produce.
 
-Two claims here are not yet measured and should not be reported as though they were. The
-benchmark scores file rank, which is the right metric for a locator, but nothing has scored
-the passages assembled from a document around a small-chunk hit, and that is what the design
-rests on. And there is a floor on smallness where a chunk carries too little meaning to
-embed distinctively: 256 tokens is demonstrated, below that is untested.
+Two claims here were not measured when this was written. The first is now, and it did not
+survive; see the amendment below. The second stands open: there is a floor on smallness
+where a chunk carries too little meaning to embed distinctively, 256 tokens is
+demonstrated, and below that is untested.
 
-**Revisit if.** Assembled passages measure worse than returned chunks on a retrieval
-evaluation that scores passages rather than file rank. That is the experiment this entry
-asks for, and the one result that would overturn it.
+**Amended by measurement, 2026-09-20.** The experiment below was run
+(`scripts/bench/passages.py`): 55 queries over the `docs` corpus, each carrying a short
+literal from the document that answers it, scoring whether the text handed back contains
+it. Both arms answer the same query at the same realised length, because an assembled
+passage wins on recall for free if it is allowed to be larger.
+
+The two halves of this entry came apart.
+
+**The locator half holds.** Scored on what the caller reads rather than on file rank, a
+small chunk is better, and the margin is where the budget is tight:
+
+| budget | 256 tokens | 768 tokens |
+|---|---|---|
+| 1,500 characters | **0.527** | 0.291 |
+| 6,000 characters | **0.600** | 0.582 |
+
+That is the result this entry argued was being discounted for the wrong reason, holding up
+under the metric it said to use.
+
+**The assembly half does not.** Widening the passage into the document around the hit was
+worse at every size and every budget, and at a tight budget it was catastrophic: 256 tokens
+at 1,500 characters falls from 0.527 with no neighbours to 0.073 with two. The mechanism is
+visible at the endpoint rather than inferred — a probe at 1,500 characters reports
+`droppedHits: 9` and one file cited at every width. The budget is the binding constraint,
+so spending it around the top hit crowds out the other nine documents, and the answer is
+more often in one of those than beside the hit. Breadth beats depth at a fixed cost.
+
+Nothing changes in the code, because `Neighbours` already defaults to 0 and the shipped
+behaviour is the one that measures better. What is withdrawn is the direction: retrieval
+should not be rebuilt around assembling from the document, and a caller's budget is better
+spent on more distinct documents than on more text beside one of them. This says nothing
+against `get_context` as an explicit follow-up, where the agent has already chosen the file
+and the line; that is a different call answering a different question, and it was not
+measured here.
+
+**Overlap earns nothing on this corpus.** Swept alongside: 256 tokens is better with no
+overlap than with the shipped 100 at a tight budget (0.527 against 0.473) and identical at
+a wide one, and 768 at half overlap is worse than either (0.491 against 0.582). It doubles
+the chunk count, the vectors and the embedding time for no measured return.
+
+**What the evidence does not cover.** One corpus of 16 documents and 55 queries, on one
+model. Containment is a floor and not a quality score: text holding the answer can still be
+padded with noise and this does not say so. The self-sizing default this entry describes —
+starting from the whole document and subdividing on refusal — was never implemented and
+therefore was not tested; what shipped is the configured target with the refusal behind it.
+And the ground truth is authored, which is its weakest point: 15 of the 55 spans were
+unique and still identified the wrong fact until review and a full re-read caught them.
+
+**Revisit if.** A larger or more varied corpus reverses the assembly result, or a budget
+wide enough to hold several documents AND their surroundings changes the trade-off that
+drives it. The result above is the one this entry named as overturning, and it arrived for
+the half that rested on it.
 ---
 
 ### D-32 Discovery is its own pass, and does not queue behind indexing
