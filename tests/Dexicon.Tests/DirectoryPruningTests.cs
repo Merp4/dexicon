@@ -95,6 +95,13 @@ public sealed class DirectoryPruningTests : IDisposable
     [InlineData("!keep/", "keep/inner", true)]
     // Applies at any depth, so nothing is prunable.
     [InlineData("!*.md", "node_modules", true)]
+    // A wildcard inside a segment constrains nothing about which directory it names, so
+    // the certain prefix is the boundary above it. Cutting at the wildcard gave "foo",
+    // which "foo123" does not match, and the directory holding the re-included file was
+    // pruned.
+    [InlineData("!foo*/bar", "foo123", true)]
+    [InlineData("!foo*/bar", "anything", true)]
+    [InlineData("!data/*/keep", "data/mariadb", true)]
     // Unrelated, so the directory can go.
     [InlineData("!data/sessions/", "node_modules", false)]
     [InlineData("!.vscode/launch.json", "data/mariadb", false)]

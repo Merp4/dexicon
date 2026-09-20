@@ -13,9 +13,9 @@ public sealed partial class IgnoreRuleSet
     private readonly List<Rule> _rules = [];
 
     /// <param name="LiteralPrefix">
-    /// The glob up to its first wildcard, which is the deepest path this rule is certain
-    /// to be confined to. Used to decide whether a negation could reach beneath a
-    /// directory that is otherwise prunable.
+    /// The deepest path this rule is certain to sit under: its text up to the last path
+    /// boundary before its first wildcard. Used to decide whether a negation could reach
+    /// beneath a directory that is otherwise prunable.
     /// </param>
     /// <param name="MatchesAnyDepth">
     /// The pattern has no interior slash and no anchor, so it applies at every level:
@@ -91,12 +91,22 @@ public sealed partial class IgnoreRuleSet
         return false;
     }
 
-    /// <summary>The glob up to its first wildcard, cut at a path boundary.</summary>
+    /// <summary>
+    /// The deepest path this glob is certain to sit under: its text up to the last path
+    /// boundary BEFORE its first wildcard.
+    ///
+    /// Cutting at the wildcard itself is not the same thing and is wrong here. `foo*/bar`
+    /// would give `foo`, which an ignored `foo123` does not match, so that directory would
+    /// be pruned even though `foo123/bar` is exactly what the rule re-includes. Cut at the
+    /// boundary instead, which for that glob leaves nothing and therefore prunes nothing.
+    /// </summary>
     private static string LiteralPrefixOf(string glob)
     {
         var wildcard = glob.IndexOfAny(['*', '?', '[']);
-        var literal = wildcard < 0 ? glob : glob[..wildcard];
-        return literal.TrimEnd('/');
+        if (wildcard < 0) return glob.TrimEnd('/');
+
+        var boundary = glob.LastIndexOf('/', wildcard);
+        return boundary <= 0 ? string.Empty : glob[..boundary];
     }
 
     // `bin/` must exclude `bin/Debug/App.dll`, not just the directory entry itself.
