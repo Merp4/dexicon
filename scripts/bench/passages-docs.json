@@ -1,0 +1,542 @@
+[
+  {
+    "chunkSize": 256,
+    "overlap": 0,
+    "chunks": {
+      "found": 29,
+      "queries": 55,
+      "recall": 0.5273,
+      "meanChars": 1426
+    },
+    "budget": 1500,
+    "neighbours": 0,
+    "passage": {
+      "found": 29,
+      "queries": 55,
+      "recall": 0.5273,
+      "meanChars": 1426
+    }
+  },
+  {
+    "chunkSize": 256,
+    "overlap": 0,
+    "chunks": {
+      "found": 20,
+      "queries": 55,
+      "recall": 0.3636,
+      "meanChars": 830
+    },
+    "budget": 1500,
+    "neighbours": 2,
+    "passage": {
+      "found": 4,
+      "queries": 55,
+      "recall": 0.0727,
+      "meanChars": 830
+    }
+  },
+  {
+    "chunkSize": 256,
+    "overlap": 0,
+    "chunks": {
+      "found": 20,
+      "queries": 55,
+      "recall": 0.3636,
+      "meanChars": 730
+    },
+    "budget": 1500,
+    "neighbours": 5,
+    "passage": {
+      "found": 2,
+      "queries": 55,
+      "recall": 0.0364,
+      "meanChars": 730
+    }
+  },
+  {
+    "chunkSize": 256,
+    "overlap": 0,
+    "chunks": {
+      "found": 33,
+      "queries": 55,
+      "recall": 0.6,
+      "meanChars": 5824
+    },
+    "budget": 6000,
+    "neighbours": 0,
+    "passage": {
+      "found": 34,
+      "queries": 55,
+      "recall": 0.6182,
+      "meanChars": 5824
+    }
+  },
+  {
+    "chunkSize": 256,
+    "overlap": 0,
+    "chunks": {
+      "found": 32,
+      "queries": 55,
+      "recall": 0.5818,
+      "meanChars": 4624
+    },
+    "budget": 6000,
+    "neighbours": 2,
+    "passage": {
+      "found": 29,
+      "queries": 55,
+      "recall": 0.5273,
+      "meanChars": 4624
+    }
+  },
+  {
+    "chunkSize": 256,
+    "overlap": 0,
+    "chunks": {
+      "found": 22,
+      "queries": 55,
+      "recall": 0.4,
+      "meanChars": 2071
+    },
+    "budget": 6000,
+    "neighbours": 5,
+    "passage": {
+      "found": 13,
+      "queries": 55,
+      "recall": 0.2364,
+      "meanChars": 2071
+    }
+  },
+  {
+    "chunkSize": 256,
+    "overlap": 100,
+    "chunks": {
+      "found": 26,
+      "queries": 55,
+      "recall": 0.4727,
+      "meanChars": 1444
+    },
+    "budget": 1500,
+    "neighbours": 0,
+    "passage": {
+      "found": 25,
+      "queries": 55,
+      "recall": 0.4545,
+      "meanChars": 1444
+    }
+  },
+  {
+    "chunkSize": 256,
+    "overlap": 100,
+    "chunks": {
+      "found": 23,
+      "queries": 55,
+      "recall": 0.4182,
+      "meanChars": 991
+    },
+    "budget": 1500,
+    "neighbours": 2,
+    "passage": {
+      "found": 4,
+      "queries": 55,
+      "recall": 0.0727,
+      "meanChars": 991
+    }
+  },
+  {
+    "chunkSize": 256,
+    "overlap": 100,
+    "chunks": {
+      "found": 23,
+      "queries": 55,
+      "recall": 0.4182,
+      "meanChars": 997
+    },
+    "budget": 1500,
+    "neighbours": 5,
+    "passage": {
+      "found": 4,
+      "queries": 55,
+      "recall": 0.0727,
+      "meanChars": 997
+    }
+  },
+  {
+    "chunkSize": 256,
+    "overlap": 100,
+    "chunks": {
+      "found": 33,
+      "queries": 55,
+      "recall": 0.6,
+      "meanChars": 5945
+    },
+    "budget": 6000,
+    "neighbours": 0,
+    "passage": {
+      "found": 33,
+      "queries": 55,
+      "recall": 0.6,
+      "meanChars": 5945
+    }
+  },
+  {
+    "chunkSize": 256,
+    "overlap": 100,
+    "chunks": {
+      "found": 32,
+      "queries": 55,
+      "recall": 0.5818,
+      "meanChars": 4085
+    },
+    "budget": 6000,
+    "neighbours": 2,
+    "passage": {
+      "found": 28,
+      "queries": 55,
+      "recall": 0.5091,
+      "meanChars": 4085
+    }
+  },
+  {
+    "chunkSize": 256,
+    "overlap": 100,
+    "chunks": {
+      "found": 23,
+      "queries": 55,
+      "recall": 0.4182,
+      "meanChars": 1466
+    },
+    "budget": 6000,
+    "neighbours": 5,
+    "passage": {
+      "found": 9,
+      "queries": 55,
+      "recall": 0.1636,
+      "meanChars": 1466
+    }
+  },
+  {
+    "chunkSize": 768,
+    "overlap": 0,
+    "chunks": {
+      "found": 16,
+      "queries": 55,
+      "recall": 0.2909,
+      "meanChars": 1442
+    },
+    "budget": 1500,
+    "neighbours": 0,
+    "passage": {
+      "found": 17,
+      "queries": 55,
+      "recall": 0.3091,
+      "meanChars": 1442
+    }
+  },
+  {
+    "chunkSize": 768,
+    "overlap": 0,
+    "chunks": {
+      "found": 16,
+      "queries": 55,
+      "recall": 0.2909,
+      "meanChars": 1363
+    },
+    "budget": 1500,
+    "neighbours": 2,
+    "passage": {
+      "found": 2,
+      "queries": 55,
+      "recall": 0.0364,
+      "meanChars": 1363
+    }
+  },
+  {
+    "chunkSize": 768,
+    "overlap": 0,
+    "chunks": {
+      "found": 16,
+      "queries": 55,
+      "recall": 0.2909,
+      "meanChars": 1301
+    },
+    "budget": 1500,
+    "neighbours": 5,
+    "passage": {
+      "found": 3,
+      "queries": 55,
+      "recall": 0.0545,
+      "meanChars": 1301
+    }
+  },
+  {
+    "chunkSize": 768,
+    "overlap": 0,
+    "chunks": {
+      "found": 32,
+      "queries": 55,
+      "recall": 0.5818,
+      "meanChars": 5889
+    },
+    "budget": 6000,
+    "neighbours": 0,
+    "passage": {
+      "found": 32,
+      "queries": 55,
+      "recall": 0.5818,
+      "meanChars": 5889
+    }
+  },
+  {
+    "chunkSize": 768,
+    "overlap": 0,
+    "chunks": {
+      "found": 23,
+      "queries": 55,
+      "recall": 0.4182,
+      "meanChars": 2848
+    },
+    "budget": 6000,
+    "neighbours": 2,
+    "passage": {
+      "found": 8,
+      "queries": 55,
+      "recall": 0.1455,
+      "meanChars": 2848
+    }
+  },
+  {
+    "chunkSize": 768,
+    "overlap": 0,
+    "chunks": {
+      "found": 23,
+      "queries": 55,
+      "recall": 0.4182,
+      "meanChars": 2394
+    },
+    "budget": 6000,
+    "neighbours": 5,
+    "passage": {
+      "found": 6,
+      "queries": 55,
+      "recall": 0.1091,
+      "meanChars": 2394
+    }
+  },
+  {
+    "chunkSize": 768,
+    "overlap": 100,
+    "chunks": {
+      "found": 19,
+      "queries": 55,
+      "recall": 0.3455,
+      "meanChars": 1431
+    },
+    "budget": 1500,
+    "neighbours": 0,
+    "passage": {
+      "found": 19,
+      "queries": 55,
+      "recall": 0.3455,
+      "meanChars": 1431
+    }
+  },
+  {
+    "chunkSize": 768,
+    "overlap": 100,
+    "chunks": {
+      "found": 19,
+      "queries": 55,
+      "recall": 0.3455,
+      "meanChars": 1436
+    },
+    "budget": 1500,
+    "neighbours": 2,
+    "passage": {
+      "found": 4,
+      "queries": 55,
+      "recall": 0.0727,
+      "meanChars": 1436
+    }
+  },
+  {
+    "chunkSize": 768,
+    "overlap": 100,
+    "chunks": {
+      "found": 19,
+      "queries": 55,
+      "recall": 0.3455,
+      "meanChars": 1428
+    },
+    "budget": 1500,
+    "neighbours": 5,
+    "passage": {
+      "found": 5,
+      "queries": 55,
+      "recall": 0.0909,
+      "meanChars": 1428
+    }
+  },
+  {
+    "chunkSize": 768,
+    "overlap": 100,
+    "chunks": {
+      "found": 32,
+      "queries": 55,
+      "recall": 0.5818,
+      "meanChars": 5900
+    },
+    "budget": 6000,
+    "neighbours": 0,
+    "passage": {
+      "found": 32,
+      "queries": 55,
+      "recall": 0.5818,
+      "meanChars": 5900
+    }
+  },
+  {
+    "chunkSize": 768,
+    "overlap": 100,
+    "chunks": {
+      "found": 25,
+      "queries": 55,
+      "recall": 0.4545,
+      "meanChars": 2748
+    },
+    "budget": 6000,
+    "neighbours": 2,
+    "passage": {
+      "found": 7,
+      "queries": 55,
+      "recall": 0.1273,
+      "meanChars": 2748
+    }
+  },
+  {
+    "chunkSize": 768,
+    "overlap": 100,
+    "chunks": {
+      "found": 26,
+      "queries": 55,
+      "recall": 0.4727,
+      "meanChars": 2875
+    },
+    "budget": 6000,
+    "neighbours": 5,
+    "passage": {
+      "found": 8,
+      "queries": 55,
+      "recall": 0.1455,
+      "meanChars": 2875
+    }
+  },
+  {
+    "chunkSize": 768,
+    "overlap": 384,
+    "chunks": {
+      "found": 17,
+      "queries": 55,
+      "recall": 0.3091,
+      "meanChars": 1436
+    },
+    "budget": 1500,
+    "neighbours": 0,
+    "passage": {
+      "found": 17,
+      "queries": 55,
+      "recall": 0.3091,
+      "meanChars": 1436
+    }
+  },
+  {
+    "chunkSize": 768,
+    "overlap": 384,
+    "chunks": {
+      "found": 17,
+      "queries": 55,
+      "recall": 0.3091,
+      "meanChars": 1438
+    },
+    "budget": 1500,
+    "neighbours": 2,
+    "passage": {
+      "found": 3,
+      "queries": 55,
+      "recall": 0.0545,
+      "meanChars": 1438
+    }
+  },
+  {
+    "chunkSize": 768,
+    "overlap": 384,
+    "chunks": {
+      "found": 17,
+      "queries": 55,
+      "recall": 0.3091,
+      "meanChars": 1436
+    },
+    "budget": 1500,
+    "neighbours": 5,
+    "passage": {
+      "found": 3,
+      "queries": 55,
+      "recall": 0.0545,
+      "meanChars": 1436
+    }
+  },
+  {
+    "chunkSize": 768,
+    "overlap": 384,
+    "chunks": {
+      "found": 27,
+      "queries": 55,
+      "recall": 0.4909,
+      "meanChars": 5922
+    },
+    "budget": 6000,
+    "neighbours": 0,
+    "passage": {
+      "found": 27,
+      "queries": 55,
+      "recall": 0.4909,
+      "meanChars": 5922
+    }
+  },
+  {
+    "chunkSize": 768,
+    "overlap": 384,
+    "chunks": {
+      "found": 24,
+      "queries": 55,
+      "recall": 0.4364,
+      "meanChars": 2963
+    },
+    "budget": 6000,
+    "neighbours": 2,
+    "passage": {
+      "found": 9,
+      "queries": 55,
+      "recall": 0.1636,
+      "meanChars": 2963
+    }
+  },
+  {
+    "chunkSize": 768,
+    "overlap": 384,
+    "chunks": {
+      "found": 24,
+      "queries": 55,
+      "recall": 0.4364,
+      "meanChars": 2963
+    },
+    "budget": 6000,
+    "neighbours": 5,
+    "passage": {
+      "found": 8,
+      "queries": 55,
+      "recall": 0.1455,
+      "meanChars": 2963
+    }
+  }
+]
