@@ -30,7 +30,14 @@ public sealed record ExtractedUnit(int Number, int StartOffset, string? Label = 
 /// Raised when a file is a recognised format that cannot be read: encrypted, DRM'd,
 /// or structurally broken. Distinct from "produced no text", which is not an error.
 /// </summary>
-public sealed class ExtractionFailedException(string message, Exception? inner = null)
+/// <remarks>
+/// Not sealed, so <see cref="ExtractionTimeoutException"/> can be one of these. Every
+/// extractor's catch-all is filtered on this type, and a timeout that was a sibling
+/// rather than a subtype was re-wrapped by the DOCX and PPTX ones and reported as a
+/// corrupt file. Making the relationship carry the exemption means a new extractor gets
+/// it by copying the filter its neighbours already use.
+/// </remarks>
+public class ExtractionFailedException(string message, Exception? inner = null)
     : Exception(message, inner);
 
 /// <summary>
@@ -138,12 +145,14 @@ public sealed partial class PdfTextExtractor : ITextExtractor
             source = buffered;
         }
 
+        RequireTrailer(source, fileName);
+
         PdfDocument document;
         try
         {
             document = PdfDocument.Open(source);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not ExtractionFailedException)
         {
             buffered?.Dispose();
             throw new ExtractionFailedException(
@@ -171,6 +180,64 @@ public sealed partial class PdfTextExtractor : ITextExtractor
         {
             buffered?.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Reject a PDF whose trailer is missing before handing it to PdfPig.
+    ///
+    /// A conforming PDF ends with <c>startxref</c>, a byte offset and <c>%%EOF</c>. A
+    /// download cut short has none of them, and PdfPig's response to a missing
+    /// cross-reference table is to rebuild it by scanning the file backwards for object
+    /// markers. That scan re-reads a 4 KB block to advance a single byte, so its cost is
+    /// quadratic in file size and paid at the mount's latency: on a 68 MB truncated PDF
+    /// over a 9p bind mount it ran for hours without finishing.
+    ///
+    /// The cost here is one read of the last 4 KB. Measured over 1,983 PDFs, 1,981 carry
+    /// both <c>startxref</c> and <c>%%EOF</c> within that window and the two that carry
+    /// neither are truncated downloads, one ending mid-dictionary at exactly 68 MiB. 4 KB
+    /// rather than the 1 KB the specification implies, because appended signatures and
+    /// incremental updates leave junk after the marker.
+    ///
+    /// This changes no output for a file that already extracted, so
+    /// <see cref="ExtractorVersions.Current"/> is deliberately not bumped: the cache
+    /// holds text for files that parsed, and these never produced any.
+    /// </summary>
+    private static void RequireTrailer(Stream source, string fileName)
+    {
+        // Not seekable cannot happen here (the caller buffers first), but Length on a
+        // stream that does not support it throws, and a guard must not be the thing that
+        // breaks the path it guards.
+        if (!source.CanSeek) return;
+
+        const int TailBytes = 4096;
+        var length = source.Length;
+        if (length == 0)
+            throw new ExtractionFailedException($"'{fileName}' is empty.");
+
+        var take = (int)Math.Min(TailBytes, length);
+        var tail = new byte[take];
+
+        source.Position = length - take;
+        source.ReadExactly(tail, 0, take);
+        source.Position = 0;
+
+        // Both keywords, not just %%EOF. Those five bytes can appear inside a stream, a
+        // comment or a string, so on their own they are not evidence of a trailer, and a
+        // file cut mid-stream could carry them and still reach the recovery scan. The
+        // trailer is `startxref`, an offset, then `%%EOF`, so requiring the keyword that
+        // names the cross-reference table tests for the thing actually needed.
+        //
+        // Free, measured: across 1,983 PDFs, 1,981 carry both within their last 4 KB, the
+        // two that carry neither are the truncated downloads, and not one file has %%EOF
+        // without startxref. Requiring both rejects nothing that the looser check accepted.
+        var span = tail.AsSpan();
+        if (span.IndexOf("%%EOF"u8) >= 0 && span.IndexOf("startxref"u8) >= 0) return;
+
+        throw new ExtractionFailedException(
+            $"'{fileName}' has no PDF trailer (startxref and %%EOF) in its last {take:N0} "
+            + $"bytes, so it is truncated rather than merely unusual. Its {length:N0} bytes "
+            + "were not read: a PDF with no cross-reference table can only be recovered by "
+            + "scanning it backwards a byte at a time, which costs hours on a file this size.");
     }
 
     /// <summary>

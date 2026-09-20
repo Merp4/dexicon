@@ -130,6 +130,33 @@ public sealed class IndexingOptions
     /// </summary>
     public long DocumentMaxBytes { get; init; } = 512L * 1024 * 1024;
 
+    /// <summary>
+    /// How long a file may go on reading itself during extraction before it is abandoned
+    /// and recorded as failed. 0 disables the limit.
+    ///
+    /// Extraction is a synchronous call into PdfPig or the OpenXML readers, none of which
+    /// take a cancellation token, so a job's own token cannot interrupt one. Without a
+    /// limit a single unreadable file holds the corpus and everything queued behind it: a
+    /// truncated 68 MB PDF did exactly that for over two hours, and only a container
+    /// restart ended it. <see cref="Extraction.DeadlineStream"/> enforces the budget on
+    /// the file's own reads, which is what lets the thread unwind instead of being left
+    /// running.
+    ///
+    /// WHAT IT DOES NOT COVER. The clock is read between operations on the file, so this
+    /// bounds a file that keeps reading, not wall-clock time in extraction. A single read
+    /// that never returns, or a long stretch of computation inside the library between
+    /// two reads, passes unchecked. Both are out of reach from here for the same reason
+    /// the budget exists: there is no cancellation to hook and no safe way to stop a
+    /// thread, so bounding them needs process isolation rather than a larger number. The
+    /// case this was built for, a file issuing millions of small reads, is covered.
+    ///
+    /// 300s is far above anything healthy. The slowest legitimate file measured here is an
+    /// intact 84 MB PDF at 13s, and the limit exists for the pathological case rather than
+    /// the large one. Raise it if a genuinely enormous document is being rejected; the
+    /// failure names the file and the budget.
+    /// </summary>
+    public int ExtractionTimeoutSeconds { get; init; } = 300;
+
     public int ChunkSize { get; init; } = 768;
     public int ChunkOverlap { get; init; } = 100;
     public string BoundaryMode { get; init; } = "language-aware";

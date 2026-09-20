@@ -692,7 +692,17 @@ public sealed class CorpusIndexer(
                 else
                 {
                     await using var stream = File.OpenRead(candidate.FullPath);
-                    extracted = extractor.Extract(stream, candidate.RelativePath);
+
+                    // Every read the extractor makes passes through the deadline, which is
+                    // the only way to interrupt one: Extract is synchronous and the
+                    // libraries under it take no cancellation token.
+                    extracted = _indexing.ExtractionTimeoutSeconds > 0
+                        ? extractor.Extract(
+                            new DeadlineStream(stream,
+                                TimeSpan.FromSeconds(_indexing.ExtractionTimeoutSeconds),
+                                candidate.RelativePath),
+                            candidate.RelativePath)
+                        : extractor.Extract(stream, candidate.RelativePath);
                 }
 
                 var content = extracted.Text;
@@ -797,6 +807,20 @@ public sealed class CorpusIndexer(
                 okFile.ExtractedChars = content.Length;
 
                 job.FilesDone++;   // ChunksWritten is accumulated per batch above
+            }
+            catch (ExtractionTimeoutException ex)
+            {
+                // The file outran its budget and the read threw to get the thread back.
+                // Recorded as failed with no content hash, so fixing the file or raising
+                // the budget lets a later refresh retry it rather than skipping it
+                // forever on a hash that matches.
+                log.LogWarning("Extraction timed out for {File}: {Reason}",
+                    candidate.RelativePath, ex.Message);
+                var (_, timedOut) = Track(known, states, set, source.Id, candidate.RelativePath);
+                timedOut.Status = FileStatus.Failed;
+                timedOut.StatusDetail = ex.Message;
+                timedOut.ContentHash = null;
+                job.FilesFailed++;
             }
             catch (ExtractionFailedException ex)
             {

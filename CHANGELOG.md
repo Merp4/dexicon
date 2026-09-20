@@ -86,6 +86,35 @@ with no section here fails its release rather than publishing an undescribed one
   blank line numbered the same as the tail's first real line. The separator now belongs to
   neither half, and a round-trip through `Stitch` holds it.
 
+- **A truncated PDF is refused instead of being searched byte by byte.** A conforming PDF
+  ends with `%%EOF`. One cut short by an interrupted download does not, and has no
+  cross-reference table, so PdfPig rebuilds one by scanning the file backwards for object
+  markers, re-reading a 4 KB block to advance a single byte. Over a bind mount each of
+  those is a round trip: measured at about 6,000 a second against a 68 MiB file, which is
+  3.3 hours for that file alone with the index job and its queue stopped behind it.
+
+  The last 4 KB is now checked for the trailer, `startxref` and `%%EOF`, before the file
+  is opened. The same file is refused in 2 ms and recorded as failed with its size. Both
+  keywords rather than the marker alone, because those five bytes can appear inside a
+  stream or a comment: run over the 1,983 PDFs to hand, the check rejects exactly the two
+  truncated downloads and not one other file carries `%%EOF` without `startxref`. An
+  84 MB PDF that is intact still extracts, in 13 s.
+
+- **Extraction has a time budget, so one file can no longer hold a corpus.** `Extract` is
+  synchronous and the libraries beneath it take no cancellation token, so an index job's
+  own token could not interrupt one. A single file held a corpus for over two hours with
+  two refresh jobs queued behind it, and only restarting the container ended it.
+
+  Reads now pass through a deadline and throw once it is reached, so the stack unwinds and
+  the thread is returned rather than left running until the process ends. The file is
+  recorded as failed with no content hash, so a later refresh retries it. Set by
+  `DEXICON_INDEXING_EXTRACTIONTIMEOUTSECONDS`, default 300, 0 to disable.
+
+  The clock is read between operations on the file, so this bounds a file that keeps
+  reading rather than wall-clock time in extraction. A single read that never returns, or
+  a long stretch of computation inside the library, passes unchecked; bounding those needs
+  process isolation, and the option says so where it is declared.
+
 ---
 
 ## 0.5.1 — 2026-09-19
