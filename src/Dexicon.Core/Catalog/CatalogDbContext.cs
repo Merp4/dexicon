@@ -148,6 +148,9 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             e.ToTable("file_chunk_states");
             e.HasKey(x => new { x.FileId, x.ChunkSetId });
             e.Property(x => x.ContentHash).HasMaxLength(64);
+            // No foreign key to file_texts: a plain-text file has a hash and no row
+            // there, because reading it is the extraction.
+            e.Property(x => x.SourceSha256).HasMaxLength(64);
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
             e.HasOne(x => x.File).WithMany(f => f.ChunkStates)
                 .HasForeignKey(x => x.FileId).OnDelete(DeleteBehavior.Cascade);
@@ -180,9 +183,6 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
                 .HasForeignKey(x => x.SourceId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(x => new { x.SourceId, x.RelativePath }).IsUnique();
             e.Property(x => x.BlobSha256).HasMaxLength(64);
-            // No foreign key to file_texts: a plain-text file has a hash and no row
-            // there, since reading it is the extraction.
-            e.Property(x => x.Sha256).HasMaxLength(64);
             // Restrict, not Cascade: deleting a blob that corpora still reference would
             // silently empty them. A blob is only removable once nothing attaches it.
             e.HasOne(x => x.Blob).WithMany()
@@ -218,9 +218,12 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         modelBuilder.Entity<FileText>(e =>
         {
             e.ToTable("file_texts");
-            e.HasKey(x => x.Sha256);
+            // The bytes AND the extractor. Which extractor runs is chosen by extension,
+            // so the same bytes under two extensions are two different parses, and a key
+            // of bytes alone would serve one of them as the other.
+            e.HasKey(x => new { x.Sha256, x.Extractor });
             e.Property(x => x.Sha256).HasMaxLength(64);
-            e.Property(x => x.Extractor).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Extractor).HasMaxLength(100);
             e.Property(x => x.Title).HasMaxLength(500);
             e.Property(x => x.EmptyReason).HasMaxLength(500);
         });

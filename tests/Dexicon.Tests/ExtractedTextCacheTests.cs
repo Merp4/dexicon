@@ -27,8 +27,8 @@ public sealed class ExtractedTextCacheTests : IDisposable
     private readonly string _dir = Directory.CreateTempSubdirectory("filetext-").FullName;
     private readonly string _db = Path.Combine(Path.GetTempPath(), $"filetext-{Guid.NewGuid():N}.db");
 
-    private sealed class Counting(string text, IReadOnlyList<ExtractedUnit>? units = null,
-                                  string? title = null) : ITextExtractor
+    private class Counting(string text, IReadOnlyList<ExtractedUnit>? units = null,
+                           string? title = null) : ITextExtractor
     {
         public int Calls { get; private set; }
 
@@ -45,6 +45,11 @@ public sealed class ExtractedTextCacheTests : IDisposable
             return new ExtractedText(text, units ?? [], title);
         }
     }
+
+    /// <summary>Stands in for two extractors, which is two types rather than two instances.</summary>
+    private sealed class CountingA(string text) : Counting(text);
+
+    private sealed class CountingB(string text) : Counting(text);
 
     private CatalogDbContext Db()
     {
@@ -139,6 +144,57 @@ public sealed class ExtractedTextCacheTests : IDisposable
     }
 
     /// <summary>
+    /// Which extractor runs is decided by extension, so the same bytes under two
+    /// extensions are two different parses. DOCX, PPTX and EPUB are all zip containers,
+    /// and a rename moves a file between them; keyed on the bytes alone, the second file
+    /// would be handed the first's text and recorded as indexed.
+    /// </summary>
+    [Fact]
+    public async Task TheSameBytesUnderTwoExtractorsAreTwoRows()
+    {
+        await using var db = Db();
+        var indexer = Indexer(db);
+        // Two TYPES, because the extractor's type name is what the row records and what
+        // the lookup matches on. Two instances of one class are one extractor.
+        var epub = new CountingA("read as an epub");
+        var docx = new CountingB("read as a docx");
+        var bytes = "PK identical zip bytes";
+
+        await indexer.ExtractCachedAsync(epub, File("a.epub", bytes), default);
+        var second = await indexer.ExtractCachedAsync(docx, File("a.docx", bytes), default);
+
+        docx.Calls.ShouldBe(1);   // not served the epub's text
+        second.Text.Text.ShouldBe("read as a docx");
+        (await db.FileTexts.CountAsync()).ShouldBe(2);
+    }
+
+    /// <summary>
+    /// A row stamped by a LATER build than this one. Overwriting it would make a
+    /// rollback and the version it rolled back from take turns re-extracting the same
+    /// library, each undoing the other's work every pass.
+    /// </summary>
+    [Fact]
+    public async Task TextFromANewerExtractorIsKeptRatherThanDowngraded()
+    {
+        await using var db = Db();
+        var indexer = Indexer(db);
+        var file = File("f.pdf", "bytes");
+
+        await indexer.ExtractCachedAsync(new Counting("current text"), file, default);
+
+        var ahead = await db.FileTexts.SingleAsync();
+        ahead.ExtractorVersion = ExtractorVersions.Current + 1;
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        var older = new Counting("would be a downgrade");
+        var result = await indexer.ExtractCachedAsync(older, file, default);
+
+        older.Calls.ShouldBe(0);
+        result.Text.Text.ShouldBe("current text");
+    }
+
+    /// <summary>
     /// The reason the version column exists. Without it a library ingested before an
     /// extractor fix keeps the broken text forever, because reindexing re-chunks the
     /// cached text rather than re-reading the file.
@@ -171,8 +227,8 @@ public sealed class ExtractedTextCacheTests : IDisposable
 
     /// <summary>
     /// A scanned PDF costs the same to re-read as a readable one and yields nothing
-    /// either time, so "produced no text" is cached too, with the reason it will be
-    /// shown by.
+    /// either time, so "produced no text" is cached too. The reason is stored with it,
+    /// which is what the Files list shows in a row's status detail.
     /// </summary>
     [Fact]
     public async Task AFileThatYieldsNoTextIsCachedWithItsReason()

@@ -11,8 +11,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Dexicon.Core.Catalog.Migrations
 {
     [DbContext(typeof(CatalogDbContext))]
-    [Migration("20260920165956_FileSha")]
-    partial class FileSha
+    [Migration("20260920171654_ExtractedTextPerFile")]
+    partial class ExtractedTextPerFile
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -375,6 +375,10 @@ namespace Dexicon.Core.Catalog.Migrations
                     b.Property<DateTime?>("IndexedUtc")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("SourceSha256")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -396,6 +400,10 @@ namespace Dexicon.Core.Catalog.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Extractor")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("EmptyReason")
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
@@ -404,11 +412,6 @@ namespace Dexicon.Core.Catalog.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTime>("ExtractedUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Extractor")
-                        .IsRequired()
-                        .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
                     b.Property<int>("ExtractorVersion")
@@ -425,7 +428,7 @@ namespace Dexicon.Core.Catalog.Migrations
                     b.Property<string>("UnitsJson")
                         .HasColumnType("TEXT");
 
-                    b.HasKey("Sha256");
+                    b.HasKey("Sha256", "Extractor");
 
                     b.ToTable("file_texts", (string)null);
                 });
@@ -518,10 +521,6 @@ namespace Dexicon.Core.Catalog.Migrations
                     b.Property<string>("RelativePath")
                         .IsRequired()
                         .HasMaxLength(1000)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Sha256")
-                        .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
                     b.Property<long>("SizeBytes")

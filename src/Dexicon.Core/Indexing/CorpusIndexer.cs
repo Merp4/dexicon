@@ -777,6 +777,12 @@ public sealed class CorpusIndexer(
                 if (!full && states.TryGetValue(candidate.RelativePath, out var existing)
                           && existing.ContentHash == hash && existing.Status == FileStatus.Indexed)
                 {
+                    // Written here as well as on the success path below, because this is
+                    // where an already-indexed corpus leaves. A hash assigned only on
+                    // success would never be recorded outside a full rebuild, and the
+                    // document would stay unreachable on exactly the corpora that have
+                    // been indexed longest.
+                    existing.SourceSha256 = fileSha;
                     job.FilesSkipped++;
                     continue;   // unchanged — zero embedding calls, which is the point
                 }
@@ -793,10 +799,10 @@ public sealed class CorpusIndexer(
                     emptyState.Status = FileStatus.Empty;
                     emptyState.StatusDetail = reason;
                     emptyState.ContentHash = hash;
+                    emptyState.SourceSha256 = fileSha;
                     emptyState.ChunkCount = 0;
                     emptyState.IndexedUtc = DateTime.UtcNow;
                     emptyFile.SizeBytes = candidate.SizeBytes;
-                    emptyFile.Sha256 = fileSha;
                     emptyFile.ExtractedChars = 0;
                     job.FilesSkipped++;
                     continue;
@@ -817,6 +823,7 @@ public sealed class CorpusIndexer(
                     noneState.Status = FileStatus.Empty;
                     noneState.StatusDetail = "chunker produced no chunks";
                     noneState.ContentHash = hash;
+                    noneState.SourceSha256 = fileSha;
                     noneState.ChunkCount = 0;
                     noneState.IndexedUtc = DateTime.UtcNow;
                     job.FilesSkipped++;
@@ -860,10 +867,10 @@ public sealed class CorpusIndexer(
                 okState.Status = FileStatus.Indexed;
                 okState.StatusDetail = null;
                 okState.ContentHash = hash;          // written ONLY here, on success
+                okState.SourceSha256 = fileSha;
                 okState.ChunkCount = stored;
                 okState.IndexedUtc = DateTime.UtcNow;
                 okFile.SizeBytes = candidate.SizeBytes;
-                okFile.Sha256 = fileSha;
                 okFile.Language = language;
                 okFile.MediaType = LanguageMap.MediaType(language);
                 okFile.ExtractedChars = content.Length;
@@ -1141,37 +1148,51 @@ public sealed class CorpusIndexer(
     internal async Task<(string Sha256, ExtractedText Text)> ExtractCachedAsync(
         ITextExtractor extractor, WorkspaceWalker.Candidate candidate, CancellationToken ct)
     {
-        var sha = await HashFileAsync(candidate.FullPath, ct);
+        var name = extractor.GetType().Name;
+
+        // ONE open for both the hash and the extraction. Two would leave a window where
+        // the file changes in between, and the text of one revision would be stored
+        // under the hash of another: the cache would then hand that text to every later
+        // pass over the new bytes, which is worse than not caching at all. An open
+        // handle keeps the bytes it was opened on, so hashing and extracting through the
+        // same one cannot disagree. It also halves the round trips, which is what a bind
+        // mount charges for.
+        await using var stream = File.OpenRead(candidate.FullPath);
+        var sha = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, ct));
 
         // Untracked, and detached again after the write below. A row carries a whole
         // document's text and the change tracker lives as long as the job, so tracking
         // one per file would hold an entire library in memory at once.
+        //
+        // Keyed on the extractor as well as the bytes: which extractor runs is decided by
+        // extension, so the same bytes reached through two extensions are two parses, and
+        // DOCX, PPTX and EPUB are all zip containers that a rename moves between.
         var cached = await db.FileTexts.AsNoTracking()
-            .FirstOrDefaultAsync(t => t.Sha256 == sha, ct);
+            .FirstOrDefaultAsync(t => t.Sha256 == sha && t.Extractor == name, ct);
 
-        if (cached is not null && cached.ExtractorVersion == ExtractorVersions.Current)
+        // Not `==`. A row stamped NEWER than this build was written by a later one, and
+        // overwriting it would make a rollback and the version it rolled back from take
+        // turns re-extracting the same library.
+        if (cached is not null && cached.ExtractorVersion >= ExtractorVersions.Current)
             return (sha, new ExtractedText(cached.Text, UnitsFrom(cached.UnitsJson), cached.Title));
 
-        ExtractedText extracted;
-        await using (var stream = File.OpenRead(candidate.FullPath))
-        {
-            // Every read the extractor makes passes through the deadline, which is the
-            // only way to interrupt one: Extract is synchronous and the libraries under
-            // it take no cancellation token.
-            extracted = _indexing.ExtractionTimeoutSeconds > 0
-                ? extractor.Extract(
-                    new DeadlineStream(stream,
-                        TimeSpan.FromSeconds(_indexing.ExtractionTimeoutSeconds),
-                        candidate.RelativePath),
-                    candidate.RelativePath)
-                : extractor.Extract(stream, candidate.RelativePath);
-        }
+        stream.Position = 0;
+
+        // Every read the extractor makes passes through the deadline, which is the only
+        // way to interrupt one: Extract is synchronous and the libraries under it take no
+        // cancellation token.
+        var extracted = _indexing.ExtractionTimeoutSeconds > 0
+            ? extractor.Extract(
+                new DeadlineStream(stream,
+                    TimeSpan.FromSeconds(_indexing.ExtractionTimeoutSeconds),
+                    candidate.RelativePath),
+                candidate.RelativePath)
+            : extractor.Extract(stream, candidate.RelativePath);
 
         if (cached is not null)
-            // Same bytes, older extractor: the row is overwritten rather than added
-            // beside, since the hash is the key and the newer text is the only one
-            // anything should read. This is what lets an extractor fix reach files
-            // indexed before it.
+            // Same bytes, same extractor, older version: the row is overwritten rather
+            // than added beside. This is what lets an extractor fix reach files indexed
+            // before it.
             log.LogInformation(
                 "Re-extracted {File} with extractor v{Version}: {Before:N0} -> {After:N0} chars",
                 candidate.RelativePath, ExtractorVersions.Current,
@@ -1184,7 +1205,7 @@ public sealed class CorpusIndexer(
             UnitsJson = extracted.Units.Count > 0 ? JsonSerializer.Serialize(extracted.Units) : null,
             Title = extracted.Title,
             ExtractedChars = extracted.Text.Length,
-            Extractor = extractor.GetType().Name,
+            Extractor = name,
             ExtractorVersion = ExtractorVersions.Current,
             ExtractedUtc = DateTime.UtcNow,
 
@@ -1203,12 +1224,12 @@ public sealed class CorpusIndexer(
             // ExecuteUpdate rather than the change tracker, which would have to attach
             // the row to write it. Nothing else in the job needs this entity, and a
             // second instance of a key already tracked throws rather than replacing.
-            await db.FileTexts.Where(t => t.Sha256 == sha).ExecuteUpdateAsync(s => s
+            await db.FileTexts.Where(t => t.Sha256 == sha && t.Extractor == name)
+                .ExecuteUpdateAsync(s => s
                 .SetProperty(t => t.Text, row.Text)
                 .SetProperty(t => t.UnitsJson, row.UnitsJson)
                 .SetProperty(t => t.Title, row.Title)
                 .SetProperty(t => t.ExtractedChars, row.ExtractedChars)
-                .SetProperty(t => t.Extractor, row.Extractor)
                 .SetProperty(t => t.ExtractorVersion, row.ExtractorVersion)
                 .SetProperty(t => t.ExtractedUtc, row.ExtractedUtc)
                 .SetProperty(t => t.EmptyReason, row.EmptyReason), ct);

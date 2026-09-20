@@ -279,9 +279,8 @@ public sealed class DexiconTools
         // warning below exists for, so that case keeps the chunk path and the warning.
         if (!ambiguous && chunks.Count > 0)
         {
-            var file = await documents.FileAtAsync(
-                target.Corpus.Id, filePath, chunks[0].SourceId, ct);
-            var document = file is null ? null : await documents.ForAsync(file, ct);
+            var document = await documents.ForAsync(
+                target.Corpus.Id, target.Set.Id, filePath, chunks[0].SourceId, ct);
 
             if (document is not null)
             {

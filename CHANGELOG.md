@@ -52,10 +52,14 @@ with no section here fails its release rather than publishing an undescribed one
   bytes instead, which is computable without the work it exists to avoid.
 
   Uploads have had this since `blob_texts`, and the new table follows it: same columns,
-  same `ExtractorVersions.Current` gate so an extractor fix reaches files indexed before
-  it, and "produced no text" cached with its reason so a scanned PDF is not re-parsed on
-  every pass forever. Two corpora indexing the same file share one row. Plain text and
-  code are not cached, since reading the file is the extraction.
+  an `ExtractorVersions.Current` gate so an extractor fix reaches files indexed before it,
+  and "produced no text" cached with its reason so a scanned PDF is not re-parsed on every
+  pass forever. Two corpora indexing the same file share one row. Plain text and code are
+  not cached, since reading the file is the extraction.
+
+  Keyed on the extractor as well as the bytes, because which extractor runs is decided by
+  extension and DOCX, PPTX and EPUB are all zip containers a rename moves between. Both
+  come from one open, so the bytes hashed are the bytes parsed.
 
   This is also the first place a workspace document exists whole. Chunks carry their own
   text and nothing else did, so the content survived only as pieces.
@@ -70,10 +74,17 @@ with no section here fails its release rather than publishing an undescribed one
   The stitch remains for a code file on a mount, where no text is stored because reading
   the file is the extraction.
 
-  Reaching the document needs the hash on the file row: `files.sha256` records the bytes
-  each workspace file was indexed from, so `file_texts` can be looked up by path. Without
-  it the cache saves the indexer work and gives a reader nothing. Filled in by the next
-  index pass; a file indexed before it reports no document and falls back to the stitch.
+  Reaching the document needs the hash recorded: `file_chunk_states.source_sha256` holds
+  the bytes each set last read a file from, so `file_texts` can be looked up by path.
+  Without it the cache saves the indexer work and gives a reader nothing. Per set, not per
+  file, because a job can target one set while the others keep serving, and each set
+  should be handed the text its own chunks were cut from. Written by the next index pass
+  over the file, including the pass that skips it as unchanged; until then that file
+  reports no document and falls back to the stitch.
+
+  A file with no chunks now says which of the two it is. "Indexed, and the format yielded
+  nothing" was reported as "no indexed file at that path", which sends the reader to check
+  a path that is right.
 
 - **`get_context` windows the document, not the chunks around the line.** It selected the
   chunks overlapping the requested range and stitched them, so the passage was bounded by

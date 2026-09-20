@@ -148,10 +148,6 @@ CREATE TABLE files (
   -- Upload-sourced files only: the blob this is an attachment OF. Several corpora
   -- can point at one blob and chunk it differently — the point of the split.
   blob_sha256     TEXT REFERENCES blobs(sha256),
-  -- Workspace files: SHA-256 of the bytes as last indexed, which is the key into
-  -- file_texts and so the only way to reach the document whole. No foreign key: a code
-  -- file has a hash and no row there, because reading it is the extraction.
-  sha256          TEXT,
   size_bytes      INTEGER NOT NULL,
   media_type      TEXT,
   language        TEXT,
@@ -171,6 +167,11 @@ CREATE TABLE file_chunk_states (
   -- every file looking unchanged, so a refresh re-chunked nothing and the new setting
   -- silently did not apply. See 04-ingestion.md.
   content_hash  TEXT,                       -- NULL until successfully indexed
+  -- SHA-256 of the file's BYTES as THIS set last read them: the key into file_texts,
+  -- and so the only way to reach a workspace document whole. Per set rather than on
+  -- the attachment, because a job can target one set while the others keep serving,
+  -- and a file-wide hash would point a reader for a still-old set at the new document.
+  source_sha256 TEXT,                       -- NULL for uploads; files.blob_sha256 serves
   chunk_count   INTEGER NOT NULL DEFAULT 0,
   status        TEXT NOT NULL,              -- pending | indexed | skipped | failed | empty
   status_detail TEXT,                       -- why, in words, for skipped/failed/empty
@@ -212,22 +213,25 @@ CREATE TABLE blob_texts (
 -- The same, for files that live on a mount rather than in the blob store.
 --
 -- Keyed on a hash of the FILE'S BYTES, not of the text extracted from them: the key has
--- to be computable without doing the work it exists to avoid. No foreign key, because
--- there is no row for a file on disk to point at, and two corpora indexing the same file
--- share one row.
+-- to be computable without doing the work it exists to avoid. And on the extractor with
+-- it, because which extractor runs is decided by extension, so the same bytes under two
+-- extensions are two different parses; DOCX, PPTX and EPUB are all zip containers that a
+-- rename moves between. No foreign key, because there is no row for a file on disk to
+-- point at, and two corpora indexing the same file share one row.
 --
 -- This is also the only place a workspace document exists whole. Chunks carry their own
 -- text and nothing else did, so without this the content survives only as pieces.
 CREATE TABLE file_texts (
-  sha256            TEXT PRIMARY KEY,    -- SHA-256 of the file's bytes; files.sha256
+  sha256            TEXT NOT NULL,       -- SHA-256 of the file's bytes
+  extractor         TEXT NOT NULL,
   text              TEXT NOT NULL,
   units_json        TEXT,
   title             TEXT,
   extracted_chars   INTEGER NOT NULL,
-  extractor         TEXT NOT NULL,
   extractor_version INTEGER NOT NULL,
   extracted_utc     TEXT NOT NULL,
-  empty_reason      TEXT
+  empty_reason      TEXT,
+  PRIMARY KEY (sha256, extractor)
 );
 
 -- Operations ----------------------------------------------------------------

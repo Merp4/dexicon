@@ -78,19 +78,26 @@ public sealed class DexiconResources
             target.Set.CollectionName, target.Set.Id, path, ct);
 
         if (chunks.Count == 0)
-            throw new McpException(
-                $"No indexed file '{path}' in corpus '{corpus.Name}'. " +
-                "Paths are exactly as search_index reports them; browse dexicon://corpus/" +
-                $"{corpus.Name} for what the corpus contains.");
+        {
+            // Indexed and empty is not the same as absent, and a scanned PDF is the
+            // first. Saying the path is wrong sends the reader to check a right one.
+            var state = await documents.StatusAtAsync(corpus.Id, target.Set.Id, path, ct);
+
+            throw new McpException(state is { Status: FileStatus.Empty } empty
+                ? $"'{path}' is indexed in corpus '{corpus.Name}' and has no text: " +
+                  $"{empty.Detail ?? "no extractable text content"}."
+                : $"No indexed file '{path}' in corpus '{corpus.Name}'. " +
+                  "Paths are exactly as search_index reports them; browse dexicon://corpus/" +
+                  $"{corpus.Name} for what the corpus contains.");
+        }
 
         // The stored document where there is one. Stitching the chunks back together is
         // the fallback, and it is a reconstruction: it can only return the lines the
         // index happens to hold, and marks the ones it cannot account for.
         var sources = chunks.Select(c => c.SourceId).Distinct(StringComparer.Ordinal).ToList();
-        var file = sources.Count == 1
-            ? await documents.FileAtAsync(corpus.Id, path, sources[0], ct)
+        var document = sources.Count == 1
+            ? await documents.ForAsync(corpus.Id, target.Set.Id, path, sources[0], ct)
             : null;
-        var document = file is null ? null : await documents.ForAsync(file, ct);
 
         var sb = new StringBuilder();
         sb.Append(path).Append(" (corpus: ").Append(corpus.Name).Append(")\n\n");

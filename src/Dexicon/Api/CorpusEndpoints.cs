@@ -434,12 +434,24 @@ public static class CorpusEndpoints
 
             if (chunks.Count == 0)
             {
-                return Results.NotFound(new
-                {
-                    title = "Not indexed",
-                    detail = $"No indexed file '{path}' in '{target.Corpus.Name}:{target.Set.Name}'. " +
-                             "Paths are exactly as search reports them.",
-                });
+                // A file with no chunks is not necessarily a file that is not there. A
+                // scanned PDF is indexed, known and empty, and telling the reader their
+                // path was wrong sends them to check a path that is right.
+                var state = await documents.StatusAtAsync(target.Corpus.Id, target.Set.Id, path, ct);
+
+                return Results.NotFound(state is { Status: FileStatus.Empty } empty
+                    ? new
+                    {
+                        title = "No text",
+                        detail = $"'{path}' is indexed in '{target.Corpus.Name}:{target.Set.Name}' " +
+                                 $"and has no text: {empty.Detail ?? "no extractable text content"}.",
+                    }
+                    : new
+                    {
+                        title = "Not indexed",
+                        detail = $"No indexed file '{path}' in '{target.Corpus.Name}:{target.Set.Name}'. " +
+                                 "Paths are exactly as search reports them.",
+                    });
             }
 
             // The document itself where it is stored, and the chunks put back together
@@ -454,10 +466,9 @@ public static class CorpusEndpoints
             // Both are resolved before either is used, because the fallback needs the
             // chunks anyway: they carry the file's first line number.
             var sources = chunks.Select(c => c.SourceId).Distinct(StringComparer.Ordinal).ToList();
-            var file = sources.Count == 1
-                ? await documents.FileAtAsync(target.Corpus.Id, path, sources[0], ct)
+            var document = sources.Count == 1
+                ? await documents.ForAsync(target.Corpus.Id, target.Set.Id, path, sources[0], ct)
                 : null;
-            var document = file is null ? null : await documents.ForAsync(file, ct);
 
             var pieces = chunks.Select(c => (c.StartLine, c.EndLine, c.Content)).ToList();
             var stitched = Passage.Stitch(pieces, lineNumbers: false);

@@ -259,17 +259,6 @@ public sealed class IndexedFile
     public string? BlobSha256 { get; set; }
     public Blob? Blob { get; set; }
 
-    /// <summary>
-    /// SHA-256 of the file's bytes as last indexed. Set for workspace files, where it is
-    /// the key into <see cref="FileText"/> and therefore the only way to reach the
-    /// document whole; for uploads the blob hash already serves that purpose.
-    ///
-    /// Also what says whether the mount still holds what was indexed. A reader that finds
-    /// a different hash on disk is looking at a file that has changed since, which is a
-    /// fact worth stating rather than quietly serving either version.
-    /// </summary>
-    public string? Sha256 { get; set; }
-
     public long SizeBytes { get; set; }
     public string? MediaType { get; set; }
     public string? Language { get; set; }
@@ -301,6 +290,18 @@ public sealed class FileChunkState
     /// which is what makes a failure retry rather than be skipped as up to date.
     /// </summary>
     public string? ContentHash { get; set; }
+
+    /// <summary>
+    /// SHA-256 of the file's BYTES as this set last read them: the key into
+    /// <see cref="FileText"/>, and so the only way to reach a workspace document whole.
+    /// Null for uploads, where <see cref="IndexedFile.BlobSha256"/> already serves that.
+    ///
+    /// Per set rather than on the attachment, because a job can target one set while the
+    /// others keep serving. A file-wide hash written by that job would point a reader for
+    /// a still-old set at the new document, and the line numbers on that set's hits
+    /// address the old one.
+    /// </summary>
+    public string? SourceSha256 { get; set; }
 
     public int ChunkCount { get; set; }
     public FileStatus Status { get; set; }
@@ -361,6 +362,14 @@ public sealed class FileText
     /// <summary>SHA-256 of the file's bytes, not of the text extracted from them.</summary>
     public required string Sha256 { get; set; }
 
+    /// <summary>
+    /// Which extractor produced this, and part of the key with the hash. The extractor
+    /// is chosen by extension, so identical bytes reached through two extensions are two
+    /// different parses; keyed on the bytes alone, an EPUB copied to a <c>.docx</c> name
+    /// would be handed the EPUB's text and recorded as indexed.
+    /// </summary>
+    public required string Extractor { get; set; }
+
     public required string Text { get; set; }
 
     /// <summary>JSON array of extraction units: page, slide or chapter offsets.</summary>
@@ -369,13 +378,12 @@ public sealed class FileText
     public string? Title { get; set; }
     public int ExtractedChars { get; set; }
 
-    /// <summary>Which extractor produced this.</summary>
-    public required string Extractor { get; set; }
-
     /// <summary>
-    /// <c>ExtractorVersions.Current</c> when this text was produced. Anything older is
+    /// <c>ExtractorVersions.Current</c> when this text was produced. Anything OLDER is
     /// re-extracted rather than trusted, which is what lets an extractor fix reach files
-    /// indexed before it.
+    /// indexed before it. Anything newer is kept: it was produced by a later build of
+    /// this code, and a rollback overwriting it would make the two versions take turns
+    /// re-extracting the same library.
     /// </summary>
     public int ExtractorVersion { get; set; }
 

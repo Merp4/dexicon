@@ -208,6 +208,17 @@ deciding a file was unchanged means extracting it first. Before `file_texts`, a 
 over a mount nothing had touched still re-opened and re-parsed every PDF in it, and threw
 the text away again after chunking.
 
+The extractor is part of the key with the bytes, because which extractor runs is decided
+by extension: DOCX, PPTX and EPUB are all zip containers, and a rename moves a file
+between them. Both come from one open, so the bytes hashed are the bytes parsed; two
+opens leave a window where a file changes in between and the text of one revision is
+stored under the hash of another, which the cache would then serve to every later pass.
+
+`file_chunk_states.source_sha256` is what makes the text reachable by path, and it is per
+set rather than per file: a job can target one set while the others keep serving, so a
+file-wide hash written by that job would point a reader for a still-old set at a document
+its own chunks were not cut from.
+
 But the *code* changes. `ExtractorVersions.Current` is stamped on every cached extraction
 and bumped whenever extraction output changes; text from an older version is re-extracted
 the next time it is indexed. The version is also part of the chunking fingerprint, so the
