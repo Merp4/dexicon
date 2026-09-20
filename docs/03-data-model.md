@@ -29,6 +29,7 @@ things, deliberately:
 ```
   blobs              the bytes            content-addressed, stored once
   blob_texts         the extracted text   cached per blob, extracted once ever
+  file_texts         the extracted text   the same, for files on a mount
   files              an attachment        one per (corpus, document)
   chunk_sets         the chunk settings   what actually varies
   file_chunk_states  a file, per set      indexed here, pending there
@@ -193,14 +194,36 @@ CREATE TABLE blobs (
 -- changing a chunk size, or attaching a document to a second corpus, never re-opens
 -- the file.
 CREATE TABLE blob_texts (
-  sha256          TEXT PRIMARY KEY REFERENCES blobs(sha256) ON DELETE CASCADE,
-  text            TEXT NOT NULL,
-  units_json      TEXT,                  -- page/slide/chapter offsets, for provenance
-  title           TEXT,                  -- from the document's own metadata
-  extracted_chars INTEGER NOT NULL,
-  extractor       TEXT NOT NULL,         -- so a loader upgrade can invalidate the cache
-  extracted_utc   TEXT NOT NULL,
-  empty_reason    TEXT                   -- readable but yielded nothing: a scanned PDF
+  sha256            TEXT PRIMARY KEY REFERENCES blobs(sha256) ON DELETE CASCADE,
+  text              TEXT NOT NULL,
+  units_json        TEXT,                -- page/slide/chapter offsets, for provenance
+  title             TEXT,                -- from the document's own metadata
+  extracted_chars   INTEGER NOT NULL,
+  extractor         TEXT NOT NULL,
+  extractor_version INTEGER NOT NULL,    -- so an extractor fix invalidates the cache
+  extracted_utc     TEXT NOT NULL,
+  empty_reason      TEXT                 -- readable but yielded nothing: a scanned PDF
+);
+
+-- The same, for files that live on a mount rather than in the blob store.
+--
+-- Keyed on a hash of the FILE'S BYTES, not of the text extracted from them: the key has
+-- to be computable without doing the work it exists to avoid. No foreign key, because
+-- there is no row for a file on disk to point at, and two corpora indexing the same file
+-- share one row.
+--
+-- This is also the only place a workspace document exists whole. Chunks carry their own
+-- text and nothing else did, so without this the content survives only as pieces.
+CREATE TABLE file_texts (
+  sha256            TEXT PRIMARY KEY,    -- SHA-256 of the file's bytes
+  text              TEXT NOT NULL,
+  units_json        TEXT,
+  title             TEXT,
+  extracted_chars   INTEGER NOT NULL,
+  extractor         TEXT NOT NULL,
+  extractor_version INTEGER NOT NULL,
+  extracted_utc     TEXT NOT NULL,
+  empty_reason      TEXT
 );
 
 -- Operations ----------------------------------------------------------------

@@ -328,6 +328,52 @@ public sealed class Blob
 /// changing a corpus's chunk size, or attaching a document to a second corpus with
 /// different settings, re-chunks and re-embeds without ever re-opening the PDF.
 /// </summary>
+/// <summary>
+/// Extracted text for a WORKSPACE file, cached against the bytes it came from.
+///
+/// <see cref="BlobText"/> does this for uploads, and is why "changing a chunk size never
+/// re-opens the file" is true of them. A workspace file had no equivalent: the indexer
+/// extracted on every pass and discarded the text after chunking, so a refresh over an
+/// unchanged tree still re-opened and re-parsed every PDF, and a re-chunk paid the whole
+/// extraction cost again. One intact 84 MB PDF in this corpus costs 13.4s of that.
+///
+/// Keyed on a hash of the FILE'S BYTES rather than of the extracted text, because the key
+/// has to be computable without doing the work it exists to avoid. Hashing bytes is one
+/// sequential read; extracting is seconds. Two corpora indexing the same file share a row.
+///
+/// It is also the only place a workspace document exists whole. Chunks carry their own
+/// text, so without this the content survives only as pieces, which is what forces a chunk
+/// to be the unit a caller reads rather than merely the unit a search finds. See D-31.
+/// </summary>
+public sealed class FileText
+{
+    /// <summary>SHA-256 of the file's bytes, not of the text extracted from them.</summary>
+    public required string Sha256 { get; set; }
+
+    public required string Text { get; set; }
+
+    /// <summary>JSON array of extraction units: page, slide or chapter offsets.</summary>
+    public string? UnitsJson { get; set; }
+
+    public string? Title { get; set; }
+    public int ExtractedChars { get; set; }
+
+    /// <summary>Which extractor produced this.</summary>
+    public required string Extractor { get; set; }
+
+    /// <summary>
+    /// <c>ExtractorVersions.Current</c> when this text was produced. Anything older is
+    /// re-extracted rather than trusted, which is what lets an extractor fix reach files
+    /// indexed before it.
+    /// </summary>
+    public int ExtractorVersion { get; set; }
+
+    public DateTime ExtractedUtc { get; set; }
+
+    /// <summary>Set when the format was readable but yielded nothing, such as a scanned PDF.</summary>
+    public string? EmptyReason { get; set; }
+}
+
 public sealed class BlobText
 {
     public required string Sha256 { get; set; }

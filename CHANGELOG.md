@@ -44,6 +44,22 @@ with no section here fails its release rather than publishing an undescribed one
   at how long the work takes, so nothing has to predict that indexing a library runs for
   hours, while a holder that dies stops renewing and the corpus falls free.
 
+- **Extracted text for files on a mount is cached, as it already was for uploads.** A
+  refresh over a tree nothing had touched still re-opened and re-parsed every PDF in it,
+  and threw the text away again after chunking. The staleness check could not prevent it:
+  the fingerprint it compares is a hash of the *extracted* text, so deciding a file was
+  unchanged meant extracting it first. `file_texts` is keyed on a hash of the file's own
+  bytes instead, which is computable without the work it exists to avoid.
+
+  Uploads have had this since `blob_texts`, and the new table follows it: same columns,
+  same `ExtractorVersions.Current` gate so an extractor fix reaches files indexed before
+  it, and "produced no text" cached with its reason so a scanned PDF is not re-parsed on
+  every pass forever. Two corpora indexing the same file share one row. Plain text and
+  code are not cached, since reading the file is the extraction.
+
+  This is also the first place a workspace document exists whole. Chunks carry their own
+  text and nothing else did, so the content survived only as pieces.
+
 ### Changed
 
 - **A new corpus is chunked at 256 tokens rather than 768.** Measured, not chosen:

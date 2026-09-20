@@ -22,6 +22,7 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
     public DbSet<IndexedFile> Files => Set<IndexedFile>();
     public DbSet<Blob> Blobs => Set<Blob>();
     public DbSet<BlobText> BlobTexts => Set<BlobText>();
+    public DbSet<FileText> FileTexts => Set<FileText>();
     public DbSet<IndexJob> Jobs => Set<IndexJob>();
 
     /// <summary>
@@ -200,6 +201,20 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         modelBuilder.Entity<BlobText>(e =>
         {
             e.ToTable("blob_texts");
+            e.HasKey(x => x.Sha256);
+            e.Property(x => x.Sha256).HasMaxLength(64);
+            e.Property(x => x.Extractor).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Title).HasMaxLength(500);
+            e.Property(x => x.EmptyReason).HasMaxLength(500);
+        });
+
+        // Same shape as blob_texts and deliberately without its foreign key: a workspace
+        // file has no blob row to hang off, and the key is a content hash rather than an
+        // identity, so nothing cascades onto it. A row outlives the corpus that caused it
+        // and is reused by the next one to index the same bytes.
+        modelBuilder.Entity<FileText>(e =>
+        {
+            e.ToTable("file_texts");
             e.HasKey(x => x.Sha256);
             e.Property(x => x.Sha256).HasMaxLength(64);
             e.Property(x => x.Extractor).HasMaxLength(100).IsRequired();
