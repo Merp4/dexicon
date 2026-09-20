@@ -52,7 +52,7 @@ with no section here fails its release rather than publishing an undescribed one
   `POST /api/context` re-resolve the scope to find the collection a file's chunks live in,
   and they resolved the hits' corpus ids, which drops the `corpus:set` qualification. A
   bare corpus resolves to its default set, so asking for `books:fine` with `neighbours`
-  above zero read the neighbours out of `books`.
+  above zero read its neighbours out of `books` instead.
 
   Nothing failed, which is why it went unnoticed: a chunk index means different things in
   two chunkings, so the window either pulled unrelated text or missed the hit's own index

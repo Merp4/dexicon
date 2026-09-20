@@ -181,9 +181,10 @@ public sealed class ContextService(SearchService search, ScopeResolver scopes, I
         if (hits.Count == 0) return [];
 
         var scope = await scopes.ResolveReadableAsync(principal, ScopeForExpansion(requested, hits), ct);
-        var targets = scope.Targets
-            .GroupBy(t => t.Corpus.Id, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+        // One target per corpus, which SearchService assumes as well. Left to throw on a
+        // duplicate rather than grouped and picked from: choosing arbitrarily between two
+        // sets of one corpus is the same silent-wrong-set failure this change removes.
+        var targets = scope.Targets.ToDictionary(t => t.Corpus.Id, StringComparer.Ordinal);
 
         var files = new Dictionary<(string Corpus, string Path), IReadOnlyList<SearchHit>>();
         var candidates = new List<ContextCandidate>(hits.Count);
