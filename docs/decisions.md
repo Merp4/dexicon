@@ -1306,6 +1306,68 @@ evaluation that scores passages rather than file rank. That is the experiment th
 asks for, and the one result that would overturn it.
 ---
 
+### D-32 Discovery is its own pass, and does not queue behind indexing
+
+**Decision.** Walking a corpus and indexing it become separate pieces of work. A sweep
+resolves the source's filters, walks the tree, applies source shadowing and writes the
+file inventory, then stops: nothing is extracted, chunked or embedded. It runs on its own
+lane, so a sweep of one corpus does not wait for another corpus to finish indexing. A file
+that has been swept and not yet indexed is `Pending`, and a corpus reports that count
+beside its indexed one rather than folding the two together.
+
+**Why.** A corpus added while another was indexing read as empty. `mcptoolbox` showed
+"0 files, 0 chunks, never indexed" with a valid source and 109 entries visible under it,
+because its job sat behind a `tpn` reindex of roughly 1,800 PDFs on a queue that runs one
+job at a time. Nothing was broken and nothing said so: the only way to learn what a corpus
+contains was to wait for the expensive work to reach it.
+
+The two costs are not comparable. Statting all 1,804 files of that library through the
+container's 9p mount takes 2.08s. Extracting one ordinary 204 KB PDF from it takes 773ms,
+and an intact 84 MB one takes 13.4s, before anything is embedded. Discovery is roughly
+three orders of magnitude cheaper than the work it is currently queued behind, and it is
+the half that answers "what is in here".
+
+Most of the seam is already cut. `IndexedFile` is the inventory and belongs to a source;
+`FileChunkState` is per file and chunk set and carries the status, a split the entity
+already documents. `FileStatus.Pending` is commented "discovered, not yet chunked".
+`Track` writes both rows. `WorkspaceWalker.Walk` and `SourceScope.ShadowedPrefixes` have
+no indexing in them. `pendingCount` is already computed by the corpus endpoint and already
+rendered by `ChunkSets.tsx`. What is missing is a caller that stops after the walk, and a
+lane for it to run on.
+
+**Rejected.** A new `JobKind` on the existing queue. `IndexJobQueue` is one channel with a
+single reader, so a discovery job would wait behind precisely the work it exists to get in
+front of: correct, and useless.
+
+Redefining `fileCount` to include pending files. It counts `Indexed` today and every
+display reads it that way, next to a chunk count. Widening it silently changes what the
+number means on every screen, and the separate count the UI can already render says the
+same thing without the ambiguity.
+
+Sweeping a corpus while that same corpus is indexing. Both write `IndexedFile` rows for
+the same source, and the reconcile phase deletes rows for files that have gone. Two
+writers with deletion on one side is a race for no benefit, since the indexing pass is
+walking the tree anyway. A sweep for a corpus that is already indexing is skipped.
+
+**Consequences.** Two things have to be settled before this lands rather than discovered
+during it.
+
+The catalogue is SQLite, opened as `Data Source=…;Cache=Shared` with no busy timeout set.
+WAL is on, so readers do not block, but there is still one writer at a time and a second
+writer is refused immediately rather than waiting. A sweep writing some 1,800 rows beside
+an indexing job writing chunk states will contend, and the symptom is `database is locked`
+rather than slowness. A busy timeout and batched transactions for the sweep are part of
+this change, not a follow-up.
+
+Reconcile needs an owner. Indexing currently deletes the rows of files that have
+disappeared. If discovery reconciles too, both do; if only discovery does, a corpus that
+is never swept keeps stale rows forever. Naming one is part of the work.
+
+**Revisit if.** The sweep grows expensive enough to need its own progress and
+cancellation. A tree of a million files is a different problem from 1,804, and at that
+size discovery stops being the cheap half.
+---
+
 ## Open questions
 
 | # | Question | Needed by | Current lean |
