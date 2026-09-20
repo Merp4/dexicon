@@ -45,6 +45,21 @@ public interface IVectorStore
     Task DeleteChunkSetAsync(string collection, string chunkSetId, CancellationToken ct = default);
 
     /// <summary>
+    /// How many points each of one source's files holds in one set, in a single call.
+    ///
+    /// The catalogue's <c>ChunkCount</c> and this are two records of the same fact,
+    /// written at different moments, and nothing else compares them. A file absent from
+    /// the result holds no points.
+    /// </summary>
+    /// <returns>
+    /// Null when the answer would be incomplete, which is NOT the same as empty: a
+    /// truncated result makes every file beyond the cutoff look like it holds nothing,
+    /// and a caller acting on that would re-embed a whole corpus.
+    /// </returns>
+    Task<IReadOnlyDictionary<string, int>?> CountByFileAsync(string collection, string chunkSetId,
+        string sourceId, CancellationToken ct = default);
+
+    /// <summary>
     /// Delete points written before chunk sets existed, which carry no chunk_set_id and
     /// therefore match no query. Returns how many collections were touched.
     /// </summary>
@@ -282,6 +297,40 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
         CancellationToken ct = default)
         => _client.DeleteAsync(collection, FileChunksFilter(chunkSetId, sourceId, filePath),
             cancellationToken: ct);
+
+    /// <summary>
+    /// Distinct file_path values one facet call will report. Above this the answer is
+    /// refused rather than truncated, because a short result is indistinguishable from
+    /// files that hold no points. The largest source measured here has 27,002 files.
+    /// </summary>
+    private const int FacetLimit = 250_000;
+
+    public async Task<IReadOnlyDictionary<string, int>?> CountByFileAsync(string collection,
+        string chunkSetId, string sourceId, CancellationToken ct = default)
+    {
+        var filter = new Filter();
+        filter.Must.Add(Keyword("chunk_set_id", chunkSetId));
+        filter.Must.Add(Keyword("source_id", sourceId));
+
+        // exact, because the caller re-embeds on a disagreement: an approximate count
+        // would send healthy files back through the model.
+        var response = await _client.FacetAsync(collection, "file_path", filter,
+            limit: FacetLimit, exact: true, cancellationToken: ct);
+        var hits = response.Hits;
+
+        if (hits.Count >= FacetLimit)
+        {
+            _log.LogWarning(
+                "Facet on {Collection} returned {Count} file paths, at the {Limit} cap: "
+                + "the answer is incomplete, so no count comparison is made",
+                collection, hits.Count, FacetLimit);
+            return null;
+        }
+
+        var counts = new Dictionary<string, int>(hits.Count, StringComparer.Ordinal);
+        foreach (var hit in hits) counts[hit.Value.StringValue] = (int)hit.Count;
+        return counts;
+    }
 
     /// <summary>
     /// The filter that decides which points are one file's.
