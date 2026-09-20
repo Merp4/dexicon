@@ -216,7 +216,7 @@
       "query": "which screens exist in the web interface",
       "file": "08-ui.md",
       "why": "'Views'.",
-      "answer": "qdrant ● ollama"
+      "answer": "│ Documents  │"
     },
     {
       "query": "why is Qdrant not published on a host port",

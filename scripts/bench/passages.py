@@ -389,12 +389,23 @@ def main():
                               f"mean {r['meanChars']:>6,} chars", flush=True)
                     print(flush=True)
     finally:
+        # Nothing in here may raise. A DELETE against a corpus that was never created, or
+        # against a server that has just gone away, would replace the indexing or scoring
+        # error that brought us here with an HTTP error about the cleanup, and that is the
+        # error nobody needs. Same shape as sweep.py.
         out = ROOT / "scripts/bench" / args.queries.replace("queries-", "passages-")
-        out.write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
-        print(f"wrote {out.relative_to(ROOT)}")
+        try:
+            out.write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
+            print(f"wrote {out.relative_to(ROOT)}")
+        except OSError as e:
+            print(f"could not write results: {e}", file=sys.stderr)
+
         if not args.keep:
-            call("DELETE", f"/api/corpora/{BENCH_CORPUS}")
-            print(f"removed {BENCH_CORPUS}")
+            print(f"removing {BENCH_CORPUS}")
+            try:
+                call("DELETE", f"/api/corpora/{BENCH_CORPUS}")
+            except SystemExit as e:
+                print(f"  could not remove it: {e}", file=sys.stderr)
 
     return 0
 
