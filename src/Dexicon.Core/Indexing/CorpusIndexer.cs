@@ -44,6 +44,7 @@ public sealed class CorpusIndexer(
     IEmbeddingService embedder,
     IModelProfiles profiles,
     DocumentService documents,
+    CorpusLeases leases,
     IOptions<DexiconOptions> options,
     ILogger<CorpusIndexer> log)
 {
@@ -62,18 +63,40 @@ public sealed class CorpusIndexer(
             ? corpus.ChunkSets.Where(s => s.Id == only).ToList()
             : corpus.ChunkSets.ToList();
 
-        job.State = JobState.Running;
-        job.StartedUtc = DateTime.UtcNow;
-        job.Phase = "discover";
-        corpus.State = CorpusState.Indexing;
-        foreach (var s in targets) s.State = CorpusState.Indexing;
-        await db.SaveChangesAsync(ct);
-        Report(progress, job, null);
-
         var embeddingFailed = false;
+
+        // The caller's own cancellation, kept apart from losing the lease: one is someone
+        // deciding to stop and the other is the machinery taking the corpus away, and they
+        // are not the same outcome to record.
+        var callerCancelled = ct;
+        CorpusLeases.Hold? hold = null;
 
         try
         {
+            // Inside the try, because everything that can go wrong here has to end up on
+            // the job. Taking it outside left a job that could not get the lease sitting
+            // Queued with no finish time, and EnqueueAsync then coalesced every later
+            // request onto that stranded row without putting it back on the channel, so
+            // the corpus could never be indexed again.
+            //
+            // Held for the whole job, so a sweep is turned away at the door rather than
+            // walking the rows this is writing. Renewed in the background, so a job that
+            // runs for hours keeps it without anything predicting how long it will take.
+            hold = await WaitForLeaseAsync(corpus.Id, $"index-{job.Id}", corpus.Name, ct);
+
+            // Losing the lease ends the job. Carrying on would mean writing beside
+            // whoever now holds the corpus, which is the overlap the lease exists for.
+            using var leaseLost = CancellationTokenSource.CreateLinkedTokenSource(ct, hold.Lost);
+            ct = leaseLost.Token;
+
+            job.State = JobState.Running;
+            job.StartedUtc = DateTime.UtcNow;
+            job.Phase = "discover";
+            corpus.State = CorpusState.Indexing;
+            foreach (var s in targets) s.State = CorpusState.Indexing;
+            await db.SaveChangesAsync(ct);
+            Report(progress, job, null);
+
             if (targets.Count == 0)
                 throw new InvalidOperationException(
                     job.ChunkSetId is { Length: > 0 }
@@ -136,26 +159,57 @@ public sealed class CorpusIndexer(
             if (embeddingFailed)
                 job.Error = "One or more files could not be embedded and were skipped. They will be retried on the next run.";
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (callerCancelled.IsCancellationRequested)
         {
             job.State = JobState.Cancelled;
-            corpus.State = CorpusState.Ready;
-            foreach (var s in targets) s.State = CorpusState.Ready;
+            if (Holds(hold))
+            {
+                corpus.State = CorpusState.Ready;
+                foreach (var s in targets) s.State = CorpusState.Ready;
+            }
         }
         catch (Exception ex)
         {
             log.LogError(ex, "Indexing job {JobId} for corpus {Corpus} failed", jobId, corpus.Name);
             job.State = JobState.Failed;
             job.Error = ex.Message;
-            corpus.State = CorpusState.Degraded;
-            foreach (var s in targets) s.State = CorpusState.Degraded;
+
+            // Only while this job still owns the corpus. A job that never got the lease,
+            // or lost it, would otherwise mark a corpus someone else is working as
+            // degraded, and the save below would make that the record.
+            if (Holds(hold))
+            {
+                corpus.State = CorpusState.Degraded;
+                foreach (var s in targets) s.State = CorpusState.Degraded;
+            }
         }
         finally
         {
-            job.Phase = null;
-            job.FinishedUtc = DateTime.UtcNow;
-            await db.SaveChangesAsync(CancellationToken.None);
-            Report(progress, job, null);
+            try
+            {
+                job.Phase = null;
+                job.FinishedUtc = DateTime.UtcNow;
+
+                // Nothing about the corpus or its sets is written by a job that does not
+                // own it. Detaching rather than reverting, because the tracked values came
+                // from this job's own work and the holder's are whatever is in the row.
+                if (!Holds(hold))
+                {
+                    db.Entry(corpus).State = EntityState.Detached;
+                    foreach (var s in targets) db.Entry(s).State = EntityState.Detached;
+                }
+
+                await db.SaveChangesAsync(CancellationToken.None);
+                Report(progress, job, null);
+            }
+            finally
+            {
+                // Inner, so a failing save cannot skip it. Leaking a hold leaves the
+                // renewal task extending a lease for a job nobody is running, and the
+                // corpus is then blocked until the process ends rather than for the
+                // expiry.
+                if (hold is not null) await hold.DisposeAsync();
+            }
         }
 
         log.LogInformation(
@@ -616,29 +670,15 @@ public sealed class CorpusIndexer(
             return;
         }
 
-        // Through SourceFilters, not off the source: a null field there means the source
-        // has no opinion and the corpus default applies. Reading the columns directly
-        // indexed a source by its own emptiness.
-        var filters = SourceFilters.Resolve(corpus, source, _indexing);
+        // The same walk the sweep uses, so the inventory it records and the files this
+        // indexes are one answer rather than two that have to agree.
+        var walk = WorkspaceDiscovery.Walk(corpus, source, root, _indexing);
+        var files = walk.Owned;
 
-        var walk = WorkspaceWalker.Walk(root, filters.UseGitignore,
-            filters.IncludeGlobs, filters.ExcludeGlobs, filters.MaxFileBytes,
-            options.Value.Indexing.DocumentMaxBytes);
-
-        // The inventory is made distinct ACROSS sources here. A source covers its whole
-        // tree, so one added above another makes every file beneath reachable twice, and
-        // identity being (source, relative path) would index each of them twice over. The
-        // most specific source owns a file; this one keeps what the deeper ones do not
-        // claim. Not recorded as skipped, because these files are indexed, just not here.
-        var shadowed = SourceScope.ShadowedPrefixes(corpus.Sources, source);
-        var files = shadowed.Count == 0
-            ? walk.Files
-            : walk.Files.Where(f => !SourceScope.IsShadowed(f.RelativePath, shadowed)).ToList();
-
-        if (files.Count != walk.Files.Count)
+        if (walk.ShadowedCount > 0)
             log.LogInformation(
                 "Source {Source}: {Owned} of {Found} files; {Shadowed} belong to a more specific source",
-                source.RootPath, files.Count, walk.Files.Count, walk.Files.Count - files.Count);
+                source.RootPath, files.Count, files.Count + walk.ShadowedCount, walk.ShadowedCount);
 
         // += , not =. A job covers every chunk set, and each set walks the tree again, so
         // an assignment here reported the files of one pass against the work done by all
@@ -664,7 +704,7 @@ public sealed class CorpusIndexer(
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var sinceFlush = System.Diagnostics.Stopwatch.StartNew();
 
-        foreach (var skip in walk.SkippedFiles)
+        foreach (var skip in walk.Skipped)
         {
             seen.Add(skip.RelativePath);
             var (_, state) = Track(known, states, set, source.Id, skip.RelativePath);
@@ -907,16 +947,57 @@ public sealed class CorpusIndexer(
     /// it. A relative path with <c>..</c>, or an absolute one, must not be able to reach
     /// the container filesystem.
     /// </summary>
-    public string ResolveWorkspacePath(string? relative)
+    public string ResolveWorkspacePath(string? relative) =>
+        WorkspaceDiscovery.Resolve(_indexing.WorkspaceRoot, relative);
+
+    /// <summary>
+    /// Whether this job still owns the corpus, which is what licenses it to write shared
+    /// state. Null means the lease was never taken; a cancelled token means it was taken
+    /// from us while we worked.
+    /// </summary>
+    private static bool Holds(CorpusLeases.Hold? hold) =>
+        hold is not null && !hold.Lost.IsCancellationRequested;
+
+    /// <summary>
+    /// Take the corpus, giving a sweep already holding it a chance to finish first.
+    ///
+    /// A sweep is a walk and some rows, seconds on the library this was written against,
+    /// so the job waits rather than failing immediately. It waits twice the lease, past the
+    /// point where a holder that stopped renewing would have lapsed, so anything still
+    /// there is alive and working.
+    ///
+    /// Then it throws, and the job is recorded as failed with that reason. It does NOT
+    /// proceed without the lease: indexing beside a sweep is the overlap the lease exists
+    /// to prevent, and carrying on regardless would make it a suggestion. A job that could
+    /// not take the corpus has not been decided against, it has been blocked, and the
+    /// scheduled refresh will bring it back.
+    /// </summary>
+    private async Task<CorpusLeases.Hold> WaitForLeaseAsync(
+        string corpusId, string holder, string corpusName, CancellationToken ct)
     {
-        var root = Path.GetFullPath(_indexing.WorkspaceRoot);
-        var combined = Path.GetFullPath(Path.Combine(root, relative ?? string.Empty));
+        var waited = TimeSpan.Zero;
+        var limit = leases.Lease * 2;
+        var step = TimeSpan.FromSeconds(1);
 
-        if (!IsInside(combined, root))
-            throw new UnauthorizedAccessException(
-                $"Workspace path '{relative}' resolves outside {_indexing.WorkspaceRoot} and was refused.");
+        while (true)
+        {
+            var hold = await leases.TryAcquireAsync(corpusId, holder, ct);
+            if (hold is not null)
+            {
+                if (waited > TimeSpan.Zero)
+                    log.LogInformation("Waited {Seconds:N0}s for corpus {Corpus}",
+                        waited.TotalSeconds, corpusName);
+                return hold;
+            }
 
-        return combined;
+            if (waited >= limit)
+                throw new InvalidOperationException(
+                    $"Corpus '{corpusName}' is still held by another pass after "
+                    + $"{limit.TotalSeconds:N0}s, so this job did not run. It will be retried.");
+
+            await Task.Delay(step, ct);
+            waited += step;
+        }
     }
 
     /// <summary>

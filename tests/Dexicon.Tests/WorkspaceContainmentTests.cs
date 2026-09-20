@@ -103,7 +103,7 @@ public sealed class WorkspaceContainmentTests
     /// being true this throws a NullReferenceException, which is the right way to find out.
     /// </summary>
     private static CorpusIndexer IndexerRootedAt(string root) =>
-        new(null!, null!, null!, null!, null!,
+        new(null!, null!, null!, null!, null!, null!,
             Options.Create(new DexiconOptions { Indexing = new IndexingOptions { WorkspaceRoot = root } }),
             null!);
 }

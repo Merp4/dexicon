@@ -74,6 +74,7 @@ function corpus(chunkSets: ChunkSet[]): Corpus {
     fileCount: 12,
     chunkCount: 110,
     skippedCount: 0,
+    pendingCount: 0,
     failedCount: 0,
     sources: [],
     chunkSets,

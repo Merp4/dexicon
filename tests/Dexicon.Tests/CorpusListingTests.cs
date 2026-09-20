@@ -25,7 +25,7 @@ public class CorpusListingTests
             Id: "01ABC", Name: name, Description: description, State: state,
             CreatedUtc: DateTime.UnixEpoch, LastIndexedUtc: DateTime.UnixEpoch,
             SourceCount: 1, FileCount: files, ChunkCount: chunks,
-            SkippedCount: 0, FailedCount: failed,
+            SkippedCount: 0, FailedCount: failed, PendingCount: 0,
             Sources: [],
             ChunkSets: sets ?? [Set("default", chunks)]);
 

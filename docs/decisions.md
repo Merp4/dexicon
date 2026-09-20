@@ -1361,6 +1361,16 @@ exceed the longest legitimate hold, which for indexing is hours on a library thi
 expiry chosen for how long a sweep takes would release the claim under a running index
 job, which is the failure it was added to prevent.
 
+The claim is advisory rather than a fence, and the difference is worth naming. Loss is
+noticed on the next renewal, so a holder stalled past its own expiry can still begin a
+write before it finds out, and nothing at the write checks who holds the corpus. Fencing
+properly means a generation on the claim, carried into every catalogue and vector write and
+enforced there, which is a change to the whole write path. It is left advisory because of
+what the passes do: one process, a window bounded by the renewal interval, and a sweep that
+only adds rows and never overwrites a status, so an overlap produces a row the indexer was
+going to write anyway. A pass that deletes or rewrites under the claim ends that reasoning
+and needs the fence.
+
 **Consequences.** Two things have to be settled before this lands rather than discovered
 during it.
 
