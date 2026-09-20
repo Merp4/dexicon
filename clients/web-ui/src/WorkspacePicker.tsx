@@ -9,7 +9,7 @@ import { Spinner } from './ui';
  * `GET /api/workspaces` has always taken a `path` and returned the directories beneath
  * it, and `api.browse` has always had the parameter. Neither caller ever passed one, so
  * the two forms that point a corpus at a folder were flat lists of the top level: with
- * WORKSPACE_ROOT holding a shelf of books at books/orly/Architecture, the only reachable
+ * WORKSPACE_ROOT holding a shelf of books at books/manuals/Architecture, the only reachable
  * choice was `books`, all 1.5 GB of it. Anything organised into subfolders, which is
  * what a workspace root normally is, could not be addressed from the UI at all.
  *
@@ -59,8 +59,8 @@ export function WorkspacePicker({
   }, [value]);
 
   const segments = value ? value.split('/') : [];
-  // '/' — joining on '' put the parent of `books/orly/Architecture` on screen as
-  // `booksorly`. The button navigated correctly, so the only symptom was a label naming a
+  // '/' — joining on '' put the parent of `books/manuals/Architecture` on screen as
+  // `booksmanuals`. The button navigated correctly, so the only symptom was a label naming a
   // folder that does not exist.
   const parent = segments.slice(0, -1).join('/');
 

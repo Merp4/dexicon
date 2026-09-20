@@ -83,7 +83,7 @@ The one that matters.
       "mode":   { "type": "string", "enum": ["hybrid", "semantic", "keyword"], "default": "hybrid",
                   "description": "hybrid blends meaning and exact terms; keyword is exact-match only and works when embeddings are unavailable." },
       "limit":  { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 },
-      "source": { "type": "string", "description": "Restrict to one source of the corpus, by root path as list_corpora reports it, e.g. orly/AI. A parent matches everything beneath it." },
+      "source": { "type": "string", "description": "Restrict to one source of the corpus, by root path as list_corpora reports it, e.g. manuals/AI. A parent matches everything beneath it." },
       "path_prefix": { "type": "string", "description": "Restrict to files under this path, e.g. src/Auth/. Relative to the source root, not the corpus." },
       "language":    { "type": "string", "description": "Restrict to one language, e.g. csharp, python." },
       "symbol":      { "type": "string", "description": "Restrict to chunks declaring this symbol." },
@@ -187,9 +187,9 @@ a directory says nothing about that directory and is not reported, so a corpus t
 a single folder stays silent.
 
 ```
-NOT INDEXED: 1 file(s) in books/orly are covered by no source, though its subfolders are.
+NOT INDEXED: 1 file(s) in books/manuals are covered by no source, though its subfolders are.
   Internet of Things from Scratch.pdf
-Add a source on books/orly, or move the file into one of its subfolders.
+Add a source on books/manuals, or move the file into one of its subfolders.
 ```
 
 The directory has no source, so it has no include or exclude globs to apply. What is

@@ -743,7 +743,7 @@ with no section here fails its release rather than publishing an undescribed one
 
 - **Each source's indexing summary reported the whole job's counts.** The log line took the
   job's running totals, which accumulate across every source and every chunk set, so each
-  source in turn was credited with all the work done so far: `books/orly` owns one file and
+  source in turn was credited with all the work done so far: `books/manuals` owns one file and
   its line read `96 indexed`. It now reports the difference either side of its own pass.
 
 - **`docker-compose.external.yml` was documented but did not exist.** `docs/09` listed it in
@@ -846,8 +846,8 @@ with no section here fails its release rather than publishing an undescribed one
 - **Files no source covered were invisible rather than reported.** A file outside every
   source root is not skipped and not failed: it has no row in any count, and a search for
   it returns other documents, which is indistinguishable from a ranking result. A library
-  of 138 files indexed 95 of them; one book sat directly in `orly/` while every source was
-  `orly/<topic>/`, and a keyword search on its exact title returned four other books.
+  of 138 files indexed 95 of them; one book sat directly in `manuals/` while every source was
+  `manuals/<topic>/`, and a keyword search on its exact title returned four other books.
 
   `index_status` now reports a directory when two or more of the corpus's sources share it
   as their parent, which is where the children were enumerated deliberately and a file left
@@ -948,8 +948,8 @@ with no section here fails its release rather than publishing an undescribed one
   instead of assuming Ollama.
 
 - **The workspace picker named a folder that does not exist.** It joined a parent path on
-  `''` rather than `/`, so the button above `books/orly/Architecture` was labelled
-  `booksorly`. Navigation was correct; only the label was wrong.
+  `''` rather than `/`, so the button above `books/manuals/Architecture` was labelled
+  `booksmanuals`. Navigation was correct; only the label was wrong.
 
 - **A deduplicated upload reported itself to `console.info`.** That is the case that looks
   most like nothing happened, and it was written where nobody is looking.

@@ -7,8 +7,8 @@ namespace Dexicon.Tests;
 /// <summary>
 /// A file outside every source root is not skipped, not failed and not counted: it is
 /// absent, and absence has no row anywhere. The case these tests are built from is real. A
-/// library had sources <c>orly/AI</c>, <c>orly/dotnet</c> and eight more siblings, and one
-/// book sitting directly in <c>orly/</c>. A keyword search on that book's exact title
+/// library had sources <c>manuals/AI</c>, <c>manuals/dotnet</c> and eight more siblings, and one
+/// book sitting directly in <c>manuals/</c>. A keyword search on that book's exact title
 /// returned four other books, which reads like a ranking result rather than a gap.
 ///
 /// The reported figure has to stay quiet on the ordinary case or it will be ignored, so
@@ -36,14 +36,14 @@ public sealed class SourceCoverageTests : IDisposable
     [Fact]
     public void AFileLooseAmongTheIndexedSiblingsIsReported()
     {
-        Write("books/orly/AI/one.md");
-        Write("books/orly/dotnet/two.md");
-        Write("books/orly/Internet of Things from Scratch.txt");
+        Write("books/manuals/AI/one.md");
+        Write("books/manuals/dotnet/two.md");
+        Write("books/manuals/Internet of Things from Scratch.txt");
 
-        var gaps = Find("books/orly/AI", "books/orly/dotnet");
+        var gaps = Find("books/manuals/AI", "books/manuals/dotnet");
 
         gaps.Count.ShouldBe(1);
-        gaps[0].DirectoryRelativePath.ShouldBe("books/orly");
+        gaps[0].DirectoryRelativePath.ShouldBe("books/manuals");
         gaps[0].Files.ShouldBe(["Internet of Things from Scratch.txt"]);
     }
 
@@ -62,50 +62,50 @@ public sealed class SourceCoverageTests : IDisposable
     [Fact]
     public void TheRuleIsPerDirectoryAndNotPerCorpus()
     {
-        Write("books/orly/AI/one.md");
-        Write("books/orly/loose-a.md");
+        Write("books/manuals/AI/one.md");
+        Write("books/manuals/loose-a.md");
         Write("papers/2024/two.md");
         Write("papers/loose-b.md");
 
         // Two sources in the corpus, one under each parent. Counting sources across the
         // corpus rather than per directory would report both of these on no evidence.
-        Find("books/orly/AI", "papers/2024").ShouldBeEmpty();
+        Find("books/manuals/AI", "papers/2024").ShouldBeEmpty();
     }
 
     [Fact]
     public void ADirectoryThatIsItselfASourceIsNotAGap()
     {
-        Write("books/orly/AI/one.md");
-        Write("books/orly/dotnet/two.md");
-        Write("books/orly/loose.md");
+        Write("books/manuals/AI/one.md");
+        Write("books/manuals/dotnet/two.md");
+        Write("books/manuals/loose.md");
 
-        // orly is indexed in its own right, so loose.md is already covered. The two
+        // manuals is indexed in its own right, so loose.md is already covered. The two
         // deeper sources are redundant, not a gap.
-        Find("books/orly", "books/orly/AI", "books/orly/dotnet").ShouldBeEmpty();
+        Find("books/manuals", "books/manuals/AI", "books/manuals/dotnet").ShouldBeEmpty();
     }
 
     [Fact]
     public void AnAncestorSourceCoversTheDirectoryToo()
     {
-        Write("books/orly/AI/one.md");
-        Write("books/orly/dotnet/two.md");
-        Write("books/orly/loose.md");
+        Write("books/manuals/AI/one.md");
+        Write("books/manuals/dotnet/two.md");
+        Write("books/manuals/loose.md");
 
-        Find("books", "books/orly/AI", "books/orly/dotnet").ShouldBeEmpty();
+        Find("books", "books/manuals/AI", "books/manuals/dotnet").ShouldBeEmpty();
     }
 
     [Fact]
     public void OnlyTheDirectoryItselfIsLookedAtAndNotWhatIsBelowIt()
     {
-        Write("books/orly/AI/one.md");
-        Write("books/orly/dotnet/two.md");
-        Write("books/orly/loose.md");
+        Write("books/manuals/AI/one.md");
+        Write("books/manuals/dotnet/two.md");
+        Write("books/manuals/loose.md");
         // Under a source, so already indexed. A recursive walk would report both of these
         // and bury the one file that matters.
-        Write("books/orly/AI/deep.md");
-        Write("books/orly/AI/nested/deeper.md");
+        Write("books/manuals/AI/deep.md");
+        Write("books/manuals/AI/nested/deeper.md");
 
-        var gaps = Find("books/orly/AI", "books/orly/dotnet");
+        var gaps = Find("books/manuals/AI", "books/manuals/dotnet");
 
         gaps.Count.ShouldBe(1);
         gaps[0].Files.ShouldBe(["loose.md"]);
@@ -114,15 +114,15 @@ public sealed class SourceCoverageTests : IDisposable
     [Fact]
     public void AFileNoSourceWouldHaveIndexedIsNotReported()
     {
-        Write("books/orly/AI/one.md");
-        Write("books/orly/dotnet/two.md");
-        Write("books/orly/cover.png");                  // always-exclude
-        Write("books/orly/empty.md", string.Empty);     // empty file
-        Write("books/orly/blob.md", "text\0more");      // binary sniff
+        Write("books/manuals/AI/one.md");
+        Write("books/manuals/dotnet/two.md");
+        Write("books/manuals/cover.png");                  // always-exclude
+        Write("books/manuals/empty.md", string.Empty);     // empty file
+        Write("books/manuals/blob.md", "text\0more");      // binary sniff
 
         // Reporting a file that would not be indexed even with a source on it turns the
         // check into a list of everything on disk.
-        var gaps = Find("books/orly/AI", "books/orly/dotnet");
+        var gaps = Find("books/manuals/AI", "books/manuals/dotnet");
 
         gaps.ShouldBeEmpty();
     }
@@ -130,12 +130,12 @@ public sealed class SourceCoverageTests : IDisposable
     [Fact]
     public void AGitignoreInTheDirectoryIsObeyed()
     {
-        Write("books/orly/AI/one.md");
-        Write("books/orly/dotnet/two.md");
-        Write("books/orly/.gitignore", "notes.md\n");
-        Write("books/orly/notes.md");
+        Write("books/manuals/AI/one.md");
+        Write("books/manuals/dotnet/two.md");
+        Write("books/manuals/.gitignore", "notes.md\n");
+        Write("books/manuals/notes.md");
 
-        var gaps = Find("books/orly/AI", "books/orly/dotnet");
+        var gaps = Find("books/manuals/AI", "books/manuals/dotnet");
 
         // notes.md is gone. The ignore file itself stays, because a source over this
         // directory would have indexed it: the check reports what would have been indexed,
@@ -147,13 +147,13 @@ public sealed class SourceCoverageTests : IDisposable
     [Fact]
     public void ADocumentOverTheCodeCapIsStillReported()
     {
-        Write("books/orly/AI/one.md");
-        Write("books/orly/dotnet/two.md");
-        Write("books/orly/big.pdf", new string('x', 300_000));
+        Write("books/manuals/AI/one.md");
+        Write("books/manuals/dotnet/two.md");
+        Write("books/manuals/big.pdf", new string('x', 300_000));
 
         // A PDF gets the document cap, not the 256 KB code cap. Applying the code cap here
         // would silently drop the exact kind of file this check exists for.
-        var gaps = Find("books/orly/AI", "books/orly/dotnet");
+        var gaps = Find("books/manuals/AI", "books/manuals/dotnet");
 
         gaps.Count.ShouldBe(1);
         gaps[0].Files.ShouldBe(["big.pdf"]);
@@ -162,16 +162,16 @@ public sealed class SourceCoverageTests : IDisposable
     [Fact]
     public void SourcesUnderDifferentParentsAreJudgedSeparately()
     {
-        Write("books/orly/AI/one.md");
-        Write("books/orly/dotnet/two.md");
-        Write("books/orly/loose-a.md");
+        Write("books/manuals/AI/one.md");
+        Write("books/manuals/dotnet/two.md");
+        Write("books/manuals/loose-a.md");
         Write("papers/2024/three.md");
         Write("papers/2025/four.md");
         Write("papers/loose-b.md");
 
-        var gaps = Find("books/orly/AI", "books/orly/dotnet", "papers/2024", "papers/2025");
+        var gaps = Find("books/manuals/AI", "books/manuals/dotnet", "papers/2024", "papers/2025");
 
-        gaps.Select(g => g.DirectoryRelativePath).ShouldBe(["books/orly", "papers"]);
+        gaps.Select(g => g.DirectoryRelativePath).ShouldBe(["books/manuals", "papers"]);
         gaps[0].Files.ShouldBe(["loose-a.md"]);
         gaps[1].Files.ShouldBe(["loose-b.md"]);
     }
@@ -201,10 +201,10 @@ public sealed class SourceCoverageTests : IDisposable
     [Fact]
     public void ASourceRootThatNoLongerExistsDoesNotThrow()
     {
-        Write("books/orly/AI/one.md");
+        Write("books/manuals/AI/one.md");
 
-        // books/orly/dotnet was removed from disk but its row is still in the catalogue.
-        Find("books/orly/AI", "books/orly/dotnet").ShouldBeEmpty();
+        // books/manuals/dotnet was removed from disk but its row is still in the catalogue.
+        Find("books/manuals/AI", "books/manuals/dotnet").ShouldBeEmpty();
     }
 
     [Fact]
@@ -219,14 +219,14 @@ public sealed class SourceCoverageTests : IDisposable
     public void TheReportNamesTheDirectoryTheFilesAndWhatToDo()
     {
         var text = DexiconTools.RenderCoverage([
-            new SourceCoverage.Gap("books/orly", ["Internet of Things from Scratch.pdf"]),
+            new SourceCoverage.Gap("books/manuals", ["Internet of Things from Scratch.pdf"]),
         ]);
 
         text.ShouldContain("NOT INDEXED");
-        text.ShouldContain("books/orly");
+        text.ShouldContain("books/manuals");
         text.ShouldContain("Internet of Things from Scratch.pdf");
         // Without this an agent reads the line as a statistic rather than as something to fix.
-        text.ShouldContain("Add a source on books/orly");
+        text.ShouldContain("Add a source on books/manuals");
     }
 
     [Fact]
@@ -234,7 +234,7 @@ public sealed class SourceCoverageTests : IDisposable
     {
         var files = Enumerable.Range(1, 12).Select(n => $"book-{n:00}.pdf").ToList();
 
-        var text = DexiconTools.RenderCoverage([new SourceCoverage.Gap("books/orly", files)]);
+        var text = DexiconTools.RenderCoverage([new SourceCoverage.Gap("books/manuals", files)]);
 
         text.ShouldContain("12 file(s)");
         text.ShouldContain("book-05.pdf");

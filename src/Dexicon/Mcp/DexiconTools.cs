@@ -37,7 +37,7 @@ public sealed class DexiconTools
         [Description("hybrid blends meaning with exact terms; semantic is meaning only; keyword is exact-match only and keeps working when embeddings are unavailable.")] string mode = "hybrid",
         [Description("Maximum results, 1-50.")] int limit = 10,
         [Description("Restrict to files under this path, e.g. src/Auth/. Relative to the source root, not the corpus. Use `source` to narrow by folder instead.")] string? pathPrefix = null,
-        [Description("Restrict to one source, by the root path a search result cites, e.g. books/orly/Architecture. A parent matches everything beneath it, so books/orly covers every topic folder under it. list_corpora does not list these; run a search first, or pass a wrong one and the error names them all.")] string? source = null,
+        [Description("Restrict to one source, by the root path a search result cites, e.g. books/manuals/Architecture. A parent matches everything beneath it, so books/manuals covers every topic folder under it. list_corpora does not list these; run a search first, or pass a wrong one and the error names them all.")] string? source = null,
         [Description("Restrict to one language, e.g. csharp, python, typescript.")] string? language = null,
         [Description("Restrict to chunks declaring this symbol, e.g. TokenService.")] string? symbol = null,
         [Description("Characters of each result to return, centred on the matching passage. The default is enough to read the match in context; raise it when a hit is clearly the right passage and you need more of it, or use get_context. 0 returns whole chunks, which on a book corpus is about 8,000 characters each.")]
@@ -257,7 +257,7 @@ public sealed class DexiconTools
             target.Set.CollectionName, target.Set.Id, filePath, ct);
 
         // A file_path is relative to its source root, so within a corpus it is not unique.
-        // A corpus with sources AI/ and Philosophy/ that both hold "Logic For Dummies.pdf"
+        // A corpus with sources AI/ and Philosophy/ that both hold "Installation Guide.pdf"
         // returns the chunks of both here, ordered by chunk index, which interleaves two
         // different books and stitches them into one passage with line numbers on it. The
         // result is plausible and quotable while being wrong.

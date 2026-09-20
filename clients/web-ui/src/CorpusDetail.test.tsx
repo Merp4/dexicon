@@ -171,21 +171,21 @@ describe('adding a source', () => {
   it('can reach a folder that is not at the top level', async () => {
     // The whole reason this stopped being a flat list: `GET /api/workspaces` has always
     // taken a path and the UI never passed one, so a corpus could only ever be pointed at
-    // a top-level directory. A shelf of books at books/orly/Architecture was unreachable.
+    // a top-level directory. A shelf of books at books/manuals/Architecture was unreachable.
     addSource.mockResolvedValue({});
     const { user, dialog } = await openAddSource();
 
     browse.mockResolvedValueOnce({
-      entries: [{ name: 'orly', relativePath: 'notes/orly', isDirectory: true, childCount: 10 }],
+      entries: [{ name: 'manuals', relativePath: 'notes/manuals', isDirectory: true, childCount: 10 }],
     });
     await user.click(await within(dialog).findByRole('button', { name: /notes/ }));
 
     await waitFor(() => expect(browse).toHaveBeenLastCalledWith('notes'));
-    await user.click(await within(dialog).findByRole('button', { name: /orly/ }));
+    await user.click(await within(dialog).findByRole('button', { name: /manuals/ }));
     await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
 
     await waitFor(() => expect(addSource).toHaveBeenCalled());
-    expect(addSource.mock.calls[0][1]).toMatchObject({ workspacePath: 'notes/orly' });
+    expect(addSource.mock.calls[0][1]).toMatchObject({ workspacePath: 'notes/manuals' });
   });
 
   it('will not submit without a folder', async () => {
@@ -250,7 +250,7 @@ describe('a count taken while the walk is running', () => {
   const twoSources = (over = {}) =>
     corpus({
       sources: [
-        source({ id: 's1', rootPath: 'books/orly', fileCount: 96 }),
+        source({ id: 's1', rootPath: 'books/manuals', fileCount: 96 }),
         source({ id: 's2', rootPath: 'books/Dev', fileCount: 0 }),
       ],
       ...over,
@@ -312,8 +312,8 @@ describe('what each source contributed', () => {
   it('shows a count per source once there are several', async () => {
     getCorpus.mockResolvedValue(corpus({
       sources: [
-        source({ id: 's1', rootPath: 'orly/AI', fileCount: 34 }),
-        source({ id: 's2', rootPath: 'orly/Philosophy', fileCount: 12 }),
+        source({ id: 's1', rootPath: 'manuals/AI', fileCount: 34 }),
+        source({ id: 's2', rootPath: 'manuals/Philosophy', fileCount: 12 }),
       ],
     }));
     render(<CorpusDetail {...props} />);
@@ -327,8 +327,8 @@ describe('what each source contributed', () => {
     // look identical from a corpus-level count: fine. This is the only place it shows.
     getCorpus.mockResolvedValue(corpus({
       sources: [
-        source({ id: 's1', rootPath: 'orly/AI', fileCount: 34 }),
-        source({ id: 's2', rootPath: 'orly/Typo', fileCount: 0 }),
+        source({ id: 's1', rootPath: 'manuals/AI', fileCount: 34 }),
+        source({ id: 's2', rootPath: 'manuals/Typo', fileCount: 0 }),
       ],
     }));
     render(<CorpusDetail {...props} />);
@@ -339,20 +339,20 @@ describe('what each source contributed', () => {
 
 describe('removing a source', () => {
   it('offers a remove control per source', async () => {
-    getCorpus.mockResolvedValue(corpus({ sources: [source({ rootPath: 'orly/AI' })] }));
+    getCorpus.mockResolvedValue(corpus({ sources: [source({ rootPath: 'manuals/AI' })] }));
     render(<CorpusDetail {...props} />);
 
-    expect(await screen.findByRole('button', { name: /Remove source orly\/AI/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Remove source manuals\/AI/ })).toBeInTheDocument();
   });
 
   it('says what it costs before doing it', async () => {
     // Adding a folder is one click, so removing one should be too, but the cost has to
     // be stated, because the files leave every chunk set, not just the default one.
     const user = userEvent.setup();
-    getCorpus.mockResolvedValue(corpus({ sources: [source({ rootPath: 'orly/AI', fileCount: 34 })] }));
+    getCorpus.mockResolvedValue(corpus({ sources: [source({ rootPath: 'manuals/AI', fileCount: 34 })] }));
     render(<CorpusDetail {...props} />);
 
-    await user.click(await screen.findByRole('button', { name: /Remove source orly\/AI/ }));
+    await user.click(await screen.findByRole('button', { name: /Remove source manuals\/AI/ }));
     const dialog = await screen.findByRole('dialog');
 
     expect(within(dialog).getByText(/34 files leave the index/)).toBeInTheDocument();
@@ -363,10 +363,10 @@ describe('removing a source', () => {
   it('removes it only once confirmed', async () => {
     const user = userEvent.setup();
     removeSource.mockResolvedValue(undefined);
-    getCorpus.mockResolvedValue(corpus({ sources: [source({ id: 's9', rootPath: 'orly/AI' })] }));
+    getCorpus.mockResolvedValue(corpus({ sources: [source({ id: 's9', rootPath: 'manuals/AI' })] }));
     render(<CorpusDetail {...props} />);
 
-    await user.click(await screen.findByRole('button', { name: /Remove source orly\/AI/ }));
+    await user.click(await screen.findByRole('button', { name: /Remove source manuals\/AI/ }));
     const dialog = await screen.findByRole('dialog');
     await user.click(within(dialog).getByRole('button', { name: /^Remove source$/ }));
 
@@ -375,10 +375,10 @@ describe('removing a source', () => {
 
   it('cancels without removing anything', async () => {
     const user = userEvent.setup();
-    getCorpus.mockResolvedValue(corpus({ sources: [source({ rootPath: 'orly/AI' })] }));
+    getCorpus.mockResolvedValue(corpus({ sources: [source({ rootPath: 'manuals/AI' })] }));
     render(<CorpusDetail {...props} />);
 
-    await user.click(await screen.findByRole('button', { name: /Remove source orly\/AI/ }));
+    await user.click(await screen.findByRole('button', { name: /Remove source manuals\/AI/ }));
     const dialog = await screen.findByRole('dialog');
     await user.click(within(dialog).getByRole('button', { name: /^Cancel$/ }));
 
@@ -454,7 +454,7 @@ describe('finding one file among many', () => {
 
 describe('files no source covers', () => {
   const gap = (over: Partial<{ directory: string; files: string[] }> = {}) => ({
-    directory: 'books/orly',
+    directory: 'books/manuals',
     files: ['Internet of Things from Scratch.pdf'],
     ...over,
   });
@@ -465,7 +465,7 @@ describe('files no source covers', () => {
     render(<CorpusDetail {...props} />);
 
     expect(await screen.findByText(/covered by no source/)).toBeInTheDocument();
-    expect(screen.getByText('books/orly')).toBeInTheDocument();
+    expect(screen.getByText('books/manuals')).toBeInTheDocument();
     expect(screen.getByText('Internet of Things from Scratch.pdf')).toBeInTheDocument();
     // The consequence, not just the fact. Without it this is a statistic.
     expect(screen.getByText(/Searching will never return it/)).toBeInTheDocument();
@@ -516,12 +516,12 @@ describe('files no source covers', () => {
     coverage.mockResolvedValue({ gaps: [gap()] });
 
     render(<CorpusDetail {...props} />);
-    await user.click(await screen.findByRole('button', { name: /Add a source on books\/orly/ }));
+    await user.click(await screen.findByRole('button', { name: /Add a source on books\/manuals/ }));
 
     // The picker shows the chosen folder rather than holding it in a text field, so the
     // assertion is on what the reader sees it is about to index.
     const dialog = await screen.findByRole('dialog');
-    expect(await within(dialog).findByText('books/orly')).toBeInTheDocument();
+    expect(await within(dialog).findByText('books/manuals')).toBeInTheDocument();
     expect(within(dialog).getByText(/Indexing/)).toBeInTheDocument();
   });
 
@@ -560,7 +560,7 @@ describe('editing a source filter', () => {
         excludeGlobs: ['**/*.pdf'],
       },
       sources: [source({
-        rootPath: 'books/orly/AI',
+        rootPath: 'books/manuals/AI',
         useGitignore: false,
         maxFileBytes: 64 * 1024 * 1024,
         excludeGlobs: ['**/*.pdf'],
@@ -576,7 +576,7 @@ describe('editing a source filter', () => {
     const user = userEvent.setup();
     getCorpus.mockResolvedValue(c);
     render(<CorpusDetail {...props} />);
-    await user.click(await screen.findByRole('button', { name: /Edit filters for books\/orly\/AI/ }));
+    await user.click(await screen.findByRole('button', { name: /Edit filters for books\/manuals\/AI/ }));
     return { user, dialog: await screen.findByRole('dialog') };
   }
 
@@ -598,7 +598,7 @@ describe('editing a source filter', () => {
     }));
     render(<CorpusDetail {...props} />);
 
-    await screen.findByText('books/orly/AI');
+    await screen.findByText('books/manuals/AI');
     expect(screen.queryByText(/some from the corpus/)).not.toBeInTheDocument();
   });
 
@@ -607,11 +607,11 @@ describe('editing a source filter', () => {
     // globs, so an "inherited" word appeared on all ten rows and said nothing. A label on
     // every row is one a reader learns to skip.
     getCorpus.mockResolvedValue(corpus({
-      sources: [source({ rootPath: 'books/orly/AI' })],
+      sources: [source({ rootPath: 'books/manuals/AI' })],
     }));
     render(<CorpusDetail {...props} />);
 
-    await screen.findByText('books/orly/AI');
+    await screen.findByText('books/manuals/AI');
     expect(screen.queryByText(/from the corpus/)).not.toBeInTheDocument();
   });
 

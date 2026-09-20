@@ -67,8 +67,8 @@ public sealed class ScopeResolver(CatalogDbContext db)
     /// <paramref name="rootPath"/>, exactly or as a parent folder.
     ///
     /// Takes corpus ids that resolution has ALREADY authorised, so this cannot widen a
-    /// scope, only narrow one. Matching a parent is what makes `orly` mean all ten topic
-    /// folders beneath it and `orly/AI` mean one.
+    /// scope, only narrow one. Matching a parent is what makes `manuals` mean all ten topic
+    /// folders beneath it and `manuals/AI` mean one.
     /// </summary>
     public async Task<IReadOnlyList<string>> SourceIdsAsync(
         IReadOnlyList<string> corpusIds, string rootPath, CancellationToken ct = default)

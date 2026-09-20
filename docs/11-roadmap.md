@@ -149,7 +149,7 @@ ones came from pointing the indexer at a real shelf of 95 books rather than at f
   not have. An EPUB is a zip of XHTML, so an unparseable manifest is now salvaged from the
   archive, and DRM is asserted from `META-INF/encryption.xml` rather than guessed.
 - **A file path did not name a file.** `file_path` is relative to its *source* root, so two
-  sources of one corpus holding "Logic For Dummies.pdf" are two books with one path. The
+  sources of one corpus holding "Installation Guide.pdf" are two books with one path. The
   delete filter removed both; `get_context` interleaved them into one passage with line
   numbers on it; and the point id, derived from (set, path, index), made the second
   source's upsert overwrite the first. `source_id` had been in every point's

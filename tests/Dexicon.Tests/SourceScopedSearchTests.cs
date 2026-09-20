@@ -9,7 +9,7 @@ namespace Dexicon.Tests;
 ///
 /// A corpus over a shelf of books has one source per topic folder, and until now there was
 /// no way to say "only the AI ones". `pathPrefix` cannot do it: file_path is relative to a
-/// SOURCE root, so a source at `orly/AI` stores its books as bare filenames and no prefix
+/// SOURCE root, so a source at `manuals/AI` stores its books as bare filenames and no prefix
 /// matches the folder they came from. The information was in the index the whole time,
 /// source_id is written to every point and indexed as a keyword, and unreachable.
 /// </summary>
@@ -34,9 +34,9 @@ public sealed class SourceScopedSearchTests : IDisposable
         _db.SaveChanges();
 
         _db.Sources.AddRange(
-            Source("src-ai", "books", "books/orly/AI"),
-            Source("src-phil", "books", "books/orly/Philosophy"),
-            Source("src-arch", "books", "books/orly/Architecture"),
+            Source("src-ai", "books", "books/manuals/AI"),
+            Source("src-phil", "books", "books/manuals/Philosophy"),
+            Source("src-arch", "books", "books/manuals/Architecture"),
             Source("src-other", "code", "src"),
             // An upload source has no root path at all.
             new Source { Id = "src-upload", CorpusId = "books", Kind = SourceKind.Upload, RootPath = null, CreatedUtc = DateTime.UtcNow });
@@ -57,7 +57,7 @@ public sealed class SourceScopedSearchTests : IDisposable
     [Fact]
     public async Task One_folder_resolves_to_one_source()
     {
-        var ids = await _scopes.SourceIdsAsync(["books"], "books/orly/AI");
+        var ids = await _scopes.SourceIdsAsync(["books"], "books/manuals/AI");
 
         ids.ShouldBe(["src-ai"]);
     }
@@ -65,9 +65,9 @@ public sealed class SourceScopedSearchTests : IDisposable
     [Fact]
     public async Task A_parent_folder_resolves_to_everything_beneath_it()
     {
-        // `orly` should mean the whole shelf, not nothing. Without this a caller has to
+        // `manuals` should mean the whole shelf, not nothing. Without this a caller has to
         // know every topic folder to search more than one.
-        var ids = await _scopes.SourceIdsAsync(["books"], "books/orly");
+        var ids = await _scopes.SourceIdsAsync(["books"], "books/manuals");
 
         ids.ShouldBe(["src-ai", "src-phil", "src-arch"], ignoreOrder: true);
     }
@@ -75,18 +75,18 @@ public sealed class SourceScopedSearchTests : IDisposable
     [Fact]
     public async Task A_prefix_that_is_not_a_folder_boundary_does_not_match()
     {
-        // "books/orly/A" must not drag in "books/orly/AI" and "books/orly/Architecture" by
+        // "books/manuals/A" must not drag in "books/manuals/AI" and "books/manuals/Architecture" by
         // string prefix. Folder boundaries, not characters.
         await Should.ThrowAsync<ScopeResolutionException>(
-            () => _scopes.SourceIdsAsync(["books"], "books/orly/A"));
+            () => _scopes.SourceIdsAsync(["books"], "books/manuals/A"));
     }
 
     [Fact]
     public async Task Leading_and_trailing_slashes_are_forgiven()
     {
         // list_corpora prints the stored form; a person types whatever looks like a path.
-        (await _scopes.SourceIdsAsync(["books"], "/books/orly/AI/")).ShouldBe(["src-ai"]);
-        (await _scopes.SourceIdsAsync(["books"], "books\\orly\\AI")).ShouldBe(["src-ai"]);
+        (await _scopes.SourceIdsAsync(["books"], "/books/manuals/AI/")).ShouldBe(["src-ai"]);
+        (await _scopes.SourceIdsAsync(["books"], "books\\manuals\\AI")).ShouldBe(["src-ai"]);
     }
 
     [Fact]
@@ -108,15 +108,15 @@ public sealed class SourceScopedSearchTests : IDisposable
         // message, so a caller who guessed wrong could only guess again: found by using the
         // MCP surface and guessing wrong.
         var error = await Should.ThrowAsync<ScopeResolutionException>(
-            () => _scopes.SourceIdsAsync(["books"], "books/orly/Rust"));
+            () => _scopes.SourceIdsAsync(["books"], "books/manuals/Rust"));
 
-        error.Message.ShouldContain("books/orly/Rust");
+        error.Message.ShouldContain("books/manuals/Rust");
 
         // Every root, in the message itself: that is what a caller who guessed wrong reads.
-        foreach (var root in new[] { "books/orly/AI", "books/orly/Philosophy", "books/orly/Architecture" })
+        foreach (var root in new[] { "books/manuals/AI", "books/manuals/Philosophy", "books/manuals/Architecture" })
             error.Message.ShouldContain(root);
 
-        error.VisibleNames.ShouldBe(["books/orly/AI", "books/orly/Architecture", "books/orly/Philosophy"]);
+        error.VisibleNames.ShouldBe(["books/manuals/AI", "books/manuals/Architecture", "books/manuals/Philosophy"]);
     }
 
     [Fact]
@@ -128,7 +128,7 @@ public sealed class SourceScopedSearchTests : IDisposable
         await _db.SaveChangesAsync();
 
         var error = await Should.ThrowAsync<ScopeResolutionException>(
-            () => _scopes.SourceIdsAsync(["books"], "books/orly/AI"));
+            () => _scopes.SourceIdsAsync(["books"], "books/manuals/AI"));
 
         error.Message.ShouldContain("no workspace sources at all");
         error.VisibleNames.ShouldBeEmpty();
@@ -138,7 +138,7 @@ public sealed class SourceScopedSearchTests : IDisposable
     public async Task An_upload_source_never_matches_a_folder()
     {
         // It has no root path. Matching it against one would be matching against null.
-        var ids = await _scopes.SourceIdsAsync(["books"], "books/orly");
+        var ids = await _scopes.SourceIdsAsync(["books"], "books/manuals");
 
         ids.ShouldNotContain("src-upload");
     }

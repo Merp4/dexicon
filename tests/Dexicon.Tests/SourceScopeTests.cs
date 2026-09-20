@@ -13,8 +13,8 @@ namespace Dexicon.Tests;
 /// silently doubles, a search returns the same passage twice, and the second copy is paid
 /// for in embedding time. Nothing fails and no count says which files were affected.
 ///
-/// Found on a real library. The coverage notice said to add a source on `books/orly` to
-/// pick up one loose book; `books/orly` sits above ten sources, so the refresh that
+/// Found on a real library. The coverage notice said to add a source on `books/manuals` to
+/// pick up one loose book; `books/manuals` sits above ten sources, so the refresh that
 /// followed would have indexed ninety-five books a second time.
 /// </summary>
 public sealed class SourceScopeTests
@@ -28,10 +28,10 @@ public sealed class SourceScopeTests
     [Fact]
     public void ADeeperSourceOwnsItsOwnSubtree()
     {
-        var orly = S("2", "books/orly");
-        var ai = S("1", "books/orly/AI");
+        var manuals = S("2", "books/manuals");
+        var ai = S("1", "books/manuals/AI");
 
-        var shadowed = Shadowed(orly, orly, ai);
+        var shadowed = Shadowed(manuals, manuals, ai);
 
         shadowed.ShouldBe(["AI"]);
         SourceScope.IsShadowed("AI/one.pdf", shadowed).ShouldBeTrue();
@@ -42,22 +42,22 @@ public sealed class SourceScopeTests
     [Fact]
     public void TheDeeperSourceItselfYieldsNothing()
     {
-        var orly = S("2", "books/orly");
-        var ai = S("1", "books/orly/AI");
+        var manuals = S("2", "books/manuals");
+        var ai = S("1", "books/manuals/AI");
 
         // Asked the other way round, the specific source keeps everything: it is the most
         // specific thing covering its own tree.
-        Shadowed(ai, orly, ai).ShouldBeEmpty();
+        Shadowed(ai, manuals, ai).ShouldBeEmpty();
     }
 
     [Fact]
     public void EveryDeeperSourceIsAccountedForAndNotJustTheFirst()
     {
-        var orly = S("9", "books/orly");
+        var manuals = S("9", "books/manuals");
         var subs = new[] { "AI", "Agile", "Architecture", "DB", "dotnet" }
-            .Select((n, i) => S(i.ToString(), $"books/orly/{n}")).ToArray();
+            .Select((n, i) => S(i.ToString(), $"books/manuals/{n}")).ToArray();
 
-        var shadowed = Shadowed(orly, [orly, .. subs]);
+        var shadowed = Shadowed(manuals, [manuals, .. subs]);
 
         shadowed.Count.ShouldBe(5);
         foreach (var n in new[] { "AI", "Agile", "Architecture", "DB", "dotnet" })
@@ -67,8 +67,8 @@ public sealed class SourceScopeTests
     [Fact]
     public void ASiblingDoesNotShadowAnything()
     {
-        var ai = S("1", "books/orly/AI");
-        var db = S("2", "books/orly/DB");
+        var ai = S("1", "books/manuals/AI");
+        var db = S("2", "books/manuals/DB");
 
         Shadowed(ai, ai, db).ShouldBeEmpty();
         Shadowed(db, ai, db).ShouldBeEmpty();
@@ -77,13 +77,13 @@ public sealed class SourceScopeTests
     [Fact]
     public void AFolderThatMerelySharesAPrefixIsNotInsideIt()
     {
-        // `books/orlyx` is not under `books/orly`, however much of the string they share.
+        // `books/manualsx` is not under `books/manuals`, however much of the string they share.
         // The same boundary test the workspace root uses, for the same reason.
-        var orly = S("2", "books/orly");
-        var orlyx = S("1", "books/orlyx");
+        var manuals = S("2", "books/manuals");
+        var manualsx = S("1", "books/manualsx");
 
-        Shadowed(orly, orly, orlyx).ShouldBeEmpty();
-        SourceScope.IsShadowed("orlyx-notes.md", Shadowed(orly, orly, orlyx)).ShouldBeFalse();
+        Shadowed(manuals, manuals, manualsx).ShouldBeEmpty();
+        SourceScope.IsShadowed("manualsx-notes.md", Shadowed(manuals, manuals, manualsx)).ShouldBeFalse();
     }
 
     [Fact]
@@ -104,8 +104,8 @@ public sealed class SourceScopeTests
     {
         // Duplicated by an API caller: the UI warns, the API allows it. Both indexing is
         // the bug this whole type exists for; neither indexing is worse.
-        var first = S("1", "books/orly/AI");
-        var second = S("2", "books/orly/AI");
+        var first = S("1", "books/manuals/AI");
+        var second = S("2", "books/manuals/AI");
 
         Shadowed(first, first, second).ShouldBeEmpty();
         Shadowed(second, first, second).ShouldBe([string.Empty]);
@@ -117,8 +117,8 @@ public sealed class SourceScopeTests
     [Fact]
     public void TheOwnerOfADuplicatedRootDoesNotDependOnRowOrder()
     {
-        var first = S("1", "books/orly/AI");
-        var second = S("2", "books/orly/AI");
+        var first = S("1", "books/manuals/AI");
+        var second = S("2", "books/manuals/AI");
 
         // Same answer whichever order the rows came back in.
         Shadowed(first, second, first).ShouldBeEmpty();
@@ -128,11 +128,11 @@ public sealed class SourceScopeTests
     [Fact]
     public void AnUploadSourceNeitherShadowsNorIsShadowed()
     {
-        var orly = S("2", "books/orly");
+        var manuals = S("2", "books/manuals");
         var upload = S("1", null, SourceKind.Upload);
 
-        Shadowed(orly, orly, upload).ShouldBeEmpty();
-        Shadowed(upload, orly, upload).ShouldBeEmpty();
+        Shadowed(manuals, manuals, upload).ShouldBeEmpty();
+        Shadowed(upload, manuals, upload).ShouldBeEmpty();
     }
 
     [Fact]
@@ -142,27 +142,27 @@ public sealed class SourceScopeTests
         // they can neither shadow a folder nor be shadowed by one. Today they carry no
         // root path and the path check alone would be enough; the kind check is what keeps
         // that true if one ever does.
-        var orly = S("2", "books/orly");
-        var upload = S("1", "books/orly/AI", SourceKind.Upload);
+        var manuals = S("2", "books/manuals");
+        var upload = S("1", "books/manuals/AI", SourceKind.Upload);
 
-        Shadowed(orly, orly, upload).ShouldBeEmpty();
-        Shadowed(upload, orly, upload).ShouldBeEmpty();
+        Shadowed(manuals, manuals, upload).ShouldBeEmpty();
+        Shadowed(upload, manuals, upload).ShouldBeEmpty();
     }
 
     [Fact]
     public void ThreeLevelsResolveToTheMostSpecific()
     {
         var books = S("3", "books");
-        var orly = S("2", "books/orly");
-        var ai = S("1", "books/orly/AI");
+        var manuals = S("2", "books/manuals");
+        var ai = S("1", "books/manuals/AI");
 
-        // `books` yields its whole orly subtree to `books/orly`, which in turn yields AI.
+        // `books` yields its whole manuals subtree to `books/manuals`, which in turn yields AI.
         // Each source keeps only what nothing deeper claims.
-        Shadowed(books, books, orly, ai).ShouldBe(["orly", "orly/AI"]);
-        Shadowed(orly, books, orly, ai).ShouldBe(["AI"]);
-        Shadowed(ai, books, orly, ai).ShouldBeEmpty();
+        Shadowed(books, books, manuals, ai).ShouldBe(["manuals", "manuals/AI"]);
+        Shadowed(manuals, books, manuals, ai).ShouldBe(["AI"]);
+        Shadowed(ai, books, manuals, ai).ShouldBeEmpty();
 
-        SourceScope.IsShadowed("orly/AI/x.pdf", Shadowed(books, books, orly, ai)).ShouldBeTrue();
-        SourceScope.IsShadowed("loose-at-books.pdf", Shadowed(books, books, orly, ai)).ShouldBeFalse();
+        SourceScope.IsShadowed("manuals/AI/x.pdf", Shadowed(books, books, manuals, ai)).ShouldBeTrue();
+        SourceScope.IsShadowed("loose-at-books.pdf", Shadowed(books, books, manuals, ai)).ShouldBeFalse();
     }
 }

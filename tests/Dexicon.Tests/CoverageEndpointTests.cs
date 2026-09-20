@@ -75,16 +75,16 @@ public sealed class CoverageEndpointTests : IAsyncLifetime
     [Fact]
     public async Task ReportsTheGapAsTheContractDescribesIt()
     {
-        Write("books/orly/AI/one.md");
-        Write("books/orly/dotnet/two.md");
-        Write("books/orly/Internet of Things from Scratch.txt");
-        await AddSource("c", "books/orly/AI");
-        await AddSource("c", "books/orly/dotnet");
+        Write("books/manuals/AI/one.md");
+        Write("books/manuals/dotnet/two.md");
+        Write("books/manuals/Internet of Things from Scratch.txt");
+        await AddSource("c", "books/manuals/AI");
+        await AddSource("c", "books/manuals/dotnet");
 
         var report = await Coverage();
 
         report.Gaps.Count.ShouldBe(1);
-        report.Gaps[0].Directory.ShouldBe("books/orly");
+        report.Gaps[0].Directory.ShouldBe("books/manuals");
         report.Gaps[0].Files.ShouldBe(["Internet of Things from Scratch.txt"]);
     }
 
@@ -93,22 +93,22 @@ public sealed class CoverageEndpointTests : IAsyncLifetime
     {
         // Two corpora, each with a pair of sources under its own parent and a file loose
         // beside them. Ignoring the corpus id reports both gaps to both.
-        Write("books/orly/AI/one.md");
-        Write("books/orly/dotnet/two.md");
-        Write("books/orly/loose-book.md");
+        Write("books/manuals/AI/one.md");
+        Write("books/manuals/dotnet/two.md");
+        Write("books/manuals/loose-book.md");
         Write("papers/2024/three.md");
         Write("papers/2025/four.md");
         Write("papers/loose-paper.md");
 
-        await AddSource("c", "books/orly/AI");
-        await AddSource("c", "books/orly/dotnet");
+        await AddSource("c", "books/manuals/AI");
+        await AddSource("c", "books/manuals/dotnet");
         await AddSource("c2", "papers/2024");
         await AddSource("c2", "papers/2025");
 
         var books = await Coverage("c");
         var papers = await Coverage("c2");
 
-        books.Gaps.Select(g => g.Directory).ShouldBe(["books/orly"]);
+        books.Gaps.Select(g => g.Directory).ShouldBe(["books/manuals"]);
         books.Gaps[0].Files.ShouldBe(["loose-book.md"]);
 
         papers.Gaps.Select(g => g.Directory).ShouldBe(["papers"]);
@@ -118,14 +118,14 @@ public sealed class CoverageEndpointTests : IAsyncLifetime
     [Fact]
     public async Task UsesTheSourcesOwnSizeCapAndNotTheDefault()
     {
-        Write("books/orly/AI/one.md");
-        Write("books/orly/dotnet/two.md");
-        Write("books/orly/big.md", new string('x', 400_000));
+        Write("books/manuals/AI/one.md");
+        Write("books/manuals/dotnet/two.md");
+        Write("books/manuals/big.md", new string('x', 400_000));
 
         // Both sources take files this large, so the check must not hide one on a cap
         // neither of them uses.
-        await AddSource("c", "books/orly/AI", maxFileBytes: 1_000_000);
-        await AddSource("c", "books/orly/dotnet", maxFileBytes: 1_000_000);
+        await AddSource("c", "books/manuals/AI", maxFileBytes: 1_000_000);
+        await AddSource("c", "books/manuals/dotnet", maxFileBytes: 1_000_000);
 
         var report = await Coverage();
 
@@ -136,7 +136,7 @@ public sealed class CoverageEndpointTests : IAsyncLifetime
     [Fact]
     public async Task ACorpusWithNoSourcesReportsNothingRatherThanThrowing()
     {
-        Write("books/orly/loose.md");
+        Write("books/manuals/loose.md");
 
         (await Coverage()).Gaps.ShouldBeEmpty();
     }
@@ -144,10 +144,10 @@ public sealed class CoverageEndpointTests : IAsyncLifetime
     [Fact]
     public async Task AnUploadSourceHasNoPathAndIsNotOneHalfOfAPair()
     {
-        Write("books/orly/AI/one.md");
-        Write("books/orly/loose.md");
+        Write("books/manuals/AI/one.md");
+        Write("books/manuals/loose.md");
 
-        await AddSource("c", "books/orly/AI");
+        await AddSource("c", "books/manuals/AI");
         _db.Sources.Add(new Source
         {
             Id = "upload",
@@ -158,7 +158,7 @@ public sealed class CoverageEndpointTests : IAsyncLifetime
         });
         await _db.SaveChangesAsync();
 
-        // One workspace source and one upload source is one source under books/orly, not
+        // One workspace source and one upload source is one source under books/manuals, not
         // two, so there is nothing to infer about that directory.
         (await Coverage()).Gaps.ShouldBeEmpty();
     }

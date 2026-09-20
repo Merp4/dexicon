@@ -19,7 +19,7 @@ public sealed record SearchRequest
     public string? Language { get; init; }
     public string? Symbol { get; init; }
 
-    /// <summary>A source root path to restrict to, e.g. `orly/AI`. Null searches them all.</summary>
+    /// <summary>A source root path to restrict to, e.g. `manuals/AI`. Null searches them all.</summary>
     public string? Source { get; init; }
 
     /// <summary>
