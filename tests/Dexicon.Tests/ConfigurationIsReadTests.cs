@@ -116,4 +116,40 @@ public sealed class ConfigurationIsReadTests
         missing.ShouldBeEmpty($"compose sets variables that bind to nothing: {string.Join(", ", missing)}");
         example.ShouldNotBeEmpty();
     }
+
+    /// <summary>
+    /// Every setting compose passes appears in the deployment guide's table.
+    ///
+    /// The guide calls itself the complete configuration reference, so an operator who
+    /// reads it and not the compose file has to find everything there. Two concurrency
+    /// settings were added to compose and to .env.example and not to the guide, which
+    /// review caught and this would have: the table is a claim about completeness, and a
+    /// claim nothing checks drifts on the first change after it is written.
+    ///
+    /// A variable an operator sets under a different name in `.env` is documented under
+    /// both, so this matches the bound path exactly rather than guessing at aliases.
+    /// </summary>
+    [Fact]
+    public void EverySettingComposePassesIsInTheDeploymentGuide()
+    {
+        var root = RepoRoot();
+        var compose = File.ReadAllText(Path.Combine(root, "docker-compose.yml"));
+        var guide = File.ReadAllText(Path.Combine(root, "docs", "09-deployment.md"));
+
+        var passed = Regex.Matches(compose, @"^\s+(DEXICON__[A-Z_]+):", RegexOptions.Multiline)
+            .Select(m => m.Groups[1].Value)
+            .Distinct()
+            .ToList();
+
+        passed.Count.ShouldBeGreaterThan(5,
+            "read almost nothing out of compose, so this would pass whatever the guide said");
+
+        var undocumented = passed
+            .Where(name => !guide.Contains(name, StringComparison.Ordinal))
+            .ToList();
+
+        undocumented.ShouldBeEmpty(
+            "docs/09-deployment.md is the complete configuration reference, so a setting "
+            + "compose passes has to appear in it:\n  " + string.Join("\n  ", undocumented));
+    }
 }

@@ -141,6 +141,12 @@ public sealed class EmbeddingService(
         var generator = factory.GeneratorFor(target);
         var options = new EmbeddingGenerationOptions { ModelId = target.Model };
 
+        // Through the endpoint's gate like any other request. It is a real round trip,
+        // and model probing makes it while indexing runs; outside the gate it could add
+        // to a provider already at its configured limit, so the setting would describe
+        // something other than what the endpoint receives.
+        var gate = limits.EmbeddingFor(target);
+        await gate.WaitAsync(ct);
         try
         {
             var embeddings = await generator.GenerateAsync([text], options, ct);
@@ -153,6 +159,7 @@ public sealed class EmbeddingService(
             log.LogDebug(ex, "Could not count tokens with {Target}", target);
             return null;
         }
+        finally { gate.Release(); }
     }
 
     public async Task<IReadOnlyList<float[]>> EmbedAsync(

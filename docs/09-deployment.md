@@ -266,10 +266,10 @@ Everything has a working default except `WORKSPACE_ROOT`.
 | `DEXICON_BIND` | `127.0.0.1` | Bind address. Set to `0.0.0.0` only to reach it from another machine. |
 | `WORKSPACE_ROOT` | `./workspaces` | Host directory bind-mounted read-only at `/workspaces`. |
 | `DEXICON__QDRANT__ENDPOINT` | `http://dexicon-qdrant:6334` | gRPC endpoint. Namespaced service name — see "Routing". |
-| `QDRANT_API_KEY` | *(empty)* | Set for anything not on a single trusted machine. |
+| `QDRANT_API_KEY` (binds `DEXICON__QDRANT__APIKEY`) | *(empty)* | Set for anything not on a single trusted machine. |
 | `DEXICON__OLLAMA__ENDPOINT` | `http://dexicon-ollama:11434` | Namespaced service name — see "Routing". |
 | `DEXICON__EMBEDDING__MODEL` | `embeddinggemma` | Default for new corpora. Pinned per chunk set at creation, so changing it migrates nothing. |
-| `DEXICON__EMBEDDING__MAXCONCURRENCY` | `4` | Parallel embedding requests Dexicon issues. Keep it equal to `OLLAMA_NUM_PARALLEL`: sending more than Ollama admits only queues the difference. |
+| `DEXICON__EMBEDDING__MAXCONCURRENCY` | `4` | Parallel embedding requests Dexicon issues, counted PER PROVIDER across every indexing job. Keep it equal to `OLLAMA_NUM_PARALLEL`: sending more than Ollama admits only queues the difference. Raising `MAXCONCURRENTCORPORA` does not multiply it, and a corpus indexing alone still gets all of it. |
 | `OLLAMA_NUM_PARALLEL` | `4` | How many requests Ollama admits at once. Reaches the **in-stack Ollama container only** — with `docker-compose.external.yml` that service is not started, so set it on your own Ollama instead. Measured against a live index, 50% embedder busy unset against 79% at 4, about 63% more embed calls in the same window. It is not parallel decoding: Ollama pins an embedding model to one sequence either way, so it costs no VRAM and does not change the context each request gets. |
 | `DEXICON__INDEXING__CHUNKSIZE` | `256` | Chunk size in tokens for a NEW corpus. An existing chunk set stores its own, so this migrates nothing and costs no reindex. Measured; see D-31's amendment. |
 | `DEXICON__INDEXING__CHUNKOVERLAP` | `32` | Overlap in tokens, an eighth of the size. Sweeping it found nothing to gain from more. |
@@ -277,6 +277,8 @@ Everything has a working default except `WORKSPACE_ROOT`.
 | `DEXICON__INDEXING__DOCUMENTMAXBYTES` | `536870912` | Size cap for extracted formats (PDF, EPUB, DOCX, PPTX). 512 MB. A memory decision — extraction holds the document's text. |
 | `DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS` | `300` | How long a file may go on reading itself during extraction before it is abandoned and recorded as failed. `0` disables it. Bounds a file that keeps reading, not wall-clock time in extraction. |
 | `DEXICON__INDEXING__REFRESHMINUTES` | `0` | Automatic refresh interval in minutes. `0` = manual only. |
+| `DEXICON__INDEXING__MAXCONCURRENTCORPORA` | `4` | How many corpora may be indexed at once. Two jobs on ONE corpus are still excluded, by the lease. Costs a catalogue connection and the memory of the documents in flight per worker; the embedding endpoint and the parser are bounded separately, so raising this does not multiply either. |
+| `DEXICON__INDEXING__MAXCONCURRENTEXTRACTIONS` | `4` | How many files may be parsed at once, across every job, and how many a single job reads ahead. Parsing is CPU-bound, so the limit is the machine's rather than a corpus's. |
 | `DEXICON__UPLOAD__MAXFILEBYTES` | `209715200` | 200 MB. |
 | `DEXICON__ADMIN__PASSWORD` | _(generated)_ | The admin password. Blank generates one on first run and prints it to the log once. Set, it is applied on every start, which is the way back in after a forgotten one. |
 | `DEXICON__BOOTSTRAP__TOKEN` | *(empty)* | Blank generates one and logs it once. |

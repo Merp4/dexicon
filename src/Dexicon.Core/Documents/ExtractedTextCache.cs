@@ -4,6 +4,7 @@ using System.Text.Json;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Extraction;
 using Dexicon.Core.Indexing;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -94,7 +95,7 @@ public sealed class ExtractedTextCache(
                 fileSha, new ExtractedText(cached.Text, UnitsFrom(cached.UnitsJson), cached.Title), extractor);
 
         stream.Position = 0;
-        var extracted = Parse(stream, extractor, relativePath, timeoutSeconds);
+        var extracted = await ParseAsync(stream, extractor, relativePath, timeoutSeconds, ct);
 
         if (cached is not null)
             // Same bytes, same extractor, older version: the row is overwritten rather
@@ -116,11 +117,18 @@ public sealed class ExtractedTextCache(
     /// deadline starts inside the permit for the same reason it starts after the hash: it
     /// budgets the parse, and time spent waiting for a busy machine is not the file being
     /// slow.
+    ///
+    /// The wait carries the job's token. A blocking Wait() cannot be cancelled, so a job
+    /// stopped while every permit was held left this reader stuck and the reader's own
+    /// cleanup unable to finish - worst with ExtractionTimeoutSeconds=0, where the parse
+    /// holding the permit has no bound either. The parse itself stays synchronous
+    /// because Extract is.
     /// </summary>
-    private ExtractedText Parse(
-        Stream stream, ITextExtractor extractor, string relativePath, int timeoutSeconds)
+    private async Task<ExtractedText> ParseAsync(
+        Stream stream, ITextExtractor extractor, string relativePath, int timeoutSeconds,
+        CancellationToken ct)
     {
-        limits.Extractions.Wait();
+        await limits.Extractions.WaitAsync(ct);
         try
         {
             // Every read the extractor makes passes through the deadline, which is the
@@ -178,12 +186,11 @@ public sealed class ExtractedTextCache(
             db.FileTexts.Add(row);
             await db.SaveChangesAsync(ct);
         }
-        catch (DbUpdateException ex) when (ex.Entries.Any(e => e.Entity is FileText))
+        catch (DbUpdateException ex) when (IsDuplicateKey(ex))
         {
             // Another source or corpus extracted the same bytes first. The text is already
             // in hand, so the collision costs a duplicated extraction and nothing else;
-            // letting it escape would record a readable file as failed. Filtered on the
-            // entry, so an unrelated write failing here still throws.
+            // letting it escape would record a readable file as failed.
             log.LogDebug(ex, "file_texts row for {File} was written concurrently", relativePath);
         }
         finally
@@ -191,6 +198,27 @@ public sealed class ExtractedTextCache(
             db.Entry(row).State = EntityState.Detached;
         }
     }
+
+    /// <summary>
+    /// Whether a failed write was another writer getting there first, rather than the
+    /// database being unable to take it.
+    ///
+    /// Filtering on "the failing entry was a FileText" is not the same question. A busy
+    /// database, a full disk or a broken connection all fail on that entry too, and with
+    /// several jobs writing concurrently SQLITE_BUSY is no longer unlikely. Treated as a
+    /// harmless collision they would be logged at debug and the row silently not stored,
+    /// so every later pass would re-extract the file and the real fault would never
+    /// surface.
+    /// </summary>
+    private static bool IsDuplicateKey(DbUpdateException ex) =>
+        ex.InnerException is SqliteException
+        {
+            SqliteErrorCode: SqliteConstraintViolation,
+        } inner && inner.SqliteExtendedErrorCode is PrimaryKeyViolation or UniqueViolation;
+
+    private const int SqliteConstraintViolation = 19;   // SQLITE_CONSTRAINT
+    private const int PrimaryKeyViolation = 1555;       // SQLITE_CONSTRAINT_PRIMARYKEY
+    private const int UniqueViolation = 2067;           // SQLITE_CONSTRAINT_UNIQUE
 
     /// <summary>
     /// Text and hash from one read. A workspace tree is often on a bind mount where a
