@@ -128,6 +128,16 @@ with no section here fails its release rather than publishing an undescribed one
   Per provider rather than globally, because the number describes an endpoint: a local
   Ollama admitting four sequences says nothing about what a hosted deployment will take.
 
+- **One corpus indexing alone uses the whole extraction budget.** A job read one file at
+  a time, so the shared parsing limit only ever did anything when several corpora were
+  indexing together. A source's files are now read concurrently and recorded one at a
+  time: reading is the slow half and needs nothing shared, recording touches the pass's
+  catalogue connection, its dictionaries and its counters, and is not what makes indexing
+  slow.
+
+  Order is no longer the walk's order. Nothing depended on it — every file's outcome is
+  its own row — but a job's log now interleaves files.
+
 - **Extraction is bounded across jobs.** `DEXICON_INDEXING_MAXCONCURRENTEXTRACTIONS`
   (default 4) caps how many files are being parsed at once. Parsing is CPU-bound, so the
   limit is the machine's rather than a corpus's; the permit is taken after the extracted

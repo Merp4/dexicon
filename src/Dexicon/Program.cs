@@ -116,6 +116,11 @@ builder.Services.AddScoped<CorpusIndexer>();
 builder.Services.AddSingleton<IndexingLimits>();
 builder.Services.AddScoped<DocumentService>();
 builder.Services.AddScoped<DocumentReader>();
+// Scoped: it holds a catalogue connection, and the parallel reader resolves one per
+// scope so that each reading thread has its own.
+builder.Services.AddScoped<ExtractedTextCache>();
+// Singleton: it holds no per-job state and makes the scopes above itself.
+builder.Services.AddSingleton<WorkspaceFileReader>();
 builder.Services.AddScoped<IVectorStoreCleanup, VectorStoreCleanup>();
 builder.Services.AddScoped<IndexJobQueue>();
 builder.Services.AddScoped<RequestContext>();

@@ -1,5 +1,6 @@
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
+using Dexicon.Core.Documents;
 using Dexicon.Core.Extraction;
 using Dexicon.Core.Indexing;
 using Microsoft.EntityFrameworkCore;
@@ -19,8 +20,8 @@ namespace Dexicon.Tests;
 /// anything had touched it, and threw the text away again after chunking.
 ///
 /// The counting extractor below is what makes that observable. A test that only compared
-/// returned text would pass on a cache that never hits, which is the failure this is
-/// here to catch.
+/// returned text would pass on a cache that never hits, which is the failure this is here
+/// to catch.
 /// </summary>
 public sealed class ExtractedTextCacheTests : IDisposable
 {
@@ -40,7 +41,7 @@ public sealed class ExtractedTextCacheTests : IDisposable
 
             // Drained, because the real ones read the stream and the deadline wrapper
             // only fires on a read. An extractor that ignores its input would hide a
-            // caller that opens the wrong file.
+            // caller that opened the wrong file.
             content.CopyTo(Stream.Null);
             return new ExtractedText(text, units ?? [], title);
         }
@@ -59,41 +60,38 @@ public sealed class ExtractedTextCacheTests : IDisposable
         return db;
     }
 
-    /// <summary>
-    /// Everything but the catalog, the options and the logger is null: the method under
-    /// test reaches none of it, and standing up a vector store and an embedding provider
-    /// to check a cache would test neither.
-    /// </summary>
-    private static CorpusIndexer Indexer(CatalogDbContext db)
-    {
-        var options = Options.Create(new DexiconOptions());
-        return new(db, null!, null!, null!, null!, null!, new IndexingLimits(options), options,
-            NullLogger<CorpusIndexer>.Instance);
-    }
+    private static ExtractedTextCache Cache(CatalogDbContext db) =>
+        new(db, new IndexingLimits(Options.Create(new DexiconOptions())),
+            NullLogger<ExtractedTextCache>.Instance);
 
-    private WorkspaceWalker.Candidate File(string name, string bytes)
+    /// <summary>A file on disk, and the two paths the reader would pass for it.</summary>
+    private (string Full, string Relative) File(string name, string bytes)
     {
         var full = Path.Combine(_dir, name);
         System.IO.File.WriteAllText(full, bytes);
-        return new WorkspaceWalker.Candidate(full, name, new FileInfo(full).Length);
+        return (full, name);
     }
+
+    private static Task<ReadText> Read(
+        ExtractedTextCache cache, (string Full, string Relative) file, ITextExtractor? extractor) =>
+        cache.ReadAsync(file.Full, file.Relative, extractor, timeoutSeconds: 300, CancellationToken.None);
 
     [Fact]
     public async Task TheSecondPassOverAnUnchangedFileDoesNotRunTheExtractor()
     {
         await using var db = Db();
-        var indexer = Indexer(db);
+        var cache = Cache(db);
         var extractor = new Counting("page one");
         var file = File("a.pdf", "%PDF-1.7 whatever");
 
-        var first = await indexer.ExtractCachedAsync(extractor, file, default);
-        var second = await indexer.ExtractCachedAsync(extractor, file, default);
+        var first = await Read(cache, file, extractor);
+        var second = await Read(cache, file, extractor);
 
         extractor.Calls.ShouldBe(1);
         first.Text.Text.ShouldBe("page one");
         second.Text.Text.ShouldBe("page one");
 
-        // The hash the file row is stamped with, so the cached text is reachable by path.
+        // The hash the file's per-set row is stamped with, so the text is reachable by path.
         second.Sha256.ShouldBe(first.Sha256);
         second.Sha256.Length.ShouldBe(64);
     }
@@ -102,13 +100,13 @@ public sealed class ExtractedTextCacheTests : IDisposable
     public async Task UnitsAndTitleSurviveTheRoundTrip()
     {
         await using var db = Db();
-        var indexer = Indexer(db);
+        var cache = Cache(db);
         var extractor = new Counting("body",
             [new ExtractedUnit(1, 0), new ExtractedUnit(2, 4, "Chapter 2")], "A Book");
         var file = File("b.epub", "PK zip bytes");
 
-        await indexer.ExtractCachedAsync(extractor, file, default);
-        var (_, cached) = await indexer.ExtractCachedAsync(extractor, file, default);
+        await Read(cache, file, extractor);
+        var cached = (await Read(cache, file, extractor)).Text;
 
         extractor.Calls.ShouldBe(1);
         cached.Title.ShouldBe("A Book");
@@ -122,11 +120,11 @@ public sealed class ExtractedTextCacheTests : IDisposable
     public async Task ChangedBytesAreExtractedAgain()
     {
         await using var db = Db();
-        var indexer = Indexer(db);
+        var cache = Cache(db);
         var extractor = new Counting("text");
 
-        await indexer.ExtractCachedAsync(extractor, File("c.pdf", "one"), default);
-        await indexer.ExtractCachedAsync(extractor, File("c.pdf", "two"), default);
+        await Read(cache, File("c.pdf", "one"), extractor);
+        await Read(cache, File("c.pdf", "two"), extractor);
 
         extractor.Calls.ShouldBe(2);
         (await db.FileTexts.CountAsync()).ShouldBe(2);
@@ -136,11 +134,11 @@ public sealed class ExtractedTextCacheTests : IDisposable
     public async Task TwoFilesWithIdenticalBytesShareOneRow()
     {
         await using var db = Db();
-        var indexer = Indexer(db);
+        var cache = Cache(db);
         var extractor = new Counting("same");
 
-        await indexer.ExtractCachedAsync(extractor, File("d.pdf", "identical"), default);
-        await indexer.ExtractCachedAsync(extractor, File("e.pdf", "identical"), default);
+        await Read(cache, File("d.pdf", "identical"), extractor);
+        await Read(cache, File("e.pdf", "identical"), extractor);
 
         extractor.Calls.ShouldBe(1);
         (await db.FileTexts.CountAsync()).ShouldBe(1);
@@ -156,15 +154,16 @@ public sealed class ExtractedTextCacheTests : IDisposable
     public async Task TheSameBytesUnderTwoExtractorsAreTwoRows()
     {
         await using var db = Db();
-        var indexer = Indexer(db);
+        var cache = Cache(db);
+
         // Two TYPES, because the extractor's type name is what the row records and what
         // the lookup matches on. Two instances of one class are one extractor.
         var epub = new CountingA("read as an epub");
         var docx = new CountingB("read as a docx");
         var bytes = "PK identical zip bytes";
 
-        await indexer.ExtractCachedAsync(epub, File("a.epub", bytes), default);
-        var second = await indexer.ExtractCachedAsync(docx, File("a.docx", bytes), default);
+        await Read(cache, File("a.epub", bytes), epub);
+        var second = await Read(cache, File("a.docx", bytes), docx);
 
         docx.Calls.ShouldBe(1);   // not served the epub's text
         second.Text.Text.ShouldBe("read as a docx");
@@ -172,18 +171,18 @@ public sealed class ExtractedTextCacheTests : IDisposable
     }
 
     /// <summary>
-    /// A row stamped by a LATER build than this one. Overwriting it would make a
-    /// rollback and the version it rolled back from take turns re-extracting the same
-    /// library, each undoing the other's work every pass.
+    /// A row stamped by a LATER build than this one. Overwriting it would make a rollback
+    /// and the version it rolled back from take turns re-extracting the same library, each
+    /// undoing the other's work every pass.
     /// </summary>
     [Fact]
     public async Task TextFromANewerExtractorIsKeptRatherThanDowngraded()
     {
         await using var db = Db();
-        var indexer = Indexer(db);
+        var cache = Cache(db);
         var file = File("f.pdf", "bytes");
 
-        await indexer.ExtractCachedAsync(new Counting("current text"), file, default);
+        await Read(cache, file, new Counting("current text"));
 
         var ahead = await db.FileTexts.SingleAsync();
         ahead.ExtractorVersion = ExtractorVersions.Current + 1;
@@ -191,7 +190,7 @@ public sealed class ExtractedTextCacheTests : IDisposable
         db.ChangeTracker.Clear();
 
         var older = new Counting("would be a downgrade");
-        var result = await indexer.ExtractCachedAsync(older, file, default);
+        var result = await Read(cache, file, older);
 
         older.Calls.ShouldBe(0);
         result.Text.Text.ShouldBe("current text");
@@ -206,17 +205,18 @@ public sealed class ExtractedTextCacheTests : IDisposable
     public async Task TextFromAnOlderExtractorIsReplacedRatherThanTrusted()
     {
         await using var db = Db();
-        var indexer = Indexer(db);
-        var file = File("f.pdf", "bytes");
+        var cache = Cache(db);
+        var file = File("g.pdf", "bytes");
 
-        await indexer.ExtractCachedAsync(new Counting("old text"), file, default);
+        await Read(cache, file, new Counting("old text"));
 
         var stale = await db.FileTexts.SingleAsync();
         stale.ExtractorVersion = ExtractorVersions.Current - 1;
         await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
 
         var fresh = new Counting("new text");
-        var result = await indexer.ExtractCachedAsync(fresh, file, default);
+        var result = await Read(cache, file, fresh);
 
         fresh.Calls.ShouldBe(1);
         result.Text.Text.ShouldBe("new text");
@@ -237,12 +237,12 @@ public sealed class ExtractedTextCacheTests : IDisposable
     public async Task AFileThatYieldsNoTextIsCachedWithItsReason()
     {
         await using var db = Db();
-        var indexer = Indexer(db);
+        var cache = Cache(db);
         var extractor = new Counting("   ");
-        var file = File("g.pdf", "scanned");
+        var file = File("h.pdf", "scanned");
 
-        await indexer.ExtractCachedAsync(extractor, file, default);
-        await indexer.ExtractCachedAsync(extractor, file, default);
+        await Read(cache, file, extractor);
+        await Read(cache, file, extractor);
 
         extractor.Calls.ShouldBe(1);
         var row = await db.FileTexts.AsNoTracking().SingleAsync();
@@ -251,19 +251,38 @@ public sealed class ExtractedTextCacheTests : IDisposable
     }
 
     /// <summary>
-    /// A row holds a whole document's text and the indexer's context lives as long as the
+    /// A row holds a whole document's text and the caller's context can live as long as a
     /// job, so a tracked entity per file would hold the library in memory at once.
     /// </summary>
     [Fact]
     public async Task NoRowIsLeftInTheChangeTracker()
     {
         await using var db = Db();
-        var indexer = Indexer(db);
+        var cache = Cache(db);
 
-        await indexer.ExtractCachedAsync(new Counting("written"), File("h.pdf", "one"), default);
-        await indexer.ExtractCachedAsync(new Counting("read back"), File("h.pdf", "one"), default);
+        await Read(cache, File("i.pdf", "one"), new Counting("written"));
+        await Read(cache, File("i.pdf", "one"), new Counting("read back"));
 
         db.ChangeTracker.Entries<FileText>().ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// Plain text and code have no extractor, and their text is not cached: reading the
+    /// file IS the extraction, so a cache would hold a second copy of the tree. The hash
+    /// is still taken, because the file's per-set row carries it either way.
+    /// </summary>
+    [Fact]
+    public async Task AFileWithNoExtractorIsReadButNotCached()
+    {
+        await using var db = Db();
+        var cache = Cache(db);
+
+        var read = await Read(cache, File("a.cs", "class A { }"), extractor: null);
+
+        read.Text.Text.ShouldBe("class A { }");
+        read.Extractor.ShouldBeNull();
+        read.Sha256.Length.ShouldBe(64);
+        (await db.FileTexts.CountAsync()).ShouldBe(0);
     }
 
     public void Dispose()

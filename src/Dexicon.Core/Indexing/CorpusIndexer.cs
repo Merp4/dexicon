@@ -41,12 +41,12 @@ public sealed record IndexProgress(
 /// </summary>
 public sealed class CorpusIndexer(
     CatalogDbContext db,
+    WorkspaceFileReader reader,
     IVectorStore vectors,
     IEmbeddingService embedder,
     IModelProfiles profiles,
     DocumentService documents,
     CorpusLeases leases,
-    IndexingLimits limits,
     IOptions<DexiconOptions> options,
     ILogger<CorpusIndexer> log)
 {
@@ -739,33 +739,22 @@ public sealed class CorpusIndexer(
             job.FilesSkipped++;
         }
 
-        foreach (var candidate in files)
+        // Read in parallel, recorded here one at a time. Everything below this line
+        // touches state belonging to this pass alone - the DbContext, the two
+        // dictionaries, the job's counters - and none of it is what makes indexing slow.
+        await foreach (var read in reader.ReadAsync(files, ct))
         {
+            var candidate = read.Candidate;
             ct.ThrowIfCancellationRequested();
             seen.Add(candidate.RelativePath);
 
             try
             {
-                var extractor = ExtractorRegistry.For(candidate.RelativePath);
+                // Rethrown here rather than handled where it was caught, so the catch
+                // blocks below stay the one place a file's failure becomes a row.
+                if (read.Error is not null) throw read.Error;
 
-                string fileSha;
-                ExtractedText extracted;
-
-                if (extractor is null)
-                {
-                    // Plain text and code. The text is not cached, because the read IS the
-                    // extraction and a cache would hold a second copy of the tree to save
-                    // a file read. The hash is still taken: it goes on the file row, so a
-                    // reader can tell whether what is on the mount is what was indexed.
-                    var read = await HashAndReadTextAsync(candidate.FullPath, ct);
-                    fileSha = read.Sha256;
-                    extracted = new ExtractedText(read.Text, []);
-                }
-                else
-                {
-                    (fileSha, extracted) = await ExtractCachedAsync(extractor, candidate, ct);
-                }
-
+                var (fileSha, extracted, extractor) = read.Read!;
                 var content = extracted.Text;
 
                 // The stored hash is the CHUNKING FINGERPRINT, not the raw content hash.
@@ -790,15 +779,13 @@ public sealed class CorpusIndexer(
 
                 if (content.Trim().Length == 0)
                 {
-                    // Said plainly rather than left as an absence. "Why isn't my PDF
-                    // searchable" is answered here, in the UI, instead of by silence.
-                    var reason = extractor is PdfTextExtractor
-                        ? "no text layer: this is a scanned PDF, and OCR is not supported"
-                        : "no extractable text content";
-
                     var (emptyFile, emptyState) = Track(known, states, set, source.Id, candidate.RelativePath);
                     emptyState.Status = FileStatus.Empty;
-                    emptyState.StatusDetail = reason;
+
+                    // The same words the cache stores against these bytes, from the same
+                    // place, so a file's reason does not depend on which of the two
+                    // answered.
+                    emptyState.StatusDetail = ExtractedTextCache.EmptyReason(extractor);
                     emptyState.ContentHash = hash;
                     emptyState.SourceSha256 = fileSha;
                     emptyState.ChunkCount = 0;
@@ -1133,185 +1120,4 @@ public sealed class CorpusIndexer(
 
     internal static string HashContent(string content) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(content)));
-
-    /// <summary>
-    /// Extracted text for a workspace file: from <c>file_texts</c> when these bytes have
-    /// been read before, and by running the extractor when they have not.
-    ///
-    /// Uploads have had this since <see cref="BlobText"/>; workspace files had not, so
-    /// the indexer re-opened and re-parsed every PDF on every pass, including files
-    /// nothing had touched, and discarded the text again after chunking. The staleness
-    /// check could not prevent it, because the fingerprint it compares is a hash of the
-    /// EXTRACTED text: deciding a file was unchanged required extracting it first.
-    /// Keying on a hash of the file's bytes breaks that circle, and is why the key is
-    /// the bytes rather than the text they produce.
-    /// </summary>
-    internal async Task<(string Sha256, ExtractedText Text)> ExtractCachedAsync(
-        ITextExtractor extractor, WorkspaceWalker.Candidate candidate, CancellationToken ct)
-    {
-        var name = extractor.GetType().Name;
-
-        // ONE open for both the hash and the extraction. Two would leave a window where
-        // the file changes in between, and the text of one revision would be stored
-        // under the hash of another: the cache would then hand that text to every later
-        // pass over the new bytes, which is worse than not caching at all. An open
-        // handle keeps the bytes it was opened on, so hashing and extracting through the
-        // same one cannot disagree. It also halves the round trips, which is what a bind
-        // mount charges for.
-        await using var stream = File.OpenRead(candidate.FullPath);
-        var sha = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, ct));
-
-        // Untracked, and detached again after the write below. A row carries a whole
-        // document's text and the change tracker lives as long as the job, so tracking
-        // one per file would hold an entire library in memory at once.
-        //
-        // Keyed on the extractor as well as the bytes: which extractor runs is decided by
-        // extension, so the same bytes reached through two extensions are two parses, and
-        // DOCX, PPTX and EPUB are all zip containers that a rename moves between.
-        var cached = await db.FileTexts.AsNoTracking()
-            .FirstOrDefaultAsync(t => t.Sha256 == sha && t.Extractor == name, ct);
-
-        // Not `==`. A row stamped NEWER than this build was written by a later one, and
-        // overwriting it would make a rollback and the version it rolled back from take
-        // turns re-extracting the same library.
-        if (cached is not null && cached.ExtractorVersion >= ExtractorVersions.Current)
-            return (sha, new ExtractedText(cached.Text, UnitsFrom(cached.UnitsJson), cached.Title));
-
-        stream.Position = 0;
-
-        // Held across the parse only, and taken after the cache has been consulted: a
-        // hit costs a hash and a row read, and queueing those behind other corpora's
-        // parsing would make the cache slower than the work it replaces.
-        //
-        // The deadline clock starts inside the permit for the same reason it starts
-        // after the hash — it budgets the parse, and time spent waiting for a machine
-        // that is busy is not the file being slow.
-        await limits.Extractions.WaitAsync(ct);
-        ExtractedText extracted;
-        try
-        {
-            // Every read the extractor makes passes through the deadline, which is the
-            // only way to interrupt one: Extract is synchronous and the libraries under
-            // it take no cancellation token.
-            extracted = _indexing.ExtractionTimeoutSeconds > 0
-                ? extractor.Extract(
-                    new DeadlineStream(stream,
-                        TimeSpan.FromSeconds(_indexing.ExtractionTimeoutSeconds),
-                        candidate.RelativePath),
-                    candidate.RelativePath)
-                : extractor.Extract(stream, candidate.RelativePath);
-        }
-        finally { limits.Extractions.Release(); }
-
-        if (cached is not null)
-            // Same bytes, same extractor, older version: the row is overwritten rather
-            // than added beside. This is what lets an extractor fix reach files indexed
-            // before it.
-            log.LogInformation(
-                "Re-extracted {File} with extractor v{Version}: {Before:N0} -> {After:N0} chars",
-                candidate.RelativePath, ExtractorVersions.Current,
-                cached.ExtractedChars, extracted.Text.Length);
-
-        var row = new FileText
-        {
-            Sha256 = sha,
-            Text = extracted.Text,
-            UnitsJson = extracted.Units.Count > 0 ? JsonSerializer.Serialize(extracted.Units) : null,
-            Title = extracted.Title,
-            ExtractedChars = extracted.Text.Length,
-            Extractor = name,
-            ExtractorVersion = ExtractorVersions.Current,
-            ExtractedUtc = DateTime.UtcNow,
-
-            // "Produced no text" is recorded as a property of these bytes rather than
-            // rediscovered on every pass. A scanned PDF costs the same to re-read as a
-            // readable one and yields nothing either time.
-            EmptyReason = extracted.Text.Trim().Length > 0
-                ? null
-                : extractor is PdfTextExtractor
-                    ? "no text layer: this is a scanned PDF, and OCR is not supported"
-                    : "no extractable text content",
-        };
-
-        if (cached is not null)
-        {
-            // ExecuteUpdate rather than the change tracker, which would have to attach
-            // the row to write it. Nothing else in the job needs this entity, and a
-            // second instance of a key already tracked throws rather than replacing.
-            await db.FileTexts.Where(t => t.Sha256 == sha && t.Extractor == name)
-                .ExecuteUpdateAsync(s => s
-                .SetProperty(t => t.Text, row.Text)
-                .SetProperty(t => t.UnitsJson, row.UnitsJson)
-                .SetProperty(t => t.Title, row.Title)
-                .SetProperty(t => t.ExtractedChars, row.ExtractedChars)
-                .SetProperty(t => t.ExtractorVersion, row.ExtractorVersion)
-                .SetProperty(t => t.ExtractedUtc, row.ExtractedUtc)
-                .SetProperty(t => t.EmptyReason, row.EmptyReason), ct);
-            return (sha, extracted);
-        }
-
-        try
-        {
-            db.FileTexts.Add(row);
-            await db.SaveChangesAsync(ct);
-        }
-        catch (DbUpdateException ex) when (ex.Entries.Any(e => e.Entity is FileText))
-        {
-            // Another source or corpus extracted the same bytes first. The text is
-            // already in hand, so the collision costs a duplicated extraction and
-            // nothing else; letting it escape would record a readable file as failed.
-            // Filtered on the entry, so an unrelated write failing here still throws.
-            log.LogDebug(ex, "file_texts row for {File} was written concurrently",
-                candidate.RelativePath);
-        }
-        finally
-        {
-            db.Entry(row).State = EntityState.Detached;
-        }
-
-        return (sha, extracted);
-    }
-
-    /// <summary>
-    /// SHA-256 of a file's bytes, streamed rather than loaded. The cache key for
-    /// extracted text, and computable without the extraction it exists to avoid.
-    /// </summary>
-    private static async Task<string> HashFileAsync(string path, CancellationToken ct)
-    {
-        await using var stream = File.OpenRead(path);
-        return Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, ct));
-    }
-
-    private static List<ExtractedUnit> UnitsFrom(string? json) =>
-        string.IsNullOrEmpty(json)
-            ? []
-            : JsonSerializer.Deserialize<List<ExtractedUnit>>(json) ?? [];
-
-    /// <summary>
-    /// Text and hash from one read. A workspace tree is often on a bind mount where a
-    /// round trip is the cost that matters, and hashing separately would read every file
-    /// in a 27,000-file repository twice.
-    /// </summary>
-    private static async Task<(string Sha256, string Text)> HashAndReadTextAsync(
-        string path, CancellationToken ct)
-    {
-        var bytes = await File.ReadAllBytesAsync(path, ct);
-        return (Convert.ToHexStringLower(SHA256.HashData(bytes)), Decode(bytes));
-    }
-
-    /// <summary>BOM, then UTF-8, then Latin-1. Never throws on a file with unusual bytes.</summary>
-    private static string Decode(byte[] bytes)
-    {
-        try
-        {
-            return new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(
-                bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF
-                    ? bytes.AsSpan(3)
-                    : bytes);
-        }
-        catch (DecoderFallbackException)
-        {
-            return Encoding.Latin1.GetString(bytes);
-        }
-    }
 }
