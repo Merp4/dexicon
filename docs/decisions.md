@@ -1372,11 +1372,26 @@ cost of contention is not a fast error but a thirty-second stall and then an err
 is the worse outcome for a sweep whose whole justification is being the quick half.
 
 Setting the journal mode and a busy timeout explicitly, and writing the sweep in batched
-transactions, are part of this change rather than a follow-up.
+transactions, are part of this change rather than a follow-up. The timeout is sized against
+the longest write the other side can hold, not chosen as a round number: it is the batch
+size that makes that bound exist, so the two are picked together or neither is meaningful.
 
-Reconcile needs an owner. Indexing currently deletes the rows of files that have
-disappeared. If discovery reconciles too, both do; if only discovery does, a corpus that
-is never swept keeps stale rows forever. Naming one is part of the work.
+Indexing stays the only pass that removes anything, and the reason is not symmetry.
+Deleting a file that has vanished means deleting its vectors from every set's collection,
+and the `IndexedFile` row can only go once the last set has let go of it, which is what
+`CorpusIndexer` already threads carefully. A sweep knows nothing about collections and
+touches none, so a sweep that removed rows would strand the vectors those rows named. It
+therefore only ever adds.
+
+The exemption: a sweep may drop a row it can prove carries no vectors, meaning one whose
+state is `Pending` for every set in the corpus, because nothing has ever been written for
+it. That is what stops a corpus which is only ever swept from growing a permanent tail of
+files that were discovered, never indexed, and then deleted.
+
+What remains is that a swept-but-unindexed corpus over-reports: it lists files that have
+since disappeared until an indexing pass for each set has removed them. That is the
+accepted cost and it is the safe direction to be wrong in, because an inventory briefly
+too large is a display problem, while one too small hides files that are really there.
 
 The inventory is one row per file and the status is one row per file and chunk set, so a
 sweep of a corpus carrying two sets writes two `Pending` rows for everything it finds.
