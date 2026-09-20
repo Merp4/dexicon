@@ -151,7 +151,6 @@ public static class ContextAssembler
                 // this is a worse match, and a passage ending in several fragments is a
                 // list of beginnings rather than something to read.
                 var remaining = maxChars - spent;
-                var room = remaining - HeaderAllowance - DisclosureAllowance;
 
                 // Decided here, not at rendering, and it has to include whether the cut
                 // yields anything: a chunk with no line break inside the budget produces no
@@ -164,6 +163,19 @@ public static class ContextAssembler
                 // and the run ends with neither the block nor a note about rejecting it.
                 var first = added.Find(p => p.ChunkIndex == hit.ChunkIndex)
                     ?? added.OrderBy(p => p.ChunkIndex).First();
+
+                // The header this piece will actually get, not the flat allowance, and
+                // asked for with the source line included because that form is the longer
+                // one and whether it appears is not known until every block is in. The
+                // room admission tests must be no larger than the room rendering has, or
+                // a long path admits a block that rendering then finds no whole line in
+                // and skips, after the budget has been spent and without recording a
+                // rejection: an empty passage, `droppedHits` silent about it, and the
+                // note's `smallestRejected` still int.MaxValue.
+                var room = remaining - DisclosureAllowance - 1 - Header(
+                    hit, Locate(hit, first.StartLine, first.EndLine),
+                    first.StartLine, first.EndLine, spansSources: true).Length;
+
                 if (existing is null && partial is null && room >= MinPartialChars
                     && CutToLines(first.Content, room, lineNumbers).Lines > 0)
                 {

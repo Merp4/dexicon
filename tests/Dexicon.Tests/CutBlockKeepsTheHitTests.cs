@@ -96,4 +96,55 @@ public sealed class CutBlockKeepsTheHitTests
         result.PartialBlocks.ShouldBe(1);
         result.Text.ShouldContain("HIT line 0");
     }
+
+    /// <summary>
+    /// The second half of the same disagreement. Selection and rendering also sized the
+    /// budget differently: selection subtracted a flat 80-character allowance for the
+    /// header, rendering subtracted the header it was about to write. A path long enough
+    /// to run past the allowance, which a book title reaches easily, let selection admit
+    /// a block that rendering then found no whole line in and skipped — after the budget
+    /// had been spent on it and without recording a rejection. The result was a hit that
+    /// vanished while <c>DroppedHits</c> said nothing was dropped.
+    /// </summary>
+    [Fact]
+    public void ALongHeaderDoesNotAdmitABlockRenderingWillSkip()
+    {
+        // 200 characters of path, so the header runs to 219 against the flat 80.
+        var path = new string('p', 197) + ".md";
+
+        // 300-character lines with no spaces in them: the word-boundary fallback cannot
+        // rescue a budget with no newline inside it, so the cut yields nothing at all.
+        var dense = string.Join('\n', Enumerable.Repeat(new string('x', 300), 3));
+
+        SearchHit At(string p, string content, int end) => new()
+        {
+            CorpusId = "corpus-1",
+            CorpusName = "docs",
+            SourceId = "src-1",
+            FilePath = p,
+            StartLine = 1,
+            EndLine = end,
+            ChunkIndex = 0,
+            Score = p == "a.md" ? 0.9f : 0.5f,
+            Content = content,
+        };
+
+        var first = At("a.md", new string('a', 420), 5);
+        var second = At(path, dense, 3);
+
+        // 1,000 leaves 500 after the first block. Selection used to see 356 of that as
+        // room, enough to clear MinPartialChars and to find one line; rendering sees 216,
+        // which holds neither.
+        var result = ContextAssembler.Assemble(
+            [new ContextCandidate(first, [first]), new ContextCandidate(second, [second])],
+            maxChars: 1_000, lineNumbers: false);
+
+        result.Citations.ShouldHaveSingleItem().FilePath.ShouldBe("a.md");
+        result.PartialBlocks.ShouldBe(0);
+
+        // The part that was silent: the hit is rejected, so it is counted and the caller
+        // is told the budget cost them a result.
+        result.DroppedHits.ShouldBe(1);
+        result.Truncated.ShouldBeTrue();
+    }
 }
