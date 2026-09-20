@@ -113,7 +113,7 @@ public sealed class ContextService(SearchService search, ScopeResolver scopes, I
         }, ct);
 
         var candidates = request.Neighbours > 0
-            ? await ExpandAsync(principal, result.Hits, request.Neighbours, ct)
+            ? await ExpandAsync(principal, request.Corpus, result.Hits, request.Neighbours, ct)
             : [.. result.Hits.Select(h => new ContextCandidate(h, [h]))];
 
         var assembled = ContextAssembler.Assemble(candidates, request.MaxChars, request.LineNumbers);
@@ -140,22 +140,50 @@ public sealed class ContextService(SearchService search, ScopeResolver scopes, I
     }
 
     /// <summary>
+    /// What to re-resolve the scope against when expanding: the caller's own corpus list,
+    /// or the hits' corpora when the caller named nothing.
+    ///
+    /// The caller's list carries the <c>corpus:set</c> qualification and a corpus id does
+    /// not, so resolving the hits' ids landed on the corpus's DEFAULT set. Asking for
+    /// `books:fine` then read the neighbours out of `books`. Nothing failed: a chunk index
+    /// means different things in two chunkings, so the window either pulled unrelated text
+    /// or, more often, missed the hit's own index and fell back to the hit alone, which
+    /// reads as expansion simply doing nothing.
+    ///
+    /// That is the case chunk sets exist for (D-21): a replacement backfilling on a new
+    /// model while the live set keeps serving. Context for the set under evaluation came
+    /// from the other one.
+    ///
+    /// Falling back to the hits' corpora is safe only because a caller who named nothing
+    /// got the default sets from the search as well, so the two agree.
+    /// </summary>
+    internal static IReadOnlyList<string> ScopeForExpansion(
+        IReadOnlyList<string>? requested, IReadOnlyList<SearchHit> hits) =>
+        requested is { Count: > 0 }
+            ? requested
+            : [.. hits.Select(h => h.CorpusId).Distinct(StringComparer.Ordinal)];
+
+    /// <summary>
     /// Adds the chunks either side of each hit, so a passage can be read past the edge of
     /// what matched.
     ///
     /// One read per distinct file, reused across every hit in that file. The scope is
     /// resolved again here rather than carried through the search result, because the
-    /// collection and chunk set a file's chunks live in are not part of a search result
-    /// and cannot be guessed from the corpus name.
+    /// collection and chunk set a file's chunks live in are not part of a search result.
+    /// It is resolved from the caller's own corpus list, which carries the `corpus:set`
+    /// qualification; resolving the hits' corpus ids instead drops it and lands on the
+    /// default set.
     /// </summary>
     private async Task<IReadOnlyList<ContextCandidate>> ExpandAsync(
-        Principal principal, IReadOnlyList<SearchHit> hits, int neighbours, CancellationToken ct)
+        Principal principal, IReadOnlyList<string>? requested, IReadOnlyList<SearchHit> hits,
+        int neighbours, CancellationToken ct)
     {
         if (hits.Count == 0) return [];
 
-        var scope = await scopes.ResolveReadableAsync(
-            principal, [.. hits.Select(h => h.CorpusId).Distinct(StringComparer.Ordinal)], ct);
-        var targets = scope.Targets.ToDictionary(t => t.Corpus.Id, StringComparer.Ordinal);
+        var scope = await scopes.ResolveReadableAsync(principal, ScopeForExpansion(requested, hits), ct);
+        var targets = scope.Targets
+            .GroupBy(t => t.Corpus.Id, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
 
         var files = new Dictionary<(string Corpus, string Path), IReadOnlyList<SearchHit>>();
         var candidates = new List<ContextCandidate>(hits.Count);

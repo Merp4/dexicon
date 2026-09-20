@@ -48,6 +48,19 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Fixed
 
+- **Context expansion reads the chunk set the caller asked for.** `get_context` and
+  `POST /api/context` re-resolve the scope to find the collection a file's chunks live in,
+  and they resolved the hits' corpus ids, which drops the `corpus:set` qualification. A
+  bare corpus resolves to its default set, so asking for `books:fine` with `neighbours`
+  above zero read the neighbours out of `books`.
+
+  Nothing failed, which is why it went unnoticed: a chunk index means different things in
+  two chunkings, so the window either pulled unrelated text or missed the hit's own index
+  and fell back to the hit alone, which reads as expansion doing nothing. It bites in the
+  case chunk sets exist for ([D-21](docs/decisions.md)) — a replacement backfilling on a
+  new model while the live set keeps serving — where context for the set being evaluated
+  came from the other one.
+
 - **A split chunk is numbered in file order.** `ChunkIndex` is the ordering and neighbour
   key, not only part of the point identity: `ContextService` selects neighbours by the
   distance between indices, and four sites order by it. A split took the next index above
