@@ -1331,8 +1331,14 @@ tree was 240,704 files because it carries `.git`, `node_modules` and a database'
 directory, and `WorkspaceWalker` descends into every directory and filters the files
 afterwards rather than pruning as it goes. Indexing that same tree is still far worse, so
 the ordering this entry argues for holds, but a sweep is not reliably seconds and nothing
-downstream may assume it is. Pruning excluded directories during the walk is the obvious
-repair, and would help indexing by exactly as much.
+downstream may assume it is.
+
+That walk now prunes: a directory the filters exclude is skipped rather than descended into
+and thrown away. Measured on the same repository, 99.4s becomes 13.9s for an identical
+result, 27,001 files kept and 22 skipped either way, and indexing gains the same because
+both passes share the walk. It is conditional on negation, because a rule set that
+re-includes something beneath an excluded directory makes skipping it a silent loss rather
+than an optimisation, and that repository carries exactly such a rule.
 
 Most of the seam is already cut. `IndexedFile` is the inventory and belongs to a source;
 `FileChunkState` is per file and chunk set and carries the status, a split the entity
