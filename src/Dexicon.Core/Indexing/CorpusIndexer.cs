@@ -63,28 +63,40 @@ public sealed class CorpusIndexer(
             ? corpus.ChunkSets.Where(s => s.Id == only).ToList()
             : corpus.ChunkSets.ToList();
 
-        // Held for the whole job, so a sweep on the discovery lane is turned away at the
-        // door rather than walking the rows this is writing. Renewed in the background, so
-        // a job that runs for hours keeps it without anything predicting how long it will
-        // take; a job that dies stops renewing and the corpus falls free.
-        //
-        // Not fatal when it cannot be taken: the queue already refuses a second job per
-        // corpus, so this is a sweep in progress, and a sweep is short. Waiting for it is
-        // better than failing a job the user asked for.
-        await using var hold = await WaitForLeaseAsync(corpus.Id, $"index-{job.Id}", corpus.Name, ct);
-
-        job.State = JobState.Running;
-        job.StartedUtc = DateTime.UtcNow;
-        job.Phase = "discover";
-        corpus.State = CorpusState.Indexing;
-        foreach (var s in targets) s.State = CorpusState.Indexing;
-        await db.SaveChangesAsync(ct);
-        Report(progress, job, null);
-
         var embeddingFailed = false;
+
+        // The caller's own cancellation, kept apart from losing the lease: one is someone
+        // deciding to stop and the other is the machinery taking the corpus away, and they
+        // are not the same outcome to record.
+        var callerCancelled = ct;
+        CorpusLeases.Hold? hold = null;
 
         try
         {
+            // Inside the try, because everything that can go wrong here has to end up on
+            // the job. Taking it outside left a job that could not get the lease sitting
+            // Queued with no finish time, and EnqueueAsync then coalesced every later
+            // request onto that stranded row without putting it back on the channel, so
+            // the corpus could never be indexed again.
+            //
+            // Held for the whole job, so a sweep is turned away at the door rather than
+            // walking the rows this is writing. Renewed in the background, so a job that
+            // runs for hours keeps it without anything predicting how long it will take.
+            hold = await WaitForLeaseAsync(corpus.Id, $"index-{job.Id}", corpus.Name, ct);
+
+            // Losing the lease ends the job. Carrying on would mean writing beside
+            // whoever now holds the corpus, which is the overlap the lease exists for.
+            using var leaseLost = CancellationTokenSource.CreateLinkedTokenSource(ct, hold.Lost);
+            ct = leaseLost.Token;
+
+            job.State = JobState.Running;
+            job.StartedUtc = DateTime.UtcNow;
+            job.Phase = "discover";
+            corpus.State = CorpusState.Indexing;
+            foreach (var s in targets) s.State = CorpusState.Indexing;
+            await db.SaveChangesAsync(ct);
+            Report(progress, job, null);
+
             if (targets.Count == 0)
                 throw new InvalidOperationException(
                     job.ChunkSetId is { Length: > 0 }
@@ -147,7 +159,7 @@ public sealed class CorpusIndexer(
             if (embeddingFailed)
                 job.Error = "One or more files could not be embedded and were skipped. They will be retried on the next run.";
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (callerCancelled.IsCancellationRequested)
         {
             job.State = JobState.Cancelled;
             corpus.State = CorpusState.Ready;
@@ -163,10 +175,14 @@ public sealed class CorpusIndexer(
         }
         finally
         {
+            // Released after the outcome is written, so the corpus is free only once this
+            // job has finished saying what happened to it.
             job.Phase = null;
             job.FinishedUtc = DateTime.UtcNow;
             await db.SaveChangesAsync(CancellationToken.None);
             Report(progress, job, null);
+
+            if (hold is not null) await hold.DisposeAsync();
         }
 
         log.LogInformation(
@@ -911,8 +927,8 @@ public sealed class CorpusIndexer(
     /// Take the corpus, giving a sweep already holding it a chance to finish first.
     ///
     /// A sweep is a walk and some rows, seconds on the library this was written against,
-    /// so the job waits rather than failing immediately. It waits twice
-    /// <see cref="CorpusLeases.Lease"/>, which is past the point where a holder that has
+    /// so the job waits rather than failing immediately. It waits twice the lease, which is
+    /// past the point where a holder that has
     /// stopped renewing would have lapsed, so anything still there is alive and working.
     ///
     /// Then it throws, and the job is recorded as failed with that reason. It does NOT
@@ -925,7 +941,7 @@ public sealed class CorpusIndexer(
         string corpusId, string holder, string corpusName, CancellationToken ct)
     {
         var waited = TimeSpan.Zero;
-        var limit = CorpusLeases.Lease * 2;
+        var limit = leases.Lease * 2;
         var step = TimeSpan.FromSeconds(1);
 
         while (true)

@@ -210,6 +210,45 @@ public sealed class CorpusLeaseTests : IDisposable
     }
 
     [Fact]
+    public async Task LosingTheLeaseCancelsTheWorkHoldingIt()
+    {
+        // The finding that produced this: Lost was set and nobody read it, so a holder
+        // that lost its lease carried on writing beside whoever took the corpus. It is a
+        // token now, and both callers link it into the token their work already honours.
+        var id = await CorpusAsync();
+        var fast = new CorpusLeases(
+            _services.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<CorpusLeases>.Instance,
+            lease: TimeSpan.FromMilliseconds(200),
+            renew: TimeSpan.FromMilliseconds(50));
+
+        await using var hold = await fast.TryAcquireAsync(id, "holder", default);
+        hold.ShouldNotBeNull();
+        hold.Lost.IsCancellationRequested.ShouldBeFalse();
+
+        // Taken from under it, which is what a holder too slow to renew looks like.
+        using (var scope = _services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+            await db.Corpora.Where(c => c.Id == id)
+                .ExecuteUpdateAsync(u => u
+                    .SetProperty(c => c.HeldBy, "someone-else")
+                    .SetProperty(c => c.HeldUntilUtc, DateTime.UtcNow.AddMinutes(5)));
+        }
+
+        // The next renewal finds it gone and cancels.
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        while (!hold.Lost.IsCancellationRequested && waited.ElapsedMilliseconds < 5_000)
+            await Task.Delay(25);
+
+        hold.Lost.IsCancellationRequested.ShouldBeTrue();
+
+        // And letting go must not clear the row for whoever took it.
+        await hold.DisposeAsync();
+        (await RowAsync(id)).Holder.ShouldBe("someone-else");
+    }
+
+    [Fact]
     public async Task TwoDifferentCorporaDoNotExcludeEachOther()
     {
         // A sweep of one corpus while another indexes is the entire point of the lanes.

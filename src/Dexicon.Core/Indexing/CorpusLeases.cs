@@ -22,13 +22,30 @@ namespace Dexicon.Core.Indexing;
 /// value has to predict a duration, while a holder that dies stops renewing and its lease
 /// falls in after <see cref="Lease"/> rather than never.
 /// </summary>
-public sealed class CorpusLeases(IServiceScopeFactory scopes, ILogger<CorpusLeases> log)
+public sealed class CorpusLeases
 {
-    /// <summary>How long a hold survives without renewal. Reclaim time for a dead holder.</summary>
-    public static readonly TimeSpan Lease = TimeSpan.FromMinutes(2);
+    private readonly IServiceScopeFactory _scopes;
+    private readonly ILogger<CorpusLeases> _log;
 
-    /// <summary>Comfortably inside <see cref="Lease"/>, so one missed renewal is survivable.</summary>
-    public static readonly TimeSpan Renew = TimeSpan.FromSeconds(30);
+    /// <param name="lease">
+    /// How long a hold survives without renewal: the reclaim time for a holder that died,
+    /// and not a prediction of how long any work takes. Two minutes by default.
+    /// </param>
+    /// <param name="renew">
+    /// Comfortably inside <paramref name="lease"/>, so one missed renewal is survivable.
+    /// </param>
+    public CorpusLeases(
+        IServiceScopeFactory scopes, ILogger<CorpusLeases> log,
+        TimeSpan? lease = null, TimeSpan? renew = null)
+    {
+        _scopes = scopes;
+        _log = log;
+        Lease = lease ?? TimeSpan.FromMinutes(2);
+        Renew = renew ?? TimeSpan.FromSeconds(30);
+    }
+
+    public TimeSpan Lease { get; }
+    public TimeSpan Renew { get; }
 
     /// <summary>
     /// Take the corpus, or return null because someone else holds it. The handle renews
@@ -38,8 +55,8 @@ public sealed class CorpusLeases(IServiceScopeFactory scopes, ILogger<CorpusLeas
     {
         if (!await ClaimAsync(corpusId, holder, ct)) return null;
 
-        log.LogDebug("Corpus {Corpus} held by {Holder}", corpusId, holder);
-        return new Hold(this, corpusId, holder, log);
+        _log.LogDebug("Corpus {Corpus} held by {Holder}", corpusId, holder);
+        return new Hold(this, corpusId, holder, _log, Renew);
     }
 
     /// <summary>
@@ -48,7 +65,7 @@ public sealed class CorpusLeases(IServiceScopeFactory scopes, ILogger<CorpusLeas
     /// </summary>
     private async Task<bool> ClaimAsync(string corpusId, string holder, CancellationToken ct)
     {
-        await using var scope = scopes.CreateAsyncScope();
+        await using var scope = _scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
 
         var now = DateTime.UtcNow;
@@ -73,7 +90,7 @@ public sealed class CorpusLeases(IServiceScopeFactory scopes, ILogger<CorpusLeas
     /// </summary>
     private async Task<bool> RenewAsync(string corpusId, string holder, CancellationToken ct)
     {
-        await using var scope = scopes.CreateAsyncScope();
+        await using var scope = _scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
 
         var now = DateTime.UtcNow;
@@ -87,7 +104,7 @@ public sealed class CorpusLeases(IServiceScopeFactory scopes, ILogger<CorpusLeas
     /// <summary>Only our own hold: releasing someone else's would be worse than leaking ours.</summary>
     private async Task ReleaseAsync(string corpusId, string holder)
     {
-        await using var scope = scopes.CreateAsyncScope();
+        await using var scope = _scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
 
         await db.Corpora
@@ -105,27 +122,41 @@ public sealed class CorpusLeases(IServiceScopeFactory scopes, ILogger<CorpusLeas
     {
         private readonly CorpusLeases _owner;
         private readonly CancellationTokenSource _stop = new();
+        private readonly CancellationTokenSource _lost = new();
         private readonly Task _renewals;
         private readonly ILogger _log;
 
-        internal Hold(CorpusLeases owner, string corpusId, string holder, ILogger log)
+        private readonly TimeSpan _renew;
+
+        internal Hold(CorpusLeases owner, string corpusId, string holder, ILogger log, TimeSpan renew)
         {
             _owner = owner;
             CorpusId = corpusId;
             Holder = holder;
             _log = log;
+            _renew = renew;
             _renewals = Task.Run(() => RenewLoopAsync(_stop.Token));
         }
 
         public string CorpusId { get; }
         public string Holder { get; }
 
-        /// <summary>False once a renewal has found the lease taken from under us.</summary>
-        public bool Lost { get; private set; }
+        /// <summary>
+        /// Fires when a renewal finds the lease is no longer ours.
+        ///
+        /// A token rather than a flag because a flag is something a caller can forget to
+        /// read, and the consequence of not reading it is two passes writing the same rows
+        /// with nothing to stop either. Both callers link it into the token their work
+        /// already honours, so losing the lease ends the work instead of being recorded
+        /// next to it.
+        /// </summary>
+        public CancellationToken Lost => _lost.Token;
+
+        private bool IsLost => _lost.IsCancellationRequested;
 
         private async Task RenewLoopAsync(CancellationToken ct)
         {
-            using var timer = new PeriodicTimer(Renew);
+            using var timer = new PeriodicTimer(_renew);
             try
             {
                 while (await timer.WaitForNextTickAsync(ct))
@@ -133,12 +164,12 @@ public sealed class CorpusLeases(IServiceScopeFactory scopes, ILogger<CorpusLeas
                     if (await _owner.RenewAsync(CorpusId, Holder, ct)) continue;
 
                     // Someone else holds it, which means this holder was slow enough to
-                    // look dead. Recorded rather than ignored: the work carries on, and
-                    // whoever reads the log can see two passes overlapped.
-                    Lost = true;
+                    // look dead. Cancelling stops the work rather than letting it carry on
+                    // writing beside whoever took the corpus.
                     _log.LogWarning(
                         "Corpus {Corpus} lease lost by {Holder}; it was not renewed in time",
                         CorpusId, Holder);
+                    await _lost.CancelAsync();
                     return;
                 }
             }
@@ -151,13 +182,27 @@ public sealed class CorpusLeases(IServiceScopeFactory scopes, ILogger<CorpusLeas
             }
         }
 
+        private bool _disposed;
+
+        /// <summary>
+        /// Idempotent, because a hold is routinely both held by `await using` and released
+        /// explicitly when the caller wants the corpus free before its scope ends. The
+        /// second call used to throw on the already-disposed token source.
+        /// </summary>
         public async ValueTask DisposeAsync()
         {
+            if (_disposed) return;
+            _disposed = true;
+
             await _stop.CancelAsync();
             try { await _renewals; } catch (OperationCanceledException) { /* expected */ }
-            _stop.Dispose();
 
-            if (!Lost) await _owner.ReleaseAsync(CorpusId, Holder);
+            // Only our own hold, and only if we still have it: releasing after losing it
+            // would clear the row for whoever took it.
+            if (!IsLost) await _owner.ReleaseAsync(CorpusId, Holder);
+
+            _stop.Dispose();
+            _lost.Dispose();
         }
     }
 }

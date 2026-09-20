@@ -59,6 +59,11 @@ public sealed class CorpusSweeper(
             return new SweepResult(0, 0, Skipped: true, "the corpus is being indexed");
         }
 
+        // Losing the lease ends the sweep for the same reason it ends a job: whoever took
+        // the corpus is writing the rows this would be adding to.
+        using var leaseLost = CancellationTokenSource.CreateLinkedTokenSource(ct, hold.Lost);
+        ct = leaseLost.Token;
+
         var swept = 0;
         var added = 0;
 
