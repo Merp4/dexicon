@@ -204,10 +204,12 @@ Turning it off returns every copy, which is how two extractors get compared on o
 Search returns windows onto chunks. Two ways to get more, and only one of them is a tool:
 
 - **`get_context(corpus, file_path, around_line, before, after, line_numbers)`** — an MCP tool
-  ([06](06-mcp-surface.md)). Returns the neighbouring lines from the stored chunks for that
-  file, stitched and de-overlapped. Works for uploads with no file on disk.
+  ([06](06-mcp-surface.md)). Returns the lines around a location, windowed out of the
+  extracted document. Works for uploads with no file on disk.
 - **`dexicon://corpus/{name}/file/{path}`** — an MCP *resource*, not a tool. The
-  reconstructed text of one indexed file, capped at a configurable size.
+  extracted text of one indexed file, capped at a configurable size. It comes from
+  `blob_texts` or `file_texts`; where neither holds it, which is a code file on a mount,
+  the chunks are stitched back together and the gaps are marked.
 
 Whole-file retrieval is a resource rather than a sixth tool. It is a read of a named
 thing, which is what resources are for, and D-11 treats the tool count as a budget every

@@ -2567,6 +2567,10 @@
               "integer"
             ],
             "format": "int32"
+          },
+          "store": {
+            "type": "string",
+            "default": "chunks"
           }
         }
       },

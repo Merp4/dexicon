@@ -138,8 +138,13 @@ reported distinctly, because the first is worth retrying and the second is not.
 ### `get_context`
 
 `(corpus, file_path, around_line, before = 30, after = 30, line_numbers = true)`:
-neighbouring indexed lines, stitched from stored chunks. For when a search hit needs its
-surroundings and the agent cannot open the file itself.
+the lines around a location. For when a search hit needs its surroundings and the agent
+cannot open the file itself.
+
+Taken from the extracted document, so the window is the range asked for and cannot have
+a hole in it. Where no document is stored, which is a code file on a mount, or where two
+sources of the corpus hold the same path, it falls back to stitching the chunks that
+cover the line.
 
 This is also how an agent **reads on**. Chunks overlap and tile the file, so calling it
 again further down the file walks forwards through a document: a search hit in a book,

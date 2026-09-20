@@ -22,6 +22,7 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
     public DbSet<IndexedFile> Files => Set<IndexedFile>();
     public DbSet<Blob> Blobs => Set<Blob>();
     public DbSet<BlobText> BlobTexts => Set<BlobText>();
+    public DbSet<FileText> FileTexts => Set<FileText>();
     public DbSet<IndexJob> Jobs => Set<IndexJob>();
 
     /// <summary>
@@ -147,6 +148,9 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             e.ToTable("file_chunk_states");
             e.HasKey(x => new { x.FileId, x.ChunkSetId });
             e.Property(x => x.ContentHash).HasMaxLength(64);
+            // No foreign key to file_texts: a plain-text file has a hash and no row
+            // there, because reading it is the extraction.
+            e.Property(x => x.SourceSha256).HasMaxLength(64);
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
             e.HasOne(x => x.File).WithMany(f => f.ChunkStates)
                 .HasForeignKey(x => x.FileId).OnDelete(DeleteBehavior.Cascade);
@@ -203,6 +207,23 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             e.HasKey(x => x.Sha256);
             e.Property(x => x.Sha256).HasMaxLength(64);
             e.Property(x => x.Extractor).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Title).HasMaxLength(500);
+            e.Property(x => x.EmptyReason).HasMaxLength(500);
+        });
+
+        // Same shape as blob_texts and deliberately without its foreign key: a workspace
+        // file has no blob row to hang off, and the key is a content hash rather than an
+        // identity, so nothing cascades onto it. A row outlives the corpus that caused it
+        // and is reused by the next one to index the same bytes.
+        modelBuilder.Entity<FileText>(e =>
+        {
+            e.ToTable("file_texts");
+            // The bytes AND the extractor. Which extractor runs is chosen by extension,
+            // so the same bytes under two extensions are two different parses, and a key
+            // of bytes alone would serve one of them as the other.
+            e.HasKey(x => new { x.Sha256, x.Extractor });
+            e.Property(x => x.Sha256).HasMaxLength(64);
+            e.Property(x => x.Extractor).HasMaxLength(100);
             e.Property(x => x.Title).HasMaxLength(500);
             e.Property(x => x.EmptyReason).HasMaxLength(500);
         });

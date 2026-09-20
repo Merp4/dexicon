@@ -291,6 +291,18 @@ public sealed class FileChunkState
     /// </summary>
     public string? ContentHash { get; set; }
 
+    /// <summary>
+    /// SHA-256 of the file's BYTES as this set last read them: the key into
+    /// <see cref="FileText"/>, and so the only way to reach a workspace document whole.
+    /// Null for uploads, where <see cref="IndexedFile.BlobSha256"/> already serves that.
+    ///
+    /// Per set rather than on the attachment, because a job can target one set while the
+    /// others keep serving. A file-wide hash written by that job would point a reader for
+    /// a still-old set at the new document, and the line numbers on that set's hits
+    /// address the old one.
+    /// </summary>
+    public string? SourceSha256 { get; set; }
+
     public int ChunkCount { get; set; }
     public FileStatus Status { get; set; }
 
@@ -328,6 +340,59 @@ public sealed class Blob
 /// changing a corpus's chunk size, or attaching a document to a second corpus with
 /// different settings, re-chunks and re-embeds without ever re-opening the PDF.
 /// </summary>
+/// <summary>
+/// Extracted text for a WORKSPACE file, cached against the bytes it came from.
+///
+/// <see cref="BlobText"/> does this for uploads, and is why "changing a chunk size never
+/// re-opens the file" is true of them. A workspace file had no equivalent: the indexer
+/// extracted on every pass and discarded the text after chunking, so a refresh over an
+/// unchanged tree still re-opened and re-parsed every PDF, and a re-chunk paid the whole
+/// extraction cost again. One intact 84 MB PDF in this corpus costs 13.4s of that.
+///
+/// Keyed on a hash of the FILE'S BYTES rather than of the extracted text, because the key
+/// has to be computable without doing the work it exists to avoid. Hashing bytes is one
+/// sequential read; extracting is seconds. Two corpora indexing the same file share a row.
+///
+/// It is also the only place a workspace document exists whole. Chunks carry their own
+/// text, so without this the content survives only as pieces, which is what forces a chunk
+/// to be the unit a caller reads rather than merely the unit a search finds. See D-31.
+/// </summary>
+public sealed class FileText
+{
+    /// <summary>SHA-256 of the file's bytes, not of the text extracted from them.</summary>
+    public required string Sha256 { get; set; }
+
+    /// <summary>
+    /// Which extractor produced this, and part of the key with the hash. The extractor
+    /// is chosen by extension, so identical bytes reached through two extensions are two
+    /// different parses; keyed on the bytes alone, an EPUB copied to a <c>.docx</c> name
+    /// would be handed the EPUB's text and recorded as indexed.
+    /// </summary>
+    public required string Extractor { get; set; }
+
+    public required string Text { get; set; }
+
+    /// <summary>JSON array of extraction units: page, slide or chapter offsets.</summary>
+    public string? UnitsJson { get; set; }
+
+    public string? Title { get; set; }
+    public int ExtractedChars { get; set; }
+
+    /// <summary>
+    /// <c>ExtractorVersions.Current</c> when this text was produced. Anything OLDER is
+    /// re-extracted rather than trusted, which is what lets an extractor fix reach files
+    /// indexed before it. Anything newer is kept: it was produced by a later build of
+    /// this code, and a rollback overwriting it would make the two versions take turns
+    /// re-extracting the same library.
+    /// </summary>
+    public int ExtractorVersion { get; set; }
+
+    public DateTime ExtractedUtc { get; set; }
+
+    /// <summary>Set when the format was readable but yielded nothing, such as a scanned PDF.</summary>
+    public string? EmptyReason { get; set; }
+}
+
 public sealed class BlobText
 {
     public required string Sha256 { get; set; }

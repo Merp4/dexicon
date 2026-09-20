@@ -196,8 +196,28 @@ read it as a defect in PDF extraction.
 
 ### Extraction is cached, and the cache is versioned
 
-Extraction is cached per blob in `blob_texts`: a 437-page PDF costs ~1.8 s to extract and
-its bytes never change, so re-extracting on every reindex would be waste.
+Extraction is cached against the bytes it came from: a 437-page PDF costs ~1.8 s to
+extract and its bytes never change, so re-extracting on every reindex would be waste.
+Uploads cache in `blob_texts`, keyed by the blob's hash. Files on a mount cache in
+`file_texts`, keyed by a hash of the file's own bytes.
+
+The key is the bytes rather than the extracted text because it has to be computable
+without doing the work it exists to avoid. The staleness check one stage later cannot
+serve as the cache: the fingerprint it compares is a hash of the *extracted* text, so
+deciding a file was unchanged means extracting it first. Before `file_texts`, a refresh
+over a mount nothing had touched still re-opened and re-parsed every PDF in it, and threw
+the text away again after chunking.
+
+The extractor is part of the key with the bytes, because which extractor runs is decided
+by extension: DOCX, PPTX and EPUB are all zip containers, and a rename moves a file
+between them. Both come from one open, so the bytes hashed are the bytes parsed; two
+opens leave a window where a file changes in between and the text of one revision is
+stored under the hash of another, which the cache would then serve to every later pass.
+
+`file_chunk_states.source_sha256` is what makes the text reachable by path, and it is per
+set rather than per file: a job can target one set while the others keep serving, so a
+file-wide hash written by that job would point a reader for a still-old set at a document
+its own chunks were not cut from.
 
 But the *code* changes. `ExtractorVersions.Current` is stamped on every cached extraction
 and bumped whenever extraction output changes; text from an older version is re-extracted
@@ -211,7 +231,11 @@ than re-reading the file.
 | Extractor version | Change |
 |---|---|
 | 1 | Initial extractors |
-| 2 | HTML and EPUB keep block structure — one block per line |
+| 2 | HTML and EPUB keep block structure: one block per line |
+| 3 | An EPUB whose manifest will not parse is salvaged from the archive |
+| 4 | PDFs are read by layout rather than content-stream order |
+| 5 | A page number alone in a PDF margin is furniture, and is dropped |
+| 6 | Whitespace inside an HTML or EPUB `<pre>` is kept |
 
 The chunker carries its own version for the same reason, one stage later: without it the
 fingerprint says "same bytes, same settings, nothing to do" and a corpus keeps chunks from
@@ -223,6 +247,11 @@ an incremental refresh does.
 | 1 | Initial chunker |
 | 2 | Size decides *when* to split; a line over the whole budget is split |
 | 3 | Heading context, unit-aware boundaries, sentence-aware splitting |
+| 4 | A boundary is a split point only when it leaves a chunk worth having |
+| 5 | Tokens convert by the model's measured ratio, clamped to its context |
+| 6 | The ratio is measured per file as well as per model |
+| 7 | A chunk aims at 90% of the model's context rather than all of it |
+| 8 | Per-file density is gone; the model's refusal corrects the cut |
 
 ### A note on OCR
 

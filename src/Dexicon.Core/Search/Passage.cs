@@ -96,6 +96,67 @@ public static class Passage
     }
 
     /// <summary>
+    /// Lines <paramref name="lo"/> to <paramref name="hi"/> of a whole document, with the
+    /// range actually found.
+    ///
+    /// The counterpart to <see cref="Stitch"/> for text that does not need reassembling.
+    /// A window taken from the document cannot have gaps, and its bounds are the caller's
+    /// rather than the nearest chunk edge, so asking for one line either side returns one
+    /// line either side. Stitch selects chunks by overlap and a request for three lines
+    /// used to return forty.
+    ///
+    /// Counts newlines instead of splitting, because a technical book runs to two or three
+    /// million characters and every call would otherwise allocate a string per line of it.
+    /// </summary>
+    /// <returns>
+    /// The text, and the first and last line present. <c>Hi</c> is below <c>Lo</c> when
+    /// the window starts past the end of the document, and the text is then empty.
+    /// </returns>
+    public static (string Text, int Lo, int Hi) Window(string text, int lo, int hi)
+    {
+        lo = Math.Max(1, lo);
+        if (hi < lo || text.Length == 0) return (string.Empty, lo, lo - 1);
+
+        var line = 1;
+        var start = 0;
+        while (line < lo)
+        {
+            var next = text.IndexOf('\n', start);
+            if (next < 0) return (string.Empty, lo, lo - 1);   // the document ends first
+            start = next + 1;
+            line++;
+        }
+
+        var end = start;
+        var last = lo - 1;
+        while (line <= hi)
+        {
+            // Nothing after the last newline, so there is no further line. A document
+            // ending in a newline has as many lines as it has newlines, which is the
+            // count every other reader here uses; treating the empty tail as a line
+            // would put a citation one line past the end of the text it cites.
+            if (end >= text.Length) break;
+
+            var next = text.IndexOf('\n', end);
+            last = line;
+            if (next < 0)
+            {
+                // A final line with no newline after it. Still a line.
+                end = text.Length;
+                break;
+            }
+
+            end = next + 1;
+            line++;
+        }
+
+        // The trailing newline belongs to the line after the window, not to this one.
+        if (end > start && text[end - 1] == '\n') end--;
+
+        return (text[start..end], lo, last);
+    }
+
+    /// <summary>
     /// Appends <paramref name="piece"/>, dropping any prefix already present at the end of
     /// the buffer. Two slices of one line overlap by the configured amount, which this
     /// cannot know, so it measures the repeat instead of assuming it.
