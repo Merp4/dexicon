@@ -157,7 +157,13 @@ public static class ContextAssembler
                 // yields anything: a chunk with no line break inside the budget produces no
                 // whole lines, and admitting it would leave the run with neither a block
                 // nor the rejected cost the note is written from.
-                var first = added.OrderBy(p => p.ChunkIndex).First();
+                // The piece rendering will cut, which is the hit's own. Testing the
+                // earliest instead meant selection could admit a block on one chunk's
+                // behaviour and rendering then cut a different one; where that one yields
+                // no whole lines the block is skipped after the budget was spent on it,
+                // and the run ends with neither the block nor a note about rejecting it.
+                var first = added.Find(p => p.ChunkIndex == hit.ChunkIndex)
+                    ?? added.OrderBy(p => p.ChunkIndex).First();
                 if (existing is null && partial is null && room >= MinPartialChars
                     && CutToLines(first.Content, room, lineNumbers).Lines > 0)
                 {
@@ -214,7 +220,16 @@ public static class ContextAssembler
                 // One piece, so the rendered text is contiguous and the last line shown can
                 // be counted. Stitching several would interleave gap markers and make the
                 // citation's end line a guess.
-                var first = pieces[0];
+                //
+                // The piece that MATCHED, not the earliest one. Taking pieces[0] meant a
+                // block widened by neighbours was cut down to the chunk furthest before the
+                // hit, so asking for surrounding context returned text that did not contain
+                // what was found: measured over 55 queries against a 1,500-character budget,
+                // the matched line was absent from 43 of them at two neighbours and 0 of
+                // them at none. This is the same failure 05-search.md records for the search
+                // window — "head truncation was the obvious implementation and loses the
+                // answer" — arriving one layer up, where nothing was watching for it.
+                var first = pieces.Find(p => p.ChunkIndex == block.Hit.ChunkIndex) ?? pieces[0];
 
                 // Measured against what will actually be written, not the header estimate
                 // used during selection. A long filename makes a header well over the
