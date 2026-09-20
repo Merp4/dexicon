@@ -133,6 +133,30 @@ public sealed class IndexingLimitsTests
     }
 
     /// <summary>
+    /// A token count is a real round trip, and model probing makes them while indexing
+    /// runs. Outside the gate it could put a provider over the number the operator
+    /// configured, so the setting would describe something other than what the endpoint
+    /// receives.
+    /// </summary>
+    [Fact]
+    public async Task CountingTokensTakesAPermitLikeAnyOtherRequest()
+    {
+        var options = Config(embedConcurrency: 1);
+        using var limits = new IndexingLimits(options);
+        var generator = new ConcurrencyWatchingGenerator();
+        var target = new EmbeddingTarget(Provider, "m");
+        var service = Service(options, limits, generator);
+
+        await Task.WhenAll(
+            service.EmbedAsync(target, EmbedPurpose.Raw, ["1", "2", "3", "4"]),
+            service.CountTokensAsync(target, "how long is this"),
+            service.CountTokensAsync(target, "and this"));
+
+        generator.Peak.ShouldBe(1,
+            "a token count that skips the gate lets the endpoint exceed its budget");
+    }
+
+    /// <summary>
     /// Per provider, because the number describes an endpoint. A local Ollama admitting
     /// four sequences says nothing about what a hosted deployment will take, and a
     /// corpus on one should not wait behind traffic to the other.
