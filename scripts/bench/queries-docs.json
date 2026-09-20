@@ -132,7 +132,7 @@
       "query": "how do I get more context around a hit",
       "file": "05-search.md",
       "why": "'Retrieving more context'.",
-      "answer": "stitched and de-overlapped"
+      "answer": "Returns the lines around a location"
     },
     {
       "query": "how will retrieval quality be judged",
