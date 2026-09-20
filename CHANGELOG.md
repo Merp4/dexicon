@@ -21,7 +21,7 @@ with no section here fails its release rather than publishing an undescribed one
 ### Added
 
 - **Discovery is its own pass, on its own lane.** A corpus added while another was indexing
-  read as empty: its job sat behind a reindex of ~1,800 PDFs on a queue that runs one job
+  read as empty: its job sat behind a reindex of ~1,800 PDFs on a queue that ran one job
   at a time, and nothing said so. A sweep now walks a corpus, applies its filters and
   shadowing, and records what is there, without extracting, chunking or embedding any of
   it. Statting that library takes about two seconds against 773ms to extract one ordinary
@@ -106,6 +106,43 @@ with no section here fails its release rather than publishing an undescribed one
   The page now asks for the endpoint's maximum and states what it is showing against the
   `total` the response has carried all along, including that the name filter only
   searches the rows it loaded.
+
+- **Several corpora index at once.** The queue had one reader for the life of the
+  process, so a corpus that takes hours owned the machine: measured on a 1,834-file PDF
+  library, 6 files and 6,113 chunks in five minutes, which is 13.7 hours for the rest of
+  it, and a sixteen-file corpus queued behind that waited all of them. There is one
+  worker per `DEXICON_INDEXING_MAXCONCURRENTCORPORA` (default 4), each with its own
+  catalogue connection.
+
+  Two jobs on ONE corpus are still excluded, by the lease rather than by the queue, which
+  is where that exclusion belongs. A job that cannot take its lease is left queued and put
+  back, so a worker never waits on another worker.
+
+- **The embedding concurrency limit describes the endpoint, not the caller.** It was a
+  semaphore constructed inside each call, so it bounded one embed and nothing else: with
+  two corpora indexing at once, `DEXICON_EMBEDDING_MAXCONCURRENCY=4` would have sent
+  eight. It is now counted per provider across every job, so raising the number of
+  concurrent corpora does not multiply the load on Ollama, and a corpus indexing alone
+  still gets all of it.
+
+  Per provider rather than globally, because the number describes an endpoint: a local
+  Ollama admitting four sequences says nothing about what a hosted deployment will take.
+
+- **One corpus indexing alone uses the whole extraction budget.** A job read one file at
+  a time, so the shared parsing limit only ever did anything when several corpora were
+  indexing together. A source's files are now read concurrently and recorded one at a
+  time: reading is the slow half and needs nothing shared, recording touches the pass's
+  catalogue connection, its dictionaries and its counters, and is not what makes indexing
+  slow.
+
+  Order is no longer the walk's order. Nothing depended on it — every file's outcome is
+  its own row — but a job's log now interleaves files.
+
+- **Extraction is bounded across jobs.** `DEXICON_INDEXING_MAXCONCURRENTEXTRACTIONS`
+  (default 4) caps how many files are being parsed at once. Parsing is CPU-bound, so the
+  limit is the machine's rather than a corpus's; the permit is taken after the extracted
+  text cache has been consulted, so a cache hit is not queued behind other corpora's
+  parsing.
 
 - **A new corpus is chunked at 256 tokens rather than 768.** Measured, not chosen:
   scored on whether the text handed back contains the answer rather than on which file

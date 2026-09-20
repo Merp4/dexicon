@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
@@ -74,7 +75,10 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
 
     private readonly QdrantClient _client;
     private readonly ILogger<QdrantVectorStore> _log;
-    private readonly HashSet<string> _ensured = new(StringComparer.Ordinal);
+    // Concurrent, not a HashSet: the fast path below reads this without taking the lock
+    // the slow path writes under. That was safe while one job indexed at a time and is
+    // not now several do — a read racing an Add is undefined, not merely stale.
+    private readonly ConcurrentDictionary<string, byte> _ensured = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _ensureLock = new(1, 1);
 
     public QdrantVectorStore(IOptions<DexiconOptions> options, ILogger<QdrantVectorStore> log)
@@ -132,12 +136,14 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
 
     public async Task EnsureCollectionAsync(string collection, int dimensions, CancellationToken ct = default)
     {
-        if (_ensured.Contains(collection)) return;
+        if (_ensured.ContainsKey(collection)) return;
 
+        // One creator at a time, because two jobs starting together on a corpus's first
+        // index would otherwise both find the collection absent and both create it.
         await _ensureLock.WaitAsync(ct);
         try
         {
-            if (_ensured.Contains(collection)) return;
+            if (_ensured.ContainsKey(collection)) return;
 
             if (!await _client.CollectionExistsAsync(collection, ct))
             {
@@ -170,7 +176,7 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
             await EnsureIndexAsync(collection, "symbols", PayloadSchemaType.Keyword, null, ct);
             await EnsureIndexAsync(collection, "source_id", PayloadSchemaType.Keyword, null, ct);
 
-            _ensured.Add(collection);
+            _ensured[collection] = 0;
         }
         finally { _ensureLock.Release(); }
     }

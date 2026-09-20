@@ -111,8 +111,16 @@ builder.Services.AddScoped<ScopeResolver>();
 builder.Services.AddScoped<SearchService>();
 builder.Services.AddScoped<ContextService>();
 builder.Services.AddScoped<CorpusIndexer>();
+// A singleton, because what it counts belongs to the machine and the endpoints rather
+// than to a caller. Scoped, it would be one limit per request and describe nothing.
+builder.Services.AddSingleton<IndexingLimits>();
 builder.Services.AddScoped<DocumentService>();
 builder.Services.AddScoped<DocumentReader>();
+// Scoped: it holds a catalogue connection, and the parallel reader resolves one per
+// scope so that each reading thread has its own.
+builder.Services.AddScoped<ExtractedTextCache>();
+// Singleton: it holds no per-job state and makes the scopes above itself.
+builder.Services.AddSingleton<WorkspaceFileReader>();
 builder.Services.AddScoped<IVectorStoreCleanup, VectorStoreCleanup>();
 builder.Services.AddScoped<IndexJobQueue>();
 builder.Services.AddScoped<RequestContext>();

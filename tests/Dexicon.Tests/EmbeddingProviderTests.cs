@@ -1,5 +1,6 @@
 using Dexicon.Core.Configuration;
 using Dexicon.Core.Embedding;
+using Dexicon.Core.Indexing;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -193,6 +194,7 @@ public sealed class EmbeddingProviderTests
             // framing has its own tests and would only add noise to the inputs here.
             new NoProfiles(),
             options,
+            new IndexingLimits(options),
             cache ?? new MemoryCache(new MemoryCacheOptions()),
             log ?? NullLogger<EmbeddingService>.Instance);
     }

@@ -101,14 +101,14 @@ sparse encoding is in-process. Target p95 under 400 ms for a warm `embeddinggemm
 ```
 UI / MCP ──POST /api/corpora/{id}/reindex──▶ enqueue job ──▶ 202 + jobId
                                                   │
-                          IndexingService picks up │ (one at a time)
+                          IndexingService picks up │ (MaxConcurrentCorpora at a time)
                                                   ▼
   ┌─ discover ──▶ walk /workspaces/<mount> honouring .gitignore + .dexiconignore
   │               or enumerate uploaded blobs
   ├─ triage ────▶ skip binaries, oversize, unchanged (content hash vs catalog)
   ├─ extract ───▶ per-format loader → text + metadata
   ├─ chunk ─────▶ language/format-aware, with line or page provenance
-  ├─ embed ─────▶ Ollama, batched, bounded concurrency, capped backoff
+  ├─ embed ─────▶ Ollama, batched, capped backoff, bounded per PROVIDER
   ├─ upsert ────▶ Qdrant, batched; delete-then-insert per changed file
   └─ reconcile ─▶ drop chunks for files that vanished; write file hashes
                                                   │
@@ -133,7 +133,8 @@ Stated up front because these are the cases that get fudged.
 
 ## What is deliberately absent
 
-- **No message broker.** One in-process channel, one worker. Jobs are local and short.
+- **No message broker.** One in-process channel, a handful of workers reading it. Jobs
+  are local, and the coordination between two parts of one process is a queue.
 - **No Redis.** Nothing to share between instances, because there is one instance.
 - **No relational server.** SQLite in WAL mode on a volume covers the catalogue.
 - **No FileSystemWatcher.** Watch events go missing across Docker bind mounts without

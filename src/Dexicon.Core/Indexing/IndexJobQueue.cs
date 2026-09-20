@@ -8,14 +8,19 @@ using Microsoft.Extensions.Logging;
 namespace Dexicon.Core.Indexing;
 
 /// <summary>
-/// One job at a time, in a bounded in-process channel. No broker: jobs are local and
-/// there is one instance, so a queue between two parts of the same process is all the
-/// coordination that exists to do.
+/// An in-process channel of job ids. No broker: jobs are local and there is one
+/// instance, so a queue between two parts of the same process is all the coordination
+/// that exists to do.
+///
+/// Several readers, one per concurrent corpus. It was a single reader, which made the
+/// queue the thing that serialised indexing: a corpus taking hours owned the machine and
+/// a sixteen-file refresh behind it waited all of them. Excluding two jobs on ONE corpus
+/// is the lease's job, and it does it whether one reader or four takes them.
 /// </summary>
 public sealed class IndexJobQueue(CatalogDbContext db, ILogger<IndexJobQueue> log)
 {
     private static readonly Channel<string> Pending = Channel.CreateUnbounded<string>(
-        new UnboundedChannelOptions { SingleReader = true });
+        new UnboundedChannelOptions { SingleReader = false });
 
     public static ChannelReader<string> Reader => Pending.Reader;
 
@@ -99,16 +104,40 @@ public sealed class IndexJobQueue(CatalogDbContext db, ILogger<IndexJobQueue> lo
     }
 }
 
-/// <summary>Drains the queue, one job at a time, for the life of the process.</summary>
+/// <summary>
+/// Drains the queue for the life of the process, <c>MaxConcurrentCorpora</c> jobs at a
+/// time.
+///
+/// Each job takes its own DI scope and therefore its own catalogue connection, which is
+/// what makes running several safe: nothing here is shared between them but the queue
+/// they read from. What they contend for — the embedding endpoint, the parser, the
+/// filesystem — is bounded by <see cref="IndexingLimits"/>, per resource rather than per
+/// job, so one corpus indexing alone still uses the whole budget.
+///
+/// Two jobs on ONE corpus remain excluded, by the lease. A job that cannot take it is
+/// left Queued and put back, which is why a worker never waits on another worker.
+/// </summary>
 public sealed class IndexingBackgroundService(
     IServiceScopeFactory scopes,
     IndexProgressBroadcaster broadcaster,
+    IndexingLimits limits,
     ILogger<IndexingBackgroundService> log) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        log.LogInformation("Indexing worker started");
+        var workers = limits.MaxConcurrentCorpora;
+        log.LogInformation("Indexing workers started: {Workers} corpora at a time", workers);
 
+        // One loop per permit rather than one loop taking permits. The permit count IS
+        // the worker count, so a job never sits held inside a worker waiting for one
+        // while the queue behind it goes unread.
+        await Task.WhenAll(Enumerable.Range(0, workers).Select(i => RunWorkerAsync(i, stoppingToken)));
+
+        log.LogInformation("Indexing workers stopped");
+    }
+
+    private async Task RunWorkerAsync(int worker, CancellationToken stoppingToken)
+    {
         await foreach (var jobId in IndexJobQueue.Reader.ReadAllAsync(stoppingToken))
         {
             try
@@ -118,9 +147,9 @@ public sealed class IndexingBackgroundService(
                 var progress = new Progress<IndexProgress>(broadcaster.Publish);
                 var job = await indexer.RunAsync(jobId, progress, stoppingToken);
 
-                // Still Queued means it never ran, because its corpus was held by the
-                // discovery lane. Put it back and take the next one: the alternative is
-                // this reader waiting, which stops every other corpus too.
+                // Still Queued means it never ran, because its corpus is held by another
+                // pass. Put it back and take the next one: the alternative is this worker
+                // waiting, which stops every corpus it could have been indexing instead.
                 if (job.State == JobState.Queued) IndexJobQueue.RequeueLater(jobId, log, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -131,11 +160,10 @@ public sealed class IndexingBackgroundService(
             {
                 // The worker must outlive a bad job. A crash here would silently stop
                 // every future index with nothing in the UI to explain it.
-                log.LogError(ex, "Indexing job {JobId} threw outside its own error handling", jobId);
+                log.LogError(ex, "Indexing job {JobId} on worker {Worker} threw outside "
+                    + "its own error handling", jobId, worker);
             }
         }
-
-        log.LogInformation("Indexing worker stopped");
     }
 }
 
