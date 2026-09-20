@@ -1306,6 +1306,123 @@ evaluation that scores passages rather than file rank. That is the experiment th
 asks for, and the one result that would overturn it.
 ---
 
+### D-32 Discovery is its own pass, and does not queue behind indexing
+
+**Decision.** Walking a corpus and indexing it become separate pieces of work. A sweep
+resolves the source's filters, walks the tree, applies source shadowing and writes the
+file inventory, then stops: nothing is extracted, chunked or embedded. It runs on its own
+lane, so a sweep of one corpus does not wait for another corpus to finish indexing. A file
+that has been swept and not yet indexed is `Pending`, and a corpus reports that count
+beside its indexed one rather than folding the two together.
+
+**Why.** A corpus added while another was indexing read as empty. `mcptoolbox` showed
+"0 files, 0 chunks, never indexed" with a valid source and 109 entries visible under it,
+because its job sat behind a `tpn` reindex of roughly 1,800 PDFs on a queue that runs one
+job at a time. Nothing was broken and nothing said so: the only way to learn what a corpus
+contains was to wait for the expensive work to reach it.
+
+The two costs are not comparable. Statting all 1,804 files of that library through the
+container's 9p mount takes 2.08s, which is the syscall floor rather than a run of
+`WorkspaceWalker`: the real walk evaluates gitignore, globs and size caps on top, in
+process and against the same syscalls. Extracting one ordinary 204 KB PDF from it takes
+773ms, and an intact 84 MB one takes 13.4s, before anything is embedded. Discovery is
+roughly three orders of magnitude cheaper than the work it is currently queued behind,
+and it is the half that answers "what is in here".
+
+Most of the seam is already cut. `IndexedFile` is the inventory and belongs to a source;
+`FileChunkState` is per file and chunk set and carries the status, a split the entity
+already documents. `FileStatus.Pending` is commented "discovered, not yet chunked".
+`Track` writes both rows. `WorkspaceWalker.Walk` and `SourceScope.ShadowedPrefixes` have
+no indexing in them. `pendingCount` is already computed by the corpus endpoint and already
+rendered by `ChunkSets.tsx`. What is missing is a caller that stops after the walk, and a
+lane for it to run on.
+
+**Rejected.** A new `JobKind` on the existing queue. `IndexJobQueue` is one channel with a
+single reader, so a discovery job would wait behind precisely the work it exists to get in
+front of: correct, and useless.
+
+Redefining `fileCount` to include pending files. It counts `Indexed` today and every
+display reads it that way, next to a chunk count. Widening it silently changes what the
+number means on every screen, and the separate count the UI can already render says the
+same thing without the ambiguity.
+
+Sweeping a corpus while that same corpus is indexing. Both write `IndexedFile` rows for
+the same source, and the reconcile phase deletes rows for files that have gone. Two
+writers with deletion on one side is a race for no benefit, since the indexing pass is
+walking the tree anyway.
+
+Excluding them needs a claim, not a look. `CorpusState.Indexing` is set inside `RunAsync`,
+after the job has been taken off the queue, so a sweep that reads the state and then starts
+can be overtaken by an index job that starts in the gap, and both write. The exclusion is
+therefore an atomic per-corpus claim: whichever pass takes it runs, the other does not, and
+taking it is one conditional write rather than a read followed by a write. If that claim
+carries an expiry so a crashed holder cannot block the corpus forever, the expiry has to
+exceed the longest legitimate hold, which for indexing is hours on a library this size. An
+expiry chosen for how long a sweep takes would release the claim under a running index
+job, which is the failure it was added to prevent.
+
+**Consequences.** Two things have to be settled before this lands rather than discovered
+during it.
+
+The catalogue is SQLite, opened as `Data Source=…;Cache=Shared`. What that produces was
+measured rather than read off the connection string, because the two obvious readings of
+it are both wrong.
+
+A database created by that string reports `journal_mode=delete` and `busy_timeout=0`. This
+machine's catalogue is in WAL anyway: bytes 18 and 19 of its header both read 2. Journal
+mode is persistent once set, so this file carries it and nothing in the startup path
+establishes it. A fresh deployment therefore gets rollback journalling, where readers block
+writers as well, and behaves differently under a concurrent sweep from the machine the
+feature was designed on.
+
+`busy_timeout=0` does not mean the second writer is refused at once. Microsoft.Data.Sqlite
+retries for the command timeout, 30s by default. Measured against a held write transaction,
+a second connection failed after 30,108ms with `SQLite Error 5: 'database is locked'`. The
+cost of contention is not a fast error but a thirty-second stall and then an error, which
+is the worse outcome for a sweep whose whole justification is being the quick half.
+
+Setting the journal mode and a busy timeout explicitly, and writing the sweep in batched
+transactions, are part of this change rather than a follow-up. The timeout is sized against
+the longest write the other side can hold, not chosen as a round number: it is the batch
+size that makes that bound exist, so the two are picked together or neither is meaningful.
+
+Indexing stays the only pass that removes anything, and the reason is not symmetry.
+Deleting a file that has vanished means deleting its vectors from every set's collection,
+and the `IndexedFile` row can only go once the last set has let go of it, which is what
+`CorpusIndexer` already threads carefully. A sweep knows nothing about collections and
+touches none, so a sweep that removed rows would strand the vectors those rows named. A
+sweep only ever adds.
+
+There is deliberately no exemption for rows that look empty. `Pending` is not evidence
+that a file has no vectors: the upsert runs before the status is set to `Indexed`, and the
+save is throttled to about a second, so a crash between them leaves a durable `Pending`
+beside vectors that exist. A sweep deleting on that reading would strand exactly what the
+rule above exists to protect. Absent and unobserved arrive identically here, and the
+ambiguous one must not drive a delete.
+
+The cost is that a corpus which is only ever swept keeps rows for files that have since
+gone, including ones that were never indexed at all. Clearing them is per set, not one
+event: each set's pass removes its own state, and the shared `IndexedFile` row goes only
+once the last set has let go, so a corpus carrying two sets needs an index run of both
+before the row disappears. That is the path every corpus is on anyway.
+
+What remains is that a swept-but-unindexed corpus over-reports: it lists files that have
+since disappeared until an indexing pass for each set has removed them. That is the
+accepted cost and it is the safe direction to be wrong in, because an inventory briefly
+too large is a display problem, while one too small hides files that are really there.
+
+The inventory is one row per file and the status is one row per file and chunk set, so a
+sweep of a corpus carrying two sets writes two `Pending` rows for everything it finds.
+`StatesFor` backfills those during indexing today, which is how a set added to a corpus
+full of documents comes to have rows at all. Whether adding a set now triggers a sweep, or
+indexing keeps that job, is the same question as reconcile in a different place: one writer
+or two.
+
+**Revisit if.** The sweep grows expensive enough to need its own progress and
+cancellation. A tree of a million files is a different problem from 1,804, and at that
+size discovery stops being the cheap half.
+---
+
 ## Open questions
 
 | # | Question | Needed by | Current lean |
