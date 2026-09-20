@@ -18,6 +18,32 @@ with no section here fails its release rather than publishing an undescribed one
 
 ## Unreleased
 
+### Added
+
+- **Discovery is its own pass, on its own lane.** A corpus added while another was indexing
+  read as empty: its job sat behind a reindex of ~1,800 PDFs on a queue that runs one job
+  at a time, and nothing said so. A sweep now walks a corpus, applies its filters and
+  shadowing, and records what is there, without extracting, chunking or embedding any of
+  it. Statting that library takes about two seconds against 773ms to extract one ordinary
+  PDF from it, so the cheap half no longer waits for the expensive one.
+
+  It runs when a source is added, and on demand at `POST /api/corpora/{name}/sweep`. A
+  corpus reports what it found as `pendingCount`, beside the file count rather than folded
+  into it, since that one counts what is searchable.
+
+  The sweep only ever adds. Removing a vanished file means removing its vectors from every
+  set's collection, and the shared row only once the last set has let go, which a sweep
+  cannot do; indexing remains the only pass that removes anything. There is no exemption
+  for rows that look empty either, because `Pending` is not evidence that a file has no
+  vectors: the upsert runs before the status is written. See [D-32](docs/decisions.md).
+
+- **A corpus lease, so the two lanes exclude each other.** Taken as one conditional update
+  whose row count is the answer, because reading the corpus state cannot exclude anything:
+  it is set inside the indexer once a job is already running, leaving a gap for the other
+  pass to start in. The expiry is renewed while the holder works rather than set to a guess
+  at how long the work takes, so nothing has to predict that indexing a library runs for
+  hours, while a holder that dies stops renewing and the corpus falls free.
+
 ### Changed
 
 - **A chunk too long for the model is split, not truncated.** The provider is asked not to
@@ -46,6 +72,68 @@ with no section here fails its release rather than publishing an undescribed one
   denser than their model's average, which was most of them, would otherwise have been
   skipped as unchanged and kept chunks no code path can produce.
 
+- **The catalogue's journal mode and busy timeout are set by Dexicon, not inherited from
+  whatever the database file carries.** Neither was established anywhere: a catalogue
+  created by the connection string reports `journal_mode=delete` and `busy_timeout=0`,
+  while a long-lived one is in WAL because journal mode is persistent in the file. A fresh
+  install and an existing one therefore behaved differently under concurrent access, with
+  nothing in the code to say which you had. WAL is now asked for explicitly and checked; if
+  the filesystem refuses it, which happens on network shares, that is logged rather than
+  passing as success.
+
+  `Cache=Shared` is gone with it. It arrived with the first walking skeleton and nothing
+  depended on it, and it decides how a blocked write fails: measured against a lock held
+  longer than the caller would wait, a shared-cache connection fails with `SQLITE_LOCKED`,
+  which no busy timeout can serve, where a private-cache one fails with `SQLITE_BUSY`,
+  which one can. Ordinary contention is unaffected either way, since a lock held for 500ms
+  is waited out in about 600ms.
+
+  Prerequisite for [D-32](docs/decisions.md). `DEXICON__STORAGE__BUSYTIMEOUTSECONDS`,
+  default 30, matching the provider's own command timeout so neither gives up first.
+- **Ollama is told how many requests to admit at once.** `OLLAMA_NUM_PARALLEL` was not
+  settable anywhere: not in `docker-compose.yml`, not in `.env.example`. Unset, Ollama
+  admits one request and the embedder waits between them. Measured A/B/A/B against a
+  running index, from the runner's own slot log: 49.8% and 50.4% busy unset, against
+  78.0% and 80.3% at 4 — about 63% more embed calls in the same window.
+
+  Not parallel decoding. The runner reports `n_seq_max = 1` either way, because Ollama
+  pins an embedding model to one sequence, so this costs no VRAM and leaves the
+  2,048-token context per request alone. It removes the gap between requests, which
+  matters because one embed averages 25-27 ms. Defaults to 4, matching
+  `DEXICON_EMBEDDING_MAXCONCURRENCY`, since sending more than Ollama admits only queues
+  the difference.
+
+- **The walk skips excluded directories instead of reading them.** It descended into every
+  directory and filtered the files afterwards, so `.git`, `node_modules` and a database's
+  data directory were enumerated in full and then discarded. On the repository that
+  prompted this, 240,704 files were stat'd to keep 27,001; the walk now takes 13.9s where
+  it took 99.4s, for an identical result on both counts. Indexing gains the same, because
+  it shares the walk with discovery.
+
+  Conditional on negation, and deliberately conservative about it. A rule set that
+  re-includes something beneath an excluded directory makes skipping that directory a
+  silent loss rather than an optimisation: the same repository keeps `!.vscode/launch.json`
+  under an always-excluded `.vscode/`. A directory is skipped only where no negation can
+  reach into it, so one narrow exception does not disable pruning for its siblings.
+
+- **The catalogue's journal mode and busy timeout are set by Dexicon, not inherited from
+  whatever the database file carries.** Neither was established anywhere: a catalogue
+  created by the connection string reports `journal_mode=delete` and `busy_timeout=0`,
+  while a long-lived one is in WAL because journal mode is persistent in the file. A fresh
+  install and an existing one therefore behaved differently under concurrent access, with
+  nothing in the code to say which you had. WAL is now asked for explicitly and checked; if
+  the filesystem refuses it, which happens on network shares, that is logged rather than
+  passing as success.
+
+  `Cache=Shared` is gone with it. It arrived with the first walking skeleton and nothing
+  depended on it, and it decides how a blocked write fails: measured against a lock held
+  longer than the caller would wait, a shared-cache connection fails with `SQLITE_LOCKED`,
+  which no busy timeout can serve, where a private-cache one fails with `SQLITE_BUSY`,
+  which one can. Ordinary contention is unaffected either way, since a lock held for 500ms
+  is waited out in about 600ms.
+
+  Prerequisite for [D-32](docs/decisions.md). `DEXICON__STORAGE__BUSYTIMEOUTSECONDS`,
+  default 30, matching the provider's own command timeout so neither gives up first.
 ### Fixed
 
 - **Context expansion reads the chunk set the caller asked for.** `get_context` and
@@ -129,70 +217,6 @@ with no section here fails its release rather than publishing an undescribed one
   process isolation, and the option says so where it is declared.
 
 ---
-
-## Unreleased
-
-### Changed
-
-- **The walk skips excluded directories instead of reading them.** It descended into every
-  directory and filtered the files afterwards, so `.git`, `node_modules` and a database's
-  data directory were enumerated in full and then discarded. On the repository that
-  prompted this, 240,704 files were stat'd to keep 27,001; the walk now takes 13.9s where
-  it took 99.4s, for an identical result on both counts. Indexing gains the same, because
-  it shares the walk with discovery.
-
-  Conditional on negation, and deliberately conservative about it. A rule set that
-  re-includes something beneath an excluded directory makes skipping that directory a
-  silent loss rather than an optimisation: the same repository keeps `!.vscode/launch.json`
-  under an always-excluded `.vscode/`. A directory is skipped only where no negation can
-  reach into it, so one narrow exception does not disable pruning for its siblings.
-
-### Added
-
-- **Discovery is its own pass, on its own lane.** A corpus added while another was indexing
-  read as empty: its job sat behind a reindex of ~1,800 PDFs on a queue that runs one job
-  at a time, and nothing said so. A sweep now walks a corpus, applies its filters and
-  shadowing, and records what is there, without extracting, chunking or embedding any of
-  it. Statting that library takes about two seconds against 773ms to extract one ordinary
-  PDF from it, so the cheap half no longer waits for the expensive one.
-
-  It runs when a source is added, and on demand at `POST /api/corpora/{name}/sweep`. A
-  corpus reports what it found as `pendingCount`, beside the file count rather than folded
-  into it, since that one counts what is searchable.
-
-  The sweep only ever adds. Removing a vanished file means removing its vectors from every
-  set's collection, and the shared row only once the last set has let go, which a sweep
-  cannot do; indexing remains the only pass that removes anything. There is no exemption
-  for rows that look empty either, because `Pending` is not evidence that a file has no
-  vectors: the upsert runs before the status is written. See [D-32](docs/decisions.md).
-
-- **A corpus lease, so the two lanes exclude each other.** Taken as one conditional update
-  whose row count is the answer, because reading the corpus state cannot exclude anything:
-  it is set inside the indexer once a job is already running, leaving a gap for the other
-  pass to start in. The expiry is renewed while the holder works rather than set to a guess
-  at how long the work takes, so nothing has to predict that indexing a library runs for
-  hours, while a holder that dies stops renewing and the corpus falls free.
-
-### Changed
-
-- **The catalogue's journal mode and busy timeout are set by Dexicon, not inherited from
-  whatever the database file carries.** Neither was established anywhere: a catalogue
-  created by the connection string reports `journal_mode=delete` and `busy_timeout=0`,
-  while a long-lived one is in WAL because journal mode is persistent in the file. A fresh
-  install and an existing one therefore behaved differently under concurrent access, with
-  nothing in the code to say which you had. WAL is now asked for explicitly and checked; if
-  the filesystem refuses it, which happens on network shares, that is logged rather than
-  passing as success.
-
-  `Cache=Shared` is gone with it. It arrived with the first walking skeleton and nothing
-  depended on it, and it decides how a blocked write fails: measured against a lock held
-  longer than the caller would wait, a shared-cache connection fails with `SQLITE_LOCKED`,
-  which no busy timeout can serve, where a private-cache one fails with `SQLITE_BUSY`,
-  which one can. Ordinary contention is unaffected either way, since a lock held for 500ms
-  is waited out in about 600ms.
-
-  Prerequisite for [D-32](docs/decisions.md). `DEXICON__STORAGE__BUSYTIMEOUTSECONDS`,
-  default 30, matching the provider's own command timeout so neither gives up first.
 
 ---
 
