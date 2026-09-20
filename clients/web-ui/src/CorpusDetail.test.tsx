@@ -242,6 +242,62 @@ describe('adding a source', () => {
   });
 });
 
+describe('a count taken while the walk is running', () => {
+  // A source added a moment ago sat at "no files" in the warning colour, beside a corpus
+  // badge reading "indexing". A folder that has not been walked yet and one that a
+  // mistyped path made empty are different problems, and they read identically.
+  const twoSources = (over = {}) =>
+    corpus({
+      sources: [
+        source({ id: 's1', rootPath: 'books/orly', fileCount: 96 }),
+        source({ id: 's2', rootPath: 'books/Dev', fileCount: 0 }),
+      ],
+      ...over,
+    });
+
+  it('does not call a source empty while the corpus is still indexing', async () => {
+    getCorpus.mockResolvedValue(twoSources({ state: 'indexing' }));
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText('counting…')).toBeInTheDocument();
+    expect(screen.queryByText('no files')).not.toBeInTheDocument();
+  });
+
+  it('marks a partial tally as partial rather than as a total', async () => {
+    getCorpus.mockResolvedValue(twoSources({ state: 'indexing' }));
+
+    render(<CorpusDetail {...props} />);
+
+    // 96 is what has been counted so far, not what the folder holds.
+    expect(await screen.findByText('96 so far')).toBeInTheDocument();
+    expect(screen.queryByText('96 files')).not.toBeInTheDocument();
+  });
+
+  it('takes a running job as indexing even before the corpus state catches up', async () => {
+    // The stream knows within a second of a refresh starting; corpus.state is whatever the
+    // last load returned, which on a fresh page is already stale.
+    getCorpus.mockResolvedValue(twoSources({ state: 'ready' }));
+    const live = { c1: { id: 'j1', corpusId: 'c1', state: 'running' } };
+
+    render(<CorpusDetail {...props} live={live as never} />);
+
+    expect(await screen.findByText('counting…')).toBeInTheDocument();
+  });
+
+  it('still says a folder brought in nothing once the walk has finished', async () => {
+    // The warning this replaced is worth keeping: with the run over, an empty source is a
+    // finding, and it is the only place a mistyped path shows up.
+    getCorpus.mockResolvedValue(twoSources({ state: 'ready' }));
+
+    render(<CorpusDetail {...props} />);
+
+    const empty = await screen.findByText('no files');
+    expect(empty.className).toMatch(/warn/);
+    expect(screen.getByText('96 files')).toBeInTheDocument();
+  });
+});
+
 describe('what each source contributed', () => {
   it('says nothing about it when there is only one source', async () => {
     // The corpus total IS the source total. Repeating it on the row is noise.

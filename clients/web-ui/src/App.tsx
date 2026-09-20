@@ -1042,6 +1042,11 @@ export function CorpusDetail({
   useEffect(() => { void load(); }, [load]);
 
   const job = corpus ? live[corpus.id] : undefined;
+
+  // Both, because they answer at different speeds. The live job knows within a second of
+  // a refresh starting; `corpus.state` survives a page load, when nothing is streaming
+  // yet and the counts on screen are still a partial tally from a run already underway.
+  const indexing = job?.state === 'running' || job?.state === 'queued' || corpus?.state === 'indexing';
   useEffect(() => {
     if (job && !job.phase) void load();
   }, [job, load]);
@@ -1098,13 +1103,28 @@ export function CorpusDetail({
                       the corpus total IS the source total — but a corpus with ten does:
                       a folder contributing nothing is what a mistyped path, an over-eager
                       exclude glob and an index that stopped early all look like, and it
-                      is invisible in a corpus-level count. */}
+                      is invisible in a corpus-level count.
+
+                      While the walk is running the count is a partial tally, so it must
+                      not be read as a finding. A source added a moment ago sat at "no
+                      files" in the warning colour, next to a corpus badge reading
+                      "indexing", and there was no way to tell that from a mistyped path.
+                      It says what it is instead, and stops claiming anything until the
+                      run that would justify the claim has finished. */}
                   {corpus.sources.length > 1 && (
-                    <span className={s.fileCount ? 'dim text-xs' : 'text-xs text-[var(--warn-text)]'}>
-                      {s.fileCount
-                        ? `${s.fileCount.toLocaleString()} ${s.fileCount === 1 ? 'file' : 'files'}`
-                        : 'no files'}
-                    </span>
+                    indexing ? (
+                      <span className="dim text-xs">
+                        {s.fileCount
+                          ? `${s.fileCount.toLocaleString()} so far`
+                          : 'counting…'}
+                      </span>
+                    ) : (
+                      <span className={s.fileCount ? 'dim text-xs' : 'text-xs text-[var(--warn-text)]'}>
+                        {s.fileCount
+                          ? `${s.fileCount.toLocaleString()} ${s.fileCount === 1 ? 'file' : 'files'}`
+                          : 'no files'}
+                      </span>
+                    )
                   )}
                   <span className="dim text-xs">
                     {s.useGitignore ? '.gitignore honoured' : '.gitignore ignored'}
