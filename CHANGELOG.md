@@ -259,6 +259,19 @@ with no section here fails its release rather than publishing an undescribed one
   default 30, matching the provider's own command timeout so neither gives up first.
 ### Fixed
 
+- **A cut context block kept the chunk before the hit, not the hit.** A block too large
+  for the remaining budget is reduced to one piece; it took the lowest chunk index, which
+  with `neighbours` is the chunk furthest before the match. A top hit at lines 122-165 came
+  back as lines 1-30. Measured over 55 queries at a 1,500-character budget, the matched
+  line was absent from 43 at two neighbours and from none at zero; afterwards it is absent
+  from none at any width, and neighbours score what no neighbours scores.
+
+  Nothing failed and the budget was full, which is why it lasted. It is the failure
+  [05](docs/05-search.md) records for the search window — head truncation loses the answer
+  — one layer up. Selection and rendering each chose a piece independently, so both were
+  corrected: otherwise a block admitted on one chunk's behaviour could be cut on another's
+  and vanish after the budget had been spent on it.
+
 - **Context expansion reads the chunk set the caller asked for.** `get_context` and
   `POST /api/context` re-resolve the scope to find the collection a file's chunks live in,
   and they resolved the hits' corpus ids, which drops the `corpus:set` qualification. A
