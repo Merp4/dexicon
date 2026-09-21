@@ -820,8 +820,7 @@ public sealed class CorpusIndexer(
             string reason, int extractedChars)
         {
             var cleared = await ClearChunksAsync(candidate.RelativePath);
-            var (file, state) = Track(known, states, set, source.Id, candidate.RelativePath);
-            file.SizeBytes = candidate.SizeBytes;
+            var (file, state) = Track(known, states, set, source.Id, candidate.RelativePath, candidate.SizeBytes);
             file.ExtractedChars = extractedChars;
             state.SourceSha256 = fileSha;
             state.IndexedUtc = DateTime.UtcNow;
@@ -848,7 +847,7 @@ public sealed class CorpusIndexer(
         foreach (var skip in walk.Skipped)
         {
             seen.Add(skip.RelativePath);
-            var (_, state) = Track(known, states, set, source.Id, skip.RelativePath);
+            var (_, state) = Track(known, states, set, source.Id, skip.RelativePath, skip.SizeBytes);
             state.Status = FileStatus.Skipped;
             state.ContentHash = null;
 
@@ -948,7 +947,7 @@ public sealed class CorpusIndexer(
                 //
                 // Written with no hash, so the same interruption now leaves the file
                 // looking stale and the next pass indexes it again.
-                var (okFile, okState) = Track(known, states, set, source.Id, candidate.RelativePath);
+                var (okFile, okState) = Track(known, states, set, source.Id, candidate.RelativePath, candidate.SizeBytes);
                 okState.ContentHash = null;
                 okState.Status = FileStatus.Pending;
                 await db.SaveChangesAsync(ct);
@@ -992,7 +991,6 @@ public sealed class CorpusIndexer(
                 okState.SourceSha256 = fileSha;
                 okState.ChunkCount = stored;
                 okState.IndexedUtc = DateTime.UtcNow;
-                okFile.SizeBytes = candidate.SizeBytes;
                 okFile.Language = language;
                 okFile.MediaType = LanguageMap.MediaType(language);
                 okFile.ExtractedChars = content.Length;
@@ -1007,7 +1005,7 @@ public sealed class CorpusIndexer(
                 // forever on a hash that matches.
                 log.LogWarning("Extraction timed out for {File}: {Reason}",
                     candidate.RelativePath, ex.Message);
-                var (_, timedOut) = Track(known, states, set, source.Id, candidate.RelativePath);
+                var (_, timedOut) = Track(known, states, set, source.Id, candidate.RelativePath, candidate.SizeBytes);
                 timedOut.Status = FileStatus.Failed;
                 timedOut.StatusDetail = ex.Message;
                 timedOut.ContentHash = null;
@@ -1018,7 +1016,7 @@ public sealed class CorpusIndexer(
                 // A recognised format we could not read: encrypted, DRM'd, or corrupt.
                 // Distinct from "produced no text", which is not a failure.
                 log.LogWarning(ex, "Extraction failed for {File}", candidate.RelativePath);
-                var (_, failedState) = Track(known, states, set, source.Id, candidate.RelativePath);
+                var (_, failedState) = Track(known, states, set, source.Id, candidate.RelativePath, candidate.SizeBytes);
                 failedState.Status = FileStatus.Failed;
                 failedState.StatusDetail = ex.Message;
                 failedState.ContentHash = null;
@@ -1028,7 +1026,7 @@ public sealed class CorpusIndexer(
             {
                 // Skip the FILE, flag the job, keep scanning. See the class remark.
                 log.LogWarning(ex, "Embedding failed for {File}; skipping it and continuing", candidate.RelativePath);
-                var (_, embedFailed) = Track(known, states, set, source.Id, candidate.RelativePath);
+                var (_, embedFailed) = Track(known, states, set, source.Id, candidate.RelativePath, candidate.SizeBytes);
                 embedFailed.Status = FileStatus.Failed;
                 embedFailed.StatusDetail = $"embedding failed: {ex.Message}";
                 embedFailed.ContentHash = null;    // deliberately unrecorded, so it retries
@@ -1038,7 +1036,7 @@ public sealed class CorpusIndexer(
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 log.LogWarning(ex, "Failed to index {File}", candidate.RelativePath);
-                var (_, otherFailed) = Track(known, states, set, source.Id, candidate.RelativePath);
+                var (_, otherFailed) = Track(known, states, set, source.Id, candidate.RelativePath, candidate.SizeBytes);
                 otherFailed.Status = FileStatus.Failed;
                 otherFailed.StatusDetail = ex.Message;
                 otherFailed.ContentHash = null;
@@ -1245,9 +1243,23 @@ public sealed class CorpusIndexer(
     /// mutator keeps each call site explicit about which half it is writing to. The split
     /// between "what the file is" and "what this set made of it" is easy to get wrong.
     /// </summary>
+    /// <param name="sizeBytes">
+    /// What the walk measured, recorded HERE rather than on the paths that succeed.
+    ///
+    /// It used to be written on the success and empty branches only, so a file that
+    /// failed to read kept the default and the Files list showed it as 0 bytes. On a
+    /// live index the eight failures in one corpus were among its largest files and
+    /// every one of them displayed as empty, while the failure's own detail quoted the
+    /// real size. The walk already knew it before the read was attempted, and this is
+    /// the one place every path goes through, so no future branch can forget it.
+    ///
+    /// Zero is left alone rather than written, because zero here means "not measured":
+    /// a walk that could not stat a file reports no size, and the walk never produces a
+    /// zero-length candidate, since an empty file is skipped as empty.
+    /// </param>
     private (IndexedFile File, FileChunkState State) Track(
         Dictionary<string, IndexedFile> known, Dictionary<string, FileChunkState> states,
-        ChunkSet set, string sourceId, string relativePath)
+        ChunkSet set, string sourceId, string relativePath, long sizeBytes)
     {
         if (!known.TryGetValue(relativePath, out var file))
         {
@@ -1260,6 +1272,8 @@ public sealed class CorpusIndexer(
             known[relativePath] = file;
             db.Files.Add(file);
         }
+
+        if (sizeBytes > 0) file.SizeBytes = sizeBytes;
 
         if (!states.TryGetValue(relativePath, out var state))
         {
