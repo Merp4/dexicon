@@ -203,7 +203,17 @@ public sealed class ChunkSet
     public List<FileChunkState> Files { get; set; } = [];
 }
 
-public enum SourceKind { Workspace = 0, Upload = 1 }
+/// <summary>
+/// Where a source's content comes from, and therefore what a unit of it is.
+///
+/// <see cref="GitHistory"/> is its own kind rather than a flag on a workspace source,
+/// because the unit is a commit and not a file: the filters mean which paths' history
+/// rather than which files to read, the walk is a `git log` rather than a directory
+/// descent, and the counts stay legible instead of mixing 27,000 files with 5,000
+/// commits under one source. The UI offers it as an extra on a workspace source whose
+/// root is a repository, which creates the second source over the same root.
+/// </summary>
+public enum SourceKind { Workspace = 0, Upload = 1, GitHistory = 2 }
 
 public sealed class Source
 {
@@ -228,6 +238,16 @@ public sealed class Source
     public string? ExcludeGlobs { get; set; }            // json array, null = inherit
     public bool? UseGitignore { get; set; }
     public int? MaxFileBytes { get; set; }
+
+    /// <summary>
+    /// Git-history sources only: which ref, and how much of each commit. JSON, because
+    /// these are one cluster of settings that travel together and only one kind of
+    /// source has any of them; a column each would be seven nullable columns that every
+    /// other source leaves empty. Read through
+    /// <see cref="Indexing.GitHistoryOptions.FromJson"/>, which supplies the defaults.
+    /// </summary>
+    public string? GitOptions { get; set; }
+
     public DateTime CreatedUtc { get; set; }
 
     public List<IndexedFile> Files { get; set; } = [];

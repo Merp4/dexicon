@@ -145,7 +145,7 @@ internal sealed class IndexingHarness : IAsyncDisposable
     /// One corpus with <paramref name="sets"/> chunk sets, over one source per root the
     /// harness was started with. An upload corpus gets a single source with no root.
     /// </summary>
-    public async Task SeedCorpusAsync(SourceKind kind, int sets = 1)
+    public async Task SeedCorpusAsync(SourceKind kind, int sets = 1, string? gitOptions = null)
     {
         await using var db = NewContext();
         var corpus = new Corpus
@@ -173,7 +173,9 @@ internal sealed class IndexingHarness : IAsyncDisposable
                 CreatedUtc = DateTime.UtcNow,
             });
 
-        if (kind == SourceKind.Workspace)
+        // A git-history source is rooted like a workspace one: it is a directory in the
+        // workspace, and what differs is that its units are commits rather than files.
+        if (kind is SourceKind.Workspace or SourceKind.GitHistory)
         {
             for (var i = 0; i < _sourceRoots.Length; i++)
                 corpus.Sources.Add(new Source
@@ -182,6 +184,7 @@ internal sealed class IndexingHarness : IAsyncDisposable
                     CorpusId = corpus.Id,
                     Kind = kind,
                     RootPath = _sourceRoots[i],
+                    GitOptions = gitOptions,
                     CreatedUtc = DateTime.UtcNow,
                 });
         }

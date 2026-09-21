@@ -215,8 +215,19 @@ public sealed record SaveModelProfileRequest(
 /// <summary>A configured backend, and whether its models can be pulled and deleted.</summary>
 public sealed record EmbeddingProviderInfo(string Name, string Kind, bool Managed, bool Configured, string? Detail);
 
+/// <param name="GitHistory">
+/// Index this folder's commit history rather than its files. The folder must be a git
+/// repository. A repository whose files AND history are both wanted takes two sources
+/// over the same root, because a commit and a file are different units: the counts, the
+/// filters and the walk all mean different things.
+/// </param>
+/// <param name="Git">
+/// How much of each commit to index, for a git-history source. Omitted means the
+/// defaults: the message and the stat, and not the patch.
+/// </param>
 public sealed record AddSourceRequest(string WorkspacePath, bool? UseGitignore = null, int? MaxFileBytes = null,
-    IReadOnlyList<string>? IncludeGlobs = null, IReadOnlyList<string>? ExcludeGlobs = null);
+    IReadOnlyList<string>? IncludeGlobs = null, IReadOnlyList<string>? ExcludeGlobs = null,
+    bool GitHistory = false, GitHistoryOptions? Git = null);
 
 /// <summary>
 /// A directory that leads to this corpus's sources but which no source covers, and the

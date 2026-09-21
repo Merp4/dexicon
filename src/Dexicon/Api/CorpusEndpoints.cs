@@ -219,15 +219,27 @@ public static class CorpusEndpoints
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
 
-            try { indexer.ResolveWorkspacePath(body.WorkspacePath); }
+            string root;
+            try { root = indexer.ResolveWorkspacePath(body.WorkspacePath); }
             catch (UnauthorizedAccessException ex)
             { return Results.Problem(title: "Invalid workspace path", detail: ex.Message, statusCode: 400); }
+
+            // Refused at the door rather than recorded and discovered on the first pass.
+            // A source that can never produce anything is worse than a 400: it sits in
+            // the list looking configured, and the reason only ever appears in a job.
+            if (body.GitHistory && !await GitHistory.IsRepositoryAsync(root, ct))
+                return Results.Problem(
+                    title: "Not a git repository",
+                    detail: $"'{body.WorkspacePath}' has no git repository in it, so there is no "
+                          + "history to index. Point this at the folder holding .git.",
+                    statusCode: 400);
 
             var source = new Source
             {
                 Id = Ulid.NewUlid().ToString(),
                 CorpusId = corpus.Id,
-                Kind = SourceKind.Workspace,
+                Kind = body.GitHistory ? SourceKind.GitHistory : SourceKind.Workspace,
+                GitOptions = body.GitHistory ? (body.Git ?? new GitHistoryOptions()).ToJson() : null,
                 RootPath = body.WorkspacePath.Trim('/', '\\'),
                 // Null, not a default. An omitted field means this source has no opinion
                 // and follows the corpus, which is the point of the corpus having one.

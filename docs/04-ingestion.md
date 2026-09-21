@@ -129,6 +129,65 @@ size left every file looking unchanged, so a refresh re-chunked nothing and the 
 had no effect. The fingerprint marks precisely the affected files as stale and no
 others.
 
+### `git-history` — a repository's commits
+
+A source whose units are commits rather than files. The root is a folder in the workspace
+that holds a `.git`, and a repository whose files *and* history are both wanted takes two
+sources over the same root: a commit and a file are different units, and folding them into
+one source would mix 27,000 files with 5,000 commits under one set of counts.
+
+One commit is one document, at `commits/<yyyy-MM-dd>-<sha[..12]>`. Dated first because the
+file list sorts by path and a thousand commits ordered by hash is a list nobody can scan;
+the author date, because it is what people mean by when. Not one file at a revision, which
+multiplies a repository by its history and re-indexes text that did not change, and not
+one hunk, which has no author and no subject while the question asked of history is why
+something changed.
+
+What a document holds is per source:
+
+| Setting | Default | |
+|---|---|---|
+| `ref` | `HEAD` | The ref to walk |
+| `includeMessage` | true | Subject and body |
+| `includeStat` | true | Files touched, with ± counts |
+| `includeDiff` | false | The patch |
+| `maxDiffBytes` | 65536 | Per commit. Over it the patch is dropped and the document says so, in characters |
+| `includeMerges` | false | A merge's default patch is empty and its message is usually generated |
+| `maxCommits`, `since` | — | Bound the walk from the tip, or by date |
+
+The diff is off because of what it costs. Measured over 201 commits of this repository:
+with patches the history is 5.99 MB and the median commit 11,393 characters; with the
+message and the stat it is 449 KB and the median 1,939, which fits in one chunk. A
+repository where the diff is the point turns it on knowing that.
+
+An oversized patch is **reported, not cut**: a diff truncated mid-hunk reads as a complete
+change that did something other than what it did.
+
+The source's include globs become git pathspecs, so they mean whose history and narrow the
+diff at the same time. Excludes are not passed: git's exclude pathspec syntax is its own,
+and mapping one glob language onto another quietly is how a filter comes to mean something
+else.
+
+**A refresh over a tip that has not moved reads nothing.** `git log --format` gives shas
+and subjects and is the inventory; the bodies are asked for in a second call, for the
+commits the catalogue does not already have. A commit cannot change, so its fingerprint is
+its sha plus what these settings say a document contains, and that is knowable without
+asking git for the body — which is why the staleness check for this source runs *before*
+the read rather than after it, as a file's must. Measured on this repository: 77ms to
+enumerate 201 commits, 1,069ms to read all of them with their patches.
+
+Changing any setting that alters what a document says re-indexes the history, because
+every document really is different. Changing `ref`, `maxCommits` or `since` does not:
+those decide which commits are indexed, not what any one of them holds.
+
+The git binary is in the image (`apk add git`) rather than a native library: the runtime
+is Alpine, so a library means musl builds to keep working, and two processes per refresh
+is not a cost worth that. Refs and pathspecs are caller-supplied, so arguments are passed
+as a list and never a command line, with `--end-of-options` before the ref and `--` before
+the pathspecs.
+
+See [D-34](decisions.md#d-34-a-commit-is-a-document).
+
 ## Extraction
 
 | Format | Extensions | Library | Licence | Provenance unit | Notes |

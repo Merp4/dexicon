@@ -1600,6 +1600,70 @@ retry would survive it.
 being small enough to configure by hand.
 ---
 
+### D-34 A commit is a document
+
+**Decision.** A repository's history is indexed as one document per commit, by a source
+of its own kind. The document is laid out the way `git show` lays one out; its path is
+`commits/<yyyy-MM-dd>-<sha[..12]>`; and what it contains — message, stat, patch, and the
+per-commit cap on the patch — is configured per source.
+
+**Why one commit.** The alternatives both index the wrong thing. One file at a revision
+multiplies a repository by its history and re-indexes text that did not change: a
+27,000-file repository with 5,000 commits is not 27,000 documents, it is tens of millions.
+One hunk has no author and no subject, and the question asked of history is why something
+changed, which lives in the message.
+
+**Why the diff is off by default.** Measured over 201 commits of this repository: with
+patches the history is 5.99 MB and the median commit 11,393 characters, p90 77,220, the
+largest 399,527. With the message and the stat it is 449 KB and the median 1,939, which
+fits in a single chunk. Thirteen times smaller for the half that answers "when did this
+change and why". A repository where the diff is the point turns it on knowing the cost.
+
+An oversized patch is stated in characters rather than cut. A diff truncated mid-hunk
+reads as a complete change that did something other than what it did, and nothing
+downstream can tell.
+
+**Why two passes.** `git log --format` over the ref gives shas, dates and subjects; the
+bodies are fetched in a second call for the commits the catalogue does not already hold.
+A single `git log -p` would produce every patch in the repository in order to discover
+that nothing had changed. 77ms against 1,069ms on this repository, and the difference
+grows with the history.
+
+That is also why this source's staleness check runs before the read rather than after it.
+A file's fingerprint is a hash of its EXTRACTED text, so deciding a file is unchanged
+means extracting it first; a commit is immutable, so its sha and the source's content
+settings decide its text and the check needs nothing from git.
+
+**Why its own `SourceKind`.** The unit is a commit, the filters mean paths-of-history
+rather than files-to-read, the walk is a `git log` rather than a directory descent, and
+the file list stays legible instead of mixing files with commits under one set of counts.
+A repository whose files and history are both wanted takes two sources over one root, and
+the UI offers the second as a checkbox on the first.
+
+Everything after "what are the units and how do I read one" is shared with the file path:
+the chunking fingerprint, the four empty branches that drop their vectors, the claim
+written before the delete, the counters, the reconcile. Each of those is a defect that has
+been fixed once already, and a second copy of that loop is where the fixes would stop
+applying to half the sources.
+
+**Rejected.** LibGit2Sharp. The runtime image is Alpine, so it needs musl native binaries
+to keep working across upgrades, and a native dependency is the wrong price for avoiding
+two processes on a pass that runs a few times a day.
+
+One `git show` per commit: thousands of process launches for one pass.
+
+A flag on the workspace source rather than a kind. It makes one source mean two things,
+and every count, filter and status on it then needs to know which.
+
+Indexing the working tree at each commit, so that history search returns file content as
+of a date. That is a different product — time-travel over a corpus — and it needs the
+storage to match.
+
+**Revisit if.** A repository large enough that the enumeration itself is slow: 10,000
+commits enumerate in a few seconds, and a million would need the inventory to be
+incremental as well, keyed on the last sha seen.
+---
+
 ## Open questions
 
 | # | Question | Needed by | Current lean |
@@ -1608,4 +1672,4 @@ being small enough to configure by hand.
 | ~~Q2~~ | ~~Repository name and GHCR namespace~~ | — | **Resolved** — see [D-17](#d-17-name) |
 | ~~Q3~~ | ~~Default embedding model — `nomic-embed-text` or `embeddinggemma`?~~ | — | **Resolved** — `embeddinggemma`, which won both sweeps. See [benchmarks](benchmarks.md) |
 | ~~Q4~~ | ~~Should `index_refresh` require the `ingest` scope, or be admin-only?~~ | — | **Resolved** — `ingest`, granted per key and off by default, with the tool hidden from keys that lack it. See [D-28](#d-28-an-admin-password-and-scoped-api-keys) |
-| Q5 | Git history indexing in v1? | M2 scope freeze | No. M5, and only on request |
+| ~~Q5~~ | ~~Git history indexing in v1?~~ | — | **Resolved** — yes, as a source kind of its own. See [D-34](#d-34-a-commit-is-a-document) |
