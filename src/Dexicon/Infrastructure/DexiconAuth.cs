@@ -107,7 +107,7 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
             log.LogWarning(
                 "Rejected request to {Path} from {Remote} ({Agent}), credential {Digest}: "
                 + "invalid, revoked or expired",
-                path,
+                OneLine(path),
                 ctx.Connection.RemoteIpAddress?.ToString() ?? "an unknown address",
                 Agent(ctx.Request.Headers.UserAgent.FirstOrDefault()),
                 CallerDigest(presented));
@@ -121,8 +121,15 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
         ctx.Response.OnStarting(() =>
         {
             // Audit line. The credential's id and name, never its value.
+            //
+            // The method goes through OneLine like everything else the caller supplies.
+            // Kestrel will not accept a method with a control character in it, so this
+            // one cannot fire today; applying the rule to every caller-supplied field on
+            // the line is still cheaper to read than a per-field argument about which
+            // parser already validated what, and it survives the server being swapped.
             log.LogInformation("{Method} {Path} -> {Status} (caller {TokenId} '{TokenName}')",
-                ctx.Request.Method, path, ctx.Response.StatusCode, principal.TokenId, principal.TokenName);
+                OneLine(ctx.Request.Method), OneLine(path), ctx.Response.StatusCode,
+                OneLine(principal.TokenId), OneLine(principal.TokenName));
             return Task.CompletedTask;
         });
 
@@ -170,16 +177,64 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
     ///
     /// Capped, because it is whatever the caller sent and a rejected request is the one
     /// path an unauthenticated caller can reach: uncapped, a kilobyte of user agent per
-    /// poll is theirs to write into the audit trail. It goes in as a property rather
-    /// than into the message, so the configured template escapes it and a newline in it
-    /// cannot end the line — see <c>LogOutput.ConsoleTemplate</c>.
+    /// poll is theirs to write into the audit trail. Cut before <see cref="OneLine"/>,
+    /// so the cost of the pass is bounded by the cap and not by what was sent.
     /// </summary>
     internal static string Agent(string? header) =>
         string.IsNullOrWhiteSpace(header) ? "no user agent"
-        : header.Length <= AgentMax ? header
-        : header[..AgentMax] + "…";
+        : header.Length <= AgentMax ? OneLine(header)
+        : OneLine(header[..AgentMax]) + "…";
 
     private const int AgentMax = 120;
+
+    /// <summary>
+    /// One log line, whatever the caller sent.
+    ///
+    /// A request path arrives URL-decoded, so <c>%0A</c> in it is a real newline by the
+    /// time it reaches here, and a newline inside an entry lets the caller append a line
+    /// that reads as the server's own. The same goes for the user-agent header, for a
+    /// key's name, and for its id, which is generated for a key created through the API
+    /// but is whatever <c>DEXICON__BOOTSTRAP__TOKEN</c> carried for one adopted from the
+    /// environment.
+    ///
+    /// The console sink renders message properties with <c>{Message:j}</c>, which quotes
+    /// and escapes a string, so that output is already safe — see
+    /// <c>LogOutput.ConsoleTemplate</c>. That is the sink's formatting and not this
+    /// code's decision, and it covers one sink: a second one configured later, or that
+    /// format specifier dropped, silently restores the hole. The value is held here
+    /// instead, where the caller's text is known to be the caller's.
+    ///
+    /// Replaced rather than removed, and with U+FFFD, so a path that was odd still reads
+    /// as odd rather than as a path somebody sent.
+    ///
+    /// The two line breaks go through <see cref="string.Replace(string, string)"/> by
+    /// name. Written as one pass over <see cref="char.IsControl"/> it reads better and
+    /// does the same thing, but CodeQL's <c>cs/log-forging</c> recognises the Replace
+    /// form as the barrier and nothing else, so folding these two lines into the loop
+    /// below reopens the alert without changing the behaviour.
+    ///
+    /// The loop then takes the rest of the control range, which the Replace calls do not
+    /// cover: an escape sequence reaching a terminal that tails the log is the same trick
+    /// by another route, and <c>[2J</c> clears its screen.
+    /// </summary>
+    internal static string OneLine(string value)
+    {
+        var held = value.Replace("\r", ReplacementText, StringComparison.Ordinal)
+                        .Replace("\n", ReplacementText, StringComparison.Ordinal);
+
+        var at = 0;
+        while (at < held.Length && !char.IsControl(held[at])) at++;
+        if (at == held.Length) return held;
+
+        return string.Create(held.Length, held, static (span, source) =>
+        {
+            for (var i = 0; i < source.Length; i++)
+                span[i] = char.IsControl(source[i]) ? Replacement : source[i];
+        });
+    }
+
+    private const char Replacement = '�';
+    private const string ReplacementText = "�";
 
     private static Task Problem(HttpContext ctx, int status, string title, string detail)
     {

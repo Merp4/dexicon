@@ -17,6 +17,11 @@ namespace Dexicon.Tests;
 ///
 /// These run against <see cref="LogOutput.ConsoleTemplate"/> itself rather than a copy of
 /// it, so restoring the `l` flag fails the build rather than quietly reopening this.
+///
+/// The template is the sink's formatting, and it covers the sink it is configured on.
+/// <see cref="DexiconAuthMiddleware.OneLine"/> holds the value where the caller's text is
+/// known to be the caller's, so a second sink added later, or that format specifier
+/// dropped, does not silently reopen it either.
 /// </summary>
 public class LogForgingTests
 {
@@ -95,6 +100,41 @@ public class LogForgingTests
         agent.Length.ShouldBeLessThan(200);
         DexiconAuthMiddleware.Agent(null).ShouldBe("no user agent");
         DexiconAuthMiddleware.Agent("curl/8.0").ShouldBe("curl/8.0");
+    }
+
+    /// <summary>
+    /// Held at the value, so it survives a sink that does not escape. Rendered here with
+    /// the literal specifier, which is what a second sink configured later, or the `j`
+    /// dropped from the template, would do.
+    /// </summary>
+    [Fact]
+    public void AForgedPathIsHeldBeforeItReachesASink()
+    {
+        var held = DexiconAuthMiddleware.OneLine(ForgedPath);
+
+        held.ShouldNotContain("\n");
+        held.ShouldNotContain("\r");
+        held.Length.ShouldBe(ForgedPath.Length);
+        held.ShouldContain("DELETE /api/corpora/books");
+
+        Render("[{Level:u3}] {Message:lj}", held).Split('\n').Length.ShouldBe(1);
+    }
+
+    [Fact]
+    public void AnEscapeSequenceGoesWithTheLineBreaks()
+    {
+        // A terminal reading the log is the same trick by another route: [2J
+        // clears the screen of whoever tails it.
+        DexiconAuthMiddleware.OneLine("/x[2Jcleared").ShouldBe("/x�[2Jcleared");
+    }
+
+    [Fact]
+    public void AnOrdinaryValueIsTheSameString()
+    {
+        // Every request goes through this. The common case must not allocate.
+        const string path = "/api/corpora/books/files";
+
+        DexiconAuthMiddleware.OneLine(path).ShouldBeSameAs(path);
     }
 
     [Fact]
