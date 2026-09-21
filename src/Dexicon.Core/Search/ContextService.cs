@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Dexicon.Core.Auth;
+using Dexicon.Core.Documents;
 using Dexicon.Core.Vectors;
 
 namespace Dexicon.Core.Search;
@@ -88,7 +89,8 @@ public sealed record ContextResult
 ///
 /// See docs/decisions.md D-29.
 /// </summary>
-public sealed class ContextService(SearchService search, ScopeResolver scopes, IVectorStore vectors)
+public sealed class ContextService(
+    SearchService search, ScopeResolver scopes, IVectorStore vectors, DocumentReader documents)
 {
     public async Task<ContextResult> BuildAsync(
         Principal principal, ContextRequest request, CancellationToken ct = default)
@@ -112,9 +114,11 @@ public sealed class ContextService(SearchService search, ScopeResolver scopes, I
             MaxCharsPerHit = 0,
         }, ct);
 
-        var candidates = request.Neighbours > 0
-            ? await ExpandAsync(principal, request.Corpus, result.Hits, request.Neighbours, ct)
-            : [.. result.Hits.Select(h => new ContextCandidate(h, [h]))];
+        // Unconditionally, including at zero neighbours. Zero used to take the hits as
+        // they came, which meant the DEFAULT request never reached the document and got
+        // chunk payloads — the shape this endpoint was supposed to stop returning.
+        var candidates = await BuildCandidatesAsync(
+            principal, request.Corpus, result.Hits, request.Neighbours, ct);
 
         var assembled = ContextAssembler.Assemble(candidates, request.MaxChars, request.LineNumbers);
 
@@ -174,7 +178,7 @@ public sealed class ContextService(SearchService search, ScopeResolver scopes, I
     /// qualification; resolving the hits' corpus ids instead drops it and lands on the
     /// default set.
     /// </summary>
-    private async Task<IReadOnlyList<ContextCandidate>> ExpandAsync(
+    private async Task<IReadOnlyList<ContextCandidate>> BuildCandidatesAsync(
         Principal principal, IReadOnlyList<string>? requested, IReadOnlyList<SearchHit> hits,
         int neighbours, CancellationToken ct)
     {
@@ -187,6 +191,7 @@ public sealed class ContextService(SearchService search, ScopeResolver scopes, I
         var targets = scope.Targets.ToDictionary(t => t.Corpus.Id, StringComparer.Ordinal);
 
         var files = new Dictionary<(string Corpus, string Path), IReadOnlyList<SearchHit>>();
+        var docs = new Dictionary<(string Corpus, string Set, string? Source, string Path), string[]?>();
         var candidates = new List<ContextCandidate>(hits.Count);
 
         foreach (var hit in hits)
@@ -197,33 +202,205 @@ public sealed class ContextService(SearchService search, ScopeResolver scopes, I
                 continue;
             }
 
-            var key = (hit.CorpusId, hit.FilePath);
-            if (!files.TryGetValue(key, out var chunks))
+            List<SearchHit> pieces;
+
+            if (neighbours == 0)
             {
-                chunks = await vectors.GetFileChunksAsync(
-                    target.Set.CollectionName, target.Set.Id, hit.FilePath, ct);
-                files[key] = chunks;
+                // No chunk list needed to know the hit's own span, and fetching one to
+                // rediscover the chunk already in hand is a vector read per file for
+                // nothing. The document read below still happens, which is the point.
+                pieces = [hit];
+            }
+            else
+            {
+                var key = (hit.CorpusId, hit.FilePath);
+                if (!files.TryGetValue(key, out var chunks))
+                {
+                    chunks = await vectors.GetFileChunksAsync(
+                        target.Set.CollectionName, target.Set.Id, hit.FilePath, ct);
+                    files[key] = chunks;
+                }
+
+                // Within the one source the hit came from. Two sources of a corpus can
+                // hold the same path, and interleaving their chunks stitches two
+                // different files into one passage that reads as continuous.
+                var sameFile = hit.SourceId is { } source
+                    ? chunks.Where(c => c.SourceId == source).ToList()
+                    : [.. chunks];
+
+                pieces = sameFile
+                    .Where(c => Math.Abs(c.ChunkIndex - hit.ChunkIndex) <= neighbours)
+                    .OrderBy(c => c.ChunkIndex)
+                    .ToList();
+
+                // A hit whose own chunk did not come back is a hit whose index has moved
+                // under the query. What matched is still the honest answer.
+                if (!pieces.Exists(p => p.ChunkIndex == hit.ChunkIndex))
+                {
+                    candidates.Add(new ContextCandidate(hit, [hit]));
+                    continue;
+                }
             }
 
-            // Within the one source the hit came from. Two sources of a corpus can hold
-            // the same path, and interleaving their chunks stitches two different files
-            // into one passage that reads as continuous.
-            var sameFile = hit.SourceId is { } source
-                ? chunks.Where(c => c.SourceId == source).ToList()
-                : [.. chunks];
-
-            var pieces = sameFile
-                .Where(c => Math.Abs(c.ChunkIndex - hit.ChunkIndex) <= neighbours)
-                .OrderBy(c => c.ChunkIndex)
-                .ToList();
-
-            // A hit whose own chunk did not come back is a hit whose index has moved under
-            // the query. What matched is still the honest answer, so it is what is used.
-            candidates.Add(pieces.Exists(p => p.ChunkIndex == hit.ChunkIndex)
-                ? new ContextCandidate(hit, pieces)
-                : new ContextCandidate(hit, [hit]));
+            candidates.Add(await FromDocumentAsync(target.Corpus.Id, target.Set.Id, hit, pieces, docs, ct)
+                           ?? new ContextCandidate(hit, pieces));
         }
 
         return candidates;
+    }
+
+    /// <summary>
+    /// The passage for a hit, read out of the document rather than glued from the chunks
+    /// either side of it — which is what `get_context` already does, and what this
+    /// endpoint did not.
+    ///
+    /// The chunks still decide WHERE: the span is their line range, so `neighbours`
+    /// keeps its meaning and a caller asking for two either side gets the same width as
+    /// before. Only the TEXT changes source. Stitching chunk payloads leaves whatever
+    /// the chunker did not cut — a heading skipped by a boundary rule, the gap where an
+    /// oversized chunk was split — missing from a passage that reads as continuous.
+    ///
+    /// Null where there is no document to read, which is the ordinary answer for code
+    /// and plain text on a mount: reading those IS the extraction, so nothing is cached
+    /// and the chunks are the only copy. The caller falls back to them, as
+    /// <c>get_context</c> does, so the two agree on both paths rather than only on one.
+    /// </summary>
+    internal async Task<ContextCandidate?> FromDocumentAsync(
+        string corpusId, string chunkSetId, SearchHit hit, List<SearchHit> pieces,
+        Dictionary<(string Corpus, string Set, string? Source, string Path), string[]?>? cache = null,
+        CancellationToken ct = default)
+    {
+        // One read per file, not per hit, and one split with it. Several hits in one book
+        // is the ordinary shape of a result, and a document is the whole extracted text —
+        // hundreds of thousands of characters for a technical book — so reading it again
+        // for each hit is the same load repeated. What is cached is the line table rather
+        // than the text, because taking a window out of the text walks it from line one:
+        // caching only the read left fifty hits walking the same book fifty times. Misses
+        // are cached too: a file with no document must not be looked up once per hit to
+        // learn that again.
+        var key = (corpusId, chunkSetId, hit.SourceId, hit.FilePath);
+        string[]? lines;
+
+        if (cache is not null && cache.TryGetValue(key, out var cached)) lines = cached;
+        else
+        {
+            var document = await documents.ForAsync(corpusId, chunkSetId, hit.FilePath, hit.SourceId, ct);
+            lines = document is null ? null : Passage.Lines(document.Text);
+            if (cache is not null) cache[key] = lines;
+        }
+
+        if (lines is null) return null;
+
+        var ordered = pieces.OrderBy(p => p.ChunkIndex).ToList();
+        var lo = ordered.Min(p => p.StartLine);
+        var hi = ordered.Max(p => p.EndLine);
+
+        var (text, gotLo, gotHi) = Passage.Window(lines, lo, hi);
+
+        // Anything short of the whole span means the document and these chunks were cut
+        // from different versions of the file. Window returns what it could reach, so a
+        // document ending at line 15 answers a request for 10-20 with 10-15 — a passage
+        // shorter than its own citation claims, and quotable. Only the exact span is
+        // usable; otherwise the chunks are what the hit's line numbers address.
+        if (text.Length == 0 || gotLo != lo || gotHi != hi) return null;
+
+        // One window per chunk, each running to where the next begins, rather than one
+        // window for the whole span.
+        //
+        // The span as a single piece would have to carry a single chunk index, and that
+        // is what ContextAssembler de-duplicates and budgets on: two hits in one file
+        // would then be charged for their whole windows even where those windows cover
+        // the same lines, and the second hit gets dropped by a budget it actually fits.
+        // Keeping the indexes keeps that accounting correct.
+        //
+        // Extending each piece to the next one's first line is what closes the gaps the
+        // chunker left, which is the point of reading the document at all. Chunks that
+        // overlap lose the duplicated lines the same way, since a piece stops where its
+        // successor starts.
+        // Sliced out of the line table, not fetched again per piece. Window over the
+        // text walks the document from its first line to find one, so asking it once per
+        // chunk rescans the whole text as many times as there are neighbours. The span
+        // was checked against the table above, so every index below is in range.
+        //
+        // Chunks that begin on the same line are one group, and a group of more than one
+        // is a line the chunker had to divide.
+        var groups = new List<List<SearchHit>>();
+        foreach (var c in ordered)
+        {
+            if (groups.Count > 0 && groups[^1][0].StartLine == c.StartLine) groups[^1].Add(c);
+            else groups.Add([c]);
+        }
+
+        var windows = new List<SearchHit>(groups.Count);
+
+        for (var g = 0; g < groups.Count; g++)
+        {
+            var group = groups[g];
+            var from = group[0].StartLine;
+            var to = g + 1 < groups.Count ? groups[g + 1][0].StartLine - 1 : hi;
+            if (to < from) continue;
+
+            // A line the chunker had to divide keeps its own slices, untouched.
+            //
+            // Every slice of an oversized line reports the same start and end, so the
+            // document's copy of that line is what they say between them and there is no
+            // gap inside one line for a document read to close. Replacing them with it
+            // loses which slice matched: the assembler cuts a block from the start of its
+            // first piece, so a hit in the third slice of a line that is itself over the
+            // budget renders as the opening of the line, or as nothing, while the
+            // citation still names the hit.
+            //
+            // Untouched includes the line numbers. Extending the last slice to cover the
+            // lines after it reads as tidy and is not: `Passage.Stitch` separates slices
+            // of one line by their text, and only for a piece whose start and end are the
+            // same line, so a slice widened to 2-4 falls through to the overlap rule
+            // instead, which drops its first line as already emitted — the slice's own
+            // text. Lines after a divided one are left to the next chunk that covers
+            // them, and Stitch discloses the gap where none does.
+            if (IsDivided(group, lines))
+            {
+                windows.AddRange(group);
+                continue;
+            }
+
+            // The hit's own index when the hit is in this group, so the assembler finds
+            // the piece it is citing; otherwise the group's first, which is its identity.
+            var owner = group.Find(c => c.ChunkIndex == hit.ChunkIndex) ?? group[0];
+
+            windows.Add(owner with
+            {
+                StartLine = from,
+                EndLine = to,
+                Content = string.Join('\n', lines[(from - 1)..to]),
+            });
+        }
+
+        return windows.Count == 0 ? null : new ContextCandidate(hit, windows);
+    }
+
+    /// <summary>
+    /// Whether these chunks are slices of one line the chunker had to divide, rather than
+    /// chunks that happen to start on it.
+    ///
+    /// Several sharing a start line settles it. One does not, and one is the ordinary
+    /// shape of the default request: <c>Neighbours = 0</c> sends the hit by itself, so a
+    /// slice arrives with nothing beside it to be compared against.
+    ///
+    /// What identifies it on its own is that dividing a line cuts it up: a slice is part
+    /// of the line, and shorter than it. A chunk left behind by an older version of the
+    /// file is a different text rather than part of this one, so it still gets the
+    /// document's line, which is the point of reading the document at all.
+    ///
+    /// A short slice could be contained by coincidence. Then the payload really is in
+    /// the line, and returning it is narrower than it needed to be rather than wrong.
+    /// </summary>
+    private static bool IsDivided(List<SearchHit> group, string[] lines)
+    {
+        if (group.Count > 1) return true;
+        if (group[0].StartLine != group[0].EndLine) return false;
+
+        var line = lines[group[0].StartLine - 1];
+        return line.Length > group[0].Content.Length
+               && line.Contains(group[0].Content, StringComparison.Ordinal);
     }
 }
