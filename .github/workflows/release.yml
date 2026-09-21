@@ -84,7 +84,7 @@ jobs:
           echo "Release notes for $VERSION:"
           cat release-notes.md
 
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v3
 
       - name: Tags and labels
