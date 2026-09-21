@@ -266,7 +266,7 @@ public sealed class CorpusIndexer(
         // objects, so clearing a hash here is what the check reads a few lines down.
         var byPath = new Dictionary<string, FileChunkState>(attachments.Count, StringComparer.Ordinal);
         foreach (var f in attachments) byPath[f.RelativePath] = states[f.Id];
-        await MarkFilesMissingVectorsAsync(set, source.Id, byPath, ct);
+        await ReconcileChunkCountsAsync(set, source.Id, byPath, ct);
 
         job.FilesTotal += attachments.Count;
         job.Phase = "extract";
@@ -765,7 +765,7 @@ public sealed class CorpusIndexer(
                 StringComparer.Ordinal);
 
         // Before anything is written, while the two records are both at rest.
-        await MarkFilesMissingVectorsAsync(set, source.Id, states, ct);
+        await ReconcileChunkCountsAsync(set, source.Id, states, ct);
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var sinceFlush = System.Diagnostics.Stopwatch.StartNew();
@@ -1148,8 +1148,12 @@ public sealed class CorpusIndexer(
             : StringComparison.Ordinal;
 
     /// <summary>
-    /// Clear the hash of any file whose recorded chunk count the vector store does not
-    /// back, so the staleness check below re-indexes it.
+    /// Clear the hash of any file whose recorded chunk count and the vector store's own
+    /// disagree, so the staleness check below re-indexes it.
+    ///
+    /// Either direction counts. A deficit is the one that prompted this, but a surplus
+    /// is the same disagreement and the same repair, and the pass cannot tell which of
+    /// the two records is the wrong one.
     ///
     /// The catalogue and the vector store are two records of the same fact, written at
     /// different moments, and nothing else compares them. A pass that dies between
@@ -1163,7 +1167,7 @@ public sealed class CorpusIndexer(
     /// touches a file the two records agree on, so the worst it can cost is re-embedding
     /// a file that did not need it.
     /// </summary>
-    private async Task MarkFilesMissingVectorsAsync(ChunkSet set, string sourceId,
+    private async Task ReconcileChunkCountsAsync(ChunkSet set, string sourceId,
         Dictionary<string, FileChunkState> states, CancellationToken ct)
     {
         IReadOnlyDictionary<string, int>? actual;
@@ -1193,8 +1197,11 @@ public sealed class CorpusIndexer(
             var held = actual.GetValueOrDefault(path);
             if (held == state.ChunkCount) continue;
 
+            // Neutral about the direction. A surplus is as much a disagreement as a
+            // deficit and is re-indexed the same way, so wording that assumes a shortfall
+            // would misdescribe half the cases to whoever is reading the log.
             log.LogWarning(
-                "{Set}: {File} records {Recorded:N0} chunks but the index holds {Held:N0}; re-indexing it",
+                "{Set}: {File} records {Recorded:N0} chunks, the index holds {Held:N0}; re-indexing it",
                 set.Name, path, state.ChunkCount, held);
             state.ContentHash = null;
             mismatched++;
@@ -1204,7 +1211,8 @@ public sealed class CorpusIndexer(
         {
             await db.SaveChangesAsync(ct);
             log.LogWarning(
-                "Set {Set}: {Count} file(s) recorded chunks the index does not have; they will be re-indexed",
+                "Set {Set}: {Count} file(s) whose recorded chunk count and the index disagree; "
+                + "they will be re-indexed",
                 set.Name, mismatched);
         }
     }

@@ -70,6 +70,25 @@ public sealed class IndexedFileKeepsItsVectorsTests
     }
 
     [Fact]
+    public async Task ASurplusIsADisagreementToo_AndIsRepairedTheSameWay()
+    {
+        // The check compares, it does not subtract. A file holding MORE points than its
+        // row records - a stale chunk left at a high index - is the same disagreement,
+        // and the pass cannot tell which of the two records is the wrong one.
+        await using var harness = await IndexedAsync();
+        var recorded = harness.Vectors.CountFor("note.md");
+
+        harness.Vectors.AddStraySilently("note.md");
+        harness.Vectors.CountFor("note.md").ShouldBe(recorded + 1);
+
+        var job = await harness.RunIndexAsync();
+
+        job.FilesDone.ShouldBe(1, "a surplus is re-indexed, not ignored");
+        harness.Vectors.CountFor("note.md").ShouldBe(recorded,
+            "re-indexing deletes the file's points first, so the stray goes with them");
+    }
+
+    [Fact]
     public async Task AnIncompleteCountIsNotTreatedAsAnEmptyOne()
     {
         // The dangerous failure. A facet at its cap reports nothing for every file past

@@ -285,6 +285,16 @@ internal sealed class IndexingHarness : IAsyncDisposable
                                 && (chunkSetId is null || p.ChunkSetId == chunkSetId)
                                 && (sourceId is null || p.SourceId == sourceId));
 
+        /// <summary>
+        /// An extra point for a file, beyond what the catalogue recorded. The opposite
+        /// disagreement to a loss, and one a stale chunk at a high index produces.
+        /// </summary>
+        public void AddStraySilently(string filePath)
+        {
+            var existing = _points.First(p => p.FilePath == filePath);
+            _points.Add(existing with { ChunkIndex = _points.Max(p => p.ChunkIndex) + 1 });
+        }
+
         /// <summary>One point of a file, for a partial loss rather than a total one.</summary>
         public void DropOne(string filePath)
         {
