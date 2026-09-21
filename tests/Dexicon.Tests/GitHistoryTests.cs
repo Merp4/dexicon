@@ -37,9 +37,18 @@ public sealed class GitHistoryTests : IDisposable
         foreach (var a in args) info.ArgumentList.Add(a);
 
         using var p = Process.Start(info)!;
-        var stdout = p.StandardOutput.ReadToEnd();
-        var stderr = p.StandardError.ReadToEnd();
+
+        // Both pipes drained at once, which is the deadlock the code under test comments
+        // about and this helper originally walked into. `git add` over 900 files emits a
+        // line-ending warning per file to STDERR; reading stdout to the end first filled
+        // that buffer, git blocked writing it, stdout never closed, and the test hung
+        // until it was killed.
+        var stdoutTask = p.StandardOutput.ReadToEndAsync();
+        var stderrTask = p.StandardError.ReadToEndAsync();
+
         p.WaitForExit();
+        var stdout = stdoutTask.GetAwaiter().GetResult();
+        var stderr = stderrTask.GetAwaiter().GetResult();
 
         if (p.ExitCode != 0)
             throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {stderr}");
@@ -247,7 +256,12 @@ public sealed class GitHistoryTests : IDisposable
     public async Task APatchTooLargeToReadIsNeverRead()
     {
         Commit("small.txt", "one\n", "a small change");
-        Commit("big.txt", string.Join('\n', Enumerable.Range(0, 60_000).Select(i => $"line {i}")), "a huge change");
+
+        // Over the read ceiling, which is the stat's own allowance plus the diff cap.
+        // Long lines rather than many, so git has less to diff for the same bytes.
+        var wide = new string('x', 100);
+        Commit("big.txt", string.Join('\n', Enumerable.Range(0, 20_000).Select(i => $"{i} {wide}")),
+            "a huge change");
 
         var commits = await EnumerateAsync();
         commits.Count.ShouldBe(2);
@@ -261,7 +275,7 @@ public sealed class GitHistoryTests : IDisposable
         var big = read[commits[0].Sha];
         big.ShouldContain("    a huge change", Case.Sensitive);
         big.ShouldContain("not included");
-        big.ShouldNotContain("+line 59999", Case.Sensitive);
+        big.ShouldNotContain(wide, Case.Sensitive, "no part of the patch reached the document");
         big.ShouldContain("big.txt", Case.Sensitive, "the stat survives, which is the point of keeping it");
 
         // Which path dropped it, and the distinction is the whole test. A patch read
@@ -273,6 +287,39 @@ public sealed class GitHistoryTests : IDisposable
 
         read[commits[1].Sha].ShouldContain("+one", Case.Sensitive,
             "a small commit in the same batch still gets its patch");
+    }
+
+    /// <summary>
+    /// A commit that touches many files keeps its stat, and the source does not fail.
+    ///
+    /// The ceiling measured the stat against the diff's budget and then handed the
+    /// stat-only retry that same budget, so a commit whose stat alone exceeded it made
+    /// the retry throw as well — losing the one part the cap promises to keep, and
+    /// failing the whole source with it. The stat has its own allowance now.
+    ///
+    /// Note what this does NOT claim: that a large stat can coexist with a small patch.
+    /// It cannot, because a stat line implies a diff header, so the patch is always the
+    /// larger of the two. The reachable half of the problem is the retry.
+    /// </summary>
+    [Fact]
+    public async Task ACommitThatTouchesManyFilesKeepsItsStat()
+    {
+        Directory.CreateDirectory(Path.Combine(_repo, "many"));
+        for (var i = 0; i < 900; i++)
+            File.WriteAllText(Path.Combine(_repo, "many", $"f{i}.txt"), "a\n");
+
+        Git("add", "many");
+        Git("commit", "-m", "touch many files");
+
+        var commits = await EnumerateAsync();
+
+        var text = (await ReadAsync(
+            new GitHistoryOptions { IncludeDiff = true, MaxDiffBytes = 32_000 }, commits))[commits[0].Sha];
+
+        text.ShouldContain("900 files changed", Case.Sensitive,
+            "the stat is kept whatever happens to the patch");
+        text.ShouldContain("    touch many files", Case.Sensitive);
+        text.ShouldContain("not included", Case.Sensitive, "and the patch is over its own limit");
     }
 
     [Fact]

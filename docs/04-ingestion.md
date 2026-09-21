@@ -185,6 +185,15 @@ them holds, and turning merges on adds documents without altering a single exist
 The include globs DO, because they are passed to git and decide which files the stat
 lists and which hunks the patch holds.
 
+**The container runs as uid 10001 and `/workspaces` is a host bind mount**, so the
+repository belongs to somebody else and git refuses it outright with "detected dubious
+ownership". Every call therefore passes `-c safe.directory=<the repository>`: one
+invocation's configuration, naming one repository, rather than a global setting that
+outlives the call. Measured rather than assumed — `docker run -u 10001:10001 -v
+<repo>:/w alpine/git` fails exactly that way and succeeds with the flag. Without it
+every history source reports unavailable on a normal deployment while every test
+passes, because a test runs as the user who owns the repository.
+
 The git binary is in the image (`apk add git`) rather than a native library: the runtime
 is Alpine, so a library means musl builds to keep working, and a handful of processes per
 pass is not a cost worth that. The inventory is one call; reading is one call per 100

@@ -847,7 +847,7 @@ export function CorporaView({
                   {c.chunkSets.length > 1 && <span>{c.chunkSets.length} chunk sets</span>}
                 </div>
 
-                {running && <ProgressBar job={job} />}
+                {running && <ProgressBar job={job} sources={c.sources} />}
               </CardButton>
             );
           })}
@@ -859,12 +859,20 @@ export function CorporaView({
   );
 }
 
-function ProgressBar({ job }: { job: Job & { currentFile?: string } }) {
+/**
+ * @param sources The corpus's sources, so the caption counts what the job is counting.
+ * A history job reading "0/201 files" beside a corpus that says "201 commits" is two
+ * numbers about the same work disagreeing on what the work is.
+ */
+function ProgressBar({ job, sources }: {
+  job: Job & { currentFile?: string };
+  sources?: Corpus['sources'];
+}) {
   const processed = job.filesDone + job.filesSkipped + job.filesFailed;
   const pct = job.filesTotal > 0 ? Math.min(100, (processed / job.filesTotal) * 100) : 0;
   const caption =
-    `${job.phase ?? job.state} · ${processed.toLocaleString()}/${job.filesTotal.toLocaleString()} files` +
-    ` · ${job.chunksWritten.toLocaleString()} chunks`;
+    `${job.phase ?? job.state} · ${processed.toLocaleString()}/${job.filesTotal.toLocaleString()}` +
+    ` ${unitFor(sources, job.filesTotal)} · ${job.chunksWritten.toLocaleString()} chunks`;
 
   return (
     <div className="mt-2.5">
@@ -1130,7 +1138,7 @@ export function CorpusDetail({
         <Button variant="danger" onClick={() => setConfirmDelete(true)}><Trash2 />Delete</Button>
       </div>
 
-      {job?.phase && <div className="card p-3.5"><ProgressBar job={job} /></div>}
+      {job?.phase && <div className="card p-3.5"><ProgressBar job={job} sources={corpus.sources} /></div>}
 
       <CoverageNotice
         gaps={gaps}
@@ -2243,6 +2251,9 @@ function groupRuns(jobs: Job[]): ({ kind: 'job'; job: Job } | { kind: 'quiet'; j
 export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: Record<string, Job & { currentFile?: string }>; onError: (e: unknown) => void }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const names = useMemo(() => Object.fromEntries(corpora.map((c) => [c.id, c.name])), [corpora]);
+  // The job's own corpus, so its caption counts what that corpus counts.
+  const sourcesOf = useMemo(
+    () => Object.fromEntries(corpora.map((c) => [c.id, c.sources])), [corpora]);
 
   useEffect(() => {
     const load = () => api.listJobs().then(setJobs).catch(onError);
@@ -2307,7 +2318,9 @@ export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: 
               </span>
             </div>
 
-            {(merged.state === 'running' || merged.phase) && <ProgressBar job={merged} />}
+            {(merged.state === 'running' || merged.phase) && (
+              <ProgressBar job={merged} sources={sourcesOf[j.corpusId]} />
+            )}
 
             <div className="dim mt-1.5 text-xs flex gap-3.5 flex-wrap">
               <span>{merged.filesDone.toLocaleString()} indexed</span>

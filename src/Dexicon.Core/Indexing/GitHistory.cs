@@ -447,11 +447,27 @@ public static class GitHistory
     /// </summary>
     private static long CeilingFor(GitHistoryOptions options, int commits)
     {
-        var perCommit = options.IncludeDiff ? options.MaxDiffBytes + Slack : Slack;
+        var perCommit = StatAllowance + (options.IncludeDiff ? options.MaxDiffBytes : 0);
         return Math.Min((long)perCommit * commits, AbsoluteCeiling);
     }
 
-    private const int Slack = 256 * 1024;
+    /// <summary>
+    /// What a commit's stat and headers may take, on top of any patch budget.
+    ///
+    /// Its own allowance rather than a share of the diff's, because the cap is on the
+    /// patch and the stat is what survives the patch being dropped. Folded together, a
+    /// commit with a long stat and a small patch was killed for exceeding a limit its
+    /// patch was inside, and the stat-only retry was then given the same small budget
+    /// and could fail as well — losing the one part the cap promises to keep.
+    ///
+    /// Generous, because a stat is one line per file and a commit that touches a
+    /// vendored tree has thousands: a stat line is on the order of 80 characters, so a
+    /// megabyte is something like twelve thousand files in one commit. It bounds memory
+    /// rather than shaping a document, and it is the floor of what a single commit's
+    /// read may buffer.
+    /// </summary>
+    private const int StatAllowance = 1024 * 1024;
+
     private const long AbsoluteCeiling = 64L * 1024 * 1024;
 
     private static string OverCeiling(GitHistoryOptions options) =>
@@ -603,8 +619,25 @@ public static class GitHistory
 
         foreach (var arg in args) info.ArgumentList.Add(arg);
 
+        // safe.directory, per invocation, or nothing here works in the shipped container.
+        //
+        // The image runs as uid 10001 and /workspaces is a host bind mount, so the
+        // repository is owned by somebody else and git refuses it outright:
+        //
+        //     fatal: detected dubious ownership in repository at '/w'
+        //
+        // Measured, not assumed: `docker run -u 10001:10001 -v <repo>:/w alpine/git`
+        // fails exactly that way and succeeds with `-c safe.directory=/w`. Without this
+        // every history source reports unavailable on a normal deployment, while every
+        // test passes, because a test runs as the user who owns the repository.
+        //
+        // `-c` rather than `git config --global`: this is one call's configuration, it
+        // names the one repository, and it cannot be left behind for another.
+        info.ArgumentList.Insert(0, "safe.directory=" + workingDirectory);
+        info.ArgumentList.Insert(0, "-c");
+
         // A repository someone else configured is not ours to trust with hooks, aliases
-        // or a pager. -c core.hooksPath= and --no-pager keep the call to what was asked.
+        // or a pager. --no-pager keeps the call to what was asked.
         info.ArgumentList.Insert(0, "--no-pager");
         info.Environment["GIT_TERMINAL_PROMPT"] = "0";
         info.Environment["GIT_OPTIONAL_LOCKS"] = "0";
