@@ -80,7 +80,12 @@ Dexicon v1 is done when, on a clean machine:
   beyond copying `.env.example` to `.env`.
 - `claude mcp add --transport http dexicon http://localhost:8477/mcp --header ...` connects,
   and `search_index` returns relevant chunks from a repository indexed through the UI.
-- A 50k-file repository indexes without manual intervention, and a subsequent refresh that
-  touches ten files re-embeds ten files.
+- A repository of tens of thousands of files indexes without manual intervention, and a
+  subsequent refresh re-embeds what changed and nothing else. Measured on a 27,001-file
+  repository: 26,992 files and 63,540 chunks in one unattended pass, and a later refresh
+  that found one changed file re-embedded that one file as 11 chunks.
+
+  The bar is the two properties — unattended at that scale, and incremental cost
+  proportional to the change — rather than a particular file count.
 - A key cannot retrieve content from a corpus it is not mapped to, through any surface, proven by
   a test that asserts it.
