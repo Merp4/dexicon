@@ -330,10 +330,17 @@ public static class CorpusEndpoints
                     detail: $"Corpus '{corpus.Name}' has no source '{sourceId}'.",
                     statusCode: 404);
 
-            if (source.Kind != SourceKind.Workspace)
+            if (source.Kind == SourceKind.Upload)
                 return Results.Problem(
-                    title: "Not a workspace source",
+                    title: "Not a walked source",
                     detail: "Filters apply to a folder being walked. An upload source has no tree to filter.",
+                    statusCode: 400);
+
+            if (body.Git is not null && source.Kind != SourceKind.GitHistory)
+                return Results.Problem(
+                    title: "Not a git-history source",
+                    detail: $"Source '{sourceId}' indexes files, not commits, so it has no history "
+                          + "settings. Add a second source over the same folder with gitHistory: true.",
                     statusCode: 400);
 
             if (body.MaxFileBytes is { } m && m <= 0)
@@ -343,6 +350,20 @@ public static class CorpusEndpoints
                     statusCode: 400);
 
             var changed = ApplyFilters(source, body);
+
+            if (body.Git is { } git)
+            {
+                // Compared as stored rather than as sent, so a request that re-states
+                // the current settings is not a change. Without that, saving the form
+                // unchanged re-indexes every commit in the repository, which is the same
+                // mistake the filter path already avoids one line above.
+                var updated = git.ToJson();
+                if (!string.Equals(source.GitOptions, updated, StringComparison.Ordinal))
+                {
+                    source.GitOptions = updated;
+                    changed = true;
+                }
+            }
 
             await db.SaveChangesAsync(ct);
 

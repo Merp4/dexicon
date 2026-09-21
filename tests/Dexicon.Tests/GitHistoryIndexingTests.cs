@@ -157,6 +157,46 @@ public sealed class GitHistoryIndexingTests
     /// A directory that is not a repository is an operational condition, not a failure
     /// that removes what was indexed before.
     /// </summary>
+    /// <summary>
+    /// The sweep covers a history source, so the corpus says what it holds before any
+    /// commit has been read.
+    ///
+    /// Adding a source enqueues a sweep, and the sweep walked workspace sources only —
+    /// so a new history source reported zero files and zero pending until an index job
+    /// reached the front of the queue. That is the case D-32 exists to prevent,
+    /// reintroduced for a new kind of source, and the inventory it needs is the cheap
+    /// `git log` this feature already runs.
+    /// </summary>
+    [Fact]
+    public async Task ASweepRecordsTheCommitsBeforeAnyAreRead()
+    {
+        await using var harness = await IndexingHarness.StartAsync("repo");
+        Init(harness.SourceDirectory);
+        Commit(harness.SourceDirectory, "a.txt", "one\n", "the first change");
+        Commit(harness.SourceDirectory, "b.txt", "two\n", "the second change");
+
+        await harness.SeedCorpusAsync(SourceKind.GitHistory);
+
+        var result = await harness.SweepAsync();
+
+        result.Outcome.ShouldBe(SweepOutcome.Swept);
+        result.Swept.ShouldBe(2);
+        result.Added.ShouldBe(2);
+
+        await using var db = harness.NewContext();
+        var states = await db.FileChunkStates.AsNoTracking().ToListAsync();
+        states.Count.ShouldBe(2);
+        states.ShouldAllBe(s => s.Status == FileStatus.Pending);
+        states.ShouldAllBe(s => s.ChunkCount == 0 && s.ContentHash == null);
+
+        (await IndexedPathsAsync(harness)).ShouldAllBe(p => p.StartsWith("commits/", StringComparison.Ordinal));
+
+        // And indexing afterwards fills those rows in rather than duplicating them.
+        var job = await harness.RunIndexAsync();
+        job.FilesDone.ShouldBe(2);
+        (await IndexedPathsAsync(harness)).Count.ShouldBe(2);
+    }
+
     [Fact]
     public async Task ADirectoryWithNoRepositoryIsUnavailableRatherThanFailed()
     {

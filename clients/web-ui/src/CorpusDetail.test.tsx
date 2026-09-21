@@ -141,6 +141,35 @@ describe('the sources a corpus reads', () => {
     expect(screen.getByText(/\.gitignore honoured/)).toBeInTheDocument();
   });
 
+  /**
+   * A history source ignores the size cap and .gitignore, and what it counts is commits.
+   * Rendering the file settings against one said it obeyed three things it does not
+   * read, and called its commits files.
+   */
+  it('describes a history source by what it actually does', async () => {
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          // Not the corpus's own total, which is rendered elsewhere on the page.
+          source({ id: 's1', kind: 'workspace', rootPath: 'api-repo', fileCount: 37 }),
+          source({
+            id: 's2', kind: 'githistory', rootPath: 'api-repo', fileCount: 201,
+            git: { ref: 'main', includeMessage: true, includeStat: true, includeDiff: true, maxDiffBytes: 65536, includeMerges: false },
+          }),
+        ],
+      }),
+    );
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText(/201 commits/)).toBeInTheDocument();
+    expect(screen.getByText(/37 files/)).toBeInTheDocument();
+    expect(screen.getByText(/main.*with the diff/)).toBeInTheDocument();
+
+    // One .gitignore line, for the workspace source, and none for the history one.
+    expect(screen.getAllByText(/\.gitignore honoured/)).toHaveLength(1);
+  });
+
   it('tells a corpus with no sources what to do about it', async () => {
     getCorpus.mockResolvedValue(corpus({ sources: [] }));
 

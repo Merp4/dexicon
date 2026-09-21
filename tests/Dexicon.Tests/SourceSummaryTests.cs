@@ -1,6 +1,7 @@
 using Dexicon.Api;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
+using Dexicon.Core.Indexing;
 
 namespace Dexicon.Tests;
 
@@ -34,6 +35,31 @@ public sealed class SourceSummaryTests
         IncludeGlobs = include,
         ExcludeGlobs = exclude,
     };
+
+    /// <summary>
+    /// A setting that can be written and never read back is one nobody can check,
+    /// correct or reproduce. The ref and the diff decide what every document in a
+    /// history source holds, and they were accepted at creation and then invisible.
+    /// </summary>
+    [Fact]
+    public void AHistorySourceReportsItsOwnSettings()
+    {
+        var options = new GitHistoryOptions { Ref = "release/1.0", IncludeDiff = true, MaxDiffBytes = 4096 };
+
+        var source = Source();
+        source.Kind = SourceKind.GitHistory;
+        source.GitOptions = options.ToJson();
+
+        source.ToSummary(Corpus, Configured).Git.ShouldBe(options);
+    }
+
+    [Fact]
+    public void ASourceWithNoHistoryReportsNone()
+    {
+        // Null rather than the defaults: a workspace source does not have these settings,
+        // and returning a plausible set would say it did.
+        Source().ToSummary(Corpus, Configured).Git.ShouldBeNull();
+    }
 
     [Fact]
     public void GlobsComeBackAsAList()

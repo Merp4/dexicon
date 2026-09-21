@@ -206,6 +206,18 @@ git's. A body line beginning `diff --git ` used to read as the start of a patch,
 body holding the record separator split a record in two and lost a commit — which the
 shared reconcile would then have seen as vanished and deleted the vectors of.
 
+A history source is swept like a workspace one: the inventory pass records a row per
+commit before anything is read, so a corpus says what it holds as soon as the source is
+added rather than when an index job reaches it.
+
+The settings come back on the source summary, and change with
+`PATCH /api/corpora/{name}/sources/{id}` carrying a `git` object, which replaces them
+whole. Settings that can be written and never read back are settings nobody can check or
+reproduce, and these decide what every document in the source holds. The UI shows the ref
+and whether the diff is on, and counts commits rather than files; the size cap and the
+`.gitignore` toggle are not shown at all, because a commit is not read from the working
+tree.
+
 See [D-34](decisions.md#d-34-a-commit-is-a-document).
 
 ## Extraction

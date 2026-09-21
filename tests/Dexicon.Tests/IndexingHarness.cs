@@ -242,6 +242,23 @@ internal sealed class IndexingHarness : IAsyncDisposable
     }
 
     /// <summary>
+    /// A discovery sweep over the harness's corpus, on its own catalogue connection as
+    /// the hosted one would have.
+    /// </summary>
+    public async Task<SweepResult> SweepAsync()
+    {
+        await using var db = NewContext();
+        var sweeper = new CorpusSweeper(
+            db,
+            new CorpusLeases(_services.GetRequiredService<IServiceScopeFactory>(),
+                NullLogger<CorpusLeases>.Instance),
+            _services.GetRequiredService<IOptions<DexiconOptions>>(),
+            NullLogger<CorpusSweeper>.Instance);
+
+        return await sweeper.SweepAsync(CorpusId, CancellationToken.None);
+    }
+
+    /// <summary>
     /// One file's row in one chunk set.
     ///
     /// The set has to be named. There is a row per set, so an unfiltered read returns

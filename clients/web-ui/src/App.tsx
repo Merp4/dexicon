@@ -1177,21 +1177,32 @@ export function CorpusDetail({
                     ) : (
                       <span className={s.fileCount ? 'dim text-xs' : 'text-xs text-[var(--warn-text)]'}>
                         {s.fileCount
-                          ? `${s.fileCount.toLocaleString()} ${s.fileCount === 1 ? 'file' : 'files'}`
-                          : 'no files'}
+                          ? `${s.fileCount.toLocaleString()} ${unitOf(s, s.fileCount)}`
+                          : `no ${unitOf(s, 0)}`}
                       </span>
                     )
                   )}
-                  <span className="dim text-xs">
-                    {s.useGitignore ? '.gitignore honoured' : '.gitignore ignored'}
-                    {' · '}≤ {formatBytes(s.maxFileBytes)}
-                    {s.includeGlobs?.length ? ` · only ${s.includeGlobs.join(', ')}` : ''}
-                    {s.excludeGlobs?.length ? ` · not ${s.excludeGlobs.join(', ')}` : ''}
-                    {/* Which of those the source would keep if the corpus default moved.
-                        Without it a reader reads every value as one they typed here, and
-                        editing the corpus default looks like it did nothing. */}
-                    {inheritsFromCorpus(s, corpus.defaults) && ' · some from the corpus'}
-                  </span>
+                  {/* A history source ignores the size cap and .gitignore, and what it
+                      counts is commits. Rendering the file settings against one said it
+                      obeyed three things it does not read, and called its commits files. */}
+                  {s.kind === 'githistory' ? (
+                    <span className="dim text-xs">
+                      {s.git?.ref ?? 'HEAD'}
+                      {' · '}{s.git?.includeDiff ? 'with the diff' : 'message and stat'}
+                      {s.includeGlobs?.length ? ` · only ${s.includeGlobs.join(', ')}` : ''}
+                    </span>
+                  ) : (
+                    <span className="dim text-xs">
+                      {s.useGitignore ? '.gitignore honoured' : '.gitignore ignored'}
+                      {' · '}≤ {formatBytes(s.maxFileBytes)}
+                      {s.includeGlobs?.length ? ` · only ${s.includeGlobs.join(', ')}` : ''}
+                      {s.excludeGlobs?.length ? ` · not ${s.excludeGlobs.join(', ')}` : ''}
+                      {/* Which of those the source would keep if the corpus default moved.
+                          Without it a reader reads every value as one they typed here, and
+                          editing the corpus default looks like it did nothing. */}
+                      {inheritsFromCorpus(s, corpus.defaults) && ' · some from the corpus'}
+                    </span>
+                  )}
                   {/* Adding a folder was one click; removing one meant deleting the whole
                       corpus and rebuilding it, losing its chunk sets, its history and every
                       other source with it. A path typed wrong is not worth that. */}
@@ -1495,6 +1506,17 @@ function CoverageNotice({
 /** A comma or newline separated list, with the blanks dropped. */
 function globList(raw: string): string[] {
   return raw.split(/[\n,]/).map((g) => g.trim()).filter(Boolean);
+}
+
+/**
+ * What this source counts, singular or plural.
+ *
+ * A history source's units are commits, and calling them files contradicts everything
+ * else the page says about it.
+ */
+function unitOf(s: Corpus['sources'][number], n: number): string {
+  const one = s.kind === 'githistory' ? 'commit' : 'file';
+  return n === 1 ? one : `${one}s`;
 }
 
 /**

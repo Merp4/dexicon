@@ -303,7 +303,14 @@ public sealed record SourceSummary(
     bool? OwnUseGitignore = null,
     int? OwnMaxFileBytes = null,
     IReadOnlyList<string>? OwnIncludeGlobs = null,
-    IReadOnlyList<string>? OwnExcludeGlobs = null);
+    IReadOnlyList<string>? OwnExcludeGlobs = null,
+    /// <summary>
+    /// A git-history source's settings, and null for every other kind. Returned because
+    /// a setting that can be written and never read back is a setting nobody can check,
+    /// correct or reproduce: the ref and the diff decide what every document in the
+    /// source holds, and they were accepted at creation and then invisible.
+    /// </summary>
+    GitHistoryOptions? Git = null);
 
 /// <summary>
 /// Filters every source of a corpus inherits unless it sets its own. Null means the
@@ -325,12 +332,20 @@ public sealed record CorpusDefaults(
 /// <c>includeGlobs</c>, <c>excludeGlobs</c>. JSON cannot distinguish an absent property
 /// from an explicit null once it is bound to a nullable, so clearing is said out loud.
 /// </param>
+/// <param name="Git">
+/// Git-history sources only, and it REPLACES those settings rather than merging into
+/// them: they are edited together on one form, and a partial update would need a way to
+/// say "leave that one alone" that JSON cannot distinguish from "unset it". Omit the
+/// field to leave them unchanged. Any setting that alters what a document holds
+/// re-indexes the history, and the response says so by carrying a job.
+/// </param>
 public sealed record UpdateSourceRequest(
     bool? UseGitignore = null,
     int? MaxFileBytes = null,
     IReadOnlyList<string>? IncludeGlobs = null,
     IReadOnlyList<string>? ExcludeGlobs = null,
-    IReadOnlyList<string>? Clear = null);
+    IReadOnlyList<string>? Clear = null,
+    GitHistoryOptions? Git = null);
 
 /// <summary>
 /// One indexed file: the extracted document where that is stored, and otherwise the
@@ -501,7 +516,8 @@ public static class Mapping
             s.UseGitignore,
             s.MaxFileBytes,
             SourceFilters.Globs(s.IncludeGlobs),
-            SourceFilters.Globs(s.ExcludeGlobs));
+            SourceFilters.Globs(s.ExcludeGlobs),
+            s.Kind == SourceKind.GitHistory ? GitHistoryOptions.FromJson(s.GitOptions) : null);
     }
 
     public static CorpusDefaults DefaultsOf(this Corpus c) =>

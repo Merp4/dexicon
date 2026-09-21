@@ -693,6 +693,44 @@
           }
         }
       },
+      "GitHistoryOptions": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "includeMessage": {
+            "type": "boolean"
+          },
+          "includeStat": {
+            "type": "boolean"
+          },
+          "includeDiff": {
+            "type": "boolean"
+          },
+          "maxDiffBytes": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "includeMerges": {
+            "type": "boolean"
+          },
+          "maxCommits": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "since": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date"
+          }
+        }
+      },
       "JobSummary": {
         "required": [
           "id",
@@ -1089,6 +1127,16 @@
             "items": {
               "type": "string"
             }
+          },
+          "git": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GitHistoryOptions"
+              }
+            ]
           }
         }
       }

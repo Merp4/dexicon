@@ -3410,6 +3410,16 @@
             "items": {
               "type": "string"
             }
+          },
+          "git": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GitHistoryOptions"
+              }
+            ]
           }
         }
       },
@@ -3623,6 +3633,16 @@
             "items": {
               "type": "string"
             }
+          },
+          "git": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GitHistoryOptions"
+              }
+            ]
           }
         }
       },
