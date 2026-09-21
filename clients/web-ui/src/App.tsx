@@ -1868,7 +1868,11 @@ function AddSourceModal({
   const [exclude, setExclude] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const alreadyHere = corpus.sources.some((s) => s.rootPath === path);
+  // The same folder AND the same kind. Indexing a repository's files and its history is
+  // deliberately two sources over one root, so warning about the second on the path
+  // alone told the reader that the thing this feature exists for was a mistake.
+  const wantedKind = gitHistory ? 'githistory' : 'workspace';
+  const alreadyHere = corpus.sources.some((s) => s.rootPath === path && s.kind === wantedKind);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -1908,7 +1912,9 @@ function AddSourceModal({
 
         {alreadyHere && (
           <Notice tone="warn" className="-mt-2 mb-3.5 text-xs">
-            This corpus already indexes that folder. Adding it again indexes everything twice.
+            {gitHistory
+              ? 'This corpus already indexes that folder’s history. Adding it again indexes every commit twice.'
+              : 'This corpus already indexes that folder. Adding it again indexes everything twice.'}
           </Notice>
         )}
 

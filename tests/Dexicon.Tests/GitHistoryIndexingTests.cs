@@ -169,5 +169,16 @@ public sealed class GitHistoryIndexingTests
         job.Error.ShouldNotBeNull();
         job.Error.ShouldContain("not a git repository");
         (await IndexedPathsAsync(harness)).ShouldBeEmpty();
+
+        // And the outcome survives the end of the pass. It did not: the corpus was set
+        // Unavailable by the source handler and then overwritten with Ready, and the job
+        // said Succeeded, so a caller polling the job for success was told yes while
+        // nothing had been indexed.
+        job.State.ShouldBe(JobState.Degraded, "the pass ran and one source could not be reached");
+
+        await using var db = harness.NewContext();
+        var corpus = await db.Corpora.FirstAsync();
+        corpus.State.ShouldBe(CorpusState.Unavailable);
+        corpus.LastIndexedUtc.ShouldBeNull("nothing was indexed, so nothing was indexed at");
     }
 }

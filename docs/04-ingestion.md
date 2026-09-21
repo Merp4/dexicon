@@ -151,7 +151,7 @@ What a document holds is per source:
 | `includeMessage` | true | Subject and body |
 | `includeStat` | true | Files touched, with ± counts |
 | `includeDiff` | false | The patch |
-| `maxDiffBytes` | 65536 | Per commit. Over it the patch is dropped and the document says so, in characters |
+| `maxDiffBytes` | 65536 | UTF-8 bytes of the patch, per commit. Over it the patch is dropped, the stat is kept, and the document says how large it was |
 | `includeMerges` | false | A merge's default patch is empty and its message is usually generated |
 | `maxCommits`, `since` | — | Bound the walk from the tip, or by date |
 
@@ -161,7 +161,9 @@ message and the stat it is 449 KB and the median 1,939, which fits in one chunk.
 repository where the diff is the point turns it on knowing that.
 
 An oversized patch is **reported, not cut**: a diff truncated mid-hunk reads as a complete
-change that did something other than what it did.
+change that did something other than what it did. The cap is measured over the patch
+alone, in UTF-8 bytes, and the stat is kept when the patch is dropped — it is the cheap
+half and it is what still answers "which files" without it.
 
 The source's include globs become git pathspecs, so they mean whose history and narrow the
 diff at the same time. Excludes are not passed: git's exclude pathspec syntax is its own,
@@ -177,14 +179,32 @@ the read rather than after it, as a file's must. Measured on this repository: 77
 enumerate 201 commits, 1,069ms to read all of them with their patches.
 
 Changing any setting that alters what a document says re-indexes the history, because
-every document really is different. Changing `ref`, `maxCommits` or `since` does not:
-those decide which commits are indexed, not what any one of them holds.
+every document really is different. Changing `ref`, `maxCommits`, `since` or
+`includeMerges` does not: those decide which commits are indexed, not what any one of
+them holds, and turning merges on adds documents without altering a single existing one.
+The include globs DO, because they are passed to git and decide which files the stat
+lists and which hunks the patch holds.
 
 The git binary is in the image (`apk add git`) rather than a native library: the runtime
-is Alpine, so a library means musl builds to keep working, and two processes per refresh
-is not a cost worth that. Refs and pathspecs are caller-supplied, so arguments are passed
-as a list and never a command line, with `--end-of-options` before the ref and `--` before
-the pathspecs.
+is Alpine, so a library means musl builds to keep working, and a handful of processes per
+pass is not a cost worth that. The inventory is one call; reading is one call per 100
+commits for the messages and another for the stat and patch when either is wanted, so a
+first pass over 201 commits with diffs is seven, and a refresh with nothing new is one.
+Refs and pathspecs are caller-supplied, so arguments are passed as a list and never a
+command line, with `--end-of-options` before the ref and `--` before the pathspecs, and
+the ref is checked against a small accepted set before any of that.
+
+**The root has to be the repository, not a folder inside one.** `rev-parse
+--is-inside-work-tree` answers yes from `/repo/src`, and a source accepted there would
+walk the whole of `/repo`: every commit of the parent indexed under a source scoped to
+one folder, including commits that never touched it. The top level has to equal the root.
+
+**A commit message is arbitrary text, so it is never parsed out of the same stream as
+git's own output.** The message is read under `--no-patch`; the stat and patch are read
+under a format carrying only a marker and a sha, so everything between two markers is
+git's. A body line beginning `diff --git ` used to read as the start of a patch, and a
+body holding the record separator split a record in two and lost a commit — which the
+shared reconcile would then have seen as vanished and deleted the vectors of.
 
 See [D-34](decisions.md#d-34-a-commit-is-a-document).
 

@@ -203,6 +203,36 @@ describe('adding a source', () => {
   });
 
   /**
+   * Indexing a repository's files and its history is deliberately two sources over one
+   * root. Warning on the path alone told the reader that the thing the feature exists
+   * for was a mistake.
+   */
+  it('does not call the history source a duplicate of the file source', async () => {
+    const { user, dialog } = await openAddSource();
+
+    await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
+    expect(within(dialog).getByText(/already indexes that folder/i)).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+
+    expect(within(dialog).queryByText(/already indexes that folder/i)).not.toBeInTheDocument();
+  });
+
+  it('still warns about a second history source on one folder', async () => {
+    getCorpus.mockResolvedValue(
+      corpus({ sources: [source({ kind: 'githistory', rootPath: 'api-repo' })] }),
+    );
+    const { user, dialog } = await openAddSource();
+
+    await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
+    expect(within(dialog).queryByText(/already indexes/i)).not.toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+
+    expect(within(dialog).getByText(/already indexes that folder’s history/i)).toBeInTheDocument();
+  });
+
+  /**
    * A history source indexes commits, so the settings that describe files do not apply
    * to it. Leaving them on screen would offer a size cap and a .gitignore toggle for
    * work that reads neither, and sending them would leave a source whose displayed

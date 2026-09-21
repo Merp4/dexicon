@@ -411,9 +411,15 @@ public sealed class DexiconTools
                 if (job.Error is { Length: > 0 }) sb.Append($"  error: {job.Error}\n");
             }
 
+            // Workspace sources only, as the HTTP report does. A git-history source has a
+            // root and reads none of the files under it, so counting it would make a
+            // repository look covered and hide the gap that says to add a file source.
             sb.Append(RenderCoverage(SourceCoverage.Find(
                 opts.Value.Indexing.WorkspaceRoot,
-                summary.Sources.Select(s => new SourceCoverage.SourceRoot(s.RootPath, s.MaxFileBytes)),
+                summary.Sources
+                    .Where(s => string.Equals(s.Kind, nameof(SourceKind.Workspace),
+                                StringComparison.OrdinalIgnoreCase))
+                    .Select(s => new SourceCoverage.SourceRoot(s.RootPath, s.MaxFileBytes)),
                 opts.Value.Indexing.DocumentMaxBytes)));
 
             sb.Append('\n');

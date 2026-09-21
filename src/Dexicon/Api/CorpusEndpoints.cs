@@ -654,7 +654,13 @@ public static class CorpusEndpoints
     internal static async Task<CoverageReport> CoverageAsync(
         CatalogDbContext db, IndexingOptions indexing, Corpus corpus, CancellationToken ct)
     {
-        var sources = await db.Sources.Where(s => s.CorpusId == corpus.Id).ToListAsync(ct);
+        // Workspace sources only, because coverage is about FILES on a mount that no
+        // source reads. A git-history source has a root and covers none of the files
+        // under it, so counting it made a repository look covered and suppressed the
+        // very gap that should have said "add a workspace source here too".
+        var sources = await db.Sources
+            .Where(s => s.CorpusId == corpus.Id && s.Kind == SourceKind.Workspace)
+            .ToListAsync(ct);
 
         var gaps = SourceCoverage.Find(
             indexing.WorkspaceRoot,

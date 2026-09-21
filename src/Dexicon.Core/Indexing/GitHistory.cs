@@ -68,18 +68,30 @@ public sealed record GitHistoryOptions
     /// What the synthesized text depends on, so that a commit already indexed can be
     /// skipped without being synthesized to find out.
     ///
-    /// A commit is immutable, so its sha plus this settles the content. It deliberately
-    /// leaves out <see cref="Ref"/>, <see cref="MaxCommits"/> and <see cref="Since"/>:
-    /// those decide WHICH commits are indexed, not what any one of them says, and
-    /// including them would re-index the whole history when the tip moved.
+    /// A commit is immutable, so its sha plus this settles the content. Only settings
+    /// that change what a document SAYS belong here, and the distinction is not
+    /// cosmetic: anything added re-reads and re-embeds every commit in the repository
+    /// the first time it changes.
+    ///
+    /// Out: <see cref="Ref"/>, <see cref="MaxCommits"/>, <see cref="Since"/> and
+    /// <see cref="IncludeMerges"/>, which decide WHICH commits are indexed and not what
+    /// any one of them holds. Turning merges on adds documents; it does not alter a
+    /// single existing one.
+    ///
+    /// <see cref="MaxDiffBytes"/> only when there is a diff for it to cap.
     /// </summary>
-    public string ContentFingerprint() => string.Join(
+    /// <param name="pathspecs">
+    /// The resolved include filters. They are passed to git, so they decide which files
+    /// the stat lists and which hunks the patch holds: the same commit under a narrower
+    /// filter is a different document, and leaving them out left old commits skipped
+    /// with a stat cut to paths nobody had selected any more.
+    /// </param>
+    public string ContentFingerprint(IReadOnlyList<string>? pathspecs = null) => string.Join(
         '|',
         IncludeMessage ? "m" : "-",
         IncludeStat ? "s" : "-",
-        IncludeDiff ? "d" : "-",
-        IncludeMerges ? "M" : "-",
-        MaxDiffBytes.ToString(CultureInfo.InvariantCulture));
+        IncludeDiff ? "d" + MaxDiffBytes.ToString(CultureInfo.InvariantCulture) : "-",
+        pathspecs is { Count: > 0 } ? string.Join(',', pathspecs.OrderBy(p => p, StringComparer.Ordinal)) : "-");
 }
 
 internal static class GitHistoryJson
@@ -115,14 +127,20 @@ public sealed record GitCommit(string Sha, DateTimeOffset AuthorDate, string Sub
 /// hunk: a hunk has no author and no subject, and the question people ask of history is
 /// why something changed, which lives in the message.
 ///
-/// Two passes, because a refresh has to be cheap. The first asks git only for shas and
+/// Two PHASES, because a refresh has to be cheap. The first asks git only for shas and
 /// subjects and is the inventory; the second asks for the bodies of the commits that are
 /// not already indexed. A single <c>git log -p</c> would produce every patch in the
 /// repository in order to discover that nothing had changed. Measured on this repository,
 /// 201 commits: 77ms to enumerate, 1,069ms to read all of them with their patches.
 ///
+/// Phases, not processes. The inventory is one call; reading is one call per 100 commits
+/// for the messages and another for the stat and patch when either is wanted, so a first
+/// pass over 201 commits with diffs is 1 + 3 + 3. That is bounded by what is NEW, which
+/// is the number that matters: a refresh with nothing to read is the one call.
+///
 /// The git binary rather than a library. The runtime image is Alpine, so a native library
-/// means musl builds to keep working, and one process per pass is not a cost worth that.
+/// means musl builds to keep working, and a handful of processes per pass is not a cost
+/// worth that.
 /// </summary>
 public static class GitHistory
 {
@@ -133,23 +151,55 @@ public static class GitHistory
     /// </summary>
     private const int ReadBatch = 100;
 
-    /// <summary>Record separator in git's output, ahead of every commit.</summary>
-    private const char Rs = '';
-
     /// <summary>
     /// A git call that never returns must not hold an indexing slot for ever. Generous,
     /// because the second pass over a large batch is real work.
     /// </summary>
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(10);
 
-    /// <summary>Whether this path is a git repository, which is what a source needs to be.</summary>
+    /// <summary>
+    /// Whether this path is the ROOT of a git repository, which is what a source has to be.
+    ///
+    /// Not merely inside one. `rev-parse --is-inside-work-tree` says true from
+    /// `/repo/src`, and a source pointed there would then walk the whole of `/repo`'s
+    /// history: every commit of the parent repository indexed under a source the
+    /// operator scoped to one directory, including commits that never touched it. The
+    /// top level has to BE the path.
+    /// </summary>
     public static async Task<bool> IsRepositoryAsync(string path, CancellationToken ct)
     {
         if (!Directory.Exists(path)) return false;
 
-        var (ok, stdout, _) = await RunAsync(path, ["rev-parse", "--is-inside-work-tree"], ct);
-        return ok && stdout.Trim() == "true";
+        var (ok, stdout, _) = await RunAsync(path, ["rev-parse", "--show-toplevel"], ct);
+        if (!ok) return false;
+
+        var top = stdout.Trim();
+        if (top.Length == 0) return false;
+
+        // git answers in forward slashes whatever the platform, and either side may carry
+        // a trailing separator or a differently-cased drive letter on Windows.
+        return string.Equals(
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(top)),
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// A ref this will pass to git, or null.
+    ///
+    /// Conservative on purpose. `--end-of-options` already stops a ref being read as an
+    /// option and arguments go as a list rather than a command line, so this is the third
+    /// guard rather than the only one; what it adds is that the set of things that can
+    /// reach git is small enough to read. Branch and tag names, `HEAD` and its `~`/`^`
+    /// forms, and object names.
+    /// </summary>
+    internal static bool IsAcceptableRef(string? value) =>
+        !string.IsNullOrWhiteSpace(value)
+        && value.Length <= 200
+        && !value.StartsWith('-')
+        && !value.Contains("..", StringComparison.Ordinal)
+        && value.All(c => char.IsAsciiLetterOrDigit(c)
+                          || c is '/' or '_' or '-' or '.' or '~' or '^' or '@' or '{' or '}');
 
     /// <summary>
     /// Every commit the settings select, newest first, as shas, dates and subjects.
@@ -162,7 +212,12 @@ public static class GitHistory
         string repoPath, GitHistoryOptions options, IReadOnlyList<string>? pathspecs,
         CancellationToken ct)
     {
-        var args = new List<string> { "log", $"--format={Rs}%H%x00%aI%x00%s" };
+        if (!IsAcceptableRef(options.Ref))
+            throw new GitHistoryException(
+                $"'{options.Ref}' is not a usable ref. A branch, a tag or an object name.");
+
+        var marker = Marker();
+        var args = new List<string> { "log", $"--format={marker}%H%x00%aI%x00%s" };
 
         if (!options.IncludeMerges) args.Add("--no-merges");
         if (options.MaxCommits is { } max) args.Add($"--max-count={max}");
@@ -184,7 +239,7 @@ public static class GitHistory
 
         var commits = new List<GitCommit>();
 
-        foreach (var record in stdout.Split(Rs, StringSplitOptions.RemoveEmptyEntries))
+        foreach (var record in stdout.Split(marker, StringSplitOptions.RemoveEmptyEntries))
         {
             var fields = record.Split('\0');
             if (fields.Length < 3) continue;
@@ -221,24 +276,107 @@ public static class GitHistory
         }
     }
 
+    /// <summary>
+    /// One batch, as two git calls rather than one.
+    ///
+    /// The formatted record and git's own output cannot be told apart inside one call.
+    /// A commit message is arbitrary text: a body line beginning `diff --git ` or a
+    /// leading-space line containing ` | ` reads exactly like the start of a patch or a
+    /// stat, and a message holding the record separator splits a record in half. Both
+    /// mistakes are silent and both corrupt a document.
+    ///
+    /// So the message is asked for on its own, with `--no-patch`, and the stat and patch
+    /// are asked for under a format that emits ONLY a marker and a sha — no message text
+    /// at all, so everything between two markers is git's and nothing has to be guessed.
+    /// The second call is skipped entirely when neither is wanted.
+    /// </summary>
     private static async Task<List<(string Sha, string Text)>> ReadBatchAsync(
         string repoPath, GitHistoryOptions options, List<string> shas,
         IReadOnlyList<string>? pathspecs, CancellationToken ct)
     {
-        // The body is LAST among the fields on purpose. A commit message can hold any
-        // byte, including the separator, and a NUL in a field before the body would shift
-        // every field after it. With the body last, the worst a stray separator can do is
-        // split the body, which is then rejoined.
+        var marker = Marker();
+        var stdin = string.Join('\n', shas);
+        var known = shas.ToHashSet(StringComparer.Ordinal);
+
+        var messages = await MessagesAsync(repoPath, marker, stdin, known, ct);
+        var tails = options.IncludeStat || options.IncludeDiff
+            ? await TailsAsync(repoPath, options, marker, stdin, pathspecs, known, ct)
+            : [];
+
+        var read = new List<(string, string)>(shas.Count);
+
+        foreach (var sha in shas)
+        {
+            if (!messages.TryGetValue(sha, out var message)) continue;
+            read.Add((sha, Document(options, message, tails.GetValueOrDefault(sha, string.Empty))));
+        }
+
+        return read;
+    }
+
+    /// <summary>
+    /// A record separator no commit can hold by accident: a control character and a
+    /// fresh GUID, per invocation. The alternative is a fixed byte, and a commit message
+    /// is arbitrary text, so a fixed byte is a collision waiting for the one repository
+    /// that contains it.
+    /// </summary>
+    private static string Marker() => "" + Guid.NewGuid().ToString("N") + "";
+
+    /// <param name="known">
+    /// The shas asked for. A record whose first field is not one of them is not a record:
+    /// it is the tail of the previous commit's body, split by a marker that improbably
+    /// appeared inside it. Re-joining it there is what keeps a message from being cut in
+    /// half, and what keeps a commit from going missing — a commit the reader drops is a
+    /// commit the shared reconcile sees as vanished and deletes the vectors of.
+    /// </param>
+    private static async Task<Dictionary<string, string[]>> MessagesAsync(
+        string repoPath, string marker, string stdin, HashSet<string> known, CancellationToken ct)
+    {
+        var (ok, stdout, stderr) = await RunAsync(repoPath,
+            ["log", "--no-walk", "--stdin", "--no-color", "--no-patch",
+             $"--format={marker}%H%x00%aI%x00%an%x00%ae%x00%s%x00%b"],
+            ct, stdin);
+
+        if (!ok) throw new GitHistoryException($"git log --stdin failed: {Summarise(stderr)}");
+
+        var messages = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        string? last = null;
+
+        foreach (var record in stdout.Split(marker, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var fields = record.Split('\0', 6);
+
+            if (fields.Length == 6 && known.Contains(fields[0].Trim()))
+            {
+                last = fields[0].Trim();
+                messages[last] = fields;
+                continue;
+            }
+
+            // Put back what the split took out, marker included, so the body is the
+            // body byte for byte.
+            if (last is not null) messages[last][5] += marker + record;
+        }
+
+        return messages;
+    }
+
+    /// <summary>
+    /// The stat and the patch, under a format carrying nothing but the marker and the
+    /// sha. Everything between one sha and the next marker is git's own output, so there
+    /// is no boundary to infer and no message text that can imitate one.
+    /// </summary>
+    private static async Task<Dictionary<string, string>> TailsAsync(
+        string repoPath, GitHistoryOptions options, string marker, string stdin,
+        IReadOnlyList<string>? pathspecs, HashSet<string> known, CancellationToken ct)
+    {
         var args = new List<string>
         {
-            "log", "--no-walk", "--stdin",
-            $"--format={Rs}%H%x00%aI%x00%an%x00%ae%x00%s%x00%b",
-            "--no-color",
+            "log", "--no-walk", "--stdin", "--no-color", $"--format={marker}%H",
         };
 
         if (options.IncludeDiff) args.Add("--patch");
         if (options.IncludeStat) args.Add("--stat");
-        if (!options.IncludeDiff && !options.IncludeStat) args.Add("--no-patch");
 
         if (pathspecs is { Count: > 0 })
         {
@@ -246,20 +384,23 @@ public static class GitHistory
             args.AddRange(pathspecs);
         }
 
-        var (ok, stdout, stderr) = await RunAsync(repoPath, args, ct, stdin: string.Join('\n', shas));
+        var (ok, stdout, stderr) = await RunAsync(repoPath, args, ct, stdin);
         if (!ok) throw new GitHistoryException($"git log --stdin failed: {Summarise(stderr)}");
 
-        var read = new List<(string, string)>(shas.Count);
+        var tails = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        foreach (var record in stdout.Split(Rs, StringSplitOptions.RemoveEmptyEntries))
+        foreach (var record in stdout.Split(marker, StringSplitOptions.RemoveEmptyEntries))
         {
-            var fields = record.Split('\0', 6);
-            if (fields.Length < 6) continue;
+            var newline = record.IndexOf('\n');
+            if (newline < 0) continue;
 
-            read.Add((fields[0].Trim(), Document(options, fields)));
+            var sha = record[..newline].Trim();
+            if (!known.Contains(sha)) continue;
+
+            tails[sha] = record[(newline + 1)..].Trim('\n');
         }
 
-        return read;
+        return tails;
     }
 
     /// <summary>
@@ -269,20 +410,15 @@ public static class GitHistory
     /// and a layout of our own would have to be explained to each one; the cost of
     /// following git is a few lines of formatting.
     /// </summary>
-    private static string Document(GitHistoryOptions options, string[] fields)
+    private static string Document(GitHistoryOptions options, string[] fields, string tail)
     {
-        var (sha, date, name, email, subject, rest) =
+        var (sha, date, name, email, subject, body) =
             (fields[0].Trim(), fields[1], fields[2], fields[3], fields[4], fields[5]);
 
         var sb = new StringBuilder();
         sb.Append("commit ").Append(sha).Append('\n');
         sb.Append("Author: ").Append(name).Append(" <").Append(email).Append(">\n");
         sb.Append("Date:   ").Append(date).Append('\n');
-
-        // The body carries the patch and the stat after it, because git appends them to
-        // the formatted record. Splitting them is what lets the message be included
-        // without the diff, and the diff be dropped when it is too large.
-        var (body, tail) = SplitTail(rest);
 
         if (options.IncludeMessage)
         {
@@ -299,12 +435,24 @@ public static class GitHistory
 
         if (tail.Length == 0) return sb.ToString();
 
-        if (options.IncludeDiff && tail.Length > options.MaxDiffBytes)
+        // The cap is over the PATCH, in the bytes the cap is named in.
+        //
+        // Measuring the stat as well let a long stat drop a patch that was inside the
+        // limit; measuring UTF-16 characters let a non-ASCII patch pass a byte cap it
+        // exceeded. The stat is what is left when the patch is removed, and it is never
+        // dropped: it is the cheap half and it is what still answers "which files" when
+        // the patch does not fit.
+        var (stat, patch) = SplitPatch(tail);
+        var patchBytes = Encoding.UTF8.GetByteCount(patch);
+
+        if (options.IncludeDiff && patchBytes > options.MaxDiffBytes)
         {
+            if (stat.Length > 0) sb.Append('\n').Append(stat.TrimEnd()).Append('\n');
+
             // Said, not cut. A patch truncated mid-hunk reads as a complete change that
             // did something different from what it did.
             sb.Append('\n')
-              .Append(CultureInfo.InvariantCulture, $"[diff of {tail.Length:N0} characters not included: over the {options.MaxDiffBytes:N0} character limit for this source]")
+              .Append(CultureInfo.InvariantCulture, $"[diff of {patchBytes:N0} bytes not included: over the {options.MaxDiffBytes:N0} byte limit for this source]")
               .Append('\n');
 
             return sb.ToString();
@@ -315,29 +463,19 @@ public static class GitHistory
     }
 
     /// <summary>
-    /// Splits git's trailing output into the message body and whatever followed it.
+    /// Git's trailing output split where the patch begins.
     ///
-    /// <c>--stat</c> and <c>--patch</c> are appended after the body with a blank line
-    /// between, and the first line of either is recognisable: a stat line names a file
-    /// and a bar, a patch begins with <c>diff --git</c>. Looking for those is what keeps
-    /// a message that happens to contain the word "diff" from being cut in half.
+    /// Safe here in a way it was not against a commit message: this text came from the
+    /// sha-only format, so every line of it is git's. `diff --git ` at the start of a
+    /// line is then the patch and nothing else.
     /// </summary>
-    private static (string Body, string Tail) SplitTail(string rest)
+    private static (string Stat, string Patch) SplitPatch(string tail)
     {
-        var lines = rest.Split('\n');
+        var at = tail.StartsWith("diff --git ", StringComparison.Ordinal)
+            ? 0
+            : tail.IndexOf("\ndiff --git ", StringComparison.Ordinal) + 1;
 
-        for (var i = 0; i < lines.Length; i++)
-        {
-            var line = lines[i];
-            var isPatch = line.StartsWith("diff --git ", StringComparison.Ordinal);
-            var isStat = line.StartsWith(' ') && line.Contains(" | ", StringComparison.Ordinal);
-
-            if (!isPatch && !isStat) continue;
-
-            return (string.Join('\n', lines[..i]), string.Join('\n', lines[i..]));
-        }
-
-        return (rest, string.Empty);
+        return at <= 0 ? (tail, string.Empty) : (tail[..at], tail[at..]);
     }
 
     private static string Summarise(string stderr)
@@ -395,19 +533,30 @@ public static class GitHistory
         var stdoutTask = process.StandardOutput.ReadToEndAsync(deadline.Token);
         var stderrTask = process.StandardError.ReadToEndAsync(deadline.Token);
 
-        if (stdin is not null)
-        {
-            await process.StandardInput.WriteAsync(stdin.AsMemory(), deadline.Token);
-            process.StandardInput.Close();
-        }
-
         try
         {
+            if (stdin is not null)
+            {
+                await process.StandardInput.WriteAsync(stdin.AsMemory(), deadline.Token);
+                process.StandardInput.Close();
+            }
+
             await process.WaitForExitAsync(deadline.Token);
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
+            // Killed either way, and that is the point of catching both.
+            //
+            // A cancelled wait abandons the readers and returns; the child keeps running,
+            // now writing into pipes nobody drains, so it fills them and blocks for as
+            // long as the process lives. Leaving that to the timeout branch alone meant a
+            // cancelled JOB — a stopped index, a lost lease, a shutdown — leaked a git
+            // process per call, which is the case most likely to produce several.
             try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
+
+            // The caller's cancellation is the caller's to see. Only the deadline is this
+            // method's own failure, and only that becomes an exception of ours.
+            ct.ThrowIfCancellationRequested();
             throw new GitHistoryException($"git did not finish within {Timeout.TotalMinutes:N0} minutes.");
         }
 

@@ -67,6 +67,10 @@ public sealed class CorpusIndexer(
 
         var embeddingFailed = false;
 
+        // A source this pass could not reach: a mount that is away, a folder with no
+        // repository in it. Not a failure of the job and not a success either.
+        var unavailable = false;
+
         // The caller's own cancellation, kept apart from losing the lease: one is someone
         // deciding to stop and the other is the machinery taking the corpus away, and they
         // are not the same outcome to record.
@@ -166,10 +170,13 @@ public sealed class CorpusIndexer(
                 {
                     var full = job.Kind is JobKind.Full or JobKind.Rebuild;
 
-                    // A switch with no default, so a fourth kind of source is a compile
-                    // error. It used to be an if with an else meaning Upload, which would
-                    // have indexed a repository's history as a set of attachments and
-                    // found none.
+                    // Every kind named, and an unknown one throws rather than being
+                    // skipped. It used to be an if with an else meaning Upload, which
+                    // would have indexed a repository's history as a set of attachments
+                    // and found none; a switch without the default below is no better,
+                    // because C# does not check a switch STATEMENT for exhaustiveness
+                    // and a fourth kind would silently match nothing and be left out of
+                    // its own index with the job reporting success.
                     switch (source.Kind)
                     {
                         case SourceKind.Workspace:
@@ -186,19 +193,41 @@ public sealed class CorpusIndexer(
                             await IndexUploadSourceAsync(corpus, set, templates, chunking, source, job,
                                 progress, full, onEmbeddingFailure: () => embeddingFailed = true, ct);
                             break;
+
+                        default:
+                            throw new InvalidOperationException(
+                                $"Source {source.Id} is of kind {source.Kind}, which this pass "
+                                + "does not know how to index.");
                     }
                 }
 
-                set.State = embeddingFailed ? CorpusState.Degraded : CorpusState.Ready;
-                if (!embeddingFailed) set.LastIndexedUtc = DateTime.UtcNow;
+                // A source that could not be reached sets the corpus Unavailable and
+                // returns, and that outcome has to survive the assignments below. It did
+                // not: a missing mount or a folder with no repository in it finished as a
+                // ready corpus and a succeeded job, with only `job.Error` saying anything
+                // was wrong, so a caller polling the job for success was told yes.
+                unavailable |= corpus.State == CorpusState.Unavailable;
+
+                set.State = embeddingFailed ? CorpusState.Degraded
+                    : unavailable ? CorpusState.Unavailable
+                    : CorpusState.Ready;
+
+                if (!embeddingFailed && !unavailable) set.LastIndexedUtc = DateTime.UtcNow;
             }
 
             job.Phase = "reconcile";
             await db.SaveChangesAsync(ct);
 
-            job.State = embeddingFailed ? JobState.Degraded : JobState.Succeeded;
-            corpus.State = embeddingFailed ? CorpusState.Degraded : CorpusState.Ready;
-            if (!embeddingFailed) corpus.LastIndexedUtc = DateTime.UtcNow;
+            // Degraded rather than Succeeded for an unreachable source: the pass did run
+            // and the sources it could reach are indexed, so it is not Failed, and it is
+            // not success either.
+            job.State = embeddingFailed || unavailable ? JobState.Degraded : JobState.Succeeded;
+
+            corpus.State = embeddingFailed ? CorpusState.Degraded
+                : unavailable ? CorpusState.Unavailable
+                : CorpusState.Ready;
+
+            if (!embeddingFailed && !unavailable) corpus.LastIndexedUtc = DateTime.UtcNow;
 
             if (embeddingFailed)
                 job.Error = "One or more files could not be embedded and were skipped. They will be retried on the next run.";
@@ -838,7 +867,12 @@ public sealed class CorpusIndexer(
             .Select(c => new WorkspaceWalker.Candidate(root, c.RelativePath, 0))
             .ToList();
 
-        var fingerprint = options.ContentFingerprint();
+        // The pathspecs go in: they are passed to git, so they decide which files the
+        // stat lists and which hunks the patch holds, and the same commit under a
+        // narrower filter is a different document. Left out, a corpus whose include
+        // globs changed kept every old commit skipped, with a stat cut to paths nobody
+        // had selected any more.
+        var fingerprint = options.ContentFingerprint(filters.IncludeGlobs);
 
         await IndexUnitsAsync(corpus, set, templates, chunking, source, job, progress, full,
             units, [],
@@ -866,7 +900,7 @@ public sealed class CorpusIndexer(
         var wanted = new Dictionary<string, WorkspaceWalker.Candidate>(toRead.Count, StringComparer.Ordinal);
         foreach (var candidate in toRead) wanted[byPath[candidate.RelativePath].Sha] = candidate;
 
-        var fingerprint = options.ContentFingerprint();
+        var fingerprint = options.ContentFingerprint(pathspecs);
 
         await foreach (var (sha, text) in
                        GitHistory.ReadAsync(root, options, [.. wanted.Keys], pathspecs, ct))
@@ -874,7 +908,10 @@ public sealed class CorpusIndexer(
             if (!wanted.TryGetValue(sha, out var candidate)) continue;
 
             yield return new ReadFile(
-                candidate with { SizeBytes = text.Length },
+                // UTF-8 bytes, because SizeBytes is a byte count everywhere else: it
+                // sorts the file list and is rendered as a size, and a commit carrying
+                // non-ASCII text would otherwise report smaller than it is.
+                candidate with { SizeBytes = Encoding.UTF8.GetByteCount(text) },
                 new ReadText(HashContent(sha + '|' + fingerprint), new ExtractedText(text, []), null),
                 null);
         }

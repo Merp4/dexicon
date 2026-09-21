@@ -85,6 +85,49 @@ public sealed class GitHistoryTests : IDisposable
         finally { Directory.Delete(plain, recursive: true); }
     }
 
+    /// <summary>
+    /// A subdirectory of a repository is not a repository.
+    ///
+    /// `rev-parse --is-inside-work-tree` says true from `/repo/src`, and a source
+    /// accepted there would have walked the whole of `/repo`: every commit of the parent
+    /// indexed under a source the operator scoped to one folder, including commits that
+    /// never touched it.
+    /// </summary>
+    [Fact]
+    public async Task ASubdirectoryOfARepositoryIsNotOne()
+    {
+        Commit("src/a.txt", "one", "first");
+
+        (await GitHistory.IsRepositoryAsync(_repo, default)).ShouldBeTrue();
+        (await GitHistory.IsRepositoryAsync(Path.Combine(_repo, "src"), default)).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// A commit message is arbitrary text, and it used to be parsed out of the same
+    /// stream as git's own output. A body holding the record separator split a record
+    /// in two and the fragment was dropped, which loses a commit — and a commit the
+    /// reader drops is one the shared reconcile sees as vanished and deletes the
+    /// vectors of. A body line beginning `diff --git ` was read as the start of a patch.
+    /// </summary>
+    [Fact]
+    public async Task ACommitMessageThatLooksLikeGitOutputIsStillAMessage()
+    {
+        var hostile = "Not a patch:\ndiff --git a/x b/x\n and a stat | line\n and a separator";
+
+        File.WriteAllText(Path.Combine(_repo, "a.txt"), "one");
+        Git("add", "a.txt");
+        Git("commit", "-m", "the subject", "-m", hostile);
+
+        var commits = await EnumerateAsync();
+        commits.ShouldHaveSingleItem();
+
+        var text = (await ReadAsync(new GitHistoryOptions { IncludeDiff = true }, commits))[commits[0].Sha];
+
+        text.ShouldContain("Not a patch:", Case.Sensitive);
+        text.ShouldContain("and a separator", Case.Sensitive, "the body survives the separator inside it");
+        text.ShouldContain("+one", Case.Sensitive, "and the real patch is still there");
+    }
+
     [Fact]
     public async Task TheInventoryIsShasDatesAndSubjectsNewestFirst()
     {
@@ -184,9 +227,10 @@ public sealed class GitHistoryTests : IDisposable
             new GitHistoryOptions { IncludeDiff = true, MaxDiffBytes = 500 }, commits))[commits[0].Sha];
 
         text.ShouldContain("not included");
-        text.ShouldContain("character limit for this source");
+        text.ShouldContain("byte limit for this source");
         text.ShouldNotContain("+line 1999", Case.Sensitive);
         text.ShouldContain("    a big change", Case.Sensitive, "the message survives the diff being dropped");
+        text.ShouldContain("big.txt", Case.Sensitive, "and so does the stat, which is the cheap half");
     }
 
     [Fact]
@@ -248,8 +292,16 @@ public sealed class GitHistoryTests : IDisposable
         var boom = await Should.ThrowAsync<GitHistoryException>(
             EnumerateAsync(new GitHistoryOptions { Ref = "--output=/tmp/pwned" }));
 
-        boom.Message.ShouldContain("git log failed");
+        boom.Message.ShouldContain("not a usable ref");
         File.Exists("/tmp/pwned").ShouldBeFalse();
+
+        // What the check admits, stated, so that narrowing it later cannot quietly break
+        // ordinary use — and what it refuses, so widening it cannot quietly stop refusing.
+        foreach (var ok in new[] { "HEAD", "main", "release/1.0", "v1.2.3", "HEAD~3", "HEAD^", "@{u}" })
+            GitHistory.IsAcceptableRef(ok).ShouldBeTrue(ok);
+
+        foreach (var no in new[] { "--upload-pack=x", "-n", "a b", "a;b", "a$(x)", "main..other", "", "  " })
+            GitHistory.IsAcceptableRef(no).ShouldBeFalse(no);
     }
 
     /// <summary>
@@ -262,15 +314,31 @@ public sealed class GitHistoryTests : IDisposable
     {
         var baseline = new GitHistoryOptions();
 
+        // Selection, not content: these choose WHICH commits are indexed. Including one
+        // would re-read and re-embed every commit in the repository the first time it
+        // changed, for documents not one of which had moved.
         (baseline with { Ref = "other" }).ContentFingerprint().ShouldBe(baseline.ContentFingerprint());
         (baseline with { MaxCommits = 10 }).ContentFingerprint().ShouldBe(baseline.ContentFingerprint());
         (baseline with { Since = new DateOnly(2020, 1, 1) }).ContentFingerprint()
             .ShouldBe(baseline.ContentFingerprint());
+        (baseline with { IncludeMerges = true }).ContentFingerprint()
+            .ShouldBe(baseline.ContentFingerprint(), "turning merges on ADDS documents; it alters none");
+
+        // The cap matters only when there is a patch for it to cap.
+        (baseline with { MaxDiffBytes = 1 }).ContentFingerprint()
+            .ShouldBe(baseline.ContentFingerprint(), "no diff, so no cap to apply");
+        (baseline with { IncludeDiff = true, MaxDiffBytes = 1 }).ContentFingerprint()
+            .ShouldNotBe((baseline with { IncludeDiff = true }).ContentFingerprint());
 
         (baseline with { IncludeDiff = true }).ContentFingerprint().ShouldNotBe(baseline.ContentFingerprint());
         (baseline with { IncludeStat = false }).ContentFingerprint().ShouldNotBe(baseline.ContentFingerprint());
         (baseline with { IncludeMessage = false }).ContentFingerprint().ShouldNotBe(baseline.ContentFingerprint());
-        (baseline with { MaxDiffBytes = 1 }).ContentFingerprint().ShouldNotBe(baseline.ContentFingerprint());
+
+        // Pathspecs reach git, so they decide what the stat lists and what the patch
+        // holds: the same commit under a narrower filter is a different document. Their
+        // order does not, because the same set is the same filter.
+        baseline.ContentFingerprint(["src"]).ShouldNotBe(baseline.ContentFingerprint());
+        baseline.ContentFingerprint(["src", "docs"]).ShouldBe(baseline.ContentFingerprint(["docs", "src"]));
     }
 
     [Fact]
