@@ -854,6 +854,30 @@ describe('the file list', () => {
     await waitFor(() => expect(lastQuery().offset).toBe(0));
   });
 
+  /**
+   * The debounce used to be armed by any keystroke, and by the first render, and it reset
+   * the offset when it fired whether or not the query had changed. A page turned inside
+   * that window went back to the first one, with nothing on screen saying why.
+   *
+   * It is also what made `pages forward and back` fail on a slow runner: the click landed
+   * before the timer armed at mount, and the reset arrived between the click and the
+   * assertion.
+   */
+  it('keeps the page when the filter is touched without changing', async () => {
+    listFiles.mockResolvedValue(page(100, 250));
+    render(<CorpusDetail {...props} />);
+    await screen.findByRole('button', { name: 'book-0.pdf' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await waitFor(() => expect(lastQuery().offset).toBe(100));
+
+    // The filter is trimmed, so a trailing space matches exactly the same rows.
+    await userEvent.type(screen.getByLabelText('Filter files by name'), ' ');
+    await new Promise((resolve) => setTimeout(resolve, 400));   // past the 250ms pause
+
+    expect(lastQuery().offset).toBe(100);
+  });
+
   it('stops paging at the end', async () => {
     listFiles.mockResolvedValue(page(40, 40));
 
