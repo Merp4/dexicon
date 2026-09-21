@@ -257,7 +257,15 @@ internal sealed class IndexingHarness : IAsyncDisposable
     {
         private readonly List<Chunk> _points = [];
 
-        public int CountFor(string filePath) => _points.Count(p => p.FilePath == filePath);
+        /// <summary>
+        /// Points held for a file, optionally within one set or one source. The scoped
+        /// form is what distinguishes a delete that respected its filter from one that
+        /// reached across sets or sources.
+        /// </summary>
+        public int CountFor(string filePath, string? chunkSetId = null, string? sourceId = null) =>
+            _points.Count(p => p.FilePath == filePath
+                            && (chunkSetId is null || p.ChunkSetId == chunkSetId)
+                            && (sourceId is null || p.SourceId == sourceId));
 
         /// <summary>
         /// Make the count come back incomplete, as a facet at its cap does. Absent and
@@ -272,7 +280,10 @@ internal sealed class IndexingHarness : IAsyncDisposable
         /// Remove a file's points behind the indexer's back, which is what an
         /// interrupted pass leaves: vectors gone, catalogue row untouched.
         /// </summary>
-        public int DropSilently(string filePath) => _points.RemoveAll(p => p.FilePath == filePath);
+        public int DropSilently(string filePath, string? chunkSetId = null, string? sourceId = null) =>
+            _points.RemoveAll(p => p.FilePath == filePath
+                                && (chunkSetId is null || p.ChunkSetId == chunkSetId)
+                                && (sourceId is null || p.SourceId == sourceId));
 
         /// <summary>One point of a file, for a partial loss rather than a total one.</summary>
         public void DropOne(string filePath)

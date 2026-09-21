@@ -138,18 +138,83 @@ public sealed class IndexedFileKeepsItsVectorsTests
     }
 
     [Fact]
-    public async Task TheCheckIsScopedToOneSetAndOneSource()
+    public async Task OneSetLosingItsVectors_DoesNotDragTheOtherThroughTheModel()
     {
-        // The count comes back per (set, source). If it were read across sets, a second
-        // set's copy of a file would make the first look healthy when it is not.
+        // The count is read per set. If it were read across them, the other set's copy
+        // of the same file would make this one look healthy and the loss would stand.
         await using var harness = await IndexingHarness.StartAsync();
         await harness.SeedCorpusAsync(SourceKind.Workspace, sets: 2);
         await harness.WriteFileAsync("note.md", IndexingHarness.Prose("scoping"));
         await harness.RunIndexAsync();
 
-        await using var db = harness.NewContext();
-        var perSet = await db.FileChunkStates.Where(s => s.ChunkCount > 0).ToListAsync();
-        perSet.Count.ShouldBe(2, "one row per set");
-        perSet.Select(s => s.ChunkSetId).Distinct().Count().ShouldBe(2);
+        var inSetOne = harness.Vectors.CountFor("note.md", chunkSetId: "set-1");
+        var inSetTwo = harness.Vectors.CountFor("note.md", chunkSetId: "set-2");
+        inSetOne.ShouldBeGreaterThan(0);
+        inSetTwo.ShouldBeGreaterThan(0);
+
+        harness.Vectors.DropSilently("note.md", chunkSetId: "set-1");
+
+        var job = await harness.RunIndexAsync();
+
+        harness.Vectors.CountFor("note.md", chunkSetId: "set-1").ShouldBe(inSetOne, "the set that lost them");
+        harness.Vectors.CountFor("note.md", chunkSetId: "set-2").ShouldBe(inSetTwo, "the set that did not");
+        job.FilesDone.ShouldBe(1, "only the set that was short may be re-embedded");
+    }
+
+    [Fact]
+    public async Task OneSourceLosingItsVectors_LeavesAnotherSourcesSamePathAlone()
+    {
+        // Two sources of one corpus can hold the same relative path, and the count is
+        // read per source for exactly that reason. Read across sources, the healthy
+        // copy would cover for the missing one.
+        await using var harness = await IndexingHarness.StartAsync("first", "second");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        await harness.WriteFileAsync("note.md", IndexingHarness.Prose("first source"), source: 0);
+        await harness.WriteFileAsync("note.md", IndexingHarness.Prose("second source"), source: 1);
+        await harness.RunIndexAsync();
+
+        var one = IndexingHarness.SourceIdFor(0);
+        var two = IndexingHarness.SourceIdFor(1);
+        var inOne = harness.Vectors.CountFor("note.md", sourceId: one);
+        var inTwo = harness.Vectors.CountFor("note.md", sourceId: two);
+        inOne.ShouldBeGreaterThan(0);
+        inTwo.ShouldBeGreaterThan(0);
+
+        harness.Vectors.DropSilently("note.md", sourceId: one);
+
+        var job = await harness.RunIndexAsync();
+
+        harness.Vectors.CountFor("note.md", sourceId: one).ShouldBe(inOne);
+        harness.Vectors.CountFor("note.md", sourceId: two).ShouldBe(inTwo);
+        job.FilesDone.ShouldBe(1, "only the source that was short may be re-embedded");
+    }
+
+    [Fact]
+    public async Task AnUploadedDocumentThatLosesItsVectors_IsNoticedToo()
+    {
+        // Uploads reach the same skip check with a matching fingerprint, and have no
+        // reconcile pass behind them, so the comparison has to run on that path as well.
+        await using var harness = await IndexingHarness.StartAsync();
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+
+        await using (var db = harness.NewContext())
+        {
+            var documents = harness.NewDocumentService(db);
+            var corpus = await db.Corpora.Include(c => c.Sources).Include(c => c.ChunkSets)
+                .FirstAsync(c => c.Id == IndexingHarness.CorpusId);
+            using var bytes = new MemoryStream(
+                System.Text.Encoding.UTF8.GetBytes(IndexingHarness.Prose("uploads")));
+            var stored = await documents.StoreAsync(bytes, "paper.md");
+            await documents.AttachAsync(corpus, stored.Sha256, "paper.md");
+        }
+
+        await harness.RunIndexAsync();
+        var before = harness.Vectors.CountFor("paper.md");
+        before.ShouldBeGreaterThan(0);
+
+        harness.Vectors.DropSilently("paper.md");
+        await harness.RunIndexAsync();
+
+        harness.Vectors.CountFor("paper.md").ShouldBe(before);
     }
 }

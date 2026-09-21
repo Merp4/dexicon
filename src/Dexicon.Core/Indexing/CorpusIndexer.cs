@@ -260,6 +260,14 @@ public sealed class CorpusIndexer(
 
         var states = await StatesFor(set, attachments, ct);
 
+        // The same comparison the workspace path makes, on a path-keyed view of the same
+        // rows: an upload whose vectors were lost reaches the skip check below with a
+        // matching fingerprint and stays unsearchable otherwise. The rows are the same
+        // objects, so clearing a hash here is what the check reads a few lines down.
+        var byPath = new Dictionary<string, FileChunkState>(attachments.Count, StringComparer.Ordinal);
+        foreach (var f in attachments) byPath[f.RelativePath] = states[f.Id];
+        await MarkFilesMissingVectorsAsync(set, source.Id, byPath, ct);
+
         job.FilesTotal += attachments.Count;
         job.Phase = "extract";
         await db.SaveChangesAsync(ct);
