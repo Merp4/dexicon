@@ -1401,6 +1401,12 @@ waiting this entry was written about but not the reason for the entry: discovery
 cheap, indexing is not, and a corpus should report what it holds without an embedding
 pass having to reach it.
 
+The lane is a work type rather than a second queue since
+[D-33](#d-33-one-queue-one-pool-a-concurrency-per-work-type): a sweep carries its own
+concurrency and is dispatched when its corpus is idle. What this entry argues for is
+unchanged, and the "rejected" note below about a `JobKind` on the existing queue is the
+reasoning of the time, when that queue had one reader.
+
 The two costs are not comparable. Statting all 1,804 files of that library through the
 container's 9p mount takes 2.08s, against 773ms to extract one ordinary 204 KB PDF from it
 and 13.4s for an intact 84 MB one, before anything is embedded. Discovery is the half that
@@ -1531,6 +1537,61 @@ or two.
 **Revisit if.** The sweep grows expensive enough to need its own progress and
 cancellation. A tree of a million files is a different problem from 1,804, and at that
 size discovery stops being the cheap half.
+---
+
+### D-33 One queue, one pool, a concurrency per work type
+
+**Decision.** Every piece of background work goes on one queue and is run by one pool of
+workers. An item carries its type, its corpus and the key its handler needs: a job id for
+indexing and rebuilding, a corpus id for a sweep. Dispatch has one rule: take the first
+pending item whose type has a free slot and whose corpus has nothing running.
+
+Each type carries its own limit, configured beside the others:
+`MaxConcurrentSweeps` (2), `MaxConcurrentCorpora` (4) for incremental indexing, and
+`MaxConcurrentRebuilds` (1). The pool runs their sum. Adding a kind of work is adding a
+value to the enum and a limit beside it.
+
+**Why.** [D-32](#d-32-discovery-is-its-own-pass-and-does-not-queue-behind-indexing) gave
+discovery its own lane by giving it its own queue and its own reader. That delivered what
+it was for, and left two schedulers whose limits could not see each other: the sweep
+reader knew nothing of how many index workers were already embedding, and neither could
+express that a rebuild costs more than a refresh of a tree where nothing changed.
+
+The busy-corpus case is the clearer symptom. A worker took a job, tried the lease,
+found the corpus held by the other lane and called `RequeueLater`, which put the id back
+after fifteen seconds. Eligibility was being discovered by attempting the work, so a slot
+was occupied by something that could not run and the answer was a timer. Under one
+scheduler the ineligible item is simply not taken, and it costs nothing to leave where it
+is.
+
+Fairness falls out of the corpus rule without any bookkeeping of its own. A corpus with
+five queued jobs runs one; its second is ineligible while the first holds the corpus, so
+the next corpus is taken instead. Measured on the four live corpora queued together
+against 7 slots: all four finished, the peak was 2 running at once, none was starved.
+
+A slot is released by ticket rather than by what was in it. `TryTake` hands out a lease
+and `Completed` takes it back, so a late release finds nothing to free. Keying the release
+on the item would not do, because the same key may be queued again while the first is
+still running, and the stale release would then free the replacement's slot: the same
+over-admission a bare counter allows, reached by a different route.
+
+The per-corpus lease stays. The scheduler knows about its own process; the lease is what
+excludes a second one, and it is still taken at the door.
+
+**Rejected.** A rotation that serves the least-recently-served corpus. The corpus rule
+already prevents starvation, and a rotation adds an ordering that has to be kept in step
+with what is running to reach the same outcome.
+
+A priority number per item. One scalar would stand in for two separate facts, the kind of
+work and how much of it may run, and tuning it means reasoning about every other kind at
+the same time. A limit per type says it directly.
+
+Keeping the two queues and sharing one semaphore between them. Two readers against one
+counter is the same admission problem with two places to get it wrong, and the busy-corpus
+retry would survive it.
+
+**Revisit if.** A type needs to preempt rather than queue, or the number of types stops
+being small enough to configure by hand.
 ---
 
 ## Open questions

@@ -14,7 +14,7 @@ Three containers. Dexicon is the only one we build.
                       │  /healthz     liveness / readiness       │
                       │                                          │
                       │  ┌────────────────────────────────────┐  │
-                      │  │ IndexingService (hosted, queued)   │  │
+                      │  │ WorkScheduler + WorkerPool         │  │
                       │  └────────────────────────────────────┘  │
                       │  ┌────────────────────────────────────┐  │
                       │  │ catalog.db (SQLite, volume)        │  │
@@ -43,7 +43,8 @@ additional failure mode without benefit. See
 |---|---|---|
 | `Api` | ASP.NET Core minimal API | REST for the SPA and for integrations ([13](13-integration.md)); SSE for progress |
 | `Mcp` | `ModelContextProtocol.AspNetCore`, stateless | Tool surface for agents ([06](06-mcp-surface.md)) |
-| `IndexingService` | `BackgroundService` + bounded channel | Runs one indexing job at a time; emits progress events |
+| `WorkScheduler` | in-process queue, one dispatch rule | Holds pending work; hands out a slot when the type has one free and the corpus is idle |
+| `WorkerPool` | `BackgroundService`, one worker per slot | Runs sweeps, index passes and rebuilds; emits progress events |
 | `Catalog` | EF Core + SQLite | Corpora, sources, files, jobs, keys and what each reaches |
 | `VectorStore` | `Qdrant.Client` (gRPC) | Collection lifecycle, upsert, query |
 | `Embedder` | `IEmbeddingProvider` → Ollama | Dense vectors; batching, retry, backoff |
@@ -101,7 +102,7 @@ sparse encoding is in-process. Target p95 under 400 ms for a warm `embeddinggemm
 ```
 UI / MCP ──POST /api/corpora/{id}/reindex──▶ enqueue job ──▶ 202 + jobId
                                                   │
-                          IndexingService picks up │ (MaxConcurrentCorpora at a time)
+                           the scheduler takes it │ (a slot for its type, and its corpus free)
                                                   ▼
   ┌─ discover ──▶ walk /workspaces/<mount> honouring .gitignore + .dexiconignore
   │               or enumerate uploaded blobs
