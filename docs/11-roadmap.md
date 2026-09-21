@@ -107,7 +107,7 @@ finding the matched text there.
 | **UI** | ✅ Search, Corpora, Documents, Jobs, Models, Access, Settings. |
 | **Chunk sets** | ✅ A corpus carries several chunkings over the same documents, addressed as `corpus:set`. Changing embedding model is add-set → backfill → promote, so search never sees a partial index ([D-21](decisions.md)). |
 | **Providers** | ✅ Ollama, OpenAI and Azure OpenAI through `IEmbeddingGenerator`, model chosen per call. Model list/pull/delete, and a probe that measures a model's real input limit without indexing anything ([D-24](decisions.md)). |
-| **Tests** | ✅ 307 server + 114 UI passing, including guards for the "configured but unread" defect class and for chunk-then-stitch round-tripping. Every fix is mutation-verified: break it, watch the named test go red, restore. |
+| **Tests** | ✅ 697 server + 183 UI passing, including guards for the "configured but unread" defect class and for chunk-then-stitch round-tripping. Every fix is mutation-verified: break it, watch the named test go red, restore. |
 | **CI** | ✅ Build, test, type-check, gitleaks over full history, vulnerable-dependency checks, and an image build that starts the container. |
 
 **Since closed:** `get_context` de-overlapping is now tested, including a chunk-then-stitch
@@ -251,10 +251,12 @@ it, and anyone proposing a reranker has a baseline to beat.
   repository's own documentation by `scripts/screenshot.mjs`.
 - ✅ Licence review of the full transitive dependency tree, NuGet and npm, re-runnable with
   `scripts/licence-review.py` and failing CI on a copyleft dependency.
-- ⬜ The repository made public.
+- ✅ The repository made public, 2026-09-16, which is also what enables the provenance
+  attestation the release workflow skips on a private repo.
 
 **Done when:** the repository is public and the quickstart has been followed on a clean
-machine by someone who did not write it.
+machine by someone who did not write it. The first half holds; the second has not been
+attempted, and it is the only thing left in this milestone.
 
 ---
 
