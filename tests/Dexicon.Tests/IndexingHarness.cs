@@ -68,8 +68,9 @@ internal sealed class IndexingHarness : IAsyncDisposable
         services.AddScoped<ExtractedTextCache>();
         var provider = services.BuildServiceProvider();
 
-        await using (var scope = provider.CreateAsyncScope())
-            await scope.ServiceProvider.GetRequiredService<CatalogDbContext>().Database.EnsureCreatedAsync();
+        await using (var db = new CatalogDbContext(
+            provider.GetRequiredService<DbContextOptions<CatalogDbContext>>()))
+            await db.Database.EnsureCreatedAsync();
 
         return new IndexingHarness(dataPath, sourceDirectory, provider);
     }
@@ -80,8 +81,16 @@ internal sealed class IndexingHarness : IAsyncDisposable
         try { Directory.Delete(_dataPath, recursive: true); } catch { /* best effort */ }
     }
 
+    /// <summary>
+    /// A catalogue context the caller owns and disposes.
+    ///
+    /// Built from the registered options rather than resolved out of a scope: a scope
+    /// created to reach one service and then dropped is never disposed, so it holds
+    /// everything it resolved for the rest of the run. The indexer's own internals still
+    /// take real scopes from the provider, and they dispose them.
+    /// </summary>
     public CatalogDbContext NewContext() =>
-        _services.CreateScope().ServiceProvider.GetRequiredService<CatalogDbContext>();
+        new(_services.GetRequiredService<DbContextOptions<CatalogDbContext>>());
 
     /// <summary>
     /// A document service on the harness's own storage, so blobs land where the indexer
@@ -171,12 +180,23 @@ internal sealed class IndexingHarness : IAsyncDisposable
         return await indexer.RunAsync(jobId, null, CancellationToken.None);
     }
 
-    public async Task<FileChunkState> StateOfAsync(string relativePath)
+    /// <summary>
+    /// One file's row in one chunk set.
+    ///
+    /// The set has to be named. There is a row per set, so an unfiltered read returns
+    /// whichever the provider happens to order first, and an assertion about the set
+    /// under test would pass or fail on the other one's state.
+    /// </summary>
+    public async Task<FileChunkState> StateOfAsync(string relativePath, string chunkSetId = "set-1",
+        string? sourceId = null)
     {
         await using var db = NewContext();
         return await db.FileChunkStates
-            .Where(s => db.Files.Any(f => f.Id == s.FileId && f.RelativePath == relativePath))
-            .FirstAsync();
+            .Where(s => s.ChunkSetId == chunkSetId
+                     && db.Files.Any(f => f.Id == s.FileId
+                                       && f.RelativePath == relativePath
+                                       && (sourceId == null || f.SourceId == sourceId)))
+            .SingleAsync();
     }
 
     public Task WriteFileAsync(string name, string content) =>
