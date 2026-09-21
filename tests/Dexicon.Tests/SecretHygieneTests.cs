@@ -225,6 +225,38 @@ public sealed class SecretHygieneTests
         DexiconAuthMiddleware.PrincipalCacheKey(Token).ShouldNotContain("a-secret-nobody-should-read");
     }
 
+    /// <summary>
+    /// A rejected request names the caller, so a stale browser tab and a credential being
+    /// guessed can be told apart. The credential itself must still never be written.
+    /// </summary>
+    [Fact]
+    public void CallerDigest_NeverContainsTheCredential()
+    {
+        const string Token = "dex_01JBXQZ9K7MNPRSTVWXYZ01234_a-secret-nobody-should-read";
+
+        var digest = DexiconAuthMiddleware.CallerDigest(Token);
+
+        digest.ShouldNotContain("a-secret-nobody-should-read");
+        digest.ShouldNotContain("01JBXQZ9K7MNPRSTVWXYZ01234");
+        digest.ShouldAllBe(c => Uri.IsHexDigit(c));
+    }
+
+    [Fact]
+    public void CallerDigest_IsNarrowEnoughToBeWorthless_AndWideEnoughToCount()
+    {
+        // 32 bits. It answers "one caller retrying, or several" and nothing else: at this
+        // width a reader who wanted to confirm a guessed credential against the log finds
+        // collisions instead of an answer. The full digest would confirm it.
+        DexiconAuthMiddleware.CallerDigest("dex_anything").Length.ShouldBe(8);
+
+        // Stable, or two lines from one caller cannot be recognised as one caller.
+        DexiconAuthMiddleware.CallerDigest("dex_one")
+            .ShouldBe(DexiconAuthMiddleware.CallerDigest("dex_one"));
+
+        DexiconAuthMiddleware.CallerDigest("dex_one")
+            .ShouldNotBe(DexiconAuthMiddleware.CallerDigest("dex_two"));
+    }
+
     [Fact]
     public void PrincipalCacheKey_IsStableAndSeparatesTokensThatLookAlike()
     {

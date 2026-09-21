@@ -68,6 +68,35 @@ public class LogForgingTests
         rendered.Split('\n').Length.ShouldBe(2);
     }
 
+    /// <summary>
+    /// The rejection line now carries the caller's own user agent, which is the one
+    /// field on it an unauthenticated caller writes. Two things keep it honest: the
+    /// template escapes it, as it does the path, and it is capped before it is logged.
+    /// </summary>
+    [Fact]
+    public void AForgedUserAgentStaysOnOneLine()
+    {
+        var rendered = Render(LogOutput.ConsoleTemplate, DexiconAuthMiddleware.Agent(ForgedPath));
+
+        rendered.Split('\n').Length.ShouldBe(1);
+        rendered.ShouldContain("DELETE /api/corpora/books");
+    }
+
+    [Fact]
+    public void AUserAgentIsCapped()
+    {
+        // A rejected request is the one path an unauthenticated caller can reach, and it
+        // is logged. Uncapped, a kilobyte per poll is theirs to write into the audit
+        // trail.
+        var huge = new string('x', 5_000);
+
+        var agent = DexiconAuthMiddleware.Agent(huge);
+
+        agent.Length.ShouldBeLessThan(200);
+        DexiconAuthMiddleware.Agent(null).ShouldBe("no user agent");
+        DexiconAuthMiddleware.Agent("curl/8.0").ShouldBe("curl/8.0");
+    }
+
     [Fact]
     public void AnOrdinaryPathStaysReadable()
     {
