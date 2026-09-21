@@ -123,7 +123,7 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
             // Audit line. The credential's id and name, never its value.
             log.LogInformation("{Method} {Path} -> {Status} (caller {TokenId} '{TokenName}')",
                 ctx.Request.Method, OneLine(path), ctx.Response.StatusCode,
-                principal.TokenId, OneLine(principal.TokenName));
+                OneLine(principal.TokenId), OneLine(principal.TokenName));
             return Task.CompletedTask;
         });
 
@@ -186,8 +186,10 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
     ///
     /// A request path arrives URL-decoded, so <c>%0A</c> in it is a real newline by the
     /// time it reaches here, and a newline inside an entry lets the caller append a line
-    /// that reads as the server's own. The same goes for the user-agent header, and for
-    /// a key's name, which an admin chose but the log then quotes.
+    /// that reads as the server's own. The same goes for the user-agent header, for a
+    /// key's name, and for its id, which is generated for a key created through the API
+    /// but is whatever <c>DEXICON__BOOTSTRAP__TOKEN</c> carried for one adopted from the
+    /// environment.
     ///
     /// The console sink renders message properties with <c>{Message:j}</c>, which quotes
     /// and escapes a string, so that output is already safe — see
@@ -197,17 +199,28 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
     /// instead, where the caller's text is known to be the caller's.
     ///
     /// Replaced rather than removed, and with U+FFFD, so a path that was odd still reads
-    /// as odd rather than as a path somebody sent. Every control character goes and not
-    /// just the two line breaks, because an escape sequence in a terminal is the same
-    /// trick by another route.
+    /// as odd rather than as a path somebody sent.
+    ///
+    /// The two line breaks go through <see cref="string.Replace(string, string)"/> by
+    /// name. Written as one pass over <see cref="char.IsControl"/> it reads better and
+    /// does the same thing, but CodeQL's <c>cs/log-forging</c> recognises the Replace
+    /// form as the barrier and nothing else, so folding these two lines into the loop
+    /// below reopens the alert without changing the behaviour.
+    ///
+    /// The loop then takes the rest of the control range, which the Replace calls do not
+    /// cover: an escape sequence reaching a terminal that tails the log is the same trick
+    /// by another route, and <c>[2J</c> clears its screen.
     /// </summary>
     internal static string OneLine(string value)
     {
-        var at = 0;
-        while (at < value.Length && !char.IsControl(value[at])) at++;
-        if (at == value.Length) return value;
+        var held = value.Replace("\r", ReplacementText, StringComparison.Ordinal)
+                        .Replace("\n", ReplacementText, StringComparison.Ordinal);
 
-        return string.Create(value.Length, value, static (span, source) =>
+        var at = 0;
+        while (at < held.Length && !char.IsControl(held[at])) at++;
+        if (at == held.Length) return held;
+
+        return string.Create(held.Length, held, static (span, source) =>
         {
             for (var i = 0; i < source.Length; i++)
                 span[i] = char.IsControl(source[i]) ? Replacement : source[i];
@@ -215,6 +228,7 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
     }
 
     private const char Replacement = '�';
+    private const string ReplacementText = "�";
 
     private static Task Problem(HttpContext ctx, int status, string title, string detail)
     {
