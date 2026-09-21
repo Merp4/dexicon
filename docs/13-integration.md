@@ -46,7 +46,6 @@ against.
 | `POST /api/search` | `search` | Ranked hits, with a preview of each |
 | `GET /api/corpora` | `search` | What this key can reach |
 | `GET /api/corpora/{nameOrId}` | `search` | One corpus, with its state and counts |
-| `GET /api/corpora/{nameOrId}/file?path=…&start=…` | `search` | The indexed lines of one file, by path |
 | `POST /api/corpora/{nameOrId}/reindex` | `ingest` | Queue a reindex; returns immediately |
 | `GET /api/jobs` | `search` | Indexing jobs, newest first |
 | `GET /api/jobs/{id}` | `search` | One job, for polling a reindex to completion |
@@ -195,7 +194,11 @@ stating because the names invite the assumption that they do.
 |---|---|---|
 | A query, answered as one passage within a budget | — | `POST /api/context` |
 | Ranked hits for a query | `search_index` | `POST /api/search` |
-| The lines around a known place in a known file | `get_context` | `GET /api/corpora/{name}/file` |
+| The lines around a known place in a known file | `get_context` | `GET /api/corpora/{name}/file` * |
+
+\* On the full surface, not in the integration document above. An HTTP integrator reading
+on from a hit has to generate against the full document or call the path directly, which
+is a gap rather than a decision: nothing about the endpoint is UI-specific.
 
 `get_context(corpus, file_path, around_line, before, after)` is a lookup: it takes a place
 and returns what is there. `POST /api/context` takes a *query*, runs the search, and packs
@@ -217,5 +220,4 @@ parameter and the query text would live in the URL, where it is length-limited a
 in every proxy log and browser history. Neither is idempotency-sensitive and neither is
 cached, so the body is the only thing GET would have bought back.
 
-Lookups are GET, including `GET /api/corpora/{name}/file`, whose arguments are a path and
-a line.
+Lookups are GET, including the file endpoint, whose arguments are a path and a line.
