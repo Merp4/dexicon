@@ -80,6 +80,16 @@ public sealed class CorpusSweeper(
         await using var hold = await leases.TryAcquireAsync(corpusId, $"sweep-{Ulid.NewUlid()}", ct);
         if (hold is null)
         {
+            // A failed claim is one conditional update that matched no rows, and no rows
+            // means either "someone holds it" or "it is not there any more". The two
+            // arrive identically and need opposite answers — try again, and stop — so
+            // the ambiguous one is resolved by asking, on the failure path only.
+            //
+            // Without it, a corpus deleted between the lookup above and the claim reads
+            // as held, and the caller waits out a timer for work that can never run.
+            if (!await db.Corpora.AnyAsync(c => c.Id == corpusId, ct))
+                return new SweepResult(0, 0, SweepOutcome.NoSuchCorpus, "the corpus was deleted");
+
             log.LogInformation("Corpus {Corpus} is held by another pass; not sweeping", corpus.Name);
             return new SweepResult(0, 0, SweepOutcome.Held, "the corpus is being indexed");
         }
