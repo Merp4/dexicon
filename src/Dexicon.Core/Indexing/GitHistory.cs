@@ -169,8 +169,42 @@ public sealed record GitCommit(string Sha, DateTimeOffset AuthorDate, string Sub
 /// means musl builds to keep working, and a handful of processes per pass is not a cost
 /// worth that.
 /// </summary>
+/// <summary>
+/// A directory git may be started in: a path already held against the workspace boundary.
+///
+/// A string becomes one only through <see cref="GitHistory.RepositoryIn"/>, and every
+/// call that starts a process takes this rather than a string, so a directory that has
+/// not been through the boundary rule cannot reach <see cref="Process"/> at all.
+///
+/// The callers resolve their paths through that same rule before they ever get here, and
+/// that is not enough on its own: refusing a path at the API and in the sweep is
+/// usability and defence in depth, and the decision has to be made again where the
+/// process is actually started. One rule, applied in both places, rather than a second
+/// implementation of it.
+/// </summary>
+public sealed class GitRepository
+{
+    private GitRepository(string fullPath) => FullPath = fullPath;
+
+    /// <summary>The resolved directory, inside the configured workspace root.</summary>
+    public string FullPath { get; }
+
+    internal static GitRepository Of(string fullPath) => new(fullPath);
+}
+
 public static class GitHistory
 {
+    /// <summary>
+    /// <paramref name="relativePath"/> under <paramref name="workspaceRoot"/>, or
+    /// <see cref="UnauthorizedAccessException"/> if it resolves outside it.
+    ///
+    /// Delegates to <see cref="WorkspaceDiscovery.Resolve"/>, which is the one place the
+    /// containment rule lives and where its regression tests are. This is the same rule
+    /// reached from a second caller, not a copy of it.
+    /// </summary>
+    public static GitRepository RepositoryIn(string workspaceRoot, string? relativePath) =>
+        GitRepository.Of(WorkspaceDiscovery.Resolve(workspaceRoot, relativePath));
+
     /// <summary>
     /// Bodies read per git invocation. Bounds peak memory rather than process count: the
     /// patches of a hundred commits of this repository are about 3 MB, and the whole
@@ -193,11 +227,11 @@ public static class GitHistory
     /// operator scoped to one directory, including commits that never touched it. The
     /// top level has to BE the path.
     /// </summary>
-    public static async Task<bool> IsRepositoryAsync(string path, CancellationToken ct)
+    public static async Task<bool> IsRepositoryAsync(GitRepository repo, CancellationToken ct)
     {
-        if (!Directory.Exists(path)) return false;
+        if (!Directory.Exists(repo.FullPath)) return false;
 
-        var (ok, stdout, _) = await RunAsync(path, ["rev-parse", "--show-toplevel"], ct);
+        var (ok, stdout, _) = await RunAsync(repo, ["rev-parse", "--show-toplevel"], ct);
         if (!ok) return false;
 
         var top = stdout.Trim();
@@ -207,7 +241,7 @@ public static class GitHistory
         // a trailing separator or a differently-cased drive letter on Windows.
         return string.Equals(
             Path.TrimEndingDirectorySeparator(Path.GetFullPath(top)),
-            Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)),
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(repo.FullPath)),
             OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
     }
 
@@ -236,7 +270,7 @@ public static class GitHistory
     /// sha already indexed, and stops.
     /// </summary>
     public static async Task<IReadOnlyList<GitCommit>> EnumerateAsync(
-        string repoPath, GitHistoryOptions options, IReadOnlyList<string>? pathspecs,
+        GitRepository repo, GitHistoryOptions options, IReadOnlyList<string>? pathspecs,
         CancellationToken ct)
     {
         if (!IsAcceptableRef(options.Ref))
@@ -261,7 +295,7 @@ public static class GitHistory
             args.AddRange(pathspecs);
         }
 
-        var (ok, stdout, stderr) = await RunAsync(repoPath, args, ct);
+        var (ok, stdout, stderr) = await RunAsync(repo, args, ct);
         if (!ok) throw new GitHistoryException($"git log failed: {Summarise(stderr)}");
 
         var commits = new List<GitCommit>();
@@ -289,7 +323,7 @@ public static class GitHistory
     /// not have to be held at once.
     /// </summary>
     public static async IAsyncEnumerable<(string Sha, string Text)> ReadAsync(
-        string repoPath, GitHistoryOptions options, IReadOnlyList<string> shas,
+        GitRepository repo, GitHistoryOptions options, IReadOnlyList<string> shas,
         IReadOnlyList<string>? pathspecs,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
@@ -298,7 +332,7 @@ public static class GitHistory
             ct.ThrowIfCancellationRequested();
 
             var batch = shas.Skip(start).Take(ReadBatch).ToList();
-            foreach (var read in await ReadBatchAsync(repoPath, options, batch, pathspecs, ct))
+            foreach (var read in await ReadBatchAsync(repo, options, batch, pathspecs, ct))
                 yield return read;
         }
     }
@@ -318,16 +352,16 @@ public static class GitHistory
     /// The second call is skipped entirely when neither is wanted.
     /// </summary>
     private static async Task<List<(string Sha, string Text)>> ReadBatchAsync(
-        string repoPath, GitHistoryOptions options, List<string> shas,
+        GitRepository repo, GitHistoryOptions options, List<string> shas,
         IReadOnlyList<string>? pathspecs, CancellationToken ct)
     {
         var marker = Marker();
         var stdin = string.Join('\n', shas);
         var known = shas.ToHashSet(StringComparer.Ordinal);
 
-        var messages = await MessagesAsync(repoPath, marker, stdin, known, ct);
+        var messages = await MessagesAsync(repo, marker, stdin, known, ct);
         var tails = options.IncludeStat || options.IncludeDiff
-            ? await TailsAsync(repoPath, options, marker, shas, pathspecs, known, ct)
+            ? await TailsAsync(repo, options, marker, shas, pathspecs, known, ct)
             : [];
 
         var read = new List<(string, string)>(shas.Count);
@@ -357,9 +391,9 @@ public static class GitHistory
     /// commit the shared reconcile sees as vanished and deletes the vectors of.
     /// </param>
     private static async Task<Dictionary<string, string[]>> MessagesAsync(
-        string repoPath, string marker, string stdin, HashSet<string> known, CancellationToken ct)
+        GitRepository repo, string marker, string stdin, HashSet<string> known, CancellationToken ct)
     {
-        var (ok, stdout, stderr) = await RunAsync(repoPath,
+        var (ok, stdout, stderr) = await RunAsync(repo,
             ["log", "--no-walk", "--stdin", "--no-color", "--no-patch",
              $"--format={marker}%H%x00%aI%x00%an%x00%ae%x00%s%x00%b"],
             ct, stdin);
@@ -394,14 +428,14 @@ public static class GitHistory
     /// is no boundary to infer and no message text that can imitate one.
     /// </summary>
     private static async Task<Dictionary<string, string>> TailsAsync(
-        string repoPath, GitHistoryOptions options, string marker, List<string> shas,
+        GitRepository repo, GitHistoryOptions options, string marker, List<string> shas,
         IReadOnlyList<string>? pathspecs, HashSet<string> known, CancellationToken ct)
     {
         if (shas.Count == 0) return [];
 
         try
         {
-            return await ReadTailsAsync(repoPath, options, marker, shas, pathspecs, known,
+            return await ReadTailsAsync(repo, options, marker, shas, pathspecs, known,
                 CeilingFor(options, shas.Count), ct);
         }
         catch (GitOutputTooLargeException) when (shas.Count > 1)
@@ -410,9 +444,9 @@ public static class GitHistory
             // same shape as the embedder's refusal handling: log2 cheap attempts rather
             // than one call per commit.
             var half = shas.Count / 2;
-            var left = await TailsAsync(repoPath, options, marker,
+            var left = await TailsAsync(repo, options, marker,
                 shas.GetRange(0, half), pathspecs, known, ct);
-            var right = await TailsAsync(repoPath, options, marker,
+            var right = await TailsAsync(repo, options, marker,
                 shas.GetRange(half, shas.Count - half), pathspecs, known, ct);
 
             foreach (var (sha, tail) in right) left[sha] = tail;
@@ -425,7 +459,7 @@ public static class GitHistory
             // no `diff --git` in it and says the patch was left out. Which is what
             // MaxDiffBytes means — and now it is a bound on memory as well as on the
             // document, because the patch was never materialised.
-            var stat = await ReadTailsAsync(repoPath, options with { IncludeDiff = false },
+            var stat = await ReadTailsAsync(repo, options with { IncludeDiff = false },
                 marker, shas, pathspecs, known, CeilingFor(options with { IncludeDiff = false }, 1), ct);
 
             foreach (var sha in shas)
@@ -475,7 +509,7 @@ public static class GitHistory
             $"[diff not included: over the {options.MaxDiffBytes:N0} byte limit for this source]");
 
     private static async Task<Dictionary<string, string>> ReadTailsAsync(
-        string repoPath, GitHistoryOptions options, string marker, List<string> shas,
+        GitRepository repo, GitHistoryOptions options, string marker, List<string> shas,
         IReadOnlyList<string>? pathspecs, HashSet<string> known, long ceiling, CancellationToken ct)
     {
         var args = new List<string>
@@ -494,7 +528,7 @@ public static class GitHistory
         }
 
         var (ok, stdout, stderr) = await RunAsync(
-            repoPath, args, ct, string.Join('\n', shas), ceiling);
+            repo, args, ct, string.Join('\n', shas), ceiling);
 
         if (!ok) throw new GitHistoryException($"git log --stdin failed: {Summarise(stderr)}");
 
@@ -602,12 +636,16 @@ public static class GitHistory
     /// are for at the call sites.
     /// </summary>
     private static async Task<(bool Ok, string Stdout, string Stderr)> RunAsync(
-        string workingDirectory, IReadOnlyList<string> args, CancellationToken ct, string? stdin = null,
+        GitRepository repo, IReadOnlyList<string> args, CancellationToken ct, string? stdin = null,
         long? maxChars = null)
     {
+        // A GitRepository and not a string: the only way to make one is
+        // GitHistory.RepositoryIn, which holds the path against the workspace boundary.
+        // The file name is the literal "git" and the arguments go as a list, so nothing
+        // a source can set becomes an argument or a command line.
         var info = new ProcessStartInfo("git")
         {
-            WorkingDirectory = workingDirectory,
+            WorkingDirectory = repo.FullPath,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             RedirectStandardInput = stdin is not null,
@@ -633,7 +671,7 @@ public static class GitHistory
         //
         // `-c` rather than `git config --global`: this is one call's configuration, it
         // names the one repository, and it cannot be left behind for another.
-        info.ArgumentList.Insert(0, "safe.directory=" + workingDirectory);
+        info.ArgumentList.Insert(0, "safe.directory=" + repo.FullPath);
         info.ArgumentList.Insert(0, "-c");
 
         // A repository someone else configured is not ours to trust with hooks, aliases

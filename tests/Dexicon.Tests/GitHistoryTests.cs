@@ -65,31 +65,61 @@ public sealed class GitHistoryTests : IDisposable
         Git("commit", "-m", message);
     }
 
+    /// <summary>
+    /// A path as the code under test takes one: through the factory that holds it against
+    /// a workspace root, because that is the only way to make a <see cref="GitRepository"/>.
+    /// The root here is the directory above it, which is what the temporary trees are.
+    /// </summary>
+    private static GitRepository Repo(string path) =>
+        GitHistory.RepositoryIn(Path.GetDirectoryName(path)!, Path.GetFileName(path));
+
     private Task<IReadOnlyList<GitCommit>> EnumerateAsync(GitHistoryOptions? options = null,
         IReadOnlyList<string>? paths = null) =>
-        GitHistory.EnumerateAsync(_repo, options ?? new GitHistoryOptions(), paths, default);
+        GitHistory.EnumerateAsync(Repo(_repo), options ?? new GitHistoryOptions(), paths, default);
 
     private async Task<Dictionary<string, string>> ReadAsync(
         GitHistoryOptions options, IReadOnlyList<GitCommit> commits, IReadOnlyList<string>? paths = null)
     {
         var read = new Dictionary<string, string>(StringComparer.Ordinal);
         await foreach (var (sha, text) in
-                       GitHistory.ReadAsync(_repo, options, [.. commits.Select(c => c.Sha)], paths))
+                       GitHistory.ReadAsync(Repo(_repo), options, [.. commits.Select(c => c.Sha)], paths))
             read[sha] = text;
         return read;
+    }
+
+    /// <summary>
+    /// The workspace boundary, held by the code that starts the process.
+    ///
+    /// A source's root path is operator input that reaches Process.Start as a working
+    /// directory. The API and the sweep refuse an escaping path already, and that is
+    /// what is offered rather than what is enforced: the decision is made again here,
+    /// and a <see cref="GitRepository"/> cannot be made any other way.
+    /// </summary>
+    [Fact]
+    public void APathOutsideTheWorkspaceRootNeverBecomesARepository()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"ws-{Guid.NewGuid():N}");
+
+        Should.Throw<UnauthorizedAccessException>(() => GitHistory.RepositoryIn(root, "../elsewhere"));
+        Should.Throw<UnauthorizedAccessException>(() => GitHistory.RepositoryIn(root, "a/../../b"));
+        Should.Throw<UnauthorizedAccessException>(
+            () => GitHistory.RepositoryIn(root, Path.Combine(Path.GetTempPath(), "somewhere-else")));
+
+        GitHistory.RepositoryIn(root, "inside").FullPath
+            .ShouldBe(Path.Combine(Path.GetFullPath(root), "inside"));
     }
 
     [Fact]
     public async Task ADirectoryThatIsNotARepositoryIsNotOne()
     {
-        (await GitHistory.IsRepositoryAsync(_repo, default)).ShouldBeTrue();
+        (await GitHistory.IsRepositoryAsync(Repo(_repo), default)).ShouldBeTrue();
 
         var plain = Path.Combine(Path.GetTempPath(), $"plain-{Guid.NewGuid():N}");
         Directory.CreateDirectory(plain);
         try
         {
-            (await GitHistory.IsRepositoryAsync(plain, default)).ShouldBeFalse();
-            (await GitHistory.IsRepositoryAsync(Path.Combine(plain, "nope"), default)).ShouldBeFalse();
+            (await GitHistory.IsRepositoryAsync(Repo(plain), default)).ShouldBeFalse();
+            (await GitHistory.IsRepositoryAsync(Repo(Path.Combine(plain, "nope")), default)).ShouldBeFalse();
         }
         finally { Directory.Delete(plain, recursive: true); }
     }
@@ -107,8 +137,8 @@ public sealed class GitHistoryTests : IDisposable
     {
         Commit("src/a.txt", "one", "first");
 
-        (await GitHistory.IsRepositoryAsync(_repo, default)).ShouldBeTrue();
-        (await GitHistory.IsRepositoryAsync(Path.Combine(_repo, "src"), default)).ShouldBeFalse();
+        (await GitHistory.IsRepositoryAsync(Repo(_repo), default)).ShouldBeTrue();
+        (await GitHistory.IsRepositoryAsync(Repo(Path.Combine(_repo, "src")), default)).ShouldBeFalse();
     }
 
     /// <summary>

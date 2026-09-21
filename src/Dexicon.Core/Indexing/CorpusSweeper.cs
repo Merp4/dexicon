@@ -150,7 +150,8 @@ public sealed class CorpusSweeper(
     private async Task<IReadOnlyList<WorkspaceWalker.Candidate>> CommitsAsync(
         Corpus corpus, Source source, string root, CancellationToken ct)
     {
-        if (!await GitHistory.IsRepositoryAsync(root, ct))
+        var repo = GitHistory.RepositoryIn(_indexing.WorkspaceRoot, source.RootPath);
+        if (!await GitHistory.IsRepositoryAsync(repo, ct))
         {
             log.LogWarning("Source {Source} is not a git repository; leaving its inventory alone",
                 source.RootPath);
@@ -162,7 +163,7 @@ public sealed class CorpusSweeper(
 
         try
         {
-            var commits = await GitHistory.EnumerateAsync(root, options, filters.IncludeGlobs, ct);
+            var commits = await GitHistory.EnumerateAsync(repo, options, filters.IncludeGlobs, ct);
             return [.. commits.Select(c => new WorkspaceWalker.Candidate(root, c.RelativePath, 0))];
         }
         catch (GitHistoryException ex)

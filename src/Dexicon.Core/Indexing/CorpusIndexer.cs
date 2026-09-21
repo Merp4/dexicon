@@ -808,8 +808,10 @@ public sealed class CorpusIndexer(
         Source source, IndexJob job,
         IProgress<IndexProgress>? progress, bool full, Action onEmbeddingFailure, CancellationToken ct)
     {
-        var root = ResolveWorkspacePath(source.RootPath);
-        if (!Directory.Exists(root))
+        // Resolved into the type git is run against, so the boundary is applied again by
+        // the code that starts the process rather than trusted to have happened here.
+        var repo = GitHistory.RepositoryIn(_indexing.WorkspaceRoot, source.RootPath);
+        if (!Directory.Exists(repo.FullPath))
         {
             corpus.State = CorpusState.Unavailable;
             job.Error = $"Workspace path '{source.RootPath}' is not available under {_indexing.WorkspaceRoot}.";
@@ -817,7 +819,7 @@ public sealed class CorpusIndexer(
             return;
         }
 
-        if (!await GitHistory.IsRepositoryAsync(root, ct))
+        if (!await GitHistory.IsRepositoryAsync(repo, ct))
         {
             // Unavailable rather than failed, and nothing is removed: a repository whose
             // mount is present but whose .git is not is the same class of problem as a
@@ -839,7 +841,7 @@ public sealed class CorpusIndexer(
         IReadOnlyList<GitCommit> commits;
         try
         {
-            commits = await GitHistory.EnumerateAsync(root, options, filters.IncludeGlobs, ct);
+            commits = await GitHistory.EnumerateAsync(repo, options, filters.IncludeGlobs, ct);
         }
         catch (GitHistoryException ex)
         {
@@ -864,7 +866,7 @@ public sealed class CorpusIndexer(
         // Size is the size of the document, which is not known until it is read. Zero
         // here rather than a guess: a number nobody measured is worse than none.
         var units = commits
-            .Select(c => new WorkspaceWalker.Candidate(root, c.RelativePath, 0))
+            .Select(c => new WorkspaceWalker.Candidate(repo.FullPath, c.RelativePath, 0))
             .ToList();
 
         // The pathspecs go in: they are passed to git, so they decide which files the
@@ -884,7 +886,7 @@ public sealed class CorpusIndexer(
         {
             await IndexUnitsAsync(corpus, set, templates, chunking, source, job, progress, full,
                 units, [],
-                (toRead, token) => ReadCommitsAsync(root, options, byPath, toRead, filters.IncludeGlobs, token),
+                (toRead, token) => ReadCommitsAsync(repo, options, byPath, toRead, filters.IncludeGlobs, token),
                 alwaysProse: true,
                 fingerprintOf: candidate => HashContent(
                     byPath[candidate.RelativePath].Sha + '|' + fingerprint),
@@ -906,7 +908,7 @@ public sealed class CorpusIndexer(
     /// would mean the check could not run before the read.
     /// </summary>
     private static async IAsyncEnumerable<ReadFile> ReadCommitsAsync(
-        string root, GitHistoryOptions options, Dictionary<string, GitCommit> byPath,
+        GitRepository repo, GitHistoryOptions options, Dictionary<string, GitCommit> byPath,
         IReadOnlyList<WorkspaceWalker.Candidate> toRead, IReadOnlyList<string>? pathspecs,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
@@ -918,7 +920,7 @@ public sealed class CorpusIndexer(
         var fingerprint = options.ContentFingerprint(pathspecs);
 
         await foreach (var (sha, text) in
-                       GitHistory.ReadAsync(root, options, [.. wanted.Keys], pathspecs, ct))
+                       GitHistory.ReadAsync(repo, options, [.. wanted.Keys], pathspecs, ct))
         {
             if (!wanted.TryGetValue(sha, out var candidate)) continue;
 
