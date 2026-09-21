@@ -95,13 +95,48 @@ public sealed class ContextReadsTheDocumentTests : IDisposable
         var candidate = await Service(db).FromDocumentAsync(corpusId, setId, hit, [hit, neighbour]);
 
         candidate.ShouldNotBeNull();
-        var text = candidate.Pieces.ShouldHaveSingleItem().Content;
+        var text = string.Concat(candidate.Pieces.Select(p => p.Content));
 
         text.ShouldContain("line three", Case.Sensitive,
             "line 3 falls between the two chunks and is only in the document");
         text.ShouldContain("line one");
         text.ShouldContain("line five");
         text.ShouldNotContain("line six", Case.Sensitive, "the span ends at line 5");
+    }
+
+    /// <summary>
+    /// A window per chunk, not one window for the whole span, and the chunk indexes
+    /// survive.
+    ///
+    /// `ContextAssembler` de-duplicates and budgets on `ChunkIndex`. Collapsing a span
+    /// into one piece leaves it one index to charge against, so two hits in the same
+    /// file are charged for their whole windows even where those cover the same lines,
+    /// and the second is dropped by a budget it actually fits. Keeping a piece per chunk
+    /// keeps that accounting right; extending each to where the next begins is what
+    /// closes the gaps.
+    /// </summary>
+    [Fact]
+    public async Task ThePiecesKeepTheirChunkIndexesAndDoNotOverlap()
+    {
+        await using var db = Db();
+        var (corpusId, setId, sourceId) = await SeedAsync(db);
+
+        var hit = Chunk(sourceId, 7, 1, 2, "line one\nline two");
+        var neighbour = Chunk(sourceId, 8, 4, 5, "line four\nline five");
+
+        var candidate = await Service(db).FromDocumentAsync(corpusId, setId, hit, [hit, neighbour]);
+
+        var pieces = candidate.ShouldNotBeNull().Pieces.OrderBy(p => p.ChunkIndex).ToList();
+        pieces.Count.ShouldBe(2);
+
+        pieces.Select(p => p.ChunkIndex).ShouldBe([7, 8], "the indexes the assembler budgets on");
+
+        // Contiguous and non-overlapping: the first runs up to where the second begins,
+        // so no line is charged twice and none is missing between them.
+        pieces[0].StartLine.ShouldBe(1);
+        pieces[0].EndLine.ShouldBe(3);
+        pieces[1].StartLine.ShouldBe(4);
+        pieces[1].EndLine.ShouldBe(5);
     }
 
     /// <summary>

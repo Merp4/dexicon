@@ -287,8 +287,9 @@ public sealed class ContextService(
 
         if (document is null) return null;
 
-        var lo = pieces.Min(p => p.StartLine);
-        var hi = pieces.Max(p => p.EndLine);
+        var ordered = pieces.OrderBy(p => p.ChunkIndex).ToList();
+        var lo = ordered.Min(p => p.StartLine);
+        var hi = ordered.Max(p => p.EndLine);
 
         var (text, gotLo, gotHi) = Passage.Window(document.Text, lo, hi);
 
@@ -299,11 +300,35 @@ public sealed class ContextService(
         // usable; otherwise the chunks are what the hit's line numbers address.
         if (text.Length == 0 || gotLo != lo || gotHi != hi) return null;
 
-        return new ContextCandidate(hit, [hit with
+        // One window per chunk, each running to where the next begins, rather than one
+        // window for the whole span.
+        //
+        // The span as a single piece would have to carry a single chunk index, and that
+        // is what ContextAssembler de-duplicates and budgets on: two hits in one file
+        // would then be charged for their whole windows even where those windows cover
+        // the same lines, and the second hit gets dropped by a budget it actually fits.
+        // Keeping the indexes keeps that accounting correct.
+        //
+        // Extending each piece to the next one's first line is what closes the gaps the
+        // chunker left, which is the point of reading the document at all. Chunks that
+        // overlap lose the duplicated lines the same way, since a piece stops where its
+        // successor starts.
+        var windows = new List<SearchHit>(ordered.Count);
+
+        for (var i = 0; i < ordered.Count; i++)
         {
-            StartLine = gotLo,
-            EndLine = gotHi,
-            Content = text,
-        }]);
+            var from = ordered[i].StartLine;
+            var to = i + 1 < ordered.Count ? ordered[i + 1].StartLine - 1 : hi;
+
+            // A chunk that begins no later than its predecessor adds no lines of its own.
+            if (to < from) continue;
+
+            var (part, partLo, partHi) = Passage.Window(document.Text, from, to);
+            if (part.Length == 0) continue;
+
+            windows.Add(ordered[i] with { StartLine = partLo, EndLine = partHi, Content = part });
+        }
+
+        return windows.Count == 0 ? null : new ContextCandidate(hit, windows);
     }
 }
