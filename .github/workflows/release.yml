@@ -166,7 +166,7 @@ jobs:
         run: docker logs dexicon || true
 
       # ── Publish ───────────────────────────────────────────────────────────
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
