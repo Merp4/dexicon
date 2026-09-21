@@ -77,8 +77,15 @@ internal sealed class IndexingHarness : IAsyncDisposable
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton(options);
+        // The same interceptor the app registers, and for the reason this harness exists:
+        // the reader opens a connection per file on several threads, and SQLite's default
+        // busy_timeout of 0 turns any overlap into SQLITE_BUSY rather than a short wait.
+        // Left off, these tests would diverge from production in the one respect their
+        // concurrency is meant to exercise, and fail intermittently.
         services.AddDbContext<CatalogDbContext>(
-            o => o.UseSqlite($"Data Source={Path.Combine(dataPath, "catalog.db")}"));
+            o => o.UseSqlite($"Data Source={Path.Combine(dataPath, "catalog.db")}")
+                  .AddInterceptors(new SqlitePragmas(
+                      TimeSpan.FromSeconds(30), NullLogger<SqlitePragmas>.Instance)));
         services.AddSingleton<IndexingLimits>();
         services.AddScoped<ExtractedTextCache>();
         var provider = services.BuildServiceProvider();
