@@ -38,7 +38,16 @@ updates:
       react:
         patterns: ["react", "react-dom", "@types/react*"]
       build:
-        patterns: ["vite", "typescript", "@vitejs/*", "tailwindcss", "@tailwindcss/*"]
+        patterns: ["vite", "@vitejs/*", "tailwindcss", "@tailwindcss/*"]
+      # vitest and its @vitest/* companions peer-require each other at an exact
+      # version; bumped in separate PRs, each fails npm ci against the other.
+      vitest:
+        patterns: ["vitest", "@vitest/*"]
+      # Separate from build: a typescript major can outpace what a tool bundling
+      # the compiler API (@hey-api/openapi-ts) supports, and that should not also
+      # hold back vite or tailwind.
+      typescript:
+        patterns: ["typescript"]
 
   - package-ecosystem: github-actions
     directory: /
