@@ -88,6 +88,34 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
+    /// A repository's own settings do not get to run a command.
+    ///
+    /// A <c>diff=&lt;driver&gt;</c> attribute and a <c>diff.&lt;driver&gt;.textconv</c> in
+    /// the config both live inside the repository being read, and together they make git
+    /// run that command on every blob it diffs. Whoever can write to a repository under
+    /// the workspace root therefore gets a command executed by the indexer, with its
+    /// output indexed as the file's content.
+    ///
+    /// Both halves are asserted: the driver's output is absent, and the real content is
+    /// present. Absent alone would pass against a read that returned nothing at all.
+    /// </summary>
+    [Fact]
+    public async Task ATextconvDriverInTheRepositoryIsNotRun()
+    {
+        Commit(".gitattributes", "*.bin diff=evil\n", "attributes");
+        Commit("a.bin", "the real content\n", "first");
+        Commit("a.bin", "the real content, changed\n", "second");
+        Git("config", "diff.evil.textconv", "echo PWNED-BY-TEXTCONV");
+
+        var commits = await EnumerateAsync();
+        var read = await ReadAsync(new GitHistoryOptions { IncludeDiff = true }, commits);
+
+        var patches = string.Join('\n', read.Values);
+        patches.ShouldNotContain("PWNED-BY-TEXTCONV");
+        patches.ShouldContain("the real content, changed");
+    }
+
+    /// <summary>
     /// The workspace boundary, held by the code that starts the process.
     ///
     /// A source's root path is operator input that reaches Process.Start as a working

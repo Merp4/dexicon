@@ -514,7 +514,23 @@ public static class GitHistory
     {
         var args = new List<string>
         {
-            "log", "--no-walk", "--stdin", "--no-color", $"--format={marker}%H",
+            // --no-textconv, because a repository's own settings must not run a command.
+            // A `diff=<driver>` attribute plus a `diff.<driver>.textconv` in the
+            // repository's config makes git run that command on every blob it diffs, and
+            // both live inside the repository being read. Measured on a scratch repo:
+            //
+            //     *.bin diff=evil        in .gitattributes
+            //     diff.evil.textconv = echo PWNED-BY-TEXTCONV
+            //
+            //     $ git log -1 --patch
+            //     -PWNED-BY-TEXTCONV /tmp/PiWeOe_a.bin
+            //
+            // so the command runs and its output is what gets indexed. With
+            // --no-textconv the same call prints the file's real content.
+            //
+            // `diff.external` is NOT the same case and needs no flag: git log ignores it
+            // unless --ext-diff is passed, confirmed on the same repo.
+            "log", "--no-walk", "--stdin", "--no-color", "--no-textconv", $"--format={marker}%H",
         };
 
         if (options.IncludeDiff) args.Add("--patch");
