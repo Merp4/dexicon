@@ -60,10 +60,29 @@ public sealed class IndexJobQueue(CatalogDbContext db, WorkScheduler scheduler, 
             .OrderByDescending(j => j.QueuedUtc)
             .FirstOrDefaultAsync(ct);
 
-        if (existing is not null)
+        // Only onto a job that covers this request. A full pass re-embeds everything it
+        // walks and an incremental one re-embeds what changed, so a refresh queued behind
+        // a full is genuinely covered by it and a full queued behind a refresh is not:
+        // coalescing that way returned the refresh's id, reported success, and re-embedded
+        // nothing. It would also run in the wrong lane, since the type the scheduler
+        // counts against `MaxConcurrentRebuilds` is derived from the job's kind and the
+        // job would still say Refresh.
+        //
+        // The weaker request is the one that yields, which is the direction that cannot
+        // lose work. Two jobs for one corpus is the cost, and the scheduler already runs
+        // them one at a time.
+        if (existing is not null && TypeOf(existing.Kind) == TypeOf(kind))
         {
             log.LogInformation("Corpus {Corpus} already has job {JobId} queued; not queuing another",
                 corpusId, existing.Id);
+            return existing;
+        }
+
+        if (existing is not null && TypeOf(existing.Kind) == WorkType.Rebuild)
+        {
+            log.LogInformation(
+                "Corpus {Corpus} has {Kind} job {JobId} queued, which covers this {Requested}",
+                corpusId, existing.Kind, existing.Id, kind);
             return existing;
         }
 

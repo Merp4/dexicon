@@ -36,7 +36,7 @@ public sealed class DeferredSweepTests : IDisposable
             Indexing = new IndexingOptions { WorkspaceRoot = Path.GetTempPath() },
         }));
         services.AddDbContext<CatalogDbContext>(
-            o => o.UseSqlite($"Data Source={_db}")
+            o => o.UseSqlite($"Data Source={_db};Pooling=False")
                   .AddInterceptors(new SqlitePragmas(
                       TimeSpan.FromSeconds(30), NullLogger<SqlitePragmas>.Instance)),
             ServiceLifetime.Scoped);
@@ -122,7 +122,12 @@ public sealed class DeferredSweepTests : IDisposable
     public void Dispose()
     {
         _services.Dispose();
-        SqliteConnection.ClearAllPools();
+
+        // No ClearAllPools here. It is global, and clearing the pool out from under
+        // another test class's connection strips the pragmas its interceptor had just
+        // set on it — which is how a busy-timeout assertion in another file came to
+        // fail only when the whole suite ran. Pooling is off for this database instead,
+        // so there is nothing left holding the file.
         foreach (var suffix in new[] { "", "-wal", "-shm" })
         {
             try { File.Delete(_db + suffix); } catch (IOException) { }

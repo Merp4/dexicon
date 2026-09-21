@@ -33,7 +33,7 @@ public sealed class CorpusSweepTests : IDisposable
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddDbContext<CatalogDbContext>(
-            o => o.UseSqlite($"Data Source={_db}")
+            o => o.UseSqlite($"Data Source={_db};Pooling=False")
                   .AddInterceptors(new SqlitePragmas(
                       TimeSpan.FromSeconds(30), NullLogger<SqlitePragmas>.Instance)),
             ServiceLifetime.Scoped);
@@ -331,7 +331,6 @@ public sealed class CorpusSweepTests : IDisposable
     public void Dispose()
     {
         _services.Dispose();
-        SqliteConnection.ClearAllPools();
         try { if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true); } catch (IOException) { }
         foreach (var suffix in new[] { "", "-wal", "-shm" })
         {
