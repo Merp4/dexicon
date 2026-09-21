@@ -104,6 +104,32 @@ public sealed class ContextReadsTheDocumentTests : IDisposable
         text.ShouldNotContain("line six", Case.Sensitive, "the span ends at line 5");
     }
 
+    /// <summary>
+    /// The default request, and the one that matters most.
+    ///
+    /// `Neighbours` defaults to zero, and zero used to take the hits exactly as search
+    /// returned them — so the common call never reached the document at all and the fix
+    /// helped almost nobody. At zero the span is the hit's own, and the text still comes
+    /// from the document.
+    /// </summary>
+    [Fact]
+    public async Task ZeroNeighboursStillReadsFromTheDocument()
+    {
+        await using var db = Db();
+        var (corpusId, setId, sourceId) = await SeedAsync(db);
+
+        // A chunk whose stored payload differs from the document, which is how the two
+        // sources are told apart. Only the document has the real line.
+        var hit = Chunk(sourceId, 1, 2, 2, "STALE PAYLOAD");
+
+        var candidate = await Service(db).FromDocumentAsync(corpusId, setId, hit, [hit]);
+
+        candidate.ShouldNotBeNull();
+        var piece = candidate.Pieces.ShouldHaveSingleItem();
+        piece.Content.Trim().ShouldBe("line two");
+        piece.Content.ShouldNotContain("STALE PAYLOAD");
+    }
+
     [Fact]
     public async Task TheSpanIsStillTheChunksSpan()
     {

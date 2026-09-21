@@ -114,9 +114,11 @@ public sealed class ContextService(
             MaxCharsPerHit = 0,
         }, ct);
 
-        var candidates = request.Neighbours > 0
-            ? await ExpandAsync(principal, request.Corpus, result.Hits, request.Neighbours, ct)
-            : [.. result.Hits.Select(h => new ContextCandidate(h, [h]))];
+        // Unconditionally, including at zero neighbours. Zero used to take the hits as
+        // they came, which meant the DEFAULT request never reached the document and got
+        // chunk payloads — the shape this endpoint was supposed to stop returning.
+        var candidates = await BuildCandidatesAsync(
+            principal, request.Corpus, result.Hits, request.Neighbours, ct);
 
         var assembled = ContextAssembler.Assemble(candidates, request.MaxChars, request.LineNumbers);
 
@@ -176,7 +178,7 @@ public sealed class ContextService(
     /// qualification; resolving the hits' corpus ids instead drops it and lands on the
     /// default set.
     /// </summary>
-    private async Task<IReadOnlyList<ContextCandidate>> ExpandAsync(
+    private async Task<IReadOnlyList<ContextCandidate>> BuildCandidatesAsync(
         Principal principal, IReadOnlyList<string>? requested, IReadOnlyList<SearchHit> hits,
         int neighbours, CancellationToken ct)
     {
@@ -199,32 +201,44 @@ public sealed class ContextService(
                 continue;
             }
 
-            var key = (hit.CorpusId, hit.FilePath);
-            if (!files.TryGetValue(key, out var chunks))
+            List<SearchHit> pieces;
+
+            if (neighbours == 0)
             {
-                chunks = await vectors.GetFileChunksAsync(
-                    target.Set.CollectionName, target.Set.Id, hit.FilePath, ct);
-                files[key] = chunks;
+                // No chunk list needed to know the hit's own span, and fetching one to
+                // rediscover the chunk already in hand is a vector read per file for
+                // nothing. The document read below still happens, which is the point.
+                pieces = [hit];
             }
-
-            // Within the one source the hit came from. Two sources of a corpus can hold
-            // the same path, and interleaving their chunks stitches two different files
-            // into one passage that reads as continuous.
-            var sameFile = hit.SourceId is { } source
-                ? chunks.Where(c => c.SourceId == source).ToList()
-                : [.. chunks];
-
-            var pieces = sameFile
-                .Where(c => Math.Abs(c.ChunkIndex - hit.ChunkIndex) <= neighbours)
-                .OrderBy(c => c.ChunkIndex)
-                .ToList();
-
-            // A hit whose own chunk did not come back is a hit whose index has moved under
-            // the query. What matched is still the honest answer, so it is what is used.
-            if (!pieces.Exists(p => p.ChunkIndex == hit.ChunkIndex))
+            else
             {
-                candidates.Add(new ContextCandidate(hit, [hit]));
-                continue;
+                var key = (hit.CorpusId, hit.FilePath);
+                if (!files.TryGetValue(key, out var chunks))
+                {
+                    chunks = await vectors.GetFileChunksAsync(
+                        target.Set.CollectionName, target.Set.Id, hit.FilePath, ct);
+                    files[key] = chunks;
+                }
+
+                // Within the one source the hit came from. Two sources of a corpus can
+                // hold the same path, and interleaving their chunks stitches two
+                // different files into one passage that reads as continuous.
+                var sameFile = hit.SourceId is { } source
+                    ? chunks.Where(c => c.SourceId == source).ToList()
+                    : [.. chunks];
+
+                pieces = sameFile
+                    .Where(c => Math.Abs(c.ChunkIndex - hit.ChunkIndex) <= neighbours)
+                    .OrderBy(c => c.ChunkIndex)
+                    .ToList();
+
+                // A hit whose own chunk did not come back is a hit whose index has moved
+                // under the query. What matched is still the honest answer.
+                if (!pieces.Exists(p => p.ChunkIndex == hit.ChunkIndex))
+                {
+                    candidates.Add(new ContextCandidate(hit, [hit]));
+                    continue;
+                }
             }
 
             candidates.Add(await FromDocumentAsync(target.Corpus.Id, target.Set.Id, hit, pieces, ct)
