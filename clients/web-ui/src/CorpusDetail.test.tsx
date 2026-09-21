@@ -170,6 +170,39 @@ describe('the sources a corpus reads', () => {
     expect(screen.getAllByText(/\.gitignore honoured/)).toHaveLength(1);
   });
 
+  /**
+   * The corpus total counts both kinds, so neither "files" nor "commits" is true of it.
+   * Saying "files" contradicted the source row directly beneath it.
+   */
+  it('counts a mixed corpus in documents and a history-only one in commits', async () => {
+    getCorpus.mockResolvedValue(
+      corpus({
+        fileCount: 238,
+        sources: [
+          source({ id: 's1', kind: 'workspace' }),
+          source({ id: 's2', kind: 'githistory' }),
+        ],
+      }),
+    );
+
+    // The number and the unit are separate JSX children, so this reads the rendered
+    // text rather than one node: a matcher that only sees one node would report a
+    // failure that is about the markup and not about the label.
+    const says = (text: string) => (_: string, el: Element | null) =>
+      (el?.textContent ?? '').replace(/\s+/g, ' ').includes(text);
+
+    const { unmount } = render(<CorpusDetail {...props} />);
+    expect(await screen.findAllByText(says('238 documents'))).not.toHaveLength(0);
+    unmount();
+
+    getCorpus.mockResolvedValue(
+      corpus({ fileCount: 201, sources: [source({ id: 's2', kind: 'githistory' })] }),
+    );
+
+    render(<CorpusDetail {...props} />);
+    expect(await screen.findAllByText(says('201 commits'))).not.toHaveLength(0);
+  });
+
   it('tells a corpus with no sources what to do about it', async () => {
     getCorpus.mockResolvedValue(corpus({ sources: [] }));
 

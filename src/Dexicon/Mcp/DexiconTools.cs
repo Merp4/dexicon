@@ -199,7 +199,7 @@ public sealed class DexiconTools
                 : "    NOT SEARCHABLE: no indexed content. Nothing here will ever match.\n");
         }
 
-        sb.Append($"    state: {s.State}, {s.FileCount:N0} files, {s.ChunkCount:N0} chunks");
+        sb.Append($"    state: {s.State}, {s.FileCount:N0} {UnitFor(s.Sources, s.FileCount)}, {s.ChunkCount:N0} chunks");
 
         // Every set is addressable as `corpus:set`, so an agent that is only told the
         // corpus name cannot reach the others. Named here, with the default marked.
@@ -384,7 +384,7 @@ public sealed class DexiconTools
                 .FirstOrDefaultAsync(ct);
 
             sb.Append($"{c.Name}: {summary.State}\n");
-            sb.Append($"  {summary.FileCount:N0} files indexed, {summary.ChunkCount:N0} chunks");
+            sb.Append($"  {summary.FileCount:N0} {UnitFor(summary.Sources, summary.FileCount)} indexed, {summary.ChunkCount:N0} chunks");
             if (summary.SkippedCount > 0) sb.Append($", {summary.SkippedCount:N0} skipped");
             if (summary.FailedCount > 0) sb.Append($", {summary.FailedCount:N0} failed");
             sb.Append('\n');
@@ -437,6 +437,26 @@ public sealed class DexiconTools
     /// Capped at five files per directory. The whole list belongs in the UI; what an agent
     /// needs here is to know the corpus has a hole and roughly where.
     /// </summary>
+    /// <summary>
+    /// What a corpus's count is counting.
+    ///
+    /// A git-history source's units are commits, so a corpus made only of them saying
+    /// "201 files indexed" contradicts the source summary the same agent can read. A
+    /// corpus holding both kinds is counting two different things at once and neither
+    /// word is true of the total, so it says "documents", which is true of either.
+    /// </summary>
+    internal static string UnitFor(IReadOnlyList<SourceSummary> sources, int n)
+    {
+        var history = nameof(SourceKind.GitHistory);
+        var kinds = sources.Select(s => s.Kind).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        var one = !kinds.Contains(history, StringComparer.OrdinalIgnoreCase) ? "file"
+            : kinds.Count == 1 ? "commit"
+            : "document";
+
+        return n == 1 ? one : one + "s";
+    }
+
     internal static string RenderCoverage(IReadOnlyList<SourceCoverage.Gap> gaps)
     {
         if (gaps.Count == 0) return string.Empty;

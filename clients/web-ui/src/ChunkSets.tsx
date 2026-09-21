@@ -16,6 +16,7 @@ import {
 import { Checkbox } from './ui';
 import { Trash2, TriangleAlert } from 'lucide-react';
 import { cn } from 'cn';
+import { unitFor } from './lib/units';
 
 /**
  * Chunk sets for one corpus.
@@ -132,7 +133,7 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
                 </div>
 
                 <div className="dim text-xs mt-1">
-                  {set.fileCount.toLocaleString()} files · {set.chunkCount.toLocaleString()} chunks ·{' '}
+                  {set.fileCount.toLocaleString()} {unitFor(corpus.sources, set.fileCount)} · {set.chunkCount.toLocaleString()} chunks ·{' '}
                   <span title={set.lastIndexedUtc ? localTime(set.lastIndexedUtc) : undefined}>
                     {set.lastIndexedUtc ? `indexed ${relativeTime(set.lastIndexedUtc)}` : 'never indexed'}
                   </span>

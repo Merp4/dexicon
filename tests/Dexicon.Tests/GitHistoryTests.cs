@@ -381,6 +381,14 @@ public sealed class GitHistoryTests : IDisposable
         // order does not, because the same set is the same filter.
         baseline.ContentFingerprint(["src"]).ShouldNotBe(baseline.ContentFingerprint());
         baseline.ContentFingerprint(["src", "docs"]).ShouldBe(baseline.ContentFingerprint(["docs", "src"]));
+
+        // A pathspec is a caller's text and may hold any character, so a separator alone
+        // cannot encode the list: joined on a comma these two are the same string, and
+        // they are different filters. One of them would skip a commit whose stat had
+        // been cut to the other's paths.
+        baseline.ContentFingerprint(["a,b"]).ShouldNotBe(baseline.ContentFingerprint(["a", "b"]));
+        baseline.ContentFingerprint(["a;b"]).ShouldNotBe(baseline.ContentFingerprint(["a", "b"]));
+        baseline.ContentFingerprint(["2:ab"]).ShouldNotBe(baseline.ContentFingerprint(["ab"]));
     }
 
     [Fact]

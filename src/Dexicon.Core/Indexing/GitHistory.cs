@@ -95,7 +95,30 @@ public sealed record GitHistoryOptions
         IncludeMessage ? "m" : "-",
         IncludeStat ? "s" : "-",
         IncludeDiff ? "d" + MaxDiffBytes.ToString(CultureInfo.InvariantCulture) : "-",
-        pathspecs is { Count: > 0 } ? string.Join(',', pathspecs.OrderBy(p => p, StringComparer.Ordinal)) : "-");
+        Encode(pathspecs));
+
+    /// <summary>
+    /// The pathspecs as one string that only one list can produce.
+    ///
+    /// A separator alone will not do: a pathspec is a caller's text and may contain any
+    /// character, so joining on a comma makes <c>["a,b"]</c> and <c>["a", "b"]</c>
+    /// identical. They are different filters, and a fingerprint that cannot tell them
+    /// apart skips a commit whose stat was cut to the other one's paths.
+    ///
+    /// Each entry is written with its length in front, so the reader of the string could
+    /// recover the list exactly — which is the property that makes a collision
+    /// impossible rather than unlikely.
+    /// </summary>
+    private static string Encode(IReadOnlyList<string>? pathspecs)
+    {
+        if (pathspecs is not { Count: > 0 }) return "-";
+
+        var sb = new StringBuilder();
+        foreach (var p in pathspecs.OrderBy(p => p, StringComparer.Ordinal))
+            sb.Append(p.Length.ToString(CultureInfo.InvariantCulture)).Append(':').Append(p).Append(';');
+
+        return sb.ToString();
+    }
 }
 
 internal static class GitHistoryJson

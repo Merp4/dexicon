@@ -24,6 +24,7 @@ import {
   Search, Settings, Sliders, SlidersHorizontal, Trash2, TriangleAlert,
 } from 'lucide-react';
 import { cn } from 'cn';
+import { unitFor, unitOf } from './lib/units';
 import { parseHash, toHash, type View as RouteView } from './route';
 import { WorkspacePicker } from './WorkspacePicker';
 
@@ -827,7 +828,7 @@ export function CorporaView({
                 {c.description && <p className="dim mt-1.5 mx-0 mb-0 text-sm">{c.description}</p>}
 
                 <div className="dim mt-2 text-xs flex gap-3.5 flex-wrap">
-                  <span>{c.fileCount.toLocaleString()} {c.fileCount === 1 ? 'file' : 'files'}</span>
+                  <span>{c.fileCount.toLocaleString()} {unitFor(c.sources, c.fileCount)}</span>
                   <span>{c.chunkCount.toLocaleString()} chunks</span>
                   {/* Discovered by a sweep and not yet indexed. Separate from the file count,
                       which is what is searchable: a corpus added while another indexes used to
@@ -1250,7 +1251,7 @@ export function CorpusDetail({
           </span>
         </Row>
         <Row label="Contents">
-          {corpus.fileCount.toLocaleString()} {corpus.fileCount === 1 ? 'file' : 'files'}
+          {corpus.fileCount.toLocaleString()} {unitFor(corpus.sources, corpus.fileCount)}
           {' · '}{corpus.chunkCount.toLocaleString()} chunks
           {corpus.skippedCount > 0 && ` · ${corpus.skippedCount} skipped`}
           {corpus.failedCount > 0 && ` · ${corpus.failedCount} failed`}
@@ -1302,7 +1303,7 @@ export function CorpusDetail({
         ) : files.length === 0 ? (
           <Empty
             title="No file matches that"
-            hint={`Searched all ${corpus.fileCount.toLocaleString()} files in this corpus. Clear the filter to see them.`}
+            hint={`Searched all ${corpus.fileCount.toLocaleString()} ${unitFor(corpus.sources, corpus.fileCount)} in this corpus. Clear the filter to see them.`}
           />
         ) : (
           <div className="card overflow-hidden">
@@ -1506,17 +1507,6 @@ function CoverageNotice({
 /** A comma or newline separated list, with the blanks dropped. */
 function globList(raw: string): string[] {
   return raw.split(/[\n,]/).map((g) => g.trim()).filter(Boolean);
-}
-
-/**
- * What this source counts, singular or plural.
- *
- * A history source's units are commits, and calling them files contradicts everything
- * else the page says about it.
- */
-function unitOf(s: Corpus['sources'][number], n: number): string {
-  const one = s.kind === 'githistory' ? 'commit' : 'file';
-  return n === 1 ? one : `${one}s`;
 }
 
 /**
@@ -2166,7 +2156,7 @@ function RemoveSourceModal({ corpus, source, onClose, onRemoved, onError }: {
           index that no longer exists. Say what it costs and take one click. */}
       <p className="mt-0 text-sm">
         {source.fileCount
-          ? `Its ${source.fileCount.toLocaleString()} ${source.fileCount === 1 ? 'file leaves' : 'files leave'} the index immediately, in every chunk set of ${corpus.name}.`
+          ? `Its ${source.fileCount.toLocaleString()} ${unitOf(source, source.fileCount)} ${source.fileCount === 1 ? 'leaves' : 'leave'} the index immediately, in every chunk set of ${corpus.name}.`
           : `It has no indexed files, so nothing leaves the index.`}
         {' '}The folder on disk is untouched; Dexicon only ever reads it. Adding it again
         re-indexes from scratch.
