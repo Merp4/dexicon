@@ -233,6 +233,22 @@ public sealed class IndexingOptions
     /// </summary>
     public int MaxConcurrentExtractions { get; init; } = 4;
 
+    /// <summary>
+    /// Discovery passes at once. Its own limit because a sweep is a walk and a few
+    /// hundred rows, and the reason it has a lane at all is that it must not wait behind
+    /// indexing (D-32). More than a couple contend for the catalogue's single writer to
+    /// finish a two-second job marginally sooner.
+    /// </summary>
+    public int MaxConcurrentSweeps { get; init; } = 2;
+
+    /// <summary>
+    /// Full and rebuild passes at once, held below <see cref="MaxConcurrentCorpora"/> on
+    /// purpose: a rebuild re-embeds every file it walks, so several together saturate the
+    /// embedding endpoint and slow each other without finishing any sooner. Incremental
+    /// passes keep their own slots while one runs.
+    /// </summary>
+    public int MaxConcurrentRebuilds { get; init; } = 1;
+
     /// <summary>0 disables automatic refresh; the UI button and MCP tool still work.</summary>
     public int RefreshMinutes { get; init; }
 

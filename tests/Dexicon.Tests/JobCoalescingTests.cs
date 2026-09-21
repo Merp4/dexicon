@@ -1,8 +1,10 @@
 using Dexicon.Core.Catalog;
+using Dexicon.Core.Configuration;
 using Dexicon.Core.Indexing;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace Dexicon.Tests;
 
@@ -24,6 +26,7 @@ public sealed class JobCoalescingTests : IAsyncLifetime
     private SqliteConnection _connection = null!;
     private CatalogDbContext _db = null!;
     private IndexJobQueue _queue = null!;
+    private WorkScheduler _scheduler = null!;
 
     public async Task InitializeAsync()
     {
@@ -47,7 +50,8 @@ public sealed class JobCoalescingTests : IAsyncLifetime
         });
         await _db.SaveChangesAsync();
 
-        _queue = new IndexJobQueue(_db, NullLogger<IndexJobQueue>.Instance);
+        _scheduler = new WorkScheduler(Options.Create(new DexiconOptions()));
+        _queue = new IndexJobQueue(_db, _scheduler, NullLogger<IndexJobQueue>.Instance);
     }
 
     public async Task DisposeAsync()

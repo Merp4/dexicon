@@ -125,14 +125,17 @@ builder.Services.AddScoped<IVectorStoreCleanup, VectorStoreCleanup>();
 builder.Services.AddScoped<IndexJobQueue>();
 builder.Services.AddScoped<RequestContext>();
 
-builder.Services.AddHostedService<IndexingBackgroundService>();
+// One queue and one pool for every kind of work. A singleton because "what may run at
+// once" is a property of the process: scoped, it would be one answer per caller and
+// bound nothing. The pool sizes itself from the limits it holds.
+builder.Services.AddSingleton<WorkScheduler>();
+builder.Services.AddHostedService<WorkerPool>();
 builder.Services.AddHostedService<ScheduledRefreshService>();
 
-// The discovery lane, deliberately its own worker: a sweep that queued behind indexing
-// would wait for exactly the work it exists to get in front of. See D-32.
+// Discovery keeps the guarantee D-32 gave it — a sweep never waits behind indexing —
+// as a work type with its own slots, rather than as a second queue and worker.
 builder.Services.AddScoped<CorpusSweeper>();
 builder.Services.AddSingleton<SweepQueue>();
-builder.Services.AddHostedService<SweepWorker>();
 
 // Singleton: the lease is a row, and the service only takes scopes to reach it.
 builder.Services.AddSingleton<CorpusLeases>();
