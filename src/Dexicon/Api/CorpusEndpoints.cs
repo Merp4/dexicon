@@ -213,7 +213,7 @@ public static class CorpusEndpoints
         });
 
         g.MapPost("/{nameOrId}/sources", async (string nameOrId, AddSourceRequest body, RequestContext rc,
-            ScopeResolver scopes, CatalogDbContext db, CorpusIndexer indexer, IOptions<DexiconOptions> opts,
+            ScopeResolver scopes, CatalogDbContext db, IOptions<DexiconOptions> opts,
             IndexJobQueue queue, SweepQueue sweeps, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
