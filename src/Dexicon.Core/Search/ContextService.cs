@@ -340,7 +340,7 @@ public sealed class ContextService(
             var to = g + 1 < groups.Count ? groups[g + 1][0].StartLine - 1 : hi;
             if (to < from) continue;
 
-            // A line the chunker had to divide keeps its own slices.
+            // A line the chunker had to divide keeps its own slices, untouched.
             //
             // Every slice of an oversized line reports the same start and end, so the
             // document's copy of that line is what they say between them and there is no
@@ -348,22 +348,18 @@ public sealed class ContextService(
             // loses which slice matched: the assembler cuts a block from the start of its
             // first piece, so a hit in the third slice of a line that is itself over the
             // budget renders as the opening of the line, or as nothing, while the
-            // citation still names the hit. The slices go through as they are, which is
-            // what the chunk path does, and Stitch joins them on their text because it
-            // cannot separate them by line.
-            if (group.Count > 1)
+            // citation still names the hit.
+            //
+            // Untouched includes the line numbers. Extending the last slice to cover the
+            // lines after it reads as tidy and is not: `Passage.Stitch` separates slices
+            // of one line by their text, and only for a piece whose start and end are the
+            // same line, so a slice widened to 2-4 falls through to the overlap rule
+            // instead, which drops its first line as already emitted — the slice's own
+            // text. Lines after a divided one are left to the next chunk that covers
+            // them, and Stitch discloses the gap where none does.
+            if (IsDivided(group, lines))
             {
                 windows.AddRange(group);
-
-                // Lines after it that no other chunk begins on belong to the last slice,
-                // which is where reading the document still earns its place here.
-                if (to > from)
-                    windows[^1] = group[^1] with
-                    {
-                        EndLine = to,
-                        Content = group[^1].Content + '\n' + string.Join('\n', lines[from..to]),
-                    };
-
                 continue;
             }
 
@@ -380,5 +376,31 @@ public sealed class ContextService(
         }
 
         return windows.Count == 0 ? null : new ContextCandidate(hit, windows);
+    }
+
+    /// <summary>
+    /// Whether these chunks are slices of one line the chunker had to divide, rather than
+    /// chunks that happen to start on it.
+    ///
+    /// Several sharing a start line settles it. One does not, and one is the ordinary
+    /// shape of the default request: <c>Neighbours = 0</c> sends the hit by itself, so a
+    /// slice arrives with nothing beside it to be compared against.
+    ///
+    /// What identifies it on its own is that dividing a line cuts it up: a slice is part
+    /// of the line, and shorter than it. A chunk left behind by an older version of the
+    /// file is a different text rather than part of this one, so it still gets the
+    /// document's line, which is the point of reading the document at all.
+    ///
+    /// A short slice could be contained by coincidence. Then the payload really is in
+    /// the line, and returning it is narrower than it needed to be rather than wrong.
+    /// </summary>
+    private static bool IsDivided(List<SearchHit> group, string[] lines)
+    {
+        if (group.Count > 1) return true;
+        if (group[0].StartLine != group[0].EndLine) return false;
+
+        var line = lines[group[0].StartLine - 1];
+        return line.Length > group[0].Content.Length
+               && line.Contains(group[0].Content, StringComparison.Ordinal);
     }
 }

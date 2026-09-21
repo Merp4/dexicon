@@ -285,26 +285,77 @@ public sealed class ContextReadsTheDocumentTests : IDisposable
     }
 
     /// <summary>
-    /// Lines after a divided one that no other chunk begins on still come from the
-    /// document, which is where reading it earns its place even here.
+    /// A slice arriving alone, which is the default request: <c>Neighbours = 0</c> sends
+    /// the hit by itself, so there is no second slice to recognise it by.
+    ///
+    /// What identifies one on its own is that dividing a line cuts it up: the slice is
+    /// part of the line and shorter than it, where a payload left by an older version of
+    /// the file is a different text. Without that, the default request replaced the
+    /// slice with the whole oversized line and the match went with it.
     /// </summary>
     [Fact]
-    public async Task LinesAfterADividedOneAreReadFromTheDocument()
+    public async Task ASliceArrivingAloneIsStillASlice()
     {
         await using var db = Db();
-        var (corpusId, setId, sourceId) = await SeedAsync(db);   // six lines
+        var (corpusId, setId, sourceId) = await SeedAsync(db);
 
-        var first = Chunk(sourceId, 10, 2, 2, "first slice");
-        var second = Chunk(sourceId, 11, 2, 4, "second slice");
+        var slice = Chunk(sourceId, 11, 2, 2, "two");   // part of "line two"
 
-        var candidate = await Service(db).FromDocumentAsync(
-            corpusId, setId, first, [first, second]);
+        var candidate = await Service(db).FromDocumentAsync(corpusId, setId, slice, [slice]);
+
+        candidate.ShouldNotBeNull().Pieces.ShouldHaveSingleItem()
+            .Content.ShouldBe("two", "the slice is what matched; the line is not");
+    }
+
+    /// <summary>
+    /// A one-line chunk that IS the line still comes from the document, so the check
+    /// above does not turn every single-line chunk back into its payload.
+    /// </summary>
+    [Fact]
+    public async Task AChunkThatIsTheWholeLineStillComesFromTheDocument()
+    {
+        await using var db = Db();
+        var (corpusId, setId, sourceId) = await SeedAsync(db);
+
+        // Says line 2, carries line 2, and the span runs to the next chunk at line 4.
+        var whole = Chunk(sourceId, 1, 2, 2, "line two");
+        var next = Chunk(sourceId, 2, 4, 4, "line four");
+
+        var candidate = await Service(db).FromDocumentAsync(corpusId, setId, whole, [whole, next]);
 
         var pieces = candidate.ShouldNotBeNull().Pieces;
-        pieces.Select(p => p.ChunkIndex).ShouldBe([10, 11]);
-        pieces[^1].EndLine.ShouldBe(4);
-        pieces[^1].Content.ShouldBe("second slice\nline three\nline four",
-            "the slice keeps its own text, and the lines after it come from the document");
+        pieces[0].Content.ShouldBe("line two\nline three",
+            "line 3 is between the chunks and only the document has it");
+    }
+
+    /// <summary>
+    /// The passage the assembler actually renders, rather than the pieces handed to it.
+    ///
+    /// <c>Passage.Stitch</c> separates slices of one line by their text, and only for a
+    /// piece whose start and end are the same line. A slice widened to cover the lines
+    /// after it falls through to the overlap rule instead, which drops its first line as
+    /// already emitted — the slice's own text — so the pieces can carry the match and the
+    /// passage still not contain it.
+    /// </summary>
+    [Fact]
+    public async Task TheAssembledPassageContainsTheSliceThatMatched()
+    {
+        await using var db = Db();
+        var (corpusId, setId, sourceId) = await SeedAsync(db);
+
+        var first = Chunk(sourceId, 10, 2, 2, "first slice");
+        var second = Chunk(sourceId, 11, 2, 2, "second slice");
+        var after = Chunk(sourceId, 12, 4, 4, "line four");
+
+        var candidate = await Service(db).FromDocumentAsync(
+            corpusId, setId, second, [first, second, after]);
+
+        var assembled = ContextAssembler.Assemble(
+            [candidate.ShouldNotBeNull()], maxChars: 4_000, lineNumbers: false);
+
+        assembled.Text.ShouldContain("second slice", Case.Sensitive,
+            "the hit's own slice has to survive stitching, not only candidate building");
+        assembled.Text.ShouldContain("first slice", Case.Sensitive);
     }
 
     /// <summary>
