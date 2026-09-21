@@ -205,7 +205,11 @@ public sealed class WorkspaceWalker
 
     public sealed record Candidate(string FullPath, string RelativePath, long SizeBytes);
 
-    public sealed record Skipped(string RelativePath, string Reason);
+    /// <param name="SizeBytes">
+    /// What the walk measured, or 0 where it could not: the row a skip writes shows a
+    /// size like any other, and for the two cap reasons the size IS the reason.
+    /// </param>
+    public sealed record Skipped(string RelativePath, string Reason, long SizeBytes);
 
     public sealed record WalkResult(IReadOnlyList<Candidate> Files, IReadOnlyList<Skipped> SkippedFiles);
 
@@ -243,16 +247,16 @@ public sealed class WorkspaceWalker
 
             FileInfo info;
             try { info = new FileInfo(full); }
-            catch (Exception ex) { skipped.Add(new Skipped(relative, $"unreadable: {ex.Message}")); continue; }
+            catch (Exception ex) { skipped.Add(new Skipped(relative, $"unreadable: {ex.Message}", 0)); continue; }
 
             if (info.Length > maxFileBytes && !Extraction.ExtractorRegistry.IsDocumentFormat(relative))
             {
                 skipped.Add(new Skipped(relative,
-                    $"over the {maxFileBytes:N0} byte size cap ({info.Length:N0} bytes)"));
+                    $"over the {maxFileBytes:N0} byte size cap ({info.Length:N0} bytes)", info.Length));
                 continue;
             }
 
-            if (info.Length == 0) { skipped.Add(new Skipped(relative, "empty file")); continue; }
+            if (info.Length == 0) { skipped.Add(new Skipped(relative, "empty file", 0)); continue; }
 
             // A PDF, DOCX, PPTX or EPUB is binary, but has text inside that an extractor
             // can reach. Sniffing it would drop every PDF in a
@@ -266,13 +270,13 @@ public sealed class WorkspaceWalker
                 {
                     skipped.Add(new Skipped(relative,
                         $"document over the {documentCap:N0} byte cap ({info.Length:N0} bytes). " +
-                        "Raise DEXICON__INDEXING__DOCUMENTMAXBYTES if you have the memory for it."));
+                        "Raise DEXICON__INDEXING__DOCUMENTMAXBYTES if you have the memory for it.", info.Length));
                     continue;
                 }
             }
             else if (LooksBinary(full))
             {
-                skipped.Add(new Skipped(relative, "binary content (NUL byte in the first 8 KB)"));
+                skipped.Add(new Skipped(relative, "binary content (NUL byte in the first 8 KB)", info.Length));
                 continue;
             }
 
