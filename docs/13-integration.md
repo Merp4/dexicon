@@ -220,12 +220,19 @@ decide which lines. Where none is, which is code and plain text on a mount, beca
 reading those IS the extraction and nothing is cached, the passage is stitched back
 together from the chunk payloads, and it can then carry the gaps the chunker left, which
 `get_context` and the file endpoint both disclose in the text as `… lines N-M not indexed …`.
-The file endpoint also falls back when a path is ambiguous, because two sources of one
-corpus can hold the same path and neither document is the right one.
 
 That split is what `POST /api/context` did not do until recently: it stitched chunk
-payloads in every case, including for a book that had a document sitting in the catalogue.
-Both surfaces now make the same choice on the same evidence.
+payloads in every case, including for a book whose document was sitting in the catalogue.
+
+**A duplicate path is where the three diverge, and it is not a discrepancy.** A file path
+is relative to its source root, so within a corpus it is not unique: two sources can each
+hold `Installation Guide.pdf`, and they are two different books. A lookup is given only
+the path, so `get_context` and the file endpoint detect the ambiguity, keep the chunk path
+and warn, because serving one book's text under the other's name is plausible and
+quotable and wrong. `POST /api/context` is answering a search, and a hit carries the
+source it came from, so there is no ambiguity to resolve and it reads that source's
+document. Same rule, different evidence: read the document when it is known which
+document, and say so when it is not.
 
 ### Why the two reads are POST
 
