@@ -274,6 +274,53 @@ with no section here fails its release rather than publishing an undescribed one
   default 30, matching the provider's own command timeout so neither gives up first.
 ### Fixed
 
+- **A file the catalogue records with no chunks no longer keeps the vectors it had.** Four
+  early exits wrote a zero-chunk row and returned before the success path's delete:
+  extraction producing nothing, the chunker producing nothing, the walk excluding the file,
+  and the same empty case for an uploaded document. The reconcile pass only removes files a
+  walk stopped seeing, and all four leave the file in that walk, so nothing collected them.
+
+  The stale vectors stayed searchable while the row reported zero chunks, so a hit pointed
+  at text the file no longer contains and the Files list gave no way to tell. Measured on
+  the index this was found in: 8 files holding 1,243 points between them, one of them 792.
+
+  The delete is unconditional rather than conditional on the recorded count, which is what
+  lets an existing deployment repair itself — where the two disagree, the count is the
+  thing that is wrong. A delete that fails no longer writes a settled outcome over live
+  chunks: the empty branches record `Failed`, and an excluded file keeps its chunk count as
+  the only remaining record that those chunks exist. Both are retried next refresh.
+
+- **A job's counters add up to its total.** `FilesTotal` counted only the files a source
+  owns, while `FilesSkipped` also counts everything the walk excluded — binaries, oversize
+  files, zero-byte files, unreadable ones — which never entered the total. A completed
+  refresh reported 27,011 total against 27,031 skipped, and any progress reading
+  `(done + skipped + failed) / total` went past 1.0.
+
+  `FilesTotal` now means every file the pass will record, which is also the number the
+  Files list shows for the corpus, so the two agree. Shadowing applies to the owned term
+  only, so a file an exclusion catches under a nested source is counted by every source
+  above it — in both terms, which is what keeps the invariant.
+
+- **A file cannot be recorded as indexed while its vectors are missing.** The success path
+  deletes a file's vectors before embedding the replacements and writes its row only after.
+  A pass that died in between — a restart, a lost lease, a cancel — left a row reading
+  `Indexed`, with a hash and a chunk count, over vectors that were already gone. The hash
+  still matched, so the staleness check short-circuited the file on every later refresh: it
+  was unsearchable, reported healthy, and no refresh would ever repair it. Found on a
+  1,834-file corpus as 3 files short by 13,016 points, two of them reporting thousands of
+  chunks while holding none.
+
+  The row is now claimed before the delete and the claim made durable, so the same
+  interruption leaves the file looking stale and the next pass indexes it. The two records
+  are also compared: at the start of each source's pass, per-file point counts come back in
+  one call and any file whose recorded count is not backed has its hash cleared, which the
+  existing staleness check acts on. Both apply to workspace sources and to uploads.
+
+  The comparison only ever clears a hash — it deletes nothing and writes no count — and is
+  skipped entirely when the count cannot be read or comes back at its cap, because absent
+  and zero are the same shape in that answer. `chunk_set_id` gains the payload index that
+  every per-file filter already needed.
+
 - **A cut context block kept the chunk before the hit, not the hit.** A block too large
   for the remaining budget is reduced to one piece; it took the lowest chunk index, which
   with `neighbours` is the chunk furthest before the match. A top hit at lines 122-165 came
