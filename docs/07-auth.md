@@ -157,8 +157,10 @@ is what separates a browser tab left open on an expired session from someone wor
 through a list: both used to write the same line, and a page of them said only that
 something was failing. The digest is 32 bits on purpose — enough to recognise one caller
 repeating, and too narrow to confirm a guess for anyone who can read the logs. The user
-agent is the caller's own text, so it is capped and logged as a property, which the
-console template escapes.
+agent is the caller's own text, so it is capped, and every control character in it is
+replaced with U+FFFD before it is logged, as they are in the request path and in a key's
+name. The console template also escapes properties: that covers the sink it is configured
+on, and the replacement covers the value wherever it is written.
 
 This is a log, not a table. Persisting an audit trail to SQLite is a v2 question, and the
 answer for v1 is that a local tool's container logs are the audit trail. A mapping change is

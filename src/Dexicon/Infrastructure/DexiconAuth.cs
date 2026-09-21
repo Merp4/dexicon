@@ -107,7 +107,7 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
             log.LogWarning(
                 "Rejected request to {Path} from {Remote} ({Agent}), credential {Digest}: "
                 + "invalid, revoked or expired",
-                path,
+                OneLine(path),
                 ctx.Connection.RemoteIpAddress?.ToString() ?? "an unknown address",
                 Agent(ctx.Request.Headers.UserAgent.FirstOrDefault()),
                 CallerDigest(presented));
@@ -122,7 +122,8 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
         {
             // Audit line. The credential's id and name, never its value.
             log.LogInformation("{Method} {Path} -> {Status} (caller {TokenId} '{TokenName}')",
-                ctx.Request.Method, path, ctx.Response.StatusCode, principal.TokenId, principal.TokenName);
+                ctx.Request.Method, OneLine(path), ctx.Response.StatusCode,
+                principal.TokenId, OneLine(principal.TokenName));
             return Task.CompletedTask;
         });
 
@@ -170,16 +171,50 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
     ///
     /// Capped, because it is whatever the caller sent and a rejected request is the one
     /// path an unauthenticated caller can reach: uncapped, a kilobyte of user agent per
-    /// poll is theirs to write into the audit trail. It goes in as a property rather
-    /// than into the message, so the configured template escapes it and a newline in it
-    /// cannot end the line — see <c>LogOutput.ConsoleTemplate</c>.
+    /// poll is theirs to write into the audit trail. Cut before <see cref="OneLine"/>,
+    /// so the cost of the pass is bounded by the cap and not by what was sent.
     /// </summary>
     internal static string Agent(string? header) =>
         string.IsNullOrWhiteSpace(header) ? "no user agent"
-        : header.Length <= AgentMax ? header
-        : header[..AgentMax] + "…";
+        : header.Length <= AgentMax ? OneLine(header)
+        : OneLine(header[..AgentMax]) + "…";
 
     private const int AgentMax = 120;
+
+    /// <summary>
+    /// One log line, whatever the caller sent.
+    ///
+    /// A request path arrives URL-decoded, so <c>%0A</c> in it is a real newline by the
+    /// time it reaches here, and a newline inside an entry lets the caller append a line
+    /// that reads as the server's own. The same goes for the user-agent header, and for
+    /// a key's name, which an admin chose but the log then quotes.
+    ///
+    /// The console sink renders message properties with <c>{Message:j}</c>, which quotes
+    /// and escapes a string, so that output is already safe — see
+    /// <c>LogOutput.ConsoleTemplate</c>. That is the sink's formatting and not this
+    /// code's decision, and it covers one sink: a second one configured later, or that
+    /// format specifier dropped, silently restores the hole. The value is held here
+    /// instead, where the caller's text is known to be the caller's.
+    ///
+    /// Replaced rather than removed, and with U+FFFD, so a path that was odd still reads
+    /// as odd rather than as a path somebody sent. Every control character goes and not
+    /// just the two line breaks, because an escape sequence in a terminal is the same
+    /// trick by another route.
+    /// </summary>
+    internal static string OneLine(string value)
+    {
+        var at = 0;
+        while (at < value.Length && !char.IsControl(value[at])) at++;
+        if (at == value.Length) return value;
+
+        return string.Create(value.Length, value, static (span, source) =>
+        {
+            for (var i = 0; i < source.Length; i++)
+                span[i] = char.IsControl(source[i]) ? Replacement : source[i];
+        });
+    }
+
+    private const char Replacement = '�';
 
     private static Task Problem(HttpContext ctx, int status, string title, string detail)
     {
