@@ -100,7 +100,17 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
 
         if (principal is null)
         {
-            log.LogWarning("Rejected request to {Path}: credential invalid, revoked or expired", path);
+            // Which caller, not which credential. A rejection said only the path, so a
+            // browser tab left open on an expired session and a credential being guessed
+            // wrote the identical line, and a log full of them answered neither
+            // question: not how many callers, not whether it was always the same one.
+            log.LogWarning(
+                "Rejected request to {Path} from {Remote} ({Agent}), credential {Digest}: "
+                + "invalid, revoked or expired",
+                path,
+                ctx.Connection.RemoteIpAddress?.ToString() ?? "an unknown address",
+                Agent(ctx.Request.Headers.UserAgent.FirstOrDefault()),
+                CallerDigest(presented));
             await Problem(ctx, StatusCodes.Status401Unauthorized, "Invalid credentials",
                 "The credential was not recognised, or it has been revoked or has expired.");
             return;
@@ -140,6 +150,36 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
     /// </summary>
     internal static string PrincipalCacheKey(string presented) =>
         "principal::" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(presented)));
+
+    /// <summary>
+    /// A short one-way mark for a credential that was rejected, so repeats can be
+    /// counted without the credential being written down.
+    ///
+    /// Eight hex characters, which is 32 bits and deliberately narrow. The question it
+    /// answers is "one caller retrying, or many", and at that width collisions are
+    /// common enough that the mark is worth nothing to anyone reading the logs who
+    /// wanted to confirm a guess. The full digest would answer the same question and be
+    /// a confirmation oracle for any credential someone could think of.
+    /// </summary>
+    internal static string CallerDigest(string presented) =>
+        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(presented)))[..8];
+
+    /// <summary>
+    /// The caller's own description of itself, which is the field that separates a stale
+    /// browser tab from a script, and is worth more than either of the other two.
+    ///
+    /// Capped, because it is whatever the caller sent and a rejected request is the one
+    /// path an unauthenticated caller can reach: uncapped, a kilobyte of user agent per
+    /// poll is theirs to write into the audit trail. It goes in as a property rather
+    /// than into the message, so the configured template escapes it and a newline in it
+    /// cannot end the line — see <c>LogOutput.ConsoleTemplate</c>.
+    /// </summary>
+    internal static string Agent(string? header) =>
+        string.IsNullOrWhiteSpace(header) ? "no user agent"
+        : header.Length <= AgentMax ? header
+        : header[..AgentMax] + "…";
+
+    private const int AgentMax = 120;
 
     private static Task Problem(HttpContext ctx, int status, string title, string detail)
     {

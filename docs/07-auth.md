@@ -151,6 +151,15 @@ never its value, plus method, path and status. Authorization failures log at War
 the reason, and a failed sign-in logs the consecutive count and the delay the next attempt
 will wait.
 
+A rejected credential has no id or name to log, so the line carries the remote address,
+the caller's user agent and eight hex characters of a SHA-256 of what was presented. That
+is what separates a browser tab left open on an expired session from someone working
+through a list: both used to write the same line, and a page of them said only that
+something was failing. The digest is 32 bits on purpose — enough to recognise one caller
+repeating, and too narrow to confirm a guess for anyone who can read the logs. The user
+agent is the caller's own text, so it is capped and logged as a property, which the
+console template escapes.
+
 This is a log, not a table. Persisting an audit trail to SQLite is a v2 question, and the
 answer for v1 is that a local tool's container logs are the audit trail. A mapping change is
 an ordinary authenticated request and lands on that line, but a log is not a diff and cannot

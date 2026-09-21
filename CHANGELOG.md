@@ -272,6 +272,21 @@ with no section here fails its release rather than publishing an undescribed one
 
   Prerequisite for [D-32](docs/decisions.md). `DEXICON__STORAGE__BUSYTIMEOUTSECONDS`,
   default 30, matching the provider's own command timeout so neither gives up first.
+
+- **A rejected credential says which caller, not just which path.** The line was the path
+  and nothing else, so a browser tab left open on an expired session and someone working
+  through a list of guesses wrote the identical warning, and a log full of them answered
+  neither how many callers there were nor whether it was always the same one. Found on a
+  live instance: two clients polling `/api/jobs` about a minute apart, both refused, with
+  no way to tell what either of them was.
+
+  It now carries the remote address, the caller's user agent and eight hex characters of a
+  SHA-256 of what was presented. The digest is 32 bits deliberately: wide enough to
+  recognise one caller repeating, narrow enough that it confirms no guess for anyone
+  reading the logs. The user agent is the one field an unauthenticated caller writes, so
+  it is capped at 120 characters and goes in as a property, which the console template
+  escapes as it already does the path.
+
 ### Fixed
 
 - **Turning a page of the file list no longer loses it to the filter's timer.** The name
