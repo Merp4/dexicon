@@ -191,6 +191,7 @@ public sealed class ContextService(
         var targets = scope.Targets.ToDictionary(t => t.Corpus.Id, StringComparer.Ordinal);
 
         var files = new Dictionary<(string Corpus, string Path), IReadOnlyList<SearchHit>>();
+        var docs = new Dictionary<(string Corpus, string Set, string? Source, string Path), DocumentBody?>();
         var candidates = new List<ContextCandidate>(hits.Count);
 
         foreach (var hit in hits)
@@ -241,7 +242,7 @@ public sealed class ContextService(
                 }
             }
 
-            candidates.Add(await FromDocumentAsync(target.Corpus.Id, target.Set.Id, hit, pieces, ct)
+            candidates.Add(await FromDocumentAsync(target.Corpus.Id, target.Set.Id, hit, pieces, docs, ct)
                            ?? new ContextCandidate(hit, pieces));
         }
 
@@ -266,9 +267,23 @@ public sealed class ContextService(
     /// </summary>
     internal async Task<ContextCandidate?> FromDocumentAsync(
         string corpusId, string chunkSetId, SearchHit hit, List<SearchHit> pieces,
+        Dictionary<(string Corpus, string Set, string? Source, string Path), DocumentBody?>? cache = null,
         CancellationToken ct = default)
     {
-        var document = await documents.ForAsync(corpusId, chunkSetId, hit.FilePath, hit.SourceId, ct);
+        // One read per file, not per hit. Several hits in one book is the ordinary shape
+        // of a result, and a document is the whole extracted text — hundreds of
+        // thousands of characters for a technical book — so reading it again for each
+        // hit is the same load repeated. Misses are cached too: a file with no document
+        // must not be looked up once per hit to learn that again.
+        var key = (corpusId, chunkSetId, hit.SourceId, hit.FilePath);
+        DocumentBody? document;
+
+        if (cache is not null && cache.TryGetValue(key, out var cached)) document = cached;
+        else
+        {
+            document = await documents.ForAsync(corpusId, chunkSetId, hit.FilePath, hit.SourceId, ct);
+            if (cache is not null) cache[key] = document;
+        }
 
         if (document is null) return null;
 
@@ -277,10 +292,12 @@ public sealed class ContextService(
 
         var (text, gotLo, gotHi) = Passage.Window(document.Text, lo, hi);
 
-        // The document exists but does not reach these lines, which means its text and
-        // these chunks were cut from different versions. The chunks are what the hit's
-        // line numbers address, so they are what is honest to return.
-        if (gotHi < gotLo || text.Length == 0) return null;
+        // Anything short of the whole span means the document and these chunks were cut
+        // from different versions of the file. Window returns what it could reach, so a
+        // document ending at line 15 answers a request for 10-20 with 10-15 — a passage
+        // shorter than its own citation claims, and quotable. Only the exact span is
+        // usable; otherwise the chunks are what the hit's line numbers address.
+        if (text.Length == 0 || gotLo != lo || gotHi != hi) return null;
 
         return new ContextCandidate(hit, [hit with
         {

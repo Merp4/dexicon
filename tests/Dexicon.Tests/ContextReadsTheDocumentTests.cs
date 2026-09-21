@@ -195,6 +195,49 @@ public sealed class ContextReadsTheDocumentTests : IDisposable
         (await Service(db).FromDocumentAsync(corpusId, setId, hit, [hit])).ShouldBeNull();
     }
 
+    /// <summary>
+    /// The harder half of the same case, and the one a start-only guard misses.
+    ///
+    /// `Passage.Window` returns what it could reach, so a document of six lines answers
+    /// a request for 4–20 with 4–6. The start is present, so a guard that only asks
+    /// "did we get the first line" passes it and returns a passage shorter than its own
+    /// citation claims. Only the exact span is usable.
+    /// </summary>
+    [Fact]
+    public async Task ADocumentThatStopsInsideTheSpanDefersToTheChunks()
+    {
+        await using var db = Db();
+        var (corpusId, setId, sourceId) = await SeedAsync(db);   // six lines
+
+        var hit = Chunk(sourceId, 3, 4, 20, "chunks from a longer version of the file");
+
+        (await Service(db).FromDocumentAsync(corpusId, setId, hit, [hit])).ShouldBeNull(
+            "the window would have been 4-6 under a citation claiming 4-20");
+    }
+
+    /// <summary>
+    /// Several hits in one book is the ordinary shape of a result, and a document is the
+    /// whole extracted text — hundreds of thousands of characters for a technical book.
+    /// Reading it once per hit is the same load repeated.
+    /// </summary>
+    [Fact]
+    public async Task TheDocumentIsReadOncePerFileRatherThanOncePerHit()
+    {
+        await using var db = Db();
+        var (corpusId, setId, sourceId) = await SeedAsync(db);
+
+        var cache = new Dictionary<(string Corpus, string Set, string? Source, string Path), DocumentBody?>();
+        var service = Service(db);
+
+        foreach (var line in new[] { 1, 2, 3, 4 })
+        {
+            var hit = Chunk(sourceId, line, line, line, $"chunk {line}");
+            (await service.FromDocumentAsync(corpusId, setId, hit, [hit], cache)).ShouldNotBeNull();
+        }
+
+        cache.Count.ShouldBe(1, "four hits in one file is one document, read once");
+    }
+
     public void Dispose()
     {
         try { File.Delete(_path); } catch { /* best effort */ }
