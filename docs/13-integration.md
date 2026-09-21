@@ -194,7 +194,7 @@ stating because the names invite the assumption that they do.
 |---|---|---|
 | A query, answered as one passage within a budget | — | `POST /api/context` |
 | Ranked hits for a query | `search_index` | `POST /api/search` |
-| The lines around a known place in a known file | `get_context` | `GET /api/corpora/{name}/file` * |
+| Text from a known file, without a query | `get_context` | `GET /api/corpora/{name}/file` * |
 
 \* On the full surface, not in the integration document above. An HTTP integrator reading
 on from a hit has to generate against the full document or call the path directly, which
@@ -206,11 +206,26 @@ the results into one passage that stops at `maxChars` (D-29). Its handle is a qu
 not a location, and there is no MCP tool for it — an agent already has a loop, so it
 searches and then reads.
 
-What the two do share is where the text comes from. Both read the passage out of the
-extracted document and use the chunks only to decide which lines, so neither returns a
-passage stitched from chunk payloads with the chunker's gaps in it. That part was a real
-divergence until `POST /api/context` was changed to read the document as `get_context`
-already did.
+The two lookups answer the same need with different arguments, and the arguments are not
+interchangeable. `get_context` centres on a line and takes `before` and `after` in lines.
+`GET /api/corpora/{name}/file` takes `path` and `start`, where `start` is a **character
+offset**, and returns a 400,000-character window with the line range it turned out to
+cover: it is how the file viewer pages through a book of two or three million characters,
+not a line-addressed read.
+
+Where the text comes from is the same question for all of them, and the answer has two
+cases. Where an extracted document is stored — anything that went through an extractor, so
+every PDF, EPUB and uploaded document — the passage is read from it and the chunks only
+decide which lines. Where none is, which is code and plain text on a mount, because
+reading those IS the extraction and nothing is cached, the passage is stitched back
+together from the chunk payloads, and it can then carry the gaps the chunker left, which
+`get_context` and the file endpoint both disclose in the text as `… lines N-M not indexed …`.
+The file endpoint also falls back when a path is ambiguous, because two sources of one
+corpus can hold the same path and neither document is the right one.
+
+That split is what `POST /api/context` did not do until recently: it stitched chunk
+payloads in every case, including for a book that had a document sitting in the catalogue.
+Both surfaces now make the same choice on the same evidence.
 
 ### Why the two reads are POST
 
@@ -220,4 +235,4 @@ parameter and the query text would live in the URL, where it is length-limited a
 in every proxy log and browser history. Neither is idempotency-sensitive and neither is
 cached, so the body is the only thing GET would have bought back.
 
-Lookups are GET, including the file endpoint, whose arguments are a path and a line.
+Lookups are GET, including the file endpoint, whose arguments are a path and an offset.
