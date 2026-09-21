@@ -156,6 +156,14 @@ with no section here fails its release rather than publishing an undescribed one
   corpus is taken instead. Measured with all four corpora queued at once against 7 slots,
   all four finished, the peak was 2 running together and none was starved.
 
+  **A source added while a job was queued is walked by that job.** Queuing a refresh for
+  a corpus that already has one pending returns the pending job, which is a promise that
+  it covers what the caller asked for. The pass read its source list before it took the
+  lease and before the row said `Running`, so a source added in that window was never
+  walked and the request that added it was reported as covered by a pass that could not
+  have seen it. The sources are read after the claim, where nothing can coalesce onto the
+  job any more.
+
   A sweep refused the lease comes back the same way a deferred index job does. It did
   not: the pool discarded the sweep's result and only ever re-queued jobs, so a sweep lost
   to another process's hold was lost outright. A sweep for a corpus that no longer exists

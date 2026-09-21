@@ -115,6 +115,21 @@ public sealed class CorpusIndexer(
             await db.SaveChangesAsync(ct);
             Report(progress, job, null);
 
+            // The sources are read AFTER the row says Running, and the ordering is the
+            // point rather than tidiness.
+            //
+            // `EnqueueAsync` coalesces a refresh onto a job that is still Queued, and
+            // answers the caller with it: the promise is that this job covers what they
+            // asked for. The corpus was loaded with its sources before the lease was
+            // taken, so a source added while this job sat between those two reads was
+            // never walked, and the request that added it was reported as covered by a
+            // pass that could not have seen it. That is the defect the long comment in
+            // EnqueueAsync describes, arrived at from the other end.
+            //
+            // Nothing can coalesce onto this job now, because the row is no longer
+            // Queued, so reading here cannot miss a caller that was promised this pass.
+            var sources = await db.Sources.Where(s => s.CorpusId == corpus.Id).ToListAsync(ct);
+
             if (targets.Count == 0)
                 throw new InvalidOperationException(
                     job.ChunkSetId is { Length: > 0 }
@@ -147,7 +162,7 @@ public sealed class CorpusIndexer(
                         + "in one go, chunking at {Effective:N0}",
                         set.Name, set.ChunkSize, set.EmbeddingModel, chunking.ChunkSizeTokens);
 
-                foreach (var source in corpus.Sources)
+                foreach (var source in sources)
                 {
                     var full = job.Kind is JobKind.Full or JobKind.Rebuild;
 
