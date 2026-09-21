@@ -29,6 +29,19 @@ public enum WorkType
 public sealed record WorkItem(WorkType Type, string CorpusId, string Key);
 
 /// <summary>
+/// A claim on one slot, handed out by <see cref="WorkScheduler.TryTake"/> and given back
+/// to <see cref="WorkScheduler.Completed"/>.
+///
+/// The ticket is what makes releasing safe. Identifying a running item by its type and
+/// key is not enough, because the scheduler deliberately lets a second item with the
+/// same key queue while the first runs — a sweep asked for again during one. A stale
+/// release of the first would then free the SECOND's slot, which is the same
+/// over-admission a plain counter allows, arrived at by a different route. A ticket is
+/// spent once and belongs to one take.
+/// </summary>
+public sealed record WorkLease(WorkItem Item, long Ticket);
+
+/// <summary>
 /// The one queue, and the one rule for taking from it.
 ///
 /// Work is dispatched to the first pending item whose TYPE has a free slot and whose
@@ -56,15 +69,20 @@ public sealed class WorkScheduler(IOptions<DexiconOptions> options) : IDisposabl
     private readonly HashSet<string> _busyCorpora = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// What is running, so that releasing an item twice cannot free two slots.
+    /// Tickets currently out, so that releasing twice cannot free two slots.
     ///
     /// A count alone is not enough. Release, a replacement starts in the freed slot,
     /// then a stale second release lands and decrements the count that now belongs to
     /// the replacement — admitting work past the limit. Releasing twice back to back is
-    /// harmless and hides it, which is why this is held per item rather than guarded by
-    /// "the count is above zero".
+    /// harmless and hides it, which is why this is per take.
+    ///
+    /// Per TICKET rather than per (type, key): the same key may be taken again after the
+    /// first finishes, and keying on it would let a stale release of the first free the
+    /// second's slot.
     /// </summary>
-    private readonly HashSet<(WorkType Type, string Key)> _inFlight = [];
+    private readonly HashSet<long> _inFlight = [];
+
+    private long _nextTicket;
 
     private readonly Lock _gate = new();
 
@@ -130,7 +148,7 @@ public sealed class WorkScheduler(IOptions<DexiconOptions> options) : IDisposabl
     /// passes both tests is taken, so waiting longest still wins wherever two items are
     /// equally able to run.
     /// </summary>
-    public WorkItem? TryTake()
+    public WorkLease? TryTake()
     {
         lock (_gate)
         {
@@ -144,8 +162,10 @@ public sealed class WorkScheduler(IOptions<DexiconOptions> options) : IDisposabl
                 _pending.RemoveAt(i);
                 _running[item.Type] = _running.GetValueOrDefault(item.Type) + 1;
                 _busyCorpora.Add(item.CorpusId);
-                _inFlight.Add((item.Type, item.Key));
-                return item;
+
+                var ticket = ++_nextTicket;
+                _inFlight.Add(ticket);
+                return new WorkLease(item, ticket);
             }
 
             return null;
@@ -156,15 +176,16 @@ public sealed class WorkScheduler(IOptions<DexiconOptions> options) : IDisposabl
     /// Release the slot and the corpus, and wake a worker in case that made something
     /// eligible. Must be called for every item <see cref="TryTake"/> returned.
     /// </summary>
-    public void Completed(WorkItem item)
+    public void Completed(WorkLease lease)
     {
         lock (_gate)
         {
-            // Ignore a release for something that is not running. Calling twice is then
-            // harmless rather than quietly over-admitting, and the second call cannot
-            // free a slot or a corpus that now belongs to a replacement.
-            if (!_inFlight.Remove((item.Type, item.Key))) return;
+            // A ticket is spent once. Releasing twice is then inert rather than quietly
+            // over-admitting, and a stale release cannot free a slot or a corpus that
+            // now belongs to a later take of the same work.
+            if (!_inFlight.Remove(lease.Ticket)) return;
 
+            var item = lease.Item;
             var count = _running.GetValueOrDefault(item.Type);
             if (count > 0) _running[item.Type] = count - 1;
             _busyCorpora.Remove(item.CorpusId);

@@ -37,8 +37,8 @@ public sealed class WorkSchedulerTests
         s.Enqueue(Index("a"));
         s.Enqueue(Index("b"));
 
-        s.TryTake()!.CorpusId.ShouldBe("a");
-        s.TryTake()!.CorpusId.ShouldBe("b");
+        s.TryTake()!.Item.CorpusId.ShouldBe("a");
+        s.TryTake()!.Item.CorpusId.ShouldBe("b");
     }
 
     /// <summary>
@@ -60,8 +60,8 @@ public sealed class WorkSchedulerTests
         var first = s.TryTake();
         var second = s.TryTake();
 
-        first!.CorpusId.ShouldBe("busy");
-        second!.CorpusId.ShouldBe("other", "the busy corpus's second job must not take a slot");
+        first!.Item.CorpusId.ShouldBe("busy");
+        second!.Item.CorpusId.ShouldBe("other", "the busy corpus's second job must not take a slot");
         s.TryTake().ShouldBeNull("nothing else is eligible while both corpora are running");
     }
 
@@ -77,7 +77,7 @@ public sealed class WorkSchedulerTests
 
         s.Completed(running);
 
-        s.TryTake()!.Key.ShouldBe("job-2");
+        s.TryTake()!.Item.Key.ShouldBe("job-2");
     }
 
     /// <summary>
@@ -93,11 +93,11 @@ public sealed class WorkSchedulerTests
         s.Enqueue(Rebuild("b"));
         s.Enqueue(Index("c"));
 
-        s.TryTake()!.Type.ShouldBe(WorkType.Rebuild);
+        s.TryTake()!.Item.Type.ShouldBe(WorkType.Rebuild);
 
         var next = s.TryTake();
-        next!.Type.ShouldBe(WorkType.Index, "the second rebuild is over its limit; the index job is not");
-        next.CorpusId.ShouldBe("c");
+        next!.Item.Type.ShouldBe(WorkType.Index, "the second rebuild is over its limit; the index job is not");
+        next.Item.CorpusId.ShouldBe("c");
     }
 
     /// <summary>
@@ -112,10 +112,10 @@ public sealed class WorkSchedulerTests
         s.Enqueue(Index("b"));
         s.Enqueue(Sweep("c"));
 
-        s.TryTake()!.Type.ShouldBe(WorkType.Index);
+        s.TryTake()!.Item.Type.ShouldBe(WorkType.Index);
 
         var next = s.TryTake();
-        next!.Type.ShouldBe(WorkType.Sweep, "a sweep has its own slots and must not queue behind indexing");
+        next!.Item.Type.ShouldBe(WorkType.Sweep, "a sweep has its own slots and must not queue behind indexing");
     }
 
     /// <summary>
@@ -138,7 +138,7 @@ public sealed class WorkSchedulerTests
 
         var first = s.TryTake()!;
         s.Completed(first);
-        s.TryTake()!.Key.ShouldNotBe(first.Key, "the other set's job must still be there");
+        s.TryTake()!.Item.Key.ShouldNotBe(first.Item.Key, "the other set's job must still be there");
     }
 
     [Fact]
@@ -180,7 +180,7 @@ public sealed class WorkSchedulerTests
 
         s.Completed(first);
 
-        s.TryTake()!.CorpusId.ShouldBe("b");
+        s.TryTake()!.Item.CorpusId.ShouldBe("b");
     }
 
     [Fact]
@@ -195,6 +195,36 @@ public sealed class WorkSchedulerTests
 
         await waiting.WaitAsync(TimeSpan.FromSeconds(5));
         s.TryTake().ShouldNotBeNull();
+    }
+
+    /// <summary>
+    /// A release for work that has since been taken again must not free the new take's
+    /// slot.
+    ///
+    /// The scheduler lets a second item with the same key queue while the first runs — a
+    /// sweep asked for again during one — so identifying a running item by its type and
+    /// key cannot tell the two takes apart. A guard keyed that way lets a stale release
+    /// of the first free the second's slot: the same over-admission, by another route.
+    /// The ticket is what distinguishes them.
+    /// </summary>
+    [Fact]
+    public void AStaleReleaseDoesNotFreeALaterTakeOfTheSameWork()
+    {
+        using var s = With(sweeps: 1);
+
+        s.Enqueue(Sweep("a"));
+        var first = s.TryTake()!;
+
+        s.Completed(first);          // the first finishes normally
+        s.Enqueue(Sweep("a"));       // asked for again
+        var second = s.TryTake()!;   // same type, same key, different take
+        second.Item.Key.ShouldBe("a");
+
+        s.Completed(first);          // a stale release of the FIRST arrives late
+
+        s.Enqueue(Sweep("b"));
+        s.TryTake().ShouldBeNull(
+            "the second take still holds the only sweep slot; the stale release must not free it");
     }
 
     /// <summary>

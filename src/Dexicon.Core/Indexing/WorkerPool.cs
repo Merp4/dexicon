@@ -45,7 +45,7 @@ public sealed class WorkerPool(
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            WorkItem? item;
+            WorkLease? lease;
             try
             {
                 // Wait first, then take. A wake does not promise an item — another worker
@@ -53,18 +53,18 @@ public sealed class WorkerPool(
                 // slot helps what it was woken for — so a null is ordinary and the loop
                 // simply waits again.
                 await scheduler.WaitAsync(stoppingToken);
-                item = scheduler.TryTake();
+                lease = scheduler.TryTake();
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }
 
-            if (item is null) continue;
+            if (lease is null) continue;
 
             try
             {
-                await RunOneAsync(item, stoppingToken);
+                await RunOneAsync(lease.Item, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -80,11 +80,11 @@ public sealed class WorkerPool(
                 // every future one, with nothing in the UI to explain why indexing or
                 // inventories stopped.
                 log.LogError(ex, "{Type} work {Key} on worker {Worker} threw outside its "
-                    + "own error handling", item.Type, item.Key, worker);
+                    + "own error handling", lease.Item.Type, lease.Item.Key, worker);
             }
             finally
             {
-                scheduler.Completed(item);
+                scheduler.Completed(lease);
             }
         }
     }
