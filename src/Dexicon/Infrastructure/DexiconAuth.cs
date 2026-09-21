@@ -121,8 +121,14 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
         ctx.Response.OnStarting(() =>
         {
             // Audit line. The credential's id and name, never its value.
+            //
+            // The method goes through OneLine like everything else the caller supplies.
+            // Kestrel will not accept a method with a control character in it, so this
+            // one cannot fire today; applying the rule to every caller-supplied field on
+            // the line is still cheaper to read than a per-field argument about which
+            // parser already validated what, and it survives the server being swapped.
             log.LogInformation("{Method} {Path} -> {Status} (caller {TokenId} '{TokenName}')",
-                ctx.Request.Method, OneLine(path), ctx.Response.StatusCode,
+                OneLine(ctx.Request.Method), OneLine(path), ctx.Response.StatusCode,
                 OneLine(principal.TokenId), OneLine(principal.TokenName));
             return Task.CompletedTask;
         });
