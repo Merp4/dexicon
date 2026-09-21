@@ -86,6 +86,26 @@ public sealed class JobCounterTests
     }
 
     [Fact]
+    public async Task WithNestedSources_AnExcludedFileIsCountedByEachButStillAddsUp()
+    {
+        // Shadowing applies to the walk's owned files and not to its skipped ones, so a
+        // file an exclusion catches under a nested source is reported by every source
+        // above it. That double-counts it in the total, which is worth knowing, and the
+        // thing this line has to guarantee is that it double-counts it in BOTH terms.
+        await using var harness = await IndexingHarness.StartAsync("outer", "outer/inner");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+
+        await harness.WriteFileAsync("kept.md", IndexingHarness.Prose("outer"), source: 0);
+        await harness.WriteFileAsync("empty.md", "", source: 1);
+
+        var job = await harness.RunIndexAsync();
+
+        job.State.ShouldBe(JobState.Succeeded);
+        job.FilesSkipped.ShouldBe(2, "the nested empty file is skipped once per source that saw it");
+        ShouldAddUp(job, expectedTotal: 3);
+    }
+
+    [Fact]
     public async Task ProgressNeverReadsPastOne()
     {
         // What the UI computes, asserted here so the invariant is stated in the terms the

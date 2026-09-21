@@ -30,25 +30,40 @@ internal sealed class IndexingHarness : IAsyncDisposable
 
     private readonly string _dataPath;
     private readonly ServiceProvider _services;
+    private readonly string[] _sourceRoots;
 
-    /// <summary>The source root on disk. Files written here are what a pass walks.</summary>
-    public string SourceDirectory { get; }
+    /// <summary>Each source's root on disk, in the order they were declared.</summary>
+    public IReadOnlyList<string> SourceDirectories { get; }
+
+    /// <summary>The first source's root. Files written here are what a pass walks.</summary>
+    public string SourceDirectory => SourceDirectories[0];
+
+    /// <summary>The id the nth declared source is seeded with.</summary>
+    public static string SourceIdFor(int index) => $"source-{index + 1}";
 
     public RecordingVectorStore Vectors { get; } = new();
 
-    private IndexingHarness(string dataPath, string sourceDirectory, ServiceProvider services)
+    private IndexingHarness(string dataPath, string[] sourceRoots, string[] sourceDirectories,
+        ServiceProvider services)
     {
         _dataPath = dataPath;
-        SourceDirectory = sourceDirectory;
+        _sourceRoots = sourceRoots;
+        SourceDirectories = sourceDirectories;
         _services = services;
     }
 
-    public static async Task<IndexingHarness> StartAsync(string sourceRoot = "notes")
+    /// <summary>
+    /// A workspace with one directory per source root. Roots may nest ("outer",
+    /// "outer/inner"), which is how a corpus with a more specific source is built.
+    /// </summary>
+    public static async Task<IndexingHarness> StartAsync(params string[] sourceRoots)
     {
+        if (sourceRoots.Length == 0) sourceRoots = ["notes"];
+
         var dataPath = Path.Combine(Path.GetTempPath(), $"dexicon-indexing-{Guid.NewGuid():N}");
         var workspace = Path.Combine(dataPath, "workspace");
-        var sourceDirectory = Path.Combine(workspace, sourceRoot);
-        Directory.CreateDirectory(sourceDirectory);
+        var sourceDirectories = sourceRoots.Select(r => Path.Combine(workspace, r)).ToArray();
+        foreach (var dir in sourceDirectories) Directory.CreateDirectory(dir);
 
         var options = Options.Create(new DexiconOptions
         {
@@ -72,7 +87,7 @@ internal sealed class IndexingHarness : IAsyncDisposable
             provider.GetRequiredService<DbContextOptions<CatalogDbContext>>()))
             await db.Database.EnsureCreatedAsync();
 
-        return new IndexingHarness(dataPath, sourceDirectory, provider);
+        return new IndexingHarness(dataPath, sourceRoots, sourceDirectories, provider);
     }
 
     public async ValueTask DisposeAsync()
@@ -101,8 +116,11 @@ internal sealed class IndexingHarness : IAsyncDisposable
         new(db, _services.GetRequiredService<IOptions<DexiconOptions>>(),
             NullLogger<DocumentService>.Instance);
 
-    /// <summary>One corpus, one source, and <paramref name="sets"/> chunk sets over it.</summary>
-    public async Task SeedCorpusAsync(SourceKind kind, string sourceRoot = "notes", int sets = 1)
+    /// <summary>
+    /// One corpus with <paramref name="sets"/> chunk sets, over one source per root the
+    /// harness was started with. An upload corpus gets a single source with no root.
+    /// </summary>
+    public async Task SeedCorpusAsync(SourceKind kind, int sets = 1)
     {
         await using var db = NewContext();
         var corpus = new Corpus
@@ -130,14 +148,29 @@ internal sealed class IndexingHarness : IAsyncDisposable
                 CreatedUtc = DateTime.UtcNow,
             });
 
-        corpus.Sources.Add(new Source
+        if (kind == SourceKind.Workspace)
         {
-            Id = SourceId,
-            CorpusId = corpus.Id,
-            Kind = kind,
-            RootPath = kind == SourceKind.Workspace ? sourceRoot : null,
-            CreatedUtc = DateTime.UtcNow,
-        });
+            for (var i = 0; i < _sourceRoots.Length; i++)
+                corpus.Sources.Add(new Source
+                {
+                    Id = SourceIdFor(i),
+                    CorpusId = corpus.Id,
+                    Kind = kind,
+                    RootPath = _sourceRoots[i],
+                    CreatedUtc = DateTime.UtcNow,
+                });
+        }
+        else
+        {
+            corpus.Sources.Add(new Source
+            {
+                Id = SourceId,
+                CorpusId = corpus.Id,
+                Kind = kind,
+                RootPath = null,
+                CreatedUtc = DateTime.UtcNow,
+            });
+        }
 
         db.Corpora.Add(corpus);
         await db.SaveChangesAsync();
@@ -199,8 +232,8 @@ internal sealed class IndexingHarness : IAsyncDisposable
             .SingleAsync();
     }
 
-    public Task WriteFileAsync(string name, string content) =>
-        File.WriteAllTextAsync(Path.Combine(SourceDirectory, name), content);
+    public Task WriteFileAsync(string name, string content, int source = 0) =>
+        File.WriteAllTextAsync(Path.Combine(SourceDirectories[source], name), content);
 
     /// <summary>Enough paragraphs to chunk, without being about anything.</summary>
     public static string Prose(string word) =>

@@ -725,8 +725,12 @@ public sealed class CorpusIndexer(
         // an assignment here reported the files of one pass against the work done by all
         // of them: a corpus with two sets showed "24 / 12" and a progress bar past 100%.
         //
-        // Shadowed files are in neither term: a more specific source owns them and counts
-        // them in its own pass.
+        // Shadowing applies to the first term only. WorkspaceDiscovery filters `Owned` by
+        // it and returns `Skipped` as the walk produced it, so a file an exclusion caught
+        // under a nested source is reported by every source above it and counted by each.
+        // That inflates the total on a corpus with nested sources, but it does not break
+        // what this line is for: each of those counts is matched by a FilesSkipped in the
+        // same pass, so the two still add up.
         job.FilesTotal += files.Count + walk.Skipped.Count;
         job.Phase = "extract";
 
