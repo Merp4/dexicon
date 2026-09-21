@@ -130,8 +130,50 @@ with no section here fails its release rather than publishing an undescribed one
   catalogue connection.
 
   Two jobs on ONE corpus are still excluded, by the lease rather than by the queue, which
-  is where that exclusion belongs. A job that cannot take its lease is left queued and put
-  back, so a worker never waits on another worker.
+  is where that exclusion belongs. The scheduler below does not hand out work for a corpus
+  that already has some running, so a worker never waits on another worker.
+
+- **One queue for every kind of background work, with a concurrency per kind.** Sweeps ran
+  on their own queue with their own reader, so the two sets of limits could not see each
+  other, and a job whose corpus was busy was taken, refused by the lease and put back on a
+  fifteen-second timer. Retrying a scheduling decision is how a worker comes to hold a slot
+  for work that cannot run.
+
+  There is now one queue and one pool. An item carries its type, its corpus and the key its
+  handler needs, and dispatch has one rule: take the first pending item whose type has a
+  free slot and whose corpus has nothing running. A corpus busy in this process is skipped
+  rather than attempted, and an item that is not eligible costs nothing to leave where it
+  is. A corpus held by ANOTHER process stays on the timer: the lease is the only thing that
+  can see that hold, so the only way to learn of it is to be refused.
+
+  Each type has its own limit, because the work is not comparable: `MAXCONCURRENTSWEEPS`
+  (2) for walking a tree, `MAXCONCURRENTCORPORA` (4) for an incremental pass where most
+  files are unchanged, and `MAXCONCURRENTREBUILDS` (1) for a pass that re-embeds everything
+  it walks. Adding a kind of work is an enum value and a limit beside it.
+
+  Fairness comes out of the corpus rule rather than a rotation: a corpus with five queued
+  jobs runs one, its second is ineligible while the first holds the corpus, and the next
+  corpus is taken instead. Measured with all four corpora queued at once against 7 slots,
+  all four finished, the peak was 2 running together and none was starved.
+
+  **A source added while a job was queued is walked by that job.** Queuing a refresh for
+  a corpus that already has one pending returns the pending job, which is a promise that
+  it covers what the caller asked for. The pass read its source list before it took the
+  lease and before the row said `Running`, so a source added in that window was never
+  walked and the request that added it was reported as covered by a pass that could not
+  have seen it. The sources are read after the claim, where nothing can coalesce onto the
+  job any more.
+
+  A sweep refused the lease comes back the same way a deferred index job does. It did
+  not: the pool discarded the sweep's result and only ever re-queued jobs, so a sweep lost
+  to another process's hold was lost outright. A sweep for a corpus that no longer exists
+  is terminal instead of retried, which is why the two are separate outcomes rather than
+  one "skipped" flag.
+
+  A slot is released by ticket. `TryTake` hands out a lease and `Completed` takes it back,
+  so a release that arrives late finds nothing to free: the same key may legitimately be
+  queued again while the first is running, and keying the release on it would free the
+  replacement's slot. See [D-33](docs/decisions.md).
 
 - **The embedding concurrency limit describes the endpoint, not the caller.** It was a
   semaphore constructed inside each call, so it bounded one embed and nothing else: with

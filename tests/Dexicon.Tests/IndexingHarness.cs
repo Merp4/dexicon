@@ -6,6 +6,7 @@ using Dexicon.Core.Indexing;
 using Dexicon.Core.Search;
 using Dexicon.Core.Vectors;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -35,6 +36,9 @@ internal sealed class IndexingHarness : IAsyncDisposable
     /// <summary>Each source's root on disk, in the order they were declared.</summary>
     public IReadOnlyList<string> SourceDirectories { get; }
 
+    /// <summary>Where the catalogue and the workspace live, for a test that has to reach them.</summary>
+    public string DataPath => _dataPath;
+
     /// <summary>The first source's root. Files written here are what a pass walks.</summary>
     public string SourceDirectory => SourceDirectories[0];
 
@@ -56,7 +60,16 @@ internal sealed class IndexingHarness : IAsyncDisposable
     /// A workspace with one directory per source root. Roots may nest ("outer",
     /// "outer/inner"), which is how a corpus with a more specific source is built.
     /// </summary>
-    public static async Task<IndexingHarness> StartAsync(params string[] sourceRoots)
+    public static Task<IndexingHarness> StartAsync(params string[] sourceRoots) =>
+        StartAsync(null, sourceRoots);
+
+    /// <param name="watcher">
+    /// An extra command interceptor on the catalogue, for a test that has to act at a
+    /// point inside a pass. Opening a window deliberately is the only way to be in one
+    /// from outside, and hoping to land in it is a test that quietly stops testing.
+    /// </param>
+    public static async Task<IndexingHarness> StartAsync(
+        IInterceptor? watcher, params string[] sourceRoots)
     {
         if (sourceRoots.Length == 0) sourceRoots = ["notes"];
 
@@ -84,8 +97,13 @@ internal sealed class IndexingHarness : IAsyncDisposable
         // concurrency is meant to exercise, and fail intermittently.
         services.AddDbContext<CatalogDbContext>(
             o => o.UseSqlite($"Data Source={Path.Combine(dataPath, "catalog.db")}")
-                  .AddInterceptors(new SqlitePragmas(
-                      TimeSpan.FromSeconds(30), NullLogger<SqlitePragmas>.Instance)));
+                  .AddInterceptors(watcher is null
+                      ? [new SqlitePragmas(TimeSpan.FromSeconds(30), NullLogger<SqlitePragmas>.Instance)]
+                      : new IInterceptor[]
+                      {
+                          new SqlitePragmas(TimeSpan.FromSeconds(30), NullLogger<SqlitePragmas>.Instance),
+                          watcher,
+                      }));
         services.AddSingleton<IndexingLimits>();
         services.AddScoped<ExtractedTextCache>();
         var provider = services.BuildServiceProvider();

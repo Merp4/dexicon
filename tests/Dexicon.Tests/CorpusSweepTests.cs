@@ -1,8 +1,10 @@
+using System.Data.Common;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
 using Dexicon.Core.Indexing;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -31,7 +33,7 @@ public sealed class CorpusSweepTests : IDisposable
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddDbContext<CatalogDbContext>(
-            o => o.UseSqlite($"Data Source={_db}")
+            o => o.UseSqlite($"Data Source={_db};Pooling=False")
                   .AddInterceptors(new SqlitePragmas(
                       TimeSpan.FromSeconds(30), NullLogger<SqlitePragmas>.Instance)),
             ServiceLifetime.Scoped);
@@ -217,9 +219,95 @@ public sealed class CorpusSweepTests : IDisposable
 
         var result = await SweepAsync(id, leases);
 
-        result.Skipped.ShouldBeTrue();
+        result.Outcome.ShouldBe(SweepOutcome.Held,
+            "held and gone are different answers: one is retried, the other is terminal");
         result.Swept.ShouldBe(0);
         (await StatesAsync()).ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// The corpus is deleted between the lookup and the claim.
+    ///
+    /// A claim is one conditional update, so no rows matched means "held" or "gone" and
+    /// the lease cannot say which. They need opposite answers — retry, and stop — so the
+    /// caller would have waited out a timer for work that can never run.
+    ///
+    /// The window is opened deliberately: an interceptor deletes the row as the claim's
+    /// UPDATE is about to run, which is the only way to be inside it from outside.
+    /// </summary>
+    [Fact]
+    public async Task ACorpusDeletedDuringTheClaimIsTerminalRatherThanHeld()
+    {
+        File("a.md");
+        var id = await CorpusAsync();
+
+        var deleteOnClaim = new DeleteWhenClaimed(_db, id);
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<CatalogDbContext>(
+            o => o.UseSqlite($"Data Source={_db}")
+                  .AddInterceptors(
+                      new SqlitePragmas(TimeSpan.FromSeconds(30), NullLogger<SqlitePragmas>.Instance),
+                      deleteOnClaim),
+            ServiceLifetime.Scoped);
+        await using var racy = services.BuildServiceProvider();
+
+        using var scope = racy.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+        var leases = new CorpusLeases(
+            racy.GetRequiredService<IServiceScopeFactory>(), NullLogger<CorpusLeases>.Instance);
+
+        var result = await new CorpusSweeper(db, leases,
+            Options.Create(new DexiconOptions
+            {
+                Indexing = new IndexingOptions { WorkspaceRoot = Path.GetTempPath() },
+            }),
+            NullLogger<CorpusSweeper>.Instance).SweepAsync(id, default);
+
+        deleteOnClaim.Fired.ShouldBeTrue("the interceptor has to have opened the window");
+        result.Outcome.ShouldBe(SweepOutcome.NoSuchCorpus,
+            "a corpus that is gone is terminal, however the claim failed");
+    }
+
+    /// <summary>
+    /// Deletes the corpus as the lease's conditional UPDATE is about to run, so the claim
+    /// matches no rows for the one reason the lease cannot report.
+    /// </summary>
+    private sealed class DeleteWhenClaimed(string dbPath, string corpusId) : DbCommandInterceptor
+    {
+        public bool Fired { get; private set; }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (!Fired
+                && command.CommandText.Contains("UPDATE", StringComparison.Ordinal)
+                && command.CommandText.Contains("HeldBy", StringComparison.Ordinal))
+            {
+                Fired = true;
+
+                using var conn = new SqliteConnection($"Data Source={dbPath}");
+                conn.Open();
+                using var delete = conn.CreateCommand();
+                delete.CommandText = "DELETE FROM Corpora WHERE Id = $id";
+                delete.Parameters.AddWithValue("$id", corpusId);
+                delete.ExecuteNonQuery();
+            }
+
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
+    [Fact]
+    public async Task ACorpusThatIsGoneIsTerminalRatherThanHeld()
+    {
+        // The caller decides whether to try again on this, so the two reasons for
+        // walking nothing cannot share one flag.
+        var result = await SweepAsync(Ulid.NewUlid().ToString());
+
+        result.Outcome.ShouldBe(SweepOutcome.NoSuchCorpus);
+        result.Skipped.ShouldBeTrue();
     }
 
     [Fact]
@@ -243,7 +331,6 @@ public sealed class CorpusSweepTests : IDisposable
     public void Dispose()
     {
         _services.Dispose();
-        SqliteConnection.ClearAllPools();
         try { if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true); } catch (IOException) { }
         foreach (var suffix in new[] { "", "-wal", "-shm" })
         {

@@ -8,43 +8,25 @@ using Microsoft.Extensions.Logging;
 namespace Dexicon.Core.Indexing;
 
 /// <summary>
-/// An in-process channel of job ids. No broker: jobs are local and there is one
-/// instance, so a queue between two parts of the same process is all the coordination
-/// that exists to do.
+/// Writes the job row and hands it to <see cref="WorkScheduler"/>. No broker: jobs are
+/// local and there is one instance, so a queue between two parts of the same process is
+/// all the coordination that exists to do.
 ///
-/// Several readers, one per concurrent corpus. It was a single reader, which made the
-/// queue the thing that serialised indexing: a corpus taking hours owned the machine and
-/// a sixteen-file refresh behind it waited all of them. Excluding two jobs on ONE corpus
-/// is the lease's job, and it does it whether one reader or four takes them.
+/// The queue used to be a channel here, with its own worker loop and a fifteen-second
+/// requeue for a job whose corpus was busy. Both are gone: what may run at once is one
+/// question for the whole process, and answering it in one place is what lets a sweep,
+/// an incremental pass and a rebuild carry different limits without three copies of the
+/// same loop.
 /// </summary>
-public sealed class IndexJobQueue(CatalogDbContext db, ILogger<IndexJobQueue> log)
+public sealed class IndexJobQueue(CatalogDbContext db, WorkScheduler scheduler, ILogger<IndexJobQueue> log)
 {
-    private static readonly Channel<string> Pending = Channel.CreateUnbounded<string>(
-        new UnboundedChannelOptions { SingleReader = false });
-
-    public static ChannelReader<string> Reader => Pending.Reader;
-
     /// <summary>
-    /// Put a job back after a pause, without blocking the caller.
-    ///
-    /// The pause is so a job whose corpus is busy does not spin round an otherwise empty
-    /// queue; it is not a guess at how long the other pass will take, because the job is
-    /// simply tried again after it. Detached on purpose: the worker must be free to take
-    /// the next job immediately, which is the whole point of deferring.
+    /// A rebuild re-embeds every file it walks and an incremental pass mostly does not,
+    /// so they are scheduled against different limits. This is the one place that
+    /// mapping is made.
     /// </summary>
-    internal static void RequeueLater(string jobId, ILogger log, CancellationToken ct)
-    {
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await Task.Delay(TimeSpan.FromSeconds(15), ct);
-                if (!Pending.Writer.TryWrite(jobId))
-                    log.LogWarning("Could not re-queue deferred job {JobId}", jobId);
-            }
-            catch (OperationCanceledException) { /* shutting down */ }
-        }, ct);
-    }
+    internal static WorkType TypeOf(JobKind kind) =>
+        kind is JobKind.Full or JobKind.Rebuild ? WorkType.Rebuild : WorkType.Index;
 
     /// <summary>
     /// Enqueue a job for a corpus. Queuing a refresh for a corpus that already has one
@@ -78,10 +60,29 @@ public sealed class IndexJobQueue(CatalogDbContext db, ILogger<IndexJobQueue> lo
             .OrderByDescending(j => j.QueuedUtc)
             .FirstOrDefaultAsync(ct);
 
-        if (existing is not null)
+        // Only onto a job that covers this request. A full pass re-embeds everything it
+        // walks and an incremental one re-embeds what changed, so a refresh queued behind
+        // a full is genuinely covered by it and a full queued behind a refresh is not:
+        // coalescing that way returned the refresh's id, reported success, and re-embedded
+        // nothing. It would also run in the wrong lane, since the type the scheduler
+        // counts against `MaxConcurrentRebuilds` is derived from the job's kind and the
+        // job would still say Refresh.
+        //
+        // The weaker request is the one that yields, which is the direction that cannot
+        // lose work. Two jobs for one corpus is the cost, and the scheduler already runs
+        // them one at a time.
+        if (existing is not null && TypeOf(existing.Kind) == TypeOf(kind))
         {
             log.LogInformation("Corpus {Corpus} already has job {JobId} queued; not queuing another",
                 corpusId, existing.Id);
+            return existing;
+        }
+
+        if (existing is not null && TypeOf(existing.Kind) == WorkType.Rebuild)
+        {
+            log.LogInformation(
+                "Corpus {Corpus} has {Kind} job {JobId} queued, which covers this {Requested}",
+                corpusId, existing.Kind, existing.Id, kind);
             return existing;
         }
 
@@ -97,73 +98,10 @@ public sealed class IndexJobQueue(CatalogDbContext db, ILogger<IndexJobQueue> lo
 
         db.Jobs.Add(job);
         await db.SaveChangesAsync(ct);
-        await Pending.Writer.WriteAsync(job.Id, ct);
+        scheduler.Enqueue(new WorkItem(TypeOf(kind), corpusId, job.Id));
 
         log.LogInformation("Queued {Kind} job {JobId} for corpus {Corpus}", kind, job.Id, corpusId);
         return job;
-    }
-}
-
-/// <summary>
-/// Drains the queue for the life of the process, <c>MaxConcurrentCorpora</c> jobs at a
-/// time.
-///
-/// Each job takes its own DI scope and therefore its own catalogue connection, which is
-/// what makes running several safe: nothing here is shared between them but the queue
-/// they read from. What they contend for — the embedding endpoint, the parser, the
-/// filesystem — is bounded by <see cref="IndexingLimits"/>, per resource rather than per
-/// job, so one corpus indexing alone still uses the whole budget.
-///
-/// Two jobs on ONE corpus remain excluded, by the lease. A job that cannot take it is
-/// left Queued and put back, which is why a worker never waits on another worker.
-/// </summary>
-public sealed class IndexingBackgroundService(
-    IServiceScopeFactory scopes,
-    IndexProgressBroadcaster broadcaster,
-    IndexingLimits limits,
-    ILogger<IndexingBackgroundService> log) : BackgroundService
-{
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        var workers = limits.MaxConcurrentCorpora;
-        log.LogInformation("Indexing workers started: {Workers} corpora at a time", workers);
-
-        // One loop per permit rather than one loop taking permits. The permit count IS
-        // the worker count, so a job never sits held inside a worker waiting for one
-        // while the queue behind it goes unread.
-        await Task.WhenAll(Enumerable.Range(0, workers).Select(i => RunWorkerAsync(i, stoppingToken)));
-
-        log.LogInformation("Indexing workers stopped");
-    }
-
-    private async Task RunWorkerAsync(int worker, CancellationToken stoppingToken)
-    {
-        await foreach (var jobId in IndexJobQueue.Reader.ReadAllAsync(stoppingToken))
-        {
-            try
-            {
-                using var scope = scopes.CreateScope();
-                var indexer = scope.ServiceProvider.GetRequiredService<CorpusIndexer>();
-                var progress = new Progress<IndexProgress>(broadcaster.Publish);
-                var job = await indexer.RunAsync(jobId, progress, stoppingToken);
-
-                // Still Queued means it never ran, because its corpus is held by another
-                // pass. Put it back and take the next one: the alternative is this worker
-                // waiting, which stops every corpus it could have been indexing instead.
-                if (job.State == JobState.Queued) IndexJobQueue.RequeueLater(jobId, log, stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                // The worker must outlive a bad job. A crash here would silently stop
-                // every future index with nothing in the UI to explain it.
-                log.LogError(ex, "Indexing job {JobId} on worker {Worker} threw outside "
-                    + "its own error handling", jobId, worker);
-            }
-        }
     }
 }
 

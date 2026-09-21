@@ -1,8 +1,10 @@
 using Dexicon.Core.Catalog;
+using Dexicon.Core.Configuration;
 using Dexicon.Core.Indexing;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace Dexicon.Tests;
 
@@ -24,6 +26,7 @@ public sealed class JobCoalescingTests : IAsyncLifetime
     private SqliteConnection _connection = null!;
     private CatalogDbContext _db = null!;
     private IndexJobQueue _queue = null!;
+    private WorkScheduler _scheduler = null!;
 
     public async Task InitializeAsync()
     {
@@ -47,7 +50,8 @@ public sealed class JobCoalescingTests : IAsyncLifetime
         });
         await _db.SaveChangesAsync();
 
-        _queue = new IndexJobQueue(_db, NullLogger<IndexJobQueue>.Instance);
+        _scheduler = new WorkScheduler(Options.Create(new DexiconOptions()));
+        _queue = new IndexJobQueue(_db, _scheduler, NullLogger<IndexJobQueue>.Instance);
     }
 
     public async Task DisposeAsync()
@@ -56,14 +60,14 @@ public sealed class JobCoalescingTests : IAsyncLifetime
         await _connection.DisposeAsync();
     }
 
-    private async Task<IndexJob> Existing(JobState state)
+    private async Task<IndexJob> Existing(JobState state, JobKind kind = JobKind.Refresh)
     {
         var job = new IndexJob
         {
             Id = Ulid.NewUlid().ToString(),
             CorpusId = "c",
             ChunkSetId = null,
-            Kind = JobKind.Refresh,
+            Kind = kind,
             State = state,
             QueuedUtc = DateTime.UtcNow.AddMinutes(-1),
             StartedUtc = state == JobState.Running ? DateTime.UtcNow.AddMinutes(-1) : null,
@@ -79,6 +83,41 @@ public sealed class JobCoalescingTests : IAsyncLifetime
         // It has not looked at the corpus yet, so it will see the new source when it runs.
         // Queuing a second job here would index the same thing twice.
         var queued = await Existing(JobState.Queued);
+
+        var result = await _queue.EnqueueAsync("c", JobKind.Refresh);
+
+        result.Id.ShouldBe(queued.Id);
+        (await _db.Jobs.CountAsync()).ShouldBe(1);
+    }
+
+    /// <summary>
+    /// A full pass re-embeds everything it walks and an incremental one does not, so a
+    /// full queued behind a refresh is not covered by it. Coalescing that way returned
+    /// the refresh's id, reported success and re-embedded nothing — and it would have run
+    /// in the incremental lane, because the type the scheduler counts against
+    /// `MaxConcurrentRebuilds` comes from the job's kind.
+    /// </summary>
+    [Fact]
+    public async Task A_full_request_is_not_absorbed_by_a_queued_refresh()
+    {
+        var queued = await Existing(JobState.Queued);
+
+        var result = await _queue.EnqueueAsync("c", JobKind.Full);
+
+        result.Id.ShouldNotBe(queued.Id);
+        result.Kind.ShouldBe(JobKind.Full);
+        (await _db.Jobs.CountAsync()).ShouldBe(2);
+        _scheduler.TryTake().ShouldNotBeNull().Item.Type.ShouldBe(WorkType.Rebuild);
+    }
+
+    /// <summary>
+    /// The other direction, which must still coalesce: a full pass covers a refresh, and
+    /// queuing both would walk the corpus twice for one answer.
+    /// </summary>
+    [Fact]
+    public async Task A_refresh_is_absorbed_by_a_queued_full()
+    {
+        var queued = await Existing(JobState.Queued, JobKind.Full);
 
         var result = await _queue.EnqueueAsync("c", JobKind.Refresh);
 
