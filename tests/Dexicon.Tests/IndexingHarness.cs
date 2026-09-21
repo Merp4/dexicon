@@ -257,7 +257,73 @@ internal sealed class IndexingHarness : IAsyncDisposable
     {
         private readonly List<Chunk> _points = [];
 
-        public int CountFor(string filePath) => _points.Count(p => p.FilePath == filePath);
+        /// <summary>
+        /// Points held for a file, optionally within one set or one source. The scoped
+        /// form is what distinguishes a delete that respected its filter from one that
+        /// reached across sets or sources.
+        /// </summary>
+        public int CountFor(string filePath, string? chunkSetId = null, string? sourceId = null) =>
+            _points.Count(p => p.FilePath == filePath
+                            && (chunkSetId is null || p.ChunkSetId == chunkSetId)
+                            && (sourceId is null || p.SourceId == sourceId));
+
+        /// <summary>
+        /// Make the count come back incomplete, as a facet at its cap does. Absent and
+        /// zero are the same shape in that answer, so a caller must not act on it.
+        /// </summary>
+        public bool CountsAreIncomplete { get; set; }
+
+        /// <summary>Make the count read fail, as an unreachable vector store does.</summary>
+        public bool CountsThrow { get; set; }
+
+        /// <summary>
+        /// Remove a file's points behind the indexer's back, which is what an
+        /// interrupted pass leaves: vectors gone, catalogue row untouched.
+        /// </summary>
+        public int DropSilently(string filePath, string? chunkSetId = null, string? sourceId = null) =>
+            _points.RemoveAll(p => p.FilePath == filePath
+                                && (chunkSetId is null || p.ChunkSetId == chunkSetId)
+                                && (sourceId is null || p.SourceId == sourceId));
+
+        /// <summary>
+        /// An extra point for a file, beyond what the catalogue recorded. The opposite
+        /// disagreement to a loss, and one a stale chunk at a high index produces.
+        /// </summary>
+        public void AddStraySilently(string filePath)
+        {
+            var existing = _points.First(p => p.FilePath == filePath);
+            _points.Add(existing with { ChunkIndex = _points.Max(p => p.ChunkIndex) + 1 });
+        }
+
+        /// <summary>One point of a file, for a partial loss rather than a total one.</summary>
+        public void DropOne(string filePath)
+        {
+            var i = _points.FindIndex(p => p.FilePath == filePath);
+            if (i < 0) throw new InvalidOperationException($"no points held for {filePath}");
+            _points.RemoveAt(i);
+        }
+
+        /// <summary>
+        /// Make the next delete abandon the pass the way an interruption does, by
+        /// throwing the one exception the per-file catch blocks deliberately do not
+        /// handle. A plain exception is caught and turned into a Failed row, which nulls
+        /// the hash on its way past and hides whether the row was safe beforehand; only
+        /// this reaches the state an interrupted pass actually leaves.
+        /// </summary>
+        public bool AbandonNextDelete { get; set; }
+
+        public Task<IReadOnlyDictionary<string, int>?> CountByFileAsync(string collection,
+            string chunkSetId, string sourceId, CancellationToken ct = default)
+        {
+            if (CountsThrow) throw new InvalidOperationException("the vector store is unreachable");
+            if (CountsAreIncomplete) return Task.FromResult<IReadOnlyDictionary<string, int>?>(null);
+
+            var counts = _points
+                .Where(p => p.ChunkSetId == chunkSetId && p.SourceId == sourceId)
+                .GroupBy(p => p.FilePath, StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
+            return Task.FromResult<IReadOnlyDictionary<string, int>?>(counts);
+        }
 
         public Task UpsertAsync(string collection, IReadOnlyList<Chunk> chunks,
             IReadOnlyList<float[]> vectors, CancellationToken ct = default)
@@ -269,6 +335,12 @@ internal sealed class IndexingHarness : IAsyncDisposable
         public Task DeleteFileChunksAsync(string collection, string chunkSetId, string sourceId,
             string filePath, CancellationToken ct = default)
         {
+            if (AbandonNextDelete)
+            {
+                AbandonNextDelete = false;
+                throw new OperationCanceledException("the pass was interrupted mid-file");
+            }
+
             // The same four-part key Qdrant filters on. Matching on filePath alone would
             // make the test agree with a delete that drops another source's file too.
             _points.RemoveAll(p => p.ChunkSetId == chunkSetId

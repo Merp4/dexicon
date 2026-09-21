@@ -260,6 +260,14 @@ public sealed class CorpusIndexer(
 
         var states = await StatesFor(set, attachments, ct);
 
+        // The same comparison the workspace path makes, on a path-keyed view of the same
+        // rows: an upload whose vectors were lost reaches the skip check below with a
+        // matching fingerprint and stays unsearchable otherwise. The rows are the same
+        // objects, so clearing a hash here is what the check reads a few lines down.
+        var byPath = new Dictionary<string, FileChunkState>(attachments.Count, StringComparer.Ordinal);
+        foreach (var f in attachments) byPath[f.RelativePath] = states[f.Id];
+        await ReconcileChunkCountsAsync(set, source.Id, byPath, ct);
+
         job.FilesTotal += attachments.Count;
         job.Phase = "extract";
         await db.SaveChangesAsync(ct);
@@ -289,11 +297,18 @@ public sealed class CorpusIndexer(
 
                 if (cached.EmptyReason is { Length: > 0 } || cached.Text.Trim().Length == 0)
                 {
-                    // Whatever this document produced before goes now. The delete on the
-                    // success path is below the `continue`, and uploads have no reconcile
-                    // pass, so a document that extracted to text under an older extractor
-                    // and to nothing under this one would answer searches forever. A
-                    // failure here is caught below and recorded as Failed, which is the
+                    // Whatever this document produced before goes now, and nothing else
+                    // would remove it. The delete on the success path is below the
+                    // `continue`. The workspace method's closing reconcile, which drops
+                    // the vectors of files a walk stopped seeing, has no counterpart
+                    // here. And ReconcileChunkCountsAsync above looks only at rows
+                    // recording Indexed, while the row written here says Empty.
+                    //
+                    // So a document that extracted to text under an older extractor and
+                    // to nothing under this one would answer searches forever: this
+                    // delete is the only thing between an Empty row and live chunks.
+                    //
+                    // A failure here is caught below and recorded as Failed, which is the
                     // honest outcome: the row must not claim Empty over live chunks.
                     await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, file.SourceId,
                         file.RelativePath, ct);
@@ -319,6 +334,13 @@ public sealed class CorpusIndexer(
                     job.FilesSkipped++;
                     continue;
                 }
+
+                // Claimed before the delete and made durable, for the same reason as the
+                // workspace path: until the success assignment below, this row still
+                // describes vectors that are about to stop existing.
+                state.ContentHash = null;
+                state.Status = FileStatus.Pending;
+                await db.SaveChangesAsync(ct);
 
                 await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, file.SourceId, file.RelativePath, ct);
 
@@ -749,6 +771,9 @@ public sealed class CorpusIndexer(
             .ToDictionary(kv => known.Values.First(f => f.Id == kv.Key).RelativePath, kv => kv.Value,
                 StringComparer.Ordinal);
 
+        // Before anything is written, while the two records are both at rest.
+        await ReconcileChunkCountsAsync(set, source.Id, states, ct);
+
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var sinceFlush = System.Diagnostics.Stopwatch.StartNew();
 
@@ -895,6 +920,24 @@ public sealed class CorpusIndexer(
                     continue;
                 }
 
+                // Claim the file BEFORE its vectors are touched, and make the claim
+                // durable. The delete below cannot be undone, and until the success
+                // assignment runs the row still describes the vectors that were just
+                // removed: a pass that dies in between - a restart, a lost lease, a
+                // cancel - left a row reading Indexed, with a hash and a chunk count,
+                // over nothing at all. Because the hash still matched, every later
+                // refresh short-circuited it, so the file was unsearchable and no
+                // refresh would ever repair it. Measured on a 1,834-file corpus: three
+                // files, 13,016 points, two of them holding none while reporting
+                // thousands.
+                //
+                // Written with no hash, so the same interruption now leaves the file
+                // looking stale and the next pass indexes it again.
+                var (okFile, okState) = Track(known, states, set, source.Id, candidate.RelativePath);
+                okState.ContentHash = null;
+                okState.Status = FileStatus.Pending;
+                await db.SaveChangesAsync(ct);
+
                 // Replace rather than merge: a changed file's old chunks are stale by
                 // definition, and leaving them produces results pointing at lines that
                 // no longer say what the result claims.
@@ -928,7 +971,6 @@ public sealed class CorpusIndexer(
                 // vectors instead of all of them.
                 var stored = await EmbedAndUpsertAsync(set, chunks, candidate.RelativePath, job, progress, sinceFlush, ct);
 
-                var (okFile, okState) = Track(known, states, set, source.Id, candidate.RelativePath);
                 okState.Status = FileStatus.Indexed;
                 okState.StatusDetail = null;
                 okState.ContentHash = hash;          // written ONLY here, on success
@@ -1111,6 +1153,76 @@ public sealed class CorpusIndexer(
         OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
+
+    /// <summary>
+    /// Clear the hash of any file whose recorded chunk count and the vector store's own
+    /// disagree, so the staleness check below re-indexes it.
+    ///
+    /// Either direction counts. A deficit is the one that prompted this, but a surplus
+    /// is the same disagreement and the same repair, and the pass cannot tell which of
+    /// the two records is the wrong one.
+    ///
+    /// The catalogue and the vector store are two records of the same fact, written at
+    /// different moments, and nothing else compares them. A pass that dies between
+    /// deleting a file's vectors and writing its row leaves the row describing points
+    /// that no longer exist; because the hash still matches, every later refresh
+    /// short-circuits the file and it stays unsearchable for good. Found on a
+    /// 1,834-file corpus: three files short by 13,016 points, two of them holding none
+    /// while reporting thousands, and no refresh repaired them.
+    ///
+    /// Only ever clears a hash. It never deletes, never writes a count, and never
+    /// touches a file the two records agree on, so the worst it can cost is re-embedding
+    /// a file that did not need it.
+    /// </summary>
+    private async Task ReconcileChunkCountsAsync(ChunkSet set, string sourceId,
+        Dictionary<string, FileChunkState> states, CancellationToken ct)
+    {
+        IReadOnlyDictionary<string, int>? actual;
+        try
+        {
+            actual = await vectors.CountByFileAsync(set.CollectionName, set.Id, sourceId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // A read that failed is not a report of an empty index, and the action this
+            // drives is re-embedding. Leaving a mismatch for the next pass costs far
+            // less than putting a corpus back through the model because Qdrant blinked.
+            log.LogWarning(ex,
+                "Could not read per-file point counts for set {Set}; no count comparison this pass", set.Name);
+            return;
+        }
+
+        // Null means the answer was incomplete. Absent and zero are the same shape here,
+        // so an incomplete answer would mark everything past the cutoff for re-embedding.
+        if (actual is null) return;
+
+        var mismatched = 0;
+        foreach (var (path, state) in states)
+        {
+            if (state.Status != FileStatus.Indexed) continue;
+
+            var held = actual.GetValueOrDefault(path);
+            if (held == state.ChunkCount) continue;
+
+            // Neutral about the direction. A surplus is as much a disagreement as a
+            // deficit and is re-indexed the same way, so wording that assumes a shortfall
+            // would misdescribe half the cases to whoever is reading the log.
+            log.LogWarning(
+                "{Set}: {File} records {Recorded:N0} chunks, the index holds {Held:N0}; re-indexing it",
+                set.Name, path, state.ChunkCount, held);
+            state.ContentHash = null;
+            mismatched++;
+        }
+
+        if (mismatched > 0)
+        {
+            await db.SaveChangesAsync(ct);
+            log.LogWarning(
+                "Set {Set}: {Count} file(s) whose recorded chunk count and the index disagree; "
+                + "they will be re-indexed",
+                set.Name, mismatched);
+        }
+    }
 
     /// <summary>
     /// Get-or-create both halves of a file's record: the attachment, which is shared by
