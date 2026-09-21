@@ -1564,6 +1564,12 @@ was occupied by something that could not run and the answer was a timer. Under o
 scheduler the ineligible item is simply not taken, and it costs nothing to leave where it
 is.
 
+**Except across processes.** A corpus held by another process is invisible to this
+scheduler, and the only way to learn of that hold is to take the lease and be refused, so
+that case is still discovered by attempting the work and still put back on a fifteen-second
+timer. The rule is that a corpus busy in THIS process is skipped; a corpus busy elsewhere
+is found out the only way it can be.
+
 Fairness falls out of the corpus rule without any bookkeeping of its own. A corpus with
 five queued jobs runs one; its second is ineligible while the first holds the corpus, so
 the next corpus is taken instead. Measured on the four live corpora queued together

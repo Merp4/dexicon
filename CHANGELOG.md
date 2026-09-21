@@ -141,8 +141,10 @@ with no section here fails its release rather than publishing an undescribed one
 
   There is now one queue and one pool. An item carries its type, its corpus and the key its
   handler needs, and dispatch has one rule: take the first pending item whose type has a
-  free slot and whose corpus has nothing running. A busy corpus is skipped rather than
-  attempted, and an item that is not eligible costs nothing to leave where it is.
+  free slot and whose corpus has nothing running. A corpus busy in this process is skipped
+  rather than attempted, and an item that is not eligible costs nothing to leave where it
+  is. A corpus held by ANOTHER process stays on the timer: the lease is the only thing that
+  can see that hold, so the only way to learn of it is to be refused.
 
   Each type has its own limit, because the work is not comparable: `MAXCONCURRENTSWEEPS`
   (2) for walking a tree, `MAXCONCURRENTCORPORA` (4) for an incremental pass where most

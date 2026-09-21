@@ -53,12 +53,19 @@ public sealed record WorkLease(WorkItem Item, long Ticket);
 ///   to keep in step.
 /// - **Expensive work is capped separately.** A rebuild re-embeds everything it walks,
 ///   so it gets a lower limit than an incremental pass rather than competing as an equal.
-/// - **A busy corpus is skipped, not retried.** This replaces a worker taking a job,
-///   discovering the corpus was leased, and putting it back on a fifteen-second timer.
-///   Ineligibility is a scheduling decision now, not a failed attempt.
+/// - **A corpus busy HERE is skipped, not retried.** This replaces a worker taking a
+///   job, discovering the corpus was leased by this process's other worker, and putting
+///   it back on a fifteen-second timer. Ineligibility is a scheduling decision now, not
+///   a failed attempt.
 ///
 /// The per-corpus rule matches what the lease already enforces at the door. The lease
 /// stays: it is what excludes a second process, and this only knows about its own.
+///
+/// Which is where the rule stops. A corpus held by ANOTHER process is invisible here,
+/// and no amount of scheduling can see it: the only way to learn of that hold is to
+/// take the lease and be refused. `WorkerPool` still discovers those by attempting the
+/// work and still puts the item back on a timer, because there is nothing else to wait
+/// on. Skipping applies to what this scheduler can know about.
 /// </summary>
 public sealed class WorkScheduler(IOptions<DexiconOptions> options) : IDisposable
 {
