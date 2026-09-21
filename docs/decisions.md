@@ -1638,7 +1638,8 @@ settings decide its text and the check needs nothing from git.
 rather than files-to-read, the walk is a `git log` rather than a directory descent, and
 the file list stays legible instead of mixing files with commits under one set of counts.
 A repository whose files and history are both wanted takes two sources over one root, and
-the UI offers the second as a checkbox on the first.
+adding one is a checkbox on the add-source form, which hides the size cap and the
+`.gitignore` toggle because neither means anything to a commit.
 
 Everything after "what are the units and how do I read one" is shared with the file path:
 the chunking fingerprint, the four empty branches that drop their vectors, the claim

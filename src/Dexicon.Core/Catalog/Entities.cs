@@ -210,8 +210,8 @@ public sealed class ChunkSet
 /// because the unit is a commit and not a file: the filters mean which paths' history
 /// rather than which files to read, the walk is a `git log` rather than a directory
 /// descent, and the counts stay legible instead of mixing 27,000 files with 5,000
-/// commits under one source. The UI offers it as an extra on a workspace source whose
-/// root is a repository, which creates the second source over the same root.
+/// commits under one source. Adding one is a checkbox on the add-source form, so a
+/// repository whose files and history are both wanted is the same folder added twice.
 /// </summary>
 public enum SourceKind { Workspace = 0, Upload = 1, GitHistory = 2 }
 

@@ -202,6 +202,47 @@ describe('adding a source', () => {
     expect(within(dialog).getByText(/already indexes that folder/i)).toBeInTheDocument();
   });
 
+  /**
+   * A history source indexes commits, so the settings that describe files do not apply
+   * to it. Leaving them on screen would offer a size cap and a .gitignore toggle for
+   * work that reads neither, and sending them would leave a source whose displayed
+   * filters describe something it does not do.
+   */
+  it('asks about commits instead of files when the history is wanted', async () => {
+    addSource.mockResolvedValue({});
+    const { user, dialog } = await openAddSource();
+
+    await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
+
+    expect(within(dialog).getByLabelText(/Largest file/)).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+
+    expect(within(dialog).queryByLabelText(/Largest file/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/Honour \.gitignore/)).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/Include the diff/)).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
+
+    await waitFor(() => expect(addSource).toHaveBeenCalled());
+    expect(addSource.mock.calls[0][1]).toMatchObject({ gitHistory: true, git: { includeDiff: false } });
+    expect(addSource.mock.calls[0][1].maxFileBytes).toBeUndefined();
+    expect(addSource.mock.calls[0][1].useGitignore).toBeUndefined();
+  });
+
+  it('sends the diff setting when it is asked for', async () => {
+    addSource.mockResolvedValue({});
+    const { user, dialog } = await openAddSource();
+
+    await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
+    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+    await user.click(within(dialog).getByRole('checkbox', { name: /Include the diff/ }));
+    await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
+
+    await waitFor(() => expect(addSource).toHaveBeenCalled());
+    expect(addSource.mock.calls[0][1]).toMatchObject({ git: { includeDiff: true } });
+  });
+
   it('sends the filters, as a list and in bytes', async () => {
     // Globs are typed as a comma separated line and sent as an array; the cap is shown in
     // MB and sent in bytes. Both conversions are places to be quietly wrong.

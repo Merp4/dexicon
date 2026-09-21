@@ -1856,6 +1856,10 @@ function AddSourceModal({
 }) {
   const [path, setPath] = useState(initialPath);
   const [useGitignore, setUseGitignore] = useState(true);
+  // Commits rather than files. The two are separate sources over the same folder when
+  // both are wanted, so this is a choice about what THIS source is, not a modifier.
+  const [gitHistory, setGitHistory] = useState(false);
+  const [includeDiff, setIncludeDiff] = useState(false);
   // 2 MB was too small to be a useful default: it is a cap on ordinary files, since PDFs,
   // EPUBs and the other document formats are measured against DocumentMaxBytes instead, so
   // the only thing it was excluding was large text.
@@ -1875,10 +1879,15 @@ function AddSourceModal({
       // box nobody typed in would pin every new source against the default.
       await api.addSource(corpus.name, {
         workspacePath: path,
-        useGitignore,
-        maxFileBytes: Math.round(maxFileMb * 1024 * 1024),
+        // The file-shaped settings are not sent for a history source. They mean nothing
+        // to a commit, and storing them would leave a source whose displayed filters
+        // describe work it does not do.
+        useGitignore: gitHistory ? undefined : useGitignore,
+        maxFileBytes: gitHistory ? undefined : Math.round(maxFileMb * 1024 * 1024),
         includeGlobs: globList(include).length ? globList(include) : undefined,
-        excludeGlobs: globList(exclude).length ? globList(exclude) : undefined,
+        excludeGlobs: gitHistory || !globList(exclude).length ? undefined : globList(exclude),
+        gitHistory: gitHistory || undefined,
+        git: gitHistory ? { includeDiff } : undefined,
       });
       await onAdded();
     } catch (err) {
@@ -1903,38 +1912,82 @@ function AddSourceModal({
           </Notice>
         )}
 
-        <Field label="Largest file (MB)" hint="Anything bigger is skipped and reported, not silently dropped.">
-          <Input
-            type="number"
-            min={0.1}
-            step="any"
-            value={maxFileMb}
-            onChange={(e) => setMaxFileMb(Number(e.target.value))}
-          />
-        </Field>
-
-        <Field label="Only these (optional)" hint="Globs, comma separated. Empty means everything not excluded.">
-          <Input className="mono" value={include} onChange={(e) => setInclude(e.target.value)} placeholder="src/**, docs/**" />
-        </Field>
-
-        <Field label="Never these (optional)" hint="Globs, comma separated. Applied after the include list.">
-          <Input className="mono" value={exclude} onChange={(e) => setExclude(e.target.value)} placeholder="**/vendor/**, *.min.js" />
-        </Field>
-
         <label className="mb-3.5 flex items-start gap-2.5">
           <Checkbox
-            checked={useGitignore}
-            onCheckedChange={(v) => setUseGitignore(v === true)}
+            checked={gitHistory}
+            onCheckedChange={(v) => setGitHistory(v === true)}
             className="mt-0.5"
           />
           <span className="grid gap-0.5">
-            <span className="text-sm leading-none font-semibold">Honour .gitignore</span>
+            <span className="text-sm leading-none font-semibold">Index its commit history</span>
             <span className="text-xs text-muted-foreground">
-              And .dexiconignore. Off indexes build output and dependencies too, which is
-              almost never what you want.
+              One document per commit instead of one per file. To search both, add the
+              folder twice: a commit and a file are different things to count.
             </span>
           </span>
         </label>
+
+        {gitHistory && (
+          <label className="mb-3.5 flex items-start gap-2.5">
+            <Checkbox
+              checked={includeDiff}
+              onCheckedChange={(v) => setIncludeDiff(v === true)}
+              className="mt-0.5"
+            />
+            <span className="grid gap-0.5">
+              <span className="text-sm leading-none font-semibold">Include the diff</span>
+              <span className="text-xs text-muted-foreground">
+                Off, each commit is its message and which files it touched: measured over
+                201 commits, about 2,000 characters each. On, it is the patch as well, and
+                about thirteen times that.
+              </span>
+            </span>
+          </label>
+        )}
+
+        {!gitHistory && (
+          <Field label="Largest file (MB)" hint="Anything bigger is skipped and reported, not silently dropped.">
+            <Input
+              type="number"
+              min={0.1}
+              step="any"
+              value={maxFileMb}
+              onChange={(e) => setMaxFileMb(Number(e.target.value))}
+            />
+          </Field>
+        )}
+
+        <Field
+          label="Only these (optional)"
+          hint={gitHistory
+            ? 'Paths, comma separated. Commits that touched them, and only their side of the diff.'
+            : 'Globs, comma separated. Empty means everything not excluded.'}
+        >
+          <Input className="mono" value={include} onChange={(e) => setInclude(e.target.value)} placeholder="src/**, docs/**" />
+        </Field>
+
+        {!gitHistory && (
+          <Field label="Never these (optional)" hint="Globs, comma separated. Applied after the include list.">
+            <Input className="mono" value={exclude} onChange={(e) => setExclude(e.target.value)} placeholder="**/vendor/**, *.min.js" />
+          </Field>
+        )}
+
+        {!gitHistory && (
+          <label className="mb-3.5 flex items-start gap-2.5">
+            <Checkbox
+              checked={useGitignore}
+              onCheckedChange={(v) => setUseGitignore(v === true)}
+              className="mt-0.5"
+            />
+            <span className="grid gap-0.5">
+              <span className="text-sm leading-none font-semibold">Honour .gitignore</span>
+              <span className="text-xs text-muted-foreground">
+                And .dexiconignore. Off indexes build output and dependencies too, which is
+                almost never what you want.
+              </span>
+            </span>
+          </label>
+        )}
 
         <div className="mt-4 flex justify-end gap-2">
           <Button type="button" onClick={onClose}>Cancel</Button>
