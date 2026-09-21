@@ -190,6 +190,10 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
             await EnsureIndexAsync(collection, "language", PayloadSchemaType.Keyword, null, ct);
             await EnsureIndexAsync(collection, "symbols", PayloadSchemaType.Keyword, null, ct);
             await EnsureIndexAsync(collection, "source_id", PayloadSchemaType.Keyword, null, ct);
+            // Every per-file operation filters on this - delete, file lookup, and the
+            // per-file counts below - and it was the one term in those filters without
+            // an index, so each of them narrowed on source_id and then walked the rest.
+            await EnsureIndexAsync(collection, "chunk_set_id", PayloadSchemaType.Keyword, null, ct);
 
             _ensured[collection] = 0;
         }

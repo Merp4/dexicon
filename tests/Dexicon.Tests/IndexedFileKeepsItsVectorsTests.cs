@@ -157,6 +157,54 @@ public sealed class IndexedFileKeepsItsVectorsTests
     }
 
     [Fact]
+    public async Task AnUploadPassInterruptedAtTheDelete_LeavesNoRowClaimingAHash()
+    {
+        // The workspace path has the same test above. Uploads take a different branch to
+        // the same delete-then-write ordering, so the claim has to hold on both.
+        await using var harness = await IndexingHarness.StartAsync();
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+
+        string sha;
+        await using (var db = harness.NewContext())
+        {
+            var documents = harness.NewDocumentService(db);
+            var corpus = await db.Corpora.Include(c => c.Sources).Include(c => c.ChunkSets)
+                .FirstAsync(c => c.Id == IndexingHarness.CorpusId);
+            using var bytes = new MemoryStream(
+                System.Text.Encoding.UTF8.GetBytes(IndexingHarness.Prose("interruption")));
+            sha = (await documents.StoreAsync(bytes, "paper.md")).Sha256;
+            await documents.AttachAsync(corpus, sha, "paper.md");
+        }
+
+        await harness.RunIndexAsync();
+        (await harness.StateOfAsync("paper.md")).ContentHash.ShouldNotBeNull();
+
+        // Stale but PRESENT, which is the state the assertion below is about: nulling it
+        // here would make that assertion true before the pass even ran. A wrong hash is
+        // also the only way to make an upload look stale, since its fingerprint is over
+        // the blob hash rather than the extracted text - re-uploading is what is meant
+        // to change it.
+        await using (var db = harness.NewContext())
+        {
+            var state = await db.FileChunkStates.FirstAsync();
+            state.ContentHash = "a-fingerprint-from-some-earlier-setting";
+            await db.SaveChangesAsync();
+        }
+        harness.Vectors.AbandonNextDelete = true;
+
+        var abandoned = await harness.RunIndexAsync();
+        abandoned.State.ShouldBe(JobState.Failed);
+
+        (await harness.StateOfAsync("paper.md")).ContentHash.ShouldBeNull(
+            "a row still carrying its hash here is skipped by every later refresh, for good");
+
+        await harness.RunIndexAsync();
+        var after = await harness.StateOfAsync("paper.md");
+        after.Status.ShouldBe(FileStatus.Indexed);
+        harness.Vectors.CountFor("paper.md").ShouldBeGreaterThan(0);
+    }
+
+    [Fact]
     public async Task OneSetLosingItsVectors_DoesNotDragTheOtherThroughTheModel()
     {
         // The count is read per set. If it were read across them, the other set's copy
