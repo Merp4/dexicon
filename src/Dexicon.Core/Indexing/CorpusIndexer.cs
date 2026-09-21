@@ -297,16 +297,16 @@ public sealed class CorpusIndexer(
 
                 if (cached.EmptyReason is { Length: > 0 } || cached.Text.Trim().Length == 0)
                 {
-                    // Whatever this document produced before goes now. The delete on the
-                    // success path is below the `continue`, and uploads have no reconcile
-                    // pass, so a document that extracted to text under an older extractor
-                    // and to nothing under this one would answer searches forever.
+                    // Whatever this document produced before goes now, and nothing else
+                    // would remove it. The delete on the success path is below the
+                    // `continue`. The workspace method's closing reconcile, which drops
+                    // the vectors of files a walk stopped seeing, has no counterpart
+                    // here. And ReconcileChunkCountsAsync above looks only at rows
+                    // recording Indexed, while the row written here says Empty.
                     //
-                    // ReconcileChunkCountsAsync above does NOT cover this. It only looks
-                    // at rows recording Indexed, and the row written here says Empty, so
-                    // a file that reached this branch without its points being removed is
-                    // invisible to it. This delete is the only thing standing between an
-                    // Empty row and live chunks under it.
+                    // So a document that extracted to text under an older extractor and
+                    // to nothing under this one would answer searches forever: this
+                    // delete is the only thing between an Empty row and live chunks.
                     //
                     // A failure here is caught below and recorded as Failed, which is the
                     // honest outcome: the row must not claim Empty over live chunks.
