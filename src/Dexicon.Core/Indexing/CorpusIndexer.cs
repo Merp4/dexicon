@@ -874,13 +874,28 @@ public sealed class CorpusIndexer(
         // had selected any more.
         var fingerprint = options.ContentFingerprint(filters.IncludeGlobs);
 
-        await IndexUnitsAsync(corpus, set, templates, chunking, source, job, progress, full,
-            units, [],
-            (toRead, token) => ReadCommitsAsync(root, options, byPath, toRead, filters.IncludeGlobs, token),
-            alwaysProse: true,
-            fingerprintOf: candidate => HashContent(
-                byPath[candidate.RelativePath].Sha + '|' + fingerprint),
-            onEmbeddingFailure, ct);
+        // The same handling for a git failure DURING the pass as for one before it. The
+        // catch above covered the inventory only, so a repository that went away between
+        // enumerating and reading — an unmounted share, a timed-out call — reached the
+        // job's generic catch and was recorded as a failed job rather than an
+        // unavailable source. Same condition, and it should not depend on when it
+        // happened.
+        try
+        {
+            await IndexUnitsAsync(corpus, set, templates, chunking, source, job, progress, full,
+                units, [],
+                (toRead, token) => ReadCommitsAsync(root, options, byPath, toRead, filters.IncludeGlobs, token),
+                alwaysProse: true,
+                fingerprintOf: candidate => HashContent(
+                    byPath[candidate.RelativePath].Sha + '|' + fingerprint),
+                onEmbeddingFailure, ct);
+        }
+        catch (GitHistoryException ex)
+        {
+            corpus.State = CorpusState.Unavailable;
+            job.Error = ex.Message;
+            log.LogWarning("{Error}", job.Error);
+        }
     }
 
     /// <summary>

@@ -18,7 +18,11 @@ public sealed record GitHistoryOptions
     /// <summary>The ref to walk. A branch, a tag, or a sha.</summary>
     public string Ref { get; init; } = "HEAD";
 
-    /// <summary>The subject and body of each commit.</summary>
+    /// <summary>
+    /// The subject and body of each commit. Off, neither appears: the document is then
+    /// the sha, the author, the date and whatever the stat and patch settings allow,
+    /// which is a record of what changed with no record of why.
+    /// </summary>
     public bool IncludeMessage { get; init; } = true;
 
     /// <summary>
@@ -300,7 +304,7 @@ public static class GitHistory
 
         var messages = await MessagesAsync(repoPath, marker, stdin, known, ct);
         var tails = options.IncludeStat || options.IncludeDiff
-            ? await TailsAsync(repoPath, options, marker, stdin, pathspecs, known, ct)
+            ? await TailsAsync(repoPath, options, marker, shas, pathspecs, known, ct)
             : [];
 
         var read = new List<(string, string)>(shas.Count);
@@ -367,8 +371,73 @@ public static class GitHistory
     /// is no boundary to infer and no message text that can imitate one.
     /// </summary>
     private static async Task<Dictionary<string, string>> TailsAsync(
-        string repoPath, GitHistoryOptions options, string marker, string stdin,
+        string repoPath, GitHistoryOptions options, string marker, List<string> shas,
         IReadOnlyList<string>? pathspecs, HashSet<string> known, CancellationToken ct)
+    {
+        if (shas.Count == 0) return [];
+
+        try
+        {
+            return await ReadTailsAsync(repoPath, options, marker, shas, pathspecs, known,
+                CeilingFor(options, shas.Count), ct);
+        }
+        catch (GitOutputTooLargeException) when (shas.Count > 1)
+        {
+            // Which commit produced it is not reported, so halve until it is alone. The
+            // same shape as the embedder's refusal handling: log2 cheap attempts rather
+            // than one call per commit.
+            var half = shas.Count / 2;
+            var left = await TailsAsync(repoPath, options, marker,
+                shas.GetRange(0, half), pathspecs, known, ct);
+            var right = await TailsAsync(repoPath, options, marker,
+                shas.GetRange(half, shas.Count - half), pathspecs, known, ct);
+
+            foreach (var (sha, tail) in right) left[sha] = tail;
+            return left;
+        }
+        catch (GitOutputTooLargeException) when (options.IncludeDiff)
+        {
+            // One commit, and its patch will not fit. Read it again without one: the
+            // stat is what still answers "which files", and `Document` sees a tail with
+            // no `diff --git` in it and says the patch was left out. Which is what
+            // MaxDiffBytes means — and now it is a bound on memory as well as on the
+            // document, because the patch was never materialised.
+            var stat = await ReadTailsAsync(repoPath, options with { IncludeDiff = false },
+                marker, shas, pathspecs, known, CeilingFor(options with { IncludeDiff = false }, 1), ct);
+
+            foreach (var sha in shas)
+                stat[sha] = (stat.GetValueOrDefault(sha, string.Empty).TrimEnd() + '\n'
+                             + OverCeiling(options)).TrimStart('\n');
+
+            return stat;
+        }
+    }
+
+    /// <summary>
+    /// How much output one call may produce before git is killed.
+    ///
+    /// Sized from the per-commit cap, so a single commit's read is bounded just above
+    /// what a document may hold: a commit carrying a vendored tree is stopped rather
+    /// than allocated and then discarded. The slack is the stat, the headers and the
+    /// marker; the absolute ceiling is there because a batch of a hundred at a generous
+    /// cap would otherwise be a bound in name only.
+    /// </summary>
+    private static long CeilingFor(GitHistoryOptions options, int commits)
+    {
+        var perCommit = options.IncludeDiff ? options.MaxDiffBytes + Slack : Slack;
+        return Math.Min((long)perCommit * commits, AbsoluteCeiling);
+    }
+
+    private const int Slack = 256 * 1024;
+    private const long AbsoluteCeiling = 64L * 1024 * 1024;
+
+    private static string OverCeiling(GitHistoryOptions options) =>
+        string.Create(CultureInfo.InvariantCulture,
+            $"[diff not included: over the {options.MaxDiffBytes:N0} byte limit for this source]");
+
+    private static async Task<Dictionary<string, string>> ReadTailsAsync(
+        string repoPath, GitHistoryOptions options, string marker, List<string> shas,
+        IReadOnlyList<string>? pathspecs, HashSet<string> known, long ceiling, CancellationToken ct)
     {
         var args = new List<string>
         {
@@ -377,6 +446,7 @@ public static class GitHistory
 
         if (options.IncludeDiff) args.Add("--patch");
         if (options.IncludeStat) args.Add("--stat");
+        if (!options.IncludeDiff && !options.IncludeStat) args.Add("--no-patch");
 
         if (pathspecs is { Count: > 0 })
         {
@@ -384,7 +454,9 @@ public static class GitHistory
             args.AddRange(pathspecs);
         }
 
-        var (ok, stdout, stderr) = await RunAsync(repoPath, args, ct, stdin);
+        var (ok, stdout, stderr) = await RunAsync(
+            repoPath, args, ct, string.Join('\n', shas), ceiling);
+
         if (!ok) throw new GitHistoryException($"git log --stdin failed: {Summarise(stderr)}");
 
         var tails = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -420,17 +492,17 @@ public static class GitHistory
         sb.Append("Author: ").Append(name).Append(" <").Append(email).Append(">\n");
         sb.Append("Date:   ").Append(date).Append('\n');
 
+        // The message means the subject AND the body, which is what the setting is
+        // named for. Keeping the subject when it is off left the option unable to do
+        // what it says, and made it change the fingerprint of every body-less commit
+        // while producing the same text — a re-embed of the whole history for nothing.
+        // A document without it is still identifiable: it carries the sha, the author,
+        // the date and the stat.
         if (options.IncludeMessage)
         {
             sb.Append('\n');
             foreach (var line in (subject + "\n\n" + body).TrimEnd().Split('\n'))
                 sb.Append("    ").Append(line.TrimEnd()).Append('\n');
-        }
-        else
-        {
-            // The subject is the commit's name. Dropping it as well would leave a document
-            // that cannot be recognised as any particular commit.
-            sb.Append('\n').Append("    ").Append(subject).Append('\n');
         }
 
         if (tail.Length == 0) return sb.ToString();
@@ -491,7 +563,8 @@ public static class GitHistory
     /// are for at the call sites.
     /// </summary>
     private static async Task<(bool Ok, string Stdout, string Stderr)> RunAsync(
-        string workingDirectory, IReadOnlyList<string> args, CancellationToken ct, string? stdin = null)
+        string workingDirectory, IReadOnlyList<string> args, CancellationToken ct, string? stdin = null,
+        long? maxChars = null)
     {
         var info = new ProcessStartInfo("git")
         {
@@ -530,8 +603,9 @@ public static class GitHistory
 
         // Both streams read concurrently. Waiting for exit with either pipe unread is the
         // classic deadlock: git fills the buffer and blocks, and nothing drains it.
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(deadline.Token);
         var stderrTask = process.StandardError.ReadToEndAsync(deadline.Token);
+        var stdout = new StringBuilder();
+        var over = false;
 
         try
         {
@@ -539,6 +613,30 @@ public static class GitHistory
             {
                 await process.StandardInput.WriteAsync(stdin.AsMemory(), deadline.Token);
                 process.StandardInput.Close();
+            }
+
+            // Read in chunks rather than to the end, so a ceiling can be enforced while
+            // the output is arriving. Reading it all and measuring afterwards is not a
+            // bound: by then it is allocated.
+            var buffer = new char[32 * 1024];
+            while (true)
+            {
+                var n = await process.StandardOutput.ReadAsync(buffer, deadline.Token);
+                if (n == 0) break;
+
+                if (maxChars is { } cap && stdout.Length + n > cap)
+                {
+                    over = true;
+                    break;
+                }
+
+                stdout.Append(buffer, 0, n);
+            }
+
+            if (over)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
+                throw new GitOutputTooLargeException(maxChars!.Value);
             }
 
             await process.WaitForExitAsync(deadline.Token);
@@ -560,7 +658,7 @@ public static class GitHistory
             throw new GitHistoryException($"git did not finish within {Timeout.TotalMinutes:N0} minutes.");
         }
 
-        return (process.ExitCode == 0, await stdoutTask, await stderrTask);
+        return (process.ExitCode == 0, stdout.ToString(), await stderrTask);
     }
 }
 
@@ -569,6 +667,18 @@ public static class GitHistory
 /// rather than an empty result, because reading no commits and finding no commits are
 /// different facts and the indexer records them differently.
 /// </summary>
+/// <summary>
+/// git produced more output than the call allowed, and was killed part way through it.
+///
+/// Internal, and never reaches the indexer: <see cref="GitHistory.TailsAsync"/> answers
+/// it by halving the batch, and for one commit by reading it again without the patch.
+/// The point of killing rather than reading and measuring is that by the time it can be
+/// measured it is allocated, so the per-commit cap would bound the document and nothing
+/// else.
+/// </summary>
+internal sealed class GitOutputTooLargeException(long ceiling)
+    : Exception($"git produced more than {ceiling:N0} characters.");
+
 public sealed class GitHistoryException : Exception
 {
     public GitHistoryException(string message) : base(message) { }

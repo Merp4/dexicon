@@ -233,6 +233,48 @@ public sealed class GitHistoryTests : IDisposable
         text.ShouldContain("big.txt", Case.Sensitive, "and so does the stat, which is the cheap half");
     }
 
+    /// <summary>
+    /// The cap bounds the read, not only the document.
+    ///
+    /// Reading a batch whole and measuring afterwards is not a bound: by then the patch
+    /// is allocated, and one commit carrying a vendored tree could exhaust the indexer
+    /// before the limit dropped it. git is killed at a ceiling instead, the batch is
+    /// halved to find which commit did it, and that one is read again without a patch.
+    ///
+    /// Two commits, so the halving runs as well as the fallback.
+    /// </summary>
+    [Fact]
+    public async Task APatchTooLargeToReadIsNeverRead()
+    {
+        Commit("small.txt", "one\n", "a small change");
+        Commit("big.txt", string.Join('\n', Enumerable.Range(0, 60_000).Select(i => $"line {i}")), "a huge change");
+
+        var commits = await EnumerateAsync();
+        commits.Count.ShouldBe(2);
+
+        // Below the smallest thing git will emit for the big commit, so the ceiling is
+        // certain to be hit rather than merely likely.
+        var read = await ReadAsync(new GitHistoryOptions { IncludeDiff = true, MaxDiffBytes = 2_000 }, commits);
+
+        read.Count.ShouldBe(2, "the batch is halved, so the other commit is not lost with it");
+
+        var big = read[commits[0].Sha];
+        big.ShouldContain("    a huge change", Case.Sensitive);
+        big.ShouldContain("not included");
+        big.ShouldNotContain("+line 59999", Case.Sensitive);
+        big.ShouldContain("big.txt", Case.Sensitive, "the stat survives, which is the point of keeping it");
+
+        // Which path dropped it, and the distinction is the whole test. A patch read
+        // and then measured says how large it was — "diff of 1,234,567 bytes" — and a
+        // patch never read cannot. Without this the assertions above pass whether the
+        // ceiling fired or the document cap did, which is the same test twice.
+        big.ShouldNotContain("diff of ", Case.Sensitive,
+            "a size here would mean the patch was read before being dropped");
+
+        read[commits[1].Sha].ShouldContain("+one", Case.Sensitive,
+            "a small commit in the same batch still gets its patch");
+    }
+
     [Fact]
     public async Task MergesAreLeftOutUnlessTheyAreAskedFor()
     {

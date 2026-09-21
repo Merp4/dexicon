@@ -35,7 +35,7 @@ with no section here fails its release rather than publishing an undescribed one
   The patch is off by default and the stat is on. Measured over 201 commits of this
   repository: with patches the history is 5.99 MB and the median commit 11,393 characters;
   with the message and the stat it is 449 KB and the median 1,939, which fits in one chunk.
-  A patch over the limit is reported in characters rather than cut, because a diff
+  A patch over the limit is reported in UTF-8 bytes rather than cut, because a diff
   truncated mid-hunk reads as a complete change that did something else.
 
   A refresh over a tip that has not moved reads nothing. The inventory is a `git log` of

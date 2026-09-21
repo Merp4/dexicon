@@ -1619,9 +1619,15 @@ largest 399,527. With the message and the stat it is 449 KB and the median 1,939
 fits in a single chunk. Thirteen times smaller for the half that answers "when did this
 change and why". A repository where the diff is the point turns it on knowing the cost.
 
-An oversized patch is stated in characters rather than cut. A diff truncated mid-hunk
-reads as a complete change that did something other than what it did, and nothing
-downstream can tell.
+An oversized patch is stated in UTF-8 bytes rather than cut, and the stat is kept beside
+the statement because it is the cheap half and it still answers which files. A diff
+truncated mid-hunk reads as a complete change that did something other than what it did,
+and nothing downstream can tell.
+
+The cap is on the DOCUMENT, not on memory. A batch's output is read whole before any of
+it is measured, so one commit carrying a vendored tree is allocated in full and then
+dropped; the reader bounds that separately, by refusing output past a ceiling and
+halving the batch to find which commit produced it.
 
 **Why two passes.** `git log --format` over the ref gives shas, dates and subjects; the
 bodies are fetched in a second call for the commits the catalogue does not already hold.
