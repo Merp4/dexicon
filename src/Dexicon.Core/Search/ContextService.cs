@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Dexicon.Core.Auth;
+using Dexicon.Core.Documents;
 using Dexicon.Core.Vectors;
 
 namespace Dexicon.Core.Search;
@@ -88,7 +89,8 @@ public sealed record ContextResult
 ///
 /// See docs/decisions.md D-29.
 /// </summary>
-public sealed class ContextService(SearchService search, ScopeResolver scopes, IVectorStore vectors)
+public sealed class ContextService(
+    SearchService search, ScopeResolver scopes, IVectorStore vectors, DocumentReader documents)
 {
     public async Task<ContextResult> BuildAsync(
         Principal principal, ContextRequest request, CancellationToken ct = default)
@@ -219,11 +221,58 @@ public sealed class ContextService(SearchService search, ScopeResolver scopes, I
 
             // A hit whose own chunk did not come back is a hit whose index has moved under
             // the query. What matched is still the honest answer, so it is what is used.
-            candidates.Add(pieces.Exists(p => p.ChunkIndex == hit.ChunkIndex)
-                ? new ContextCandidate(hit, pieces)
-                : new ContextCandidate(hit, [hit]));
+            if (!pieces.Exists(p => p.ChunkIndex == hit.ChunkIndex))
+            {
+                candidates.Add(new ContextCandidate(hit, [hit]));
+                continue;
+            }
+
+            candidates.Add(await FromDocumentAsync(target.Corpus.Id, target.Set.Id, hit, pieces, ct)
+                           ?? new ContextCandidate(hit, pieces));
         }
 
         return candidates;
+    }
+
+    /// <summary>
+    /// The passage for a hit, read out of the document rather than glued from the chunks
+    /// either side of it — which is what `get_context` already does, and what this
+    /// endpoint did not.
+    ///
+    /// The chunks still decide WHERE: the span is their line range, so `neighbours`
+    /// keeps its meaning and a caller asking for two either side gets the same width as
+    /// before. Only the TEXT changes source. Stitching chunk payloads leaves whatever
+    /// the chunker did not cut — a heading skipped by a boundary rule, the gap where an
+    /// oversized chunk was split — missing from a passage that reads as continuous.
+    ///
+    /// Null where there is no document to read, which is the ordinary answer for code
+    /// and plain text on a mount: reading those IS the extraction, so nothing is cached
+    /// and the chunks are the only copy. The caller falls back to them, as
+    /// <c>get_context</c> does, so the two agree on both paths rather than only on one.
+    /// </summary>
+    internal async Task<ContextCandidate?> FromDocumentAsync(
+        string corpusId, string chunkSetId, SearchHit hit, List<SearchHit> pieces,
+        CancellationToken ct = default)
+    {
+        var document = await documents.ForAsync(corpusId, chunkSetId, hit.FilePath, hit.SourceId, ct);
+
+        if (document is null) return null;
+
+        var lo = pieces.Min(p => p.StartLine);
+        var hi = pieces.Max(p => p.EndLine);
+
+        var (text, gotLo, gotHi) = Passage.Window(document.Text, lo, hi);
+
+        // The document exists but does not reach these lines, which means its text and
+        // these chunks were cut from different versions. The chunks are what the hit's
+        // line numbers address, so they are what is honest to return.
+        if (gotHi < gotLo || text.Length == 0) return null;
+
+        return new ContextCandidate(hit, [hit with
+        {
+            StartLine = gotLo,
+            EndLine = gotHi,
+            Content = text,
+        }]);
     }
 }
