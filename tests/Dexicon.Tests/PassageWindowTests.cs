@@ -101,4 +101,29 @@ public sealed class PassageWindowTests
         lo.ShouldBe(2);
         hi.ShouldBe(3);
     }
+
+    /// <summary>
+    /// The line-table overload exists so that fifty windows out of one book do not walk
+    /// it fifty times, and it is only safe while it answers exactly what the text
+    /// overload answers. A second implementation of line counting is where a citation
+    /// quietly moves by one, so the two are held against each other on the cases that
+    /// decide it: a trailing newline, no trailing newline, blank lines, a window past
+    /// the end, and an empty document.
+    /// </summary>
+    [Theory]
+    [InlineData("a\nb\nc\n")]
+    [InlineData("a\nb\nc")]
+    [InlineData("a\n\n\nd")]
+    [InlineData("\n")]
+    [InlineData("only one line")]
+    [InlineData("")]
+    public void TheLineTableAnswersWhatTheTextDoes(string document)
+    {
+        var lines = Passage.Lines(document);
+
+        for (var lo = 0; lo <= 6; lo++)
+            for (var hi = 0; hi <= 6; hi++)
+                Passage.Window(lines, lo, hi).ShouldBe(Passage.Window(document, lo, hi),
+                    $"window {lo}-{hi} of {document.Replace("\n", "\\n")}");
+    }
 }

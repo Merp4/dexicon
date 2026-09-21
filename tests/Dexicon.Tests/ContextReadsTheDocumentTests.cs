@@ -252,15 +252,17 @@ public sealed class ContextReadsTheDocumentTests : IDisposable
 
     /// <summary>
     /// An oversized line divided by the embedder's refusal gives every piece of it the
-    /// same start and end line.
+    /// same start and end line, and those pieces are kept.
     ///
-    /// Taking each chunk in turn made every slice but the last end before it began, so
-    /// they were dropped — and with them their indexes. A hit that WAS one of those
-    /// slices then left the assembler unable to find the piece it is citing, and fell
-    /// back to whichever piece sorted first.
+    /// Two ways of losing the match were found here. Taking each chunk in turn made
+    /// every slice but the last end before it began, so they were dropped and their
+    /// indexes with them. Merging them into the document's copy of the line kept one
+    /// index but threw away which slice matched: the assembler cuts a block from the
+    /// start of its first piece, so a hit in the third slice of a line over the budget
+    /// renders as the opening of the line, or as nothing at all.
     /// </summary>
     [Fact]
-    public async Task ChunksSplitOnOneLineKeepTheHitsOwnIndex()
+    public async Task SlicesOfOneDividedLineAreKeptAsTheyAre()
     {
         await using var db = Db();
         var (corpusId, setId, sourceId) = await SeedAsync(db);
@@ -270,14 +272,39 @@ public sealed class ContextReadsTheDocumentTests : IDisposable
         var second = Chunk(sourceId, 11, 2, 2, "second slice");
         var third = Chunk(sourceId, 12, 2, 2, "third slice");
 
-        // The hit is the FIRST slice, which the per-chunk loop dropped.
+        // The hit is the SECOND slice: neither the one a per-chunk loop kept nor the one
+        // a merged window would have rendered from.
         var candidate = await Service(db).FromDocumentAsync(
-            corpusId, setId, first, [first, second, third]);
+            corpusId, setId, second, [first, second, third]);
 
         var pieces = candidate.ShouldNotBeNull().Pieces;
-        pieces.ShouldHaveSingleItem().ChunkIndex.ShouldBe(10,
-            "one line is one slice, and it must carry the index of the hit being cited");
-        pieces[0].Content.Trim().ShouldBe("line two");
+        pieces.Select(p => p.ChunkIndex).ShouldBe([10, 11, 12],
+            "every slice of the line is a piece, so the assembler can find the one cited");
+        pieces.Single(p => p.ChunkIndex == 11).Content.ShouldBe("second slice",
+            "the matched slice is what matched, not the line it was cut from");
+    }
+
+    /// <summary>
+    /// Lines after a divided one that no other chunk begins on still come from the
+    /// document, which is where reading it earns its place even here.
+    /// </summary>
+    [Fact]
+    public async Task LinesAfterADividedOneAreReadFromTheDocument()
+    {
+        await using var db = Db();
+        var (corpusId, setId, sourceId) = await SeedAsync(db);   // six lines
+
+        var first = Chunk(sourceId, 10, 2, 2, "first slice");
+        var second = Chunk(sourceId, 11, 2, 4, "second slice");
+
+        var candidate = await Service(db).FromDocumentAsync(
+            corpusId, setId, first, [first, second]);
+
+        var pieces = candidate.ShouldNotBeNull().Pieces;
+        pieces.Select(p => p.ChunkIndex).ShouldBe([10, 11]);
+        pieces[^1].EndLine.ShouldBe(4);
+        pieces[^1].Content.ShouldBe("second slice\nline three\nline four",
+            "the slice keeps its own text, and the lines after it come from the document");
     }
 
     /// <summary>
@@ -291,7 +318,7 @@ public sealed class ContextReadsTheDocumentTests : IDisposable
         await using var db = Db();
         var (corpusId, setId, sourceId) = await SeedAsync(db);
 
-        var cache = new Dictionary<(string Corpus, string Set, string? Source, string Path), DocumentBody?>();
+        var cache = new Dictionary<(string Corpus, string Set, string? Source, string Path), string[]?>();
         var service = Service(db);
 
         foreach (var line in new[] { 1, 2, 3, 4 })

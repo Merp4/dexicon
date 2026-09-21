@@ -191,7 +191,7 @@ public sealed class ContextService(
         var targets = scope.Targets.ToDictionary(t => t.Corpus.Id, StringComparer.Ordinal);
 
         var files = new Dictionary<(string Corpus, string Path), IReadOnlyList<SearchHit>>();
-        var docs = new Dictionary<(string Corpus, string Set, string? Source, string Path), DocumentBody?>();
+        var docs = new Dictionary<(string Corpus, string Set, string? Source, string Path), string[]?>();
         var candidates = new List<ContextCandidate>(hits.Count);
 
         foreach (var hit in hits)
@@ -267,31 +267,35 @@ public sealed class ContextService(
     /// </summary>
     internal async Task<ContextCandidate?> FromDocumentAsync(
         string corpusId, string chunkSetId, SearchHit hit, List<SearchHit> pieces,
-        Dictionary<(string Corpus, string Set, string? Source, string Path), DocumentBody?>? cache = null,
+        Dictionary<(string Corpus, string Set, string? Source, string Path), string[]?>? cache = null,
         CancellationToken ct = default)
     {
-        // One read per file, not per hit. Several hits in one book is the ordinary shape
-        // of a result, and a document is the whole extracted text — hundreds of
-        // thousands of characters for a technical book — so reading it again for each
-        // hit is the same load repeated. Misses are cached too: a file with no document
-        // must not be looked up once per hit to learn that again.
+        // One read per file, not per hit, and one split with it. Several hits in one book
+        // is the ordinary shape of a result, and a document is the whole extracted text —
+        // hundreds of thousands of characters for a technical book — so reading it again
+        // for each hit is the same load repeated. What is cached is the line table rather
+        // than the text, because taking a window out of the text walks it from line one:
+        // caching only the read left fifty hits walking the same book fifty times. Misses
+        // are cached too: a file with no document must not be looked up once per hit to
+        // learn that again.
         var key = (corpusId, chunkSetId, hit.SourceId, hit.FilePath);
-        DocumentBody? document;
+        string[]? lines;
 
-        if (cache is not null && cache.TryGetValue(key, out var cached)) document = cached;
+        if (cache is not null && cache.TryGetValue(key, out var cached)) lines = cached;
         else
         {
-            document = await documents.ForAsync(corpusId, chunkSetId, hit.FilePath, hit.SourceId, ct);
-            if (cache is not null) cache[key] = document;
+            var document = await documents.ForAsync(corpusId, chunkSetId, hit.FilePath, hit.SourceId, ct);
+            lines = document is null ? null : Passage.Lines(document.Text);
+            if (cache is not null) cache[key] = lines;
         }
 
-        if (document is null) return null;
+        if (lines is null) return null;
 
         var ordered = pieces.OrderBy(p => p.ChunkIndex).ToList();
         var lo = ordered.Min(p => p.StartLine);
         var hi = ordered.Max(p => p.EndLine);
 
-        var (text, gotLo, gotHi) = Passage.Window(document.Text, lo, hi);
+        var (text, gotLo, gotHi) = Passage.Window(lines, lo, hi);
 
         // Anything short of the whole span means the document and these chunks were cut
         // from different versions of the file. Window returns what it could reach, so a
@@ -313,21 +317,13 @@ public sealed class ContextService(
         // chunker left, which is the point of reading the document at all. Chunks that
         // overlap lose the duplicated lines the same way, since a piece stops where its
         // successor starts.
-        // Sliced out of the span already read, not fetched again per piece. Window walks
-        // the document from its first line to find one, so asking it once per chunk
-        // rescans the whole text as many times as there are neighbours.
-        var lines = text.Split('\n');
-        var expected = hi - lo + 1;
-        if (lines.Length > expected) lines = lines[..expected];
-        if (lines.Length < expected) return null;
-
-        // Chunks that begin on the same line are one slice, not several.
+        // Sliced out of the line table, not fetched again per piece. Window over the
+        // text walks the document from its first line to find one, so asking it once per
+        // chunk rescans the whole text as many times as there are neighbours. The span
+        // was checked against the table above, so every index below is in range.
         //
-        // An oversized line divided by the embedder's refusal gives every piece of it
-        // the same start and end, so a run of them describes one line between them.
-        // Taking each in turn made every piece but the last end before it began, and
-        // they were dropped — along with their indexes, so a hit that WAS one of those
-        // slices left the assembler unable to find the piece it is citing.
+        // Chunks that begin on the same line are one group, and a group of more than one
+        // is a line the chunker had to divide.
         var groups = new List<List<SearchHit>>();
         foreach (var c in ordered)
         {
@@ -339,19 +335,47 @@ public sealed class ContextService(
 
         for (var g = 0; g < groups.Count; g++)
         {
-            var from = groups[g][0].StartLine;
+            var group = groups[g];
+            var from = group[0].StartLine;
             var to = g + 1 < groups.Count ? groups[g + 1][0].StartLine - 1 : hi;
             if (to < from) continue;
 
+            // A line the chunker had to divide keeps its own slices.
+            //
+            // Every slice of an oversized line reports the same start and end, so the
+            // document's copy of that line is what they say between them and there is no
+            // gap inside one line for a document read to close. Replacing them with it
+            // loses which slice matched: the assembler cuts a block from the start of its
+            // first piece, so a hit in the third slice of a line that is itself over the
+            // budget renders as the opening of the line, or as nothing, while the
+            // citation still names the hit. The slices go through as they are, which is
+            // what the chunk path does, and Stitch joins them on their text because it
+            // cannot separate them by line.
+            if (group.Count > 1)
+            {
+                windows.AddRange(group);
+
+                // Lines after it that no other chunk begins on belong to the last slice,
+                // which is where reading the document still earns its place here.
+                if (to > from)
+                    windows[^1] = group[^1] with
+                    {
+                        EndLine = to,
+                        Content = group[^1].Content + '\n' + string.Join('\n', lines[from..to]),
+                    };
+
+                continue;
+            }
+
             // The hit's own index when the hit is in this group, so the assembler finds
             // the piece it is citing; otherwise the group's first, which is its identity.
-            var owner = groups[g].Find(c => c.ChunkIndex == hit.ChunkIndex) ?? groups[g][0];
+            var owner = group.Find(c => c.ChunkIndex == hit.ChunkIndex) ?? group[0];
 
             windows.Add(owner with
             {
                 StartLine = from,
                 EndLine = to,
-                Content = string.Join('\n', lines[(from - lo)..(to - lo + 1)]),
+                Content = string.Join('\n', lines[(from - 1)..to]),
             });
         }
 

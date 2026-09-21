@@ -157,6 +157,38 @@ public static class Passage
     }
 
     /// <summary>
+    /// The document split into lines once, for a caller that will take several windows
+    /// out of the same text.
+    ///
+    /// A document ending in a newline has as many lines as it has newlines, which is what
+    /// <see cref="Window(string,int,int)"/> counts: the empty tail after the last newline
+    /// is not a line, and treating it as one puts a citation one line past the end.
+    /// </summary>
+    public static string[] Lines(string text)
+    {
+        if (text.Length == 0) return [];
+        var lines = text.Split('\n');
+        return lines[^1].Length == 0 ? lines[..^1] : lines;
+    }
+
+    /// <summary>
+    /// The same window as <see cref="Window(string,int,int)"/>, over a document already
+    /// split by <see cref="Lines"/>.
+    ///
+    /// One read of a book is not one window: a result with fifty hits in it asks for fifty,
+    /// and the string overload scans from the first line each time, so the whole document
+    /// is walked once per hit. Over a line table each window is an index.
+    /// </summary>
+    public static (string Text, int Lo, int Hi) Window(IReadOnlyList<string> lines, int lo, int hi)
+    {
+        lo = Math.Max(1, lo);
+        if (hi < lo || lines.Count == 0 || lo > lines.Count) return (string.Empty, lo, lo - 1);
+
+        var last = Math.Min(hi, lines.Count);
+        return (string.Join('\n', lines.Skip(lo - 1).Take(last - lo + 1)), lo, last);
+    }
+
+    /// <summary>
     /// Appends <paramref name="piece"/>, dropping any prefix already present at the end of
     /// the buffer. Two slices of one line overlap by the configured amount, which this
     /// cannot know, so it measures the repeat instead of assuming it.
