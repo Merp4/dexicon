@@ -515,8 +515,7 @@ public static class CorpusEndpoints
         }).Produces<IndexedFileText>();
     }
 
-
-/// <summary>One file, and what one chunk set made of it.</summary>
+    /// <summary>One file, and what one chunk set made of it.</summary>
     /// <remarks>
     /// Init properties rather than a positional record: EF projects a member
     /// initialisation and cannot translate a constructor call inside this left join.
@@ -574,22 +573,29 @@ public static class CorpusEndpoints
     }
 
     /// <summary>
-    /// Orders a page of files, always on a second key.
+    /// Orders a page of files, always ending on a key that is unique.
     ///
     /// The first key is not unique for any of these: two files of the same size, chunk
     /// count or status would come back in whatever order the database chose, and paging
     /// an unstable order repeats one row and skips another between pages. A list that
     /// loses a file while you page through it is the same defect this whole change is
     /// about, arriving by a different route.
+    ///
+    /// Neither is the path. A file_path is relative to its SOURCE, so a corpus whose
+    /// sources overlap holds the same path twice — 190 files at 187 distinct paths on the
+    /// shelf this was measured against, six of them also equal on size. Ordering that
+    /// ends at the path leaves those rows unseparated and the defect intact for exactly
+    /// the corpora that have more than one source. Only the id settles it.
     /// </summary>
     internal static IOrderedQueryable<FileRow> SortFiles(IQueryable<FileRow> q, string? sort) =>
         sort?.ToLowerInvariant() switch
         {
-            "size" => q.OrderByDescending(x => x.File.SizeBytes).ThenBy(x => x.File.RelativePath),
+            "size" => q.OrderByDescending(x => x.File.SizeBytes)
+                       .ThenBy(x => x.File.RelativePath).ThenBy(x => x.File.Id),
             "chunks" => q.OrderByDescending(x => x.State == null ? 0 : x.State.ChunkCount)
-                         .ThenBy(x => x.File.RelativePath),
+                         .ThenBy(x => x.File.RelativePath).ThenBy(x => x.File.Id),
             "status" => q.OrderBy(x => x.State == null ? "" : x.State.Status.ToString())
-                         .ThenBy(x => x.File.RelativePath),
+                         .ThenBy(x => x.File.RelativePath).ThenBy(x => x.File.Id),
             _ => q.OrderBy(x => x.File.RelativePath).ThenBy(x => x.File.Id),
         };
 

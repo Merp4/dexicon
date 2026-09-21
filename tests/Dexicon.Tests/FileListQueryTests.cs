@@ -166,6 +166,42 @@ public sealed class FileListQueryTests : IAsyncLifetime
         paged.Distinct().Count().ShouldBe(25, $"paging by {sort} repeated a row and skipped another");
     }
 
+    /// <summary>
+    /// Every sort must END on a column that is unique, and this asserts the ORDER BY
+    /// rather than the rows it returns.
+    ///
+    /// That is deliberate. The test above pages real rows and passes either way: SQLite
+    /// returns rows equal on every ordering key in a stable order here, so an ordering
+    /// that cannot separate them looks identical to one that can. What is wrong with an
+    /// unstable ORDER BY is that the order is not GUARANTEED — a different plan, an
+    /// added index or another provider may return them differently — and no query
+    /// against this database can demonstrate the absence of a guarantee.
+    ///
+    /// The path does not provide it. A file_path is relative to its SOURCE, so a corpus
+    /// whose sources overlap holds the same path twice: 190 files at 187 distinct paths
+    /// on the shelf this was measured against, six of them equal on size as well. Only
+    /// the id is unique per row.
+    /// </summary>
+    [Theory]
+    [InlineData("size")]
+    [InlineData("chunks")]
+    [InlineData("status")]
+    [InlineData("path")]
+    [InlineData(null)]
+    public void EverySortEndsOnAUniqueColumn(string? sort)
+    {
+        var sql = CorpusEndpoints.SortFiles(Query(), sort).ToQueryString();
+
+        var orderBy = sql[sql.LastIndexOf("ORDER BY", StringComparison.Ordinal)..];
+        var lastKey = orderBy.Split(',')[^1];
+
+        lastKey.ShouldContain('"' + "Id" + '"',
+            Case.Sensitive,
+            $"sorting by {sort ?? "path"} ends on a key that is not unique, so two rows it "
+            + "cannot separate may come back in either order and paging may repeat one "
+            + $"and skip another. ORDER BY was: {orderBy}");
+    }
+
     [Fact]
     public async Task NoFilterCountsEveryFile()
     {
