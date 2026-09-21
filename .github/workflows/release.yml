@@ -113,7 +113,7 @@ jobs:
       # because the layers are shared with the push below through the same cache. The
       # alternative is publishing an image nobody has ever started.
       - name: Build for verification
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           load: true
@@ -174,7 +174,7 @@ jobs:
 
       - name: Push
         id: push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           # arm64 costs almost nothing here: both builder stages run on the native
