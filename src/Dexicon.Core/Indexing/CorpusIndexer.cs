@@ -713,10 +713,25 @@ public sealed class CorpusIndexer(
                 "Source {Source}: {Owned} of {Found} files; {Shadowed} belong to a more specific source",
                 source.RootPath, files.Count, files.Count + walk.ShadowedCount, walk.ShadowedCount);
 
+        // Every file this pass will record, which is what the counters below add up to:
+        // the ones it owns AND the ones the walk excluded, because both get a row and
+        // both increment FilesSkipped. Counting only the owned ones reported 27,031
+        // skipped against a total of 27,011, and any progress reading
+        // (done + skipped + failed) / total past 1.0.
+        //
+        // It is also the number the Files list shows for the corpus, so the two agree.
+        //
         // += , not =. A job covers every chunk set, and each set walks the tree again, so
         // an assignment here reported the files of one pass against the work done by all
         // of them: a corpus with two sets showed "24 / 12" and a progress bar past 100%.
-        job.FilesTotal += files.Count;
+        //
+        // Shadowing applies to the first term only. WorkspaceDiscovery filters `Owned` by
+        // it and returns `Skipped` as the walk produced it, so a file an exclusion caught
+        // under a nested source is reported by every source above it and counted by each.
+        // That inflates the total on a corpus with nested sources, but it does not break
+        // what this line is for: each of those counts is matched by a FilesSkipped in the
+        // same pass, so the two still add up.
+        job.FilesTotal += files.Count + walk.Skipped.Count;
         job.Phase = "extract";
 
         // The job's counters accumulate across every source and every set, so this pass's
