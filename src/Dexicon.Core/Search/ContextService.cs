@@ -313,20 +313,46 @@ public sealed class ContextService(
         // chunker left, which is the point of reading the document at all. Chunks that
         // overlap lose the duplicated lines the same way, since a piece stops where its
         // successor starts.
-        var windows = new List<SearchHit>(ordered.Count);
+        // Sliced out of the span already read, not fetched again per piece. Window walks
+        // the document from its first line to find one, so asking it once per chunk
+        // rescans the whole text as many times as there are neighbours.
+        var lines = text.Split('\n');
+        var expected = hi - lo + 1;
+        if (lines.Length > expected) lines = lines[..expected];
+        if (lines.Length < expected) return null;
 
-        for (var i = 0; i < ordered.Count; i++)
+        // Chunks that begin on the same line are one slice, not several.
+        //
+        // An oversized line divided by the embedder's refusal gives every piece of it
+        // the same start and end, so a run of them describes one line between them.
+        // Taking each in turn made every piece but the last end before it began, and
+        // they were dropped — along with their indexes, so a hit that WAS one of those
+        // slices left the assembler unable to find the piece it is citing.
+        var groups = new List<List<SearchHit>>();
+        foreach (var c in ordered)
         {
-            var from = ordered[i].StartLine;
-            var to = i + 1 < ordered.Count ? ordered[i + 1].StartLine - 1 : hi;
+            if (groups.Count > 0 && groups[^1][0].StartLine == c.StartLine) groups[^1].Add(c);
+            else groups.Add([c]);
+        }
 
-            // A chunk that begins no later than its predecessor adds no lines of its own.
+        var windows = new List<SearchHit>(groups.Count);
+
+        for (var g = 0; g < groups.Count; g++)
+        {
+            var from = groups[g][0].StartLine;
+            var to = g + 1 < groups.Count ? groups[g + 1][0].StartLine - 1 : hi;
             if (to < from) continue;
 
-            var (part, partLo, partHi) = Passage.Window(document.Text, from, to);
-            if (part.Length == 0) continue;
+            // The hit's own index when the hit is in this group, so the assembler finds
+            // the piece it is citing; otherwise the group's first, which is its identity.
+            var owner = groups[g].Find(c => c.ChunkIndex == hit.ChunkIndex) ?? groups[g][0];
 
-            windows.Add(ordered[i] with { StartLine = partLo, EndLine = partHi, Content = part });
+            windows.Add(owner with
+            {
+                StartLine = from,
+                EndLine = to,
+                Content = string.Join('\n', lines[(from - lo)..(to - lo + 1)]),
+            });
         }
 
         return windows.Count == 0 ? null : new ContextCandidate(hit, windows);

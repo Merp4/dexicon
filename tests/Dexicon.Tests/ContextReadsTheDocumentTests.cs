@@ -251,6 +251,36 @@ public sealed class ContextReadsTheDocumentTests : IDisposable
     }
 
     /// <summary>
+    /// An oversized line divided by the embedder's refusal gives every piece of it the
+    /// same start and end line.
+    ///
+    /// Taking each chunk in turn made every slice but the last end before it began, so
+    /// they were dropped — and with them their indexes. A hit that WAS one of those
+    /// slices then left the assembler unable to find the piece it is citing, and fell
+    /// back to whichever piece sorted first.
+    /// </summary>
+    [Fact]
+    public async Task ChunksSplitOnOneLineKeepTheHitsOwnIndex()
+    {
+        await using var db = Db();
+        var (corpusId, setId, sourceId) = await SeedAsync(db);
+
+        // Three slices of line 2, as dividing one long line produces.
+        var first = Chunk(sourceId, 10, 2, 2, "first slice");
+        var second = Chunk(sourceId, 11, 2, 2, "second slice");
+        var third = Chunk(sourceId, 12, 2, 2, "third slice");
+
+        // The hit is the FIRST slice, which the per-chunk loop dropped.
+        var candidate = await Service(db).FromDocumentAsync(
+            corpusId, setId, first, [first, second, third]);
+
+        var pieces = candidate.ShouldNotBeNull().Pieces;
+        pieces.ShouldHaveSingleItem().ChunkIndex.ShouldBe(10,
+            "one line is one slice, and it must carry the index of the hit being cited");
+        pieces[0].Content.Trim().ShouldBe("line two");
+    }
+
+    /// <summary>
     /// Several hits in one book is the ordinary shape of a result, and a document is the
     /// whole extracted text — hundreds of thousands of characters for a technical book.
     /// Reading it once per hit is the same load repeated.
