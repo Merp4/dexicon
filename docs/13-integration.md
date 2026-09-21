@@ -184,3 +184,62 @@ a commit-message draft. Use `POST /api/search` when something will read it as da
 ranking, counting, deciding which file to open. An agent with an MCP client should use
 neither and call `search_index` and `get_context`, which are shaped for a conversation
 ([06](06-mcp-surface.md)).
+
+### "Context" names two different operations
+
+The MCP tool and the endpoint that share the word do not do the same thing, which is worth
+stating because the names invite the assumption that they do.
+
+| Ask | MCP | HTTP |
+|---|---|---|
+| A query, answered as one passage within a budget | — | `POST /api/context` |
+| Ranked hits for a query | `search_index` | `POST /api/search` |
+| Text from a known file, without a query | `get_context` | `GET /api/corpora/{name}/file` * |
+
+\* On the full surface, not in the integration document above. An HTTP integrator reading
+on from a hit has to generate against the full document or call the path directly, which
+is a gap rather than a decision: nothing about the endpoint is UI-specific.
+
+`get_context(corpus, file_path, around_line, before, after)` is a lookup: it takes a place
+and returns what is there. `POST /api/context` takes a *query*, runs the search, and packs
+the results into one passage that stops at `maxChars` (D-29). Its handle is a question,
+not a location, and there is no MCP tool for it — an agent already has a loop, so it
+searches and then reads.
+
+The two lookups answer the same need with different arguments, and the arguments are not
+interchangeable. `get_context` centres on a line and takes `before` and `after` in lines.
+`GET /api/corpora/{name}/file` takes `path` and `start`, where `start` is a **character
+offset**, and returns a 400,000-character window with the line range it turned out to
+cover: it is how the file viewer pages through a book of two or three million characters,
+not a line-addressed read.
+
+Where the text comes from is the same question for all of them, and the answer has two
+cases. Where an extracted document is stored — anything that went through an extractor, so
+every PDF, EPUB and uploaded document — the passage is read from it and the chunks only
+decide which lines. Where none is, which is code and plain text on a mount, because
+reading those IS the extraction and nothing is cached, the passage is stitched back
+together from the chunk payloads, and it can then carry the gaps the chunker left, which
+`get_context` and the file endpoint both disclose in the text as `… lines N-M not indexed …`.
+
+That split is what `POST /api/context` did not do until recently: it stitched chunk
+payloads in every case, including for a book whose document was sitting in the catalogue.
+
+**A duplicate path is where the three diverge, and it is not a discrepancy.** A file path
+is relative to its source root, so within a corpus it is not unique: two sources can each
+hold `Installation Guide.pdf`, and they are two different books. A lookup is given only
+the path, so `get_context` and the file endpoint detect the ambiguity, keep the chunk path
+and warn, because serving one book's text under the other's name is plausible and
+quotable and wrong. `POST /api/context` is answering a search, and a hit carries the
+source it came from, so there is no ambiguity to resolve and it reads that source's
+document. Same rule, different evidence: read the document when it is known which
+document, and say so when it is not.
+
+### Why the two reads are POST
+
+`POST /api/search` and `POST /api/context` are reads that take a structured body: a list
+of corpora, a mode, filters, a budget. As a GET each corpus would be a repeated query
+parameter and the query text would live in the URL, where it is length-limited and lands
+in every proxy log and browser history. Neither is idempotency-sensitive and neither is
+cached, so the body is the only thing GET would have bought back.
+
+Lookups are GET, including the file endpoint, whose arguments are a path and an offset.
