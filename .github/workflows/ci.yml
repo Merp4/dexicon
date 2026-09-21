@@ -211,7 +211,7 @@ jobs:
       # Dockerfile still work", which is a question every PR should answer — the image is
       # the deliverable, and a green test suite says nothing about it.
       - name: Build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: false
