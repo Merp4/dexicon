@@ -274,6 +274,16 @@ with no section here fails its release rather than publishing an undescribed one
   default 30, matching the provider's own command timeout so neither gives up first.
 ### Fixed
 
+- **Turning a page of the file list no longer loses it to the filter's timer.** The name
+  filter waits 250ms before it queries, and the pause was armed by the first render and by
+  any keystroke, then reset the offset when it fired whether or not the query had changed.
+  A page turned inside that window went back to the first one, with nothing on screen
+  saying why, and a trailing space in the filter box was enough to do it.
+
+  The pause is armed only when the typed value differs from the one in force. This is also
+  what made the paging test fail on a slow runner: the click landed before the timer armed
+  at mount, and the reset arrived between the click and the assertion.
+
 - **A file the catalogue records with no chunks no longer keeps the vectors it had.** Four
   early exits wrote a zero-chunk row and returned before the success path's delete:
   extraction producing nothing, the chunker producing nothing, the walk excluding the file,

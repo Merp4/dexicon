@@ -1074,13 +1074,22 @@ export function CorpusDetail({
   // The typed value becomes the query after a pause. Every change that alters WHICH
   // rows match also returns to the first page: paging arithmetic over a different
   // result set lands somewhere arbitrary, and an empty page reads as no matches.
+  //
+  // The timer is only armed when the typed value differs from the one in force, so a
+  // page the reader turned within the pause is not dragged back to the first. It used to
+  // arm on mount and on any keystroke that left the query where it was, and 250ms later
+  // reset the offset whether or not anything had changed: clicking Next in that window
+  // put the reader back on page one, and the page did not say why.
   useEffect(() => {
+    const next = nameFilter.trim();
+    if (next === nameQuery) return;
+
     const t = setTimeout(() => {
-      setNameQuery((q) => (q === nameFilter.trim() ? q : nameFilter.trim()));
+      setNameQuery(next);
       setOffset(0);
     }, 250);
     return () => clearTimeout(t);
-  }, [nameFilter]);
+  }, [nameFilter, nameQuery]);
 
   useEffect(() => { setOffset(0); }, [filter, sort]);
 
