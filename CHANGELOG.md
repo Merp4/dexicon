@@ -156,6 +156,12 @@ with no section here fails its release rather than publishing an undescribed one
   corpus is taken instead. Measured with all four corpora queued at once against 7 slots,
   all four finished, the peak was 2 running together and none was starved.
 
+  A sweep refused the lease comes back the same way a deferred index job does. It did
+  not: the pool discarded the sweep's result and only ever re-queued jobs, so a sweep lost
+  to another process's hold was lost outright. A sweep for a corpus that no longer exists
+  is terminal instead of retried, which is why the two are separate outcomes rather than
+  one "skipped" flag.
+
   A slot is released by ticket. `TryTake` hands out a lease and `Completed` takes it back,
   so a release that arrives late finds nothing to free: the same key may legitimately be
   queued again while the first is running, and keying the release on it would free the

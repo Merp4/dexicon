@@ -6,10 +6,35 @@ using Microsoft.Extensions.Options;
 
 namespace Dexicon.Core.Indexing;
 
+/// <summary>Why a sweep walked nothing, when it walked nothing.</summary>
+public enum SweepOutcome
+{
+    /// <summary>The corpus was walked.</summary>
+    Swept,
+
+    /// <summary>
+    /// The lease was held by someone else, so nothing was walked and the work is still
+    /// outstanding. Under the scheduler that holder is another process, since a corpus
+    /// busy in this one is never dispatched, so the only way to find out was to be
+    /// refused and the only thing to do is try again.
+    /// </summary>
+    Held,
+
+    /// <summary>
+    /// The corpus is gone. Terminal, and the distinction is the whole reason this is an
+    /// outcome rather than one <c>Skipped</c> flag: retrying a corpus that has been
+    /// deleted is a loop with no end, and dropping a sweep that was only held loses it.
+    /// </summary>
+    NoSuchCorpus,
+}
+
 /// <param name="Swept">Files the sources own, whether or not they were already known.</param>
 /// <param name="Added">Rows written that did not exist before.</param>
-/// <param name="Skipped">The corpus was held by another pass and nothing was walked.</param>
-public sealed record SweepResult(int Swept, int Added, bool Skipped, string? Reason = null);
+public sealed record SweepResult(int Swept, int Added, SweepOutcome Outcome, string? Reason = null)
+{
+    /// <summary>Nothing was walked, for either reason.</summary>
+    public bool Skipped => Outcome != SweepOutcome.Swept;
+}
 
 /// <summary>
 /// Walks a corpus and records what is in it, without extracting, chunking or embedding.
@@ -48,7 +73,7 @@ public sealed class CorpusSweeper(
     {
         var corpus = await db.Corpora.Include(c => c.Sources)
             .FirstOrDefaultAsync(c => c.Id == corpusId, ct);
-        if (corpus is null) return new SweepResult(0, 0, Skipped: true, "no such corpus");
+        if (corpus is null) return new SweepResult(0, 0, SweepOutcome.NoSuchCorpus, "no such corpus");
 
         // Taken, not checked. The corpus state is set inside the indexer once a job is
         // already running, so reading it leaves a gap for a job to start in.
@@ -56,7 +81,7 @@ public sealed class CorpusSweeper(
         if (hold is null)
         {
             log.LogInformation("Corpus {Corpus} is held by another pass; not sweeping", corpus.Name);
-            return new SweepResult(0, 0, Skipped: true, "the corpus is being indexed");
+            return new SweepResult(0, 0, SweepOutcome.Held, "the corpus is being indexed");
         }
 
         // Losing the lease ends the sweep for the same reason it ends a job: whoever took
@@ -89,7 +114,7 @@ public sealed class CorpusSweeper(
 
         await db.SaveChangesAsync(ct);
         log.LogInformation("Swept {Corpus}: {Swept} files, {Added} new", corpus.Name, swept, added);
-        return new SweepResult(swept, added, Skipped: false);
+        return new SweepResult(swept, added, SweepOutcome.Swept);
     }
 
     /// <summary>

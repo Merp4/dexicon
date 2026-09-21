@@ -89,7 +89,7 @@ public sealed class WorkerPool(
         }
     }
 
-    private async Task RunOneAsync(WorkItem item, CancellationToken ct)
+    internal async Task RunOneAsync(WorkItem item, CancellationToken ct)
     {
         await using var scope = scopes.CreateAsyncScope();
 
@@ -97,7 +97,23 @@ public sealed class WorkerPool(
         {
             case WorkType.Sweep:
                 var sweeper = scope.ServiceProvider.GetRequiredService<CorpusSweeper>();
-                await sweeper.SweepAsync(item.Key, ct);
+                var sweep = await sweeper.SweepAsync(item.Key, ct);
+
+                // Held means the lease belongs to someone else, and under this scheduler
+                // that someone is another process: a corpus busy here is never
+                // dispatched. So it is the same case as a deferred index job and gets the
+                // same answer, and discarding the result instead lost the sweep outright.
+                //
+                // NoSuchCorpus is terminal. Putting that back would be a loop with no end
+                // and no work in it, which is the reason the two are separate outcomes
+                // rather than one "skipped" flag.
+                if (sweep.Outcome == SweepOutcome.Held)
+                {
+                    log.LogInformation(
+                        "Sweep of corpus {Corpus} deferred: {Reason}", item.CorpusId, sweep.Reason);
+                    Requeue(item, ct);
+                }
+
                 break;
 
             case WorkType.Index:
@@ -125,6 +141,13 @@ public sealed class WorkerPool(
     }
 
     /// <summary>
+    /// How long a deferred item waits before it is offered again. Long enough that a
+    /// corpus held by another process is not spun on, short enough that the work is not
+    /// forgotten. Settable so a test does not have to wait it out.
+    /// </summary>
+    internal TimeSpan RequeueAfter { get; set; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>
     /// Put a deferred item back, after this one's slot is released.
     ///
     /// Detached, because releasing the slot happens in the caller's `finally` and
@@ -142,7 +165,7 @@ public sealed class WorkerPool(
         {
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(15), ct);
+                await Task.Delay(RequeueAfter, ct);
                 scheduler.Enqueue(item);
             }
             catch (OperationCanceledException) { /* shutting down; the row is reconciled at startup */ }

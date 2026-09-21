@@ -217,9 +217,21 @@ public sealed class CorpusSweepTests : IDisposable
 
         var result = await SweepAsync(id, leases);
 
-        result.Skipped.ShouldBeTrue();
+        result.Outcome.ShouldBe(SweepOutcome.Held,
+            "held and gone are different answers: one is retried, the other is terminal");
         result.Swept.ShouldBe(0);
         (await StatesAsync()).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ACorpusThatIsGoneIsTerminalRatherThanHeld()
+    {
+        // The caller decides whether to try again on this, so the two reasons for
+        // walking nothing cannot share one flag.
+        var result = await SweepAsync(Ulid.NewUlid().ToString());
+
+        result.Outcome.ShouldBe(SweepOutcome.NoSuchCorpus);
+        result.Skipped.ShouldBeTrue();
     }
 
     [Fact]
