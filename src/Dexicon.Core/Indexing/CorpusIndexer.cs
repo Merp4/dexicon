@@ -289,6 +289,15 @@ public sealed class CorpusIndexer(
 
                 if (cached.EmptyReason is { Length: > 0 } || cached.Text.Trim().Length == 0)
                 {
+                    // Whatever this document produced before goes now. The delete on the
+                    // success path is below the `continue`, and uploads have no reconcile
+                    // pass, so a document that extracted to text under an older extractor
+                    // and to nothing under this one would answer searches forever. A
+                    // failure here is caught below and recorded as Failed, which is the
+                    // honest outcome: the row must not claim Empty over live chunks.
+                    await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, file.SourceId,
+                        file.RelativePath, ct);
+
                     state.Status = FileStatus.Empty;
                     state.StatusDetail = cached.EmptyReason ?? "no extractable text content";
                     state.ChunkCount = 0;
@@ -728,14 +737,80 @@ public sealed class CorpusIndexer(
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var sinceFlush = System.Diagnostics.Stopwatch.StartNew();
 
+        // Every path below that records a file as having no chunks has to drop the
+        // vectors it had. The reconcile pass at the end of this method only removes
+        // files the walk stopped seeing, and all of these are files the walk DID see:
+        // they are in `seen`, so nothing else will ever collect them.
+        //
+        // Returns false when the delete failed, so no caller writes a settled outcome
+        // over chunks that are still answering searches.
+        async Task<bool> ClearChunksAsync(string relativePath)
+        {
+            try
+            {
+                await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, source.Id, relativePath, ct);
+                return true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                log.LogWarning(ex, "Could not remove existing chunks for {File}", relativePath);
+                return false;
+            }
+        }
+
+        // Both empty outcomes write the same row. The success path's delete sits below
+        // the `continue` that brings a file here, so it has to happen again on this
+        // side of the branch.
+        async Task MarkEmptyAsync(WorkspaceWalker.Candidate candidate, string fileSha, string hash,
+            string reason, int extractedChars)
+        {
+            var cleared = await ClearChunksAsync(candidate.RelativePath);
+            var (file, state) = Track(known, states, set, source.Id, candidate.RelativePath);
+            file.SizeBytes = candidate.SizeBytes;
+            file.ExtractedChars = extractedChars;
+            state.SourceSha256 = fileSha;
+            state.IndexedUtc = DateTime.UtcNow;
+
+            if (!cleared)
+            {
+                // Recording Empty would assert the file has no chunks while its old ones
+                // are still searchable. Failed keeps the hash off the row, so the next
+                // refresh reaches this branch again and retries the delete.
+                state.Status = FileStatus.Failed;
+                state.StatusDetail = $"{reason}; its previous chunks could not be removed";
+                state.ContentHash = null;
+                job.FilesFailed++;
+                return;
+            }
+
+            state.Status = FileStatus.Empty;
+            state.StatusDetail = reason;
+            state.ContentHash = hash;
+            state.ChunkCount = 0;
+            job.FilesSkipped++;
+        }
+
         foreach (var skip in walk.Skipped)
         {
             seen.Add(skip.RelativePath);
             var (_, state) = Track(known, states, set, source.Id, skip.RelativePath);
             state.Status = FileStatus.Skipped;
-            state.StatusDetail = skip.Reason;
             state.ContentHash = null;
-            state.ChunkCount = 0;
+
+            // An exclusion that has only just started matching leaves a file that was
+            // indexed until now, and its vectors keep answering searches without this.
+            if (await ClearChunksAsync(skip.RelativePath))
+            {
+                state.StatusDetail = skip.Reason;
+                state.ChunkCount = 0;
+            }
+            else
+            {
+                // ChunkCount is left as it was: it is the only remaining record that
+                // those chunks exist. The next refresh skips this file again and retries.
+                state.StatusDetail = $"{skip.Reason}; its previous chunks could not be removed";
+            }
+
             job.FilesSkipped++;
         }
 
@@ -779,20 +854,11 @@ public sealed class CorpusIndexer(
 
                 if (content.Trim().Length == 0)
                 {
-                    var (emptyFile, emptyState) = Track(known, states, set, source.Id, candidate.RelativePath);
-                    emptyState.Status = FileStatus.Empty;
-
                     // The same words the cache stores against these bytes, from the same
                     // place, so a file's reason does not depend on which of the two
                     // answered.
-                    emptyState.StatusDetail = ExtractedTextCache.EmptyReason(extractor);
-                    emptyState.ContentHash = hash;
-                    emptyState.SourceSha256 = fileSha;
-                    emptyState.ChunkCount = 0;
-                    emptyState.IndexedUtc = DateTime.UtcNow;
-                    emptyFile.SizeBytes = candidate.SizeBytes;
-                    emptyFile.ExtractedChars = 0;
-                    job.FilesSkipped++;
+                    await MarkEmptyAsync(candidate, fileSha, hash,
+                        ExtractedTextCache.EmptyReason(extractor), extractedChars: 0);
                     continue;
                 }
 
@@ -807,14 +873,10 @@ public sealed class CorpusIndexer(
 
                 if (pieces.Count == 0)
                 {
-                    var (_, noneState) = Track(known, states, set, source.Id, candidate.RelativePath);
-                    noneState.Status = FileStatus.Empty;
-                    noneState.StatusDetail = "chunker produced no chunks";
-                    noneState.ContentHash = hash;
-                    noneState.SourceSha256 = fileSha;
-                    noneState.ChunkCount = 0;
-                    noneState.IndexedUtc = DateTime.UtcNow;
-                    job.FilesSkipped++;
+                    // Extraction found text here, so the char count is the text's, not
+                    // zero: the file is empty of chunks, not empty of content.
+                    await MarkEmptyAsync(candidate, fileSha, hash, "chunker produced no chunks",
+                        extractedChars: content.Length);
                     continue;
                 }
 
