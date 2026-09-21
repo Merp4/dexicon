@@ -1148,12 +1148,6 @@ public sealed class CorpusIndexer(
             : StringComparison.Ordinal;
 
     /// <summary>
-    /// Get-or-create both halves of a file's record: the attachment, which is shared by
-    /// every chunk set, and this set's view of it. Returning the pair rather than taking a
-    /// mutator keeps each call site explicit about which half it is writing to. The split
-    /// between "what the file is" and "what this set made of it" is easy to get wrong.
-    /// </summary>
-    /// <summary>
     /// Clear the hash of any file whose recorded chunk count the vector store does not
     /// back, so the staleness check below re-indexes it.
     ///
@@ -1215,6 +1209,12 @@ public sealed class CorpusIndexer(
         }
     }
 
+    /// <summary>
+    /// Get-or-create both halves of a file's record: the attachment, which is shared by
+    /// every chunk set, and this set's view of it. Returning the pair rather than taking a
+    /// mutator keeps each call site explicit about which half it is writing to. The split
+    /// between "what the file is" and "what this set made of it" is easy to get wrong.
+    /// </summary>
     private (IndexedFile File, FileChunkState State) Track(
         Dictionary<string, IndexedFile> known, Dictionary<string, FileChunkState> states,
         ChunkSet set, string sourceId, string relativePath)
