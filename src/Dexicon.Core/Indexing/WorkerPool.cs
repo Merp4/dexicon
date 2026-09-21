@@ -68,7 +68,10 @@ public sealed class WorkerPool(
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
-                scheduler.Completed(item);
+                // No release here: the `finally` does it, once. Releasing in both freed
+                // the slot twice, and the first release wakes another worker — so a
+                // replacement could start and then have ITS count decremented and ITS
+                // corpus marked free by the second call, admitting work past the limit.
                 break;
             }
             catch (Exception ex)
@@ -111,7 +114,7 @@ public sealed class WorkerPool(
                 {
                     log.LogInformation(
                         "Job {JobId} deferred: corpus {Corpus} is held elsewhere", item.Key, item.CorpusId);
-                    Requeue(item);
+                    Requeue(item, ct);
                 }
 
                 break;
@@ -128,18 +131,24 @@ public sealed class WorkerPool(
     /// enqueuing before that would offer the item to a scheduler that still counts this
     /// corpus as busy. A short delay keeps a corpus held by another process from
     /// spinning the loop; it is not a guess at how long that hold lasts.
+    ///
+    /// On the host's token, so a shutdown during the delay drops the requeue instead of
+    /// putting work into a scheduler whose workers have stopped. That would leave a
+    /// Queued row nothing will ever take, visible as a pending job until the next start
+    /// reconciles it as interrupted.
     /// </summary>
-    private void Requeue(WorkItem item) =>
+    private void Requeue(WorkItem item, CancellationToken ct) =>
         _ = Task.Run(async () =>
         {
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(15));
+                await Task.Delay(TimeSpan.FromSeconds(15), ct);
                 scheduler.Enqueue(item);
             }
+            catch (OperationCanceledException) { /* shutting down; the row is reconciled at startup */ }
             catch (Exception ex)
             {
                 log.LogWarning(ex, "Could not re-queue deferred {Type} work {Key}", item.Type, item.Key);
             }
-        });
+        }, ct);
 }

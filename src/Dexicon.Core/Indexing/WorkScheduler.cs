@@ -54,6 +54,18 @@ public sealed class WorkScheduler(IOptions<DexiconOptions> options) : IDisposabl
     private readonly List<WorkItem> _pending = [];
     private readonly Dictionary<WorkType, int> _running = [];
     private readonly HashSet<string> _busyCorpora = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// What is running, so that releasing an item twice cannot free two slots.
+    ///
+    /// A count alone is not enough. Release, a replacement starts in the freed slot,
+    /// then a stale second release lands and decrements the count that now belongs to
+    /// the replacement — admitting work past the limit. Releasing twice back to back is
+    /// harmless and hides it, which is why this is held per item rather than guarded by
+    /// "the count is above zero".
+    /// </summary>
+    private readonly HashSet<(WorkType Type, string Key)> _inFlight = [];
+
     private readonly Lock _gate = new();
 
     /// <summary>
@@ -132,6 +144,7 @@ public sealed class WorkScheduler(IOptions<DexiconOptions> options) : IDisposabl
                 _pending.RemoveAt(i);
                 _running[item.Type] = _running.GetValueOrDefault(item.Type) + 1;
                 _busyCorpora.Add(item.CorpusId);
+                _inFlight.Add((item.Type, item.Key));
                 return item;
             }
 
@@ -147,6 +160,11 @@ public sealed class WorkScheduler(IOptions<DexiconOptions> options) : IDisposabl
     {
         lock (_gate)
         {
+            // Ignore a release for something that is not running. Calling twice is then
+            // harmless rather than quietly over-admitting, and the second call cannot
+            // free a slot or a corpus that now belongs to a replacement.
+            if (!_inFlight.Remove((item.Type, item.Key))) return;
+
             var count = _running.GetValueOrDefault(item.Type);
             if (count > 0) _running[item.Type] = count - 1;
             _busyCorpora.Remove(item.CorpusId);

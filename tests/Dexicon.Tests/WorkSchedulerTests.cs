@@ -197,6 +197,41 @@ public sealed class WorkSchedulerTests
         s.TryTake().ShouldNotBeNull();
     }
 
+    /// <summary>
+    /// Releasing the same item twice must not free a slot twice.
+    ///
+    /// The worker did exactly that: its cancellation catch released, and so did its
+    /// `finally`. The first release wakes another worker, so a replacement could start
+    /// and then have ITS type count decremented and ITS corpus marked free by the second
+    /// call — admitting work past the limit, quietly and only under shutdown.
+    ///
+    /// The pool no longer double-releases. This holds the scheduler to the same
+    /// guarantee, since it is the thing whose counts were corrupted.
+    /// </summary>
+    [Fact]
+    public void ReleasingTheSameItemTwiceDoesNotFreeASlotTwice()
+    {
+        using var s = With(rebuilds: 1);
+        s.Enqueue(Rebuild("a"));
+        s.Enqueue(Rebuild("b"));
+        s.Enqueue(Rebuild("c"));
+
+        var first = s.TryTake()!;
+
+        // The order that matters, and the one the pool produced: release, a replacement
+        // starts in the freed slot, THEN the stale second release lands. Releasing twice
+        // back to back proves nothing — the count cannot go below zero, so the guard
+        // already absorbs it.
+        s.Completed(first);
+        var replacement = s.TryTake();
+        replacement.ShouldNotBeNull();
+
+        s.Completed(first);   // the bug: the first item released a second time
+
+        s.TryTake().ShouldBeNull(
+            "the replacement still holds the only rebuild slot; the stale release must not free it");
+    }
+
     [Fact]
     public void TotalSlotsIsWhatTheLimitsAddUpTo()
     {
