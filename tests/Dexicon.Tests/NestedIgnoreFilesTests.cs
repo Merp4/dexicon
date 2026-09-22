@@ -184,18 +184,13 @@ public sealed class NestedIgnoreFilesTests : IDisposable
         try
         {
             // The patterns behind it were never applied, and the link is not indexed
-            // either — it is a file link out of the tree, which the walk now refuses.
-            //
-            // The first version of this asserted only the first half and explained the
-            // second as "the link has no length of its own, so it lands among the skipped
-            // as an empty file". That is true on Windows and false on Linux, where
-            // FileInfo.Length follows the link: CI returned `sub/.gitignore` carrying the
-            // host file's content, which is the defect rather than a detail of the test.
+            // either. On Linux FileInfo.Length follows a link, so an unchecked one was
+            // indexed carrying the host file's content: CI returned `sub/.gitignore`.
             Walk().ShouldBe(["sub/app.ts", "sub/secret.txt"]);
 
             WorkspaceWalker.Walk(_root, true, null, null, 1_000_000).SkippedFiles
                 .ShouldContain(s => s.RelativePath == "sub/.gitignore"
-                                 && s.Reason.Contains("outside the source root", StringComparison.Ordinal));
+                                 && s.Reason == WorkspaceWalker.LinkNotFollowed);
         }
         finally { Directory.Delete(outside, recursive: true); }
     }
@@ -219,22 +214,18 @@ public sealed class NestedIgnoreFilesTests : IDisposable
     }
 
     [Fact]
-    public void ALinkThatStaysInsideTheTreeIsNotRefused()
+    public void AnIgnoreFileThatLinksInsideTheTreeIsNotAppliedEither()
     {
-        // Refusing every link would drop content a repository legitimately lays out that
-        // way. Only the ones leaving the tree are the escape.
-        //
-        // What this asserts is the containment decision, not the indexing: whether a link
-        // that stays inside ends up indexed differs by platform — on Windows its own
-        // length is 0 and it is recorded as an empty file, on Linux the length follows
-        // the link — and that difference predates this check and is not what it is for.
+        // Git's behaviour, measured with git 2.54: a `.gitignore` that is a symbolic link
+        // is not applied ("unable to access '.gitignore': Symbolic link loop"), and what it
+        // names is reported as untracked rather than ignored.
         Write("sub/app.ts");
-        Write("sub/real.txt", "content");
-        File.CreateSymbolicLink(Path.Combine(_root, "sub", "alias.txt"),
-                                Path.Combine(_root, "sub", "real.txt"));
+        Write("sub/secret.txt");
+        Write("sub/rules", "secret.txt\n");
+        File.CreateSymbolicLink(Path.Combine(_root, "sub", ".gitignore"),
+                                Path.Combine(_root, "sub", "rules"));
 
-        WorkspaceWalker.Walk(_root, true, null, null, 1_000_000).SkippedFiles
-            .ShouldNotContain(s => s.Reason.Contains("outside the source root", StringComparison.Ordinal));
+        Walk().ShouldBe(["sub/app.ts", "sub/rules", "sub/secret.txt"]);
     }
 
     [Fact]

@@ -186,7 +186,7 @@ Covered operationally in [09](09-deployment.md); the security-relevant points:
 
 | Risk | Mitigation |
 |---|---|
-| Path traversal via a workspace source path | Canonicalise, then assert the result is under `/workspaces`. Symlinks that escape the root are not followed, and are recorded as `skipped` with the reason. |
+| Path traversal via a workspace source path | Canonicalise, then assert the result is under `/workspaces`. A source path through a link is refused. The walk follows no links, and records each as `skipped` with the reason ([D-35](decisions.md#d-35-links-are-not-followed)). |
 | Zip-bomb EPUB / OOXML | Bounded decompressed size and entry count; exceed either and the file fails with a clear reason. |
 | Malicious PDF | PdfPig is managed code; extraction runs with a wall-clock timeout per file. |
 | Oversized upload | Enforced at the request-size limit, before buffering. |

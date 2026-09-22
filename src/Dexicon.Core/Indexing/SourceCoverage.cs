@@ -76,7 +76,7 @@ public static class SourceCoverage
             // its rule. This walks a directory that no source names — it is derived from
             // the sources' shared parent — so it is the one place that could reach a path
             // nobody ever created a source on, and a string test would accept a parent
-            // whose own segment links out of the workspace.
+            // whose own segment is a link.
             //
             // A refusal is skipped rather than reported. This is an advisory that asks
             // "did you mean to leave these out", and a path the indexer will refuse out

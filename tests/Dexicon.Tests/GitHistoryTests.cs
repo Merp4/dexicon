@@ -451,16 +451,15 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
-    /// A link out of the root is the same escape as `..`, by a mechanism the string
-    /// never shows.
+    /// A link is the same escape as `..`, by a mechanism the string never shows.
     ///
     /// <c>Path.GetFullPath</c> canonicalises separators and dots and resolves no links,
     /// so `root/link` passes the boundary check on its spelling and then IS the outside
-    /// directory. The walk holds every directory it descends into to this rule; a
-    /// source root reached <c>ProcessStartInfo</c> without it.
+    /// directory. Links are not followed, so one that stays inside is refused as well; the
+    /// directory it points at can be named instead.
     /// </summary>
     [Fact]
-    public void ALinkOutOfTheWorkspaceRootIsRefused()
+    public void ALinkInARepositoryPathIsRefused()
     {
         var root = Path.Combine(Path.GetTempPath(), $"ws-{Guid.NewGuid():N}");
         var outside = Path.Combine(Path.GetTempPath(), $"outside-{Guid.NewGuid():N}");
@@ -475,14 +474,9 @@ public sealed class GitHistoryTests : IDisposable
                 () => GitHistory.RepositoryIn(root, "link"));
             refused.Message.ShouldContain(outside, Case.Insensitive);
 
-            // A link that stays inside is not an escape and is not refused, which is
-            // what stops this from being a rule against links.
-            GitHistory.RepositoryIn(root, "inward").ShouldNotBeNull();
+            Should.Throw<UnauthorizedAccessException>(() => GitHistory.RepositoryIn(root, "inward"));
 
-            // And it resolves to what it points at. git reports the PHYSICAL working
-            // directory, so a path that kept the link's spelling would be compared
-            // against the target's and disagree — see the test below.
-            GitHistory.RepositoryIn(root, "inward")!.FullPath
+            GitHistory.RepositoryIn(root, "real")!.FullPath
                 .ShouldBe(Path.Combine(Path.GetFullPath(root), "real"));
         }
         finally
@@ -490,35 +484,6 @@ public sealed class GitHistoryTests : IDisposable
             Directory.Delete(root, recursive: true);
             Directory.Delete(outside, recursive: true);
         }
-    }
-
-    /// <summary>
-    /// A repository reached through a link that stays inside the root is still one.
-    ///
-    /// `rev-parse --show-toplevel` reports the PHYSICAL working directory — measured on
-    /// Windows as well as POSIX — so a path carrying the link's spelling is compared
-    /// against the target's and disagrees. The source is then reported as "not a git
-    /// repository" and its history is never indexed, which is a silent skip of a
-    /// configuration the resolver explicitly permits.
-    /// </summary>
-    [Fact]
-    public async Task ARepositoryReachedThroughAnInwardLinkIsStillARepository()
-    {
-        Commit("a.txt", "one", "first");
-
-        var parent = Path.GetDirectoryName(_repo)!;
-        var link = Path.Combine(parent, $"link-{Guid.NewGuid():N}");
-        Directory.CreateSymbolicLink(link, _repo);
-
-        try
-        {
-            var repo = GitHistory.RepositoryIn(parent, Path.GetFileName(link)).ShouldNotBeNull();
-
-            (await GitHistory.IsRepositoryAsync(repo, default)).ShouldBeTrue();
-            (await GitHistory.EnumerateAsync(repo, new GitHistoryOptions(), null, default))
-                .ShouldHaveSingleItem();
-        }
-        finally { Directory.Delete(link); }
     }
 
     /// <summary>
