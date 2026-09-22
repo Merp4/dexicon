@@ -2275,8 +2275,16 @@ function FullReindexModal({
 
   // Every set, because the job names no chunk set and the indexer then runs each of them.
   // A corpus cut two ways costs both, which is not visible anywhere else on this screen.
+  //
+  // Chunks sum honestly: a chunk belongs to exactly one set. Files do NOT —
+  // `corpus.fileCount` is the DEFAULT set's, by design, because that is what an
+  // unqualified search reaches, and a file indexed in two sets is one file. So the total
+  // here is chunks, and files are named per set, where the number means something.
   const sets = corpus.chunkSets;
   const chunks = sets.reduce((n, s) => n + s.chunkCount, 0);
+
+  // Failures are per (set, file) too, so the same file can appear in both. Counted, not
+  // called files, once there is more than one set to conflate.
   const failed = sets.reduce((n, s) => n + s.failedCount, 0);
 
   const run = async (full: boolean) => {
@@ -2293,11 +2301,10 @@ function FullReindexModal({
   return (
     <Modal title={`Full reindex of ${corpus.name}?`} onClose={onClose} width={560}>
       <p className="mt-0 text-sm">
-        Every file is read, chunked and embedded again, whether or not it changed.
-        That is <strong>{corpus.fileCount.toLocaleString()}</strong>{' '}
-        {unitFor(corpus.sources, corpus.fileCount)} and{' '}
-        <strong>{chunks.toLocaleString()}</strong> chunks
-        {sets.length > 1 && <> across {sets.length} chunk sets</>}, and embedding is the slow part.
+        Every file is read, chunked and embedded again, whether or not it changed — in{' '}
+        {sets.length === 1 ? 'this corpus’s chunk set' : <>all {sets.length} of this corpus’s chunk sets</>}.
+        That is <strong>{chunks.toLocaleString()}</strong> chunks to embed, and embedding is
+        the slow part.
       </p>
 
       <p className="text-sm">
@@ -2316,7 +2323,8 @@ function FullReindexModal({
             {s.isDefault && <Badge tone="accent">default</Badge>}
             <span className="mono dim">{s.embeddingModel}</span>
             <span className="dim">
-              {s.chunkSize} / {s.chunkOverlap} overlap · {s.chunkCount.toLocaleString()} chunks
+              {s.chunkSize} / {s.chunkOverlap} overlap · {s.fileCount.toLocaleString()}{' '}
+              {unitFor(corpus.sources, s.fileCount)} · {s.chunkCount.toLocaleString()} chunks
             </span>
           </div>
         ))}
@@ -2325,8 +2333,16 @@ function FullReindexModal({
 
       {failed > 0 && (
         <Notice tone="warn">
-          {failed.toLocaleString()} {failed === 1 ? 'file' : 'files'} failed last time. A full
-          reindex retries them, and so does Refresh — a failed file has no fingerprint to skip on.
+          {sets.length === 1 ? (
+            <>{failed.toLocaleString()} {failed === 1 ? 'file' : 'files'} failed last time.</>
+          ) : (
+            // Per (set, file), so a file that failed in both sets is counted twice.
+            // Calling that "files" would overstate how much is wrong.
+            <>{failed.toLocaleString()} failures across {sets.length} chunk sets, which can be
+              the same file more than once.</>
+          )}{' '}
+          A full reindex retries them, and so does Refresh — a failed file has no fingerprint
+          to skip on.
         </Notice>
       )}
 

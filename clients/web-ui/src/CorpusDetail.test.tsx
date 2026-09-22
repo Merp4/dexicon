@@ -1173,9 +1173,56 @@ describe('the full reindex', () => {
     expect(within(dialog).getByText('docs:default')).toBeInTheDocument();
     expect(within(dialog).getByText('docs:gemma')).toBeInTheDocument();
     expect(within(dialog).getByText('embeddinggemma')).toBeInTheDocument();
-    // 131 + 135 across both sets, not the default's alone.
+    // 131 + 135 across both sets, not the default's alone. Chunks sum honestly: each one
+    // belongs to exactly one set.
     expect(within(dialog).getByText('266')).toBeInTheDocument();
-    expect(within(dialog).getByText(/across 2 chunk sets/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/all 2 of this corpus’s chunk sets/)).toBeInTheDocument();
+  });
+
+  it('counts files per set rather than totalling them', async () => {
+    // `corpus.fileCount` is the DEFAULT set's, by design — it is what an unqualified
+    // search reaches. Labelling a run over every set with it says a number that is not
+    // the work; summing across sets says one that is not files, since a file held in two
+    // sets is one file.
+    getCorpus.mockResolvedValue(
+      corpus({
+        fileCount: 16,
+        chunkSets: [
+          chunkSet({ id: 'a', name: 'default', fileCount: 16, chunkCount: 131 }),
+          chunkSet({ id: 'b', name: 'gemma', isDefault: false, fileCount: 14, chunkCount: 135 }),
+        ],
+      }),
+    );
+
+    render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
+
+    const dialog = await screen.findByRole('dialog');
+    const text = dialog.textContent?.replace(/\s+/g, ' ') ?? '';
+
+    expect(text).toContain('16 files');
+    expect(text).toContain('14 files');
+    // Neither the default's count nor a sum stands in for the whole run.
+    expect(text).not.toContain('30 files');
+  });
+
+  it('calls multi-set failures failures, because one file can be two of them', async () => {
+    getCorpus.mockResolvedValue(
+      corpus({
+        chunkSets: [
+          chunkSet({ id: 'a', name: 'default', failedCount: 8 }),
+          chunkSet({ id: 'b', name: 'gemma', isDefault: false, failedCount: 8 }),
+        ],
+      }),
+    );
+
+    render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
+
+    const text = (await screen.findByRole('dialog')).textContent?.replace(/\s+/g, ' ') ?? '';
+
+    expect(text).toContain('16 failures across 2 chunk sets');
+    expect(text).not.toContain('16 files failed');
   });
 
   it('says a model change needs a chunk set rather than this', async () => {
