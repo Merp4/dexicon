@@ -66,6 +66,12 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
+    /// The sha of the commit just made. The inventory carries no subject, so this is
+    /// what a test names a particular commit by.
+    /// </summary>
+    private string Head() => Git("rev-parse", "HEAD").Trim();
+
+    /// <summary>
     /// A path as the code under test takes one: through the factory that holds it against
     /// a workspace root, because that is the only way to make a <see cref="GitRepository"/>.
     /// The root here is the directory above it, which is what the temporary trees are.
@@ -214,6 +220,42 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
+    /// A link out of the root is the same escape as `..`, by a mechanism the string
+    /// never shows.
+    ///
+    /// <c>Path.GetFullPath</c> canonicalises separators and dots and resolves no links,
+    /// so `root/link` passes the boundary check on its spelling and then IS the outside
+    /// directory. The walk holds every directory it descends into to this rule; a
+    /// source root reached <c>ProcessStartInfo</c> without it.
+    /// </summary>
+    [Fact]
+    public void ALinkOutOfTheWorkspaceRootIsRefused()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"ws-{Guid.NewGuid():N}");
+        var outside = Path.Combine(Path.GetTempPath(), $"outside-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(root, "real"));
+        Directory.CreateDirectory(outside);
+        Directory.CreateSymbolicLink(Path.Combine(root, "link"), outside);
+        Directory.CreateSymbolicLink(Path.Combine(root, "inward"), Path.Combine(root, "real"));
+
+        try
+        {
+            var refused = Should.Throw<UnauthorizedAccessException>(
+                () => GitHistory.RepositoryIn(root, "link"));
+            refused.Message.ShouldContain(outside, Case.Insensitive);
+
+            // A link that stays inside is not an escape and is not refused, which is
+            // what stops this from being a rule against links.
+            GitHistory.RepositoryIn(root, "inward").ShouldNotBeNull();
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    /// <summary>
     /// The path handed to git is the filesystem's own string, not the caller's.
     ///
     /// On Windows and macOS a differently-cased request resolves to the same directory,
@@ -307,13 +349,15 @@ public sealed class GitHistoryTests : IDisposable
     public async Task TheInventoryIsShasDatesAndSubjectsNewestFirst()
     {
         Commit("a.txt", "one", "first change");
+        var first = Head();
         Commit("b.txt", "two", "second change");
+        var second = Head();
 
         var commits = await EnumerateAsync();
 
         commits.Count.ShouldBe(2);
-        commits[0].Subject.ShouldBe("second change", "newest first, as git log gives them");
-        commits[1].Subject.ShouldBe("first change");
+        commits[0].Sha.ShouldBe(second, "newest first, as git log gives them");
+        commits[1].Sha.ShouldBe(first);
         commits.ShouldAllBe(c => c.Sha.Length == 40);
         commits[0].AuthorDate.ShouldBeGreaterThan(DateTimeOffset.UtcNow.AddMinutes(-5));
     }
@@ -497,12 +541,13 @@ public sealed class GitHistoryTests : IDisposable
         Git("checkout", "main");
         Commit("c.txt", "three", "on main");
         Git("merge", "--no-ff", "side", "-m", "merge the side branch");
+        var merge = Head();
 
         var without = await EnumerateAsync();
         var with = await EnumerateAsync(new GitHistoryOptions { IncludeMerges = true });
 
-        without.ShouldNotContain(c => c.Subject == "merge the side branch");
-        with.ShouldContain(c => c.Subject == "merge the side branch");
+        without.ShouldNotContain(c => c.Sha == merge);
+        with.ShouldContain(c => c.Sha == merge);
     }
 
     [Fact]
@@ -526,13 +571,14 @@ public sealed class GitHistoryTests : IDisposable
     public async Task PathspecsSelectWhoseHistoryIsIndexed()
     {
         Commit("src/a.txt", "one", "touch src");
+        var touchedSrc = Head();
         Commit("docs/b.txt", "two", "touch docs");
 
         var all = await EnumerateAsync();
         var srcOnly = await EnumerateAsync(paths: ["src"]);
 
         all.Count.ShouldBe(2);
-        srcOnly.ShouldHaveSingleItem().Subject.ShouldBe("touch src");
+        srcOnly.ShouldHaveSingleItem().Sha.ShouldBe(touchedSrc);
     }
 
     /// <summary>

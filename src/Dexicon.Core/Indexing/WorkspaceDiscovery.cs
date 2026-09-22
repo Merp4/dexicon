@@ -109,6 +109,29 @@ public static class WorkspaceDiscovery
                 d => string.Equals(Path.GetFileName(d), segment, CorpusIndexer.PathComparison));
 
             if (match is null) return null;
+
+            // A link out of the root is the same escape as `..`, by a mechanism the
+            // string never shows: `Path.GetFullPath` canonicalises separators and dots
+            // and resolves no links, so `workspace/link` passes the boundary check and
+            // then IS `/outside`. The walk applies this rule to every directory it
+            // descends into (GitignoreFilter.EnumerateFilesSafely); a source root
+            // reached this far without it.
+            //
+            // Refused rather than skipped, which is where this differs from the walk.
+            // The walk is enumerating and a link it will not follow is simply not part
+            // of the tree; here the operator named this one path, and answering "there
+            // is nothing there" about a directory that plainly exists sends them
+            // looking at the mount instead of at the link.
+            var info = new DirectoryInfo(match);
+            if (info.LinkTarget is not null)
+            {
+                var linked = Path.GetFullPath(info.ResolveLinkTarget(true)?.FullName ?? match);
+                if (!CorpusIndexer.IsInside(linked, Path.GetFullPath(workspaceRoot)))
+                    throw new UnauthorizedAccessException(
+                        $"Workspace path '{relative}' passes through '{segment}', which links to "
+                        + $"'{linked}', outside {workspaceRoot}. It was refused.");
+            }
+
             current = match;
         }
 

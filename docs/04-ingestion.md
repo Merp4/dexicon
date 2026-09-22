@@ -218,7 +218,15 @@ carries executable configuration:
   matching each segment against the entries `Directory.EnumerateDirectories` reports, so
   no part of what reaches `ProcessStartInfo` came from a caller. A path that does not
   exist is absent rather than refused, which keeps "the mount is away" distinct from
-  "this resolves outside the workspace".
+  "this resolves outside the workspace". A segment that links out of the root is refused:
+  `Path.GetFullPath` resolves no links, so the string test passes and the directory is
+  elsewhere. The walk already held every directory it descends into to that rule.
+- **The inventory carries a sha and a date and nothing else.** The subject was in it and
+  nothing read it, and it was the one field there whose size a caller controls, on the
+  one call with no ceiling — there is no commit count to size a ceiling from before the
+  call that discovers the count. Truncating in the format pads as well as cuts, so
+  bounding it would have made every ordinary repository's inventory larger to cap a
+  pathological one.
 
 **The root has to be the repository, not a folder inside one.** `rev-parse
 --is-inside-work-tree` answers yes from `/repo/src`, and a source accepted there would

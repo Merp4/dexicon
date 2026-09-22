@@ -132,7 +132,25 @@ internal static class GitHistoryJson
 
 /// <summary>One commit as the enumeration pass found it.</summary>
 /// <param name="Sha">The full object name. The identity of the commit and of its document.</param>
-public sealed record GitCommit(string Sha, DateTimeOffset AuthorDate, string Subject)
+/// <remarks>
+/// No subject. It was asked for and nothing read it: the document's subject comes from
+/// the message pass, the path is the date and the sha, and the fingerprint is the sha and
+/// the settings, so the only readers this record's Subject ever had were its own tests.
+///
+/// It also made the inventory the last unbounded read. A subject is a caller's one-line
+/// text, the enumeration asks for every commit in the repository at once, and there is no
+/// commit count to size a ceiling from before the call that discovers it. Truncating in
+/// the format pads as well as cuts — `%&lt;(200,trunc)%s` returns exactly 200 characters
+/// for a 500-character subject and 200 for a five-character one — so bounding it here
+/// would have made every ordinary repository's inventory larger to cap a pathological
+/// one. Leaving it out bounds the read by construction: a sha and an ISO date is a fixed
+/// cost per commit.
+///
+/// A file list showing subjects would be a real improvement, and this is not an argument
+/// against it — it is an argument for asking for them where something displays them, with
+/// a bound chosen then.
+/// </remarks>
+public sealed record GitCommit(string Sha, DateTimeOffset AuthorDate)
 {
     /// <summary>
     /// The path this commit is indexed under, relative to the source.
@@ -317,7 +335,11 @@ public static class GitHistory
         RequireAcceptableDiffCap(options);
 
         var marker = Marker();
-        var args = new List<string> { "log", $"--format={marker}%H%x00%aI%x00%s" };
+        // A sha and an ISO date, and deliberately nothing else. See the remark on
+        // GitCommit: the subject was the one field here whose size a caller controls,
+        // and this call has no commit count to size a ceiling from, because it is the
+        // call that discovers the count.
+        var args = new List<string> { "log", $"--format={marker}%H%x00%aI" };
 
         if (!options.IncludeMerges) args.Add("--no-merges");
         if (options.MaxCommits is { } max) args.Add($"--max-count={max}");
@@ -342,13 +364,13 @@ public static class GitHistory
         foreach (var record in stdout.Split(marker, StringSplitOptions.RemoveEmptyEntries))
         {
             var fields = record.Split('\0');
-            if (fields.Length < 3) continue;
+            if (fields.Length < 2) continue;
 
             if (!DateTimeOffset.TryParse(fields[1], CultureInfo.InvariantCulture,
                     DateTimeStyles.None, out var date))
                 continue;
 
-            commits.Add(new GitCommit(fields[0].Trim(), date, fields[2].Trim('\n', '\r')));
+            commits.Add(new GitCommit(fields[0].Trim(), date));
         }
 
         return commits;
