@@ -46,7 +46,6 @@ public static class SourceCoverage
         IEnumerable<SourceRoot> sources,
         long? documentMaxBytes = null)
     {
-        var root = Path.GetFullPath(workspaceRoot);
         var comparer = CorpusIndexer.PathComparison == StringComparison.Ordinal
             ? StringComparer.Ordinal
             : StringComparer.OrdinalIgnoreCase;
@@ -73,14 +72,27 @@ public static class SourceCoverage
             // parent itself being a source is the same case with no ancestor to walk.
             if (SelfOrAncestorCovered(parent, covered, comparer)) continue;
 
+            // The same resolver the indexer and the sweep go through, not a second copy of
+            // its rule. This walks a directory that no source names — it is derived from
+            // the sources' shared parent — so it is the one place that could reach a path
+            // nobody ever created a source on, and a string test would accept a parent
+            // whose own segment links out of the workspace.
+            //
+            // A refusal is skipped rather than reported. This is an advisory that asks
+            // "did you mean to leave these out", and a path the indexer will refuse out
+            // loud is not a gap in the corpus's coverage.
+            // IOException as well as the refusal: Resolve enumerates directories now, so a
+            // mount going away mid-call raises DirectoryNotFoundException where the old
+            // Directory.Exists returned false and this skipped. An advisory that fails the
+            // whole endpoint on a transient condition is worse than one that says nothing
+            // about a directory it could not read.
             string full;
-            try { full = Path.GetFullPath(Path.Combine(root, parent)); }
-            catch (Exception) { continue; }
+            try { full = WorkspaceDiscovery.Resolve(workspaceRoot, parent); }
+            catch (UnauthorizedAccessException) { continue; }
+            catch (ArgumentException) { continue; }
+            catch (IOException) { continue; }
 
-            // The same boundary test the indexer applies to a source path. A stored root
-            // should already be inside, and a check that reads the filesystem is the wrong
-            // place to find out it is not.
-            if (!CorpusIndexer.IsInside(full, root) || !Directory.Exists(full)) continue;
+            if (!Directory.Exists(full)) continue;
 
             // The most permissive cap among the sources that share this parent, so the
             // check does not hide a file one of them would have taken.
