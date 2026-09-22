@@ -298,12 +298,28 @@ public static class GitHistory
     /// </summary>
     internal static bool IsAcceptableDiffCap(int value) => value >= 0 && value <= AbsoluteCeiling;
 
-    private static void RequireAcceptableDiffCap(GitHistoryOptions options)
+    /// <summary>
+    /// A commit limit this will pass to git.
+    ///
+    /// Null means all of them and is the documented default. A number has to be at least
+    /// one, because git accepts the other values and does something silently unhelpful
+    /// with each: `--max-count=0` returns no commits and exits 0, so the source indexes
+    /// nothing and reports no error, and `--max-count=-1` is treated as unlimited, so a
+    /// negative limit quietly means the opposite of a limit.
+    /// </summary>
+    internal static bool IsAcceptableCommitLimit(int? value) => value is null or >= 1;
+
+    private static void RequireUsableOptions(GitHistoryOptions options)
     {
         if (!IsAcceptableDiffCap(options.MaxDiffBytes))
             throw new GitHistoryException(
                 $"maxDiffBytes is {options.MaxDiffBytes:N0}, which is not a usable cap. "
                 + $"It must be between 0 and {AbsoluteCeiling:N0}.");
+
+        if (!IsAcceptableCommitLimit(options.MaxCommits))
+            throw new GitHistoryException(
+                $"maxCommits is {options.MaxCommits:N0}, which is not a usable limit. "
+                + "It must be at least 1, or absent for every commit.");
     }
 
     internal static bool IsAcceptableRef(string? value) =>
@@ -332,7 +348,7 @@ public static class GitHistory
         // Here rather than only on the read path: every pass enumerates first, so a
         // source carrying a nonsense cap says so on its inventory instead of on a
         // partial read, and it says so the same way a bad ref does.
-        RequireAcceptableDiffCap(options);
+        RequireUsableOptions(options);
 
         var marker = Marker();
         // A sha and an ISO date, and deliberately nothing else. See the remark on
@@ -391,7 +407,7 @@ public static class GitHistory
         // Again, because this is where the cap actually sizes a read and it is a public
         // entry point of its own. The enumeration reaching here first is how it happens
         // today, not a property this method can rely on.
-        RequireAcceptableDiffCap(options);
+        RequireUsableOptions(options);
 
         for (var start = 0; start < shas.Count; start += ReadBatch)
         {

@@ -121,6 +121,30 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
+    /// The commit limit, refused for the same reason and in the same place.
+    ///
+    /// git accepts both bad values and does something silently unhelpful with each,
+    /// measured: `--max-count=0` returns no commits and exits 0, so the source indexes
+    /// nothing and reports no error, and `--max-count=-1` is treated as unlimited, so a
+    /// negative limit quietly means the opposite of a limit. Neither is a failure the
+    /// operator would ever see without this.
+    /// </summary>
+    [Fact]
+    public async Task ACommitLimitThatIsNotALimitIsRefused()
+    {
+        Commit("a.txt", "one", "first");
+        Commit("b.txt", "two", "second");
+
+        await Should.ThrowAsync<GitHistoryException>(
+            () => EnumerateAsync(new GitHistoryOptions { MaxCommits = 0 }));
+        await Should.ThrowAsync<GitHistoryException>(
+            () => EnumerateAsync(new GitHistoryOptions { MaxCommits = -1 }));
+
+        (await EnumerateAsync(new GitHistoryOptions { MaxCommits = 1 })).Count.ShouldBe(1);
+        (await EnumerateAsync(new GitHistoryOptions())).Count.ShouldBe(2, "absent means all of them");
+    }
+
+    /// <summary>
     /// The message pass had no bound at all, and a commit message is arbitrary text.
     ///
     /// Both halves matter: that the read is stopped, and that what comes out is the

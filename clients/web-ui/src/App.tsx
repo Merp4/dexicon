@@ -1289,11 +1289,11 @@ export function CorpusDetail({
             value={nameFilter}
             onChange={(e) => setNameFilter(e.target.value)}
             placeholder="Filter by name…"
-            aria-label="Filter files by name"
+            aria-label={`Filter ${unitFor(corpus.sources, 0)} by name`}
             className="h-8 w-[220px] text-sm"
           />
           <Segmented
-            label="Sort files by"
+            label={`Sort ${unitFor(corpus.sources, 0)} by`}
             value={sort}
             onChange={setSort}
             options={[
@@ -1307,10 +1307,13 @@ export function CorpusDetail({
         </div>
 
         {files.length === 0 && totalFiles === 0 && !nameQuery && !filter ? (
-          <Empty title="No files" hint="Run a refresh to index this corpus." />
+          <Empty
+            title={`No ${unitFor(corpus.sources, 0)}`}
+            hint="Run a refresh to index this corpus."
+          />
         ) : files.length === 0 ? (
           <Empty
-            title="No file matches that"
+            title={`No ${unitFor(corpus.sources, 1)} matches that`}
             hint={`Searched all ${corpus.fileCount.toLocaleString()} ${unitFor(corpus.sources, corpus.fileCount)} in this corpus. Clear the filter to see them.`}
           />
         ) : (
