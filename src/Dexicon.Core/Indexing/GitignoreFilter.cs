@@ -423,13 +423,21 @@ public sealed class WorkspaceWalker
                     var target = Path.GetFullPath(info.ResolveLinkTarget(true)?.FullName ?? sub);
                     if (!CorpusIndexer.IsInside(target, root)) continue;
                 }
+                var relativeSub = Path.GetRelativePath(root, sub).Replace('\\', '/');
+
+                // Unconditionally, ahead of the re-inclusion test below. A `!.git`
+                // anywhere makes MayReincludeBeneath say "possibly", so the walk would
+                // descend the whole object store to drop every file of it at the filter.
+                // Nothing under here can be indexed whatever the rules say, so there is
+                // no re-inclusion to be conservative about.
+                if (IsGitPlumbing(relativeSub)) continue;
+
                 // Skipped rather than walked and thrown away. A repository carrying .git,
                 // node_modules and a database's data directory enumerated 240,704 files to
                 // keep 27,001, and every one of those was a stat across the mount: 99s
                 // against 14s for the same result. Only where nothing beneath could be
                 // re-included, because being wrong here means quietly not indexing
                 // something that is indexed today.
-                var relativeSub = Path.GetRelativePath(root, sub).Replace('\\', '/');
                 if (ignore.IsIgnored(relativeSub, isDirectory: true)
                     && !ignore.MayReincludeBeneath(relativeSub))
                 {

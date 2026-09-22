@@ -24,11 +24,13 @@ Discovery walks the tree and applies, **in order**:
    is a leak ([03](03-data-model.md#identifier-conventions)). A directory-only pattern
    indexed it as content.
 
-   It is also the one entry in this list that a later negation cannot take back. Patterns
-   are offered rather than enforced: later ones win, so `!.git` in a `.gitignore`, a
-   `.dexiconignore` or an `exclude_globs` would re-include the pointer file. Git makes the
-   same call — `.git` cannot be un-ignored at all, whatever the ignore files say — and a
-   repository's history has its own source type below.
+   It is also the one entry in this list that is enforced rather than offered. Everything
+   else here is a pattern, and later patterns win, so a `!.git` in a `.gitignore`, a
+   `.dexiconignore` or an `exclude_globs` would otherwise take the pointer file back. A
+   path with a `.git` segment is dropped before any rule set is consulted, and such a
+   directory is pruned before the re-inclusion test that would otherwise walk the whole
+   object store. Git makes the same call: `.git` cannot be un-ignored at all, whatever the
+   ignore files say. A repository's history has its own source type below.
 2. **`.git/info/exclude`** — git's per-clone ignore file, read when `use_gitignore` is on.
    It holds what a checkout excludes without the repository saying so, which is where
    anything that adds directories to someone's working copy puts them: `git worktree`, and
