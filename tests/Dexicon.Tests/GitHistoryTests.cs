@@ -139,6 +139,27 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
+    /// The same repository, the same commit, and the opposite outcome from the setting
+    /// alone. A source that has turned messages off must not be stopped by a message:
+    /// it is not asked for, so its size is not a fact about this read.
+    /// </summary>
+    [Fact]
+    public async Task AMessageTooLargeToReadIsNoObstacleWhenMessagesAreOff()
+    {
+        File.WriteAllText(Path.Combine(_repo, "a.txt"), "one\n");
+        File.WriteAllText(Path.Combine(_repo, "msg.txt"), new string('m', 2 * 1024 * 1024));
+        Git("add", "a.txt");
+        Git("commit", "-F", "msg.txt");
+
+        var commits = await EnumerateAsync();
+        var read = await ReadAsync(new GitHistoryOptions { IncludeMessage = false }, commits);
+
+        var document = read.Values.ShouldHaveSingleItem();
+        document.ShouldNotContain("mmmm", Case.Sensitive);
+        document.ShouldContain("commit " + commits[0].Sha);
+    }
+
+    /// <summary>
     /// A repository's own settings do not get to run a command.
     ///
     /// A <c>diff=&lt;driver&gt;</c> attribute and a <c>diff.&lt;driver&gt;.textconv</c> in

@@ -29,9 +29,18 @@ public sealed class GitHistoryIndexingTests
         foreach (var a in args) info.ArgumentList.Add(a);
 
         using var p = Process.Start(info)!;
-        p.StandardOutput.ReadToEnd();
-        var stderr = p.StandardError.ReadToEnd();
+
+        // Both pipes drained at once. Reading stdout to the end first fills the stderr
+        // buffer on any git call that is chatty on it, git blocks writing, stdout never
+        // closes, and the test hangs with no CPU. `GitHistoryTests.Git` hit exactly that
+        // on a `git add` of 900 files emitting a line-ending warning per file; this copy
+        // kept the bug because the fix was made in the other file.
+        var stdoutTask = p.StandardOutput.ReadToEndAsync();
+        var stderrTask = p.StandardError.ReadToEndAsync();
+
         p.WaitForExit();
+        stdoutTask.GetAwaiter().GetResult();
+        var stderr = stderrTask.GetAwaiter().GetResult();
 
         if (p.ExitCode != 0)
             throw new InvalidOperationException($"git {string.Join(' ', args)}: {stderr}");

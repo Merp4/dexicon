@@ -408,7 +408,8 @@ public static class GitHistory
 
         try
         {
-            messages = await MessagesAsync(repo, marker, stdin, known, MessageCeilingFor(shas.Count), ct);
+            messages = await MessagesAsync(
+                repo, marker, stdin, known, options.IncludeMessage, MessageCeilingFor(shas.Count), ct);
             tails = options.IncludeStat || options.IncludeDiff
                 ? await TailsAsync(repo, options, marker, shas, pathspecs, known, ct)
                 : [];
@@ -451,34 +452,54 @@ public static class GitHistory
     /// half, and what keeps a commit from going missing — a commit the reader drops is a
     /// commit the shared reconcile sees as vanished and deletes the vectors of.
     /// </param>
+    /// <param name="wantsMessage">
+    /// Whether to ask git for the subject and body at all.
+    ///
+    /// Off, the format stops at the author's address. Asking for them anyway and
+    /// letting <see cref="Document"/> drop them meant a source that had switched
+    /// messages OFF still read every message, paid for it on every refresh, and could
+    /// be made unavailable by one large message it had already decided not to index.
+    ///
+    /// The re-joining below goes with them: it exists because a body can contain
+    /// anything, including the marker. Every remaining field is git's own formatting of
+    /// a sha, a date and an identity, so a short record is not a split body and there
+    /// is nothing to put back.
+    /// </param>
     private static async Task<Dictionary<string, string[]>> MessagesAsync(
         GitRepository repo, string marker, string stdin, HashSet<string> known,
-        long ceiling, CancellationToken ct)
+        bool wantsMessage, long ceiling, CancellationToken ct)
     {
+        var format = wantsMessage
+            ? $"--format={marker}%H%x00%aI%x00%an%x00%ae%x00%s%x00%b"
+            : $"--format={marker}%H%x00%aI%x00%an%x00%ae";
+
         var (ok, stdout, stderr) = await RunAsync(repo,
-            ["log", "--no-walk", "--stdin", "--no-color", "--no-patch",
-             $"--format={marker}%H%x00%aI%x00%an%x00%ae%x00%s%x00%b"],
+            ["log", "--no-walk", "--stdin", "--no-color", "--no-patch", format],
             ct, stdin, ceiling);
 
         if (!ok) throw new GitHistoryException($"git log --stdin failed: {Summarise(stderr)}");
 
+        var fieldCount = wantsMessage ? 6 : 4;
         var messages = new Dictionary<string, string[]>(StringComparer.Ordinal);
         string? last = null;
 
         foreach (var record in stdout.Split(marker, StringSplitOptions.RemoveEmptyEntries))
         {
-            var fields = record.Split('\0', 6);
+            var fields = record.Split('\0', fieldCount);
 
-            if (fields.Length == 6 && known.Contains(fields[0].Trim()))
+            if (fields.Length == fieldCount && known.Contains(fields[0].Trim()))
             {
                 last = fields[0].Trim();
-                messages[last] = fields;
+
+                // Padded to the six Document reads, so the caller's shape does not
+                // depend on which format produced it.
+                messages[last] = wantsMessage ? fields : [.. fields, string.Empty, string.Empty];
                 continue;
             }
 
             // Put back what the split took out, marker included, so the body is the
             // body byte for byte.
-            if (last is not null) messages[last][5] += marker + record;
+            if (wantsMessage && last is not null) messages[last][5] += marker + record;
         }
 
         return messages;
