@@ -13,20 +13,46 @@ Discovery walks the tree and applies, **in order**:
 
 1. **Always-exclude** — binaries, media, archives, build output, VCS internals. Hard-coded,
    not configurable, because nothing good comes of embedding a `.dll`:
-   `.git/`, `**/node_modules/**`, `**/bin/**`, `**/obj/**`, `**/.vs/**`, `**/.idea/**`,
+   `.git`, `**/node_modules/**`, `**/bin/**`, `**/obj/**`, `**/.vs/**`, `**/.idea/**`,
    `**/target/**`, `**/dist/**`, `**/__pycache__/**`, and by extension:
    `exe dll pdb so dylib o obj a lib zip tar gz 7z rar jar woff woff2 ttf eot
    ico png jpg jpeg gif bmp webp svg mp3 mp4 avi mov wav db sqlite sqlite3
    safetensors gguf bin pt pth pkl npy npz`
-2. **`.gitignore`** — honoured by default, full gitignore glob semantics, nested files
-   respected. Disable per source with `use_gitignore: false`.
-3. **`.dexiconignore`** — same syntax, for things that are checked in but not worth
+
+   `.git` carries no trailing slash because in a linked worktree and in a submodule it is
+   a file, holding `gitdir: <absolute host path>` — and an absolute host path in a payload
+   is a leak ([03](03-data-model.md#identifier-conventions)). A directory-only pattern
+   indexed it as content.
+2. **`.git/info/exclude`** — git's per-clone ignore file, read when `use_gitignore` is on.
+   It holds what a checkout excludes without the repository saying so, which is where
+   anything that adds directories to someone's working copy puts them: `git worktree`, and
+   the editors and agents that make worktrees inside the repository.
+
+   Read only where `.git` is a directory. In a linked worktree it is the pointer file
+   above, aimed at a gitdir outside the tree being walked, and following it would read a
+   file the source root does not contain. `core.excludesFile`, git's third layer, is
+   per-user and outside the workspace entirely; it is not read. Either gap is covered by
+   `.dexiconignore`.
+3. **`.gitignore`** — honoured by default, full gitignore glob semantics, nested files
+   respected. Disable per source with `use_gitignore: false`, which turns off `2` with it:
+   one setting, and it says whether git decides what is indexed.
+4. **`.dexiconignore`** — same syntax, for things that are checked in but not worth
    indexing (lock files, generated clients, vendored trees). Separate from `.gitignore` so
    you never have to change VCS behaviour to change index behaviour.
-4. **`exclude_globs`**, then **`include_globs`** as an override.
-5. **Size cap** — `max_file_bytes`, default 256 KB. A file over the cap is recorded as
+5. **`exclude_globs`**, then **`include_globs`** as an override.
+6. **Size cap** — `max_file_bytes`, default 256 KB. A file over the cap is recorded as
    `skipped` with the reason, never dropped without record.
-6. **Binary sniff** — a NUL byte in the first 8 KB means binary, regardless of extension.
+7. **Binary sniff** — a NUL byte in the first 8 KB means binary, regardless of extension.
+
+Within `2` and `3` the later file wins, which is git's precedence: a `!generated/` in
+`.gitignore` re-includes what `info/exclude` dropped.
+
+Worktrees are the case that prompted `2`. Reported against a checkout with four of them:
+22,004 files walked to 5,463 tracked ones, and search returning the same document at two
+older commits. That is worse than noise — a hit from a stale copy carries a real path and
+a real line and says something that stopped being true. This repository has the same
+shape: 239 tracked files, six worktrees under `.claude/worktrees/`, excluded by
+`.git/info/exclude` and by nothing in `.gitignore`.
 
 ### One file, one source
 

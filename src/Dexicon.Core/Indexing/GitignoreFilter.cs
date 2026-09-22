@@ -169,8 +169,9 @@ public sealed partial class IgnoreRuleSet
 }
 
 /// <summary>
-/// Walks a workspace tree applying, in order: always-exclude, .gitignore,
-/// .dexiconignore, per-source globs, size cap, binary sniff. See docs/04-ingestion.md.
+/// Walks a workspace tree applying, in order: always-exclude, .git/info/exclude,
+/// .gitignore, .dexiconignore, per-source globs, size cap, binary sniff. See
+/// docs/04-ingestion.md.
 /// </summary>
 public sealed class WorkspaceWalker
 {
@@ -189,7 +190,11 @@ public sealed class WorkspaceWalker
     /// </summary>
     private static readonly string[] AlwaysExclude =
     [
-        ".git/", ".hg/", ".svn/",
+        // `.git` without the slash, because in a linked worktree and in a submodule it is
+        // a FILE holding `gitdir: <absolute host path>`. `.git/` matches directories only,
+        // so that pointer was indexed as content, and an absolute host path in a payload
+        // is a leak (docs/03). Without the slash it still prunes the directory.
+        ".git", ".hg/", ".svn/",
         "node_modules/", "bin/", "obj/", ".vs/", ".idea/", ".vscode/",
         "target/", "dist/", "build/", "__pycache__/", ".venv/", "venv/",
         "*.exe", "*.dll", "*.pdb", "*.so", "*.dylib", "*.o", "*.obj", "*.a", "*.lib",
@@ -228,6 +233,7 @@ public sealed class WorkspaceWalker
 
         var ignore = new IgnoreRuleSet();
         ignore.AddPatterns(AlwaysExclude, "always-exclude");
+        if (useGitignore) AddLocalGitExcludes(ignore, root);
         if (useGitignore && File.Exists(Path.Combine(root, ".gitignore")))
             ignore.AddPatterns(File.ReadAllLines(Path.Combine(root, ".gitignore")), ".gitignore");
         if (File.Exists(Path.Combine(root, IgnoreFileName)))
@@ -284,6 +290,45 @@ public sealed class WorkspaceWalker
         }
 
         return new WalkResult(files, skipped);
+    }
+
+    /// <summary>
+    /// Adds <c>.git/info/exclude</c>, git's per-clone ignore file. It holds what a working
+    /// copy excludes without the repository saying so, which is where a tool that adds
+    /// directories to someone's checkout puts them: <c>git worktree</c>, and the editors
+    /// and agents that create worktrees inside the repository.
+    ///
+    /// Reported against a checkout with four worktrees: 22,004 files walked to 5,463
+    /// tracked ones, and search returning the same document at two older commits. The
+    /// copies are not noise, they are earlier versions of the answer, so a hit carries a
+    /// real path and a real line and says something that stopped being true.
+    ///
+    /// This repository has the same shape. Measured on it: 239 tracked files, six
+    /// worktrees under <c>.claude/worktrees/</c>, and the only thing excluding them is
+    /// <c>**/.claude/worktrees/</c> in <c>.git/info/exclude</c> — <c>.gitignore</c> says
+    /// nothing about them.
+    ///
+    /// Added BEFORE <c>.gitignore</c> because later patterns win here and
+    /// <c>.gitignore</c> outranks <c>info/exclude</c> in git.
+    ///
+    /// Only where <c>.git</c> is a directory. In a linked worktree it is a file pointing
+    /// at a gitdir that is normally outside the tree being walked, and following it would
+    /// read a file the source root does not contain, which is the boundary the walk
+    /// otherwise holds. A worktree indexed as its own source still has
+    /// <c>.dexiconignore</c>. <c>core.excludesFile</c>, git's third layer, is per-user and
+    /// outside the workspace entirely; it is not read.
+    /// </summary>
+    private static void AddLocalGitExcludes(IgnoreRuleSet ignore, string root)
+    {
+        var gitDir = Path.Combine(root, ".git");
+        if (!Directory.Exists(gitDir)) return;
+
+        var exclude = Path.Combine(gitDir, "info", "exclude");
+        if (!File.Exists(exclude)) return;
+
+        try { ignore.AddPatterns(File.ReadAllLines(exclude), ".git/info/exclude"); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     /// <summary>
