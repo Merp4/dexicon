@@ -105,6 +105,17 @@ public static class WorkspaceDiscovery
     {
         try
         {
+            // `..` cuts the other way here than it does for a caller's path. There,
+            // collapsing it lexically NARROWS, and that is why Contained does it. In a
+            // link target it widens: the collapse removes the very component that gives
+            // the escape away, so `alias/../secret` reads as `<root>/secret` while the OS
+            // follows `alias` to the outside first and only then takes the parent.
+            //
+            // A target still spelling `..` has not been resolved, so it is refused rather
+            // than collapsed. Nothing is lost by that — a target the platform HAS resolved
+            // never carries one.
+            if (HasDotDot(path)) return false;
+
             var full = Path.GetFullPath(path);
             if (!CorpusIndexer.IsInside(full, root)) return false;
 
@@ -117,6 +128,22 @@ public static class WorkspaceDiscovery
         }
         catch (UnauthorizedAccessException) { return false; }
         catch (IOException) { return false; }
+    }
+
+    /// <summary>
+    /// Whether any segment of the path is <c>..</c>. Compared segment by segment rather
+    /// than by <c>Contains("..")</c>, which would also match a directory named <c>..foo</c>.
+    /// </summary>
+    private static bool HasDotDot(string path)
+    {
+        foreach (var segment in path.Split(
+                     [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (segment == "..") return true;
+        }
+
+        return false;
     }
 
     /// <summary>

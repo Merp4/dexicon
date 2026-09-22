@@ -259,22 +259,46 @@ public sealed class SourceRootLinkTests : IDisposable
 
 
     [Fact]
-    public void AMountThatGoesAwayMidWalkIsNotAnAnswer()
+    public void APathUnderAMissingMountIsAbsentRatherThanRefused()
     {
-        // The walk enumerates directories, so a mount disappearing between the existence
-        // check and the listing raises DirectoryNotFoundException. Callers translate
-        // UnauthorizedAccessException and nothing else, so it reached them as a 500 from
-        // source creation, or ended a sweep — an outage reported as a decision.
+        // What this covers is the ordinary missing-mount path: the parent is not there, so
+        // the enumeration finds no match and the walk stops. Absent, never a refusal.
         //
-        // Simulated by naming a path under a directory that is gone by the time the walk
-        // reaches it, which is the same enumeration failure.
+        // It does NOT cover the mid-walk race the DirectoryNotFoundException catch exists
+        // for — a mount going away after its parent has already listed it. The first
+        // version of this test claimed to, and passed with that catch removed. Reaching it
+        // deterministically needs a filesystem seam this suite does not have, so the race
+        // is handled and stated rather than tested.
         var vanishing = Path.Combine(_workspace, "mount");
         Directory.CreateDirectory(Path.Combine(vanishing, "repo"));
         Directory.Delete(vanishing, recursive: true);
 
-        // Absent, not refused, and nothing escapes.
         Should.NotThrow(() => WorkspaceDiscovery.Resolve(_workspace, "mount/repo"));
         WorkspaceDiscovery.ResolveExisting(_workspace, "mount/repo").ShouldBeNull();
+    }
+
+    [Fact]
+    public void ALinkTargetSpelledWithDotDotIsRefused()
+    {
+        // `..` cuts the other way in a link target than it does in a caller's path.
+        //
+        // For a caller's path, collapsing it lexically NARROWS: `alias/../secret` becomes
+        // `<ws>/secret`, which is inside. For a link TARGET it widens, because the
+        // collapse removes the very component that gives the escape away — the OS follows
+        // `alias` to the outside first and only then takes the parent.
+        //
+        // So a target that still spells `..` has not been resolved, and is refused rather
+        // than collapsed. There is nothing to lose by it: a target the platform HAS
+        // resolved never carries one.
+        Directory.CreateDirectory(Path.Combine(_outside, "secret"));
+        Directory.CreateSymbolicLink(Path.Combine(_workspace, "alias"), _outside);
+        Directory.CreateSymbolicLink(
+            Path.Combine(_workspace, "link"),
+            Path.Combine(_workspace, "alias", "..", "secret"));
+
+        WorkspaceDiscovery.ResolvesInside(
+            Path.Combine(_workspace, "alias", "..", "secret"), Path.GetFullPath(_workspace))
+            .ShouldBeFalse();
     }
 
     [Fact]
