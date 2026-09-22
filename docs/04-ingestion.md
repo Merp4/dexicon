@@ -194,9 +194,13 @@ outlives the call. Measured rather than assumed — `docker run -u 10001:10001 -
 every history source reports unavailable on a normal deployment while every test
 passes, because a test runs as the user who owns the repository.
 
-The git binary is in the image (`apk add git`) rather than a native library: the runtime
-is Alpine, so a library means musl builds to keep working, and a handful of processes per
-pass is not a cost worth that. The inventory is one call; reading is one call per 100
+The git binary is in the image (`apk add git`) rather than a native library. Alpine is not
+the reason — `LibGit2Sharp.NativeBinaries` ships musl builds — and neither is the process
+count. The reason is that the document is `git show`'s layout, and a library returns
+structured objects, so using one means writing the hunk headers and the stat columns by
+hand and re-indexing every commit the day they differ. What that costs is weighed against
+what a library would remove, in
+[D-34](decisions.md#d-34-a-commit-is-a-document). The inventory is one call; reading is one call per 100
 commits for the messages and another for the stat and patch when either is wanted, so a
 first pass over 201 commits with diffs is seven, and a refresh with nothing new is one.
 Refs and pathspecs are caller-supplied, so arguments are passed as a list and never a

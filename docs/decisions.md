@@ -1654,9 +1654,23 @@ written before the delete, the counters, the reconcile. Each of those is a defec
 been fixed once already, and a second copy of that loop is where the fixes would stop
 applying to half the sources.
 
-**Rejected.** LibGit2Sharp. The runtime image is Alpine, so it needs musl native binaries
-to keep working across upgrades, and a native dependency is the wrong price for avoiding
-two processes on a pass that runs a few times a day.
+**Rejected.** LibGit2Sharp — though not for the reason first recorded here, and not as
+comfortably as that reason suggested.
+
+Alpine is not the obstacle: `LibGit2Sharp.NativeBinaries` ships musl builds for x64, arm
+and arm64 beside the glibc ones. The obstacle is the document. It is `git show`'s layout,
+chosen so that a model recognises it without being taught, and libgit2 returns structured
+objects rather than that text — so using it means writing the hunk headers and the stat
+columns by hand, and any difference from what git prints re-indexes every commit in every
+history corpus.
+
+What a library would buy is more than the two processes this entry originally weighed
+against it. libgit2 does not shell out, so `textconv`, `gpg.program` and `diff.external`
+stop being reachable rather than being disabled one flag at a time; and it returns diffs
+as data, so the record marker, the `diff --git` ambiguity in a commit message, and the
+read ceiling that bounds a batch rather than a commit all stop existing rather than being
+handled. Those are the costs to weigh against writing the formatter, and they are the
+reason to revisit this rather than treat it as settled.
 
 One `git show` per commit: thousands of process launches for one pass.
 
