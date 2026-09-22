@@ -191,7 +191,13 @@ public sealed class CorpusSweeper(
             var filters = SourceFilters.Resolve(corpus, source, _indexing);
 
             var commits = await GitHistory.EnumerateAsync(repo, options, filters.IncludeGlobs, ct);
-            return [.. commits.Select(c => new WorkspaceWalker.Candidate(root, c.RelativePath, 0))];
+
+            // Through the same function the indexing pass uses, not a second rule that
+            // agrees today. A sweep that counted a commit the index collapses would
+            // report an inventory the index can never fill, which reads as a wrong count
+            // rather than as two passes differing.
+            return [.. GitHistory.OnePerPath(commits)
+                .Select(c => new WorkspaceWalker.Candidate(root, c.RelativePath, 0))];
         }
         catch (GitHistoryException ex)
         {

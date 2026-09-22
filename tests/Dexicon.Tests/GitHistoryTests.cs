@@ -220,6 +220,34 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
+    /// Two commits that land on one path are one document, and it is the newer.
+    ///
+    /// A real collision needs two shas sharing twelve hex characters on one day, which
+    /// is a birthday search rather than something a test can commit its way to, so this
+    /// builds the pair directly. What matters is not the odds but that the outcome is
+    /// decided: carried forward, both were processed under the one path, each deleting
+    /// the other's chunks and upserting its own, so which document survived fell out of
+    /// the order they were read in.
+    /// </summary>
+    [Fact]
+    public void TwoCommitsOnOnePathAreOneDocument()
+    {
+        var day = new DateTimeOffset(2026, 9, 22, 9, 0, 0, TimeSpan.Zero);
+        var newer = new GitCommit(new string('a', 12) + new string('1', 28), day.AddHours(2));
+        var older = new GitCommit(new string('a', 12) + new string('2', 28), day);
+        var other = new GitCommit(new string('b', 40), day);
+
+        newer.RelativePath.ShouldBe(older.RelativePath, "the premise: these collide");
+
+        // git log order, newest first.
+        var kept = GitHistory.OnePerPath([newer, older, other]);
+
+        kept.Count.ShouldBe(2);
+        kept[0].Sha.ShouldBe(newer.Sha, "the newer of a colliding pair is the one kept");
+        kept[1].Sha.ShouldBe(other.Sha);
+    }
+
+    /// <summary>
     /// A repository cannot change what its own commits say by changing its config.
     ///
     /// The fingerprint settles a document from the sha and the source's settings, so

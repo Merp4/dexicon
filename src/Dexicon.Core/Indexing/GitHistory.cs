@@ -309,6 +309,32 @@ public static class GitHistory
     /// </summary>
     internal static bool IsAcceptableCommitLimit(int? value) => value is null or >= 1;
 
+    /// <summary>
+    /// One commit per document path, keeping the first of any that collide.
+    ///
+    /// A path is a date and twelve characters of a sha, so two commits on one day whose
+    /// shas share a prefix are one document. Both being carried forward is worse than
+    /// either being dropped: each deletes the other's chunks and upserts its own, so
+    /// which survives depends on the order they were read in, and the fingerprint can
+    /// end up naming a sha the stored text did not come from.
+    ///
+    /// Shared by the indexing pass and the sweep because they must agree. A sweep that
+    /// counted both would report an inventory the index can never fill, which reads as a
+    /// wrong count rather than as two passes differing. The order is git's, newest
+    /// first, so the first of a colliding pair is the newer.
+    /// </summary>
+    public static IReadOnlyList<GitCommit> OnePerPath(IReadOnlyList<GitCommit> commits)
+    {
+        var seen = new HashSet<string>(commits.Count, StringComparer.Ordinal);
+        var kept = new List<GitCommit>(commits.Count);
+
+        foreach (var commit in commits)
+            if (seen.Add(commit.RelativePath))
+                kept.Add(commit);
+
+        return kept;
+    }
+
     private static void RequireUsableOptions(GitHistoryOptions options)
     {
         if (!IsAcceptableDiffCap(options.MaxDiffBytes))
