@@ -388,6 +388,13 @@ public static class CorpusEndpoints
                     detail: "maxFileBytes must be greater than zero. Name it in `clear` to inherit the corpus default.",
                     statusCode: 400);
 
+            if (UnknownClearName(body.Clear) is { } unknown)
+                return Results.Problem(
+                    title: "Unknown filter",
+                    detail: $"'{unknown}' is not a filter that can be cleared. "
+                          + $"Name one of: {string.Join(", ", ClearableFilters)}.",
+                    statusCode: 400);
+
             if (FileOnlySettingsFor(source.Kind, body.UseGitignore, body.MaxFileBytes, body.ExcludeGlobs)
                 is { } inapplicable)
                 return Results.Problem(
@@ -717,6 +724,22 @@ public static class CorpusEndpoints
 
         return named.Count == 0 ? null : string.Join(", ", named);
     }
+
+    /// <summary>
+    /// The names <c>clear</c> understands. Anything else is a typo the caller wants to
+    /// know about: unknown names were dropped on the floor and the request answered 200,
+    /// so `clear: ["maxfilebytes"]` — or a field renamed one day — left the setting in
+    /// place and reported success.
+    ///
+    /// Case-insensitive, because that is how <see cref="ApplyFilters"/> compares them.
+    /// </summary>
+    internal static readonly string[] ClearableFilters =
+        ["useGitignore", "maxFileBytes", "includeGlobs", "excludeGlobs"];
+
+    /// <summary>The first name <c>clear</c> does not understand, or null.</summary>
+    internal static string? UnknownClearName(IReadOnlyList<string>? clear) =>
+        clear?.FirstOrDefault(
+            name => !ClearableFilters.Contains(name, StringComparer.OrdinalIgnoreCase));
 
     internal static bool ApplyFilters(Source source, UpdateSourceRequest body)
     {

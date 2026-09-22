@@ -226,6 +226,27 @@ public sealed class SourceFilterUpdateTests
         CorpusEndpoints.FileOnlySettingsFor(SourceKind.Workspace, true, 1024, ["**/*.pdf"]).ShouldBeNull();
     }
 
+    /// <summary>
+    /// A name `clear` does not understand is a typo, and the caller wants to know.
+    ///
+    /// Unknown names were dropped on the floor and the request answered 200, so
+    /// `clear: ["maxfilebytes"]` left the setting in place and reported success — and so
+    /// would a field renamed one day, on every caller still sending the old name.
+    /// </summary>
+    [Fact]
+    public void AClearNameThatIsNotAFilterIsNamedBack()
+    {
+        CorpusEndpoints.UnknownClearName(["maxFileBytes", "includeGlobs"]).ShouldBeNull();
+        CorpusEndpoints.UnknownClearName(null).ShouldBeNull();
+        CorpusEndpoints.UnknownClearName([]).ShouldBeNull();
+
+        // How ApplyFilters compares them, so how this must.
+        CorpusEndpoints.UnknownClearName(["MAXFILEBYTES"]).ShouldBeNull();
+
+        CorpusEndpoints.UnknownClearName(["maxFileBytes", "nonsense"]).ShouldBe("nonsense");
+        CorpusEndpoints.UnknownClearName(["git"]).ShouldBe("git", "history settings are not a filter");
+    }
+
     [Fact]
     public void AnOmittedFieldIsLeftAlone()
     {

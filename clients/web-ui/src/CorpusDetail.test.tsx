@@ -403,8 +403,10 @@ describe('a count taken while the walk is running', () => {
 
     render(<CorpusDetail {...props} />);
 
-    // 96 is what has been counted so far, not what the folder holds.
-    expect(await screen.findByText('96 so far')).toBeInTheDocument();
+    // 96 is what has been counted so far, not what the folder holds. The unit is there
+    // for the same reason it is on every other count, and "so far" is what stops it
+    // reading as a total — so the assertion below is the one that matters.
+    expect(await screen.findByText('96 files so far')).toBeInTheDocument();
     expect(screen.queryByText('96 files')).not.toBeInTheDocument();
   });
 

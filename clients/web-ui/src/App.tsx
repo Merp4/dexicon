@@ -1180,7 +1180,7 @@ export function CorpusDetail({
                     indexing ? (
                       <span className="dim text-xs">
                         {s.fileCount
-                          ? `${s.fileCount.toLocaleString()} so far`
+                          ? `${s.fileCount.toLocaleString()} ${unitOf(s, s.fileCount)} so far`
                           : 'counting…'}
                       </span>
                     ) : (
@@ -2168,7 +2168,7 @@ function RemoveSourceModal({ corpus, source, onClose, onRemoved, onError }: {
       <p className="mt-0 text-sm">
         {source.fileCount
           ? `Its ${source.fileCount.toLocaleString()} ${unitOf(source, source.fileCount)} ${source.fileCount === 1 ? 'leaves' : 'leave'} the index immediately, in every chunk set of ${corpus.name}.`
-          : `It has no indexed files, so nothing leaves the index.`}
+          : `It has no indexed ${unitOf(source, 0)}, so nothing leaves the index.`}
         {' '}The folder on disk is untouched; Dexicon only ever reads it. Adding it again
         re-indexes from scratch.
       </p>

@@ -151,7 +151,7 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
                     // the point, and a button that vanishes teaches nothing.
                     title={
                       set.pendingCount > 0
-                        ? `${set.pendingCount.toLocaleString()} file(s) still to index; promoting now would make search incomplete`
+                        ? `${set.pendingCount.toLocaleString()} ${unitFor(corpus.sources, set.pendingCount)} still to index; promoting now would make search incomplete`
                         : 'Make this the set that search uses'
                     }
                     onClick={() => act(set.id, () => api.promoteChunkSet(corpus.name, set.name))}
