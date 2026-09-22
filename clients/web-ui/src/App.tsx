@@ -2258,20 +2258,67 @@ export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: 
   const sourcesOf = useMemo(
     () => Object.fromEntries(corpora.map((c) => [c.id, c.sources])), [corpora]);
 
+  // Routine refreshes are dropped IN THE QUERY, not collapsed after the fact. The client
+  // can only collapse what it fetched, and at one job per corpus per REFRESHMINUTES a
+  // page of thirty is about an hour: on this instance 48 of the last 200 jobs did real
+  // work and not one of them was in the most recent thirty, so the view was a summary of
+  // nothing over the top of everything that mattered.
+  const [routine, setRoutine] = useState(false);
+
+  // Fast only while there is something to watch.
+  //
+  // This polled every four seconds for as long as the tab was open, whether or not
+  // anything was running — and the progress STREAM already pushes a running job's
+  // counters, which is what `live` holds. So the poll's job is to notice a run starting
+  // or finishing, and `live` notices the start first: a job appearing there flips this
+  // and the effect re-arms at the fast interval on the same tick.
+  const busy =
+    jobs.some((j) => j.state === 'running' || j.state === 'queued')
+    || Object.values(live).some((j) => j.state === 'running' || j.state === 'queued');
+
   useEffect(() => {
-    const load = () => api.listJobs().then(setJobs).catch(onError);
+    const load = () => api.listJobs(routine ? 200 : 30, routine ? undefined : true)
+      .then(setJobs)
+      .catch(onError);
+
     void load();
-    const id = setInterval(load, 4000);
+    const id = setInterval(load, busy ? 4000 : 30000);
     return () => clearInterval(id);
-  }, [onError]);
+  }, [onError, routine, busy]);
 
   // The heading stays whichever way this goes: every other view keeps its title over an
   // empty state, and a screen that loses its name is a screen you cannot tell you are on.
+  // The toggle sits with the heading on both branches, because the empty state is the
+  // one place you most need to know that a filter is on: "no jobs yet" under a hidden
+  // filter is the view lying about an empty database.
+  const heading = (
+    <div className="flex justify-between items-center gap-3">
+      <h1 className="m-0 text-lg">Jobs</h1>
+      <label className="dim flex items-center gap-1.5 text-xs">
+        <input
+          type="checkbox"
+          checked={routine}
+          onChange={(e) => setRoutine(e.target.checked)}
+          aria-label="Show scheduled refreshes that found nothing to do"
+        />
+        Show routine refreshes
+      </label>
+    </div>
+  );
+
   if (jobs.length === 0) {
     return (
       <div className="grid gap-4">
-        <h1 className="m-0 text-lg">Jobs</h1>
-        <Empty title="No jobs yet" hint="Indexing runs appear here, newest first." />
+        {heading}
+        <Empty
+          title={routine ? 'No jobs yet' : 'Nothing has happened yet'}
+          hint={
+            routine
+              ? 'Indexing runs appear here, newest first.'
+              : 'Runs that indexed something, failed, or are still going appear here. '
+                + 'Tick "Show routine refreshes" for the scheduled ones that found nothing to do.'
+          }
+        />
       </div>
     );
   }
@@ -2280,7 +2327,7 @@ export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: 
   // closer to the first card than the same heading is on Corpora or Documents.
   return (
     <div className="grid gap-4">
-      <h1 className="m-0 text-lg">Jobs</h1>
+      {heading}
       {groupRuns(jobs).map((entry) => {
         if (entry.kind === 'quiet') {
           const newest = entry.jobs[0];

@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import userEvent from '@testing-library/user-event';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JobsView } from './App';
 import type { Corpus, Job } from './api';
 
@@ -105,5 +106,76 @@ describe('runs that found nothing to do', () => {
 
     expect(await screen.findByText(/Dexicon restarted/)).toBeInTheDocument();
     expect(screen.queryByText(/scheduled refresh/)).not.toBeInTheDocument();
+  });
+});
+
+describe('what it asks the server for', () => {
+  it('asks for activity only, so a page is days of real work rather than an hour of quiet', async () => {
+    // The client can only collapse what it fetched. At one job per corpus per
+    // REFRESHMINUTES, thirty rows is about an hour: measured on a live instance, 48 of
+    // the last 200 jobs did real work and not one was in the most recent thirty.
+    listJobs.mockResolvedValue([job({ filesDone: 8, chunksWritten: 51 })]);
+
+    render(<JobsView {...props} />);
+
+    await screen.findByText('8 indexed');
+    expect(listJobs).toHaveBeenCalledWith(30, true);
+  });
+
+  it('asks for everything once routine refreshes are wanted', async () => {
+    listJobs.mockResolvedValue([job()]);
+
+    render(<JobsView {...props} />);
+    await screen.findByText('0 indexed');
+
+    await userEvent.click(screen.getByLabelText(/Show scheduled refreshes/));
+
+    await vi.waitFor(() => expect(listJobs).toHaveBeenLastCalledWith(200, undefined));
+  });
+
+  it('says a filter is on rather than claiming there is nothing', async () => {
+    // "No jobs yet" under a hidden filter is the view lying about an empty database.
+    listJobs.mockResolvedValue([]);
+
+    render(<JobsView {...props} />);
+
+    expect(await screen.findByText('Nothing has happened yet')).toBeInTheDocument();
+  });
+});
+
+describe('how often it asks', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('polls slowly while nothing is running', async () => {
+    // It polled every four seconds for as long as the tab was open, running or not.
+    listJobs.mockResolvedValue([job({ filesDone: 8, chunksWritten: 51 })]);
+
+    render(<JobsView {...props} />);
+    await vi.waitFor(() => expect(listJobs).toHaveBeenCalledTimes(1));
+
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(listJobs).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(26_500);
+    expect(listJobs).toHaveBeenCalledTimes(2);
+  });
+
+  it('polls fast while a run is live, without waiting for a slow tick to notice', async () => {
+    // The progress stream fills `live` the moment a run starts, so the fast interval is
+    // armed on that tick rather than up to thirty seconds later.
+    listJobs.mockResolvedValue([job({ filesDone: 8, chunksWritten: 51 })]);
+
+    const live = { c1: job({ state: 'running' }) } as unknown as typeof props.live;
+    render(<JobsView {...props} live={live} />);
+    await vi.waitFor(() => expect(listJobs).toHaveBeenCalledTimes(1));
+
+    await vi.advanceTimersByTimeAsync(4_500);
+    expect(listJobs).toHaveBeenCalledTimes(2);
   });
 });

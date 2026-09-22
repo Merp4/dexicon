@@ -279,7 +279,12 @@ export const api = {
   fileText: (nameOrId: string, path: string, start?: number) =>
     call(() => getApiCorporaByNameOrIdFile({ path: { nameOrId }, query: { path, start } })),
 
-  listJobs: (limit = 30) => call(() => getApiJobs({ query: { limit } })),
+  /**
+   * @param activity drop the runs that found nothing to do, in the query. A page of
+   * thirty is an hour of scheduled refreshes and days of real work.
+   */
+  listJobs: (limit = 30, activity?: boolean) =>
+    call(() => getApiJobs({ query: { limit, activity } })),
 
   // ── Chunk sets ────────────────────────────────────────────────────────────
 

@@ -171,6 +171,13 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "activity",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {

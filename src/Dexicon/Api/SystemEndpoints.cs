@@ -16,6 +16,20 @@ namespace Dexicon.Api;
 public static class SystemEndpoints
 {
     /// <summary>
+    /// The runs worth listing: anything that did work, failed, or has not finished yet.
+    ///
+    /// A field rather than a literal inside the query, so the test that pins this is
+    /// pinning what the endpoint runs. Written out twice, it is two rules that agree
+    /// until one of them is edited, and the one nobody would think to edit is the test.
+    ///
+    /// Not-succeeded comes first on purpose: a failed job and a degraded one have the
+    /// same zero counters as a quiet refresh, and they are the rows a person opens this
+    /// screen to find.
+    /// </summary>
+    internal static readonly System.Linq.Expressions.Expression<Func<IndexJob, bool>> DidSomething =
+        j => j.State != JobState.Succeeded || j.FilesDone > 0 || j.ChunksWritten > 0;
+
+    /// <summary>
     /// How long a model probe may run before it is given up on.
     ///
     /// Long enough for two dozen embeds against an idle CPU backend, short enough that a
@@ -104,8 +118,8 @@ public static class SystemEndpoints
     {
         var g = app.MapGroup("/api/jobs").WithTags("Jobs");
 
-        g.MapGet("/", async (string? corpusId, int? limit, RequestContext rc, ScopeResolver scopes,
-            CatalogDbContext db, CancellationToken ct) =>
+        g.MapGet("/", async (string? corpusId, int? limit, bool? activity, RequestContext rc,
+            ScopeResolver scopes, CatalogDbContext db, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
             var visible = await scopes.VisibleAsync(rc.RequirePrincipal(), ct);
@@ -113,6 +127,21 @@ public static class SystemEndpoints
 
             var q = db.Jobs.Where(j => ids.Contains(j.CorpusId));
             if (!string.IsNullOrWhiteSpace(corpusId)) q = q.Where(j => j.CorpusId == corpusId);
+
+            // `activity=true` drops the runs that found nothing to do, IN THE QUERY.
+            //
+            // A scheduled refresh enqueues one job per corpus per interval, and on an
+            // unchanged tree every one of them indexes nothing. The list used to collapse
+            // them in the client, which can only collapse what it fetched: at five
+            // corpora every ten minutes, a page of thirty jobs is an hour, and the
+            // reindex somebody actually ran scrolls off the end of the window before it
+            // scrolls off the screen. Measured on this instance: 200 jobs spanned 449
+            // minutes, 48 of them did real work, and none of those 48 were in the most
+            // recent thirty.
+            //
+            // The same rule as the client's, so the two cannot disagree about what counts
+            // as quiet: succeeded, nothing indexed, nothing written.
+            if (activity == true) q = q.Where(DidSomething);
 
             // Newest first, by when it was QUEUED. Ordering on StartedUtc floated every
             // never-started job to the top, so two long-dead failures sat above the job
