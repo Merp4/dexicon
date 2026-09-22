@@ -111,6 +111,27 @@ them yields, chosen by id so the answer does not depend on the order rows came b
 Overlap is decidable from the root paths alone, since each source covers exactly its own
 subtree, so this costs no extra walk and holds no inventory in memory.
 
+**Within one source, a symlink is the same problem by another route.** `real/` with
+`alias-a -> real` and `alias-b -> real` is one directory under three names, and a walk
+keyed on the name indexes its contents three times. A link back to somewhere the walk has
+already been is the same thing unbounded: measured with `loop -> <workspace>` in a
+one-file tree, the walk returned **41 copies** of that file, at `app.cs`, `loop/app.cs`,
+`loop/loop/app.cs` and so on until the platform's own symlink limit stopped it. It
+terminates, and it costs forty extra embeddings of every file in the tree.
+
+So a directory is walked once, placed by where it **physically** is rather than by the
+name it was reached under. Resolving only a link's last component is not enough for that:
+on Linux a resolved target can still carry an unresolved parent link, so two names for one
+directory spell themselves differently — every component is resolved.
+
+Where two names reach one directory, the **real** one is walked and the links are not.
+Otherwise the survivor would be whichever the filesystem listed first, and since a file's
+identity is its relative path, an order that changed between runs would move every file
+under it and make the next refresh delete and re-add the lot.
+
+A link to somewhere the walk has **not** been is still followed, which is what a
+repository laid out that way depends on.
+
 ### Where steps 2, 4 and 5 get their values
 
 `use_gitignore`, the two glob lists and `max_file_bytes` resolve through three layers,

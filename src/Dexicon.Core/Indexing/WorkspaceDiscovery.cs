@@ -131,6 +131,79 @@ public static class WorkspaceDiscovery
     }
 
     /// <summary>
+    /// Where a path physically is, with every component resolved, so that two names for
+    /// one directory give one answer.
+    ///
+    /// <c>ResolveLinkTarget</c> alone does not: on Linux it can hand back a target that
+    /// still carries an unresolved parent link, so <c>alias-a</c> and <c>alias-b</c>
+    /// pointing at one directory spell themselves differently. Resolving only the last
+    /// component has the same gap one level up — for <c>entry/src</c> where <c>entry</c>
+    /// is the link, <c>src</c> is an ordinary directory and nothing gets resolved at all.
+    ///
+    /// It takes no root and applies no boundary, deliberately: it answers "where is this",
+    /// not "may this be read". Containment is <see cref="ResolvesInside"/>'s question and
+    /// is settled before this is asked. Giving it a root and falling back to the lexical
+    /// path outside that root breaks it exactly where it is needed — under a root that is
+    /// itself a link, every child is spelled <c>entry/…</c> while the root is <c>real</c>.
+    ///
+    /// Falls back to the path's own full form when it cannot be read. That is a spelling
+    /// no other entry has, so an unresolvable path is never mistaken for one already seen.
+    /// </summary>
+    internal static string Canonical(string path)
+    {
+        try
+        {
+            var current = Path.GetFullPath(path);
+
+            // Until it stops moving. One pass resolves each component against the
+            // canonical parent built so far, but a target it lands on can itself carry an
+            // unresolved parent link, so the pass has to be repeated. Bounded for the same
+            // reason WalkInside is: a chain that never settles is a cycle.
+            for (var pass = 0; pass < 40; pass++)
+            {
+                var next = ResolveComponents(current);
+                if (string.Equals(next, current, CorpusIndexer.PathComparison)) return current;
+                current = next;
+            }
+
+            return current;
+        }
+        catch (IOException) { return Path.GetFullPath(path); }
+        catch (UnauthorizedAccessException) { return Path.GetFullPath(path); }
+    }
+
+    /// <summary>
+    /// One left-to-right pass: each component resolved against the canonical parent built
+    /// so far, so an ancestor link is followed and the remainder attaches to where it
+    /// lands.
+    /// </summary>
+    private static string ResolveComponents(string full)
+    {
+        var anchor = Path.GetPathRoot(full) ?? string.Empty;
+        var current = anchor;
+
+        foreach (var segment in full[anchor.Length..].Split(
+                     [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, segment);
+
+            var info = new DirectoryInfo(current);
+            if (info.LinkTarget is null) continue;
+
+            var resolved = info.ResolveLinkTarget(returnFinalTarget: true);
+
+            // A target still spelling `..` has not been resolved, and collapsing it here
+            // would hide the component that gives an escape away — the same reason
+            // ResolvesInside refuses one. Left as it is, so the boundary check sees it.
+            if (resolved is not null && !HasDotDot(resolved.FullName))
+                current = Path.GetFullPath(resolved.FullName);
+        }
+
+        return current;
+    }
+
+    /// <summary>
     /// Whether any segment of the path is <c>..</c>. Compared segment by segment rather
     /// than by <c>Contains("..")</c>, which would also match a directory named <c>..foo</c>.
     /// </summary>

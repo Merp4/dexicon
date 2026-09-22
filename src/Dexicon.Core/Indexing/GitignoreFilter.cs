@@ -289,6 +289,14 @@ public sealed class WorkspaceWalker
         bool topLevelOnly = false)
     {
         var root = Path.GetFullPath(rootPath);
+
+        // Two roots, deliberately. `root` is what the caller named and is what every
+        // relative path is measured from, because that is what a file's identity is made
+        // of — moving it would move every file in the corpus. `physicalRoot` is where it
+        // actually is, and is what containment and identity are measured against: a root
+        // that is itself a link otherwise leaves the walk comparing `<ws>/real` against
+        // `<ws>/entry` and calling everything inside it outside.
+        var physicalRoot = WorkspaceDiscovery.Canonical(root);
         var files = new List<Candidate>();
         var skipped = new List<Skipped>();
 
@@ -298,7 +306,7 @@ public sealed class WorkspaceWalker
         // about itself — including a nested file, which the operator has never seen.
         var treeRules = new IgnoreRuleSet();
         treeRules.AddPatterns(AlwaysExclude, "always-exclude");
-        if (useGitignore) AddLocalGitExcludes(treeRules, root);
+        if (useGitignore) AddLocalGitExcludes(treeRules, physicalRoot);
         // The root's own `.gitignore` and `.dexiconignore` are read by the walk, which
         // reaches the root before anything else and treats it like any other directory.
 
@@ -308,7 +316,7 @@ public sealed class WorkspaceWalker
         if (includeGlobs is { Count: > 0 }) include.AddPatterns(includeGlobs, "source.include");
         var hasInclude = include.Count > 0;
 
-        foreach (var (full, ignore) in EnumerateFilesSafely(root, layer, useGitignore, excludeGlobs, topLevelOnly))
+        foreach (var (full, ignore) in EnumerateFilesSafely(root, physicalRoot, layer, useGitignore, excludeGlobs, topLevelOnly))
         {
             var relative = Path.GetRelativePath(root, full).Replace('\\', '/');
 
@@ -339,7 +347,7 @@ public sealed class WorkspaceWalker
             // that appears in no count is the absence nothing can read back. Here, beside
             // the FileInfo that already exists, because doing it in the enumerator costs
             // a second stat on every file in the walk.
-            if (info.LinkTarget is not null && !StaysInside(info, root))
+            if (info.LinkTarget is not null && !StaysInside(info, physicalRoot))
             {
                 skipped.Add(new Skipped(relative, "a link to a file outside the source root", 0));
                 continue;
@@ -514,15 +522,39 @@ public sealed class WorkspaceWalker
     /// ignore file applies to that subtree and to nothing beside it.
     /// </summary>
     private static IEnumerable<(string FilePath, IgnoreRuleSet Ignore)> EnumerateFilesSafely(
-        string root, Layer rootLayer, bool useGitignore,
+        string root, string physicalRoot, Layer rootLayer, bool useGitignore,
         IReadOnlyList<string>? excludeGlobs, bool topLevelOnly = false)
     {
-        var stack = new Stack<(string Dir, string Prefix, Layer Layer)>();
-        stack.Push((root, string.Empty, rootLayer));
+        var stack = new Stack<(string Dir, string Prefix, string Physical, Layer Layer)>();
+        stack.Push((root, string.Empty, physicalRoot, rootLayer));
+
+        // Every directory this walk has been into, by where it PHYSICALLY is rather than
+        // by the name it was reached under. A link can point at somewhere already walked —
+        // the root, its own parent, a sibling, or another link pointing back — and
+        // containment catches none of that, because all of those are inside.
+        //
+        // Measured with `loop -> <workspace>` in a one-file tree: 41 copies of it, at
+        // `app.cs`, `loop/app.cs`, `loop/loop/app.cs` and so on until the platform's own
+        // symlink limit stopped it. Not a hang, and forty extra embeddings of every file
+        // in the tree — the "silently doubles" failure in docs/04, forty-one times over.
+        //
+        // PHYSICAL, because the name is not an identity: `alias-a` and `alias-b` pointing
+        // at one directory are two names for it, and on Linux a resolved target can still
+        // carry an unresolved parent link, so two of them can even spell themselves
+        // differently. A plain directory costs nothing to place — it is its parent's
+        // physical path plus its own name — and only a link needs resolving.
+        //
+        // The consequence is that content reachable two ways is walked once rather than
+        // twice, which is the same call "one file, one source" makes for two sources over
+        // one tree.
+        var followed = new HashSet<string>(
+            CorpusIndexer.PathComparison == StringComparison.Ordinal
+                ? StringComparer.Ordinal
+                : StringComparer.OrdinalIgnoreCase) { physicalRoot };
 
         while (stack.Count > 0)
         {
-            var (dir, prefix, layer) = stack.Pop();
+            var (dir, prefix, physical, layer) = stack.Pop();
 
             // Listed before the subdirectories, because an ignore file here governs them
             // and this is the listing that finds it. Probing for the two names instead
@@ -546,8 +578,8 @@ public sealed class WorkspaceWalker
             if (gitignore is not null || dexiconignore is not null)
             {
                 var tree = new IgnoreRuleSet(layer.Tree);
-                var added = AddIgnoreFile(tree, root, gitignore, ".gitignore", prefix);
-                added |= AddIgnoreFile(tree, root, dexiconignore, IgnoreFileName, prefix);
+                var added = AddIgnoreFile(tree, physicalRoot, gitignore, ".gitignore", prefix);
+                added |= AddIgnoreFile(tree, physicalRoot, dexiconignore, IgnoreFileName, prefix);
                 if (added) layer = Layer.Of(tree, excludeGlobs);
             }
 
@@ -557,9 +589,31 @@ public sealed class WorkspaceWalker
             try { subdirs = topLevelOnly ? [] : Directory.GetDirectories(dir); }
             catch (Exception) { continue; }
 
-            foreach (var sub in subdirs)
+            // Real directories before links, so that where two names reach one directory
+            // the real one is the one walked. Otherwise the survivor is whichever
+            // Directory.GetDirectories happened to return first, and a file's identity is
+            // its relative path: an order that changed between runs would move every file
+            // under it, and the refresh would delete and re-add the lot.
+            //
+            // Two passes over one array rather than a sort, and only the second pass when
+            // the directory holds a link at all, which is almost never. The order within
+            // each pass is still the OS's.
+            var infos = new DirectoryInfo[subdirs.Length];
+            var anyLinks = false;
+            for (var i = 0; i < subdirs.Length; i++)
             {
-                var info = new DirectoryInfo(sub);
+                infos[i] = new DirectoryInfo(subdirs[i]);
+                anyLinks |= infos[i].LinkTarget is not null;
+            }
+
+            for (var pass = 0; pass <= (anyLinks ? 1 : 0); pass++)
+            for (var i = 0; i < infos.Length; i++)
+            {
+                var info = infos[i];
+                if (anyLinks && (info.LinkTarget is not null) != (pass == 1)) continue;
+
+                var sub = subdirs[i];
+
                 // Same boundary test as a source root, through the same routine, and for
                 // the same reason: a symlink to a sibling that merely shares the root's
                 // name prefix is outside the tree being walked, however much of the
@@ -569,7 +623,7 @@ public sealed class WorkspaceWalker
                 // target's own text, which is not the same question — measured on Linux,
                 // `alias -> outside` with `link -> alias/src` put `link/host-secret.txt`
                 // in the walk's results.
-                if (!StaysInside(info, root)) continue;
+                if (!StaysInside(info, physicalRoot)) continue;
 
                 var relativeSub = Path.GetRelativePath(root, sub).Replace('\\', '/');
 
@@ -592,7 +646,18 @@ public sealed class WorkspaceWalker
                     continue;
                 }
 
-                stack.Push((sub, relativeSub, layer));
+                // Last, and only for a directory that is actually being walked. Marking it
+                // any earlier loses files: a link skipped by the rules above would claim
+                // its target, and a later allowed name for the same directory would then
+                // be dropped — so whether a file is indexed would depend on the order
+                // Directory.GetDirectories happened to return.
+                var subPhysical = info.LinkTarget is null
+                    ? Path.Combine(physical, info.Name)
+                    : WorkspaceDiscovery.Canonical(sub);
+
+                if (!followed.Add(subPhysical)) continue;
+
+                stack.Push((sub, relativeSub, subPhysical, layer));
             }
 
             // A directory whose files could not be listed still had its subdirectories

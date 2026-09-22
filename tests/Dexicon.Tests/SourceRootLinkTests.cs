@@ -302,6 +302,137 @@ public sealed class SourceRootLinkTests : IDisposable
     }
 
     [Fact]
+    public void ALinkBackToTheRootDoesNotMultiplyTheCorpus()
+    {
+        // Containment cannot catch this: the root IS inside itself. Measured on Linux with
+        // `loop -> <workspace>` in a one-file tree, the walk returned
+        //
+        //   count=41  app.cs | loop/app.cs | loop/loop/app.cs | loop/loop/loop/app.cs
+        //
+        // stopping only at the platform's own symlink limit. It terminates and multiplies
+        // the corpus — the "silently doubles" failure in docs/04, forty-one times over,
+        // and forty extra embeddings of every file.
+        File.WriteAllText(Path.Combine(_workspace, "app.cs"), "class A {}");
+        Directory.CreateSymbolicLink(Path.Combine(_workspace, "loop"), _workspace);
+
+        WorkspaceWalker.Walk(_workspace, true, null, null, 1_000_000)
+            .Files.Select(f => f.RelativePath)
+            .ShouldBe(["app.cs"]);
+    }
+
+    [Fact]
+    public void NorOneBackToADirectoryTheWalkIsAlreadyInside()
+    {
+        // The subtler shape: the cycle closes on an ordinary directory part way down
+        // rather than on the root. Tracking only where LINKS had reached let this one
+        // through once before it closed, because `deep` was never recorded — it was a
+        // plain directory. Placing every directory by where it physically is stops it
+        // where it starts.
+        Directory.CreateDirectory(Path.Combine(_workspace, "deep"));
+        File.WriteAllText(Path.Combine(_workspace, "deep", "app.cs"), "class A {}");
+        Directory.CreateSymbolicLink(
+            Path.Combine(_workspace, "deep", "loop"), Path.Combine(_workspace, "deep"));
+
+        WorkspaceWalker.Walk(_workspace, true, null, null, 1_000_000)
+            .Files.Select(f => f.RelativePath)
+            .ShouldBe(["deep/app.cs"]);
+    }
+
+    [Fact]
+    public void TwoNamesForOneDirectoryIndexItOnce()
+    {
+        // `alias-a` and `alias-b` are the same directory, and so is `real`. Keying on the
+        // name gives three copies of its content; keying on where it physically is gives
+        // one, which is the call "one file, one source" already makes for two sources over
+        // one tree.
+        //
+        // `real` is the survivor, not whichever the OS listed first. A file's identity is
+        // its relative path, so an order that changed between runs would move every file
+        // under it and make the next refresh delete and re-add the lot.
+        Directory.CreateDirectory(Path.Combine(_workspace, "real"));
+        File.WriteAllText(Path.Combine(_workspace, "real", "app.cs"), "class A {}");
+        Directory.CreateSymbolicLink(
+            Path.Combine(_workspace, "alias-a"), Path.Combine(_workspace, "real"));
+        Directory.CreateSymbolicLink(
+            Path.Combine(_workspace, "alias-b"), Path.Combine(_workspace, "real"));
+
+        WorkspaceWalker.Walk(_workspace, true, null, null, 1_000_000)
+            .Files.Select(f => f.RelativePath)
+            .ShouldBe(["real/app.cs"]);
+    }
+
+    [Fact]
+    public void ARootThatIsItselfALinkRecognisesItsOwnRoot()
+    {
+        // A source created on `inner`, a link to the workspace. Seeding the walk with the
+        // link's own spelling meant it did not recognise the directory it had started in
+        // when it met it again, and yielded a second copy of everything.
+        File.WriteAllText(Path.Combine(_workspace, "app.cs"), "class A {}");
+        Directory.CreateSymbolicLink(Path.Combine(_workspace, "inner"), _workspace);
+
+        WorkspaceWalker.Walk(Path.Combine(_workspace, "inner"), true, null, null, 1_000_000)
+            .Files.Select(f => f.RelativePath)
+            .ShouldBe(["app.cs"]);
+    }
+
+    [Fact]
+    public void ADuplicateUnderALinkedRootIsStillOneCopy()
+    {
+        // The identity has to hold when the ROOT is a link to somewhere else. Children are
+        // spelled `entry/...` while the root is `real`, so a canonicaliser that refused to
+        // work outside its root fell back to the lexical path for every one of them and no
+        // two names ever matched — the dedupe silently did nothing under such a root.
+        Directory.CreateDirectory(Path.Combine(_workspace, "real", "content"));
+        File.WriteAllText(Path.Combine(_workspace, "real", "content", "app.cs"), "class A {}");
+        Directory.CreateSymbolicLink(
+            Path.Combine(_workspace, "real", "alias"), Path.Combine(_workspace, "real", "content"));
+        Directory.CreateSymbolicLink(
+            Path.Combine(_workspace, "entry"), Path.Combine(_workspace, "real"));
+
+        WorkspaceWalker.Walk(Path.Combine(_workspace, "entry"), true, null, null, 1_000_000)
+            .Files.Select(f => f.RelativePath)
+            .ShouldBe(["content/app.cs"]);
+    }
+
+    [Fact]
+    public void ARootReachedThroughAnAliasedAncestorIsStillPlacedPhysically()
+    {
+        // `entry -> real`, and the source is `entry/src`. The last component is an
+        // ordinary directory, so resolving only that one leaves the root lexical and every
+        // link under it reads as outside. The ancestors have to be resolved too.
+        Directory.CreateDirectory(Path.Combine(_workspace, "real", "src", "shared"));
+        Directory.CreateSymbolicLink(
+            Path.Combine(_workspace, "entry"), Path.Combine(_workspace, "real"));
+
+        WorkspaceDiscovery.Canonical(Path.Combine(_workspace, "entry", "src"))
+            .ShouldBe(Path.Combine(Path.GetFullPath(_workspace), "real", "src"));
+    }
+
+    [Fact]
+    public void AnIgnoreFileUnderAnAliasedRootIsStillRead()
+    {
+        // The ignore-file containment check was left on the lexical root while the
+        // directory and file walk moved to the physical one. A `.gitignore` that is itself
+        // a link, under an aliased root, then reads as outside and its rules are dropped —
+        // silently, which for an ignore file means indexing what someone excluded.
+        //
+        // The ignore file is a link on purpose: a plain file is inside by construction and
+        // never reaches the containment test at all.
+        Directory.CreateDirectory(Path.Combine(_workspace, "real"));
+        File.WriteAllText(Path.Combine(_workspace, "real", "rules"), "secret.txt\n");
+        File.CreateSymbolicLink(
+            Path.Combine(_workspace, "real", ".gitignore"), Path.Combine(_workspace, "real", "rules"));
+        File.WriteAllText(Path.Combine(_workspace, "real", "secret.txt"), "excluded");
+        File.WriteAllText(Path.Combine(_workspace, "real", "app.cs"), "class A {}");
+        Directory.CreateSymbolicLink(
+            Path.Combine(_workspace, "entry"), Path.Combine(_workspace, "real"));
+
+        WorkspaceWalker.Walk(Path.Combine(_workspace, "entry"), true, null, null, 1_000_000)
+            .Files.Select(f => f.RelativePath)
+            .ShouldNotContain("secret.txt");
+    }
+
+    [Fact]
     public void CoverageDoesNotWalkThroughOneEither()
     {
         // The one path that reaches a directory NOBODY created a source on: coverage
