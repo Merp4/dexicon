@@ -833,6 +833,39 @@ public static class GitHistory
         info.ArgumentList.Insert(0, "safe.directory=" + repo.FullPath);
         info.ArgumentList.Insert(0, "-c");
 
+        // How a diff is PRESENTED is pinned, because the fingerprint says a commit's
+        // document is settled by its sha and this source's settings, and a repository
+        // can change the text of the same sha by changing its own config. Measured with
+        // `core.quotePath`, which is the one most likely to be set for real:
+        //
+        //     unpinned   "\346\274\242.txt" | 1 +
+        //     pinned     漢.txt | 1 +
+        //
+        // The pre-read skip then holds a document that no longer matches what git would
+        // produce, and it is the path that avoids looking, so nothing notices. Pinned
+        // rather than folded into the fingerprint: a config change would otherwise
+        // re-read and re-embed an entire history, and an index wants the document to be
+        // a function of the commit rather than of how somebody likes their diffs.
+        //
+        // Each value is git's own default, so this changes nothing for a repository that
+        // has not set them. `core.quotePath=false` is the exception and is an
+        // improvement: a non-ASCII path is indexed as itself rather than as octal.
+        //
+        // NOT pinnable here: `diff.orderFile`, which reorders the files within a diff.
+        // `-c diff.orderFile=` is `fatal: failed to read orderfile ''`, and there is no
+        // value meaning "none", so a repository that sets it can still reorder its own
+        // documents. Left as a known gap rather than worked around with a temporary file.
+        foreach (var pin in new[]
+                 {
+                     "core.quotePath=false", "diff.algorithm=myers", "diff.renames=true",
+                     "diff.context=3", "diff.noprefix=false", "diff.mnemonicPrefix=false",
+                     "diff.indentHeuristic=true", "diff.relative=false", "diff.submodule=short",
+                 })
+        {
+            info.ArgumentList.Insert(0, pin);
+            info.ArgumentList.Insert(0, "-c");
+        }
+
         // log.showSignature, because verifying a signature means running a program the
         // repository names. `log.showSignature=true` and `gpg.program=<anything>` are
         // both settable in the repository being read, and together they make git execute

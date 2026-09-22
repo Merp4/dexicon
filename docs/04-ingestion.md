@@ -224,6 +224,15 @@ carries executable configuration:
   that stays inside is followed rather than merely allowed, because `rev-parse
   --show-toplevel` answers with the physical directory, and a path that kept the link's
   spelling would be compared against the target's and reported as not a repository.
+- **How a diff is presented is pinned.** A document is settled by its sha and the
+  source's settings, so a repository that changes its own config must not change the text
+  of a commit already indexed — the pre-read skip would hold a document git no longer
+  produces, and that is the path that avoids looking. Measured with `core.quotePath`,
+  which turns `漢.txt` into `"\346\274\242.txt"` in the stat. Nine keys are pinned to
+  git's own defaults, so a repository that has not set them sees no change;
+  `core.quotePath=false` is the exception and is an improvement. `diff.orderFile` is a
+  known gap: it reorders the files within a diff, `-c diff.orderFile=` is an error, and
+  there is no value meaning "none".
 - **Every call passes `-c log.showSignature=false`.** Verifying a signature means running
   a program the repository names, and `log.showSignature` and `gpg.program` are both
   settable in the repository being read. Measured: with the two set, a fake gpg left its

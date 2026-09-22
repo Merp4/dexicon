@@ -220,6 +220,36 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
+    /// A repository cannot change what its own commits say by changing its config.
+    ///
+    /// The fingerprint settles a document from the sha and the source's settings, so
+    /// anything else that alters the text makes the pre-read skip hold a document git
+    /// would no longer produce — and the skip is the path that avoids looking, so
+    /// nothing notices. `core.quotePath` is the one measured here because it is the one
+    /// most likely to be set for real, and the difference is visible at a glance.
+    /// </summary>
+    [Fact]
+    public async Task RepositoryConfigDoesNotChangeWhatACommitSays()
+    {
+        var name = "漢.txt";
+        File.WriteAllText(Path.Combine(_repo, name), "one\n");
+        Git("add", "--all");
+        Git("commit", "-m", "a path outside ASCII");
+
+        Git("config", "core.quotePath", "true");
+        Git("config", "diff.noprefix", "true");
+        Git("config", "diff.context", "7");
+
+        var commits = await EnumerateAsync();
+        var read = await ReadAsync(new GitHistoryOptions { IncludeDiff = true }, commits);
+        var document = read[commits[0].Sha];
+
+        document.ShouldContain(name, Case.Sensitive);
+        document.ShouldNotContain("346", Case.Sensitive);   // the octal escape quotePath produces
+        document.ShouldContain($"diff --git a/{name} b/{name}", Case.Sensitive);
+    }
+
+    /// <summary>
     /// Signature verification is a second way a repository's own config runs a program.
     ///
     /// `log.showSignature=true` plus `gpg.program=<anything>`, both settable in the
