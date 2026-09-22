@@ -2280,12 +2280,22 @@ function FullReindexModal({
   // `corpus.fileCount` is the DEFAULT set's, by design, because that is what an
   // unqualified search reaches, and a file indexed in two sets is one file. So the total
   // here is chunks, and files are named per set, where the number means something.
+  //
+  // It is what the catalogue holds NOW, not a plan. A pending row has no chunks yet, a
+  // failed one keeps the count it last had, and a file that changed will produce a
+  // different number this time. The API has no planned figure to ask for, so the wording
+  // says what this is — "it holds N chunks today" — rather than promising the work.
   const sets = corpus.chunkSets;
   const chunks = sets.reduce((n, s) => n + s.chunkCount, 0);
 
   // Failures are per (set, file) too, so the same file can appear in both. Counted, not
   // called files, once there is more than one set to conflate.
   const failed = sets.reduce((n, s) => n + s.failedCount, 0);
+
+  // A git-history corpus counts commits and a mixed one counts documents. The rest of
+  // this screen already says so; a hardcoded "files" here would contradict the row above
+  // it.
+  const unit = unitFor(corpus.sources, failed);
 
   const run = async (full: boolean) => {
     setQueueing(true);
@@ -2303,7 +2313,7 @@ function FullReindexModal({
       <p className="mt-0 text-sm">
         Every file is read, chunked and embedded again, whether or not it changed — in{' '}
         {sets.length === 1 ? 'this corpus’s chunk set' : <>all {sets.length} of this corpus’s chunk sets</>}.
-        That is <strong>{chunks.toLocaleString()}</strong> chunks to embed, and embedding is
+        It holds <strong>{chunks.toLocaleString()}</strong> chunks today, and embedding is
         the slow part.
       </p>
 
@@ -2334,14 +2344,14 @@ function FullReindexModal({
       {failed > 0 && (
         <Notice tone="warn">
           {sets.length === 1 ? (
-            <>{failed.toLocaleString()} {failed === 1 ? 'file' : 'files'} failed last time.</>
+            <>{failed.toLocaleString()} {unit} failed last time.</>
           ) : (
-            // Per (set, file), so a file that failed in both sets is counted twice.
-            // Calling that "files" would overstate how much is wrong.
+            // Per (set, file), so one that failed in both sets is counted twice. Calling
+            // that a count of documents would overstate how much is wrong.
             <>{failed.toLocaleString()} failures across {sets.length} chunk sets, which can be
-              the same file more than once.</>
+              the same {unitFor(corpus.sources, 1)} more than once.</>
           )}{' '}
-          A full reindex retries them, and so does Refresh — a failed file has no fingerprint
+          A full reindex retries them, and so does Refresh — a failure has no fingerprint
           to skip on.
         </Notice>
       )}

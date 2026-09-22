@@ -1245,4 +1245,38 @@ describe('the full reindex', () => {
 
     expect(await screen.findByText(/8 files failed last time/)).toBeInTheDocument();
   });
+
+  it('fails commits on a history corpus, not files', async () => {
+    // `unitFor` is used for every other count on this screen. Hardcoding "files" here
+    // made the warning contradict the source row above it.
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [source({ id: 's2', kind: 'githistory' })],
+        chunkSets: [chunkSet({ failedCount: 3 })],
+      }),
+    );
+
+    render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
+
+    const text = (await screen.findByRole('dialog')).textContent?.replace(/\s+/g, ' ') ?? '';
+
+    expect(text).toContain('3 commits failed last time');
+    expect(text).not.toContain('3 files failed');
+  });
+
+  it('says the chunk figure is what is held now, not what the run will produce', async () => {
+    // There is no planned count to ask for: a pending row has no chunks yet, a failed one
+    // keeps its last, and a changed file will produce a different number. Announcing this
+    // as the work would let a corpus mid-sweep claim it has nothing to do.
+    getCorpus.mockResolvedValue(corpus({ chunkSets: [chunkSet({ chunkCount: 131 })] }));
+
+    render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
+
+    const text = (await screen.findByRole('dialog')).textContent?.replace(/\s+/g, ' ') ?? '';
+
+    expect(text).toContain('holds 131 chunks today');
+    expect(text).not.toContain('chunks to embed');
+  });
 });
