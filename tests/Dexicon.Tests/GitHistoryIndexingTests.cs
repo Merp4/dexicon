@@ -220,6 +220,42 @@ public sealed class GitHistoryIndexingTests
     /// `git log` this feature already runs.
     /// </summary>
     [Fact]
+    public async Task ASourceWhosePathIsRefusedDoesNotLoseTheSweep()
+    {
+        await using var harness = await IndexingHarness.StartAsync("repo");
+        await harness.SeedCorpusAsync(SourceKind.GitHistory);
+
+        // A real repository, OUTSIDE the workspace, with the source's root linked to it.
+        // A path is resolved on every sweep, so this needs nobody to edit anything: a
+        // link target that moves outside the root turns a source that has swept for
+        // months into a refusal. Uncaught, that reached the worker pool and lost the
+        // whole corpus's sweep, including sources that were fine — and leaving an
+        // inventory it could not refresh alone is the one thing this pass promises.
+        var outside = Path.Combine(Path.GetTempPath(), $"outside-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outside);
+        Init(outside);
+        Commit(outside, "a.txt", "one\n", "the first change");
+
+        Directory.Delete(harness.SourceDirectory);   // the harness made it, and it is empty
+        Directory.CreateSymbolicLink(harness.SourceDirectory, outside);
+
+        try
+        {
+            var result = await harness.SweepAsync();
+
+            result.Outcome.ShouldBe(SweepOutcome.Swept, "the sweep finished rather than throwing");
+            result.Swept.ShouldBe(0);
+        }
+        finally
+        {
+            Directory.Delete(harness.SourceDirectory);
+            foreach (var f in Directory.EnumerateFiles(outside, "*", SearchOption.AllDirectories))
+                File.SetAttributes(f, FileAttributes.Normal);
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task ASweepRecordsTheCommitsBeforeAnyAreRead()
     {
         await using var harness = await IndexingHarness.StartAsync("repo");

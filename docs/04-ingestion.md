@@ -224,6 +224,12 @@ carries executable configuration:
   that stays inside is followed rather than merely allowed, because `rev-parse
   --show-toplevel` answers with the physical directory, and a path that kept the link's
   spelling would be compared against the target's and reported as not a repository.
+- **Every call passes `--no-replace-objects`.** A `git replace` mapping is honoured by
+  every read by default, so the same sha yields different text and the pre-read skip
+  keeps a document nobody would recognise. Measured: `git log -1 --format=%s <sha>` gives
+  the replacement and the same call with the flag gives the original. Disabled rather
+  than folded into the fingerprint, because indexing the object the sha names is what
+  makes the sha an identity at all.
 - **The inventory carries a sha and a date and nothing else.** The subject was in it and
   nothing read it, and it was the one field there whose size a caller controls, on the
   one call with no ceiling — there is no commit count to size a ceiling from before the

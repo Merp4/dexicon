@@ -196,6 +196,36 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
+    /// A sha settles the content, which is the assumption the whole cheap refresh rests
+    /// on, and `git replace` makes it false.
+    ///
+    /// A replacement is honoured by every read by default, so the same sha yields
+    /// different text and the pre-read skip keeps a document nobody would recognise.
+    /// Indexing the object the sha names is what makes the sha an identity at all.
+    /// </summary>
+    [Fact]
+    public async Task AReplaceRefDoesNotChangeWhatAShaSays()
+    {
+        Commit("a.txt", "one", "ORIGINAL MESSAGE");
+        var original = Head();
+
+        Git("checkout", "-q", "--detach", original);
+        File.WriteAllText(Path.Combine(_repo, "a.txt"), "one");
+        Git("add", "a.txt");
+        Git("commit", "--amend", "-m", "REPLACEMENT MESSAGE");
+        var replacement = Head();
+
+        Git("replace", original, replacement);
+
+        var read = await ReadAsync(
+            new GitHistoryOptions(), [new GitCommit(original, DateTimeOffset.UtcNow)]);
+
+        var document = read.Values.ShouldHaveSingleItem();
+        document.ShouldContain("ORIGINAL MESSAGE");
+        document.ShouldNotContain("REPLACEMENT MESSAGE");
+    }
+
+    /// <summary>
     /// A repository's own settings do not get to run a command.
     ///
     /// A <c>diff=&lt;driver&gt;</c> attribute and a <c>diff.&lt;driver&gt;.textconv</c> in

@@ -817,6 +817,19 @@ public static class GitHistory
         info.ArgumentList.Insert(0, "safe.directory=" + repo.FullPath);
         info.ArgumentList.Insert(0, "-c");
 
+        // --no-replace-objects, because the fingerprint says a sha settles the content
+        // and a replace ref makes that false. `git replace <old> <new>` is honoured by
+        // every read by default, so the same sha yields different text and the pre-read
+        // skip keeps a document nobody would recognise. Measured:
+        //
+        //     $ git log -1 --format=%s <sha>                        REPLACEMENT MESSAGE
+        //     $ git --no-replace-objects log -1 --format=%s <sha>   ORIGINAL MESSAGE
+        //
+        // Disabled rather than folded into the fingerprint: a replacement is a local
+        // view of history, and indexing the object the sha names is what makes the sha
+        // an identity at all.
+        info.ArgumentList.Insert(0, "--no-replace-objects");
+
         // A repository someone else configured is not ours to trust with hooks, aliases
         // or a pager. --no-pager keeps the call to what was asked.
         //

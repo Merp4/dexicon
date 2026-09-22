@@ -108,20 +108,41 @@ public sealed class CorpusSweeper(
         {
             ct.ThrowIfCancellationRequested();
 
-            var root = WorkspaceDiscovery.Resolve(_indexing.WorkspaceRoot, source.RootPath);
-            if (!Directory.Exists(root))
+            string root;
+            IReadOnlyList<WorkspaceWalker.Candidate> owned;
+
+            try
             {
-                // Not an error and not destructive: the inventory a previous sweep wrote
-                // stays, because a mount being away is an operational condition rather
-                // than a statement that the files are gone.
-                log.LogWarning("Source {Source} is not available; leaving its inventory alone",
-                    source.RootPath);
+                root = WorkspaceDiscovery.Resolve(_indexing.WorkspaceRoot, source.RootPath);
+                if (!Directory.Exists(root))
+                {
+                    // Not an error and not destructive: the inventory a previous sweep
+                    // wrote stays, because a mount being away is an operational condition
+                    // rather than a statement that the files are gone.
+                    log.LogWarning("Source {Source} is not available; leaving its inventory alone",
+                        source.RootPath);
+                    continue;
+                }
+
+                owned = source.Kind == SourceKind.GitHistory
+                    ? await CommitsAsync(corpus, source, root, ct)
+                    : WorkspaceDiscovery.Walk(corpus, source, root, _indexing).Owned;
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                // One source's path is refused; the others are still sweepable, and the
+                // sweep itself is still worth finishing. Uncaught this reached the worker
+                // pool and lost the whole corpus's sweep, including sources that were
+                // perfectly fine, and the one thing this pass promises is that it leaves
+                // an inventory it could not refresh alone.
+                //
+                // Reachable without anyone editing a source: a path is resolved on every
+                // sweep, so a link target that moves outside the root turns a source that
+                // has swept for months into a refusal.
+                log.LogWarning("Source {Source} was refused: {Reason}; leaving its inventory alone",
+                    source.RootPath, ex.Message);
                 continue;
             }
-
-            var owned = source.Kind == SourceKind.GitHistory
-                ? await CommitsAsync(corpus, source, root, ct)
-                : WorkspaceDiscovery.Walk(corpus, source, root, _indexing).Owned;
 
             swept += owned.Count;
             added += await RecordAsync(corpus, source, owned, ct);
