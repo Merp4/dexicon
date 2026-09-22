@@ -90,6 +90,51 @@ public sealed class JobOrderingTests : IAsyncLifetime
         (await NewestFirst()).Select(j => j.Id).ShouldBe(["01BBBB", "01AAAA"]);
     }
 
+    /// <summary>
+    /// The `activity=true` listing, through the endpoint's own predicate rather than a
+    /// copy of it. A copy agrees until somebody edits one, and nobody edits the test.
+    /// </summary>
+    private Task<List<IndexJob>> DidSomething() =>
+        _db.Jobs.Where(Dexicon.Api.SystemEndpoints.DidSomething)
+            .OrderByDescending(j => j.QueuedUtc).ThenByDescending(j => j.Id).ToListAsync();
+
+    /// <summary>
+    /// A scheduled refresh over an unchanged tree succeeds having done nothing, one per
+    /// corpus per interval. Filtering those out in the CLIENT only filters what was
+    /// fetched: on a live instance 48 of the last 200 jobs did real work and not one of
+    /// them was in the most recent thirty, so a page of thirty was an hour of silence
+    /// over the top of everything worth reading.
+    /// </summary>
+    [Fact]
+    public async Task AQuietRefreshIsLeftOutAndEverythingElseIsKept()
+    {
+        var t0 = new DateTime(2026, 9, 22, 9, 0, 0, DateTimeKind.Utc);
+
+        Add("quiet", queued: t0, started: t0, finished: t0, state: JobState.Succeeded);
+        Add("indexed-something", queued: t0.AddMinutes(1), started: t0.AddMinutes(1),
+            state: JobState.Succeeded, filesDone: 8);
+        // Nothing indexed, but chunks were written: a re-chunk of unchanged files.
+        Add("wrote-chunks", queued: t0.AddMinutes(2), started: t0.AddMinutes(2),
+            state: JobState.Succeeded, chunksWritten: 51);
+        // The three that look quiet on their counters and are the whole point of looking.
+        Add("failed", queued: t0.AddMinutes(3), started: null, state: JobState.Failed,
+            error: "Interrupted");
+        Add("degraded", queued: t0.AddMinutes(4), started: t0.AddMinutes(4), state: JobState.Degraded,
+            error: "maxCommits is 0, which is not a usable limit.");
+        Add("running", queued: t0.AddMinutes(5), started: t0.AddMinutes(5), state: JobState.Running);
+        Add("queued", queued: t0.AddMinutes(6), started: null, state: JobState.Queued);
+
+        var kept = await DidSomething();
+
+        kept.Select(j => j.Id).ShouldBe(
+            ["queued", "running", "degraded", "failed", "wrote-chunks", "indexed-something"]);
+        kept.ShouldNotContain(j => j.Id == "quiet");
+
+        // And the unfiltered list still has all of them, so this is a view rather than a
+        // deletion: "Show routine refreshes" has to be able to get back to it.
+        (await NewestFirst()).Count.ShouldBe(7);
+    }
+
     [Fact]
     public async Task QueuedUtcIsReadBackAsUtc()
     {
@@ -100,7 +145,7 @@ public sealed class JobOrderingTests : IAsyncLifetime
     }
 
     private void Add(string id, DateTime queued, DateTime? started, JobState state,
-        DateTime? finished = null, string? error = null)
+        DateTime? finished = null, string? error = null, int filesDone = 0, int chunksWritten = 0)
     {
         _db.Jobs.Add(new IndexJob
         {
@@ -112,6 +157,8 @@ public sealed class JobOrderingTests : IAsyncLifetime
             StartedUtc = started,
             FinishedUtc = finished,
             Error = error,
+            FilesDone = filesDone,
+            ChunksWritten = chunksWritten,
         });
         _db.SaveChanges();
     }
