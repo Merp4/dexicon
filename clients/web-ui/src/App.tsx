@@ -1050,6 +1050,7 @@ export function CorpusDetail({
   const [filter, setFilter] = useState<string>('');
   const [nameFilter, setNameFilter] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmFullReindex, setConfirmFullReindex] = useState(false);
   const [removingSource, setRemovingSource] = useState<Corpus['sources'][number] | null>(null);
   const [addingSource, setAddingSource] = useState<{ path: string } | null>(null);
   const [viewing, setViewing] = useState<{ path: string; line?: number } | null>(null);
@@ -1154,7 +1155,9 @@ export function CorpusDetail({
         <Badge tone={stateTone(corpus.state)}>{corpus.state}</Badge>
         <span className="flex-1" />
         <Button onClick={async () => { try { await api.reindex(corpus.name); } catch (e) { onError(e); } }}><RefreshCw />Refresh</Button>
-        <Button onClick={async () => { try { await api.reindex(corpus.name, true); } catch (e) { onError(e); } }}><RotateCcw />Full reindex</Button>
+        {/* Asks first. Refresh is cheap and idempotent; this one re-embeds a corpus that
+            may have taken hours, and it sat one click away from it with nothing between. */}
+        <Button onClick={() => setConfirmFullReindex(true)}><RotateCcw />Full reindex</Button>
         <Button variant="danger" onClick={() => setConfirmDelete(true)}><Trash2 />Delete</Button>
       </div>
 
@@ -1459,6 +1462,14 @@ export function CorpusDetail({
           corpus={corpus}
           onClose={() => setConfirmDelete(false)}
           onDeleted={async () => { setConfirmDelete(false); await onRefresh(); onBack(); }}
+          onError={onError}
+        />
+      )}
+
+      {confirmFullReindex && (
+        <FullReindexModal
+          corpus={corpus}
+          onClose={() => setConfirmFullReindex(false)}
           onError={onError}
         />
       )}
@@ -2233,6 +2244,142 @@ function DeleteCorpusModal({ corpus, onClose, onDeleted, onError }: { corpus: Co
         >
           <Trash2 />
           Delete permanently
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * What a full reindex is about to do, before it does it.
+ *
+ * It sat one click from Refresh with nothing between them, and the two are not
+ * comparable: Refresh embeds what moved, this embeds everything. On the largest corpus
+ * here that is 177,536 chunks against a normal refresh's none.
+ *
+ * Nothing is lost by running it, so there is no name to type — this asks about cost, not
+ * about damage. What it does carry is the two routes people actually want when they reach
+ * for it, because neither is this button: a different model needs a new chunk set, and new
+ * or changed files need Refresh.
+ */
+function FullReindexModal({
+  corpus,
+  onClose,
+  onError,
+}: {
+  corpus: Corpus;
+  onClose: () => void;
+  onError: (e: unknown) => void;
+}) {
+  const [queueing, setQueueing] = useState(false);
+
+  // Every set, because the job names no chunk set and the indexer then runs each of them.
+  // A corpus cut two ways costs both, which is not visible anywhere else on this screen.
+  //
+  // Chunks sum honestly: a chunk belongs to exactly one set. Files do NOT —
+  // `corpus.fileCount` is the DEFAULT set's, by design, because that is what an
+  // unqualified search reaches, and a file indexed in two sets is one file. So the total
+  // here is chunks, and files are named per set, where the number means something.
+  //
+  // It is what the catalogue holds NOW, not a plan. A pending row has no chunks yet, a
+  // failed one keeps the count it last had, and a file that changed will produce a
+  // different number this time. The API has no planned figure to ask for, so the wording
+  // says what this is — "it holds N chunks today" — rather than promising the work.
+  const sets = corpus.chunkSets;
+  const chunks = sets.reduce((n, s) => n + s.chunkCount, 0);
+
+  // Failures are per (set, file) too, so the same file can appear in both. Counted, not
+  // called files, once there is more than one set to conflate.
+  const failed = sets.reduce((n, s) => n + s.failedCount, 0);
+
+  // A git-history corpus counts commits and a mixed one counts documents. The rest of
+  // this screen already says so; a hardcoded "files" here would contradict the row above
+  // it.
+  const unit = unitFor(corpus.sources, failed);
+
+  const run = async (full: boolean) => {
+    setQueueing(true);
+    try {
+      await api.reindex(corpus.name, full);
+      onClose();
+    } catch (e) {
+      onError(e);
+      setQueueing(false);
+    }
+  };
+
+  return (
+    <Modal title={`Full reindex of ${corpus.name}?`} onClose={onClose} width={560}>
+      <p className="mt-0 text-sm">
+        Every {unitFor(corpus.sources, 1)} is read again, whether or not it changed, and
+        re-embedded if it can be read and chunked — in{' '}
+        {sets.length === 1 ? 'this corpus’s chunk set' : <>all {sets.length} of this corpus’s chunk sets</>}.
+        It holds <strong>{chunks.toLocaleString()}</strong> chunks today, and embedding is
+        the slow part.
+      </p>
+
+      <p className="text-sm">
+        One that is excluded, oversize or empty is recorded without being embedded, as it
+        is on any pass.
+      </p>
+
+      <p className="text-sm">
+        The corpus is not cleared up front: vectors are replaced one{' '}
+        {unitFor(corpus.sources, 1)} at a time as the walk reaches it, so the rest stays
+        searchable throughout. The one in hand does not — its old vectors are deleted
+        before the new ones are written, so it is missing from search for that moment, and
+        stays missing until a later pass if its embedding fails or the job is interrupted.
+      </p>
+
+      {/* The settings it will apply. They are set per chunk set and nowhere near this
+          button, so a reindex was run to pick up a change without any way to see, here,
+          what the change was. */}
+      <div className="card p-3 grid gap-1.5 text-xs">
+        <div className="dim">It will use each set as it stands now:</div>
+        {sets.map((s) => (
+          <div key={s.id} className="flex flex-wrap items-baseline gap-2">
+            <span className="mono font-semibold">{corpus.name}:{s.name}</span>
+            {s.isDefault && <Badge tone="accent">default</Badge>}
+            <span className="mono dim">{s.embeddingModel}</span>
+            <span className="dim">
+              {s.chunkSize} / {s.chunkOverlap} overlap · {s.fileCount.toLocaleString()}{' '}
+              {unitFor(corpus.sources, s.fileCount)} · {s.chunkCount.toLocaleString()} chunks
+            </span>
+          </div>
+        ))}
+        <div className="dim">Change any of it under Chunk sets, which re-chunks on its own.</div>
+      </div>
+
+      {failed > 0 && (
+        <Notice tone="warn">
+          {sets.length === 1 ? (
+            <>{failed.toLocaleString()} {unit} failed last time.</>
+          ) : (
+            // Per (set, file), so one that failed in both sets is counted twice. Calling
+            // that a count of documents would overstate how much is wrong.
+            <>{failed.toLocaleString()} failures across {sets.length} chunk sets, which can be
+              the same {unitFor(corpus.sources, 1)} more than once.</>
+          )}{' '}
+          A full reindex retries them, and so does Refresh — a failure has no fingerprint
+          to skip on.
+        </Notice>
+      )}
+
+      <Notice tone="accent">
+        <strong>To move to another embedding model, this is not the button.</strong> A model
+        is a different vector space, so it needs a new chunk set built alongside this one and
+        promoted when it is complete. Add one under Chunk sets, below.
+      </Notice>
+
+      <div className="mt-4 flex flex-wrap justify-end gap-2">
+        <Button onClick={onClose}>Cancel</Button>
+        <Button disabled={queueing} onClick={() => void run(false)}>
+          <RefreshCw />
+          Refresh instead
+        </Button>
+        <Button variant="danger" disabled={queueing} onClick={() => void run(true)}>
+          {queueing ? <Spinner /> : <RotateCcw />}
+          Reindex everything
         </Button>
       </div>
     </Modal>
