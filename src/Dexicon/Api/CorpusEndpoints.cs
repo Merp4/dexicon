@@ -253,6 +253,17 @@ public static class CorpusEndpoints
                 return Results.Problem(title: "Invalid workspace path", detail: ex.Message, statusCode: 400);
             }
 
+            // Refused, not dropped. PATCH already answers this way for the same mistake
+            // on an existing source; creation took the settings, stored null, and said
+            // nothing, so a source created with `git` but without `gitHistory` indexed
+            // files under settings the caller believed were in force.
+            if (body.Git is not null && !body.GitHistory)
+                return Results.Problem(
+                    title: "Not a git-history source",
+                    detail: "History settings were sent for a source that indexes files. Set "
+                          + "gitHistory: true to index the repository's commits, or leave them out.",
+                    statusCode: 400);
+
             var source = new Source
             {
                 Id = Ulid.NewUlid().ToString(),

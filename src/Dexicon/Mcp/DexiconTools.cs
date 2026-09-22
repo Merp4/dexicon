@@ -214,7 +214,8 @@ public sealed class DexiconTools
             sb.Append("\n    (* is the default; name another with corpus:set)");
 
         if (s.LastIndexedUtc is { } indexed) sb.Append($"\n    last indexed: {indexed:u}");
-        if (s.FailedCount > 0) sb.Append($"\n    {s.FailedCount} file(s) failed; see the UI for why");
+        if (s.FailedCount > 0)
+            sb.Append($"\n    {s.FailedCount:N0} {UnitFor(s.Sources, s.FailedCount)} failed; see the UI for why");
         sb.Append('\n');
         return sb.ToString();
     }
@@ -405,7 +406,8 @@ public sealed class DexiconTools
                 if (job.State == JobState.Running && job.FilesTotal > 0)
                 {
                     var pct = 100.0 * (job.FilesDone + job.FilesSkipped + job.FilesFailed) / job.FilesTotal;
-                    sb.Append($" — {pct:F0}% ({job.FilesDone + job.FilesSkipped + job.FilesFailed:N0} / {job.FilesTotal:N0} files)");
+                    sb.Append($" — {pct:F0}% ({job.FilesDone + job.FilesSkipped + job.FilesFailed:N0}"
+                            + $" / {job.FilesTotal:N0} {UnitFor(summary.Sources, job.FilesTotal)})");
                 }
                 sb.Append('\n');
                 if (job.Error is { Length: > 0 }) sb.Append($"  error: {job.Error}\n");
