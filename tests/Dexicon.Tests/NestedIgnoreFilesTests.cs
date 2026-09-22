@@ -181,11 +181,76 @@ public sealed class NestedIgnoreFilesTests : IDisposable
         File.WriteAllText(Path.Combine(outside, "rules"), "secret.txt\n");
         File.CreateSymbolicLink(Path.Combine(_root, "sub", ".gitignore"), Path.Combine(outside, "rules"));
 
-        // The link itself is not asserted about: it has no length of its own, so it lands
-        // among the skipped as an empty file. What matters is that the patterns behind it
-        // were never applied.
-        try { Walk().ShouldBe(["sub/app.ts", "sub/secret.txt"]); }
+        try
+        {
+            // The patterns behind it were never applied, and the link is not indexed
+            // either — it is a file link out of the tree, which the walk now refuses.
+            //
+            // The first version of this asserted only the first half and explained the
+            // second as "the link has no length of its own, so it lands among the skipped
+            // as an empty file". That is true on Windows and false on Linux, where
+            // FileInfo.Length follows the link: CI returned `sub/.gitignore` carrying the
+            // host file's content, which is the defect rather than a detail of the test.
+            Walk().ShouldBe(["sub/app.ts", "sub/secret.txt"]);
+
+            WorkspaceWalker.Walk(_root, true, null, null, 1_000_000).SkippedFiles
+                .ShouldContain(s => s.RelativePath == "sub/.gitignore"
+                                 && s.Reason.Contains("outside the source root", StringComparison.Ordinal));
+        }
         finally { Directory.Delete(outside, recursive: true); }
+    }
+
+    [Fact]
+    public void AnOrdinaryFileThatLinksOutOfTheTreeIsNotIndexed()
+    {
+        // Nothing to do with ignore files: the walk checked links on directories and never
+        // on files, so a link inside the tree pointing at a host file was sized, sniffed
+        // with File.OpenRead and indexed, out of a read-only mount.
+        Write("sub/app.ts");
+
+        var outside = Path.Combine(Path.GetTempPath(), $"nested-outside-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outside);
+        File.WriteAllText(Path.Combine(outside, "host-secret.txt"), "not in the workspace");
+        File.CreateSymbolicLink(Path.Combine(_root, "sub", "notes.txt"),
+                                Path.Combine(outside, "host-secret.txt"));
+
+        try { Walk().ShouldBe(["sub/app.ts"]); }
+        finally { Directory.Delete(outside, recursive: true); }
+    }
+
+    [Fact]
+    public void ALinkThatStaysInsideTheTreeIsNotRefused()
+    {
+        // Refusing every link would drop content a repository legitimately lays out that
+        // way. Only the ones leaving the tree are the escape.
+        //
+        // What this asserts is the containment decision, not the indexing: whether a link
+        // that stays inside ends up indexed differs by platform — on Windows its own
+        // length is 0 and it is recorded as an empty file, on Linux the length follows
+        // the link — and that difference predates this check and is not what it is for.
+        Write("sub/app.ts");
+        Write("sub/real.txt", "content");
+        File.CreateSymbolicLink(Path.Combine(_root, "sub", "alias.txt"),
+                                Path.Combine(_root, "sub", "real.txt"));
+
+        WorkspaceWalker.Walk(_root, true, null, null, 1_000_000).SkippedFiles
+            .ShouldNotContain(s => s.Reason.Contains("outside the source root", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ANestedNegationWithNoSlashKeepsItsWholeSubtreeWalked()
+    {
+        // `!keep.txt` in sub/.gitignore matches sub/deep/keep.txt, so sub/deep cannot be
+        // pruned. Taking the pattern's own text as the deepest certain ancestor gave
+        // LiteralPrefix `sub/keep.txt`, which matches no directory at all: sub/deep was
+        // pruned and the file the negation exists to re-include was never reached.
+        Write(".gitignore", "deep/\n");
+        Write("sub/.gitignore", "!keep.txt\n");
+        Write("sub/deep/keep.txt");
+        Write("sub/deep/other.txt");
+
+        Walk().ShouldContain("sub/deep/keep.txt");
+        Walk().ShouldNotContain("sub/deep/other.txt");
     }
 
     [Fact]
@@ -203,6 +268,15 @@ public sealed class NestedIgnoreFilesTests : IDisposable
         rules.MayReincludeBeneath("sub/deep").ShouldBeTrue();
         rules.MayReincludeBeneath("other").ShouldBeFalse();
         rules.MayReincludeBeneath("node_modules").ShouldBeFalse();
+
+        // A literal with no slash is the same case, and is the one that was wrong: it too
+        // applies at every depth below `sub`, so the whole subtree has to stay walkable.
+        var literal = new IgnoreRuleSet();
+        literal.AddPatterns(["!keep.txt"], "nested", "sub");
+
+        literal.MayReincludeBeneath("sub").ShouldBeTrue();
+        literal.MayReincludeBeneath("sub/deep").ShouldBeTrue();
+        literal.MayReincludeBeneath("other").ShouldBeFalse();
     }
 
     [Fact]

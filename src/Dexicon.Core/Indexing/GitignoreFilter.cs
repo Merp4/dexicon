@@ -76,14 +76,19 @@ public sealed partial class IgnoreRuleSet
 
             var anchored = line.StartsWith('/');
             var bare = anchored ? line[1..] : line;
-            var own = LiteralPrefixOf(bare);
+
+            // No anchor and no interior slash: it applies at every level beneath wherever
+            // it was written. The deepest path it is CERTAIN to sit under is therefore that
+            // directory and not the pattern's own text — `!keep.txt` in `sub/.gitignore`
+            // matches `sub/deep/keep.txt`, so a LiteralPrefix of `sub/keep.txt` would let
+            // `sub/deep` be pruned and the file it re-includes never be reached.
+            var anyDepth = !anchored && !bare.Contains('/', StringComparison.Ordinal);
 
             _rules.Add(new Rule(
                 new Regex(ToRegex(line, directoryPrefix), RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(250)),
                 negated, directoryOnly, source,
-                LiteralPrefix: Join(directoryPrefix, own),
-                MatchesAnyDepth: directoryPrefix.Length == 0
-                                 && !anchored && !bare.Contains('/', StringComparison.Ordinal)));
+                LiteralPrefix: anyDepth ? directoryPrefix : Join(directoryPrefix, LiteralPrefixOf(bare)),
+                MatchesAnyDepth: anyDepth && directoryPrefix.Length == 0));
         }
     }
 
@@ -324,6 +329,21 @@ public sealed class WorkspaceWalker
             FileInfo info;
             try { info = new FileInfo(full); }
             catch (Exception ex) { skipped.Add(new Skipped(relative, $"unreadable: {ex.Message}", 0)); continue; }
+
+            // The same escape the directory branch of the walk refuses, on the kind of
+            // entry it never looked at. `FileInfo.Length` and LooksBinary's
+            // `File.OpenRead` both follow a link, so a link inside the tree pointing at a
+            // host file was sized, sniffed and indexed, out of a read-only mount.
+            //
+            // Recorded rather than dropped: a file the operator can see in their tree
+            // that appears in no count is the absence nothing can read back. Here, beside
+            // the FileInfo that already exists, because doing it in the enumerator costs
+            // a second stat on every file in the walk.
+            if (info.LinkTarget is not null && !StaysInside(info, root))
+            {
+                skipped.Add(new Skipped(relative, "a link to a file outside the source root", 0));
+                continue;
+            }
 
             if (info.Length > maxFileBytes && !Extraction.ExtractorRegistry.IsDocumentFormat(relative))
             {
