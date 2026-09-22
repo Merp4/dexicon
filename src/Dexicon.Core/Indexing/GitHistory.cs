@@ -776,6 +776,13 @@ public static class GitHistory
 
         // A repository someone else configured is not ours to trust with hooks, aliases
         // or a pager. --no-pager keeps the call to what was asked.
+        //
+        // Aliases need nothing here while the subcommands are `log` and `rev-parse`:
+        // git ignores an alias that shadows a builtin. Measured on a repository with
+        // `alias.log = !echo PWNED` and `alias.lg = !echo PWNED`, where `git log` ran
+        // the builtin and `git lg` printed PWNED — the second is the control, without
+        // which the first proves only that the probe missed. A NON-builtin subcommand
+        // added here later would be expandable, and would need the alias disabled.
         info.ArgumentList.Insert(0, "--no-pager");
         info.Environment["GIT_TERMINAL_PROMPT"] = "0";
         info.Environment["GIT_OPTIONAL_LOCKS"] = "0";
