@@ -97,6 +97,8 @@ public static class WorkspaceDiscovery
     /// hands back <c>workspace/alias/src</c>, which passes a test on the text. Measured,
     /// the walk then returned a file from outside the workspace.
     ///
+    /// <paramref name="root"/> is expected physical, as the walk's is.
+    ///
     /// A bool rather than an exception, because the two callers want different things from
     /// the same answer. The walk is enumerating and skips what it will not follow; the
     /// resolver was handed one path by an operator and owes them a refusal.
@@ -116,7 +118,11 @@ public static class WorkspaceDiscovery
             // never carries one.
             if (HasDotDot(path)) return false;
 
-            var full = Path.GetFullPath(path);
+            // Resolved, as the root is. On Linux a target keeps its unresolved parents, so
+            // under `entry -> real` a link to `entry/shared` read as outside `real` and its
+            // content was dropped without a skip row. After the `..` guard, because
+            // Canonical collapses `..` lexically.
+            var full = Canonical(path);
             if (!CorpusIndexer.IsInside(full, root)) return false;
 
             // Absent is harmless: a component that is not there leads nowhere to read.

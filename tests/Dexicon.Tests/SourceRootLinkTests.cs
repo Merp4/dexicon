@@ -433,6 +433,29 @@ public sealed class SourceRootLinkTests : IDisposable
     }
 
     [Fact]
+    public void AnInwardLinkUnderALinkedRootIsStillFollowed()
+    {
+        // The walk tests containment against the physical root, `real`, but on Linux this
+        // link's target comes back as `entry/shared`. Unresolved, it reads as outside.
+        //
+        // `shared` is ignored so the link is the only route to the file. Reachable under
+        // both names, it arrives once either way (refused, or followed and deduped), and
+        // the test would pass without the fix.
+        Directory.CreateDirectory(Path.Combine(_workspace, "real", "shared"));
+        File.WriteAllText(Path.Combine(_workspace, "real", "shared", "app.cs"), "class A {}");
+        File.WriteAllText(Path.Combine(_workspace, "real", ".gitignore"), "shared/\n");
+        Directory.CreateSymbolicLink(
+            Path.Combine(_workspace, "real", "link"),
+            Path.Combine(_workspace, "entry", "shared"));
+        Directory.CreateSymbolicLink(
+            Path.Combine(_workspace, "entry"), Path.Combine(_workspace, "real"));
+
+        WorkspaceWalker.Walk(Path.Combine(_workspace, "entry"), true, null, null, 1_000_000)
+            .Files.Select(f => f.RelativePath)
+            .ShouldContain("link/app.cs");
+    }
+
+    [Fact]
     public void CoverageDoesNotWalkThroughOneEither()
     {
         // The one path that reaches a directory NOBODY created a source on: coverage
