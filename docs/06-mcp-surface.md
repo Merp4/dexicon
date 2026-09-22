@@ -97,6 +97,18 @@ The one that matters.
 }
 ```
 
+`corpus` is the only array on the surface — `source`, `language`, `symbol` and
+`path_prefix` are all scalars — so `"corpus": "docs"` is the shape a client reaches for
+when it wants one. It is accepted, and read as a list of one. The schema above still
+describes an array, which is the contract worth advertising; accepting a bare name is
+leniency in binding, not a second type.
+
+Before that, a bare name was refused while the arguments were being bound, so the tool
+body never ran and the caller got `An error occurred invoking 'search_index'.` with
+nothing to act on. Reported from a live instance as "`search_index` errors whenever a
+`corpus` argument is passed", reproduced four times across two corpora, and read —
+reasonably — as scoped search being broken.
+
 Each result is a window centred on the matching passage rather than the whole chunk, and
 one result per document by default; both are described in [05](05-search.md), along with
 what they were measured to cost and why the window is centred rather than cut from the head.
@@ -240,6 +252,18 @@ on, not a stack trace to display.
 | Embeddings down, hybrid asked | Results returned with `degraded: true` — not an error. |
 | Dimension mismatch | `Corpus 'api-repo' was indexed with nomic-embed-text (768 dims); the configured model produces 1024. Rebuild the corpus or restore the original model.` |
 | Indexing in progress, no results | Results plus a note: `corpus 'api-repo' is 12% indexed; results are incomplete.` |
+| Argument of the wrong shape | `corpus takes a name or a list of names, not a number.` |
+
+Binding runs before the tool body, so nothing raised there goes through the tool's own
+error handling. The SDK renders an `McpException` as `An error occurred invoking
+'<tool>': <message>` and turns every other exception into that sentence with the message
+empty, which is what the caller saw. Measured against a running instance:
+
+| Sent as `corpus` | Caller sees |
+|---|---|
+| `"docs"` | the same result as `["docs"]` |
+| `7` | `An error occurred invoking 'search_index': corpus takes a name or a list of names, not a number.` |
+| `[{"name":"docs"}]` | `An error occurred invoking 'search_index': corpus takes a name or a list of names; this list holds an object.` |
 
 That last one is the difference between an agent concluding "this codebase has no auth
 code" and an agent waiting thirty seconds.
