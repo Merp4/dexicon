@@ -1265,6 +1265,22 @@ describe('the full reindex', () => {
     expect(text).not.toContain('3 files failed');
   });
 
+  it('does not claim the item being reindexed stays searchable', async () => {
+    // The indexer deletes a file's vectors and then writes the replacement, so the one in
+    // hand IS missing for that moment — and stays missing if its embedding fails or the
+    // job is interrupted. "Search keeps working" was true of the corpus and false of the
+    // item, which is the half someone would notice.
+    render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
+
+    const text = (await screen.findByRole('dialog')).textContent?.replace(/\s+/g, ' ') ?? '';
+
+    expect(text).toContain('not cleared up front');
+    expect(text).toContain('deleted before the new ones are written');
+    expect(text).toContain('stays missing until a later pass');
+    expect(text).not.toContain('Search keeps working while it runs');
+  });
+
   it('does not promise to embed what it will only record', async () => {
     // A full pass reads everything and embeds what it can chunk. An excluded, oversize or
     // empty item gets a row and no vectors, and a failure gets neither — so "every file is

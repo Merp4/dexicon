@@ -2320,9 +2320,15 @@ function FullReindexModal({
 
       <p className="text-sm">
         One that is excluded, oversize or empty is recorded without being embedded, as it
-        is on any pass. Search keeps working while it runs: vectors are replaced one{' '}
-        {unitFor(corpus.sources, 1)} at a time as the walk reaches it, rather than the
-        corpus being cleared first.
+        is on any pass.
+      </p>
+
+      <p className="text-sm">
+        The corpus is not cleared up front: vectors are replaced one{' '}
+        {unitFor(corpus.sources, 1)} at a time as the walk reaches it, so the rest stays
+        searchable throughout. The one in hand does not — its old vectors are deleted
+        before the new ones are written, so it is missing from search for that moment, and
+        stays missing until a later pass if its embedding fails or the job is interrupted.
       </p>
 
       {/* The settings it will apply. They are set per chunk set and nowhere near this
