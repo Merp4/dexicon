@@ -118,6 +118,16 @@ public sealed class GitHistoryTests : IDisposable
             () => EnumerateAsync(new GitHistoryOptions { MaxDiffBytes = int.MaxValue }));
 
         (await EnumerateAsync()).Count.ShouldBe(1, "the default cap is a usable one");
+
+        // The boundary, because the interesting value is the largest one that works
+        // rather than the silly ones above. A cap equal to the read ceiling is refused:
+        // the read has to fit the stat as well, so such a cap would kill its own patch
+        // and then report the diff as over a limit it was under.
+        var largest = (int)GitHistory.MaxDiffCap;
+
+        await Should.ThrowAsync<GitHistoryException>(
+            () => EnumerateAsync(new GitHistoryOptions { MaxDiffBytes = largest + 1 }));
+        (await EnumerateAsync(new GitHistoryOptions { MaxDiffBytes = largest })).Count.ShouldBe(1);
     }
 
     /// <summary>

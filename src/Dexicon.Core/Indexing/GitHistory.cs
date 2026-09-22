@@ -296,7 +296,18 @@ public static class GitHistory
     /// absolute ceiling it is a cap that can never be the binding one, which is a
     /// setting that silently does nothing.
     /// </summary>
-    internal static bool IsAcceptableDiffCap(int value) => value >= 0 && value <= AbsoluteCeiling;
+    /// <summary>
+    /// The largest cap a read can actually honour.
+    ///
+    /// The absolute ceiling less the stat's allowance, because a commit's read has to fit
+    /// the patch AND the stat and headers that come with it. Accepting the ceiling itself
+    /// made a cap that refutes itself: at 64 MiB, a 63 MiB patch is inside the cap, its
+    /// read is 64 MiB plus the stat, the call is killed, the retry drops the patch, and
+    /// the document says the diff was over a limit it was under.
+    /// </summary>
+    internal static long MaxDiffCap => AbsoluteCeiling - StatAllowance;
+
+    internal static bool IsAcceptableDiffCap(int value) => value >= 0 && value <= MaxDiffCap;
 
     /// <summary>
     /// A commit limit this will pass to git.
@@ -340,7 +351,8 @@ public static class GitHistory
         if (!IsAcceptableDiffCap(options.MaxDiffBytes))
             throw new GitHistoryException(
                 $"maxDiffBytes is {options.MaxDiffBytes:N0}, which is not a usable cap. "
-                + $"It must be between 0 and {AbsoluteCeiling:N0}.");
+                + $"It must be between 0 and {MaxDiffCap:N0}, which is the {AbsoluteCeiling:N0} "
+                + $"byte read ceiling less the {StatAllowance:N0} bytes a commit's stat may take.");
 
         if (!IsAcceptableCommitLimit(options.MaxCommits))
             throw new GitHistoryException(
