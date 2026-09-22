@@ -1,8 +1,8 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JobsView } from './App';
-import type { Corpus, Job } from './api';
+import type { Corpus, Job, Progress } from './api';
 
 /**
  * The jobs list, and the runs that did nothing.
@@ -40,6 +40,26 @@ function job(over: Partial<Job> = {}): Job {
     error: null,
     ...over,
   } as unknown as Job;
+}
+
+/**
+ * One `/api/events` frame, in the shape the server actually sends — captured from a live
+ * run: `jobId` rather than `id`, a `phase`, and no `state` anywhere.
+ */
+function progress(over: Partial<Progress> = {}): Progress {
+  return {
+    jobId: 'j-live',
+    corpusId: 'c1',
+    phase: 'extract',
+    filesTotal: 174,
+    filesDone: 12,
+    filesSkipped: 0,
+    filesFailed: 0,
+    chunksWritten: 40,
+    currentFile: null,
+    error: null,
+    ...over,
+  };
 }
 
 const props = { corpora, live: {}, onError: vi.fn() };
@@ -133,6 +153,35 @@ describe('what it asks the server for', () => {
     await vi.waitFor(() => expect(listJobs).toHaveBeenLastCalledWith(200, undefined));
   });
 
+  it('ignores a reply from the mode it has already left', async () => {
+    // Flipping the toggle leaves the previous request in flight. If it lands second it
+    // paints the list nobody asked for: the routine runs appear, vanish when the
+    // activity-only reply arrives behind them, and come back on the next poll.
+    const routineRun = job();
+    const realRun = job({ filesDone: 8, chunksWritten: 51 });
+
+    let releaseSlowReply: (v: Job[]) => void = () => {};
+    listJobs
+      .mockImplementationOnce(() => new Promise<Job[]>((res) => { releaseSlowReply = res; }))
+      .mockResolvedValue([routineRun]);
+
+    render(<JobsView {...props} />);
+    await userEvent.click(screen.getByLabelText(/Show scheduled refreshes/));
+    await screen.findByText('0 indexed');
+
+    // The activity-only reply from before the click, arriving late. Let it settle before
+    // asserting: polling for "still absent" is satisfied by the first check, which is
+    // before the reply has been applied, and passes whether or not it is ignored.
+    await act(async () => {
+      releaseSlowReply([realRun]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText('8 indexed')).toBeNull();
+    expect(screen.getByText('0 indexed')).toBeInTheDocument();
+  });
+
   it('says a filter is on rather than claiming there is nothing', async () => {
     // "No jobs yet" under a hidden filter is the view lying about an empty database.
     listJobs.mockResolvedValue([]);
@@ -169,13 +218,29 @@ describe('how often it asks', () => {
   it('polls fast while a run is live, without waiting for a slow tick to notice', async () => {
     // The progress stream fills `live` the moment a run starts, so the fast interval is
     // armed on that tick rather than up to thirty seconds later.
+    //
+    // A REAL event, captured off the wire: it carries `jobId` and a `phase` and it has
+    // no `state` at all. The first version of this test invented a `state` field, so it
+    // passed while the code it was guarding could never have fired in production.
     listJobs.mockResolvedValue([job({ filesDone: 8, chunksWritten: 51 })]);
 
-    const live = { c1: job({ state: 'running' }) } as unknown as typeof props.live;
-    render(<JobsView {...props} live={live} />);
+    render(<JobsView {...props} live={{ c1: progress({ phase: 'extract' }) }} />);
     await vi.waitFor(() => expect(listJobs).toHaveBeenCalledTimes(1));
 
     await vi.advanceTimersByTimeAsync(4_500);
     expect(listJobs).toHaveBeenCalledTimes(2);
+  });
+
+  it('goes back to idle once the last event says the run finished', async () => {
+    // The final event of a run carries the STATE NAME in `phase`, because the server
+    // nulls Phase before it and sends `job.Phase ?? job.State.ToString()`. Waiting for
+    // phase to go absent waits forever.
+    listJobs.mockResolvedValue([job({ filesDone: 8, chunksWritten: 51 })]);
+
+    render(<JobsView {...props} live={{ c1: progress({ phase: 'Succeeded' }) }} />);
+    await vi.waitFor(() => expect(listJobs).toHaveBeenCalledTimes(1));
+
+    await vi.advanceTimersByTimeAsync(4_500);
+    expect(listJobs).toHaveBeenCalledTimes(1);
   });
 });

@@ -3,6 +3,8 @@ import {
   api,
   ApiError,
   getToken,
+  isRunning,
+  progressOf,
   setToken,
   subscribeToProgress,
   type Corpus,
@@ -12,6 +14,7 @@ import {
   type EmbeddingModelInfo,
   type IndexedFileText,
   type Job,
+  type Progress,
   type SearchResult,
   type TokenSummary,
 } from './api';
@@ -130,7 +133,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const [view, setView] = useState<View>(initial.view);
   const [health, setHealth] = useState<Health | null>(null);
   const [corpora, setCorpora] = useState<Corpus[]>([]);
-  const [live, setLive] = useState<Record<string, Job & { currentFile?: string }>>({});
+  const [live, setLive] = useState<Record<string, Progress>>({});
   const [connected, setConnected] = useState(true);
   const [healthStale, setHealthStale] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -196,10 +199,13 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
         if (cancelled) return;
         const running = jobs.filter((j) => j.state === 'running' || j.state === 'queued');
         if (running.length === 0) return;
-        // Only where the stream has said nothing yet: an event is fresher than a poll.
+        // Mapped into the shape the stream sends, so `live` holds one kind of thing.
+        // Seeded as a JobSummary and updated as an IndexProgress, every reader had to
+        // guess which it had, and the guesses were wrong in both directions.
         setLive((prev) => {
           const next = { ...prev };
-          for (const j of running) next[j.corpusId] ??= j;
+          // Only where the stream has said nothing yet: an event is fresher than a poll.
+          for (const j of running) next[j.corpusId] ??= progressOf(j);
           return next;
         });
       } catch {
@@ -214,8 +220,10 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
       subscribeToProgress(
         (p) => {
           setLive((prev) => ({ ...prev, [p.corpusId]: p }));
-          // A job reaching a terminal state changes the corpus counts too.
-          if (p.state && !['running', 'queued'].includes(String(p.phase ?? ''))) void refreshCorpora();
+          // A job reaching a terminal state changes the corpus counts too. This asked
+          // for `p.state`, which the event has never carried, so the guard was false on
+          // every event and the counts only moved on the next poll.
+          if (!isRunning(p)) void refreshCorpora();
         },
         () => setConnected(false),
         () => setConnected(true),
@@ -791,7 +799,7 @@ export function CorporaView({
   onError,
 }: {
   corpora: Corpus[];
-  live: Record<string, Job & { currentFile?: string }>;
+  live: Record<string, Progress>;
   onRefresh: () => Promise<void>;
   onOpen: (name: string) => void;
   onError: (e: unknown) => void;
@@ -815,7 +823,7 @@ export function CorporaView({
         <div className="grid gap-3">
           {corpora.map((c) => {
             const job = live[c.id];
-            const running = job && (job.state === 'running' || job.phase);
+            const running = isRunning(job);
             return (
               <CardButton key={c.id} onClick={() => onOpen(c.name)}>
                 <div className="flex gap-2 items-center flex-wrap">
@@ -865,13 +873,13 @@ export function CorporaView({
  * numbers about the same work disagreeing on what the work is.
  */
 function ProgressBar({ job, sources }: {
-  job: Job & { currentFile?: string };
+  job: Progress;
   sources?: Corpus['sources'];
 }) {
   const processed = job.filesDone + job.filesSkipped + job.filesFailed;
   const pct = job.filesTotal > 0 ? Math.min(100, (processed / job.filesTotal) * 100) : 0;
   const caption =
-    `${job.phase ?? job.state} · ${processed.toLocaleString()}/${job.filesTotal.toLocaleString()}` +
+    `${job.phase} · ${processed.toLocaleString()}/${job.filesTotal.toLocaleString()}` +
     ` ${unitFor(sources, job.filesTotal)} · ${job.chunksWritten.toLocaleString()} chunks`;
 
   return (
@@ -1023,7 +1031,7 @@ export function CorpusDetail({
   onError,
 }: {
   name: string;
-  live: Record<string, Job & { currentFile?: string }>;
+  live: Record<string, Progress>;
   onBack: () => void;
   onRefresh: () => Promise<void>;
   onError: (e: unknown) => void;
@@ -1107,9 +1115,12 @@ export function CorpusDetail({
   // Both, because they answer at different speeds. The live job knows within a second of
   // a refresh starting; `corpus.state` survives a page load, when nothing is streaming
   // yet and the counts on screen are still a partial tally from a run already underway.
-  const indexing = job?.state === 'running' || job?.state === 'queued' || corpus?.state === 'indexing';
+  const indexing = isRunning(job) || corpus?.state === 'indexing';
+  // Reload when the run ENDS. This waited for `phase` to go absent, and it never does:
+  // the last event of a run carries the state name in that field, so the corpus detail
+  // sat on the counts from before the run for as long as the page was open.
   useEffect(() => {
-    if (job && !job.phase) void load();
+    if (job && !isRunning(job)) void load();
   }, [job, load]);
 
   if (!corpus) return <Empty title="Loading…" />;
@@ -2251,7 +2262,7 @@ function groupRuns(jobs: Job[]): ({ kind: 'job'; job: Job } | { kind: 'quiet'; j
   return out.map((e) => (e.kind === 'quiet' && e.jobs.length === 1 ? { kind: 'job' as const, job: e.jobs[0] } : e));
 }
 
-export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: Record<string, Job & { currentFile?: string }>; onError: (e: unknown) => void }) {
+export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: Record<string, Progress>; onError: (e: unknown) => void }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const names = useMemo(() => Object.fromEntries(corpora.map((c) => [c.id, c.name])), [corpora]);
   // The job's own corpus, so its caption counts what that corpus counts.
@@ -2274,16 +2285,23 @@ export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: 
   // and the effect re-arms at the fast interval on the same tick.
   const busy =
     jobs.some((j) => j.state === 'running' || j.state === 'queued')
-    || Object.values(live).some((j) => j.state === 'running' || j.state === 'queued');
+    || Object.values(live).some(isRunning);
 
   useEffect(() => {
+    // Ignored after cleanup, results AND errors. This effect re-runs whenever the toggle
+    // moves or `busy` changes, and the request it started is still in flight: without
+    // this, an older reply lands after the newer one and paints the list it was NOT
+    // asked for — tick the box and the routine runs appear, then vanish when the
+    // activity-only reply arrives behind them, then come back on the next poll.
+    let cancelled = false;
+
     const load = () => api.listJobs(routine ? 200 : 30, routine ? undefined : true)
-      .then(setJobs)
-      .catch(onError);
+      .then((next) => { if (!cancelled) setJobs(next); })
+      .catch((e) => { if (!cancelled) onError(e); });
 
     void load();
     const id = setInterval(load, busy ? 4000 : 30000);
-    return () => clearInterval(id);
+    return () => { cancelled = true; clearInterval(id); };
   }, [onError, routine, busy]);
 
   // The heading stays whichever way this goes: every other view keeps its title over an
@@ -2349,12 +2367,18 @@ export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: 
         }
 
         const j = entry.job;
-        const merged = live[j.corpusId]?.id === j.id ? live[j.corpusId] : j;
+        // The live event where it is about THIS job, the poll otherwise. Matched on
+        // jobId: the event has no `id`, so comparing one was false on every event and
+        // a running job's counters never moved until the next poll.
+        const merged = live[j.corpusId]?.jobId === j.id ? live[j.corpusId] : progressOf(j);
         return (
           <div key={j.id} className="card p-3.5">
             <div className="flex gap-2 items-center flex-wrap">
               <strong>{names[j.corpusId] ?? j.corpusId}</strong>
-              <Badge tone={stateTone(merged.state)}>{merged.state}</Badge>
+              {/* From the POLL, not the event: an IndexProgress has no state. The
+                   effect below re-runs the moment `busy` goes false, so a run that has
+                   just finished is re-read at once rather than at the idle interval. */}
+              <Badge tone={stateTone(j.state)}>{j.state}</Badge>
               <Badge>{j.kind}</Badge>
               <span className="flex-1" />
               <span className="dim text-xs">
@@ -2368,7 +2392,7 @@ export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: 
               </span>
             </div>
 
-            {(merged.state === 'running' || merged.phase) && (
+            {isRunning(merged) && (
               <ProgressBar job={merged} sources={sourcesOf[j.corpusId]} />
             )}
 
@@ -2385,7 +2409,7 @@ export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: 
                   'mt-2 mb-0 text-xs',
                   // A job that is alive but achieving nothing is not a failed one, and
                   // colouring it red says it is.
-                  merged.state === 'degraded' ? 'text-[var(--warn-text)]' : 'text-[var(--danger-text)]',
+                  j.state === 'degraded' ? 'text-[var(--warn-text)]' : 'text-[var(--danger-text)]',
                 )}
               >
                 {merged.error}

@@ -436,8 +436,59 @@ function authHeaders(): HeadersInit {
  * `onOpen` exists because the header offers to say "reconnecting" and nothing could ever
  * take that back.
  */
+/**
+ * What `/api/events` actually puts on the wire: `IndexProgress`, serialised as it stands.
+ *
+ * NOT a `JobSummary`, which is what this was typed as. The two differ in the two fields
+ * anything reading the stream reaches for first — it carries `jobId` rather than `id`,
+ * and it has no `state` at all — so the compiler cheerfully agreed with code that read
+ * `p.state` and compared `p.id`, and every one of those comparisons was quietly false
+ * forever. Captured from a live run rather than read off the record:
+ *
+ *   keys:  jobId, corpusId, phase, filesTotal, filesDone, filesSkipped, filesFailed,
+ *          chunksWritten, currentFile, error
+ *   phase: "discover", "extract", … while working, then the STATE NAME — "Succeeded" —
+ *          because the server nulls Phase before the last report and sends
+ *          `job.Phase ?? job.State.ToString()`.
+ *
+ * So `phase` is the whole signal, and "finished" is a phase that names a terminal state
+ * rather than a phase that is absent.
+ */
+export type Progress = {
+  jobId: string;
+  corpusId: string;
+  phase: string;
+  filesTotal: number;
+  filesDone: number;
+  filesSkipped: number;
+  filesFailed: number;
+  chunksWritten: number;
+  currentFile?: string | null;
+  error?: string | null;
+};
+
+/** The phases that mean the run is over. They are `JobState` names, capitalised by .NET. */
+const FINISHED_PHASES = new Set(['succeeded', 'failed', 'degraded', 'cancelled']);
+
+/** Whether a progress event describes a run that is still going. */
+export const isRunning = (p: Progress | undefined): boolean =>
+  p !== undefined && !FINISHED_PHASES.has(String(p.phase ?? '').toLowerCase());
+
+/** A running job from the jobs listing, in the shape the stream would have sent. */
+export const progressOf = (j: JobSummary): Progress => ({
+  jobId: j.id,
+  corpusId: j.corpusId,
+  phase: j.phase ?? j.state,
+  filesTotal: j.filesTotal,
+  filesDone: j.filesDone,
+  filesSkipped: j.filesSkipped,
+  filesFailed: j.filesFailed,
+  chunksWritten: j.chunksWritten,
+  error: j.error,
+});
+
 export function subscribeToProgress(
-  onProgress: (p: JobSummary & { currentFile?: string }) => void,
+  onProgress: (p: Progress) => void,
   onError?: () => void,
   onOpen?: () => void,
 ): () => void {
