@@ -311,24 +311,55 @@ public sealed class WorkspaceWalker
     /// Added BEFORE <c>.gitignore</c> because later patterns win here and
     /// <c>.gitignore</c> outranks <c>info/exclude</c> in git.
     ///
-    /// Only where <c>.git</c> is a directory. In a linked worktree it is a file pointing
-    /// at a gitdir that is normally outside the tree being walked, and following it would
-    /// read a file the source root does not contain, which is the boundary the walk
-    /// otherwise holds. A worktree indexed as its own source still has
-    /// <c>.dexiconignore</c>. <c>core.excludesFile</c>, git's third layer, is per-user and
-    /// outside the workspace entirely; it is not read.
+    /// Three things it does not reach, each covered by <c>.dexiconignore</c>:
+    ///
+    /// A linked worktree, where <c>.git</c> is a FILE pointing at a gitdir that is
+    /// normally outside the tree being walked. Following it would read a file the source
+    /// root does not contain.
+    ///
+    /// A link, for the same reason and more sharply: <c>Directory.Exists</c> and
+    /// <c>File.ReadAllLines</c> both follow one, so a symlinked <c>.git</c>, <c>info</c>
+    /// or <c>exclude</c> would read a host file from inside a read-only mount. Every
+    /// segment is tested against the same boundary <see cref="EnumerateFilesSafely"/>
+    /// holds while it descends.
+    ///
+    /// A source rooted BELOW the repository, which has no <c>.git</c> of its own. The
+    /// repository's rules are not read for it — exactly as its <c>.gitignore</c> is not.
+    ///
+    /// <c>core.excludesFile</c>, git's third layer, is per-user and outside the workspace
+    /// entirely; it is not read at all.
     /// </summary>
     private static void AddLocalGitExcludes(IgnoreRuleSet ignore, string root)
     {
         var gitDir = Path.Combine(root, ".git");
-        if (!Directory.Exists(gitDir)) return;
+        if (!Directory.Exists(gitDir) || !StaysInside(new DirectoryInfo(gitDir), root)) return;
 
-        var exclude = Path.Combine(gitDir, "info", "exclude");
-        if (!File.Exists(exclude)) return;
+        var info = Path.Combine(gitDir, "info");
+        if (!Directory.Exists(info) || !StaysInside(new DirectoryInfo(info), root)) return;
+
+        var exclude = Path.Combine(info, "exclude");
+        if (!File.Exists(exclude) || !StaysInside(new FileInfo(exclude), root)) return;
 
         try { ignore.AddPatterns(File.ReadAllLines(exclude), ".git/info/exclude"); }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
+    }
+
+    /// <summary>
+    /// True when <paramref name="entry"/> is not a link, or is one whose target is still
+    /// under <paramref name="root"/>. An entry that cannot be resolved is not inside.
+    /// </summary>
+    private static bool StaysInside(FileSystemInfo entry, string root)
+    {
+        if (entry.LinkTarget is null) return true;
+
+        try
+        {
+            var target = entry.ResolveLinkTarget(returnFinalTarget: true);
+            return target is not null && CorpusIndexer.IsInside(Path.GetFullPath(target.FullName), root);
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
     }
 
     /// <summary>

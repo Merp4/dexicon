@@ -28,11 +28,14 @@ Discovery walks the tree and applies, **in order**:
    anything that adds directories to someone's working copy puts them: `git worktree`, and
    the editors and agents that make worktrees inside the repository.
 
-   Read only where `.git` is a directory. In a linked worktree it is the pointer file
-   above, aimed at a gitdir outside the tree being walked, and following it would read a
-   file the source root does not contain. `core.excludesFile`, git's third layer, is
-   per-user and outside the workspace entirely; it is not read. Either gap is covered by
-   `.dexiconignore`.
+   Three things it does not reach, each covered by `.dexiconignore`: a **linked
+   worktree**, where `.git` is the pointer file above, aimed at a gitdir outside the tree
+   being walked; a **link**, because `Directory.Exists` and `File.ReadAllLines` follow
+   one, so every segment of `.git/info/exclude` is tested against the same boundary the
+   walk holds while it descends; and a **source rooted below the repository**, which has
+   no `.git` of its own and so does not get the repository's rules — exactly as it does
+   not get its `.gitignore`. `core.excludesFile`, git's third layer, is per-user and
+   outside the workspace entirely; it is not read at all.
 3. **`.gitignore`** — honoured by default, full gitignore glob semantics, nested files
    respected. Disable per source with `use_gitignore: false`, which turns off `2` with it:
    one setting, and it says whether git decides what is indexed.

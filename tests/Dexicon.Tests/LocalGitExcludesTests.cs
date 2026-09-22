@@ -111,6 +111,61 @@ public sealed class LocalGitExcludesTests : IDisposable
         Walk().ShouldBe(["src/app.cs", "vendor/lib/README.md"]);
     }
 
+    [Fact]
+    public void AnExcludeFileThatIsALinkOutOfTheRootIsNotRead()
+    {
+        // `File.Exists` and `File.ReadAllLines` both follow a link, so a workspace that
+        // carries one has the walk read a host file from inside a read-only mount. That is
+        // the boundary EnumerateFilesSafely holds while it descends, and this reads a path
+        // it never descended to.
+        //
+        // The patterns being ignorable rather than returnable is not the point: the read
+        // is the boundary crossing, and a file that says `*` would empty the index.
+        Write("src/app.cs");
+        var outside = Path.Combine(Path.GetTempPath(), $"gitexclude-outside-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outside);
+        File.WriteAllText(Path.Combine(outside, "exclude"), "src/\n");
+
+        Directory.CreateDirectory(Path.Combine(_root, ".git", "info"));
+        File.CreateSymbolicLink(Path.Combine(_root, ".git", "info", "exclude"),
+                                Path.Combine(outside, "exclude"));
+
+        try { Walk().ShouldBe(["src/app.cs"]); }
+        finally { Directory.Delete(outside, recursive: true); }
+    }
+
+    [Fact]
+    public void AGitDirectoryThatIsALinkOutOfTheRootIsNotRead()
+    {
+        Write("src/app.cs");
+        var outside = Path.Combine(Path.GetTempPath(), $"gitexclude-outside-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(outside, "info"));
+        File.WriteAllText(Path.Combine(outside, "info", "exclude"), "src/\n");
+
+        Directory.CreateSymbolicLink(Path.Combine(_root, ".git"), outside);
+
+        try { Walk().ShouldBe(["src/app.cs"]); }
+        finally { Directory.Delete(outside, recursive: true); }
+    }
+
+    [Fact]
+    public void ASourceRootedBelowTheRepositoryReadsNeitherFile()
+    {
+        // A source at `repo/docs` has no `.git` of its own, so the repository's local
+        // excludes are not read for it — exactly as its `.gitignore` is not. Stated
+        // because a rule with no written boundary gets one invented at the first hard
+        // case.
+        Write("repo/.git/info/exclude", "docs/notes.md\n");
+        Write("repo/.gitignore", "docs/notes.md\n");
+        Write("repo/docs/notes.md");
+
+        var docs = Path.Combine(_root, "repo", "docs");
+        var files = WorkspaceWalker.Walk(docs, useGitignore: true, null, null, 1_000_000)
+            .Files.Select(f => f.RelativePath).ToList();
+
+        files.ShouldBe(["notes.md"]);
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
