@@ -456,7 +456,15 @@ public sealed class WorkspaceWalker
 
     /// <summary>
     /// True when <paramref name="entry"/> is not a link, or is one whose target is still
-    /// under <paramref name="root"/>. An entry that cannot be resolved is not inside.
+    /// under <paramref name="root"/> with every component of that target resolved. An
+    /// entry that cannot be resolved is not inside.
+    ///
+    /// The containment itself is <see cref="WorkspaceDiscovery.ResolvesInside"/>, which is
+    /// also what a source root goes through. Testing the target's own text here instead
+    /// was the leak: with <c>alias -&gt; outside</c> and <c>link -&gt; alias/src</c>,
+    /// Linux resolves the link to <c>workspace/alias/src</c>, which passes a text test,
+    /// and the walk returned <c>link/host-secret.txt</c> — a file from outside the
+    /// workspace, read out of a read-only mount.
     /// </summary>
     private static bool StaysInside(FileSystemInfo entry, string root)
     {
@@ -465,7 +473,7 @@ public sealed class WorkspaceWalker
         try
         {
             var target = entry.ResolveLinkTarget(returnFinalTarget: true);
-            return target is not null && CorpusIndexer.IsInside(Path.GetFullPath(target.FullName), root);
+            return target is not null && WorkspaceDiscovery.ResolvesInside(target.FullName, root);
         }
         catch (IOException) { return false; }
         catch (UnauthorizedAccessException) { return false; }
@@ -552,15 +560,17 @@ public sealed class WorkspaceWalker
             foreach (var sub in subdirs)
             {
                 var info = new DirectoryInfo(sub);
-                if (info.LinkTarget is not null)
-                {
-                    // Same directory-boundary test as the workspace root, and for the same
-                    // reason: a symlink to a sibling that merely shares the root's name
-                    // prefix is outside the tree being walked, however much of the string
-                    // it has in common with it.
-                    var target = Path.GetFullPath(info.ResolveLinkTarget(true)?.FullName ?? sub);
-                    if (!CorpusIndexer.IsInside(target, root)) continue;
-                }
+                // Same boundary test as a source root, through the same routine, and for
+                // the same reason: a symlink to a sibling that merely shares the root's
+                // name prefix is outside the tree being walked, however much of the
+                // string it has in common with it.
+                //
+                // Through StaysInside rather than a second copy of it. The copy tested the
+                // target's own text, which is not the same question — measured on Linux,
+                // `alias -> outside` with `link -> alias/src` put `link/host-secret.txt`
+                // in the walk's results.
+                if (!StaysInside(info, root)) continue;
+
                 var relativeSub = Path.GetRelativePath(root, sub).Replace('\\', '/');
 
                 // Unconditionally, ahead of the re-inclusion test below. A `!.git`
