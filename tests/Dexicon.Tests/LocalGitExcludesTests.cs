@@ -157,12 +157,27 @@ public sealed class LocalGitExcludesTests : IDisposable
         // un-ignored at all, whatever the ignore files say.
         Write("src/app.cs");
         Write(".gitignore", "!.git\n");
-        Write(".dexiconignore", "!.git\n");
+        Write(".dexiconignore", "!.git\n!.git/config\n");
         File.WriteAllText(Path.Combine(_root, ".git"), "gitdir: ../../.git/worktrees/feature\n");
 
+        var pointer = WorkspaceWalker.Walk(_root, useGitignore: true, null, ["!.git"], 1_000_000)
+            .Files.Select(f => f.RelativePath).ToList();
+
+        pointer.ShouldNotContain(".git");
+
+        // And the directory's contents. `!.git/config` stops the directory being pruned,
+        // so the walk descends into it and the check has to catch what comes back rather
+        // than rely on never having looked.
+        File.Delete(Path.Combine(_root, ".git"));
+        Write(".git/config", "[core]\n\trepositoryformatversion = 0\n");
+        Write(".git/HEAD", "ref: refs/heads/main\n");
+
+        // The ignore files themselves are candidates like any other text file, as
+        // AGitignoreInTheDirectoryIsObeyed records. What matters is that nothing under
+        // `.git/` came back.
         WorkspaceWalker.Walk(_root, useGitignore: true, null, ["!.git"], 1_000_000)
             .Files.Select(f => f.RelativePath)
-            .ShouldNotContain(".git");
+            .ShouldNotContain(p => p.StartsWith(".git/", StringComparison.Ordinal));
     }
 
     [Fact]
