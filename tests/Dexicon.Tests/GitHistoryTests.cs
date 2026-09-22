@@ -69,9 +69,14 @@ public sealed class GitHistoryTests : IDisposable
     /// A path as the code under test takes one: through the factory that holds it against
     /// a workspace root, because that is the only way to make a <see cref="GitRepository"/>.
     /// The root here is the directory above it, which is what the temporary trees are.
+    ///
+    /// Non-null asserted rather than suppressed: every caller of this passes a directory
+    /// it has just created, so null here is the test setup being wrong and should say so
+    /// at the line that made the assumption.
     /// </summary>
     private static GitRepository Repo(string path) =>
-        GitHistory.RepositoryIn(Path.GetDirectoryName(path)!, Path.GetFileName(path));
+        GitHistory.RepositoryIn(Path.GetDirectoryName(path)!, Path.GetFileName(path))
+        ?? throw new InvalidOperationException($"{path} does not exist, so there is no repository to resolve");
 
     private Task<IReadOnlyList<GitCommit>> EnumerateAsync(GitHistoryOptions? options = null,
         IReadOnlyList<string>? paths = null) =>
@@ -127,16 +132,51 @@ public sealed class GitHistoryTests : IDisposable
     public void APathOutsideTheWorkspaceRootNeverBecomesARepository()
     {
         var root = Path.Combine(Path.GetTempPath(), $"ws-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(root, "inside"));
+        try
+        {
+            Should.Throw<UnauthorizedAccessException>(() => GitHistory.RepositoryIn(root, "../elsewhere"));
+            Should.Throw<UnauthorizedAccessException>(() => GitHistory.RepositoryIn(root, "a/../../b"));
+            Should.Throw<UnauthorizedAccessException>(
+                () => GitHistory.RepositoryIn(root, Path.Combine(Path.GetTempPath(), "somewhere-else")));
 
-        Should.Throw<UnauthorizedAccessException>(() => GitHistory.RepositoryIn(root, "../elsewhere"));
-        Should.Throw<UnauthorizedAccessException>(() => GitHistory.RepositoryIn(root, "a/../../b"));
-        Should.Throw<UnauthorizedAccessException>(
-            () => GitHistory.RepositoryIn(root, Path.Combine(Path.GetTempPath(), "somewhere-else")));
-
-        GitHistory.RepositoryIn(root, "inside").FullPath
-            .ShouldBe(Path.Combine(Path.GetFullPath(root), "inside"));
+            GitHistory.RepositoryIn(root, "inside")!.FullPath
+                .ShouldBe(Path.Combine(Path.GetFullPath(root), "inside"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
     }
 
+    /// <summary>
+    /// The path handed to git is the filesystem's own string, not the caller's.
+    ///
+    /// On Windows and macOS a differently-cased request resolves to the same directory,
+    /// and what comes back is spelled the way the directory is. That is what keeps the
+    /// request's text out of the working directory a process is started in.
+    /// </summary>
+    [Fact]
+    public void TheResolvedPathIsTheOneTheFilesystemReports()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"ws-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(root, "MixedCase"));
+        try
+        {
+            GitHistory.RepositoryIn(root, "MixedCase")!.FullPath
+                .ShouldEndWith("MixedCase");
+
+            var asked = GitHistory.RepositoryIn(root, "mixedcase");
+            if (OperatingSystem.IsWindows() || OperatingSystem.IsMacOS())
+                asked!.FullPath.ShouldEndWith("MixedCase");
+            else
+                asked.ShouldBeNull("a case-sensitive filesystem has no such directory");
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    /// <summary>
+    /// Absent is not the same answer as refused. A mount that is away is an operational
+    /// condition the callers report without touching what they indexed last time; a path
+    /// that escapes the root is a refusal. Returning a string for both made them one.
+    /// </summary>
     [Fact]
     public async Task ADirectoryThatIsNotARepositoryIsNotOne()
     {
@@ -147,7 +187,8 @@ public sealed class GitHistoryTests : IDisposable
         try
         {
             (await GitHistory.IsRepositoryAsync(Repo(plain), default)).ShouldBeFalse();
-            (await GitHistory.IsRepositoryAsync(Repo(Path.Combine(plain, "nope")), default)).ShouldBeFalse();
+
+            GitHistory.RepositoryIn(plain, "nope").ShouldBeNull();
         }
         finally { Directory.Delete(plain, recursive: true); }
     }

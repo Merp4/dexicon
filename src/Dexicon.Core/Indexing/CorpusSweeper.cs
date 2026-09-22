@@ -151,7 +151,7 @@ public sealed class CorpusSweeper(
         Corpus corpus, Source source, string root, CancellationToken ct)
     {
         var repo = GitHistory.RepositoryIn(_indexing.WorkspaceRoot, source.RootPath);
-        if (!await GitHistory.IsRepositoryAsync(repo, ct))
+        if (repo is null || !await GitHistory.IsRepositoryAsync(repo, ct))
         {
             log.LogWarning("Source {Source} is not a git repository; leaving its inventory alone",
                 source.RootPath);

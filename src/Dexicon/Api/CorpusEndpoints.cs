@@ -219,20 +219,27 @@ public static class CorpusEndpoints
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
 
-            GitRepository repo;
-            try { repo = GitHistory.RepositoryIn(opts.Value.Indexing.WorkspaceRoot, body.WorkspacePath); }
+            // The boundary, for every kind of source. Existence is deliberately not
+            // required here: a workspace source may be added while its mount is away,
+            // and a pass reports that as unavailable rather than losing the source.
+            try { WorkspaceDiscovery.Resolve(opts.Value.Indexing.WorkspaceRoot, body.WorkspacePath); }
             catch (UnauthorizedAccessException ex)
             { return Results.Problem(title: "Invalid workspace path", detail: ex.Message, statusCode: 400); }
 
-            // Refused at the door rather than recorded and discovered on the first pass.
-            // A source that can never produce anything is worse than a 400: it sits in
-            // the list looking configured, and the reason only ever appears in a job.
-            if (body.GitHistory && !await GitHistory.IsRepositoryAsync(repo, ct))
-                return Results.Problem(
-                    title: "Not a git repository",
-                    detail: $"'{body.WorkspacePath}' has no git repository in it, so there is no "
-                          + "history to index. Point this at the folder holding .git.",
-                    statusCode: 400);
+            // A history source is the exception, refused at the door rather than recorded
+            // and discovered on the first pass. A source that can never produce anything
+            // is worse than a 400: it sits in the list looking configured, and the reason
+            // only ever appears in a job.
+            if (body.GitHistory)
+            {
+                var repo = GitHistory.RepositoryIn(opts.Value.Indexing.WorkspaceRoot, body.WorkspacePath);
+                if (repo is null || !await GitHistory.IsRepositoryAsync(repo, ct))
+                    return Results.Problem(
+                        title: "Not a git repository",
+                        detail: $"'{body.WorkspacePath}' has no git repository in it, so there is no "
+                              + "history to index. Point this at the folder holding .git.",
+                        statusCode: 400);
+            }
 
             var source = new Source
             {

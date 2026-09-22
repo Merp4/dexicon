@@ -170,23 +170,28 @@ public sealed record GitCommit(string Sha, DateTimeOffset AuthorDate, string Sub
 /// worth that.
 /// </summary>
 /// <summary>
-/// A directory git may be started in: a path already held against the workspace boundary.
+/// A directory git may be started in: one the workspace boundary passed and the
+/// filesystem reported.
 ///
 /// A string becomes one only through <see cref="GitHistory.RepositoryIn"/>, and every
 /// call that starts a process takes this rather than a string, so a directory that has
-/// not been through the boundary rule cannot reach <see cref="Process"/> at all.
+/// not been through that factory cannot reach <see cref="Process"/> at all.
 ///
-/// The callers resolve their paths through that same rule before they ever get here, and
+/// The callers hold their paths against the same boundary before they ever get here, and
 /// that is not enough on its own: refusing a path at the API and in the sweep is
 /// usability and defence in depth, and the decision has to be made again where the
-/// process is actually started. One rule, applied in both places, rather than a second
-/// implementation of it.
+/// process is actually started.
 /// </summary>
 public sealed class GitRepository
 {
     private GitRepository(string fullPath) => FullPath = fullPath;
 
-    /// <summary>The resolved directory, inside the configured workspace root.</summary>
+    /// <summary>
+    /// The directory, as the filesystem spells it. Every character of it was produced by
+    /// <see cref="Directory.EnumerateDirectories"/> rather than by combining a caller's
+    /// text onto a root, which is the property that makes it safe to hand to another
+    /// program as a working directory.
+    /// </summary>
     public string FullPath { get; }
 
     internal static GitRepository Of(string fullPath) => new(fullPath);
@@ -195,15 +200,24 @@ public sealed class GitRepository
 public static class GitHistory
 {
     /// <summary>
-    /// <paramref name="relativePath"/> under <paramref name="workspaceRoot"/>, or
-    /// <see cref="UnauthorizedAccessException"/> if it resolves outside it.
+    /// The directory <paramref name="relativePath"/> names under
+    /// <paramref name="workspaceRoot"/>, or null if there is no such directory.
+    /// <see cref="UnauthorizedAccessException"/> if it resolves outside the root.
     ///
-    /// Delegates to <see cref="WorkspaceDiscovery.Resolve"/>, which is the one place the
-    /// containment rule lives and where its regression tests are. This is the same rule
-    /// reached from a second caller, not a copy of it.
+    /// Null and the exception are different answers on purpose. A mount that is away is
+    /// an operational condition and the callers report it as one, leaving what they
+    /// indexed last time alone; a path that escapes the root is a refusal.
+    ///
+    /// Delegates to <see cref="WorkspaceDiscovery.ResolveExisting"/>, which applies the
+    /// one containment rule and then re-derives the directory from the filesystem. The
+    /// re-derivation is what keeps a caller's text out of the working directory handed to
+    /// git: the boundary check decides whether the path is allowed, and enumeration
+    /// decides what the string is.
     /// </summary>
-    public static GitRepository RepositoryIn(string workspaceRoot, string? relativePath) =>
-        GitRepository.Of(WorkspaceDiscovery.Resolve(workspaceRoot, relativePath));
+    public static GitRepository? RepositoryIn(string workspaceRoot, string? relativePath) =>
+        WorkspaceDiscovery.ResolveExisting(workspaceRoot, relativePath) is { } path
+            ? GitRepository.Of(path)
+            : null;
 
     /// <summary>
     /// Bodies read per git invocation. Bounds peak memory rather than process count: the

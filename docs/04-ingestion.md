@@ -203,6 +203,23 @@ Refs and pathspecs are caller-supplied, so arguments are passed as a list and ne
 command line, with `--end-of-options` before the ref and `--` before the pathspecs, and
 the ref is checked against a small accepted set before any of that.
 
+Two more, because a working directory is also a caller-supplied value and a repository
+carries executable configuration:
+
+- **The patch read passes `--no-textconv`.** A `diff=<driver>` attribute plus a
+  `diff.<driver>.textconv` setting, both of which live inside the repository being read,
+  make git run that command on every blob it diffs and index its output instead of the
+  file. Measured: with `*.bin diff=evil` and `diff.evil.textconv = echo PWNED`, `git log
+  -1 --patch` prints `-PWNED /tmp/…`, and the same call with the flag prints the file.
+  `diff.external` needs no flag, because `git log` ignores it unless `--ext-diff` is
+  passed. Pinned by `ATextconvDriverInTheRepositoryIsNotRun`.
+- **The working directory is the filesystem's string, not the request's.** The workspace
+  boundary decides whether a path is allowed; the directory is then re-derived by
+  matching each segment against the entries `Directory.EnumerateDirectories` reports, so
+  no part of what reaches `ProcessStartInfo` came from a caller. A path that does not
+  exist is absent rather than refused, which keeps "the mount is away" distinct from
+  "this resolves outside the workspace".
+
 **The root has to be the repository, not a folder inside one.** `rev-parse
 --is-inside-work-tree` answers yes from `/repo/src`, and a source accepted there would
 walk the whole of `/repo`: every commit of the parent indexed under a source scoped to

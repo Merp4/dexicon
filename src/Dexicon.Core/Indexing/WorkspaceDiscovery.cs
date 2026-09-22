@@ -68,4 +68,50 @@ public static class WorkspaceDiscovery
 
         return combined;
     }
+
+    /// <summary>
+    /// The same directory as <see cref="Resolve"/>, spelled the way the filesystem spells
+    /// it, or null when there is no such directory.
+    ///
+    /// Containment is still <see cref="Resolve"/>'s decision and is made first, so there
+    /// is one rule and one set of regression tests for it. What this adds is that the
+    /// path is then re-derived from the filesystem rather than from the caller's text:
+    /// each segment is matched against the entries <see cref="Directory"/> actually
+    /// reports, and the string returned is the one enumeration produced.
+    ///
+    /// Two things follow, and both matter to a caller about to hand the path to another
+    /// program. The directory exists, so "the mount is away" is a distinct answer from
+    /// "this resolves outside the workspace" — the first is an operational condition and
+    /// the second is a refusal, and a caller that cannot tell them apart reports one as
+    /// the other. And no part of the returned value came from the request, which is what
+    /// makes it safe to pass to <see cref="System.Diagnostics.ProcessStartInfo"/>: see
+    /// <see cref="GitHistory.RepositoryIn"/>.
+    ///
+    /// The segments are compared, never used as a search pattern: a pattern would give
+    /// `*` and `?` in a caller's text their glob meaning.
+    /// </summary>
+    public static string? ResolveExisting(string workspaceRoot, string? relative)
+    {
+        var target = Resolve(workspaceRoot, relative);
+
+        var current = Path.GetFullPath(workspaceRoot);
+        if (!Directory.Exists(current)) return null;
+
+        // Containment already holds, so this carries no `..` to walk back through.
+        var within = Path.GetRelativePath(current, target);
+        if (within == ".") return current;
+
+        foreach (var segment in within.Split(
+                     [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            var match = Directory.EnumerateDirectories(current).FirstOrDefault(
+                d => string.Equals(Path.GetFileName(d), segment, CorpusIndexer.PathComparison));
+
+            if (match is null) return null;
+            current = match;
+        }
+
+        return current;
+    }
 }

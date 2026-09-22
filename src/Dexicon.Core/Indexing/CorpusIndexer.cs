@@ -810,8 +810,10 @@ public sealed class CorpusIndexer(
     {
         // Resolved into the type git is run against, so the boundary is applied again by
         // the code that starts the process rather than trusted to have happened here.
+        // Null is the mount being away, which is the same condition the old
+        // Directory.Exists check reported and takes the same branch.
         var repo = GitHistory.RepositoryIn(_indexing.WorkspaceRoot, source.RootPath);
-        if (!Directory.Exists(repo.FullPath))
+        if (repo is null)
         {
             corpus.State = CorpusState.Unavailable;
             job.Error = $"Workspace path '{source.RootPath}' is not available under {_indexing.WorkspaceRoot}.";
