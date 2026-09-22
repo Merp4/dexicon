@@ -248,6 +248,17 @@ public sealed class WorkspaceWalker
         {
             var relative = Path.GetRelativePath(root, full).Replace('\\', '/');
 
+            // Before the rule sets, and not expressible in them. `.git` sits in
+            // always-exclude for the pruning, but a pattern list is offered, not enforced:
+            // later patterns win there, so a `!.git` in anyone's .gitignore,
+            // .dexiconignore or exclude_globs takes the pointer file back — and what it
+            // holds is `gitdir: <absolute host path>`.
+            //
+            // Git makes the same call: `.git` cannot be un-ignored at all, whatever the
+            // ignore files say. A repository's history has its own source type
+            // (docs/04); nothing needs the plumbing indexed as text.
+            if (IsGitPlumbing(relative)) continue;
+
             if (ignore.IsIgnored(relative, isDirectory: false)) continue;
             if (hasInclude && !include.IsIgnored(relative, isDirectory: false)) continue;
 
@@ -343,6 +354,25 @@ public sealed class WorkspaceWalker
         try { ignore.AddPatterns(File.ReadAllLines(exclude), ".git/info/exclude"); }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
+    }
+
+    /// <summary>
+    /// A path with a <c>.git</c> segment: the directory's contents, and the pointer file a
+    /// linked worktree or a submodule has in its place.
+    /// </summary>
+    private static bool IsGitPlumbing(string relativePath)
+    {
+        var rest = relativePath.AsSpan();
+        while (!rest.IsEmpty)
+        {
+            var slash = rest.IndexOf('/');
+            var segment = slash < 0 ? rest : rest[..slash];
+            if (segment.Equals(".git", StringComparison.OrdinalIgnoreCase)) return true;
+            if (slash < 0) break;
+            rest = rest[(slash + 1)..];
+        }
+
+        return false;
     }
 
     /// <summary>

@@ -149,6 +149,23 @@ public sealed class LocalGitExcludesTests : IDisposable
     }
 
     [Fact]
+    public void NoNegationCanReIncludeGitsPlumbing()
+    {
+        // `.git` is in the always-exclude list, and a pattern list is offered rather than
+        // enforced: later patterns win, so a `!.git` anywhere downstream of it takes the
+        // pointer file back. Git makes the same call the other way — `.git` cannot be
+        // un-ignored at all, whatever the ignore files say.
+        Write("src/app.cs");
+        Write(".gitignore", "!.git\n");
+        Write(".dexiconignore", "!.git\n");
+        File.WriteAllText(Path.Combine(_root, ".git"), "gitdir: ../../.git/worktrees/feature\n");
+
+        WorkspaceWalker.Walk(_root, useGitignore: true, null, ["!.git"], 1_000_000)
+            .Files.Select(f => f.RelativePath)
+            .ShouldNotContain(".git");
+    }
+
+    [Fact]
     public void ASourceRootedBelowTheRepositoryReadsNeitherFile()
     {
         // A source at `repo/docs` has no `.git` of its own, so the repository's local
