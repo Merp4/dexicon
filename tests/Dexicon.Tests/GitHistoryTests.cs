@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using Dexicon.Core.Indexing;
 using Shouldly;
 
@@ -142,6 +143,35 @@ public sealed class GitHistoryTests : IDisposable
             () => ReadAsync(new GitHistoryOptions(), commits));
 
         ex.Message.ShouldContain("could not be read");
+    }
+
+    /// <summary>
+    /// The ceilings are named in bytes, so they are counted in bytes.
+    ///
+    /// Enforced against <c>StringBuilder.Length</c> they were UTF-16 code units, and a
+    /// character outside the ASCII range is one code unit and up to four bytes: 400,000
+    /// of these is 1.2 MB of UTF-8 against a 1 MB ceiling, and 400,000 code units, so
+    /// the read passed a limit it was over. Document already measures the patch in UTF-8
+    /// bytes for the same reason, one measurement further up the same file.
+    /// </summary>
+    [Fact]
+    public async Task AReadIsMeasuredInTheBytesItsCeilingIsNamedIn()
+    {
+        const int Count = 400_000;
+        var message = new string('漢', Count);   // three bytes each in UTF-8
+
+        Encoding.UTF8.GetByteCount(message).ShouldBe(Count * 3, "the premise of this test");
+        message.Length.ShouldBeLessThan(1024 * 1024, "and under the ceiling as code units");
+
+        File.WriteAllText(Path.Combine(_repo, "a.txt"), "one\n");
+        File.WriteAllText(Path.Combine(_repo, "msg.txt"), message, new UTF8Encoding(false));
+        Git("add", "a.txt");
+        Git("commit", "-F", "msg.txt");
+
+        var commits = await EnumerateAsync();
+
+        await Should.ThrowAsync<GitHistoryException>(
+            () => ReadAsync(new GitHistoryOptions(), commits));
     }
 
     /// <summary>

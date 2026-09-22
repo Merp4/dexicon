@@ -780,7 +780,7 @@ public static class GitHistory
     /// </summary>
     private static async Task<(bool Ok, string Stdout, string Stderr)> RunAsync(
         GitRepository repo, IReadOnlyList<string> args, CancellationToken ct, string? stdin = null,
-        long? maxChars = null)
+        long? maxBytes = null)
     {
         // A GitRepository and not a string: the only way to make one is
         // GitHistory.RepositoryIn, which holds the path against the workspace boundary.
@@ -850,6 +850,7 @@ public static class GitHistory
         var stderrTask = process.StandardError.ReadToEndAsync(deadline.Token);
         var stdout = new StringBuilder();
         var over = false;
+        var read = 0L;
 
         try
         {
@@ -868,10 +869,23 @@ public static class GitHistory
                 var n = await process.StandardOutput.ReadAsync(buffer, deadline.Token);
                 if (n == 0) break;
 
-                if (maxChars is { } cap && stdout.Length + n > cap)
+                // Counted in UTF-8 bytes, because that is the unit every ceiling here is
+                // named in: MaxDiffBytes is the operator's setting and StatAllowance and
+                // AbsoluteCeiling are sized against it. Against StringBuilder.Length it
+                // was UTF-16 code units, so a patch of three-byte characters read three
+                // times the stated ceiling before being stopped — the same mistake
+                // Document already carries a comment about, one measurement further up.
+                //
+                // Per chunk rather than over the whole buffer again, so the cost is one
+                // pass over what was just read.
+                if (maxBytes is { } cap)
                 {
-                    over = true;
-                    break;
+                    read += Encoding.UTF8.GetByteCount(buffer, 0, n);
+                    if (read > cap)
+                    {
+                        over = true;
+                        break;
+                    }
                 }
 
                 stdout.Append(buffer, 0, n);
@@ -880,7 +894,7 @@ public static class GitHistory
             if (over)
             {
                 try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
-                throw new GitOutputTooLargeException(maxChars!.Value);
+                throw new GitOutputTooLargeException(maxBytes!.Value);
             }
 
             await process.WaitForExitAsync(deadline.Token);
@@ -919,9 +933,13 @@ public static class GitHistory
 /// The point of killing rather than reading and measuring is that by the time it can be
 /// measured it is allocated, so the per-commit cap would bound the document and nothing
 /// else.
+///
+/// It is no longer answered everywhere: the message pass has no batch to halve, so
+/// <see cref="GitHistory.ReadBatchAsync"/> turns what survives into a
+/// <see cref="GitHistoryException"/> rather than letting it reach the job.
 /// </summary>
 internal sealed class GitOutputTooLargeException(long ceiling)
-    : Exception($"git produced more than {ceiling:N0} characters.");
+    : Exception($"git produced more than {ceiling:N0} bytes.");
 
 public sealed class GitHistoryException : Exception
 {
