@@ -264,6 +264,15 @@ public static class CorpusEndpoints
                           + "gitHistory: true to index the repository's commits, or leave them out.",
                     statusCode: 400);
 
+            if (FileOnlySettingsFor(
+                    body.GitHistory ? SourceKind.GitHistory : SourceKind.Workspace,
+                    body.UseGitignore, body.MaxFileBytes, body.ExcludeGlobs) is { } unusable)
+                return Results.Problem(
+                    title: "Not a file source",
+                    detail: $"{unusable} apply to a folder being walked, and a history source is "
+                          + "walked by git log. Include globs work there, as pathspecs.",
+                    statusCode: 400);
+
             var source = new Source
             {
                 Id = Ulid.NewUlid().ToString(),
@@ -377,6 +386,14 @@ public static class CorpusEndpoints
                 return Results.Problem(
                     title: "Invalid size cap",
                     detail: "maxFileBytes must be greater than zero. Name it in `clear` to inherit the corpus default.",
+                    statusCode: 400);
+
+            if (FileOnlySettingsFor(source.Kind, body.UseGitignore, body.MaxFileBytes, body.ExcludeGlobs)
+                is { } inapplicable)
+                return Results.Problem(
+                    title: "Not a file source",
+                    detail: $"Source '{sourceId}' indexes commits, so {inapplicable} would be stored "
+                          + "and never read. Include globs work there, as pathspecs.",
                     statusCode: 400);
 
             var changed = ApplyFilters(source, body);
@@ -674,6 +691,33 @@ public static class CorpusEndpoints
     /// inferring it would make every partial update an accidental reset of everything it
     /// did not mention.
     /// </summary>
+    /// <summary>
+    /// The file-shaped settings a history source has no use for, or null if there are none.
+    ///
+    /// A commit history is walked by `git log`, not by the file walker, so only the
+    /// include globs mean anything there — they become pathspecs. `useGitignore`,
+    /// `maxFileBytes` and `excludeGlobs` are read by nothing on that path, so storing
+    /// them makes the API answer 200 to a request it did not honour and leaves a value
+    /// in the row that nothing will ever act on.
+    ///
+    /// Refused rather than ignored, for the symmetry the other direction already has:
+    /// history settings on a file source are a 400. The UI hides these fields for a
+    /// history source, which is what is offered rather than what is enforced — this is
+    /// the same rule where the request is actually handled.
+    /// </summary>
+    internal static string? FileOnlySettingsFor(
+        SourceKind kind, bool? useGitignore, int? maxFileBytes, IReadOnlyList<string>? excludeGlobs)
+    {
+        if (kind != SourceKind.GitHistory) return null;
+
+        var named = new List<string>(3);
+        if (useGitignore is not null) named.Add("useGitignore");
+        if (maxFileBytes is not null) named.Add("maxFileBytes");
+        if (excludeGlobs is not null) named.Add("excludeGlobs");
+
+        return named.Count == 0 ? null : string.Join(", ", named);
+    }
+
     internal static bool ApplyFilters(Source source, UpdateSourceRequest body)
     {
         var clear = new HashSet<string>(body.Clear ?? [], StringComparer.OrdinalIgnoreCase);

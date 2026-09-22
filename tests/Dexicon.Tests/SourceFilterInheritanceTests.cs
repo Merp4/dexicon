@@ -197,6 +197,35 @@ public sealed class SourceFilterUpdateTests
         ExcludeGlobs = """["**/*.pdf"]""",
     };
 
+    /// <summary>
+    /// A history source is walked by `git log`, so only the include globs mean anything
+    /// there — they become pathspecs. The other three are read by nothing on that path,
+    /// and storing them answers 200 to a request that was not honoured.
+    ///
+    /// The UI hides these fields for a history source, which is what is offered rather
+    /// than what is enforced. This is the rule where the request is handled.
+    /// </summary>
+    [Fact]
+    public void FileOnlySettingsAreNotForAHistorySource()
+    {
+        CorpusEndpoints.FileOnlySettingsFor(SourceKind.GitHistory, useGitignore: true, null, null)
+            .ShouldBe("useGitignore");
+        CorpusEndpoints.FileOnlySettingsFor(SourceKind.GitHistory, null, maxFileBytes: 1024, null)
+            .ShouldBe("maxFileBytes");
+        CorpusEndpoints.FileOnlySettingsFor(SourceKind.GitHistory, null, null, excludeGlobs: ["**/*.pdf"])
+            .ShouldBe("excludeGlobs");
+
+        CorpusEndpoints.FileOnlySettingsFor(SourceKind.GitHistory, true, 1024, ["**/*.pdf"])
+            .ShouldBe("useGitignore, maxFileBytes, excludeGlobs", "all three are named, not just the first");
+
+        // Include globs are the exception, and the reason this is not simply "no filters
+        // on a history source".
+        CorpusEndpoints.FileOnlySettingsFor(SourceKind.GitHistory, null, null, null).ShouldBeNull();
+
+        // And a file source takes all of them, which is what it is for.
+        CorpusEndpoints.FileOnlySettingsFor(SourceKind.Workspace, true, 1024, ["**/*.pdf"]).ShouldBeNull();
+    }
+
     [Fact]
     public void AnOmittedFieldIsLeftAlone()
     {
