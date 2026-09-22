@@ -21,6 +21,7 @@ const removeSource = vi.fn();
 const coverage = vi.fn();
 const updateSource = vi.fn();
 const updateCorpus = vi.fn();
+const reindex = vi.fn();
 
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
@@ -33,7 +34,7 @@ vi.mock('./api', async (importOriginal) => ({
     coverage: (...a: unknown[]) => coverage(...a),
     updateSource: (...a: unknown[]) => updateSource(...a),
     updateCorpus: (...a: unknown[]) => updateCorpus(...a),
-    reindex: vi.fn(),
+    reindex: (...a: unknown[]) => reindex(...a),
     deleteCorpus: vi.fn(),
   },
 }));
@@ -50,6 +51,34 @@ function source(over: Partial<Corpus['sources'][number]> = {}): Corpus['sources'
     fileCount: 12,
     ...over,
   };
+}
+
+function chunkSet(over: Partial<Corpus['chunkSets'][number]> = {}): Corpus['chunkSets'][number] {
+  return {
+    id: 'cs1',
+    name: 'default',
+    description: null,
+    embeddingProvider: 'ollama',
+    embeddingModel: 'nomic-embed-text',
+    embeddingDimensions: 768,
+    collectionName: 'dexicon_768',
+    chunkSize: 768,
+    chunkOverlap: 100,
+    boundaryMode: 'paragraph',
+    customBoundaryPattern: null,
+    unitAware: true,
+    sentenceAware: true,
+    headingContext: true,
+    isDefault: true,
+    state: 'ready',
+    fileCount: 12,
+    chunkCount: 114,
+    pendingCount: 0,
+    failedCount: 0,
+    createdUtc: new Date().toISOString(),
+    lastIndexedUtc: new Date().toISOString(),
+    ...over,
+  } as Corpus['chunkSets'][number];
 }
 
 function corpus(over: Partial<Corpus> = {}): Corpus {
@@ -1078,5 +1107,95 @@ describe('when a run finishes', () => {
     await waitFor(() => expect(getCorpus).toHaveBeenCalledTimes(3));
     await new Promise((r) => setTimeout(r, 50));
     expect(getCorpus).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('the full reindex', () => {
+  /**
+   * It sat one click from Refresh with nothing between them, and the two are not
+   * comparable: Refresh embeds what moved, this embeds everything.
+   */
+  it('asks before it queues anything', async () => {
+    render(<CorpusDetail {...props} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
+
+    expect(reindex).not.toHaveBeenCalled();
+    expect(await screen.findByText(/Full reindex of docs/)).toBeInTheDocument();
+  });
+
+  it('queues the full one once confirmed', async () => {
+    render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
+
+    await userEvent.click(await screen.findByRole('button', { name: /Reindex everything/ }));
+
+    expect(reindex).toHaveBeenCalledWith('docs', true);
+  });
+
+  it('offers the cheap one at the moment of doubt', async () => {
+    // The dialog is where someone finds out this is not what they wanted. Making them
+    // cancel and go looking for the other button is where they confirm instead.
+    render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
+
+    await userEvent.click(await screen.findByRole('button', { name: /Refresh instead/ }));
+
+    expect(reindex).toHaveBeenCalledWith('docs', false);
+  });
+
+  it('queues nothing on cancel', async () => {
+    render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+
+    expect(reindex).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Full reindex of docs/)).not.toBeInTheDocument();
+  });
+
+  it('names every set and what it will embed with', async () => {
+    // The job names no chunk set, so the indexer runs each of them. A corpus cut two ways
+    // costs both, and nothing else on the screen says so.
+    getCorpus.mockResolvedValue(
+      corpus({
+        chunkSets: [
+          chunkSet({ id: 'a', name: 'default', chunkCount: 131 }),
+          chunkSet({ id: 'b', name: 'gemma', isDefault: false, embeddingModel: 'embeddinggemma', chunkCount: 135 }),
+        ],
+      }),
+    );
+
+    render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('docs:default')).toBeInTheDocument();
+    expect(within(dialog).getByText('docs:gemma')).toBeInTheDocument();
+    expect(within(dialog).getByText('embeddinggemma')).toBeInTheDocument();
+    // 131 + 135 across both sets, not the default's alone.
+    expect(within(dialog).getByText('266')).toBeInTheDocument();
+    expect(within(dialog).getByText(/across 2 chunk sets/)).toBeInTheDocument();
+  });
+
+  it('says a model change needs a chunk set rather than this', async () => {
+    // The reason people reach for this button, and the one thing it cannot do: a model is
+    // a different vector space.
+    render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
+
+    expect(await screen.findByText(/To move to another embedding model, this is not the button/))
+      .toBeInTheDocument();
+  });
+
+  it('mentions the failures it will retry, and that a refresh retries them too', async () => {
+    // Otherwise a failed file is a reason to reach for the expensive button when the cheap
+    // one would have done it: a failed file has no fingerprint to skip on.
+    getCorpus.mockResolvedValue(corpus({ chunkSets: [chunkSet({ failedCount: 8 })] }));
+
+    render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
+
+    expect(await screen.findByText(/8 files failed last time/)).toBeInTheDocument();
   });
 });
