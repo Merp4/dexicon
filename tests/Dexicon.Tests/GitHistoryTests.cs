@@ -230,6 +230,32 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
+    /// "No patch here" and "the patch starts at the beginning" are different answers.
+    ///
+    /// They used to be the same value: a tail beginning with the header gave 0, and so
+    /// did the not-found branch, so the whole patch came back as the stat and the cap
+    /// was measured against a patch of zero bytes. The tail as git emits it opens with a
+    /// newline, so the collision is not reachable today — it is in the function rather
+    /// than in the format, and anything that trims the tail would turn a silently
+    /// unenforced cap into the behaviour with nothing failing to say so.
+    /// </summary>
+    [Fact]
+    public void APatchAtTheStartOfATailIsStillAPatch()
+    {
+        var (stat, patch) = GitHistory.SplitPatch("diff --git a/x b/x\n-one\n+two\n");
+        stat.ShouldBeEmpty();
+        patch.ShouldStartWith("diff --git");
+
+        var (leading, afterNewline) = GitHistory.SplitPatch("\ndiff --git a/x b/x\n+two\n");
+        leading.ShouldBe("\n", "the tail as git emits it: the sha line's own newline, then the header");
+        afterNewline.ShouldStartWith("diff --git");
+
+        var (onlyStat, none) = GitHistory.SplitPatch(" x.txt | 1 +\n 1 file changed\n");
+        onlyStat.ShouldBe(" x.txt | 1 +\n 1 file changed\n");
+        none.ShouldBeEmpty();
+    }
+
+    /// <summary>
     /// Two commits that land on one path are one document, and it is the newer.
     ///
     /// A real collision needs two shas sharing twelve hex characters on one day, which

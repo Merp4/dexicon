@@ -230,9 +230,18 @@ carries executable configuration:
   produces, and that is the path that avoids looking. Measured with `core.quotePath`,
   which turns `漢.txt` into `"\346\274\242.txt"` in the stat. Nine keys are pinned to
   git's own defaults, so a repository that has not set them sees no change;
-  `core.quotePath=false` is the exception and is an improvement. `diff.orderFile` is a
-  known gap: it reorders the files within a diff, `-c diff.orderFile=` is an error, and
-  there is no value meaning "none".
+  `core.quotePath=false` is the exception and is an improvement. The stat's width is
+  pinned by passing `--stat=80`, an option, which beats config and is byte-identical to
+  `--stat` because 80 is what git uses when the output is not a terminal.
+
+  Three gaps, stated rather than left to be found. `diff.orderFile` reorders the files
+  within a diff and `-c diff.orderFile=` is an error, so pinning it needs a temporary
+  file per call. `diff.statNameWidth` and `diff.statGraphWidth` size the columns either
+  side of the name and have no option that does not also change the output — on git
+  2.31.1 neither took effect at all, while `--stat=80,12` truncated as expected, so the
+  config path is simply not honoured there and a newer git may differ.
+  `diff.renameLimit` silently stops rename detection on a large commit, which changes
+  the stat, and pinning it means choosing a number whose default varies by git version.
 - **Every call passes `-c log.showSignature=false`.** Verifying a signature means running
   a program the repository names, and `log.showSignature` and `gpg.program` are both
   settable in the repository being read. Measured: with the two set, a fake gpg left its

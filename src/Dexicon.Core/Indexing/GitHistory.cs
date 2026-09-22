@@ -715,7 +715,10 @@ public static class GitHistory
         };
 
         if (options.IncludeDiff) args.Add("--patch");
-        if (options.IncludeStat) args.Add("--stat");
+        // The width, given explicitly. `diff.statWidth` and its siblings are repository
+        // config, and an option beats config; `--stat=80` is byte-identical to `--stat`
+        // here, because 80 is what git uses when the output is not a terminal.
+        if (options.IncludeStat) args.Add("--stat=80");
         if (!options.IncludeDiff && !options.IncludeStat) args.Add("--no-patch");
 
         if (pathspecs is { Count: > 0 })
@@ -811,13 +814,28 @@ public static class GitHistory
     /// sha-only format, so every line of it is git's. `diff --git ` at the start of a
     /// line is then the patch and nothing else.
     /// </summary>
-    private static (string Stat, string Patch) SplitPatch(string tail)
+    /// <remarks>
+    /// -1 for "no patch here", not 0. The two used to be the same value: a tail that
+    /// BEGINS with the header gave 0, and so did the not-found branch, so the whole
+    /// patch was returned as the stat and <c>Document</c> measured a patch of zero bytes
+    /// against the cap — which is a cap that never fires.
+    ///
+    /// Not reachable as the format stands. The tail is what follows the sha's line, so
+    /// it opens with that line's own newline and the header is at index 1; measured by
+    /// reading the first bytes of a real `--patch` tail, which are 10, 'd', 'i', 'f'.
+    /// It is fixed because the collision is in the function rather than in the format:
+    /// anything that trims the tail or drops the newline turns a silent cap into the
+    /// behaviour, with nothing failing to say so.
+    /// </remarks>
+    internal static (string Stat, string Patch) SplitPatch(string tail)
     {
         var at = tail.StartsWith("diff --git ", StringComparison.Ordinal)
             ? 0
-            : tail.IndexOf("\ndiff --git ", StringComparison.Ordinal) + 1;
+            : tail.IndexOf("\ndiff --git ", StringComparison.Ordinal) is var found && found >= 0
+                ? found + 1
+                : -1;
 
-        return at <= 0 ? (tail, string.Empty) : (tail[..at], tail[at..]);
+        return at < 0 ? (tail, string.Empty) : (tail[..at], tail[at..]);
     }
 
     private static string Summarise(string stderr)
@@ -889,10 +907,25 @@ public static class GitHistory
         // has not set them. `core.quotePath=false` is the exception and is an
         // improvement: a non-ASCII path is indexed as itself rather than as octal.
         //
-        // NOT pinnable here: `diff.orderFile`, which reorders the files within a diff.
-        // `-c diff.orderFile=` is `fatal: failed to read orderfile ''`, and there is no
-        // value meaning "none", so a repository that sets it can still reorder its own
-        // documents. Left as a known gap rather than worked around with a temporary file.
+        // Known gaps, written down because a rule with no stated carve-out gets one
+        // invented at the first hard case:
+        //
+        // - `diff.orderFile` reorders the files within a diff. `-c diff.orderFile=` is
+        //   `fatal: failed to read orderfile ''` and git has no value meaning "none",
+        //   so it would need a temporary empty file per call.
+        // - `diff.statNameWidth` and `diff.statGraphWidth` size the columns either side
+        //   of the stat's name. The width itself is pinned by passing `--stat=80`, an
+        //   option, which beats config; these two have no option that does not also
+        //   change the output. On git 2.31.1 neither took effect at all — set by `-c`
+        //   and in the repository's own config, the stat was byte-identical, while
+        //   `--stat=80,12` truncated as expected, so the mechanism is there and the
+        //   config path is not honoured on that version. A newer git in the container
+        //   may differ, which is why they are listed rather than dismissed.
+        // - `diff.renameLimit` silently stops rename detection once a commit is big
+        //   enough, and that changes the stat: measured, a rename reads
+        //   `{old => new} | 0` with detection on and `old | 3 ---` with it off. Pinning
+        //   it means choosing a number, and the default varies by git version, so
+        //   pinning could itself change behaviour rather than preserve it.
         foreach (var pin in new[]
                  {
                      "core.quotePath=false", "diff.algorithm=myers", "diff.renames=true",
