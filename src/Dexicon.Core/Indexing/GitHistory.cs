@@ -220,7 +220,8 @@ public static class GitHistory
     /// <summary>
     /// The directory <paramref name="relativePath"/> names under
     /// <paramref name="workspaceRoot"/>, or null if there is no such directory.
-    /// <see cref="UnauthorizedAccessException"/> if it resolves outside the root.
+    /// <see cref="UnauthorizedAccessException"/> if it resolves outside the root or passes
+    /// through a link.
     ///
     /// Null and the exception are different answers on purpose. A mount that is away is
     /// an operational condition and the callers report it as one, leaving what they

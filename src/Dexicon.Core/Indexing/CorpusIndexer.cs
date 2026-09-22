@@ -769,7 +769,20 @@ public sealed class CorpusIndexer(
         Source source, IndexJob job,
         IProgress<IndexProgress>? progress, bool full, Action onEmbeddingFailure, CancellationToken ct)
     {
-        var root = ResolveWorkspacePath(source.RootPath);
+        string root;
+        try { root = ResolveWorkspacePath(source.RootPath); }
+        catch (UnauthorizedAccessException ex)
+        {
+            // Refused, and handled like the missing mount below: nothing deleted, the other
+            // sources still indexed. A path is resolved on every pass, so a source can be
+            // refused without anyone editing it, and one created through a link before
+            // D-35 now is. Uncaught, this failed the whole job at the first such source.
+            corpus.State = CorpusState.Unavailable;
+            job.Error = ex.Message;
+            log.LogWarning("{Error}", job.Error);
+            return;
+        }
+
         if (!Directory.Exists(root))
         {
             // Not destructive: the existing index stays searchable. A missing mount is
@@ -812,7 +825,17 @@ public sealed class CorpusIndexer(
         // the code that starts the process rather than trusted to have happened here.
         // Null is the mount being away, which is the same condition the old
         // Directory.Exists check reported and takes the same branch.
-        var repo = GitHistory.RepositoryIn(_indexing.WorkspaceRoot, source.RootPath);
+        GitRepository? repo;
+        try { repo = GitHistory.RepositoryIn(_indexing.WorkspaceRoot, source.RootPath); }
+        catch (UnauthorizedAccessException ex)
+        {
+            // As for a workspace source (IndexWorkspaceSourceAsync).
+            corpus.State = CorpusState.Unavailable;
+            job.Error = ex.Message;
+            log.LogWarning("{Error}", job.Error);
+            return;
+        }
+
         if (repo is null)
         {
             corpus.State = CorpusState.Unavailable;

@@ -1684,6 +1684,61 @@ storage to match.
 **Revisit if.** A repository large enough that the enumeration itself is slow: 10,000
 commits enumerate in a few seconds, and a million would need the inventory to be
 incremental as well, keyed on the last sha seen.
+
+---
+
+### D-35 Links are not followed
+
+**Decision.** Neither a source path nor the walk follows a symbolic link or a junction. A
+source path with a link in it is refused. In the walk, a link to a file or a directory is
+recorded as `skipped` ("a link; links are not followed") and is neither read nor entered,
+unless the rules in force ignore it. An ignore file that is a link is not read, and
+neither is `.git/info/exclude` when any part of its path is one.
+
+**Why.** Following a link means deciding where it leads before reading through it, and
+each way of deciding was wrong somewhere:
+
+- `Path.GetFullPath` resolves no links, so `workspace/link` passes a test on its text and
+  then is wherever it points.
+- `ResolveLinkTarget(returnFinalTarget: true)` leaves a target's parent links unresolved
+  on Linux, so `link -> alias/src`, with `alias` pointing out of the workspace, read as
+  inside.
+- Its `FullName` collapses `..` in the text. POSIX takes `..` from wherever the preceding
+  link led; Windows collapses it in the text, as .NET does. Measured on Linux,
+  `link -> alias/../hostdir` read as inside, and both the walk and a source rooted at
+  `link` returned a file from outside the workspace. The deployed build had this.
+- A link back to the root walked the tree again at every level: 41 copies of a one-file
+  tree before the platform's own link limit stopped it.
+- Several names for one directory indexed it once per name, and removing the duplicates
+  needs an identity for a directory and a rule, stable across runs, for which name wins.
+
+The mount does not remove the risk. Measured through a Docker Desktop bind mount from a
+Windows drive, links arrive as ordinary Linux symlinks and resolve inside the container.
+An absolute Windows target arrives as `/mnt/host/c/...`, which does not exist there, so
+the host's files are out of reach. A relative target that climbs above the mount lands in
+the container's own filesystem, which holds `/data` and a process environment carrying
+the Qdrant key and the admin password.
+
+Git reads an ignore file the same way. Measured with git 2.54, a `.gitignore` that is a
+symbolic link is not applied (`unable to access '.gitignore': Symbolic link loop`), and
+what it names is reported as untracked.
+
+**Cost.** Measured on the workspace this runs against, 869,756 files: 218 links, every one
+to a file, none to a directory, none dangling, none resolving outside `/workspaces`. 100
+were under `node_modules`, `.git`, `.venv`, `bin` or `obj`. The other 118 are no longer
+indexed under their link's name; their targets are inside the workspace and are indexed
+under their own paths wherever a source covers them.
+
+**Rejected.** Resolving each link the way its OS does: `..` per platform, every component
+in order. It closes the `..` escape and leaves the loop and the duplicate names to be
+handled on top, for directory links this workspace does not have.
+
+Refusing only a link whose target contains `..`. All 218 links here do, so it refuses the
+same links while keeping directory following and everything that needs.
+
+**Revisit if.** A workspace needs content that is reachable only through a link and cannot
+be added as a source of its own.
+
 ---
 
 ## Open questions

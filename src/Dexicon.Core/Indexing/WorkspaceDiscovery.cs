@@ -49,7 +49,8 @@ public static class WorkspaceDiscovery
     }
 
     /// <summary>
-    /// A source's root on disk, refusing anything that resolves outside the workspace.
+    /// A source's root on disk, refusing anything outside the workspace or reached through
+    /// a link.
     ///
     /// The containment rule itself stays in <see cref="CorpusIndexer.IsInside"/>, which is
     /// where its reasoning and its regression tests live. This exists so the sweep reaches
@@ -64,12 +65,11 @@ public static class WorkspaceDiscovery
     ///   Resolve          accepted -&gt; workspace\link
     ///   Walk files       [host-secret.txt]      &lt;- from outside the workspace, indexed
     ///
-    /// So the existing part of the path is walked here too, and a segment linking out is
-    /// refused. The walk already applies this rule to every directory it descends into
-    /// (GitignoreFilter.EnumerateFilesSafely); it is the root it never checked.
+    /// So the existing part of the path is walked here too, and a segment that is a link
+    /// is refused. The walk follows no links either (GitignoreFilter.IsLink).
     ///
-    /// The returned string is the one that was asked for, not the one the links resolve
-    /// to. A caller that needs the filesystem's own spelling wants
+    /// The returned string is the one that was asked for. A caller that needs the
+    /// filesystem's own spelling wants
     /// <see cref="ResolveExisting"/>; changing it here would change what every caller
     /// stores and compares.
     ///
@@ -84,66 +84,6 @@ public static class WorkspaceDiscovery
         WalkInside(root, combined, relative, out _);
 
         return combined;
-    }
-
-    /// <summary>
-    /// Whether following <paramref name="path"/> stays under <paramref name="root"/>, with
-    /// every component of it resolved rather than only the last.
-    ///
-    /// The walk needs the same answer this file's resolver needs, and asking it the same
-    /// way is the point. A single <c>ResolveLinkTarget</c> plus <c>IsInside</c> is not
-    /// enough, because how much of a target the platform has already canonicalised varies:
-    /// with <c>alias -&gt; outside</c> and <c>link -&gt; workspace/alias/src</c>, Linux
-    /// hands back <c>workspace/alias/src</c>, which passes a test on the text. Measured,
-    /// the walk then returned a file from outside the workspace.
-    ///
-    /// A bool rather than an exception, because the two callers want different things from
-    /// the same answer. The walk is enumerating and skips what it will not follow; the
-    /// resolver was handed one path by an operator and owes them a refusal.
-    /// </summary>
-    internal static bool ResolvesInside(string path, string root)
-    {
-        try
-        {
-            // `..` cuts the other way here than it does for a caller's path. There,
-            // collapsing it lexically NARROWS, and that is why Contained does it. In a
-            // link target it widens: the collapse removes the very component that gives
-            // the escape away, so `alias/../secret` reads as `<root>/secret` while the OS
-            // follows `alias` to the outside first and only then takes the parent.
-            //
-            // A target still spelling `..` has not been resolved, so it is refused rather
-            // than collapsed. Nothing is lost by that — a target the platform HAS resolved
-            // never carries one.
-            if (HasDotDot(path)) return false;
-
-            var full = Path.GetFullPath(path);
-            if (!CorpusIndexer.IsInside(full, root)) return false;
-
-            // Absent is harmless: a component that is not there leads nowhere to read.
-            // Unreadable is NOT. A directory that could not be enumerated has not been
-            // shown to stay inside, and the walk must not follow what it could not check —
-            // an unreadable mount is a broken instrument, not a verdict.
-            WalkInside(root, full, null, out var outcome);
-            return outcome is not WalkOutcome.Unreadable;
-        }
-        catch (UnauthorizedAccessException) { return false; }
-        catch (IOException) { return false; }
-    }
-
-    /// <summary>
-    /// Whether any segment of the path is <c>..</c>. Compared segment by segment rather
-    /// than by <c>Contains("..")</c>, which would also match a directory named <c>..foo</c>.
-    /// </summary>
-    private static bool HasDotDot(string path)
-    {
-        foreach (var segment in path.Split(
-                     [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
-                     StringSplitOptions.RemoveEmptyEntries))
-        {
-            if (segment == "..") return true;
-        }
-
-        return false;
     }
 
     /// <summary>
@@ -213,8 +153,8 @@ public static class WorkspaceDiscovery
     /// it, or null when there is no such directory.
     ///
     /// Containment is the same decision made in the same two places, and made first: the
-    /// text is tested, then the existing part of the path is walked and a segment linking
-    /// out is refused. What this adds is that the path is then re-derived from the
+    /// text is tested, then the existing part of the path is walked and a segment that is
+    /// a link is refused. What this adds is that the path is then re-derived from the
     /// filesystem rather than from the caller's text: each segment is matched against the
     /// entries <see cref="Directory"/> actually reports, and the string returned is the
     /// one enumeration produced.
@@ -246,20 +186,18 @@ public static class WorkspaceDiscovery
 
     /// <summary>
     /// Walks the part of <paramref name="target"/> that exists, one segment at a time
-    /// against the entries <see cref="Directory"/> reports, refusing any that links out of
-    /// <paramref name="root"/> and following any that links back in. Returns the deepest
-    /// directory it reached, and sets <paramref name="complete"/> when every segment
-    /// existed.
+    /// against the entries <see cref="Directory"/> reports, refusing any segment that is a
+    /// link. Returns the deepest directory it reached, and sets <paramref name="outcome"/>
+    /// to say whether every segment existed.
     ///
     /// One implementation, because two of a security check is how the two come to
     /// disagree. <see cref="Resolve"/> wants the refusal and keeps its own spelling;
     /// <see cref="ResolveExisting"/> wants the filesystem's.
     ///
-    /// A link out of the root is the same escape as <c>..</c>, by a mechanism the string
-    /// never shows: <c>Path.GetFullPath</c> canonicalises separators and dots and resolves
-    /// no links, so <c>workspace/link</c> passes a boundary check on the text and then IS
-    /// <c>/outside</c>. The walk applies this rule to every directory it descends into
-    /// (GitignoreFilter.EnumerateFilesSafely); the root reached it through neither.
+    /// A link is the same escape as <c>..</c>, by a mechanism the string never shows:
+    /// <c>Path.GetFullPath</c> canonicalises separators and dots and resolves no links, so
+    /// <c>workspace/link</c> passes a boundary check on the text and then IS wherever it
+    /// points. Links are not followed anywhere, for the reasons at GitignoreFilter.IsLink.
     ///
     /// Refused rather than skipped, which is where this differs from the walk. The walk is
     /// enumerating and a link it will not follow is simply not part of the tree; here the
@@ -277,22 +215,15 @@ public static class WorkspaceDiscovery
     /// rewrite the tree mid-walk already has the filesystem.
     /// </summary>
     private static string? WalkInside(string root, string target, string? relative,
-        out WalkOutcome outcome, int depth = 0)
+        out WalkOutcome outcome)
     {
         outcome = WalkOutcome.Absent;
-
-        // A followed link is walked again as its own path, so a chain is bounded by this
-        // rather than by the filesystem. POSIX names the same limit SYMLOOP_MAX.
-        if (depth > 40)
-            throw new UnauthorizedAccessException(
-                $"Workspace path '{relative}' follows more than 40 links. It was refused.");
 
         var current = root;
 
         // Not Directory.Exists. It answers false for a directory that is there and cannot
-        // be read, which is the same answer it gives for one that is not there — so an
-        // unreadable root left the outcome at Absent, and ResolvesInside read that as
-        // "inside" and let the walk follow something it had not validated.
+        // be read, which is the same answer it gives for one that is not there, and "not
+        // there" is the answer a caller is allowed to pass on.
         var reached = Probe(current);
         if (reached is not WalkOutcome.Reached) { outcome = reached; return null; }
 
@@ -327,94 +258,15 @@ public static class WorkspaceDiscovery
 
             if (match is null) return current;
 
-            var info = new DirectoryInfo(match);
-            if (info.LinkTarget is null)
-            {
-                current = match;
-                continue;
-            }
-
-            // A link this cannot resolve is not inside, and saying so has to be a refusal
-            // rather than a return value: `Resolve` does not read one, so an early return
-            // here reached the walker as an accepted path while this comment claimed the
-            // opposite. The previous `?? match` was the same bug by another route — it
-            // read "unresolvable" as the link's own path, which is inside the root by
-            // construction, while the walk's own check (GitignoreFilter.StaysInside)
-            // refused it.
-            //
-            // Distinct from the absent case below, which IS a return value: not existing
-            // is not a boundary problem, and `Resolve` is right to ignore it.
-            // `returnFinalTarget` follows the chain, and throws IOException rather than
-            // answering null when it cannot — a cycle, or more levels than the platform
-            // allows. Callers translate UnauthorizedAccessException and not that, so it
-            // would have surfaced as a 500 from source creation or aborted a sweep, in
-            // place of the refusal this is documented to give.
-            FileSystemInfo? resolved;
-            try { resolved = info.ResolveLinkTarget(returnFinalTarget: true); }
-            catch (IOException) { resolved = null; }
-
-            if (resolved is null)
+            // Refused, not followed: see GitignoreFilter.IsLink. The link's own text goes in
+            // the message, as `ls -l` would show it; nothing is resolved to produce it.
+            var link = new DirectoryInfo(match).LinkTarget;
+            if (link is not null)
                 throw new UnauthorizedAccessException(
-                    $"Workspace path '{relative}' passes through '{segment}', a link whose "
-                    + "target could not be resolved. It was refused.");
+                    $"Workspace path '{relative}' passes through '{segment}', a link to '{link}'. "
+                    + "Links are not followed, so it was refused.");
 
-            var linked = Path.GetFullPath(resolved.FullName);
-
-            if (!CorpusIndexer.IsInside(linked, root))
-                throw new UnauthorizedAccessException(
-                    $"Workspace path '{relative}' passes through '{segment}', which links to "
-                    + $"'{linked}', outside {root}. It was refused.");
-
-            // Inside as a STRING is not inside, and how much of it the platform has
-            // already canonicalised differs. `alias` leaves the workspace and `link`
-            // points at `alias/src`, so the target's own text is inside and only its
-            // parent gives it away. Measured, same pair, same .NET:
-            //
-            //   Windows   ResolveLinkTarget(true) -> <outside>\src        refused
-            //   Linux     ResolveLinkTarget(true) -> <workspace>/alias/src  ACCEPTED
-            //
-            // So the target is walked as its own path, which resolves each of ITS
-            // components and refuses one that leaves. Depth-capped above, because a
-            // followed link walks again.
-            linked = WalkInside(root, linked, relative, out var targetOutcome, depth + 1) ?? linked;
-
-            // Absent is fine to stop on; unreadable has to stop too, because a target
-            // this could not walk has not been shown to stay inside.
-            if (targetOutcome is not WalkOutcome.Reached)
-            {
-                outcome = targetOutcome;
-                return current;
-            }
-
-            // Followed, not just checked. A link that stays inside is allowed, and a
-            // path that kept its spelling would then be compared against a physical one
-            // and lose: `rev-parse --show-toplevel` reports the physical working
-            // directory — measured on Windows as well as POSIX — so `root/inward` was
-            // answered with `root/real`, the two did not match, and the source was
-            // reported as not a git repository and never indexed.
-            //
-            // Resolving here rather than at that comparison also covers a link part way
-            // along the path, which resolving only the last component would not.
-            //
-            // The target has to actually be there. Measured: a dangling link resolves —
-            // `ResolveLinkTarget(returnFinalTarget: true)` hands back the target it names
-            // whether or not anything is at it — so following one set `current` to a
-            // directory that does not exist. With no segment left that returned a path
-            // this method is documented to answer null for; with one left it threw
-            // DirectoryNotFoundException out of the next enumeration, which is neither of
-            // the two answers it is allowed to give.
-            //
-            // Probed rather than Exists, for the same reason as the root: a target that is
-            // there and cannot be read must not come back as merely absent, because that
-            // is the answer ResolvesInside treats as safe.
-            var landed = Probe(linked);
-            if (landed is not WalkOutcome.Reached)
-            {
-                outcome = landed;
-                return current;
-            }
-
-            current = linked;
+            current = match;
         }
 
         outcome = WalkOutcome.Reached;

@@ -308,7 +308,8 @@ public sealed class WorkspaceWalker
         if (includeGlobs is { Count: > 0 }) include.AddPatterns(includeGlobs, "source.include");
         var hasInclude = include.Count > 0;
 
-        foreach (var (full, ignore) in EnumerateFilesSafely(root, layer, useGitignore, excludeGlobs, topLevelOnly))
+        foreach (var (full, ignore) in EnumerateFilesSafely(
+                     root, layer, useGitignore, excludeGlobs, skipped, topLevelOnly))
         {
             var relative = Path.GetRelativePath(root, full).Replace('\\', '/');
 
@@ -330,18 +331,16 @@ public sealed class WorkspaceWalker
             try { info = new FileInfo(full); }
             catch (Exception ex) { skipped.Add(new Skipped(relative, $"unreadable: {ex.Message}", 0)); continue; }
 
-            // The same escape the directory branch of the walk refuses, on the kind of
-            // entry it never looked at. `FileInfo.Length` and LooksBinary's
-            // `File.OpenRead` both follow a link, so a link inside the tree pointing at a
-            // host file was sized, sniffed and indexed, out of a read-only mount.
+            // `FileInfo.Length` and LooksBinary's `File.OpenRead` both follow a link, so a
+            // link is decided here, before either runs. See IsLink.
             //
             // Recorded rather than dropped: a file the operator can see in their tree
             // that appears in no count is the absence nothing can read back. Here, beside
             // the FileInfo that already exists, because doing it in the enumerator costs
             // a second stat on every file in the walk.
-            if (info.LinkTarget is not null && !StaysInside(info, root))
+            if (IsLink(info))
             {
-                skipped.Add(new Skipped(relative, "a link to a file outside the source root", 0));
+                skipped.Add(new Skipped(relative, LinkNotFollowed, 0));
                 continue;
             }
 
@@ -409,9 +408,8 @@ public sealed class WorkspaceWalker
     ///
     /// A link, for the same reason and more sharply: <c>Directory.Exists</c> and
     /// <c>File.ReadAllLines</c> both follow one, so a symlinked <c>.git</c>, <c>info</c>
-    /// or <c>exclude</c> would read a host file from inside a read-only mount. Every
-    /// segment is tested against the same boundary <see cref="EnumerateFilesSafely"/>
-    /// holds while it descends.
+    /// or <c>exclude</c> would read a file from outside the tree. None of the three is
+    /// read when it is a link (<see cref="IsLink"/>).
     ///
     /// A source rooted BELOW the repository, which has no <c>.git</c> of its own. The
     /// repository's rules are not read for it — exactly as its <c>.gitignore</c> is not.
@@ -422,13 +420,13 @@ public sealed class WorkspaceWalker
     private static void AddLocalGitExcludes(IgnoreRuleSet ignore, string root)
     {
         var gitDir = Path.Combine(root, ".git");
-        if (!Directory.Exists(gitDir) || !StaysInside(new DirectoryInfo(gitDir), root)) return;
+        if (!Directory.Exists(gitDir) || IsLink(new DirectoryInfo(gitDir))) return;
 
         var info = Path.Combine(gitDir, "info");
-        if (!Directory.Exists(info) || !StaysInside(new DirectoryInfo(info), root)) return;
+        if (!Directory.Exists(info) || IsLink(new DirectoryInfo(info))) return;
 
         var exclude = Path.Combine(info, "exclude");
-        if (!File.Exists(exclude) || !StaysInside(new FileInfo(exclude), root)) return;
+        if (!File.Exists(exclude) || IsLink(new FileInfo(exclude))) return;
 
         try { ignore.AddPatterns(File.ReadAllLines(exclude), ".git/info/exclude"); }
         catch (IOException) { }
@@ -454,30 +452,25 @@ public sealed class WorkspaceWalker
         return false;
     }
 
-    /// <summary>
-    /// True when <paramref name="entry"/> is not a link, or is one whose target is still
-    /// under <paramref name="root"/> with every component of that target resolved. An
-    /// entry that cannot be resolved is not inside.
-    ///
-    /// The containment itself is <see cref="WorkspaceDiscovery.ResolvesInside"/>, which is
-    /// also what a source root goes through. Testing the target's own text here instead
-    /// was the leak: with <c>alias -&gt; outside</c> and <c>link -&gt; alias/src</c>,
-    /// Linux resolves the link to <c>workspace/alias/src</c>, which passes a text test,
-    /// and the walk returned <c>link/host-secret.txt</c> — a file from outside the
-    /// workspace, read out of a read-only mount.
-    /// </summary>
-    private static bool StaysInside(FileSystemInfo entry, string root)
-    {
-        if (entry.LinkTarget is null) return true;
+    internal const string LinkNotFollowed = "a link; links are not followed";
 
-        try
-        {
-            var target = entry.ResolveLinkTarget(returnFinalTarget: true);
-            return target is not null && WorkspaceDiscovery.ResolvesInside(target.FullName, root);
-        }
-        catch (IOException) { return false; }
-        catch (UnauthorizedAccessException) { return false; }
-    }
+    /// <summary>
+    /// Whether <paramref name="entry"/> is a symbolic link or a junction. The walk follows
+    /// neither: not into a directory, not to a file, and not to read an ignore file. A
+    /// source path through one is refused (<see cref="WorkspaceDiscovery.Resolve"/>).
+    ///
+    /// Following a link means deciding where it leads, and the platforms disagree about
+    /// that. POSIX takes <c>..</c> from wherever a link led; Windows, and
+    /// <c>ResolveLinkTarget(...).FullName</c> on either, collapse it in the text. Measured
+    /// on Linux, <c>link -&gt; alias/../hostdir</c> with <c>alias</c> pointing out of the
+    /// workspace read as inside, and the walk returned a file from outside it. A link to
+    /// the root also walked the tree again at every level, 41 times over.
+    ///
+    /// Git reads an ignore file the same way: measured with git 2.54, a
+    /// <c>.gitignore</c> that is a symbolic link is not applied ("unable to access
+    /// '.gitignore': Symbolic link loop") and what it names is reported as untracked.
+    /// </summary>
+    private static bool IsLink(FileSystemInfo entry) => entry.LinkTarget is not null;
 
     /// <summary>
     /// The rules in force inside one directory.
@@ -507,15 +500,15 @@ public sealed class WorkspaceWalker
 
     /// <summary>
     /// Enumerate without letting one unreadable directory abort the whole walk, and
-    /// without following symlinks out of the root, since a link to / would otherwise index
-    /// the entire filesystem.
+    /// without following links (<see cref="IsLink"/>). A directory link is added to
+    /// <paramref name="skipped"/> unless the rules in force ignore it.
     ///
     /// Each file comes with the rules in force where it sits, because a subdirectory's own
     /// ignore file applies to that subtree and to nothing beside it.
     /// </summary>
     private static IEnumerable<(string FilePath, IgnoreRuleSet Ignore)> EnumerateFilesSafely(
         string root, Layer rootLayer, bool useGitignore,
-        IReadOnlyList<string>? excludeGlobs, bool topLevelOnly = false)
+        IReadOnlyList<string>? excludeGlobs, List<Skipped> skipped, bool topLevelOnly = false)
     {
         var stack = new Stack<(string Dir, string Prefix, Layer Layer)>();
         stack.Push((root, string.Empty, rootLayer));
@@ -546,8 +539,8 @@ public sealed class WorkspaceWalker
             if (gitignore is not null || dexiconignore is not null)
             {
                 var tree = new IgnoreRuleSet(layer.Tree);
-                var added = AddIgnoreFile(tree, root, gitignore, ".gitignore", prefix);
-                added |= AddIgnoreFile(tree, root, dexiconignore, IgnoreFileName, prefix);
+                var added = AddIgnoreFile(tree, gitignore, ".gitignore", prefix);
+                added |= AddIgnoreFile(tree, dexiconignore, IgnoreFileName, prefix);
                 if (added) layer = Layer.Of(tree, excludeGlobs);
             }
 
@@ -559,18 +552,6 @@ public sealed class WorkspaceWalker
 
             foreach (var sub in subdirs)
             {
-                var info = new DirectoryInfo(sub);
-                // Same boundary test as a source root, through the same routine, and for
-                // the same reason: a symlink to a sibling that merely shares the root's
-                // name prefix is outside the tree being walked, however much of the
-                // string it has in common with it.
-                //
-                // Through StaysInside rather than a second copy of it. The copy tested the
-                // target's own text, which is not the same question — measured on Linux,
-                // `alias -> outside` with `link -> alias/src` put `link/host-secret.txt`
-                // in the walk's results.
-                if (!StaysInside(info, root)) continue;
-
                 var relativeSub = Path.GetRelativePath(root, sub).Replace('\\', '/');
 
                 // Unconditionally, ahead of the re-inclusion test below. A `!.git`
@@ -580,17 +561,23 @@ public sealed class WorkspaceWalker
                 // no re-inclusion to be conservative about.
                 if (IsGitPlumbing(relativeSub)) continue;
 
+                var ignored = ignore.IsIgnored(relativeSub, isDirectory: true);
+
+                // Never entered. Listed like a file link, unless the rules would have
+                // excluded it anyway, in which case it is as absent as any ignored entry.
+                if (IsLink(new DirectoryInfo(sub)))
+                {
+                    if (!ignored) skipped.Add(new Skipped(relativeSub, LinkNotFollowed, 0));
+                    continue;
+                }
+
                 // Skipped rather than walked and thrown away. A repository carrying .git,
                 // node_modules and a database's data directory enumerated 240,704 files to
                 // keep 27,001, and every one of those was a stat across the mount: 99s
                 // against 14s for the same result. Only where nothing beneath could be
                 // re-included, because being wrong here means quietly not indexing
                 // something that is indexed today.
-                if (ignore.IsIgnored(relativeSub, isDirectory: true)
-                    && !ignore.MayReincludeBeneath(relativeSub))
-                {
-                    continue;
-                }
+                if (ignored && !ignore.MayReincludeBeneath(relativeSub)) continue;
 
                 stack.Push((sub, relativeSub, layer));
             }
@@ -609,10 +596,8 @@ public sealed class WorkspaceWalker
     /// `.gitignore` only when the source honours git; `.dexiconignore` always, as at the
     /// root, because it is Dexicon's own file and `use_gitignore` is a statement about git.
     ///
-    /// Both are held to the boundary the walk holds everywhere else. `File.ReadAllLines`
-    /// follows a link, so one pointing out of the tree would read a host file from inside a
-    /// read-only mount; this is the check `.git/info/exclude` already gets, applied to the
-    /// root's own files as well, which had it nowhere.
+    /// Neither is read when it is a link: `File.ReadAllLines` follows one. Git makes the
+    /// same call (<see cref="IsLink"/>).
     /// </summary>
     private static string? Named(IReadOnlyList<string> entries, string name)
     {
@@ -624,9 +609,9 @@ public sealed class WorkspaceWalker
     }
 
     private static bool AddIgnoreFile(
-        IgnoreRuleSet rules, string root, string? path, string name, string directoryPrefix)
+        IgnoreRuleSet rules, string? path, string name, string directoryPrefix)
     {
-        if (path is null || !StaysInside(new FileInfo(path), root)) return false;
+        if (path is null || IsLink(new FileInfo(path))) return false;
 
         try
         {

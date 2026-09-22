@@ -120,6 +120,17 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Changed
 
+- **Links are not followed.** A symbolic link or junction in a source is listed as skipped
+  ("a link; links are not followed") rather than read or entered, and a source path that
+  passes through one is refused. On Linux, a link whose target used `..` after another
+  link (`link -> alias/../dir`) read files from outside the workspace, through the walk and
+  through a source rooted at it. A link back to the root indexed a tree 41 times over.
+
+  The directory a link points at is still indexed under its own path wherever a source
+  covers it. A `.gitignore` that is a link is not applied, which is what git does. Measured
+  on one deployment's workspace, 218 links, all to files and none to directories. See
+  [D-35](docs/decisions.md#d-35-links-are-not-followed).
+
 - **The file list pages, filters and sorts on the server.** Disclosing that a list was
   truncated was the first fix and the wrong one: a client can only filter and order the
   rows it fetched, so on a corpus larger than one page a name that IS in the corpus still

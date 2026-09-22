@@ -38,12 +38,11 @@ Discovery walks the tree and applies, **in order**:
 
    Three things it does not reach, each covered by `.dexiconignore`: a **linked
    worktree**, where `.git` is the pointer file above, aimed at a gitdir outside the tree
-   being walked; a **link**, because `Directory.Exists` and `File.ReadAllLines` follow
-   one, so every segment of `.git/info/exclude` is tested against the same boundary the
-   walk holds while it descends; and a **source rooted below the repository**, which has
-   no `.git` of its own and so does not get the repository's rules — exactly as it does
-   not get its `.gitignore`. `core.excludesFile`, git's third layer, is per-user and
-   outside the workspace entirely; it is not read at all.
+   being walked; a **link**, since `.git`, `info` and `exclude` are not read when any of
+   them is one (links are not followed, below); and a **source rooted below the
+   repository**, which has no `.git` of its own and so does not get the repository's
+   rules — exactly as it does not get its `.gitignore`. `core.excludesFile`, git's third
+   layer, is per-user and outside the workspace entirely; it is not read at all.
 3. **`.gitignore`** — honoured by default, in every directory the walk reaches, not only
    at the source root. Disable per source with `use_gitignore: false`, which turns off `2`
    with it: one setting, and it says whether git decides what is indexed.
@@ -73,6 +72,15 @@ looked at — so a `!keep.txt` in `vendor/.gitignore` does not bring `vendor/kee
 when `vendor/` was excluded above it. Git decides the same way and for the same reason: it
 does not read ignore files in a directory it has excluded. `.dexiconignore` higher up is
 where the exception goes.
+
+**Links are not followed.** A symbolic link or junction, to a file or a directory, is
+recorded as `skipped` ("a link; links are not followed") and is neither read nor entered;
+one the rules already exclude is simply absent, like any ignored entry. The directory a
+link points at is indexed under its own path wherever a source covers it. An ignore file
+that is a link is not read either, which is what git does: git 2.54 reports `unable to
+access '.gitignore': Symbolic link loop` and applies nothing from it. A source path that
+passes through a link is refused. Why, and what it costs, is
+[D-35](decisions.md#d-35-links-are-not-followed).
 
 **The glob syntax is gitignore's; the resolution is not git's in one place.** A negation
 reaches into an excluded directory: `data/` with `!data/sessions/` indexes
@@ -282,12 +290,9 @@ carries executable configuration:
   matching each segment against the entries `Directory.EnumerateDirectories` reports, so
   no part of what reaches `ProcessStartInfo` came from a caller. A path that does not
   exist is absent rather than refused, which keeps "the mount is away" distinct from
-  "this resolves outside the workspace". A segment that links out of the root is refused:
-  `Path.GetFullPath` resolves no links, so the string test passes and the directory is
-  elsewhere. The walk already held every directory it descends into to that rule. A link
-  that stays inside is followed rather than merely allowed, because `rev-parse
-  --show-toplevel` answers with the physical directory, and a path that kept the link's
-  spelling would be compared against the target's and reported as not a repository.
+  "this resolves outside the workspace". A segment that is a link is refused, wherever it
+  points: `Path.GetFullPath` resolves no links, so the string test passes and the
+  directory is elsewhere. Links are not followed anywhere (above).
 - **How a diff is presented is pinned.** A document is settled by its sha and the
   source's settings, so a repository that changes its own config must not change the text
   of a commit already indexed — the pre-read skip would hold a document git no longer
