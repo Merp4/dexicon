@@ -44,30 +44,42 @@ Discovery walks the tree and applies, **in order**:
    no `.git` of its own and so does not get the repository's rules — exactly as it does
    not get its `.gitignore`. `core.excludesFile`, git's third layer, is per-user and
    outside the workspace entirely; it is not read at all.
-3. **`.gitignore`** — honoured by default, at the source root. Disable per source with
-   `use_gitignore: false`, which turns off `2` with it:
-   one setting, and it says whether git decides what is indexed.
-4. **`.dexiconignore`** — same syntax, for things that are checked in but not worth
-   indexing (lock files, generated clients, vendored trees). Separate from `.gitignore` so
-   you never have to change VCS behaviour to change index behaviour.
+3. **`.gitignore`** — honoured by default, in every directory the walk reaches, not only
+   at the source root. Disable per source with `use_gitignore: false`, which turns off `2`
+   with it: one setting, and it says whether git decides what is indexed.
+4. **`.dexiconignore`** — same syntax and the same reach, for things that are checked in
+   but not worth indexing (lock files, generated clients, vendored trees). Separate from
+   `.gitignore` so you never have to change VCS behaviour to change index behaviour, and
+   read whatever `use_gitignore` says, because that setting is a statement about git.
 5. **`exclude_globs`**, then **`include_globs`** as an override.
 6. **Size cap** — `max_file_bytes`, default 256 KB. A file over the cap is recorded as
    `skipped` with the reason, never dropped without record.
 7. **Binary sniff** — a NUL byte in the first 8 KB means binary, regardless of extension.
 
-Within `2` and `3` the later file wins, which is git's precedence: a `!generated/` in
-`.gitignore` re-includes what `info/exclude` dropped.
+Within `2`, `3` and `4` the later file wins, which is git's precedence: a `!generated/` in
+`.gitignore` re-includes what `info/exclude` dropped, and a deeper file outranks a
+shallower one. `exclude_globs` go on the end of whatever set is in force, so a source's
+own filters keep winning over anything a repository says about itself — including a file
+two directories down that the operator has never seen.
 
-**The glob syntax is gitignore's; the resolution is not git's in two places**, and both
-predate `2`:
+**A nested file says what it means relative to itself**, so its patterns are anchored to
+its directory: `secret.txt` in `sub/.gitignore` is `sub/**/secret.txt`. It reaches every
+depth beneath `sub` and no sibling of `sub`. A leading `/` still anchors, now to that
+directory: `/secret.txt` there is `sub/secret.txt` alone.
 
-- **One file per root.** A `.gitignore` in a subdirectory is not read. Point a source at
-  that subdirectory and its own file applies, as the root of that walk.
-- **A negation reaches into an excluded directory.** `data/` with `!data/sessions/` indexes
-  `data/sessions/a.json`; git would not, because it does not re-include a file whose
-  ancestor is excluded. Deliberate, and the case it came from is real: a repository that
-  excludes `data/` and keeps `data/sessions/` while the bulk of the tree is a sibling.
-  It is also what makes `!.vscode/launch.json` work against the always-exclude list.
+**A file inside a pruned directory is never read.** The decision to skip a directory is
+made from the rules in force when the walk reaches it, and nothing inside it has been
+looked at — so a `!keep.txt` in `vendor/.gitignore` does not bring `vendor/keep.txt` back
+when `vendor/` was excluded above it. Git decides the same way and for the same reason: it
+does not read ignore files in a directory it has excluded. `.dexiconignore` higher up is
+where the exception goes.
+
+**The glob syntax is gitignore's; the resolution is not git's in one place.** A negation
+reaches into an excluded directory: `data/` with `!data/sessions/` indexes
+`data/sessions/a.json`, where git would not, because git does not re-include a file whose
+ancestor is excluded. Deliberate, and the case it came from is real: a repository that
+excludes `data/` and keeps `data/sessions/` while the bulk of the tree is a sibling. It is
+also what makes `!.vscode/launch.json` work against the always-exclude list.
 
 Worktrees are the case that prompted `2`. Reported against a checkout with four of them:
 22,004 files walked to 5,463 tracked ones, and search returning the same document at two

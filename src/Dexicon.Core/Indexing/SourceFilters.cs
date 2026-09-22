@@ -20,9 +20,10 @@ namespace Dexicon.Core.Indexing;
 public static class SourceFilters
 {
     /// <param name="UseGitignore">
-    /// Honour git's answer about this source's root: its <c>.gitignore</c>, and its
-    /// <c>.git/info/exclude</c>, which is where worktrees and other local additions are
-    /// excluded. One setting for both, so it says whether git decides what is indexed.
+    /// Honour git's answer about this source's tree: a <c>.gitignore</c> in every
+    /// directory the walk reaches, and the root's <c>.git/info/exclude</c>, which is where
+    /// worktrees and other local additions are excluded. One setting for all of it, so it
+    /// says whether git decides what is indexed.
     /// </param>
     /// <param name="MaxFileBytes">The cap for ordinary files; documents get their own, larger one.</param>
     /// <param name="IncludeGlobs">Empty means everything not excluded, which is not the same as matching nothing.</param>
