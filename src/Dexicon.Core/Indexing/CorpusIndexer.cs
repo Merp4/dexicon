@@ -67,6 +67,10 @@ public sealed class CorpusIndexer(
 
         var embeddingFailed = false;
 
+        // A source this pass could not reach: a mount that is away, a folder with no
+        // repository in it. Not a failure of the job and not a success either.
+        var unavailable = false;
+
         // The caller's own cancellation, kept apart from losing the lease: one is someone
         // deciding to stop and the other is the machinery taking the corpus away, and they
         // are not the same outcome to record.
@@ -166,28 +170,64 @@ public sealed class CorpusIndexer(
                 {
                     var full = job.Kind is JobKind.Full or JobKind.Rebuild;
 
-                    if (source.Kind == SourceKind.Workspace)
+                    // Every kind named, and an unknown one throws rather than being
+                    // skipped. It used to be an if with an else meaning Upload, which
+                    // would have indexed a repository's history as a set of attachments
+                    // and found none; a switch without the default below is no better,
+                    // because C# does not check a switch STATEMENT for exhaustiveness
+                    // and a fourth kind would silently match nothing and be left out of
+                    // its own index with the job reporting success.
+                    switch (source.Kind)
                     {
-                        await IndexWorkspaceSourceAsync(corpus, set, templates, chunking, source, job, progress, full,
-                            onEmbeddingFailure: () => embeddingFailed = true, ct);
-                    }
-                    else
-                    {
-                        await IndexUploadSourceAsync(corpus, set, templates, chunking, source, job, progress, full,
-                            onEmbeddingFailure: () => embeddingFailed = true, ct);
+                        case SourceKind.Workspace:
+                            await IndexWorkspaceSourceAsync(corpus, set, templates, chunking, source, job,
+                                progress, full, onEmbeddingFailure: () => embeddingFailed = true, ct);
+                            break;
+
+                        case SourceKind.GitHistory:
+                            await IndexGitHistorySourceAsync(corpus, set, templates, chunking, source, job,
+                                progress, full, onEmbeddingFailure: () => embeddingFailed = true, ct);
+                            break;
+
+                        case SourceKind.Upload:
+                            await IndexUploadSourceAsync(corpus, set, templates, chunking, source, job,
+                                progress, full, onEmbeddingFailure: () => embeddingFailed = true, ct);
+                            break;
+
+                        default:
+                            throw new InvalidOperationException(
+                                $"Source {source.Id} is of kind {source.Kind}, which this pass "
+                                + "does not know how to index.");
                     }
                 }
 
-                set.State = embeddingFailed ? CorpusState.Degraded : CorpusState.Ready;
-                if (!embeddingFailed) set.LastIndexedUtc = DateTime.UtcNow;
+                // A source that could not be reached sets the corpus Unavailable and
+                // returns, and that outcome has to survive the assignments below. It did
+                // not: a missing mount or a folder with no repository in it finished as a
+                // ready corpus and a succeeded job, with only `job.Error` saying anything
+                // was wrong, so a caller polling the job for success was told yes.
+                unavailable |= corpus.State == CorpusState.Unavailable;
+
+                set.State = embeddingFailed ? CorpusState.Degraded
+                    : unavailable ? CorpusState.Unavailable
+                    : CorpusState.Ready;
+
+                if (!embeddingFailed && !unavailable) set.LastIndexedUtc = DateTime.UtcNow;
             }
 
             job.Phase = "reconcile";
             await db.SaveChangesAsync(ct);
 
-            job.State = embeddingFailed ? JobState.Degraded : JobState.Succeeded;
-            corpus.State = embeddingFailed ? CorpusState.Degraded : CorpusState.Ready;
-            if (!embeddingFailed) corpus.LastIndexedUtc = DateTime.UtcNow;
+            // Degraded rather than Succeeded for an unreachable source: the pass did run
+            // and the sources it could reach are indexed, so it is not Failed, and it is
+            // not success either.
+            job.State = embeddingFailed || unavailable ? JobState.Degraded : JobState.Succeeded;
+
+            corpus.State = embeddingFailed ? CorpusState.Degraded
+                : unavailable ? CorpusState.Unavailable
+                : CorpusState.Ready;
+
+            if (!embeddingFailed && !unavailable) corpus.LastIndexedUtc = DateTime.UtcNow;
 
             if (embeddingFailed)
                 job.Error = "One or more files could not be embedded and were skipped. They will be retried on the next run.";
@@ -743,12 +783,206 @@ public sealed class CorpusIndexer(
         // The same walk the sweep uses, so the inventory it records and the files this
         // indexes are one answer rather than two that have to agree.
         var walk = WorkspaceDiscovery.Walk(corpus, source, root, _indexing);
-        var files = walk.Owned;
 
         if (walk.ShadowedCount > 0)
             log.LogInformation(
                 "Source {Source}: {Owned} of {Found} files; {Shadowed} belong to a more specific source",
-                source.RootPath, files.Count, files.Count + walk.ShadowedCount, walk.ShadowedCount);
+                source.RootPath, walk.Owned.Count, walk.Owned.Count + walk.ShadowedCount, walk.ShadowedCount);
+
+        await IndexUnitsAsync(corpus, set, templates, chunking, source, job, progress, full,
+            walk.Owned, walk.Skipped, reader.ReadAsync, alwaysProse: false,
+            fingerprintOf: null, onEmbeddingFailure, ct);
+    }
+
+    /// <summary>
+    /// One pass over a repository's history, one document per commit.
+    ///
+    /// The enumeration is the inventory and is deliberately cheap: shas and dates, no
+    /// messages and no patches. Which of them still need reading is then settled against the
+    /// catalogue before git is asked for anything else, because a commit's text is
+    /// decided by its sha and this source's settings and a commit cannot change. A
+    /// refresh of a repository whose tip has not moved therefore costs one `git log`.
+    /// </summary>
+    private async Task IndexGitHistorySourceAsync(Corpus corpus, ChunkSet set, ModelTemplates templates,
+        ChunkOptions chunking,
+        Source source, IndexJob job,
+        IProgress<IndexProgress>? progress, bool full, Action onEmbeddingFailure, CancellationToken ct)
+    {
+        // Resolved into the type git is run against, so the boundary is applied again by
+        // the code that starts the process rather than trusted to have happened here.
+        // Null is the mount being away, which is the same condition the old
+        // Directory.Exists check reported and takes the same branch.
+        var repo = GitHistory.RepositoryIn(_indexing.WorkspaceRoot, source.RootPath);
+        if (repo is null)
+        {
+            corpus.State = CorpusState.Unavailable;
+            job.Error = $"Workspace path '{source.RootPath}' is not available under {_indexing.WorkspaceRoot}.";
+            log.LogWarning("{Error}", job.Error);
+            return;
+        }
+
+        if (!await GitHistory.IsRepositoryAsync(repo, ct))
+        {
+            // Unavailable rather than failed, and nothing is removed: a repository whose
+            // mount is present but whose .git is not is the same class of problem as a
+            // mount that is away, and the history indexed last time is still searchable.
+            corpus.State = CorpusState.Unavailable;
+            job.Error = $"Source '{source.RootPath}' is not a git repository, so it has no history to index.";
+            log.LogWarning("{Error}", job.Error);
+            return;
+        }
+
+        var options = GitHistoryOptions.FromJson(source.GitOptions);
+
+        // The source's include globs become pathspecs, so they mean whose history rather
+        // than which files to read, and they narrow the diff at the same time. Excludes
+        // are not passed: git's exclude pathspec syntax is its own, and quietly mapping
+        // one glob language onto another is how a filter comes to mean something else.
+        var filters = SourceFilters.Resolve(corpus, source, _indexing);
+
+        IReadOnlyList<GitCommit> commits;
+        try
+        {
+            commits = await GitHistory.EnumerateAsync(repo, options, filters.IncludeGlobs, ct);
+        }
+        catch (GitHistoryException ex)
+        {
+            corpus.State = CorpusState.Unavailable;
+            job.Error = ex.Message;
+            log.LogWarning("{Error}", job.Error);
+            return;
+        }
+
+        log.LogInformation("Source {Source}: {Commits} commits on {Ref}",
+            source.RootPath, commits.Count, options.Ref);
+
+        // One commit per path, decided in the one place the sweep decides it too.
+        //
+        // Not widened to the full sha, because the arithmetic does not justify a 40
+        // character path in every file list: twelve hex characters is 48 bits, so an
+        // accidental collision inside one day needs on the order of 16.7 million commits
+        // dated that day. Deliberate collisions are not a threat worth pricing either —
+        // the only party who can add commits to the repository is the party whose commit
+        // would go missing. What is worth the lines is that the loss is decided and
+        // counted rather than falling out of an ordering, because at these odds nobody
+        // would ever go looking.
+        var distinct = GitHistory.OnePerPath(commits);
+
+        if (distinct.Count != commits.Count)
+            log.LogWarning(
+                "{Dropped} of {Total} commits in {Source} share a date and a twelve-character "
+                + "sha prefix with a newer one, and are not indexed",
+                commits.Count - distinct.Count, commits.Count, source.RootPath);
+
+        var byPath = distinct.ToDictionary(c => c.RelativePath, StringComparer.Ordinal);
+
+        // Size is the size of the document, which is not known until it is read. Zero
+        // here rather than a guess: a number nobody measured is worse than none.
+        var units = distinct
+            .Select(c => new WorkspaceWalker.Candidate(repo.FullPath, c.RelativePath, 0))
+            .ToList();
+
+        // The pathspecs go in: they are passed to git, so they decide which files the
+        // stat lists and which hunks the patch holds, and the same commit under a
+        // narrower filter is a different document. Left out, a corpus whose include
+        // globs changed kept every old commit skipped, with a stat cut to paths nobody
+        // had selected any more.
+        var fingerprint = options.ContentFingerprint(filters.IncludeGlobs);
+
+        // The same handling for a git failure DURING the pass as for one before it. The
+        // catch above covered the inventory only, so a repository that went away between
+        // enumerating and reading — an unmounted share, a timed-out call — reached the
+        // job's generic catch and was recorded as a failed job rather than an
+        // unavailable source. Same condition, and it should not depend on when it
+        // happened.
+        try
+        {
+            await IndexUnitsAsync(corpus, set, templates, chunking, source, job, progress, full,
+                units, [],
+                (toRead, token) => ReadCommitsAsync(repo, options, byPath, toRead, filters.IncludeGlobs, token),
+                alwaysProse: true,
+                fingerprintOf: candidate => HashContent(
+                    byPath[candidate.RelativePath].Sha + '|' + fingerprint),
+                onEmbeddingFailure, ct);
+        }
+        catch (GitHistoryException ex)
+        {
+            corpus.State = CorpusState.Unavailable;
+            job.Error = ex.Message;
+            log.LogWarning("{Error}", job.Error);
+        }
+    }
+
+    /// <summary>
+    /// The commits the pass still wants, as reads the shared loop understands.
+    ///
+    /// The sha is what the text is hashed from, for the same reason it is what the
+    /// staleness check used: it settles the content, and hashing the document instead
+    /// would mean the check could not run before the read.
+    /// </summary>
+    private static async IAsyncEnumerable<ReadFile> ReadCommitsAsync(
+        GitRepository repo, GitHistoryOptions options, Dictionary<string, GitCommit> byPath,
+        IReadOnlyList<WorkspaceWalker.Candidate> toRead, IReadOnlyList<string>? pathspecs,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        if (toRead.Count == 0) yield break;
+
+        var wanted = new Dictionary<string, WorkspaceWalker.Candidate>(toRead.Count, StringComparer.Ordinal);
+        foreach (var candidate in toRead) wanted[byPath[candidate.RelativePath].Sha] = candidate;
+
+        var fingerprint = options.ContentFingerprint(pathspecs);
+
+        await foreach (var (sha, text) in
+                       GitHistory.ReadAsync(repo, options, [.. wanted.Keys], pathspecs, ct))
+        {
+            if (!wanted.TryGetValue(sha, out var candidate)) continue;
+
+            yield return new ReadFile(
+                // UTF-8 bytes, because SizeBytes is a byte count everywhere else: it
+                // sorts the file list and is rendered as a size, and a commit carrying
+                // non-ASCII text would otherwise report smaller than it is.
+                candidate with { SizeBytes = Encoding.UTF8.GetByteCount(text) },
+                new ReadText(HashContent(sha + '|' + fingerprint), new ExtractedText(text, []), null),
+                null);
+        }
+    }
+
+    /// <summary>
+    /// One pass over the units of one source, into one chunk set.
+    ///
+    /// A unit is a file for a workspace source, an attachment for an upload and a commit
+    /// for a git history. Everything from here down is about text with a path, a hash and
+    /// a size, and none of it knows which of the three it came from. That is deliberate:
+    /// the staleness short-circuit, the four empty branches that have to drop their
+    /// vectors, the claim written before the delete, the counters and the reconcile are
+    /// each a defect that has already been fixed once, and a second copy of this loop is
+    /// where those fixes would stop applying to half the sources.
+    /// </summary>
+    /// <param name="units">What to index, already filtered to what this source owns.</param>
+    /// <param name="skipped">Units the discovery excluded. They get rows and are counted.</param>
+    /// <param name="read">Turns the units into text, in whatever way this kind of source does.</param>
+    /// <param name="alwaysProse">
+    /// Chunk on blank lines whatever the path looks like. A commit is prose with a diff
+    /// in it, and a path ending `.cs` under a source whose units are commits would
+    /// otherwise be cut by a C# member regex.
+    /// </param>
+    /// <param name="fingerprintOf">
+    /// The hash of a unit's content, where it is knowable without reading the unit, or
+    /// null where it is not. A file's is a hash of its extracted text and so needs the
+    /// extraction; a commit's is its sha, because a commit cannot change.
+    /// </param>
+    private async Task IndexUnitsAsync(Corpus corpus, ChunkSet set, ModelTemplates templates,
+        ChunkOptions chunking,
+        Source source, IndexJob job,
+        IProgress<IndexProgress>? progress, bool full,
+        IReadOnlyList<WorkspaceWalker.Candidate> units,
+        IReadOnlyList<WorkspaceWalker.Skipped> skipped,
+        Func<IReadOnlyList<WorkspaceWalker.Candidate>, CancellationToken, IAsyncEnumerable<ReadFile>> read,
+        bool alwaysProse,
+        Func<WorkspaceWalker.Candidate, string>? fingerprintOf,
+        Action onEmbeddingFailure, CancellationToken ct)
+    {
+        var files = units;
 
         // Every file this pass will record, which is what the counters below add up to:
         // the ones it owns AND the ones the walk excluded, because both get a row and
@@ -768,7 +1002,7 @@ public sealed class CorpusIndexer(
         // That inflates the total on a corpus with nested sources, but it does not break
         // what this line is for: each of those counts is matched by a FilesSkipped in the
         // same pass, so the two still add up.
-        job.FilesTotal += files.Count + walk.Skipped.Count;
+        job.FilesTotal += files.Count + skipped.Count;
         job.Phase = "extract";
 
         // The job's counters accumulate across every source and every set, so this pass's
@@ -844,7 +1078,7 @@ public sealed class CorpusIndexer(
             job.FilesSkipped++;
         }
 
-        foreach (var skip in walk.Skipped)
+        foreach (var skip in skipped)
         {
             seen.Add(skip.RelativePath);
             var (_, state) = Track(known, states, set, source.Id, skip.RelativePath, skip.SizeBytes);
@@ -868,12 +1102,48 @@ public sealed class CorpusIndexer(
             job.FilesSkipped++;
         }
 
+        // Units whose fingerprint is knowable without reading them are settled here,
+        // before anything is asked for.
+        //
+        // A file cannot be: its fingerprint is a hash of its EXTRACTED text, so deciding
+        // it is unchanged means extracting it first, which is why the check below sits
+        // after the read. A commit can, because a commit is immutable and its text is
+        // decided by its sha and the source's settings. Left to the in-loop check, a
+        // refresh of a repository whose tip had not moved would ask git for every patch
+        // in it to discover that nothing had changed.
+        //
+        // They still go into `seen`. The reconcile at the end removes what a walk stopped
+        // seeing, and a unit skipped as unchanged is a unit the walk very much saw.
+        var toRead = files;
+
+        if (!full && fingerprintOf is not null)
+        {
+            var fresh = new List<WorkspaceWalker.Candidate>(files.Count);
+
+            foreach (var candidate in files)
+            {
+                var hash = ChunkingFingerprint(set, fingerprintOf(candidate), templates, chunking);
+
+                if (states.TryGetValue(candidate.RelativePath, out var existing)
+                    && existing.ContentHash == hash && existing.Status == FileStatus.Indexed)
+                {
+                    seen.Add(candidate.RelativePath);
+                    job.FilesSkipped++;
+                    continue;
+                }
+
+                fresh.Add(candidate);
+            }
+
+            toRead = fresh;
+        }
+
         // Read in parallel, recorded here one at a time. Everything below this line
         // touches state belonging to this pass alone - the DbContext, the two
         // dictionaries, the job's counters - and none of it is what makes indexing slow.
-        await foreach (var read in reader.ReadAsync(files, ct))
+        await foreach (var unit in read(toRead, ct))
         {
-            var candidate = read.Candidate;
+            var candidate = unit.Candidate;
             ct.ThrowIfCancellationRequested();
             seen.Add(candidate.RelativePath);
 
@@ -881,9 +1151,9 @@ public sealed class CorpusIndexer(
             {
                 // Rethrown here rather than handled where it was caught, so the catch
                 // blocks below stay the one place a file's failure becomes a row.
-                if (read.Error is not null) throw read.Error;
+                if (unit.Error is not null) throw unit.Error;
 
-                var (fileSha, extracted, extractor) = read.Read!;
+                var (fileSha, extracted, extractor) = unit.Read!;
                 var content = extracted.Text;
 
                 // The stored hash is the CHUNKING FINGERPRINT, not the raw content hash.
@@ -891,7 +1161,17 @@ public sealed class CorpusIndexer(
                 // file looking unchanged, so a refresh re-chunked nothing and the new
                 // setting had no effect. Mixing the settings in marks precisely the
                 // affected files as stale, and no others.
-                var hash = ChunkingFingerprint(set, HashContent(content), templates, chunking);
+                //
+                // Over `fingerprintOf` where a unit has one, because that is what the
+                // pre-read check above compares against, and a value written here in
+                // some other shape is one it can never match. It could not: the check
+                // hashed the commit's sha and the source's settings while this hashed
+                // the document text, so the skip never fired and a refresh over an
+                // unmoved tip read and re-hashed every patch in the repository to
+                // conclude nothing had changed. The counters could not show it, because
+                // the in-loop check below then skipped every one of them.
+                var hash = ChunkingFingerprint(
+                    set, fingerprintOf?.Invoke(candidate) ?? HashContent(content), templates, chunking);
 
                 if (!full && states.TryGetValue(candidate.RelativePath, out var existing)
                           && existing.ContentHash == hash && existing.Status == FileStatus.Indexed)
@@ -920,7 +1200,7 @@ public sealed class CorpusIndexer(
 
                 // A document is chunked as prose regardless of its extension: applying a
                 // C# member-boundary regex to extracted PDF text finds nothing useful.
-                var pieces = extractor is null
+                var pieces = extractor is null && !alwaysProse
                     ? CodeChunker.Chunk(candidate.RelativePath, content, chunking, extracted)
                     : CodeChunker.Chunk(candidate.RelativePath, content,
                         chunking with { BoundaryMode = "blank-line" }, extracted);

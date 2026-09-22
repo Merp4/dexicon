@@ -24,6 +24,7 @@ import {
   Search, Settings, Sliders, SlidersHorizontal, Trash2, TriangleAlert,
 } from 'lucide-react';
 import { cn } from 'cn';
+import { unitFor, unitOf } from './lib/units';
 import { parseHash, toHash, type View as RouteView } from './route';
 import { WorkspacePicker } from './WorkspacePicker';
 
@@ -827,7 +828,7 @@ export function CorporaView({
                 {c.description && <p className="dim mt-1.5 mx-0 mb-0 text-sm">{c.description}</p>}
 
                 <div className="dim mt-2 text-xs flex gap-3.5 flex-wrap">
-                  <span>{c.fileCount.toLocaleString()} {c.fileCount === 1 ? 'file' : 'files'}</span>
+                  <span>{c.fileCount.toLocaleString()} {unitFor(c.sources, c.fileCount)}</span>
                   <span>{c.chunkCount.toLocaleString()} chunks</span>
                   {/* Discovered by a sweep and not yet indexed. Separate from the file count,
                       which is what is searchable: a corpus added while another indexes used to
@@ -846,7 +847,7 @@ export function CorporaView({
                   {c.chunkSets.length > 1 && <span>{c.chunkSets.length} chunk sets</span>}
                 </div>
 
-                {running && <ProgressBar job={job} />}
+                {running && <ProgressBar job={job} sources={c.sources} />}
               </CardButton>
             );
           })}
@@ -858,12 +859,20 @@ export function CorporaView({
   );
 }
 
-function ProgressBar({ job }: { job: Job & { currentFile?: string } }) {
+/**
+ * @param sources The corpus's sources, so the caption counts what the job is counting.
+ * A history job reading "0/201 files" beside a corpus that says "201 commits" is two
+ * numbers about the same work disagreeing on what the work is.
+ */
+function ProgressBar({ job, sources }: {
+  job: Job & { currentFile?: string };
+  sources?: Corpus['sources'];
+}) {
   const processed = job.filesDone + job.filesSkipped + job.filesFailed;
   const pct = job.filesTotal > 0 ? Math.min(100, (processed / job.filesTotal) * 100) : 0;
   const caption =
-    `${job.phase ?? job.state} · ${processed.toLocaleString()}/${job.filesTotal.toLocaleString()} files` +
-    ` · ${job.chunksWritten.toLocaleString()} chunks`;
+    `${job.phase ?? job.state} · ${processed.toLocaleString()}/${job.filesTotal.toLocaleString()}` +
+    ` ${unitFor(sources, job.filesTotal)} · ${job.chunksWritten.toLocaleString()} chunks`;
 
   return (
     <div className="mt-2.5">
@@ -1129,7 +1138,7 @@ export function CorpusDetail({
         <Button variant="danger" onClick={() => setConfirmDelete(true)}><Trash2 />Delete</Button>
       </div>
 
-      {job?.phase && <div className="card p-3.5"><ProgressBar job={job} /></div>}
+      {job?.phase && <div className="card p-3.5"><ProgressBar job={job} sources={corpus.sources} /></div>}
 
       <CoverageNotice
         gaps={gaps}
@@ -1171,27 +1180,38 @@ export function CorpusDetail({
                     indexing ? (
                       <span className="dim text-xs">
                         {s.fileCount
-                          ? `${s.fileCount.toLocaleString()} so far`
+                          ? `${s.fileCount.toLocaleString()} ${unitOf(s, s.fileCount)} so far`
                           : 'counting…'}
                       </span>
                     ) : (
                       <span className={s.fileCount ? 'dim text-xs' : 'text-xs text-[var(--warn-text)]'}>
                         {s.fileCount
-                          ? `${s.fileCount.toLocaleString()} ${s.fileCount === 1 ? 'file' : 'files'}`
-                          : 'no files'}
+                          ? `${s.fileCount.toLocaleString()} ${unitOf(s, s.fileCount)}`
+                          : `no ${unitOf(s, 0)}`}
                       </span>
                     )
                   )}
-                  <span className="dim text-xs">
-                    {s.useGitignore ? '.gitignore honoured' : '.gitignore ignored'}
-                    {' · '}≤ {formatBytes(s.maxFileBytes)}
-                    {s.includeGlobs?.length ? ` · only ${s.includeGlobs.join(', ')}` : ''}
-                    {s.excludeGlobs?.length ? ` · not ${s.excludeGlobs.join(', ')}` : ''}
-                    {/* Which of those the source would keep if the corpus default moved.
-                        Without it a reader reads every value as one they typed here, and
-                        editing the corpus default looks like it did nothing. */}
-                    {inheritsFromCorpus(s, corpus.defaults) && ' · some from the corpus'}
-                  </span>
+                  {/* A history source ignores the size cap and .gitignore, and what it
+                      counts is commits. Rendering the file settings against one said it
+                      obeyed three things it does not read, and called its commits files. */}
+                  {s.kind === 'githistory' ? (
+                    <span className="dim text-xs">
+                      {s.git?.ref ?? 'HEAD'}
+                      {' · '}{s.git?.includeDiff ? 'with the diff' : 'message and stat'}
+                      {s.includeGlobs?.length ? ` · only ${s.includeGlobs.join(', ')}` : ''}
+                    </span>
+                  ) : (
+                    <span className="dim text-xs">
+                      {s.useGitignore ? '.gitignore honoured' : '.gitignore ignored'}
+                      {' · '}≤ {formatBytes(s.maxFileBytes)}
+                      {s.includeGlobs?.length ? ` · only ${s.includeGlobs.join(', ')}` : ''}
+                      {s.excludeGlobs?.length ? ` · not ${s.excludeGlobs.join(', ')}` : ''}
+                      {/* Which of those the source would keep if the corpus default moved.
+                          Without it a reader reads every value as one they typed here, and
+                          editing the corpus default looks like it did nothing. */}
+                      {inheritsFromCorpus(s, corpus.defaults) && ' · some from the corpus'}
+                    </span>
+                  )}
                   {/* Adding a folder was one click; removing one meant deleting the whole
                       corpus and rebuilding it, losing its chunk sets, its history and every
                       other source with it. A path typed wrong is not worth that. */}
@@ -1239,7 +1259,7 @@ export function CorpusDetail({
           </span>
         </Row>
         <Row label="Contents">
-          {corpus.fileCount.toLocaleString()} {corpus.fileCount === 1 ? 'file' : 'files'}
+          {corpus.fileCount.toLocaleString()} {unitFor(corpus.sources, corpus.fileCount)}
           {' · '}{corpus.chunkCount.toLocaleString()} chunks
           {corpus.skippedCount > 0 && ` · ${corpus.skippedCount} skipped`}
           {corpus.failedCount > 0 && ` · ${corpus.failedCount} failed`}
@@ -1269,11 +1289,11 @@ export function CorpusDetail({
             value={nameFilter}
             onChange={(e) => setNameFilter(e.target.value)}
             placeholder="Filter by name…"
-            aria-label="Filter files by name"
+            aria-label={`Filter ${unitFor(corpus.sources, 0)} by name`}
             className="h-8 w-[220px] text-sm"
           />
           <Segmented
-            label="Sort files by"
+            label={`Sort ${unitFor(corpus.sources, 0)} by`}
             value={sort}
             onChange={setSort}
             options={[
@@ -1287,11 +1307,14 @@ export function CorpusDetail({
         </div>
 
         {files.length === 0 && totalFiles === 0 && !nameQuery && !filter ? (
-          <Empty title="No files" hint="Run a refresh to index this corpus." />
+          <Empty
+            title={`No ${unitFor(corpus.sources, 0)}`}
+            hint="Run a refresh to index this corpus."
+          />
         ) : files.length === 0 ? (
           <Empty
-            title="No file matches that"
-            hint={`Searched all ${corpus.fileCount.toLocaleString()} files in this corpus. Clear the filter to see them.`}
+            title={`No ${unitFor(corpus.sources, 1)} matches that`}
+            hint={`Searched all ${corpus.fileCount.toLocaleString()} ${unitFor(corpus.sources, corpus.fileCount)} in this corpus. Clear the filter to see them.`}
           />
         ) : (
           <div className="card overflow-hidden">
@@ -1856,6 +1879,10 @@ function AddSourceModal({
 }) {
   const [path, setPath] = useState(initialPath);
   const [useGitignore, setUseGitignore] = useState(true);
+  // Commits rather than files. The two are separate sources over the same folder when
+  // both are wanted, so this is a choice about what THIS source is, not a modifier.
+  const [gitHistory, setGitHistory] = useState(false);
+  const [includeDiff, setIncludeDiff] = useState(false);
   // 2 MB was too small to be a useful default: it is a cap on ordinary files, since PDFs,
   // EPUBs and the other document formats are measured against DocumentMaxBytes instead, so
   // the only thing it was excluding was large text.
@@ -1864,7 +1891,11 @@ function AddSourceModal({
   const [exclude, setExclude] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const alreadyHere = corpus.sources.some((s) => s.rootPath === path);
+  // The same folder AND the same kind. Indexing a repository's files and its history is
+  // deliberately two sources over one root, so warning about the second on the path
+  // alone told the reader that the thing this feature exists for was a mistake.
+  const wantedKind = gitHistory ? 'githistory' : 'workspace';
+  const alreadyHere = corpus.sources.some((s) => s.rootPath === path && s.kind === wantedKind);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -1875,10 +1906,15 @@ function AddSourceModal({
       // box nobody typed in would pin every new source against the default.
       await api.addSource(corpus.name, {
         workspacePath: path,
-        useGitignore,
-        maxFileBytes: Math.round(maxFileMb * 1024 * 1024),
+        // The file-shaped settings are not sent for a history source. They mean nothing
+        // to a commit, and storing them would leave a source whose displayed filters
+        // describe work it does not do.
+        useGitignore: gitHistory ? undefined : useGitignore,
+        maxFileBytes: gitHistory ? undefined : Math.round(maxFileMb * 1024 * 1024),
         includeGlobs: globList(include).length ? globList(include) : undefined,
-        excludeGlobs: globList(exclude).length ? globList(exclude) : undefined,
+        excludeGlobs: gitHistory || !globList(exclude).length ? undefined : globList(exclude),
+        gitHistory: gitHistory || undefined,
+        git: gitHistory ? { includeDiff } : undefined,
       });
       await onAdded();
     } catch (err) {
@@ -1899,42 +1935,88 @@ function AddSourceModal({
 
         {alreadyHere && (
           <Notice tone="warn" className="-mt-2 mb-3.5 text-xs">
-            This corpus already indexes that folder. Adding it again indexes everything twice.
+            {gitHistory
+              ? 'This corpus already indexes that folder’s history. Adding it again indexes every commit twice.'
+              : 'This corpus already indexes that folder. Adding it again indexes everything twice.'}
           </Notice>
         )}
 
-        <Field label="Largest file (MB)" hint="Anything bigger is skipped and reported, not silently dropped.">
-          <Input
-            type="number"
-            min={0.1}
-            step="any"
-            value={maxFileMb}
-            onChange={(e) => setMaxFileMb(Number(e.target.value))}
-          />
-        </Field>
-
-        <Field label="Only these (optional)" hint="Globs, comma separated. Empty means everything not excluded.">
-          <Input className="mono" value={include} onChange={(e) => setInclude(e.target.value)} placeholder="src/**, docs/**" />
-        </Field>
-
-        <Field label="Never these (optional)" hint="Globs, comma separated. Applied after the include list.">
-          <Input className="mono" value={exclude} onChange={(e) => setExclude(e.target.value)} placeholder="**/vendor/**, *.min.js" />
-        </Field>
-
         <label className="mb-3.5 flex items-start gap-2.5">
           <Checkbox
-            checked={useGitignore}
-            onCheckedChange={(v) => setUseGitignore(v === true)}
+            checked={gitHistory}
+            onCheckedChange={(v) => setGitHistory(v === true)}
             className="mt-0.5"
           />
           <span className="grid gap-0.5">
-            <span className="text-sm leading-none font-semibold">Honour .gitignore</span>
+            <span className="text-sm leading-none font-semibold">Index its commit history</span>
             <span className="text-xs text-muted-foreground">
-              And .dexiconignore. Off indexes build output and dependencies too, which is
-              almost never what you want.
+              One document per commit instead of one per file. To search both, add the
+              folder twice: a commit and a file are different things to count.
             </span>
           </span>
         </label>
+
+        {gitHistory && (
+          <label className="mb-3.5 flex items-start gap-2.5">
+            <Checkbox
+              checked={includeDiff}
+              onCheckedChange={(v) => setIncludeDiff(v === true)}
+              className="mt-0.5"
+            />
+            <span className="grid gap-0.5">
+              <span className="text-sm leading-none font-semibold">Include the diff</span>
+              <span className="text-xs text-muted-foreground">
+                Off, each commit is its message and which files it touched: measured over
+                201 commits, about 2,000 characters each. On, it is the patch as well, and
+                about thirteen times that.
+              </span>
+            </span>
+          </label>
+        )}
+
+        {!gitHistory && (
+          <Field label="Largest file (MB)" hint="Anything bigger is skipped and reported, not silently dropped.">
+            <Input
+              type="number"
+              min={0.1}
+              step="any"
+              value={maxFileMb}
+              onChange={(e) => setMaxFileMb(Number(e.target.value))}
+            />
+          </Field>
+        )}
+
+        <Field
+          label="Only these (optional)"
+          hint={gitHistory
+            ? 'Paths, comma separated. Commits that touched them, and only their side of the diff.'
+            : 'Globs, comma separated. Empty means everything not excluded.'}
+        >
+          <Input className="mono" value={include} onChange={(e) => setInclude(e.target.value)} placeholder="src/**, docs/**" />
+        </Field>
+
+        {!gitHistory && (
+          <Field label="Never these (optional)" hint="Globs, comma separated. Applied after the include list.">
+            <Input className="mono" value={exclude} onChange={(e) => setExclude(e.target.value)} placeholder="**/vendor/**, *.min.js" />
+          </Field>
+        )}
+
+        {!gitHistory && (
+          <label className="mb-3.5 flex items-start gap-2.5">
+            <Checkbox
+              checked={useGitignore}
+              onCheckedChange={(v) => setUseGitignore(v === true)}
+              className="mt-0.5"
+            />
+            <span className="grid gap-0.5">
+              <span className="text-sm leading-none font-semibold">Honour .gitignore</span>
+              <span className="text-xs text-muted-foreground">
+                And .dexiconignore. Off indexes build output and dependencies too, which is
+                almost never what you want.
+              </span>
+            </span>
+          </label>
+        )}
 
         <div className="mt-4 flex justify-end gap-2">
           <Button type="button" onClick={onClose}>Cancel</Button>
@@ -2085,8 +2167,8 @@ function RemoveSourceModal({ corpus, source, onClose, onRemoved, onError }: {
           index that no longer exists. Say what it costs and take one click. */}
       <p className="mt-0 text-sm">
         {source.fileCount
-          ? `Its ${source.fileCount.toLocaleString()} ${source.fileCount === 1 ? 'file leaves' : 'files leave'} the index immediately, in every chunk set of ${corpus.name}.`
-          : `It has no indexed files, so nothing leaves the index.`}
+          ? `Its ${source.fileCount.toLocaleString()} ${unitOf(source, source.fileCount)} ${source.fileCount === 1 ? 'leaves' : 'leave'} the index immediately, in every chunk set of ${corpus.name}.`
+          : `It has no indexed ${unitOf(source, 0)}, so nothing leaves the index.`}
         {' '}The folder on disk is untouched; Dexicon only ever reads it. Adding it again
         re-indexes from scratch.
       </p>
@@ -2172,6 +2254,9 @@ function groupRuns(jobs: Job[]): ({ kind: 'job'; job: Job } | { kind: 'quiet'; j
 export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: Record<string, Job & { currentFile?: string }>; onError: (e: unknown) => void }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const names = useMemo(() => Object.fromEntries(corpora.map((c) => [c.id, c.name])), [corpora]);
+  // The job's own corpus, so its caption counts what that corpus counts.
+  const sourcesOf = useMemo(
+    () => Object.fromEntries(corpora.map((c) => [c.id, c.sources])), [corpora]);
 
   useEffect(() => {
     const load = () => api.listJobs().then(setJobs).catch(onError);
@@ -2236,7 +2321,9 @@ export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: 
               </span>
             </div>
 
-            {(merged.state === 'running' || merged.phase) && <ProgressBar job={merged} />}
+            {(merged.state === 'running' || merged.phase) && (
+              <ProgressBar job={merged} sources={sourcesOf[j.corpusId]} />
+            )}
 
             <div className="dim mt-1.5 text-xs flex gap-3.5 flex-wrap">
               <span>{merged.filesDone.toLocaleString()} indexed</span>

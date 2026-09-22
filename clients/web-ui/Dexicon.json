@@ -1350,6 +1350,20 @@
             "items": {
               "type": "string"
             }
+          },
+          "gitHistory": {
+            "type": "boolean",
+            "default": false
+          },
+          "git": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GitHistoryOptions"
+              }
+            ]
           }
         }
       },
@@ -2468,6 +2482,44 @@
           }
         }
       },
+      "GitHistoryOptions": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "includeMessage": {
+            "type": "boolean"
+          },
+          "includeStat": {
+            "type": "boolean"
+          },
+          "includeDiff": {
+            "type": "boolean"
+          },
+          "maxDiffBytes": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "includeMerges": {
+            "type": "boolean"
+          },
+          "maxCommits": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "since": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date"
+          }
+        }
+      },
       "HealthDependency": {
         "required": [
           "reachable",
@@ -3358,6 +3410,16 @@
             "items": {
               "type": "string"
             }
+          },
+          "git": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GitHistoryOptions"
+              }
+            ]
           }
         }
       },
@@ -3571,6 +3633,16 @@
             "items": {
               "type": "string"
             }
+          },
+          "git": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GitHistoryOptions"
+              }
+            ]
           }
         }
       },

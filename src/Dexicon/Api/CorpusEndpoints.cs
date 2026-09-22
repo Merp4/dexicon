@@ -213,21 +213,72 @@ public static class CorpusEndpoints
         });
 
         g.MapPost("/{nameOrId}/sources", async (string nameOrId, AddSourceRequest body, RequestContext rc,
-            ScopeResolver scopes, CatalogDbContext db, CorpusIndexer indexer, IOptions<DexiconOptions> opts,
+            ScopeResolver scopes, CatalogDbContext db, IOptions<DexiconOptions> opts,
             IndexJobQueue queue, SweepQueue sweeps, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
 
-            try { indexer.ResolveWorkspacePath(body.WorkspacePath); }
+            // The boundary, for every kind of source. Existence is deliberately not
+            // required here: a workspace source may be added while its mount is away,
+            // and a pass reports that as unavailable rather than losing the source.
+            //
+            // A history source is the exception, refused at the door rather than
+            // recorded and discovered on the first pass. A source that can never produce
+            // anything is worse than a 400: it sits in the list looking configured, and
+            // the reason only ever appears in a job.
+            //
+            // Both inside the one catch, because both resolve the same path by the same
+            // rule and either can refuse it — RepositoryIn walks the real directories
+            // and so also refuses a link that leaves the root, which the string check
+            // cannot see.
+            try
+            {
+                var root = opts.Value.Indexing.WorkspaceRoot;
+                WorkspaceDiscovery.Resolve(root, body.WorkspacePath);
+
+                if (body.GitHistory)
+                {
+                    var repo = GitHistory.RepositoryIn(root, body.WorkspacePath);
+                    if (repo is null || !await GitHistory.IsRepositoryAsync(repo, ct))
+                        return Results.Problem(
+                            title: "Not a git repository",
+                            detail: $"'{body.WorkspacePath}' has no git repository in it, so there is no "
+                                  + "history to index. Point this at the folder holding .git.",
+                            statusCode: 400);
+                }
+            }
             catch (UnauthorizedAccessException ex)
-            { return Results.Problem(title: "Invalid workspace path", detail: ex.Message, statusCode: 400); }
+            {
+                return Results.Problem(title: "Invalid workspace path", detail: ex.Message, statusCode: 400);
+            }
+
+            // Refused, not dropped. PATCH already answers this way for the same mistake
+            // on an existing source; creation took the settings, stored null, and said
+            // nothing, so a source created with `git` but without `gitHistory` indexed
+            // files under settings the caller believed were in force.
+            if (body.Git is not null && !body.GitHistory)
+                return Results.Problem(
+                    title: "Not a git-history source",
+                    detail: "History settings were sent for a source that indexes files. Set "
+                          + "gitHistory: true to index the repository's commits, or leave them out.",
+                    statusCode: 400);
+
+            if (FileOnlySettingsFor(
+                    body.GitHistory ? SourceKind.GitHistory : SourceKind.Workspace,
+                    body.UseGitignore, body.MaxFileBytes, body.ExcludeGlobs) is { } unusable)
+                return Results.Problem(
+                    title: "Not a file source",
+                    detail: $"{unusable} apply to a folder being walked, and a history source is "
+                          + "walked by git log. Include globs work there, as pathspecs.",
+                    statusCode: 400);
 
             var source = new Source
             {
                 Id = Ulid.NewUlid().ToString(),
                 CorpusId = corpus.Id,
-                Kind = SourceKind.Workspace,
+                Kind = body.GitHistory ? SourceKind.GitHistory : SourceKind.Workspace,
+                GitOptions = body.GitHistory ? (body.Git ?? new GitHistoryOptions()).ToJson() : null,
                 RootPath = body.WorkspacePath.Trim('/', '\\'),
                 // Null, not a default. An omitted field means this source has no opinion
                 // and follows the corpus, which is the point of the corpus having one.
@@ -318,10 +369,17 @@ public static class CorpusEndpoints
                     detail: $"Corpus '{corpus.Name}' has no source '{sourceId}'.",
                     statusCode: 404);
 
-            if (source.Kind != SourceKind.Workspace)
+            if (source.Kind == SourceKind.Upload)
                 return Results.Problem(
-                    title: "Not a workspace source",
+                    title: "Not a walked source",
                     detail: "Filters apply to a folder being walked. An upload source has no tree to filter.",
+                    statusCode: 400);
+
+            if (body.Git is not null && source.Kind != SourceKind.GitHistory)
+                return Results.Problem(
+                    title: "Not a git-history source",
+                    detail: $"Source '{sourceId}' indexes files, not commits, so it has no history "
+                          + "settings. Add a second source over the same folder with gitHistory: true.",
                     statusCode: 400);
 
             if (body.MaxFileBytes is { } m && m <= 0)
@@ -330,7 +388,36 @@ public static class CorpusEndpoints
                     detail: "maxFileBytes must be greater than zero. Name it in `clear` to inherit the corpus default.",
                     statusCode: 400);
 
+            if (UnknownClearName(body.Clear) is { } unknown)
+                return Results.Problem(
+                    title: "Unknown filter",
+                    detail: $"'{unknown}' is not a filter that can be cleared. "
+                          + $"Name one of: {string.Join(", ", ClearableFilters)}.",
+                    statusCode: 400);
+
+            if (FileOnlySettingsFor(source.Kind, body.UseGitignore, body.MaxFileBytes, body.ExcludeGlobs)
+                is { } inapplicable)
+                return Results.Problem(
+                    title: "Not a file source",
+                    detail: $"Source '{sourceId}' indexes commits, so {inapplicable} would be stored "
+                          + "and never read. Include globs work there, as pathspecs.",
+                    statusCode: 400);
+
             var changed = ApplyFilters(source, body);
+
+            if (body.Git is { } git)
+            {
+                // Compared as stored rather than as sent, so a request that re-states
+                // the current settings is not a change. Without that, saving the form
+                // unchanged re-indexes every commit in the repository, which is the same
+                // mistake the filter path already avoids one line above.
+                var updated = git.ToJson();
+                if (!string.Equals(source.GitOptions, updated, StringComparison.Ordinal))
+                {
+                    source.GitOptions = updated;
+                    changed = true;
+                }
+            }
 
             await db.SaveChangesAsync(ct);
 
@@ -611,6 +698,49 @@ public static class CorpusEndpoints
     /// inferring it would make every partial update an accidental reset of everything it
     /// did not mention.
     /// </summary>
+    /// <summary>
+    /// The file-shaped settings a history source has no use for, or null if there are none.
+    ///
+    /// A commit history is walked by `git log`, not by the file walker, so only the
+    /// include globs mean anything there — they become pathspecs. `useGitignore`,
+    /// `maxFileBytes` and `excludeGlobs` are read by nothing on that path, so storing
+    /// them makes the API answer 200 to a request it did not honour and leaves a value
+    /// in the row that nothing will ever act on.
+    ///
+    /// Refused rather than ignored, for the symmetry the other direction already has:
+    /// history settings on a file source are a 400. The UI hides these fields for a
+    /// history source, which is what is offered rather than what is enforced — this is
+    /// the same rule where the request is actually handled.
+    /// </summary>
+    internal static string? FileOnlySettingsFor(
+        SourceKind kind, bool? useGitignore, int? maxFileBytes, IReadOnlyList<string>? excludeGlobs)
+    {
+        if (kind != SourceKind.GitHistory) return null;
+
+        var named = new List<string>(3);
+        if (useGitignore is not null) named.Add("useGitignore");
+        if (maxFileBytes is not null) named.Add("maxFileBytes");
+        if (excludeGlobs is not null) named.Add("excludeGlobs");
+
+        return named.Count == 0 ? null : string.Join(", ", named);
+    }
+
+    /// <summary>
+    /// The names <c>clear</c> understands. Anything else is a typo the caller wants to
+    /// know about: unknown names were dropped on the floor and the request answered 200,
+    /// so `clear: ["maxfilebytes"]` — or a field renamed one day — left the setting in
+    /// place and reported success.
+    ///
+    /// Case-insensitive, because that is how <see cref="ApplyFilters"/> compares them.
+    /// </summary>
+    internal static readonly string[] ClearableFilters =
+        ["useGitignore", "maxFileBytes", "includeGlobs", "excludeGlobs"];
+
+    /// <summary>The first name <c>clear</c> does not understand, or null.</summary>
+    internal static string? UnknownClearName(IReadOnlyList<string>? clear) =>
+        clear?.FirstOrDefault(
+            name => !ClearableFilters.Contains(name, StringComparer.OrdinalIgnoreCase));
+
     internal static bool ApplyFilters(Source source, UpdateSourceRequest body)
     {
         var clear = new HashSet<string>(body.Clear ?? [], StringComparer.OrdinalIgnoreCase);
@@ -642,7 +772,13 @@ public static class CorpusEndpoints
     internal static async Task<CoverageReport> CoverageAsync(
         CatalogDbContext db, IndexingOptions indexing, Corpus corpus, CancellationToken ct)
     {
-        var sources = await db.Sources.Where(s => s.CorpusId == corpus.Id).ToListAsync(ct);
+        // Workspace sources only, because coverage is about FILES on a mount that no
+        // source reads. A git-history source has a root and covers none of the files
+        // under it, so counting it made a repository look covered and suppressed the
+        // very gap that should have said "add a workspace source here too".
+        var sources = await db.Sources
+            .Where(s => s.CorpusId == corpus.Id && s.Kind == SourceKind.Workspace)
+            .ToListAsync(ct);
 
         var gaps = SourceCoverage.Find(
             indexing.WorkspaceRoot,

@@ -1,4 +1,5 @@
 using Dexicon.Api;
+using Dexicon.Core.Catalog;
 using Dexicon.Mcp;
 
 namespace Dexicon.Tests;
@@ -20,13 +21,14 @@ public class CorpusListingTests
         int chunks = 2531,
         string state = "ready",
         int failed = 0,
+        IReadOnlyList<SourceSummary>? sources = null,
         IReadOnlyList<ChunkSetSummary>? sets = null) =>
         new(
             Id: "01ABC", Name: name, Description: description, State: state,
             CreatedUtc: DateTime.UnixEpoch, LastIndexedUtc: DateTime.UnixEpoch,
             SourceCount: 1, FileCount: files, ChunkCount: chunks,
             SkippedCount: 0, FailedCount: failed, PendingCount: 0,
-            Sources: [],
+            Sources: sources ?? [],
             ChunkSets: sets ?? [Set("default", chunks)]);
 
     private static ChunkSetSummary Set(string name, int chunks, bool isDefault = true) =>
@@ -112,6 +114,28 @@ public class CorpusListingTests
     {
         // Six of nineteen books failed to extract once, and search simply returned less.
         // Nothing in a result set says "and there were six books I could not read".
-        DexiconTools.RenderCorpus(Corpus(failed: 6)).ShouldContain("6 file(s) failed");
+        DexiconTools.RenderCorpus(Corpus(failed: 6)).ShouldContain("6 files failed");
+    }
+
+    /// <summary>
+    /// The failure line counts in the corpus's own unit, like the line above it.
+    ///
+    /// The count and the unit were fixed together everywhere else and this line kept
+    /// "file(s)", so a history corpus reported "8 file(s) failed" directly beneath "201
+    /// commits" — an agent reading both has to decide which one is lying.
+    /// </summary>
+    [Fact]
+    public void A_history_corpus_reports_commits_failed_not_files()
+    {
+        var sources = new[]
+        {
+            new SourceSummary("s", nameof(SourceKind.GitHistory).ToLowerInvariant(), "repo",
+                true, 1024, [], []),
+        };
+
+        var rendered = DexiconTools.RenderCorpus(Corpus(failed: 8, sources: sources));
+
+        rendered.ShouldContain("8 commits failed");
+        rendered.ShouldNotContain("file");
     }
 }

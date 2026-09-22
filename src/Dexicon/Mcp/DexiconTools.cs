@@ -199,7 +199,7 @@ public sealed class DexiconTools
                 : "    NOT SEARCHABLE: no indexed content. Nothing here will ever match.\n");
         }
 
-        sb.Append($"    state: {s.State}, {s.FileCount:N0} files, {s.ChunkCount:N0} chunks");
+        sb.Append($"    state: {s.State}, {s.FileCount:N0} {UnitFor(s.Sources, s.FileCount)}, {s.ChunkCount:N0} chunks");
 
         // Every set is addressable as `corpus:set`, so an agent that is only told the
         // corpus name cannot reach the others. Named here, with the default marked.
@@ -214,7 +214,8 @@ public sealed class DexiconTools
             sb.Append("\n    (* is the default; name another with corpus:set)");
 
         if (s.LastIndexedUtc is { } indexed) sb.Append($"\n    last indexed: {indexed:u}");
-        if (s.FailedCount > 0) sb.Append($"\n    {s.FailedCount} file(s) failed; see the UI for why");
+        if (s.FailedCount > 0)
+            sb.Append($"\n    {s.FailedCount:N0} {UnitFor(s.Sources, s.FailedCount)} failed; see the UI for why");
         sb.Append('\n');
         return sb.ToString();
     }
@@ -384,7 +385,7 @@ public sealed class DexiconTools
                 .FirstOrDefaultAsync(ct);
 
             sb.Append($"{c.Name}: {summary.State}\n");
-            sb.Append($"  {summary.FileCount:N0} files indexed, {summary.ChunkCount:N0} chunks");
+            sb.Append($"  {summary.FileCount:N0} {UnitFor(summary.Sources, summary.FileCount)} indexed, {summary.ChunkCount:N0} chunks");
             if (summary.SkippedCount > 0) sb.Append($", {summary.SkippedCount:N0} skipped");
             if (summary.FailedCount > 0) sb.Append($", {summary.FailedCount:N0} failed");
             sb.Append('\n');
@@ -405,15 +406,22 @@ public sealed class DexiconTools
                 if (job.State == JobState.Running && job.FilesTotal > 0)
                 {
                     var pct = 100.0 * (job.FilesDone + job.FilesSkipped + job.FilesFailed) / job.FilesTotal;
-                    sb.Append($" — {pct:F0}% ({job.FilesDone + job.FilesSkipped + job.FilesFailed:N0} / {job.FilesTotal:N0} files)");
+                    sb.Append($" — {pct:F0}% ({job.FilesDone + job.FilesSkipped + job.FilesFailed:N0}"
+                            + $" / {job.FilesTotal:N0} {UnitFor(summary.Sources, job.FilesTotal)})");
                 }
                 sb.Append('\n');
                 if (job.Error is { Length: > 0 }) sb.Append($"  error: {job.Error}\n");
             }
 
+            // Workspace sources only, as the HTTP report does. A git-history source has a
+            // root and reads none of the files under it, so counting it would make a
+            // repository look covered and hide the gap that says to add a file source.
             sb.Append(RenderCoverage(SourceCoverage.Find(
                 opts.Value.Indexing.WorkspaceRoot,
-                summary.Sources.Select(s => new SourceCoverage.SourceRoot(s.RootPath, s.MaxFileBytes)),
+                summary.Sources
+                    .Where(s => string.Equals(s.Kind, nameof(SourceKind.Workspace),
+                                StringComparison.OrdinalIgnoreCase))
+                    .Select(s => new SourceCoverage.SourceRoot(s.RootPath, s.MaxFileBytes)),
                 opts.Value.Indexing.DocumentMaxBytes)));
 
             sb.Append('\n');
@@ -431,6 +439,26 @@ public sealed class DexiconTools
     /// Capped at five files per directory. The whole list belongs in the UI; what an agent
     /// needs here is to know the corpus has a hole and roughly where.
     /// </summary>
+    /// <summary>
+    /// What a corpus's count is counting.
+    ///
+    /// A git-history source's units are commits, so a corpus made only of them saying
+    /// "201 files indexed" contradicts the source summary the same agent can read. A
+    /// corpus holding both kinds is counting two different things at once and neither
+    /// word is true of the total, so it says "documents", which is true of either.
+    /// </summary>
+    internal static string UnitFor(IReadOnlyList<SourceSummary> sources, int n)
+    {
+        var history = nameof(SourceKind.GitHistory);
+        var kinds = sources.Select(s => s.Kind).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        var one = !kinds.Contains(history, StringComparer.OrdinalIgnoreCase) ? "file"
+            : kinds.Count == 1 ? "commit"
+            : "document";
+
+        return n == 1 ? one : one + "s";
+    }
+
     internal static string RenderCoverage(IReadOnlyList<SourceCoverage.Gap> gaps)
     {
         if (gaps.Count == 0) return string.Empty;

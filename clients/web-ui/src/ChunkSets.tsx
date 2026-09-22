@@ -16,6 +16,7 @@ import {
 import { Checkbox } from './ui';
 import { Trash2, TriangleAlert } from 'lucide-react';
 import { cn } from 'cn';
+import { unitFor } from './lib/units';
 
 /**
  * Chunk sets for one corpus.
@@ -132,7 +133,7 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
                 </div>
 
                 <div className="dim text-xs mt-1">
-                  {set.fileCount.toLocaleString()} files · {set.chunkCount.toLocaleString()} chunks ·{' '}
+                  {set.fileCount.toLocaleString()} {unitFor(corpus.sources, set.fileCount)} · {set.chunkCount.toLocaleString()} chunks ·{' '}
                   <span title={set.lastIndexedUtc ? localTime(set.lastIndexedUtc) : undefined}>
                     {set.lastIndexedUtc ? `indexed ${relativeTime(set.lastIndexedUtc)}` : 'never indexed'}
                   </span>
@@ -150,7 +151,7 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
                     // the point, and a button that vanishes teaches nothing.
                     title={
                       set.pendingCount > 0
-                        ? `${set.pendingCount.toLocaleString()} file(s) still to index; promoting now would make search incomplete`
+                        ? `${set.pendingCount.toLocaleString()} ${unitFor(corpus.sources, set.pendingCount)} still to index; promoting now would make search incomplete`
                         : 'Make this the set that search uses'
                     }
                     onClick={() => act(set.id, () => api.promoteChunkSet(corpus.name, set.name))}

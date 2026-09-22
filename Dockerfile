@@ -62,6 +62,11 @@ RUN dotnet publish src/Dexicon/Dexicon.csproj \
 # ── Runtime ───────────────────────────────────────────────────────────────────
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine@sha256:f62a272ac1b46e83f56b8ed0416572f31cd1128e2c4a5e63eb34d348e4a36095 AS runtime
 
+# git, for a source that indexes a repository's history. The binary rather than a native
+# library: this image is musl, so LibGit2Sharp would need musl builds to keep working,
+# and two processes per refresh is not a cost worth that. About 10 MB.
+RUN apk add --no-cache git
+
 # Non-root. The UID is fixed so a bind-mounted /data keeps working across rebuilds.
 RUN addgroup -g 10001 dexicon \
  && adduser -u 10001 -G dexicon -s /bin/false -D dexicon

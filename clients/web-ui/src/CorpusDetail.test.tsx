@@ -141,6 +141,68 @@ describe('the sources a corpus reads', () => {
     expect(screen.getByText(/\.gitignore honoured/)).toBeInTheDocument();
   });
 
+  /**
+   * A history source ignores the size cap and .gitignore, and what it counts is commits.
+   * Rendering the file settings against one said it obeyed three things it does not
+   * read, and called its commits files.
+   */
+  it('describes a history source by what it actually does', async () => {
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          // Not the corpus's own total, which is rendered elsewhere on the page.
+          source({ id: 's1', kind: 'workspace', rootPath: 'api-repo', fileCount: 37 }),
+          source({
+            id: 's2', kind: 'githistory', rootPath: 'api-repo', fileCount: 201,
+            git: { ref: 'main', includeMessage: true, includeStat: true, includeDiff: true, maxDiffBytes: 65536, includeMerges: false },
+          }),
+        ],
+      }),
+    );
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText(/201 commits/)).toBeInTheDocument();
+    expect(screen.getByText(/37 files/)).toBeInTheDocument();
+    expect(screen.getByText(/main.*with the diff/)).toBeInTheDocument();
+
+    // One .gitignore line, for the workspace source, and none for the history one.
+    expect(screen.getAllByText(/\.gitignore honoured/)).toHaveLength(1);
+  });
+
+  /**
+   * The corpus total counts both kinds, so neither "files" nor "commits" is true of it.
+   * Saying "files" contradicted the source row directly beneath it.
+   */
+  it('counts a mixed corpus in documents and a history-only one in commits', async () => {
+    getCorpus.mockResolvedValue(
+      corpus({
+        fileCount: 238,
+        sources: [
+          source({ id: 's1', kind: 'workspace' }),
+          source({ id: 's2', kind: 'githistory' }),
+        ],
+      }),
+    );
+
+    // The number and the unit are separate JSX children, so this reads the rendered
+    // text rather than one node: a matcher that only sees one node would report a
+    // failure that is about the markup and not about the label.
+    const says = (text: string) => (_: string, el: Element | null) =>
+      (el?.textContent ?? '').replace(/\s+/g, ' ').includes(text);
+
+    const { unmount } = render(<CorpusDetail {...props} />);
+    expect(await screen.findAllByText(says('238 documents'))).not.toHaveLength(0);
+    unmount();
+
+    getCorpus.mockResolvedValue(
+      corpus({ fileCount: 201, sources: [source({ id: 's2', kind: 'githistory' })] }),
+    );
+
+    render(<CorpusDetail {...props} />);
+    expect(await screen.findAllByText(says('201 commits'))).not.toHaveLength(0);
+  });
+
   it('tells a corpus with no sources what to do about it', async () => {
     getCorpus.mockResolvedValue(corpus({ sources: [] }));
 
@@ -200,6 +262,77 @@ describe('adding a source', () => {
     await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
 
     expect(within(dialog).getByText(/already indexes that folder/i)).toBeInTheDocument();
+  });
+
+  /**
+   * Indexing a repository's files and its history is deliberately two sources over one
+   * root. Warning on the path alone told the reader that the thing the feature exists
+   * for was a mistake.
+   */
+  it('does not call the history source a duplicate of the file source', async () => {
+    const { user, dialog } = await openAddSource();
+
+    await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
+    expect(within(dialog).getByText(/already indexes that folder/i)).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+
+    expect(within(dialog).queryByText(/already indexes that folder/i)).not.toBeInTheDocument();
+  });
+
+  it('still warns about a second history source on one folder', async () => {
+    getCorpus.mockResolvedValue(
+      corpus({ sources: [source({ kind: 'githistory', rootPath: 'api-repo' })] }),
+    );
+    const { user, dialog } = await openAddSource();
+
+    await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
+    expect(within(dialog).queryByText(/already indexes/i)).not.toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+
+    expect(within(dialog).getByText(/already indexes that folder’s history/i)).toBeInTheDocument();
+  });
+
+  /**
+   * A history source indexes commits, so the settings that describe files do not apply
+   * to it. Leaving them on screen would offer a size cap and a .gitignore toggle for
+   * work that reads neither, and sending them would leave a source whose displayed
+   * filters describe something it does not do.
+   */
+  it('asks about commits instead of files when the history is wanted', async () => {
+    addSource.mockResolvedValue({});
+    const { user, dialog } = await openAddSource();
+
+    await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
+
+    expect(within(dialog).getByLabelText(/Largest file/)).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+
+    expect(within(dialog).queryByLabelText(/Largest file/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/Honour \.gitignore/)).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/Include the diff/)).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
+
+    await waitFor(() => expect(addSource).toHaveBeenCalled());
+    expect(addSource.mock.calls[0][1]).toMatchObject({ gitHistory: true, git: { includeDiff: false } });
+    expect(addSource.mock.calls[0][1].maxFileBytes).toBeUndefined();
+    expect(addSource.mock.calls[0][1].useGitignore).toBeUndefined();
+  });
+
+  it('sends the diff setting when it is asked for', async () => {
+    addSource.mockResolvedValue({});
+    const { user, dialog } = await openAddSource();
+
+    await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
+    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+    await user.click(within(dialog).getByRole('checkbox', { name: /Include the diff/ }));
+    await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
+
+    await waitFor(() => expect(addSource).toHaveBeenCalled());
+    expect(addSource.mock.calls[0][1]).toMatchObject({ git: { includeDiff: true } });
   });
 
   it('sends the filters, as a list and in bytes', async () => {
@@ -270,8 +403,10 @@ describe('a count taken while the walk is running', () => {
 
     render(<CorpusDetail {...props} />);
 
-    // 96 is what has been counted so far, not what the folder holds.
-    expect(await screen.findByText('96 so far')).toBeInTheDocument();
+    // 96 is what has been counted so far, not what the folder holds. The unit is there
+    // for the same reason it is on every other count, and "so far" is what stops it
+    // reading as a total — so the assertion below is the one that matters.
+    expect(await screen.findByText('96 files so far')).toBeInTheDocument();
     expect(screen.queryByText('96 files')).not.toBeInTheDocument();
   });
 

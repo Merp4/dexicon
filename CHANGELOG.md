@@ -20,6 +20,32 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Added
 
+- **A repository's history is a source.** Point a source at a folder holding a `.git` and
+  tick "index its history", and every commit becomes a searchable document laid out the
+  way `git show` lays one out. A repository whose files and history are both wanted takes
+  two sources over the same root: a commit and a file are different units, and one source
+  meaning both would mix 27,000 files with 5,000 commits under one set of counts.
+
+  What each document holds is per source, because a repository whose commit messages are
+  the record wants different settings from one where the diff is: the message, the stat,
+  the patch, whether merges count, a cap on the patch per commit, and the ref, count or
+  date that bounds the walk. The source's include globs become git pathspecs, so they mean
+  whose history and narrow the diff at the same time.
+
+  The patch is off by default and the stat is on. Measured over 201 commits of this
+  repository: with patches the history is 5.99 MB and the median commit 11,393 characters;
+  with the message and the stat it is 449 KB and the median 1,939, which fits in one chunk.
+  A patch over the limit is reported in UTF-8 bytes rather than cut, because a diff
+  truncated mid-hunk reads as a complete change that did something else.
+
+  A refresh over a tip that has not moved reads nothing. The inventory is a `git log` of
+  shas and dates; everything else is fetched only for commits the catalogue does not hold. A
+  commit cannot change, so its fingerprint is its sha and what the settings say a document
+  contains, which is knowable without asking git for the body. 77ms to enumerate 201
+  commits against 1,069ms to read all of them with their patches.
+
+  The image now carries `git`. See [D-34](docs/decisions.md).
+
 - **Discovery is its own pass, on its own lane.** A corpus added while another was indexing
   read as empty: its job sat behind a reindex of ~1,800 PDFs on a queue that ran one job
   at a time, and nothing said so. A sweep now walks a corpus, applies its filters and

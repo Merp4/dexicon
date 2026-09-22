@@ -129,6 +129,167 @@ size left every file looking unchanged, so a refresh re-chunked nothing and the 
 had no effect. The fingerprint marks precisely the affected files as stale and no
 others.
 
+### `git-history` — a repository's commits
+
+A source whose units are commits rather than files. The root is a folder in the workspace
+that holds a `.git`, and a repository whose files *and* history are both wanted takes two
+sources over the same root: a commit and a file are different units, and folding them into
+one source would mix 27,000 files with 5,000 commits under one set of counts.
+
+One commit is one document, at `commits/<yyyy-MM-dd>-<sha[..12]>`. Dated first because the
+file list sorts by path and a thousand commits ordered by hash is a list nobody can scan;
+the author date, because it is what people mean by when. Not one file at a revision, which
+multiplies a repository by its history and re-indexes text that did not change, and not
+one hunk, which has no author and no subject while the question asked of history is why
+something changed.
+
+What a document holds is per source:
+
+| Setting | Default | |
+|---|---|---|
+| `ref` | `HEAD` | The ref to walk |
+| `includeMessage` | true | Subject and body |
+| `includeStat` | true | Files touched, with ± counts |
+| `includeDiff` | false | The patch |
+| `maxDiffBytes` | 65536 | UTF-8 bytes of the patch, per commit. Over it the patch is dropped, the stat is kept, and the document says how large it was |
+| `includeMerges` | false | A merge's default patch is empty and its message is usually generated |
+| `maxCommits`, `since` | — | Bound the walk from the tip, or by date |
+
+The diff is off because of what it costs. Measured over 201 commits of this repository:
+with patches the history is 5.99 MB and the median commit 11,393 characters; with the
+message and the stat it is 449 KB and the median 1,939, which fits in one chunk. A
+repository where the diff is the point turns it on knowing that.
+
+An oversized patch is **reported, not cut**: a diff truncated mid-hunk reads as a complete
+change that did something other than what it did. The cap is measured over the patch
+alone, in UTF-8 bytes, and the stat is kept when the patch is dropped — it is the cheap
+half and it is what still answers "which files" without it.
+
+The source's include globs become git pathspecs, so they mean whose history and narrow the
+diff at the same time. Excludes are not passed: git's exclude pathspec syntax is its own,
+and mapping one glob language onto another quietly is how a filter comes to mean something
+else.
+
+**A refresh over a tip that has not moved reads nothing.** `git log --format` gives shas
+and dates and is the inventory; everything else is asked for in a second call, for the
+commits the catalogue does not already have. A commit cannot change, so its fingerprint is
+its sha plus what these settings say a document contains, and that is knowable without
+asking git for the body — which is why the staleness check for this source runs *before*
+the read rather than after it, as a file's must. Measured on this repository: 77ms to
+enumerate 201 commits, 1,069ms to read all of them with their patches.
+
+Changing any setting that alters what a document says re-indexes the history, because
+every document really is different. Changing `ref`, `maxCommits`, `since` or
+`includeMerges` does not: those decide which commits are indexed, not what any one of
+them holds, and turning merges on adds documents without altering a single existing one.
+The include globs DO, because they are passed to git and decide which files the stat
+lists and which hunks the patch holds.
+
+**The container runs as uid 10001 and `/workspaces` is a host bind mount**, so the
+repository belongs to somebody else and git refuses it outright with "detected dubious
+ownership". Every call therefore passes `-c safe.directory=<the repository>`: one
+invocation's configuration, naming one repository, rather than a global setting that
+outlives the call. Measured rather than assumed — `docker run -u 10001:10001 -v
+<repo>:/w alpine/git` fails exactly that way and succeeds with the flag. Without it
+every history source reports unavailable on a normal deployment while every test
+passes, because a test runs as the user who owns the repository.
+
+The git binary is in the image (`apk add git`) rather than a native library. Alpine is not
+the reason — `LibGit2Sharp.NativeBinaries` ships musl builds — and neither is the process
+count. The reason is that the document is `git show`'s layout, and a library returns
+structured objects, so using one means writing the hunk headers and the stat columns by
+hand and re-indexing every commit the day they differ. What that costs is weighed against
+what a library would remove, in
+[D-34](decisions.md#d-34-a-commit-is-a-document). The inventory is one call; reading is one call per 100
+commits for the messages and another for the stat and patch when either is wanted, so a
+first pass over 201 commits with diffs is seven, and a refresh with nothing new is one.
+Refs and pathspecs are caller-supplied, so arguments are passed as a list and never a
+command line, with `--end-of-options` before the ref and `--` before the pathspecs, and
+the ref is checked against a small accepted set before any of that.
+
+Two more, because a working directory is also a caller-supplied value and a repository
+carries executable configuration:
+
+- **The patch read passes `--no-textconv`.** A `diff=<driver>` attribute plus a
+  `diff.<driver>.textconv` setting, both of which live inside the repository being read,
+  make git run that command on every blob it diffs and index its output instead of the
+  file. Measured: with `*.bin diff=evil` and `diff.evil.textconv = echo PWNED`, `git log
+  -1 --patch` prints `-PWNED /tmp/…`, and the same call with the flag prints the file.
+  `diff.external` needs no flag, because `git log` ignores it unless `--ext-diff` is
+  passed. Pinned by `ATextconvDriverInTheRepositoryIsNotRun`.
+- **The working directory is the filesystem's string, not the request's.** The workspace
+  boundary decides whether a path is allowed; the directory is then re-derived by
+  matching each segment against the entries `Directory.EnumerateDirectories` reports, so
+  no part of what reaches `ProcessStartInfo` came from a caller. A path that does not
+  exist is absent rather than refused, which keeps "the mount is away" distinct from
+  "this resolves outside the workspace". A segment that links out of the root is refused:
+  `Path.GetFullPath` resolves no links, so the string test passes and the directory is
+  elsewhere. The walk already held every directory it descends into to that rule. A link
+  that stays inside is followed rather than merely allowed, because `rev-parse
+  --show-toplevel` answers with the physical directory, and a path that kept the link's
+  spelling would be compared against the target's and reported as not a repository.
+- **How a diff is presented is pinned.** A document is settled by its sha and the
+  source's settings, so a repository that changes its own config must not change the text
+  of a commit already indexed — the pre-read skip would hold a document git no longer
+  produces, and that is the path that avoids looking. Measured with `core.quotePath`,
+  which turns `漢.txt` into `"\346\274\242.txt"` in the stat. Nine keys are pinned to
+  git's own defaults, so a repository that has not set them sees no change;
+  `core.quotePath=false` is the exception and is an improvement. The stat's width is
+  pinned by passing `--stat=80`, an option, which beats config and is byte-identical to
+  `--stat` because 80 is what git uses when the output is not a terminal.
+
+  Three gaps, stated rather than left to be found. `diff.orderFile` reorders the files
+  within a diff and `-c diff.orderFile=` is an error, so pinning it needs a temporary
+  file per call. `diff.statNameWidth` and `diff.statGraphWidth` size the columns either
+  side of the name and have no option that does not also change the output — on git
+  2.31.1 neither took effect at all, while `--stat=80,12` truncated as expected, so the
+  config path is simply not honoured there and a newer git may differ.
+  `diff.renameLimit` silently stops rename detection on a large commit, which changes
+  the stat, and pinning it means choosing a number whose default varies by git version.
+- **Every call passes `-c log.showSignature=false`.** Verifying a signature means running
+  a program the repository names, and `log.showSignature` and `gpg.program` are both
+  settable in the repository being read. Measured: with the two set, a fake gpg left its
+  marker file behind on a commit carrying a gpgsig header, and with the flag it did not.
+  An unsigned commit does not trigger it. Pinned by `ASignatureVerifierInTheRepositoryIsNotRun`.
+- **Every call passes `--no-replace-objects`.** A `git replace` mapping is honoured by
+  every read by default, so the same sha yields different text and the pre-read skip
+  keeps a document nobody would recognise. Measured: `git log -1 --format=%s <sha>` gives
+  the replacement and the same call with the flag gives the original. Disabled rather
+  than folded into the fingerprint, because indexing the object the sha names is what
+  makes the sha an identity at all.
+- **The inventory carries a sha and a date and nothing else.** The subject was in it and
+  nothing read it, and it was the one field there whose size a caller controls, on the
+  one call with no ceiling — there is no commit count to size a ceiling from before the
+  call that discovers the count. Truncating in the format pads as well as cuts, so
+  bounding it would have made every ordinary repository's inventory larger to cap a
+  pathological one.
+
+**The root has to be the repository, not a folder inside one.** `rev-parse
+--is-inside-work-tree` answers yes from `/repo/src`, and a source accepted there would
+walk the whole of `/repo`: every commit of the parent indexed under a source scoped to
+one folder, including commits that never touched it. The top level has to equal the root.
+
+**A commit message is arbitrary text, so it is never parsed out of the same stream as
+git's own output.** The message is read under `--no-patch`; the stat and patch are read
+under a format carrying only a marker and a sha, so everything between two markers is
+git's. A body line beginning `diff --git ` used to read as the start of a patch, and a
+body holding the record separator split a record in two and lost a commit — which the
+shared reconcile would then have seen as vanished and deleted the vectors of.
+
+A history source is swept like a workspace one: the inventory pass records a row per
+commit before anything is read, so a corpus says what it holds as soon as the source is
+added rather than when an index job reaches it.
+
+The settings come back on the source summary, and change with
+`PATCH /api/corpora/{name}/sources/{id}` carrying a `git` object, which replaces them
+whole. Settings that can be written and never read back are settings nobody can check or
+reproduce, and these decide what every document in the source holds. The UI shows the ref
+and whether the diff is on, and counts commits rather than files; the size cap and the
+`.gitignore` toggle are not shown at all, because a commit is not read from the working
+tree.
+
+See [D-34](decisions.md#d-34-a-commit-is-a-document).
+
 ## Extraction
 
 | Format | Extensions | Library | Licence | Provenance unit | Notes |

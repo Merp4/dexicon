@@ -102,29 +102,110 @@ public sealed class CorpusSweeper(
         var swept = 0;
         var added = 0;
 
-        foreach (var source in corpus.Sources.Where(s => s.Kind == SourceKind.Workspace))
+        // Uploads are the exception and not an oversight: an attachment has no walk to
+        // do, because the act of attaching it is what records it.
+        foreach (var source in corpus.Sources.Where(s => s.Kind != SourceKind.Upload))
         {
             ct.ThrowIfCancellationRequested();
 
-            var root = WorkspaceDiscovery.Resolve(_indexing.WorkspaceRoot, source.RootPath);
-            if (!Directory.Exists(root))
+            string root;
+            IReadOnlyList<WorkspaceWalker.Candidate> owned;
+
+            try
             {
-                // Not an error and not destructive: the inventory a previous sweep wrote
-                // stays, because a mount being away is an operational condition rather
-                // than a statement that the files are gone.
-                log.LogWarning("Source {Source} is not available; leaving its inventory alone",
-                    source.RootPath);
+                root = WorkspaceDiscovery.Resolve(_indexing.WorkspaceRoot, source.RootPath);
+                if (!Directory.Exists(root))
+                {
+                    // Not an error and not destructive: the inventory a previous sweep
+                    // wrote stays, because a mount being away is an operational condition
+                    // rather than a statement that the files are gone.
+                    log.LogWarning("Source {Source} is not available; leaving its inventory alone",
+                        source.RootPath);
+                    continue;
+                }
+
+                owned = source.Kind == SourceKind.GitHistory
+                    ? await CommitsAsync(corpus, source, root, ct)
+                    : WorkspaceDiscovery.Walk(corpus, source, root, _indexing).Owned;
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                // One source's path is refused; the others are still sweepable, and the
+                // sweep itself is still worth finishing. Uncaught this reached the worker
+                // pool and lost the whole corpus's sweep, including sources that were
+                // perfectly fine, and the one thing this pass promises is that it leaves
+                // an inventory it could not refresh alone.
+                //
+                // Reachable without anyone editing a source: a path is resolved on every
+                // sweep, so a link target that moves outside the root turns a source that
+                // has swept for months into a refusal.
+                log.LogWarning("Source {Source} was refused: {Reason}; leaving its inventory alone",
+                    source.RootPath, ex.Message);
                 continue;
             }
 
-            var found = WorkspaceDiscovery.Walk(corpus, source, root, _indexing);
-            swept += found.Owned.Count;
-            added += await RecordAsync(corpus, source, found.Owned, ct);
+            swept += owned.Count;
+            added += await RecordAsync(corpus, source, owned, ct);
         }
 
         await db.SaveChangesAsync(ct);
         log.LogInformation("Swept {Corpus}: {Swept} files, {Added} new", corpus.Name, swept, added);
         return new SweepResult(swept, added, SweepOutcome.Swept);
+    }
+
+    /// <summary>
+    /// A git-history source's inventory: one candidate per commit the settings select.
+    ///
+    /// This is the discovery half for that kind of source, and it is cheap in exactly
+    /// the way D-32 argues discovery should be: `git log` for shas and dates, no
+    /// messages and no patches. Measured on this repository, 77ms for 201 commits.
+    ///
+    /// Without it, adding a history source enqueued a sweep that walked nothing, so the
+    /// corpus reported zero files and zero pending until an index job reached the front
+    /// of the queue — the case D-32 exists to prevent, reintroduced for a new kind of
+    /// source.
+    ///
+    /// Size is zero because a commit's document is not known until it is read, and a
+    /// number nobody measured is worse than none.
+    /// </summary>
+    private async Task<IReadOnlyList<WorkspaceWalker.Candidate>> CommitsAsync(
+        Corpus corpus, Source source, string root, CancellationToken ct)
+    {
+        var repo = GitHistory.RepositoryIn(_indexing.WorkspaceRoot, source.RootPath);
+
+        // The repository check is INSIDE the catch, not before it. It runs git, and
+        // RunAsync raises this same type for a missing binary and for a timeout — so
+        // the identical failure was handled here when enumeration produced it and
+        // aborted the whole corpus's sweep when the check did, which is one exception
+        // with two outcomes decided by which call happened to run first.
+        try
+        {
+            if (repo is null || !await GitHistory.IsRepositoryAsync(repo, ct))
+            {
+                log.LogWarning("Source {Source} is not a git repository; leaving its inventory alone",
+                    source.RootPath);
+                return [];
+            }
+
+            var options = GitHistoryOptions.FromJson(source.GitOptions);
+            var filters = SourceFilters.Resolve(corpus, source, _indexing);
+
+            var commits = await GitHistory.EnumerateAsync(repo, options, filters.IncludeGlobs, ct);
+
+            // Through the same function the indexing pass uses, not a second rule that
+            // agrees today. A sweep that counted a commit the index collapses would
+            // report an inventory the index can never fill, which reads as a wrong count
+            // rather than as two passes differing.
+            return [.. GitHistory.OnePerPath(commits)
+                .Select(c => new WorkspaceWalker.Candidate(root, c.RelativePath, 0))];
+        }
+        catch (GitHistoryException ex)
+        {
+            // Same shape as a mount that is away: the inventory a previous sweep wrote
+            // stays, and nothing is removed. A sweep only ever adds.
+            log.LogWarning("Source {Source}: {Error}", source.RootPath, ex.Message);
+            return [];
+        }
     }
 
     /// <summary>
