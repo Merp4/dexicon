@@ -102,9 +102,52 @@ public sealed class GitHistoryIndexingTests
         var second = await harness.RunIndexAsync();
 
         second.State.ShouldBe(JobState.Succeeded);
-        second.FilesSkipped.ShouldBe(2, "an immutable commit is settled without being read");
+        second.FilesSkipped.ShouldBe(2);
         second.FilesDone.ShouldBe(0);
         second.ChunksWritten.ShouldBe(0);
+    }
+
+    /// <summary>
+    /// What makes the refresh above cheap, which its counters cannot show.
+    ///
+    /// Two checks skip an unchanged unit: one before the read, from the sha and the
+    /// source's settings, and one after it, from the document text. Only the first
+    /// saves the read, and both leave FilesSkipped at the same number — so the counters
+    /// agree whether the patches were fetched or not, and the assertion above passed
+    /// while every one of them was being fetched and thrown away.
+    ///
+    /// The observable difference is the stored hash. The pre-read check can only fire
+    /// when what a pass STORED is the value that check computes, so that is what this
+    /// asserts, against the same helpers the indexer uses rather than a copy of them.
+    /// </summary>
+    [Fact]
+    public async Task TheStoredHashIsTheOneTheCheapCheckCompares()
+    {
+        await using var harness = await IndexingHarness.StartAsync("repo");
+        Init(harness.SourceDirectory);
+        Commit(harness.SourceDirectory, "a.txt", "one\n", "the first change");
+
+        await harness.SeedCorpusAsync(SourceKind.GitHistory);
+        await harness.RunIndexAsync();
+
+        await using var db = harness.NewContext();
+        var set = await db.ChunkSets.SingleAsync();
+        var state = await db.FileChunkStates.SingleAsync(s => s.Status == FileStatus.Indexed);
+        var file = await db.Files.SingleAsync(f => f.Id == state.FileId);
+
+        var sha = file.RelativePath.Split('-').Last();
+        var options = new GitHistoryOptions();
+        var repo = GitHistory.RepositoryIn(harness.DataPath, Path.Combine("workspace", "repo"))!;
+        var full = (await GitHistory.EnumerateAsync(repo, options, null, default))
+            .Single(c => c.Sha.StartsWith(sha, StringComparison.Ordinal));
+
+        var expected = CorpusIndexer.ChunkingFingerprint(
+            set,
+            CorpusIndexer.HashContent(full.Sha + '|' + options.ContentFingerprint(null)),
+            Dexicon.Core.Embedding.ModelTemplates.Raw);
+
+        state.ContentHash.ShouldBe(expected,
+            "a stored hash in any other shape is one the pre-read check can never match");
     }
 
     [Fact]

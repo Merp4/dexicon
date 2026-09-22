@@ -93,6 +93,52 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
+    /// The diff cap is operator input, stored as JSON on the source and read back on
+    /// every pass, so a value that arrived once sizes every later read. Refused where a
+    /// bad ref is refused, and for the same reason: the pass reports it and stops rather
+    /// than computing a ceiling from it.
+    /// </summary>
+    [Fact]
+    public async Task ADiffCapThatCannotSizeAReadIsRefused()
+    {
+        Commit("a.txt", "one\n", "first");
+
+        await Should.ThrowAsync<GitHistoryException>(
+            () => EnumerateAsync(new GitHistoryOptions { MaxDiffBytes = -1 }));
+
+        // Overflowed the ceiling's addition when it was done in int.
+        await Should.ThrowAsync<GitHistoryException>(
+            () => EnumerateAsync(new GitHistoryOptions { MaxDiffBytes = int.MaxValue }));
+
+        (await EnumerateAsync()).Count.ShouldBe(1, "the default cap is a usable one");
+    }
+
+    /// <summary>
+    /// The message pass had no bound at all, and a commit message is arbitrary text.
+    ///
+    /// Both halves matter: that the read is stopped, and that what comes out is the
+    /// exception the caller handles. Left as the raw too-large kind it escaped the
+    /// source's catch and killed the job, which writes an outage as a decision about
+    /// the corpus.
+    /// </summary>
+    [Fact]
+    public async Task ACommitMessageTooLargeToReadFailsTheBatchWithAReason()
+    {
+        File.WriteAllText(Path.Combine(_repo, "a.txt"), "one\n");
+        File.WriteAllText(Path.Combine(_repo, "msg.txt"), new string('m', 2 * 1024 * 1024));
+        Git("add", "a.txt");
+        Git("commit", "-F", "msg.txt");
+
+        var commits = await EnumerateAsync();
+        commits.Count.ShouldBe(1);
+
+        var ex = await Should.ThrowAsync<GitHistoryException>(
+            () => ReadAsync(new GitHistoryOptions(), commits));
+
+        ex.Message.ShouldContain("could not be read");
+    }
+
+    /// <summary>
     /// A repository's own settings do not get to run a command.
     ///
     /// A <c>diff=&lt;driver&gt;</c> attribute and a <c>diff.&lt;driver&gt;.textconv</c> in

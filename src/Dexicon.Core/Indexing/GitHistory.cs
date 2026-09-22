@@ -268,6 +268,26 @@ public static class GitHistory
     /// reach git is small enough to read. Branch and tag names, `HEAD` and its `~`/`^`
     /// forms, and object names.
     /// </summary>
+    /// <summary>
+    /// A diff cap this will size a read from.
+    ///
+    /// Operator input, stored as JSON on the source and read back on every pass, so a
+    /// value that arrived once is used for ever. Negative makes every ceiling negative
+    /// and the document's own "over the limit" line quote a negative number; near
+    /// <see cref="int.MaxValue"/> it used to overflow the ceiling's addition. Above the
+    /// absolute ceiling it is a cap that can never be the binding one, which is a
+    /// setting that silently does nothing.
+    /// </summary>
+    internal static bool IsAcceptableDiffCap(int value) => value >= 0 && value <= AbsoluteCeiling;
+
+    private static void RequireAcceptableDiffCap(GitHistoryOptions options)
+    {
+        if (!IsAcceptableDiffCap(options.MaxDiffBytes))
+            throw new GitHistoryException(
+                $"maxDiffBytes is {options.MaxDiffBytes:N0}, which is not a usable cap. "
+                + $"It must be between 0 and {AbsoluteCeiling:N0}.");
+    }
+
     internal static bool IsAcceptableRef(string? value) =>
         !string.IsNullOrWhiteSpace(value)
         && value.Length <= 200
@@ -290,6 +310,11 @@ public static class GitHistory
         if (!IsAcceptableRef(options.Ref))
             throw new GitHistoryException(
                 $"'{options.Ref}' is not a usable ref. A branch, a tag or an object name.");
+
+        // Here rather than only on the read path: every pass enumerates first, so a
+        // source carrying a nonsense cap says so on its inventory instead of on a
+        // partial read, and it says so the same way a bad ref does.
+        RequireAcceptableDiffCap(options);
 
         var marker = Marker();
         var args = new List<string> { "log", $"--format={marker}%H%x00%aI%x00%s" };
@@ -341,6 +366,11 @@ public static class GitHistory
         IReadOnlyList<string>? pathspecs,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
+        // Again, because this is where the cap actually sizes a read and it is a public
+        // entry point of its own. The enumeration reaching here first is how it happens
+        // today, not a property this method can rely on.
+        RequireAcceptableDiffCap(options);
+
         for (var start = 0; start < shas.Count; start += ReadBatch)
         {
             ct.ThrowIfCancellationRequested();
@@ -373,10 +403,27 @@ public static class GitHistory
         var stdin = string.Join('\n', shas);
         var known = shas.ToHashSet(StringComparer.Ordinal);
 
-        var messages = await MessagesAsync(repo, marker, stdin, known, ct);
-        var tails = options.IncludeStat || options.IncludeDiff
-            ? await TailsAsync(repo, options, marker, shas, pathspecs, known, ct)
-            : [];
+        Dictionary<string, string[]> messages;
+        Dictionary<string, string> tails;
+
+        try
+        {
+            messages = await MessagesAsync(repo, marker, stdin, known, MessageCeilingFor(shas.Count), ct);
+            tails = options.IncludeStat || options.IncludeDiff
+                ? await TailsAsync(repo, options, marker, shas, pathspecs, known, ct)
+                : [];
+        }
+        catch (GitOutputTooLargeException ex)
+        {
+            // A read that outgrew its ceiling and could not be narrowed any further:
+            // the message pass has no bisect, and the tail pass stops bisecting at one
+            // commit whose stat alone is over. Turned into the kind the caller handles,
+            // so the source reports unavailable with the reason on it. Left as it was,
+            // it reached the job's generic catch and killed the whole job instead —
+            // an outage written as a terminal state for the corpus.
+            throw new GitHistoryException(
+                $"A batch of {shas.Count} commits could not be read: {ex.Message}", ex);
+        }
 
         var read = new List<(string, string)>(shas.Count);
 
@@ -405,12 +452,13 @@ public static class GitHistory
     /// commit the shared reconcile sees as vanished and deletes the vectors of.
     /// </param>
     private static async Task<Dictionary<string, string[]>> MessagesAsync(
-        GitRepository repo, string marker, string stdin, HashSet<string> known, CancellationToken ct)
+        GitRepository repo, string marker, string stdin, HashSet<string> known,
+        long ceiling, CancellationToken ct)
     {
         var (ok, stdout, stderr) = await RunAsync(repo,
             ["log", "--no-walk", "--stdin", "--no-color", "--no-patch",
              $"--format={marker}%H%x00%aI%x00%an%x00%ae%x00%s%x00%b"],
-            ct, stdin);
+            ct, stdin, ceiling);
 
         if (!ok) throw new GitHistoryException($"git log --stdin failed: {Summarise(stderr)}");
 
@@ -487,17 +535,39 @@ public static class GitHistory
     /// <summary>
     /// How much output one call may produce before git is killed.
     ///
-    /// Sized from the per-commit cap, so a single commit's read is bounded just above
-    /// what a document may hold: a commit carrying a vendored tree is stopped rather
-    /// than allocated and then discarded. The slack is the stat, the headers and the
-    /// marker; the absolute ceiling is there because a batch of a hundred at a generous
-    /// cap would otherwise be a bound in name only.
+    /// Sized from the per-commit cap times the batch, capped absolutely. The slack in
+    /// the per-commit figure is the stat, the headers and the marker.
+    ///
+    /// What this bounds is one CALL, not one commit, and the difference is worth being
+    /// exact about. At the default 64 KiB cap a batch of a hundred asks for 106 MB and
+    /// gets the 64 MB ceiling, so a single 50 MB patch inside that batch is under the
+    /// ceiling, is read in full, and is only then dropped by <see cref="Document"/> for
+    /// being over the cap. Peak memory is held at the absolute ceiling; the per-commit
+    /// bound is what the bisect in <see cref="TailsAsync"/> arrives at once a call has
+    /// already been refused, and it is not in force before that.
     /// </summary>
     private static long CeilingFor(GitHistoryOptions options, int commits)
     {
-        var perCommit = StatAllowance + (options.IncludeDiff ? options.MaxDiffBytes : 0);
-        return Math.Min((long)perCommit * commits, AbsoluteCeiling);
+        // long before the addition, not after. MaxDiffBytes is operator input and an
+        // int: near int.MaxValue the sum wrapped negative, and a negative ceiling is a
+        // read that stops on its first character. AcceptableDiffCap refuses the value
+        // as well; this is the arithmetic not depending on that having happened.
+        var perCommit = (long)StatAllowance + (options.IncludeDiff ? options.MaxDiffBytes : 0);
+        return Math.Min(perCommit * commits, AbsoluteCeiling);
     }
+
+    /// <summary>
+    /// What the message pass may produce. A commit message is arbitrary text and this
+    /// call asks for a hundred of them, so it was the one read with no bound at all: a
+    /// repository with a large enough message could exhaust the indexer before anything
+    /// decided the document was too big.
+    ///
+    /// Sized like the stat, which is the other thing measured per commit rather than
+    /// shaped by a setting. There is no bisect behind it, so exceeding this fails the
+    /// batch with a reason rather than narrowing to the commit responsible.
+    /// </summary>
+    private static long MessageCeilingFor(int commits) =>
+        Math.Min((long)StatAllowance * commits, AbsoluteCeiling);
 
     /// <summary>
     /// What a commit's stat and headers may take, on top of any patch budget.

@@ -865,6 +865,23 @@ public sealed class CorpusIndexer(
             byPath[commit.RelativePath] = commit;
         }
 
+        // A path is the date and twelve characters of the sha, so two commits on one day
+        // whose shas share a prefix land on the same path and the second replaces the
+        // first, which is a commit that is never indexed and nothing saying so.
+        //
+        // Not widened to the full sha, because the arithmetic does not justify a 40
+        // character path in every file list: twelve hex characters is 48 bits, so an
+        // accidental collision inside one day needs on the order of 16.7 million commits
+        // dated that day. Deliberate collisions are not a threat worth pricing either —
+        // the only party who can add commits to the repository is the party whose commit
+        // would go missing. What is worth the three lines is that the loss is counted
+        // rather than silent, because at these odds nobody would ever go looking.
+        if (byPath.Count != commits.Count)
+            log.LogWarning(
+                "{Missing} of {Total} commits in {Source} share a date and a twelve-character "
+                + "sha prefix with another, so only one of each pair is indexed",
+                commits.Count - byPath.Count, commits.Count, source.RootPath);
+
         // Size is the size of the document, which is not known until it is read. Zero
         // here rather than a guess: a number nobody measured is worse than none.
         var units = commits
@@ -1151,7 +1168,17 @@ public sealed class CorpusIndexer(
                 // file looking unchanged, so a refresh re-chunked nothing and the new
                 // setting had no effect. Mixing the settings in marks precisely the
                 // affected files as stale, and no others.
-                var hash = ChunkingFingerprint(set, HashContent(content), templates, chunking);
+                //
+                // Over `fingerprintOf` where a unit has one, because that is what the
+                // pre-read check above compares against, and a value written here in
+                // some other shape is one it can never match. It could not: the check
+                // hashed the commit's sha and the source's settings while this hashed
+                // the document text, so the skip never fired and a refresh over an
+                // unmoved tip read and re-hashed every patch in the repository to
+                // conclude nothing had changed. The counters could not show it, because
+                // the in-loop check below then skipped every one of them.
+                var hash = ChunkingFingerprint(
+                    set, fingerprintOf?.Invoke(candidate) ?? HashContent(content), templates, chunking);
 
                 if (!full && states.TryGetValue(candidate.RelativePath, out var existing)
                           && existing.ContentHash == hash && existing.Status == FileStatus.Indexed)
