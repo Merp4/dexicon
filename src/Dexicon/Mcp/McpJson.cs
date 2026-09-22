@@ -51,6 +51,11 @@ internal static class McpJson
 ///
 /// The advertised schema stays <c>array of string</c>, which is the contract worth
 /// describing; this only widens what is accepted.
+///
+/// One place it is NARROWER: the generated schema says <c>items: ["string", "null"]</c>,
+/// the SDK describing a nullable reference type, and a null element is refused. It never
+/// meant anything — <c>ScopeResolver.Split</c> does <c>nameOrId.IndexOf(':')</c>, so one
+/// arrived as a NullReferenceException and came back as the generic sentence above.
 /// </summary>
 internal sealed class CorpusNamesConverter : JsonConverter<string[]>
 {

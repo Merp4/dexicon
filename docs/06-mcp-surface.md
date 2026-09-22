@@ -103,6 +103,11 @@ when it wants one. It is accepted, and read as a list of one. The schema above s
 describes an array, which is the contract worth advertising; accepting a bare name is
 leniency in binding, not a second type.
 
+One shape is refused that the *generated* schema allows: a null inside the list. What the
+SDK emits is `items: {"type": ["string", "null"]}`, which describes a nullable reference
+type rather than a nameless corpus. A null element reached `ScopeResolver.Split` as a
+`NullReferenceException` and came back as the generic message below.
+
 Before that, a bare name was refused while the arguments were being bound, so the tool
 body never ran and the caller got `An error occurred invoking 'search_index'.` with
 nothing to act on. Reported from a live instance as "`search_index` errors whenever a

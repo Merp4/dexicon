@@ -72,6 +72,22 @@ public class CorpusArgumentTests
     }
 
     [Fact]
+    public void ANullInTheListIsRefused()
+    {
+        // The generated schema says `items: ["string", "null"]`, so this is a shape the
+        // published contract allows and the converter does not. Deliberate, and it is the
+        // schema that is loose: `["string", "null"]` is the SDK describing a nullable
+        // reference type, not a claim that a nameless corpus means something.
+        //
+        // The alternative is worse than the asymmetry. `ScopeResolver.Split` does
+        // `nameOrId.IndexOf(':')`, so a null element reached it as a
+        // NullReferenceException and came back as "An error occurred invoking
+        // 'search_index'." — the same dead end this whole change is about.
+        Should.Throw<McpException>(() => Bind("[\"docs\",null]"))
+              .Message.ShouldContain("corpus");
+    }
+
+    [Fact]
     public void WhatTheToolAdvertisesIsUnchanged()
     {
         // Accepting a scalar is leniency in binding, not a wider contract: the schema a
