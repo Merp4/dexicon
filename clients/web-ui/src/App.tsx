@@ -1116,11 +1116,20 @@ export function CorpusDetail({
   // a refresh starting; `corpus.state` survives a page load, when nothing is streaming
   // yet and the counts on screen are still a partial tally from a run already underway.
   const indexing = isRunning(job) || corpus?.state === 'indexing';
-  // Reload when the run ENDS. This waited for `phase` to go absent, and it never does:
-  // the last event of a run carries the state name in that field, so the corpus detail
-  // sat on the counts from before the run for as long as the page was open.
+
+  // Reload when the run ENDS, once. This waited for `phase` to go absent, and it never
+  // does: the last event of a run carries the state name in that field, so the counts
+  // sat at whatever they were before the run for as long as the page was open.
+  //
+  // Keyed on the job rather than fired on the condition, because the finished event then
+  // STAYS in `live` — nothing clears it — and `load` changes identity whenever the
+  // filter, the sort or the page does. Without the key, every one of those interactions
+  // fetched the corpus twice for the rest of the session.
+  const reloadedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (job && !isRunning(job)) void load();
+    if (!job || isRunning(job) || reloadedFor.current === job.jobId) return;
+    reloadedFor.current = job.jobId;
+    void load();
   }, [job, load]);
 
   if (!corpus) return <Empty title="Loading…" />;

@@ -192,6 +192,35 @@ describe('what it asks the server for', () => {
   });
 });
 
+describe('a card carrying a live event', () => {
+  it('takes its counters from the event, matched on jobId', async () => {
+    // The event has no `id`, so matching one was false on every event and a running
+    // job's counters never moved off whatever the last poll returned.
+    listJobs.mockResolvedValue([job({ id: 'j-live', state: 'running', filesDone: 1 })]);
+
+    render(<JobsView {...props} live={{ c1: progress({ jobId: 'j-live', filesDone: 12 }) }} />);
+
+    expect(await screen.findByText('12 indexed')).toBeInTheDocument();
+    expect(screen.queryByText('1 indexed')).toBeNull();
+  });
+
+  it('drops the progress bar once the run is over, and keeps the final counts', async () => {
+    // The finished event stays in `live`, and its numbers are the right ones to show —
+    // but a bar for a run that has ended is a page that looks stuck.
+    listJobs.mockResolvedValue([job({ id: 'j-live', state: 'succeeded', filesDone: 1 })]);
+
+    render(
+      <JobsView
+        {...props}
+        live={{ c1: progress({ jobId: 'j-live', phase: 'Succeeded', filesDone: 174 }) }}
+      />,
+    );
+
+    expect(await screen.findByText('174 indexed')).toBeInTheDocument();
+    expect(screen.queryByRole('progressbar')).toBeNull();
+  });
+});
+
 describe('how often it asks', () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });

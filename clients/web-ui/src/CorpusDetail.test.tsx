@@ -1047,3 +1047,36 @@ describe('the file list', () => {
     expect(screen.getByText(/Searched all 12 files in this corpus/)).toBeInTheDocument();
   });
 });
+
+describe('when a run finishes', () => {
+  /** The last event of a run, as the server sends it: the state name in `phase`. */
+  const finished = {
+    c1: {
+      jobId: 'j1', corpusId: 'c1', phase: 'Succeeded', filesTotal: 12,
+      filesDone: 12, filesSkipped: 0, filesFailed: 0, chunksWritten: 114,
+      currentFile: null, error: null,
+    },
+  } as unknown as typeof props.live;
+
+  it('re-reads the corpus, because the counts on screen are from before the run', async () => {
+    render(<CorpusDetail {...props} live={finished} />);
+
+    // Once for the mount, once because the run ended.
+    await waitFor(() => expect(getCorpus).toHaveBeenCalledTimes(2));
+  });
+
+  it('does not re-read it again on every filter and sort after that', async () => {
+    // Nothing clears a finished event out of `live`, and `load` changes identity with
+    // the filter, the sort and the page — so a condition rather than a key fetched the
+    // corpus twice for every interaction for the rest of the session.
+    render(<CorpusDetail {...props} live={finished} />);
+    await waitFor(() => expect(getCorpus).toHaveBeenCalledTimes(2));
+
+    await userEvent.click(await screen.findByRole('radio', { name: 'size' }));
+
+    // The sort change reloads once. The finished event must not add a second.
+    await waitFor(() => expect(getCorpus).toHaveBeenCalledTimes(3));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(getCorpus).toHaveBeenCalledTimes(3);
+  });
+});
