@@ -224,6 +224,11 @@ carries executable configuration:
   that stays inside is followed rather than merely allowed, because `rev-parse
   --show-toplevel` answers with the physical directory, and a path that kept the link's
   spelling would be compared against the target's and reported as not a repository.
+- **Every call passes `-c log.showSignature=false`.** Verifying a signature means running
+  a program the repository names, and `log.showSignature` and `gpg.program` are both
+  settable in the repository being read. Measured: with the two set, a fake gpg left its
+  marker file behind on a commit carrying a gpgsig header, and with the flag it did not.
+  An unsigned commit does not trigger it. Pinned by `ASignatureVerifierInTheRepositoryIsNotRun`.
 - **Every call passes `--no-replace-objects`.** A `git replace` mapping is honoured by
   every read by default, so the same sha yields different text and the pre-read skip
   keeps a document nobody would recognise. Measured: `git log -1 --format=%s <sha>` gives

@@ -196,6 +196,59 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
+    /// Signature verification is a second way a repository's own config runs a program.
+    ///
+    /// `log.showSignature=true` plus `gpg.program=<anything>`, both settable in the
+    /// repository being read, make `git log` execute that program for any commit
+    /// carrying a gpgsig header. Measured on a scratch repository: with the two set, a
+    /// fake gpg left its marker file behind, and with `-c log.showSignature=false` it did
+    /// not. An unsigned commit does not trigger it, which is why this test has to build
+    /// the signed object by hand — there is no key involved and none is needed, because
+    /// git runs the program to find out whether the signature is any good.
+    /// </summary>
+    [Fact]
+    public async Task ASignatureVerifierInTheRepositoryIsNotRun()
+    {
+        Commit("a.txt", "one", "first");
+
+        var marker = Path.Combine(_repo, "gpg-ran.txt");
+        Git("config", "gpg.program", FakeGpg(marker));
+        Git("config", "log.showSignature", "true");
+
+        var tree = Git("rev-parse", "HEAD^{tree}").Trim();
+        var commit =
+            $"tree {tree}\n"
+            + "author A Test <test@example.invalid> 1700000000 +0000\n"
+            + "committer A Test <test@example.invalid> 1700000000 +0000\n"
+            + "gpgsig -----BEGIN PGP SIGNATURE-----\n \n ZmFrZQ==\n -----END PGP SIGNATURE-----\n"
+            + "\nsigned commit\n";
+
+        File.WriteAllText(Path.Combine(_repo, "object.txt"), commit);
+        var sha = Git("hash-object", "-t", "commit", "-w", "object.txt").Trim();
+        sha.Length.ShouldBe(40, "the signed object has to exist for this to test anything");
+
+        await ReadAsync(new GitHistoryOptions(), [new GitCommit(sha, DateTimeOffset.UtcNow)]);
+
+        File.Exists(marker).ShouldBeFalse("the repository's own gpg.program was executed");
+    }
+
+    /// <summary>A program that records having been run, executable on this platform.</summary>
+    private string FakeGpg(string marker)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var cmd = Path.Combine(_repo, "fakegpg.cmd");
+            File.WriteAllText(cmd, $"@echo off\r\necho RAN > \"{marker}\"\r\nexit /b 1\r\n");
+            return cmd;
+        }
+
+        var sh = Path.Combine(_repo, "fakegpg.sh");
+        File.WriteAllText(sh, $"#!/bin/sh\necho RAN > '{marker}'\nexit 1\n");
+        File.SetUnixFileMode(sh, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return sh;
+    }
+
+    /// <summary>
     /// A sha settles the content, which is the assumption the whole cheap refresh rests
     /// on, and `git replace` makes it false.
     ///

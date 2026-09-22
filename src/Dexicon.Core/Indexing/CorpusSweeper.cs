@@ -172,18 +172,24 @@ public sealed class CorpusSweeper(
         Corpus corpus, Source source, string root, CancellationToken ct)
     {
         var repo = GitHistory.RepositoryIn(_indexing.WorkspaceRoot, source.RootPath);
-        if (repo is null || !await GitHistory.IsRepositoryAsync(repo, ct))
-        {
-            log.LogWarning("Source {Source} is not a git repository; leaving its inventory alone",
-                source.RootPath);
-            return [];
-        }
 
-        var options = GitHistoryOptions.FromJson(source.GitOptions);
-        var filters = SourceFilters.Resolve(corpus, source, _indexing);
-
+        // The repository check is INSIDE the catch, not before it. It runs git, and
+        // RunAsync raises this same type for a missing binary and for a timeout — so
+        // the identical failure was handled here when enumeration produced it and
+        // aborted the whole corpus's sweep when the check did, which is one exception
+        // with two outcomes decided by which call happened to run first.
         try
         {
+            if (repo is null || !await GitHistory.IsRepositoryAsync(repo, ct))
+            {
+                log.LogWarning("Source {Source} is not a git repository; leaving its inventory alone",
+                    source.RootPath);
+                return [];
+            }
+
+            var options = GitHistoryOptions.FromJson(source.GitOptions);
+            var filters = SourceFilters.Resolve(corpus, source, _indexing);
+
             var commits = await GitHistory.EnumerateAsync(repo, options, filters.IncludeGlobs, ct);
             return [.. commits.Select(c => new WorkspaceWalker.Candidate(root, c.RelativePath, 0))];
         }

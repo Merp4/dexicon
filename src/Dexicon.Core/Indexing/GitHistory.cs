@@ -817,6 +817,18 @@ public static class GitHistory
         info.ArgumentList.Insert(0, "safe.directory=" + repo.FullPath);
         info.ArgumentList.Insert(0, "-c");
 
+        // log.showSignature, because verifying a signature means running a program the
+        // repository names. `log.showSignature=true` and `gpg.program=<anything>` are
+        // both settable in the repository being read, and together they make git execute
+        // that program for any commit carrying a gpgsig header. Measured: a fake gpg
+        // left its marker file behind, and with this flag it did not. An unsigned commit
+        // does not trigger it, so the test builds the signed object by hand.
+        //
+        // Off rather than left alone: the verification output is not the commit, and
+        // nothing here asks whether a signature is good.
+        info.ArgumentList.Insert(0, "log.showSignature=false");
+        info.ArgumentList.Insert(0, "-c");
+
         // --no-replace-objects, because the fingerprint says a sha settles the content
         // and a replace ref makes that false. `git replace <old> <new>` is honoured by
         // every read by default, so the same sha yields different text and the pre-read
