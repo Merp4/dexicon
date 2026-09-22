@@ -1,0 +1,106 @@
+using System.Reflection;
+using System.Text.Json;
+using Dexicon.Mcp;
+using ModelContextProtocol;
+using ModelContextProtocol.Server;
+
+namespace Dexicon.Tests;
+
+/// <summary>
+/// `search_index`'s corpus argument, and the shapes a client sends it in.
+///
+/// It is the only array on the MCP surface, so a scalar is the natural thing to send and
+/// a client that sent one was refused during argument binding — before the tool body ran,
+/// with the SDK's generic "An error occurred." reaching the caller. Reported from a live
+/// instance as "search_index errors whenever a corpus argument is passed", reproduced four
+/// times against two corpora; unscoped search worked throughout.
+/// </summary>
+public class CorpusArgumentTests
+{
+    static readonly MethodInfo SearchIndex =
+        typeof(DexiconTools).GetMethod("SearchIndexAsync", BindingFlags.Public | BindingFlags.Static)!;
+
+    static string[]? Bind(string json) =>
+        JsonSerializer.Deserialize<string[]>(json, McpJson.Options);
+
+    [Fact]
+    public void OneCorpusMayBeNamedOnItsOwn()
+    {
+        Bind("\"docs\"").ShouldBe(["docs"]);
+    }
+
+    [Fact]
+    public void AListIsStillAList()
+    {
+        Bind("[\"docs\",\"books\"]").ShouldBe(["docs", "books"]);
+    }
+
+    [Fact]
+    public void AnEmptyListAndAnAbsentOneArriveAsThemselves()
+    {
+        // Binding only. The two are the same answer downstream: ScopeResolver tests
+        // `requestedNamesOrIds is { Count: > 0 }`, so an empty list takes the
+        // everything-visible branch null takes (Core/Auth/ScopeResolver.cs). Whether it
+        // should is a question about search scope, not about this converter, and nothing
+        // here asserts a distinction the product does not make.
+        //
+        // What this holds is that the converter invents nothing. Mapping `[]` to null, or
+        // null to `[]`, would answer that question by accident and in one caller only.
+        Bind("[]").ShouldBe([]);
+        Bind("null").ShouldBeNull();
+    }
+
+    [Fact]
+    public void SomethingThatIsNeitherSaysWhichArgumentItWas()
+    {
+        // The whole defect was a refusal a model could not act on. A message naming the
+        // argument and what it takes is one the caller can fix on the next turn.
+        // McpException rather than JsonException: measured against a live instance, the SDK
+        // renders that one's message to the caller and turns everything else into
+        // "An error occurred invoking 'search_index'."
+        var thrown = Should.Throw<McpException>(() => Bind("7"));
+
+        thrown.Message.ShouldContain("corpus");
+        thrown.Message.ShouldContain("number");
+    }
+
+    [Fact]
+    public void AListOfSomethingElseIsRefusedToo()
+    {
+        Should.Throw<McpException>(() => Bind("[{\"name\":\"docs\"}]"))
+              .Message.ShouldContain("corpus");
+    }
+
+    [Fact]
+    public void ANullInTheListIsRefused()
+    {
+        // The generated schema says `items: ["string", "null"]`, so this is a shape the
+        // published contract allows and the converter does not. Deliberate, and it is the
+        // schema that is loose: `["string", "null"]` is the SDK describing a nullable
+        // reference type, not a claim that a nameless corpus means something.
+        //
+        // The alternative is worse than the asymmetry. `ScopeResolver.Split` does
+        // `nameOrId.IndexOf(':')`, so a null element reached it as a
+        // NullReferenceException and came back as "An error occurred invoking
+        // 'search_index'." — the same dead end this whole change is about.
+        Should.Throw<McpException>(() => Bind("[\"docs\",null]"))
+              .Message.ShouldContain("corpus");
+    }
+
+    [Fact]
+    public void WhatTheToolAdvertisesIsUnchanged()
+    {
+        // Accepting a scalar is leniency in binding, not a wider contract: the schema a
+        // client reads still says an array of strings, and a client that follows it is
+        // right. Without this the converter could silently turn the advertised type into
+        // `{}` and every caller would be guessing.
+        var tool = McpServerTool.Create(SearchIndex, new McpServerToolCreateOptions { SerializerOptions = McpJson.Options });
+
+        using var schema = JsonDocument.Parse(tool.ProtocolTool.InputSchema.GetRawText());
+        var corpus = schema.RootElement.GetProperty("properties").GetProperty("corpus");
+
+        corpus.GetProperty("type").EnumerateArray().Select(t => t.GetString()).ShouldBe(["array", "null"]);
+        corpus.GetProperty("items").GetProperty("type").EnumerateArray()
+              .Select(t => t.GetString()).ShouldBe(["string", "null"]);
+    }
+}

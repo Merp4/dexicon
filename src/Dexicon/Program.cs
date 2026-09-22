@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using Dexicon.Api;
 using Dexicon.Core.Auth;
@@ -143,10 +144,13 @@ builder.Services.AddSingleton<CorpusLeases>();
 // ── MCP ──────────────────────────────────────────────────────────────────────
 // Stateless: the 2026-07-28 core removed the handshake and the session id, and
 // Dexicon needs no server-to-client calls. Verified in the M0 spike.
+//
+// McpJson.Options is what the tools bind their arguments with, and what their input
+// schemas are generated from. See Mcp/McpJson.cs.
 builder.Services
     .AddMcpServer(o => o.ServerInfo = new() { Name = "dexicon", Version = ThisAssembly.Version })
     .WithHttpTransport(o => o.Stateless = true)
-    .WithTools<DexiconTools>()
+    .WithTools<DexiconTools>(McpJson.Options)
     .WithResources<DexiconResources>();
 
 // A key without `ingest` is not shown `index_refresh` at all, rather than being refused
