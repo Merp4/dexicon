@@ -1265,6 +1265,34 @@ describe('the full reindex', () => {
     expect(text).not.toContain('3 files failed');
   });
 
+  it('does not promise to embed what it will only record', async () => {
+    // A full pass reads everything and embeds what it can chunk. An excluded, oversize or
+    // empty item gets a row and no vectors, and a failure gets neither — so "every file is
+    // embedded again" was a claim about work that does not happen.
+    render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
+
+    const text = (await screen.findByRole('dialog')).textContent?.replace(/\s+/g, ' ') ?? '';
+
+    expect(text).toContain('re-embedded if it can be read and chunked');
+    expect(text).toContain('excluded, oversize or empty is recorded without being embedded');
+    expect(text).not.toContain('Every file is read, chunked and embedded again');
+  });
+
+  it('describes the pass in the corpus’s own unit', async () => {
+    getCorpus.mockResolvedValue(
+      corpus({ sources: [source({ id: 's2', kind: 'githistory' })], chunkSets: [chunkSet()] }),
+    );
+
+    render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
+
+    const text = (await screen.findByRole('dialog')).textContent?.replace(/\s+/g, ' ') ?? '';
+
+    expect(text).toContain('Every commit is read again');
+    expect(text).not.toContain('Every file is read again');
+  });
+
   it('says the chunk figure is what is held now, not what the run will produce', async () => {
     // There is no planned count to ask for: a pending row has no chunks yet, a failed one
     // keeps its last, and a changed file will produce a different number. Announcing this

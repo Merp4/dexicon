@@ -2311,15 +2311,18 @@ function FullReindexModal({
   return (
     <Modal title={`Full reindex of ${corpus.name}?`} onClose={onClose} width={560}>
       <p className="mt-0 text-sm">
-        Every file is read, chunked and embedded again, whether or not it changed — in{' '}
+        Every {unitFor(corpus.sources, 1)} is read again, whether or not it changed, and
+        re-embedded if it can be read and chunked — in{' '}
         {sets.length === 1 ? 'this corpus’s chunk set' : <>all {sets.length} of this corpus’s chunk sets</>}.
         It holds <strong>{chunks.toLocaleString()}</strong> chunks today, and embedding is
         the slow part.
       </p>
 
       <p className="text-sm">
-        Search keeps working while it runs. Each file's vectors are replaced as it is
-        reached, rather than the corpus being cleared first.
+        One that is excluded, oversize or empty is recorded without being embedded, as it
+        is on any pass. Search keeps working while it runs: vectors are replaced one{' '}
+        {unitFor(corpus.sources, 1)} at a time as the walk reaches it, rather than the
+        corpus being cleared first.
       </p>
 
       {/* The settings it will apply. They are set per chunk set and nowhere near this
