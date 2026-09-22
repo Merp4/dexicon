@@ -821,17 +821,6 @@ public sealed class CorpusIndexer(
             return;
         }
 
-        if (!await GitHistory.IsRepositoryAsync(repo, ct))
-        {
-            // Unavailable rather than failed, and nothing is removed: a repository whose
-            // mount is present but whose .git is not is the same class of problem as a
-            // mount that is away, and the history indexed last time is still searchable.
-            corpus.State = CorpusState.Unavailable;
-            job.Error = $"Source '{source.RootPath}' is not a git repository, so it has no history to index.";
-            log.LogWarning("{Error}", job.Error);
-            return;
-        }
-
         var options = GitHistoryOptions.FromJson(source.GitOptions);
 
         // The source's include globs become pathspecs, so they mean whose history rather
@@ -841,8 +830,31 @@ public sealed class CorpusIndexer(
         var filters = SourceFilters.Resolve(corpus, source, _indexing);
 
         IReadOnlyList<GitCommit> commits;
+
+        // The probe and the enumeration share one catch, because they fail the same way.
+        // RunAsync raises GitHistoryException for a missing git binary and for a timeout,
+        // and the probe runs git: outside this, an image built without git failed the
+        // whole JOB, while the identical failure from EnumerateAsync a few lines later
+        // reported the source unavailable and left the other sources to index. One
+        // exception, two outcomes, decided by which call happened to run first.
+        //
+        // Unavailable is the right one of the two. Git being absent or timing out is the
+        // machinery breaking, not a statement about this corpus, and what a job failure
+        // would assert is that the corpus could not be indexed at all.
         try
         {
+            if (!await GitHistory.IsRepositoryAsync(repo, ct))
+            {
+                // Unavailable rather than failed, and nothing is removed: a repository
+                // whose mount is present but whose .git is not is the same class of
+                // problem as a mount that is away, and the history indexed last time is
+                // still searchable.
+                corpus.State = CorpusState.Unavailable;
+                job.Error = $"Source '{source.RootPath}' is not a git repository, so it has no history to index.";
+                log.LogWarning("{Error}", job.Error);
+                return;
+            }
+
             commits = await GitHistory.EnumerateAsync(repo, options, filters.IncludeGlobs, ct);
         }
         catch (GitHistoryException ex)
