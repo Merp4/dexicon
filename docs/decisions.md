@@ -1629,8 +1629,9 @@ it is measured, so one commit carrying a vendored tree is allocated in full and 
 dropped; the reader bounds that separately, by refusing output past a ceiling and
 halving the batch to find which commit produced it.
 
-**Why two passes.** `git log --format` over the ref gives shas, dates and subjects; the
-bodies are fetched in a second call for the commits the catalogue does not already hold.
+**Why two passes.** `git log --format` over the ref gives shas and dates; the message,
+the stat and the patch are fetched in a second call for the commits the catalogue does
+not already hold.
 A single `git log -p` would produce every patch in the repository in order to discover
 that nothing had changed. 77ms against 1,069ms on this repository, and the difference
 grows with the history.

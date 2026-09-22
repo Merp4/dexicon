@@ -136,8 +136,8 @@ public sealed class CorpusSweeper(
     /// A git-history source's inventory: one candidate per commit the settings select.
     ///
     /// This is the discovery half for that kind of source, and it is cheap in exactly
-    /// the way D-32 argues discovery should be: `git log` for shas, dates and subjects,
-    /// no bodies and no patches. Measured on this repository, 77ms for 201 commits.
+    /// the way D-32 argues discovery should be: `git log` for shas and dates, no
+    /// messages and no patches. Measured on this repository, 77ms for 201 commits.
     ///
     /// Without it, adding a history source enqueued a sweep that walked nothing, so the
     /// corpus reported zero files and zero pending until an index job reached the front

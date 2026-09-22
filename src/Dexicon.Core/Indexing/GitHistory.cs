@@ -173,8 +173,8 @@ public sealed record GitCommit(string Sha, DateTimeOffset AuthorDate)
 /// why something changed, which lives in the message.
 ///
 /// Two PHASES, because a refresh has to be cheap. The first asks git only for shas and
-/// subjects and is the inventory; the second asks for the bodies of the commits that are
-/// not already indexed. A single <c>git log -p</c> would produce every patch in the
+/// dates and is the inventory; the second asks for the message, the stat and the patch of
+/// the commits that are not already indexed. A single <c>git log -p</c> would produce every patch in the
 /// repository in order to discover that nothing had changed. Measured on this repository,
 /// 201 commits: 77ms to enumerate, 1,069ms to read all of them with their patches.
 ///
@@ -315,7 +315,7 @@ public static class GitHistory
                           || c is '/' or '_' or '-' or '.' or '~' or '^' or '@' or '{' or '}');
 
     /// <summary>
-    /// Every commit the settings select, newest first, as shas, dates and subjects.
+    /// Every commit the settings select, newest first, as shas and dates.
     ///
     /// This is the inventory, and it is deliberately the cheap half: no patches, no
     /// bodies. A refresh of a repository whose tip has not moved reads this, finds every

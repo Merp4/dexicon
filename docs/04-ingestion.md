@@ -171,7 +171,7 @@ and mapping one glob language onto another quietly is how a filter comes to mean
 else.
 
 **A refresh over a tip that has not moved reads nothing.** `git log --format` gives shas
-and subjects and is the inventory; the bodies are asked for in a second call, for the
+and dates and is the inventory; everything else is asked for in a second call, for the
 commits the catalogue does not already have. A commit cannot change, so its fingerprint is
 its sha plus what these settings say a document contains, and that is knowable without
 asking git for the body — which is why the staleness check for this source runs *before*

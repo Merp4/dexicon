@@ -39,7 +39,7 @@ with no section here fails its release rather than publishing an undescribed one
   truncated mid-hunk reads as a complete change that did something else.
 
   A refresh over a tip that has not moved reads nothing. The inventory is a `git log` of
-  shas and subjects; bodies are fetched only for commits the catalogue does not hold. A
+  shas and dates; everything else is fetched only for commits the catalogue does not hold. A
   commit cannot change, so its fingerprint is its sha and what the settings say a document
   contains, which is knowable without asking git for the body. 77ms to enumerate 201
   commits against 1,069ms to read all of them with their patches.
