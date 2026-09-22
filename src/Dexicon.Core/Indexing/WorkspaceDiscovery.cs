@@ -256,6 +256,12 @@ public static class WorkspaceDiscovery
             // and nothing else, so it reached them as a 500 from source creation or ended a
             // sweep — an outage reported as a decision. It is its own outcome instead, and
             // the caller decides: absent to a resolver, refused to the walk.
+            //
+            // UnauthorizedAccessException too, and it is NOT an IOException. A directory
+            // the process cannot read would otherwise leave here as the same type this
+            // method throws for a boundary violation, so a permissions problem read as
+            // "resolves outside the workspace" — a true refusal for a false reason, which
+            // sends the operator looking at the wrong thing entirely.
             string? match;
             try
             {
@@ -263,6 +269,7 @@ public static class WorkspaceDiscovery
                     d => string.Equals(Path.GetFileName(d), segment, CorpusIndexer.PathComparison));
             }
             catch (IOException) { outcome = WalkOutcome.Unreadable; return current; }
+            catch (UnauthorizedAccessException) { outcome = WalkOutcome.Unreadable; return current; }
 
             if (match is null) return current;
 
