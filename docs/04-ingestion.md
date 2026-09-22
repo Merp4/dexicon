@@ -13,20 +13,68 @@ Discovery walks the tree and applies, **in order**:
 
 1. **Always-exclude** — binaries, media, archives, build output, VCS internals. Hard-coded,
    not configurable, because nothing good comes of embedding a `.dll`:
-   `.git/`, `**/node_modules/**`, `**/bin/**`, `**/obj/**`, `**/.vs/**`, `**/.idea/**`,
+   `.git`, `**/node_modules/**`, `**/bin/**`, `**/obj/**`, `**/.vs/**`, `**/.idea/**`,
    `**/target/**`, `**/dist/**`, `**/__pycache__/**`, and by extension:
    `exe dll pdb so dylib o obj a lib zip tar gz 7z rar jar woff woff2 ttf eot
    ico png jpg jpeg gif bmp webp svg mp3 mp4 avi mov wav db sqlite sqlite3
    safetensors gguf bin pt pth pkl npy npz`
-2. **`.gitignore`** — honoured by default, full gitignore glob semantics, nested files
-   respected. Disable per source with `use_gitignore: false`.
-3. **`.dexiconignore`** — same syntax, for things that are checked in but not worth
+
+   `.git` carries no trailing slash because in a linked worktree and in a submodule it is
+   a file, holding `gitdir: <absolute host path>` — and an absolute host path in a payload
+   is a leak ([03](03-data-model.md#identifier-conventions)). A directory-only pattern
+   indexed it as content.
+
+   It is also the one entry in this list that is enforced rather than offered. Everything
+   else here is a pattern, and later patterns win, so a `!.git` in a `.gitignore`, a
+   `.dexiconignore` or an `exclude_globs` would otherwise take the pointer file back. A
+   path with a `.git` segment is dropped before any rule set is consulted, and such a
+   directory is pruned before the re-inclusion test that would otherwise walk the whole
+   object store. Git makes the same call: `.git` cannot be un-ignored at all, whatever the
+   ignore files say. A repository's history has its own source type below.
+2. **`.git/info/exclude`** — git's per-clone ignore file, read when `use_gitignore` is on.
+   It holds what a checkout excludes without the repository saying so, which is where
+   anything that adds directories to someone's working copy puts them: `git worktree`, and
+   the editors and agents that make worktrees inside the repository.
+
+   Three things it does not reach, each covered by `.dexiconignore`: a **linked
+   worktree**, where `.git` is the pointer file above, aimed at a gitdir outside the tree
+   being walked; a **link**, because `Directory.Exists` and `File.ReadAllLines` follow
+   one, so every segment of `.git/info/exclude` is tested against the same boundary the
+   walk holds while it descends; and a **source rooted below the repository**, which has
+   no `.git` of its own and so does not get the repository's rules — exactly as it does
+   not get its `.gitignore`. `core.excludesFile`, git's third layer, is per-user and
+   outside the workspace entirely; it is not read at all.
+3. **`.gitignore`** — honoured by default, at the source root. Disable per source with
+   `use_gitignore: false`, which turns off `2` with it:
+   one setting, and it says whether git decides what is indexed.
+4. **`.dexiconignore`** — same syntax, for things that are checked in but not worth
    indexing (lock files, generated clients, vendored trees). Separate from `.gitignore` so
    you never have to change VCS behaviour to change index behaviour.
-4. **`exclude_globs`**, then **`include_globs`** as an override.
-5. **Size cap** — `max_file_bytes`, default 256 KB. A file over the cap is recorded as
+5. **`exclude_globs`**, then **`include_globs`** as an override.
+6. **Size cap** — `max_file_bytes`, default 256 KB. A file over the cap is recorded as
    `skipped` with the reason, never dropped without record.
-6. **Binary sniff** — a NUL byte in the first 8 KB means binary, regardless of extension.
+7. **Binary sniff** — a NUL byte in the first 8 KB means binary, regardless of extension.
+
+Within `2` and `3` the later file wins, which is git's precedence: a `!generated/` in
+`.gitignore` re-includes what `info/exclude` dropped.
+
+**The glob syntax is gitignore's; the resolution is not git's in two places**, and both
+predate `2`:
+
+- **One file per root.** A `.gitignore` in a subdirectory is not read. Point a source at
+  that subdirectory and its own file applies, as the root of that walk.
+- **A negation reaches into an excluded directory.** `data/` with `!data/sessions/` indexes
+  `data/sessions/a.json`; git would not, because it does not re-include a file whose
+  ancestor is excluded. Deliberate, and the case it came from is real: a repository that
+  excludes `data/` and keeps `data/sessions/` while the bulk of the tree is a sibling.
+  It is also what makes `!.vscode/launch.json` work against the always-exclude list.
+
+Worktrees are the case that prompted `2`. Reported against a checkout with four of them:
+22,004 files walked to 5,463 tracked ones, and search returning the same document at two
+older commits. That is worse than noise — a hit from a stale copy carries a real path and
+a real line and says something that stopped being true. This repository has the same
+shape: 239 tracked files, six worktrees under `.claude/worktrees/`, excluded by
+`.git/info/exclude` and by nothing in `.gitignore`.
 
 ### One file, one source
 

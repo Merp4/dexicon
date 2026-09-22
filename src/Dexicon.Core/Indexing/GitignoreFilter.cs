@@ -169,8 +169,9 @@ public sealed partial class IgnoreRuleSet
 }
 
 /// <summary>
-/// Walks a workspace tree applying, in order: always-exclude, .gitignore,
-/// .dexiconignore, per-source globs, size cap, binary sniff. See docs/04-ingestion.md.
+/// Walks a workspace tree applying, in order: always-exclude, .git/info/exclude,
+/// .gitignore, .dexiconignore, per-source globs, size cap, binary sniff. See
+/// docs/04-ingestion.md.
 /// </summary>
 public sealed class WorkspaceWalker
 {
@@ -189,7 +190,11 @@ public sealed class WorkspaceWalker
     /// </summary>
     private static readonly string[] AlwaysExclude =
     [
-        ".git/", ".hg/", ".svn/",
+        // `.git` without the slash, because in a linked worktree and in a submodule it is
+        // a FILE holding `gitdir: <absolute host path>`. `.git/` matches directories only,
+        // so that pointer was indexed as content, and an absolute host path in a payload
+        // is a leak (docs/03). Without the slash it still prunes the directory.
+        ".git", ".hg/", ".svn/",
         "node_modules/", "bin/", "obj/", ".vs/", ".idea/", ".vscode/",
         "target/", "dist/", "build/", "__pycache__/", ".venv/", "venv/",
         "*.exe", "*.dll", "*.pdb", "*.so", "*.dylib", "*.o", "*.obj", "*.a", "*.lib",
@@ -228,6 +233,7 @@ public sealed class WorkspaceWalker
 
         var ignore = new IgnoreRuleSet();
         ignore.AddPatterns(AlwaysExclude, "always-exclude");
+        if (useGitignore) AddLocalGitExcludes(ignore, root);
         if (useGitignore && File.Exists(Path.Combine(root, ".gitignore")))
             ignore.AddPatterns(File.ReadAllLines(Path.Combine(root, ".gitignore")), ".gitignore");
         if (File.Exists(Path.Combine(root, IgnoreFileName)))
@@ -241,6 +247,17 @@ public sealed class WorkspaceWalker
         foreach (var full in EnumerateFilesSafely(root, ignore, topLevelOnly))
         {
             var relative = Path.GetRelativePath(root, full).Replace('\\', '/');
+
+            // Before the rule sets, and not expressible in them. `.git` sits in
+            // always-exclude for the pruning, but a pattern list is offered, not enforced:
+            // later patterns win there, so a `!.git` in anyone's .gitignore,
+            // .dexiconignore or exclude_globs takes the pointer file back — and what it
+            // holds is `gitdir: <absolute host path>`.
+            //
+            // Git makes the same call: `.git` cannot be un-ignored at all, whatever the
+            // ignore files say. A repository's history has its own source type
+            // (docs/04); nothing needs the plumbing indexed as text.
+            if (IsGitPlumbing(relative)) continue;
 
             if (ignore.IsIgnored(relative, isDirectory: false)) continue;
             if (hasInclude && !include.IsIgnored(relative, isDirectory: false)) continue;
@@ -287,6 +304,95 @@ public sealed class WorkspaceWalker
     }
 
     /// <summary>
+    /// Adds <c>.git/info/exclude</c>, git's per-clone ignore file. It holds what a working
+    /// copy excludes without the repository saying so, which is where a tool that adds
+    /// directories to someone's checkout puts them: <c>git worktree</c>, and the editors
+    /// and agents that create worktrees inside the repository.
+    ///
+    /// Reported against a checkout with four worktrees: 22,004 files walked to 5,463
+    /// tracked ones, and search returning the same document at two older commits. The
+    /// copies are not noise, they are earlier versions of the answer, so a hit carries a
+    /// real path and a real line and says something that stopped being true.
+    ///
+    /// This repository has the same shape. Measured on it: 239 tracked files, six
+    /// worktrees under <c>.claude/worktrees/</c>, and the only thing excluding them is
+    /// <c>**/.claude/worktrees/</c> in <c>.git/info/exclude</c> — <c>.gitignore</c> says
+    /// nothing about them.
+    ///
+    /// Added BEFORE <c>.gitignore</c> because later patterns win here and
+    /// <c>.gitignore</c> outranks <c>info/exclude</c> in git.
+    ///
+    /// Three things it does not reach, each covered by <c>.dexiconignore</c>:
+    ///
+    /// A linked worktree, where <c>.git</c> is a FILE pointing at a gitdir that is
+    /// normally outside the tree being walked. Following it would read a file the source
+    /// root does not contain.
+    ///
+    /// A link, for the same reason and more sharply: <c>Directory.Exists</c> and
+    /// <c>File.ReadAllLines</c> both follow one, so a symlinked <c>.git</c>, <c>info</c>
+    /// or <c>exclude</c> would read a host file from inside a read-only mount. Every
+    /// segment is tested against the same boundary <see cref="EnumerateFilesSafely"/>
+    /// holds while it descends.
+    ///
+    /// A source rooted BELOW the repository, which has no <c>.git</c> of its own. The
+    /// repository's rules are not read for it — exactly as its <c>.gitignore</c> is not.
+    ///
+    /// <c>core.excludesFile</c>, git's third layer, is per-user and outside the workspace
+    /// entirely; it is not read at all.
+    /// </summary>
+    private static void AddLocalGitExcludes(IgnoreRuleSet ignore, string root)
+    {
+        var gitDir = Path.Combine(root, ".git");
+        if (!Directory.Exists(gitDir) || !StaysInside(new DirectoryInfo(gitDir), root)) return;
+
+        var info = Path.Combine(gitDir, "info");
+        if (!Directory.Exists(info) || !StaysInside(new DirectoryInfo(info), root)) return;
+
+        var exclude = Path.Combine(info, "exclude");
+        if (!File.Exists(exclude) || !StaysInside(new FileInfo(exclude), root)) return;
+
+        try { ignore.AddPatterns(File.ReadAllLines(exclude), ".git/info/exclude"); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
+    /// <summary>
+    /// A path with a <c>.git</c> segment: the directory's contents, and the pointer file a
+    /// linked worktree or a submodule has in its place.
+    /// </summary>
+    private static bool IsGitPlumbing(string relativePath)
+    {
+        var rest = relativePath.AsSpan();
+        while (!rest.IsEmpty)
+        {
+            var slash = rest.IndexOf('/');
+            var segment = slash < 0 ? rest : rest[..slash];
+            if (segment.Equals(".git", StringComparison.OrdinalIgnoreCase)) return true;
+            if (slash < 0) break;
+            rest = rest[(slash + 1)..];
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// True when <paramref name="entry"/> is not a link, or is one whose target is still
+    /// under <paramref name="root"/>. An entry that cannot be resolved is not inside.
+    /// </summary>
+    private static bool StaysInside(FileSystemInfo entry, string root)
+    {
+        if (entry.LinkTarget is null) return true;
+
+        try
+        {
+            var target = entry.ResolveLinkTarget(returnFinalTarget: true);
+            return target is not null && CorpusIndexer.IsInside(Path.GetFullPath(target.FullName), root);
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
+
+    /// <summary>
     /// Enumerate without letting one unreadable directory abort the whole walk, and
     /// without following symlinks out of the root, since a link to / would otherwise index
     /// the entire filesystem.
@@ -317,13 +423,21 @@ public sealed class WorkspaceWalker
                     var target = Path.GetFullPath(info.ResolveLinkTarget(true)?.FullName ?? sub);
                     if (!CorpusIndexer.IsInside(target, root)) continue;
                 }
+                var relativeSub = Path.GetRelativePath(root, sub).Replace('\\', '/');
+
+                // Unconditionally, ahead of the re-inclusion test below. A `!.git`
+                // anywhere makes MayReincludeBeneath say "possibly", so the walk would
+                // descend the whole object store to drop every file of it at the filter.
+                // Nothing under here can be indexed whatever the rules say, so there is
+                // no re-inclusion to be conservative about.
+                if (IsGitPlumbing(relativeSub)) continue;
+
                 // Skipped rather than walked and thrown away. A repository carrying .git,
                 // node_modules and a database's data directory enumerated 240,704 files to
                 // keep 27,001, and every one of those was a stat across the mount: 99s
                 // against 14s for the same result. Only where nothing beneath could be
                 // re-included, because being wrong here means quietly not indexing
                 // something that is indexed today.
-                var relativeSub = Path.GetRelativePath(root, sub).Replace('\\', '/');
                 if (ignore.IsIgnored(relativeSub, isDirectory: true)
                     && !ignore.MayReincludeBeneath(relativeSub))
                 {

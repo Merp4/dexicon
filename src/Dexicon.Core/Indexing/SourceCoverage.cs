@@ -19,9 +19,9 @@ namespace Dexicon.Core.Indexing;
 /// not reported.
 ///
 /// The directory has no source, so it has no include or exclude globs to apply. What is
-/// applied is what holds for any path: the always-exclude list, a <c>.gitignore</c> in the
-/// directory itself, the size caps and binary sniffing. A reported file is therefore one
-/// that would have been indexed had a source covered it.
+/// applied is what holds for any path: the always-exclude list, a <c>.gitignore</c> and a
+/// <c>.git/info/exclude</c> in the directory itself, the size caps and binary sniffing. A
+/// reported file is therefore one that would have been indexed had a source covered it.
 /// </summary>
 public static class SourceCoverage
 {

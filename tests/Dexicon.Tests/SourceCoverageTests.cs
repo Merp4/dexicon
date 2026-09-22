@@ -145,6 +145,20 @@ public sealed class SourceCoverageTests : IDisposable
     }
 
     [Fact]
+    public void ALocalGitExcludeInTheDirectoryIsObeyedToo()
+    {
+        // The check reports what would have been indexed, and that now includes git's
+        // per-clone ignore file. Without this it would name a worktree's files as a gap
+        // and tell the user to add a source over them.
+        Write("books/manuals/AI/one.md");
+        Write("books/manuals/dotnet/two.md");
+        Write("books/manuals/.git/info/exclude", "notes.md\n");
+        Write("books/manuals/notes.md");
+
+        Find("books/manuals/AI", "books/manuals/dotnet").ShouldBeEmpty();
+    }
+
+    [Fact]
     public void ADocumentOverTheCodeCapIsStillReported()
     {
         Write("books/manuals/AI/one.md");
