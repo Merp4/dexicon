@@ -101,7 +101,6 @@ public static class WorkspaceDiscovery
     /// the same answer. The walk is enumerating and skips what it will not follow; the
     /// resolver was handed one path by an operator and owes them a refusal.
     /// </summary>
-
     internal static bool ResolvesInside(string path, string root)
     {
         try
@@ -109,13 +108,35 @@ public static class WorkspaceDiscovery
             var full = Path.GetFullPath(path);
             if (!CorpusIndexer.IsInside(full, root)) return false;
 
-            // Anything it cannot finish walking is harmless — a component that is not
-            // there leads nowhere to read. Only the refusal means "this leaves".
-            WalkInside(root, full, null, out _);
-            return true;
+            // Absent is harmless: a component that is not there leads nowhere to read.
+            // Unreadable is NOT. A directory that could not be enumerated has not been
+            // shown to stay inside, and the walk must not follow what it could not check —
+            // an unreadable mount is a broken instrument, not a verdict.
+            WalkInside(root, full, null, out var outcome);
+            return outcome is not WalkOutcome.Unreadable;
         }
         catch (UnauthorizedAccessException) { return false; }
         catch (IOException) { return false; }
+    }
+
+    /// <summary>
+    /// What a walk of the existing part of a path found.
+    ///
+    /// Three, not two, because a caller that cannot tell "there is nothing there" from "I
+    /// could not look" reports one as the other. Absent is an operational condition the
+    /// resolver is allowed to pass on; unreadable is a failure that must not be turned
+    /// into either answer.
+    /// </summary>
+    private enum WalkOutcome
+    {
+        /// <summary>Every segment was found.</summary>
+        Reached,
+
+        /// <summary>A segment is not there. The mount is away, or the path is stale.</summary>
+        Absent,
+
+        /// <summary>A directory could not be enumerated. Nothing was decided.</summary>
+        Unreadable,
     }
 
     /// <summary>
@@ -168,9 +189,12 @@ public static class WorkspaceDiscovery
         // enumeration per segment, on the path a caller is about to hand to git.
         var root = Path.GetFullPath(workspaceRoot);
         var target = Contained(root, workspaceRoot, relative);
-        var reached = WalkInside(root, target, relative, out var complete);
+        var reached = WalkInside(root, target, relative, out var outcome);
 
-        return complete ? reached : null;
+        // Only a completed walk yields a path. Absent and unreadable both answer null —
+        // this method's contract is "or null when there is no such directory", and a
+        // directory it could not read is not one it can hand to git.
+        return outcome is WalkOutcome.Reached ? reached : null;
     }
 
     /// <summary>
@@ -205,10 +229,10 @@ public static class WorkspaceDiscovery
     /// laid out to escape, which is the shape the mount actually has; a caller able to
     /// rewrite the tree mid-walk already has the filesystem.
     /// </summary>
-    private static string? WalkInside(string root, string target, string? relative, out bool complete,
-        int depth = 0)
+    private static string? WalkInside(string root, string target, string? relative,
+        out WalkOutcome outcome, int depth = 0)
     {
-        complete = false;
+        outcome = WalkOutcome.Absent;
 
         // A followed link is walked again as its own path, so a chain is bounded by this
         // rather than by the filesystem. POSIX names the same limit SYMLOOP_MAX.
@@ -221,14 +245,24 @@ public static class WorkspaceDiscovery
 
         // Containment already holds, so this carries no `..` to walk back through.
         var within = Path.GetRelativePath(current, target);
-        if (within == ".") { complete = true; return current; }
+        if (within == ".") { outcome = WalkOutcome.Reached; return current; }
 
         foreach (var segment in within.Split(
                      [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
                      StringSplitOptions.RemoveEmptyEntries))
         {
-            var match = Directory.EnumerateDirectories(current).FirstOrDefault(
-                d => string.Equals(Path.GetFileName(d), segment, CorpusIndexer.PathComparison));
+            // A mount that goes away between the Exists above and this listing raises
+            // DirectoryNotFoundException here. Callers translate UnauthorizedAccessException
+            // and nothing else, so it reached them as a 500 from source creation or ended a
+            // sweep — an outage reported as a decision. It is its own outcome instead, and
+            // the caller decides: absent to a resolver, refused to the walk.
+            string? match;
+            try
+            {
+                match = Directory.EnumerateDirectories(current).FirstOrDefault(
+                    d => string.Equals(Path.GetFileName(d), segment, CorpusIndexer.PathComparison));
+            }
+            catch (IOException) { outcome = WalkOutcome.Unreadable; return current; }
 
             if (match is null) return current;
 
@@ -281,8 +315,15 @@ public static class WorkspaceDiscovery
             // So the target is walked as its own path, which resolves each of ITS
             // components and refuses one that leaves. Depth-capped above, because a
             // followed link walks again.
-            linked = WalkInside(root, linked, relative, out var reached, depth + 1) ?? linked;
-            if (!reached) return current;
+            linked = WalkInside(root, linked, relative, out var targetOutcome, depth + 1) ?? linked;
+
+            // Absent is fine to stop on; unreadable has to stop too, because a target
+            // this could not walk has not been shown to stay inside.
+            if (targetOutcome is not WalkOutcome.Reached)
+            {
+                outcome = targetOutcome;
+                return current;
+            }
 
             // Followed, not just checked. A link that stays inside is allowed, and a
             // path that kept its spelling would then be compared against a physical one
@@ -306,7 +347,7 @@ public static class WorkspaceDiscovery
             current = linked;
         }
 
-        complete = true;
+        outcome = WalkOutcome.Reached;
         return current;
     }
 }

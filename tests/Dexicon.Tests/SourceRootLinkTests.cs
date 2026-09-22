@@ -259,6 +259,25 @@ public sealed class SourceRootLinkTests : IDisposable
 
 
     [Fact]
+    public void AMountThatGoesAwayMidWalkIsNotAnAnswer()
+    {
+        // The walk enumerates directories, so a mount disappearing between the existence
+        // check and the listing raises DirectoryNotFoundException. Callers translate
+        // UnauthorizedAccessException and nothing else, so it reached them as a 500 from
+        // source creation, or ended a sweep — an outage reported as a decision.
+        //
+        // Simulated by naming a path under a directory that is gone by the time the walk
+        // reaches it, which is the same enumeration failure.
+        var vanishing = Path.Combine(_workspace, "mount");
+        Directory.CreateDirectory(Path.Combine(vanishing, "repo"));
+        Directory.Delete(vanishing, recursive: true);
+
+        // Absent, not refused, and nothing escapes.
+        Should.NotThrow(() => WorkspaceDiscovery.Resolve(_workspace, "mount/repo"));
+        WorkspaceDiscovery.ResolveExisting(_workspace, "mount/repo").ShouldBeNull();
+    }
+
+    [Fact]
     public void CoverageDoesNotWalkThroughOneEither()
     {
         // The one path that reaches a directory NOBODY created a source on: coverage
