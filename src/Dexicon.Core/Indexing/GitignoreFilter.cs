@@ -7,19 +7,44 @@ namespace Dexicon.Core.Indexing;
 /// gitignore-syntax path matching: <c>*</c>, <c>**</c>, <c>?</c>, <c>[a-z]</c>, a leading
 /// <c>/</c> to anchor at the root, a trailing <c>/</c> to match directories only, and
 /// <c>!</c> to negate. Later patterns win, which is what git does.
+///
+/// Paths are relative to the scan root throughout. A file read from a subdirectory says
+/// what it means relative to ITSELF, so its patterns are anchored to that directory as
+/// they go in; see the <c>directoryPrefix</c> argument to <see cref="AddPatterns"/>.
 /// </summary>
 public sealed partial class IgnoreRuleSet
 {
     private readonly List<Rule> _rules = [];
 
+    public IgnoreRuleSet() { }
+
+    /// <summary>
+    /// A set carrying everything <paramref name="other"/> holds, which further patterns can
+    /// then be added to without changing it.
+    ///
+    /// The walk needs this because a subdirectory's own ignore file applies to that subtree
+    /// and to nothing beside it: its siblings keep the set their parent had. Copied rather
+    /// than chained because a rule carries a compiled Regex and the copy is a reference to
+    /// the same one, and because a directory holding an ignore file is rare enough that the
+    /// list copy is not worth avoiding.
+    /// </summary>
+    public IgnoreRuleSet(IgnoreRuleSet other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        _rules.AddRange(other._rules);
+    }
+
     /// <param name="LiteralPrefix">
     /// The deepest path this rule is certain to sit under: its text up to the last path
-    /// boundary before its first wildcard. Used to decide whether a negation could reach
-    /// beneath a directory that is otherwise prunable.
+    /// boundary before its first wildcard, beneath the directory whose file it came from.
+    /// Used to decide whether a negation could reach beneath a directory that is otherwise
+    /// prunable.
     /// </param>
     /// <param name="MatchesAnyDepth">
-    /// The pattern has no interior slash and no anchor, so it applies at every level:
-    /// `*.md` re-includes a file anywhere, and nothing can be pruned on its account.
+    /// The pattern has no interior slash and no anchor AND came from the scan root, so it
+    /// applies at every level: `*.md` re-includes a file anywhere, and nothing can be
+    /// pruned on its account. The same pattern in `sub/.gitignore` reaches every level
+    /// beneath `sub` and no further, which is what LiteralPrefix then says.
     /// </param>
     private sealed record Rule(
         Regex Pattern, bool Negated, bool DirectoryOnly, string Source,
@@ -27,8 +52,16 @@ public sealed partial class IgnoreRuleSet
 
     public int Count => _rules.Count;
 
-    public void AddPatterns(IEnumerable<string> patterns, string source)
+    /// <param name="directoryPrefix">
+    /// Where the patterns were written, as a forward-slash path relative to the scan root,
+    /// or empty for the root itself. Every rule is anchored beneath it, so `secret.txt` in
+    /// `sub/.gitignore` is `sub/**/secret.txt` and cannot reach a sibling of `sub`.
+    /// </param>
+    public void AddPatterns(IEnumerable<string> patterns, string source, string directoryPrefix = "")
     {
+        ArgumentNullException.ThrowIfNull(patterns);
+        ArgumentNullException.ThrowIfNull(directoryPrefix);
+
         foreach (var raw in patterns)
         {
             var line = raw.Trim();
@@ -44,13 +77,25 @@ public sealed partial class IgnoreRuleSet
             var anchored = line.StartsWith('/');
             var bare = anchored ? line[1..] : line;
 
+            // No anchor and no interior slash: it applies at every level beneath wherever
+            // it was written. The deepest path it is CERTAIN to sit under is therefore that
+            // directory and not the pattern's own text — `!keep.txt` in `sub/.gitignore`
+            // matches `sub/deep/keep.txt`, so a LiteralPrefix of `sub/keep.txt` would let
+            // `sub/deep` be pruned and the file it re-includes never be reached.
+            var anyDepth = !anchored && !bare.Contains('/', StringComparison.Ordinal);
+
             _rules.Add(new Rule(
-                new Regex(ToRegex(line), RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(250)),
+                new Regex(ToRegex(line, directoryPrefix), RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(250)),
                 negated, directoryOnly, source,
-                LiteralPrefix: LiteralPrefixOf(bare),
-                MatchesAnyDepth: !anchored && !bare.Contains('/', StringComparison.Ordinal)));
+                LiteralPrefix: anyDepth ? directoryPrefix : Join(directoryPrefix, LiteralPrefixOf(bare)),
+                MatchesAnyDepth: anyDepth && directoryPrefix.Length == 0));
         }
     }
+
+    private static string Join(string prefix, string rest) =>
+        prefix.Length == 0 ? rest
+        : rest.Length == 0 ? prefix
+        : prefix + "/" + rest;
 
     /// <param name="relativePath">Forward-slash path relative to the scan root.</param>
     public bool IsIgnored(string relativePath, bool isDirectory)
@@ -74,6 +119,12 @@ public sealed partial class IgnoreRuleSet
     /// applies at every depth and stops all pruning; `!.vscode/launch.json` stops `.vscode`
     /// from being pruned and nothing else, which is the case that prompted this, since
     /// `.vscode/` is always excluded and that one file is deliberately kept.
+    ///
+    /// It answers about the rules this set holds, which during a walk is the rules in scope
+    /// where the question is asked: the root's, plus those of every directory already
+    /// descended into. An ignore file INSIDE a pruned directory is never read, so it cannot
+    /// re-include anything and cannot be consulted about it. Git decides the same way, and
+    /// for the same reason: it does not read ignore files in a directory it has excluded.
     /// </summary>
     public bool MayReincludeBeneath(string relativeDirectory)
     {
@@ -122,7 +173,15 @@ public sealed partial class IgnoreRuleSet
         }
     }
 
-    internal static string ToRegex(string glob)
+    internal static string ToRegex(string glob) => ToRegex(glob, string.Empty);
+
+    /// <param name="directoryPrefix">
+    /// The directory the pattern was written in, relative to the scan root. Everything the
+    /// glob would otherwise match at the root is matched beneath this instead, including
+    /// the any-depth case: `secret.txt` in `sub/` is `sub/**/secret.txt`, never
+    /// `other/secret.txt`.
+    /// </param>
+    internal static string ToRegex(string glob, string directoryPrefix)
     {
         var anchored = glob.StartsWith('/');
         if (anchored) glob = glob[1..];
@@ -131,6 +190,7 @@ public sealed partial class IgnoreRuleSet
         var matchAtAnyDepth = !anchored && !glob.TrimEnd('/').Contains('/', StringComparison.Ordinal);
 
         var sb = new StringBuilder("^");
+        if (directoryPrefix.Length > 0) sb.Append(Regex.Escape(directoryPrefix)).Append('/');
         if (matchAtAnyDepth) sb.Append("(?:.*/)?");
 
         for (var i = 0; i < glob.Length; i++)
@@ -170,7 +230,8 @@ public sealed partial class IgnoreRuleSet
 
 /// <summary>
 /// Walks a workspace tree applying, in order: always-exclude, .git/info/exclude,
-/// .gitignore, .dexiconignore, per-source globs, size cap, binary sniff. See
+/// .gitignore, .dexiconignore, per-source globs, size cap, binary sniff. The two ignore
+/// files are read in every directory the walk reaches, deeper outranking shallower. See
 /// docs/04-ingestion.md.
 /// </summary>
 public sealed class WorkspaceWalker
@@ -231,20 +292,23 @@ public sealed class WorkspaceWalker
         var files = new List<Candidate>();
         var skipped = new List<Skipped>();
 
-        var ignore = new IgnoreRuleSet();
-        ignore.AddPatterns(AlwaysExclude, "always-exclude");
-        if (useGitignore) AddLocalGitExcludes(ignore, root);
-        if (useGitignore && File.Exists(Path.Combine(root, ".gitignore")))
-            ignore.AddPatterns(File.ReadAllLines(Path.Combine(root, ".gitignore")), ".gitignore");
-        if (File.Exists(Path.Combine(root, IgnoreFileName)))
-            ignore.AddPatterns(File.ReadAllLines(Path.Combine(root, IgnoreFileName)), IgnoreFileName);
-        if (excludeGlobs is { Count: > 0 }) ignore.AddPatterns(excludeGlobs, "source.exclude");
+        // The tree's own rules, which a subdirectory's ignore file appends to as the walk
+        // reaches it. The source's exclude globs are held back and put on the end of
+        // whatever set is in force, so they keep outranking everything a repository says
+        // about itself — including a nested file, which the operator has never seen.
+        var treeRules = new IgnoreRuleSet();
+        treeRules.AddPatterns(AlwaysExclude, "always-exclude");
+        if (useGitignore) AddLocalGitExcludes(treeRules, root);
+        // The root's own `.gitignore` and `.dexiconignore` are read by the walk, which
+        // reaches the root before anything else and treats it like any other directory.
+
+        var layer = Layer.Of(treeRules, excludeGlobs);
 
         var include = new IgnoreRuleSet();
         if (includeGlobs is { Count: > 0 }) include.AddPatterns(includeGlobs, "source.include");
         var hasInclude = include.Count > 0;
 
-        foreach (var full in EnumerateFilesSafely(root, ignore, topLevelOnly))
+        foreach (var (full, ignore) in EnumerateFilesSafely(root, layer, useGitignore, excludeGlobs, topLevelOnly))
         {
             var relative = Path.GetRelativePath(root, full).Replace('\\', '/');
 
@@ -265,6 +329,21 @@ public sealed class WorkspaceWalker
             FileInfo info;
             try { info = new FileInfo(full); }
             catch (Exception ex) { skipped.Add(new Skipped(relative, $"unreadable: {ex.Message}", 0)); continue; }
+
+            // The same escape the directory branch of the walk refuses, on the kind of
+            // entry it never looked at. `FileInfo.Length` and LooksBinary's
+            // `File.OpenRead` both follow a link, so a link inside the tree pointing at a
+            // host file was sized, sniffed and indexed, out of a read-only mount.
+            //
+            // Recorded rather than dropped: a file the operator can see in their tree
+            // that appears in no count is the absence nothing can read back. Here, beside
+            // the FileInfo that already exists, because doing it in the enumerator costs
+            // a second stat on every file in the walk.
+            if (info.LinkTarget is not null && !StaysInside(info, root))
+            {
+                skipped.Add(new Skipped(relative, "a link to a file outside the source root", 0));
+                continue;
+            }
 
             if (info.Length > maxFileBytes && !Extraction.ExtractorRegistry.IsDocumentFormat(relative))
             {
@@ -393,19 +472,78 @@ public sealed class WorkspaceWalker
     }
 
     /// <summary>
+    /// The rules in force inside one directory.
+    ///
+    /// <paramref name="Tree"/> is what the tree itself says — the always-exclude list, the
+    /// local git excludes, and every ignore file from the root down to here.
+    /// <paramref name="Effective"/> is that with the source's exclude globs on the end, so
+    /// they keep winning over anything a repository says about itself. Both are carried
+    /// because a deeper directory appends to <paramref name="Tree"/>, not to
+    /// <paramref name="Effective"/>, and appending to the latter would put the operator's
+    /// globs in the middle.
+    ///
+    /// Shared by reference between every directory that adds nothing, which is almost all
+    /// of them.
+    /// </summary>
+    private readonly record struct Layer(IgnoreRuleSet Tree, IgnoreRuleSet Effective)
+    {
+        public static Layer Of(IgnoreRuleSet tree, IReadOnlyList<string>? excludeGlobs)
+        {
+            if (excludeGlobs is not { Count: > 0 }) return new Layer(tree, tree);
+
+            var effective = new IgnoreRuleSet(tree);
+            effective.AddPatterns(excludeGlobs, "source.exclude");
+            return new Layer(tree, effective);
+        }
+    }
+
+    /// <summary>
     /// Enumerate without letting one unreadable directory abort the whole walk, and
     /// without following symlinks out of the root, since a link to / would otherwise index
     /// the entire filesystem.
+    ///
+    /// Each file comes with the rules in force where it sits, because a subdirectory's own
+    /// ignore file applies to that subtree and to nothing beside it.
     /// </summary>
-    private static IEnumerable<string> EnumerateFilesSafely(
-        string root, IgnoreRuleSet ignore, bool topLevelOnly = false)
+    private static IEnumerable<(string FilePath, IgnoreRuleSet Ignore)> EnumerateFilesSafely(
+        string root, Layer rootLayer, bool useGitignore,
+        IReadOnlyList<string>? excludeGlobs, bool topLevelOnly = false)
     {
-        var stack = new Stack<string>();
-        stack.Push(root);
+        var stack = new Stack<(string Dir, string Prefix, Layer Layer)>();
+        stack.Push((root, string.Empty, rootLayer));
 
         while (stack.Count > 0)
         {
-            var dir = stack.Pop();
+            var (dir, prefix, layer) = stack.Pop();
+
+            // Listed before the subdirectories, because an ignore file here governs them
+            // and this is the listing that finds it. Probing for the two names instead
+            // costs a stat per directory per name, which on a 10,000-file tree measured
+            // as 1,545 ms against 1,420: the listing is already being fetched.
+            string[] entries;
+            var listed = true;
+            try { entries = Directory.GetFiles(dir); }
+            catch (Exception) { entries = []; listed = false; }
+
+            // Including the root, which is popped first and whose files therefore go in
+            // ahead of every nested one, after the always-exclude list and the local git
+            // excludes the caller put in.
+            //
+            // Looked for before anything is copied. Almost every directory has neither
+            // file and inherits its parent's sets by reference; copying first and
+            // discarding the copy is a rule list per directory rather than per file found.
+            var gitignore = useGitignore ? Named(entries, ".gitignore") : null;
+            var dexiconignore = Named(entries, IgnoreFileName);
+
+            if (gitignore is not null || dexiconignore is not null)
+            {
+                var tree = new IgnoreRuleSet(layer.Tree);
+                var added = AddIgnoreFile(tree, root, gitignore, ".gitignore", prefix);
+                added |= AddIgnoreFile(tree, root, dexiconignore, IgnoreFileName, prefix);
+                if (added) layer = Layer.Of(tree, excludeGlobs);
+            }
+
+            var ignore = layer.Effective;
 
             string[] subdirs;
             try { subdirs = topLevelOnly ? [] : Directory.GetDirectories(dir); }
@@ -444,15 +582,49 @@ public sealed class WorkspaceWalker
                     continue;
                 }
 
-                stack.Push(sub);
+                stack.Push((sub, relativeSub, layer));
             }
 
-            string[] entries;
-            try { entries = Directory.GetFiles(dir); }
-            catch (Exception) { continue; }
-
-            foreach (var f in entries) yield return f;
+            // A directory whose files could not be listed still had its subdirectories
+            // walked before this change, and still does.
+            if (listed)
+                foreach (var f in entries) yield return (f, ignore);
         }
+    }
+
+    /// <summary>
+    /// Reads the ignore files a directory holds, in the order the root's are read, and says
+    /// whether either existed.
+    ///
+    /// `.gitignore` only when the source honours git; `.dexiconignore` always, as at the
+    /// root, because it is Dexicon's own file and `use_gitignore` is a statement about git.
+    ///
+    /// Both are held to the boundary the walk holds everywhere else. `File.ReadAllLines`
+    /// follows a link, so one pointing out of the tree would read a host file from inside a
+    /// read-only mount; this is the check `.git/info/exclude` already gets, applied to the
+    /// root's own files as well, which had it nowhere.
+    /// </summary>
+    private static string? Named(IReadOnlyList<string> entries, string name)
+    {
+        foreach (var entry in entries)
+            if (string.Equals(Path.GetFileName(entry), name, CorpusIndexer.PathComparison))
+                return entry;
+
+        return null;
+    }
+
+    private static bool AddIgnoreFile(
+        IgnoreRuleSet rules, string root, string? path, string name, string directoryPrefix)
+    {
+        if (path is null || !StaysInside(new FileInfo(path), root)) return false;
+
+        try
+        {
+            rules.AddPatterns(File.ReadAllLines(path), name, directoryPrefix);
+            return true;
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
     }
 
     internal static bool LooksBinary(string path)

@@ -211,10 +211,10 @@ Add a source on books/manuals, or move the file into one of its subfolders.
 
 The directory has no source, so it has no include or exclude globs to apply. What is
 applied is what holds for any path: the always-exclude list, a `.gitignore` and a
-`.git/info/exclude` in the directory itself, the size caps and binary sniffing. A reported
-file is one that would have been indexed had a source covered it, so a file git excludes
-locally is not reported as missing. Five files are listed per directory and the rest
-counted.
+`.git/info/exclude` in the directory itself — only that one, since this does not descend —
+the size caps and binary sniffing. A reported file is one that would have been indexed had
+a source covered it, so a file git excludes locally is not reported as missing. Five files
+are listed per directory and the rest counted.
 
 ## Resources
 
