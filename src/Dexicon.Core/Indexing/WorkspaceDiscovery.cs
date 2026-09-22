@@ -123,16 +123,29 @@ public static class WorkspaceDiscovery
             // is nothing there" about a directory that plainly exists sends them
             // looking at the mount instead of at the link.
             var info = new DirectoryInfo(match);
-            if (info.LinkTarget is not null)
+            if (info.LinkTarget is null)
             {
-                var linked = Path.GetFullPath(info.ResolveLinkTarget(true)?.FullName ?? match);
-                if (!CorpusIndexer.IsInside(linked, Path.GetFullPath(workspaceRoot)))
-                    throw new UnauthorizedAccessException(
-                        $"Workspace path '{relative}' passes through '{segment}', which links to "
-                        + $"'{linked}', outside {workspaceRoot}. It was refused.");
+                current = match;
+                continue;
             }
 
-            current = match;
+            var linked = Path.GetFullPath(info.ResolveLinkTarget(true)?.FullName ?? match);
+
+            if (!CorpusIndexer.IsInside(linked, Path.GetFullPath(workspaceRoot)))
+                throw new UnauthorizedAccessException(
+                    $"Workspace path '{relative}' passes through '{segment}', which links to "
+                    + $"'{linked}', outside {workspaceRoot}. It was refused.");
+
+            // Followed, not just checked. A link that stays inside is allowed, and a
+            // path that kept its spelling would then be compared against a physical one
+            // and lose: `rev-parse --show-toplevel` reports the physical working
+            // directory — measured on Windows as well as POSIX — so `root/inward` was
+            // answered with `root/real`, the two did not match, and the source was
+            // reported as not a git repository and never indexed.
+            //
+            // Resolving here rather than at that comparison also covers a link part way
+            // along the path, which resolving only the last component would not.
+            current = linked;
         }
 
         return current;

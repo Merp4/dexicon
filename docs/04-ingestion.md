@@ -220,7 +220,10 @@ carries executable configuration:
   exist is absent rather than refused, which keeps "the mount is away" distinct from
   "this resolves outside the workspace". A segment that links out of the root is refused:
   `Path.GetFullPath` resolves no links, so the string test passes and the directory is
-  elsewhere. The walk already held every directory it descends into to that rule.
+  elsewhere. The walk already held every directory it descends into to that rule. A link
+  that stays inside is followed rather than merely allowed, because `rev-parse
+  --show-toplevel` answers with the physical directory, and a path that kept the link's
+  spelling would be compared against the target's and reported as not a repository.
 - **The inventory carries a sha and a date and nothing else.** The subject was in it and
   nothing read it, and it was the one field there whose size a caller controls, on the
   one call with no ceiling — there is no commit count to size a ceiling from before the
