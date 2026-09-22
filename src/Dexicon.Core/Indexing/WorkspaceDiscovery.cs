@@ -120,6 +120,26 @@ public static class WorkspaceDiscovery
     }
 
     /// <summary>
+    /// Whether a directory is there and can be listed, told apart by what listing it
+    /// throws. <c>Directory.Exists</c> cannot: it answers false for both, and "there and
+    /// unreadable" is the case that must not be treated as safe.
+    ///
+    /// Lazy, so this costs the first entry rather than the listing.
+    /// </summary>
+    private static WalkOutcome Probe(string directory)
+    {
+        try
+        {
+            using var entries = Directory.EnumerateDirectories(directory).GetEnumerator();
+            entries.MoveNext();
+            return WalkOutcome.Reached;
+        }
+        catch (DirectoryNotFoundException) { return WalkOutcome.Absent; }
+        catch (IOException) { return WalkOutcome.Unreadable; }
+        catch (UnauthorizedAccessException) { return WalkOutcome.Unreadable; }
+    }
+
+    /// <summary>
     /// What a walk of the existing part of a path found.
     ///
     /// Three, not two, because a caller that cannot tell "there is nothing there" from "I
@@ -241,7 +261,13 @@ public static class WorkspaceDiscovery
                 $"Workspace path '{relative}' follows more than 40 links. It was refused.");
 
         var current = root;
-        if (!Directory.Exists(current)) return null;
+
+        // Not Directory.Exists. It answers false for a directory that is there and cannot
+        // be read, which is the same answer it gives for one that is not there — so an
+        // unreadable root left the outcome at Absent, and ResolvesInside read that as
+        // "inside" and let the walk follow something it had not validated.
+        var reached = Probe(current);
+        if (reached is not WalkOutcome.Reached) { outcome = reached; return null; }
 
         // Containment already holds, so this carries no `..` to walk back through.
         var within = Path.GetRelativePath(current, target);
@@ -268,6 +294,7 @@ public static class WorkspaceDiscovery
                 match = Directory.EnumerateDirectories(current).FirstOrDefault(
                     d => string.Equals(Path.GetFileName(d), segment, CorpusIndexer.PathComparison));
             }
+            catch (DirectoryNotFoundException) { return current; }
             catch (IOException) { outcome = WalkOutcome.Unreadable; return current; }
             catch (UnauthorizedAccessException) { outcome = WalkOutcome.Unreadable; return current; }
 
@@ -349,7 +376,16 @@ public static class WorkspaceDiscovery
             // this method is documented to answer null for; with one left it threw
             // DirectoryNotFoundException out of the next enumeration, which is neither of
             // the two answers it is allowed to give.
-            if (!Directory.Exists(linked)) return current;
+            //
+            // Probed rather than Exists, for the same reason as the root: a target that is
+            // there and cannot be read must not come back as merely absent, because that
+            // is the answer ResolvesInside treats as safe.
+            var landed = Probe(linked);
+            if (landed is not WalkOutcome.Reached)
+            {
+                outcome = landed;
+                return current;
+            }
 
             current = linked;
         }
