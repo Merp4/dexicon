@@ -219,6 +219,26 @@ public static class CorpusEndpoints
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
 
+            // The shape of the request first, because judging it costs nothing and the
+            // check below it starts a git process. A request carrying both a bad path
+            // and a setting that cannot apply was answered with the path, so the caller
+            // fixed that, resent, and only then learnt about the setting.
+            if (body.Git is not null && !body.GitHistory)
+                return Results.Problem(
+                    title: "Not a git-history source",
+                    detail: "History settings were sent for a source that indexes files. Set "
+                          + "gitHistory: true to index the repository's commits, or leave them out.",
+                    statusCode: 400);
+
+            if (FileOnlySettingsFor(
+                    body.GitHistory ? SourceKind.GitHistory : SourceKind.Workspace,
+                    body.UseGitignore, body.MaxFileBytes, body.ExcludeGlobs) is { } unusable)
+                return Results.Problem(
+                    title: "Not a file source",
+                    detail: $"{unusable} apply to a folder being walked, and a history source is "
+                          + "walked by git log. Include globs work there, as pathspecs.",
+                    statusCode: 400);
+
             // The boundary, for every kind of source. Existence is deliberately not
             // required here: a workspace source may be added while its mount is away,
             // and a pass reports that as unavailable rather than losing the source.
@@ -252,26 +272,6 @@ public static class CorpusEndpoints
             {
                 return Results.Problem(title: "Invalid workspace path", detail: ex.Message, statusCode: 400);
             }
-
-            // Refused, not dropped. PATCH already answers this way for the same mistake
-            // on an existing source; creation took the settings, stored null, and said
-            // nothing, so a source created with `git` but without `gitHistory` indexed
-            // files under settings the caller believed were in force.
-            if (body.Git is not null && !body.GitHistory)
-                return Results.Problem(
-                    title: "Not a git-history source",
-                    detail: "History settings were sent for a source that indexes files. Set "
-                          + "gitHistory: true to index the repository's commits, or leave them out.",
-                    statusCode: 400);
-
-            if (FileOnlySettingsFor(
-                    body.GitHistory ? SourceKind.GitHistory : SourceKind.Workspace,
-                    body.UseGitignore, body.MaxFileBytes, body.ExcludeGlobs) is { } unusable)
-                return Results.Problem(
-                    title: "Not a file source",
-                    detail: $"{unusable} apply to a folder being walked, and a history source is "
-                          + "walked by git log. Include globs work there, as pathspecs.",
-                    statusCode: 400);
 
             var source = new Source
             {
