@@ -36,11 +36,16 @@ public class CorpusArgumentTests
     }
 
     [Fact]
-    public void AnEmptyListIsNotTheSameAsOmittingIt()
+    public void AnEmptyListAndAnAbsentOneArriveAsThemselves()
     {
-        // Null means "everything visible to me"; an empty list is a scope naming nothing.
-        // They reach SearchService differently and it is not this converter's job to
-        // collapse one into the other.
+        // Binding only. The two are the same answer downstream: ScopeResolver tests
+        // `requestedNamesOrIds is { Count: > 0 }`, so an empty list takes the
+        // everything-visible branch null takes (Core/Auth/ScopeResolver.cs). Whether it
+        // should is a question about search scope, not about this converter, and nothing
+        // here asserts a distinction the product does not make.
+        //
+        // What this holds is that the converter invents nothing. Mapping `[]` to null, or
+        // null to `[]`, would answer that question by accident and in one caller only.
         Bind("[]").ShouldBe([]);
         Bind("null").ShouldBeNull();
     }
