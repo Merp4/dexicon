@@ -508,7 +508,24 @@ export function Empty({
  * modal opened by rendering it has none, so focus fell to <body> on every close: measured
  * in the running app on the Full reindex dialog, after Escape and after Cancel. It goes
  * back to whatever had focus when this opened instead.
+ *
+ * That element can be gone by then. New key → Token created closes one modal and opens the
+ * next in a single update, so the second opens from a button the same commit removes. Each
+ * open modal therefore remembers where it came from, and a modal opened from inside another
+ * falls back to that one's origin when its own opener is gone or disabled.
  */
+type Origin = { opener: HTMLElement | null; parent: Origin | null };
+
+const origins = new WeakMap<Element, Origin>();
+
+function returnTo(origin: Origin | null): HTMLElement | null {
+  for (let o = origin; o; o = o.parent) {
+    const el = o.opener;
+    if (el?.isConnected && !(el as HTMLButtonElement).disabled) return el;
+  }
+  return null;
+}
+
 export function Modal({
   title,
   onClose,
@@ -521,11 +538,18 @@ export function Modal({
   width?: number;
 }) {
   // Read on the first render, before the primitive moves focus into the dialog.
-  const [opener] = useState(() => document.activeElement as HTMLElement | null);
+  const [origin] = useState<Origin>(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    const host = opener?.closest('[role="dialog"]');
+    return { opener, parent: host ? (origins.get(host) ?? null) : null };
+  });
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent
+        ref={(node) => {
+          if (node) origins.set(node, origin);
+        }}
         className="max-h-[85vh] overflow-y-auto"
         style={{ maxWidth: `min(calc(100% - 2rem), ${width}px)` }}
         // Not every modal has a summary line, and a described-by pointing at nothing is
@@ -533,7 +557,7 @@ export function Modal({
         aria-describedby={undefined}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          if (opener?.isConnected) opener.focus();
+          returnTo(origin)?.focus();
         }}
       >
         <DialogHeader>

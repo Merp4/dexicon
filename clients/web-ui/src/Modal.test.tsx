@@ -114,6 +114,72 @@ describe('Modal', () => {
     await waitFor(() => expect(opener).toHaveFocus());
   });
 
+  it('gives focus back to the page when one modal replaces another', async () => {
+    // Shaped like New key → Token created: a button inside the first modal closes it and
+    // opens the second in one update. The second opens from a control that the same commit
+    // removes, so it has to close back to what opened the first.
+    function Chain() {
+      const [step, setStep] = useState<'none' | 'create' | 'created'>('none');
+      return (
+        <>
+          <button type="button" onClick={() => setStep('create')}>New key</button>
+          {step === 'create' && (
+            <Modal title="New key" onClose={() => setStep('none')}>
+              <Button onClick={() => setStep('created')}>Create</Button>
+            </Modal>
+          )}
+          {step === 'created' && (
+            <Modal title="Token created" onClose={() => setStep('none')}>
+              <Button onClick={() => setStep('none')}>Done</Button>
+            </Modal>
+          )}
+        </>
+      );
+    }
+
+    const user = userEvent.setup();
+    render(<Chain />);
+    const opener = screen.getByRole('button', { name: 'New key' });
+
+    await user.click(opener);
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+    await user.click(await screen.findByRole('button', { name: 'Done' }));
+
+    await waitFor(() => expect(opener).toHaveFocus());
+  });
+
+  it('gives focus back into the modal a nested one was opened from', async () => {
+    function Nested() {
+      const [outer, setOuter] = useState(false);
+      const [inner, setInner] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOuter(true)}>Filters</button>
+          {outer && (
+            <Modal title="Filters" onClose={() => setOuter(false)}>
+              <Button onClick={() => setInner(true)}>Preview</Button>
+              {inner && (
+                <Modal title="Preview" onClose={() => setInner(false)}>
+                  <Button onClick={() => setInner(false)}>Back</Button>
+                </Modal>
+              )}
+            </Modal>
+          )}
+        </>
+      );
+    }
+
+    const user = userEvent.setup();
+    render(<Nested />);
+
+    await user.click(screen.getByRole('button', { name: 'Filters' }));
+    const preview = await screen.findByRole('button', { name: 'Preview' });
+    await user.click(preview);
+    await user.click(await screen.findByRole('button', { name: 'Back' }));
+
+    await waitFor(() => expect(preview).toHaveFocus());
+  });
+
   it('keeps Tab inside it', async () => {
     // The trap. Tabbing past the last control must come back to the first, not escape to
     // the page behind, which is where the old hand-rolled version earned its fifty lines.
