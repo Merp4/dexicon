@@ -58,6 +58,9 @@ public sealed class CorpusIndexer(
     private readonly List<string> _reasons = [];
     private bool _unreachable;
 
+    private const string EmbeddingFailedReason =
+        "One or more files could not be embedded and were skipped. They will be retried on the next run.";
+
     public async Task<IndexJob> RunAsync(string jobId, IProgress<IndexProgress>? progress, CancellationToken ct)
     {
         var job = await db.Jobs.FirstAsync(j => j.Id == jobId, ct);
@@ -139,7 +142,10 @@ public sealed class CorpusIndexer(
             //
             // Nothing can coalesce onto this job now, because the row is no longer
             // Queued, so reading here cannot miss a caller that was promised this pass.
-            var sources = await db.Sources.Where(s => s.CorpusId == corpus.Id).ToListAsync(ct);
+            //
+            // By id, so every pass takes the sources in the same order.
+            var sources = await db.Sources.Where(s => s.CorpusId == corpus.Id)
+                .OrderBy(s => s.Id).ToListAsync(ct);
 
             if (targets.Count == 0)
                 throw new InvalidOperationException(
@@ -238,8 +244,7 @@ public sealed class CorpusIndexer(
 
             if (!embeddingFailed && !unavailable) corpus.LastIndexedUtc = DateTime.UtcNow;
 
-            if (embeddingFailed)
-                AddReason(job, "One or more files could not be embedded and were skipped. They will be retried on the next run.");
+            if (embeddingFailed) AddReason(job, EmbeddingFailedReason);
         }
         catch (OperationCanceledException) when (callerCancelled.IsCancellationRequested)
         {
@@ -254,6 +259,10 @@ public sealed class CorpusIndexer(
         {
             log.LogError(ex, "Indexing job {JobId} for corpus {Corpus} failed", jobId, corpus.Name);
             job.State = JobState.Failed;
+
+            // Files that failed to embed before the failure were recorded as such, and the
+            // reason is otherwise only added once the pass completes.
+            if (embeddingFailed) AddReason(job, EmbeddingFailedReason);
             AddReason(job, ex.Message);
 
             // Only while this job still owns the corpus. A job that never got the lease,

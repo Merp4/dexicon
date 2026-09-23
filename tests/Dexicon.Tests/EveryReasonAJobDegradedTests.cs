@@ -71,22 +71,7 @@ public sealed class EveryReasonAJobDegradedTests
         await using var harness = await IndexingHarness.StartAsync("gone");
         Directory.Delete(harness.SourceDirectory);
         await harness.SeedCorpusAsync(SourceKind.Workspace);
-
-        // A kind the pass does not know throws out of the source loop, which is the failure
-        // the switch in RunAsync refuses to swallow. Its id sorts after source-1 whether
-        // rows come back by key or by insertion.
-        await using (var db = harness.NewContext())
-        {
-            db.Sources.Add(new Source
-            {
-                Id = "source-9",
-                CorpusId = IndexingHarness.CorpusId,
-                Kind = (SourceKind)99,
-                RootPath = "other",
-                CreatedUtc = DateTime.UtcNow,
-            });
-            await db.SaveChangesAsync();
-        }
+        await AddSourceOfUnknownKindAsync(harness);
 
         var job = await harness.RunIndexAsync();
 
@@ -97,6 +82,43 @@ public sealed class EveryReasonAJobDegradedTests
 
         await using var check = harness.NewContext();
         (await check.Corpora.FirstAsync()).State.ShouldBe(CorpusState.Unavailable);
+    }
+
+    [Fact]
+    public async Task APassThatFailsAfterAnEmbeddingFailureStillReportsIt()
+    {
+        // The embedding reason is otherwise only added once the pass completes.
+        await using var harness = await IndexingHarness.StartAsync("here");
+        await harness.WriteFileAsync("bad.txt", IndexingHarness.Prose("unembeddable"));
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        await AddSourceOfUnknownKindAsync(harness);
+        harness.Embedder = new FailsOn("unembeddable");
+
+        var job = await harness.RunIndexAsync();
+
+        job.State.ShouldBe(JobState.Failed);
+        job.Error.ShouldNotBeNull();
+        job.Error.ShouldContain("could not be embedded");
+        job.Error.ShouldContain("does not know how to index");
+    }
+
+    /// <summary>
+    /// A source whose kind the pass does not know, which throws out of the source loop: the
+    /// failure the switch in RunAsync refuses to swallow. Sources are taken by id, and this
+    /// one's sorts after the harness's.
+    /// </summary>
+    private static async Task AddSourceOfUnknownKindAsync(IndexingHarness harness)
+    {
+        await using var db = harness.NewContext();
+        db.Sources.Add(new Source
+        {
+            Id = "source-9",
+            CorpusId = IndexingHarness.CorpusId,
+            Kind = (SourceKind)99,
+            RootPath = "other",
+            CreatedUtc = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
     }
 
     private sealed class FailsOn(string marker) : IEmbeddingService
