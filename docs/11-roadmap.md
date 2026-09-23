@@ -263,7 +263,8 @@ attempted, and it is the only thing left in this milestone.
 ## M5 — Earned extras (unscheduled)
 
 Nothing here is started until someone asks for it with a concrete case. Listed so the
-answer to "what about…" is "yes, here, later" rather than an argument.
+answer to "what about…" is "yes, here, later" rather than an argument. A struck-through
+row was asked for and has shipped.
 
 | Candidate | Trigger |
 |---|---|

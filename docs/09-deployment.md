@@ -274,7 +274,7 @@ Everything has a working default except `WORKSPACE_ROOT`.
 | `DEXICON_BIND` | `127.0.0.1` | Bind address. Set to `0.0.0.0` only to reach it from another machine. |
 | `WORKSPACE_ROOT` | `./workspaces` | Host directory bind-mounted read-only at `/workspaces`. |
 | `DEXICON__QDRANT__ENDPOINT` | `http://dexicon-qdrant:6334` | gRPC endpoint. Namespaced service name — see "Routing". |
-| `QDRANT_API_KEY` (binds `DEXICON__QDRANT__APIKEY`) | *(empty)* | Set for anything not on a single trusted machine. |
+| `QDRANT_API_KEY` (binds `DEXICON__QDRANT__APIKEY`) | `dexicon-local-dev-key` | Used by both Qdrant and Dexicon. Never blank: see "The Qdrant API key must never be blank". The default is published in this repository, so set your own for anything not on a single trusted machine. |
 | `DEXICON__OLLAMA__ENDPOINT` | `http://dexicon-ollama:11434` | Namespaced service name — see "Routing". |
 | `DEXICON__EMBEDDING__MODEL` | `embeddinggemma` | Default for new corpora. Pinned per chunk set at creation, so changing it migrates nothing. |
 | `DEXICON__EMBEDDING__MAXCONCURRENCY` | `4` | Parallel embedding requests Dexicon issues, counted PER PROVIDER across every indexing job. Keep it equal to `OLLAMA_NUM_PARALLEL`: sending more than Ollama admits only queues the difference. Raising `MAXCONCURRENTCORPORA` does not multiply it, and a corpus indexing alone still gets all of it. |
