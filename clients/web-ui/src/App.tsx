@@ -1241,12 +1241,24 @@ export function CorpusDetail({
                           to follow and says nothing about whether it moves: a source over a
                           local branch nobody pulled indexed the same commits for three days
                           with nothing here to say so. Age rather than a date, because age
-                          is what makes a stuck one stand out. */}
+                          is what makes a stuck one stand out.
+
+                          The full sha and the exact time are in the title for a pointer and
+                          in one sentence for a screen reader, which a title does not reliably
+                          reach; the short form is hidden from it so it is not read twice. */}
                       {s.newestCommit && (
-                        <span title={`${s.newestCommit.sha}\n${s.newestCommit.authoredUtc}`}>
-                          {' · newest '}
-                          <span className="mono">{s.newestCommit.sha.slice(0, 7)}</span>
-                          {`, ${relativeTime(s.newestCommit.authoredUtc)}`}
+                        <span title={`${s.newestCommit.sha}\n${localTime(s.newestCommit.authoredUtc)}`}>
+                          <span aria-hidden="true">
+                            {' · newest '}
+                            <span className="mono">{s.newestCommit.sha.slice(0, 7)}</span>
+                            {', '}
+                            <time dateTime={s.newestCommit.authoredUtc}>
+                              {relativeTime(s.newestCommit.authoredUtc)}
+                            </time>
+                          </span>
+                          <span className="sr-only">
+                            {`, newest commit ${s.newestCommit.sha}, authored ${localTime(s.newestCommit.authoredUtc)}, ${relativeTime(s.newestCommit.authoredUtc)}`}
+                          </span>
                         </span>
                       )}
                     </span>

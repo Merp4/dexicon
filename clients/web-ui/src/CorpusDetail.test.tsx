@@ -220,10 +220,18 @@ describe('the sources a corpus reads', () => {
 
     render(<CorpusDetail {...props} />);
 
-    const newest = await screen.findByText(/newest/);
-    expect(newest).toHaveTextContent('newest 9d2ef06, 3d ago');
-    // The whole sha and the exact date are one hover away, for comparing with git.
-    expect(newest).toHaveAttribute('title', expect.stringContaining('9d2ef0633a530462b4091ad8226d1b02faadea84'));
+    // What a sighted reader sees at a glance, hidden from a screen reader so the
+    // sentence below is not read after it.
+    const shown = await screen.findByText(/newest/, { selector: '[aria-hidden="true"]' });
+    expect(shown).toHaveTextContent('newest 9d2ef06, 3d ago');
+    expect(shown.querySelector('time')).toHaveAttribute('dateTime', threeDaysAgo);
+
+    // The whole sha and the exact time, for comparing with git: in the title for a
+    // pointer, and in text a screen reader reads, since a title is not reliably read.
+    const spoken = screen.getByText(/newest commit/, { selector: '.sr-only' });
+    expect(spoken).toHaveTextContent('newest commit 9d2ef0633a530462b4091ad8226d1b02faadea84');
+    expect(spoken).toHaveTextContent('3d ago');
+    expect(shown.parentElement).toHaveAttribute('title', expect.stringContaining('9d2ef0633a530462b4091ad8226d1b02faadea84'));
   });
 
   it('says nothing about a newest commit before one was found', async () => {
