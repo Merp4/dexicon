@@ -253,16 +253,20 @@ them holds, and turning merges on adds documents without altering a single exist
 The include globs DO, because they are passed to git and decide which files the stat
 lists and which hunks the patch holds.
 
-**Each pass that reads the history records the newest commit**, its sha and author date,
+**Each pass that lists the history records the newest commit**, its sha and author date,
 on the source, and the corpus page shows it with its age. `ref` names what to follow and
 says nothing about whether it moves. `HEAD` in a checkout follows whatever branch that
 checkout is on, and a local branch moves only when someone pulls: one deployment's
 history source indexed the same 174 commits for three days while `origin/main` gained 52,
 with every count on screen correct. Pointing the source at `origin/main` follows every
-fetch instead. It is written once every chunk set has run, and only if every set read
-the history: a pass that failed on the inventory or on reading the commits, in any set,
-leaves the last record in place, so the row never names a commit that was not read. One
-whose settings select no commits clears it.
+fetch instead.
+
+The record is where the ref points, not how far indexing got, which the counts and the
+source's state already report. It is written when the inventory answers, whether or not
+every commit is then read: a commit too large to read, for instance, still moves it, and
+the source reports the read failure. Holding it back would make a read failure look like
+a ref that had stopped. A pass whose inventory failed leaves the last record in place;
+one whose settings select no commits clears it.
 
 **The container runs as uid 10001 and `/workspaces` is a host bind mount**, so the
 repository belongs to somebody else and git refuses it outright with "detected dubious

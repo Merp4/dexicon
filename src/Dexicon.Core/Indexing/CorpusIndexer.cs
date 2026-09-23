@@ -153,9 +153,6 @@ public sealed class CorpusIndexer(
                         ? $"Corpus '{corpus.Name}' has no chunk set '{job.ChunkSetId}'."
                         : $"Corpus '{corpus.Name}' has no chunk sets, so there is nothing to index into.");
 
-            // What each history source's passes read, by source, until every set has run.
-            var historyReads = new Dictionary<string, HistoryRead?>(StringComparer.Ordinal);
-
             // Each set is a separate vector space and a separate pass. A workspace tree is
             // therefore walked once per set: the duplication is real but bounded, and most
             // corpora carry one set. Sharing one walk across sets would mean holding the
@@ -201,12 +198,8 @@ public sealed class CorpusIndexer(
                             break;
 
                         case SourceKind.GitHistory:
-                            var read = await IndexGitHistorySourceAsync(corpus, set, templates, chunking, source, job,
+                            await IndexGitHistorySourceAsync(corpus, set, templates, chunking, source, job,
                                 progress, full, onEmbeddingFailure: () => embeddingFailed = true, ct);
-
-                            // A set that could not read the history outvotes any that did.
-                            historyReads[source.Id] =
-                                historyReads.TryGetValue(source.Id, out var earlier) && earlier is null ? null : read;
                             break;
 
                         case SourceKind.Upload:
@@ -235,19 +228,6 @@ public sealed class CorpusIndexer(
                     : CorpusState.Ready;
 
                 if (!embeddingFailed && !unavailable) set.LastIndexedUtc = DateTime.UtcNow;
-            }
-
-            // The newest commit, recorded once every set has run and only where every set
-            // read the history. Written per set, the first set's success was saved even
-            // when a later set failed, so the row named a commit this pass had not read
-            // everywhere. A source any set could not read keeps its last record; one
-            // whose settings selected no commits has it cleared.
-            foreach (var source in sources)
-            {
-                if (!historyReads.TryGetValue(source.Id, out var read) || read is null) continue;
-
-                source.NewestCommitSha = read.Newest?.Sha;
-                source.NewestCommitUtc = read.Newest?.AuthorDate.UtcDateTime;
             }
 
             job.Phase = "reconcile";
@@ -859,7 +839,7 @@ public sealed class CorpusIndexer(
     /// decided by its sha and this source's settings and a commit cannot change. A
     /// refresh of a repository whose tip has not moved therefore costs one `git log`.
     /// </summary>
-    private async Task<HistoryRead?> IndexGitHistorySourceAsync(Corpus corpus, ChunkSet set, ModelTemplates templates,
+    private async Task IndexGitHistorySourceAsync(Corpus corpus, ChunkSet set, ModelTemplates templates,
         ChunkOptions chunking,
         Source source, IndexJob job,
         IProgress<IndexProgress>? progress, bool full, Action onEmbeddingFailure, CancellationToken ct)
@@ -874,13 +854,13 @@ public sealed class CorpusIndexer(
         {
             // As for a workspace source (IndexWorkspaceSourceAsync).
             Unreachable(corpus, job, ex.Message);
-            return null;
+            return;
         }
 
         if (repo is null)
         {
             Unreachable(corpus, job, $"Workspace path '{source.RootPath}' is not available under {_indexing.WorkspaceRoot}.");
-            return null;
+            return;
         }
 
         var options = GitHistoryOptions.FromJson(source.GitOptions);
@@ -912,7 +892,7 @@ public sealed class CorpusIndexer(
                 // problem as a mount that is away, and the history indexed last time is
                 // still searchable.
                 Unreachable(corpus, job, $"Source '{source.RootPath}' is not a git repository, so it has no history to index.");
-                return null;
+                return;
             }
 
             commits = await GitHistory.EnumerateAsync(repo, options, filters.IncludeGlobs, ct);
@@ -920,11 +900,21 @@ public sealed class CorpusIndexer(
         catch (GitHistoryException ex)
         {
             Unreachable(corpus, job, ex.Message);
-            return null;
+            return;
         }
 
         log.LogInformation("Source {Source}: {Commits} commits on {Ref}",
             source.RootPath, commits.Count, options.Ref);
+
+        // Newest first, so the head of the inventory is the tip of what the settings
+        // select: where the ref points, which is what a source that stopped moving needs
+        // to show. Written when the inventory answered and not tied to the read below,
+        // because whether each commit was read and indexed is what the counts and the
+        // source's state already report; tying the two made a read failure look like a
+        // ref that had stopped. An inventory that failed returned above and leaves the
+        // last observation, and an empty inventory is an observation.
+        source.NewestCommitSha = commits.Count > 0 ? commits[0].Sha : null;
+        source.NewestCommitUtc = commits.Count > 0 ? commits[0].AuthorDate.UtcDateTime : null;
 
         // One commit per path, decided in the one place the sweep decides it too.
         //
@@ -978,22 +968,8 @@ public sealed class CorpusIndexer(
         catch (GitHistoryException ex)
         {
             Unreachable(corpus, job, ex.Message);
-            return null;
         }
-
-        // Newest first, so the head of the inventory is the tip of what the settings
-        // select. Returned rather than written to the source: this runs once per chunk
-        // set, and the caller records it only when every set read the history.
-        return new HistoryRead(commits.Count > 0 ? commits[0] : null);
     }
-
-    /// <summary>
-    /// A history source's inventory and read both succeeded, and the newest commit they
-    /// found, null when the settings selected none. Null in place of this means the pass
-    /// could not read the history.
-    /// </summary>
-    private sealed record HistoryRead(GitCommit? Newest);
-
 
     /// <summary>
     /// The commits the pass still wants, as reads the shared loop understands.

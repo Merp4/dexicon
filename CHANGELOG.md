@@ -30,8 +30,9 @@ with no section here fails its release rather than publishing an undescribed one
   on hover; `SourceSummary.newestCommit` carries both. A source following `HEAD` in a
   checkout whose local branch nobody pulled indexed the same 174 commits for three days
   while `origin/main` gained 52, with every count on screen correct and nothing to say the
-  history had stopped. A pass that cannot read the history leaves the last record; one
-  whose settings select no commits clears it.
+  history had stopped. It records where the ref points, not how far indexing got, which
+  the counts and the source's state report. A pass that cannot list the history leaves
+  the last record; one whose settings select no commits clears it.
 
 ### Fixed
 

@@ -255,8 +255,9 @@ public sealed class Source
     /// branch nobody pulled indexed the same 174 commits for three days with nothing on
     /// screen to say so.
     ///
-    /// Null before any pass has read the history, and after one whose settings selected
-    /// no commits. A pass that could not read the history leaves both as they were.
+    /// Where the ref points, not how far indexing got: the counts and the source's state
+    /// say that. Null before any pass has listed the history, and after one whose settings
+    /// selected no commits. A pass whose inventory failed leaves both as they were.
     /// </summary>
     public string? NewestCommitSha { get; set; }
     public DateTime? NewestCommitUtc { get; set; }

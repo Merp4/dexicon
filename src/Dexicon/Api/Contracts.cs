@@ -312,8 +312,9 @@ public sealed record SourceSummary(
     /// </summary>
     GitHistoryOptions? Git = null,
     /// <summary>
-    /// A git-history source's newest commit as its last pass found it, and null for
-    /// every other kind, before the first pass, and when the settings select no commits.
+    /// A git-history source's newest commit as its last inventory listed it: where the ref
+    /// points, not how far indexing got. Null for every other kind, before the first
+    /// pass, and when the settings select no commits.
     /// Beside <see cref="Git"/> because the ref names what to follow and this says where
     /// it had got to: a ref that stopped moving is otherwise invisible.
     /// </summary>
