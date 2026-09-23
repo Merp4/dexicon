@@ -259,9 +259,10 @@ says nothing about whether it moves. `HEAD` in a checkout follows whatever branc
 checkout is on, and a local branch moves only when someone pulls: one deployment's
 history source indexed the same 174 commits for three days while `origin/main` gained 52,
 with every count on screen correct. Pointing the source at `origin/main` follows every
-fetch instead. A pass that failed on the inventory or on reading the commits leaves the
-last record in place, so the row never names a commit that was not read; one whose
-settings select no commits clears it.
+fetch instead. It is written once every chunk set has run, and only if every set read
+the history: a pass that failed on the inventory or on reading the commits, in any set,
+leaves the last record in place, so the row never names a commit that was not read. One
+whose settings select no commits clears it.
 
 **The container runs as uid 10001 and `/workspaces` is a host bind mount**, so the
 repository belongs to somebody else and git refuses it outright with "detected dubious

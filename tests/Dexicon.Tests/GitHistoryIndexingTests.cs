@@ -280,6 +280,59 @@ public sealed class GitHistoryIndexingTests
     }
 
     /// <summary>
+    /// The pass runs once per chunk set over the same source. Recorded per set, the first
+    /// set's success was saved when the second then failed, and the row named a commit
+    /// this pass had not read in every set.
+    /// </summary>
+    [Fact]
+    public async Task ACommitOneSetCouldNotReadIsNotRecordedByAnother()
+    {
+        await using var harness = await IndexingHarness.StartAsync("repo");
+        Init(harness.SourceDirectory);
+        Commit(harness.SourceDirectory, "a.txt", "one\n", "the first change");
+
+        await harness.SeedCorpusAsync(SourceKind.GitHistory, sets: 2);
+        await harness.RunIndexAsync();
+        var seen = Head(harness.SourceDirectory);
+
+        Commit(harness.SourceDirectory, "b.txt", "two\n", "a later change");
+
+        // Whichever set runs first reads the new commit and embeds it, and the moment it
+        // embeds the repository goes away, so the other set finds none.
+        var git = Path.Combine(harness.SourceDirectory, ".git");
+        harness.Embedder = new OnFirstEmbed(() => Directory.Move(git, git + "-away"));
+
+        var job = await harness.RunIndexAsync();
+
+        Directory.Exists(git + "-away").ShouldBeTrue("one set read the new commit and embedded it");
+        job.State.ShouldBe(JobState.Degraded, "the other set could not reach the repository");
+        ShouldBeTheCommit(await NewestRecordedAsync(harness), seen);
+    }
+
+    /// <summary>Embeds as the harness does, and runs an action on the first call.</summary>
+    private sealed class OnFirstEmbed(Action action) : Dexicon.Core.Embedding.IEmbeddingService
+    {
+        private readonly IndexingHarness.FixedEmbedder _inner = new();
+        private int _calls;
+
+        public Task<IReadOnlyList<float[]>> EmbedAsync(Dexicon.Core.Embedding.EmbeddingTarget target,
+            Dexicon.Core.Embedding.EmbedPurpose purpose, IReadOnlyList<string> inputs,
+            string? source = null, CancellationToken ct = default)
+        {
+            if (Interlocked.Increment(ref _calls) == 1) action();
+            return _inner.EmbedAsync(target, purpose, inputs, source, ct);
+        }
+
+        public Task<int?> CountTokensAsync(Dexicon.Core.Embedding.EmbeddingTarget t, string text,
+            CancellationToken ct = default) => _inner.CountTokensAsync(t, text, ct);
+
+        public Task<int> ProbeDimensionsAsync(Dexicon.Core.Embedding.EmbeddingTarget t,
+            CancellationToken ct = default) => _inner.ProbeDimensionsAsync(t, ct);
+
+        public int KnownDimensions(Dexicon.Core.Embedding.EmbeddingTarget t) => _inner.KnownDimensions(t);
+    }
+
+    /// <summary>
     /// Settings that select no commits are an observation, and the record says so.
     /// Keeping the old commit would show a source reading history it no longer reads.
     /// </summary>
