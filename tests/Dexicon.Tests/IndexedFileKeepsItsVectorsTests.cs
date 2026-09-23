@@ -109,6 +109,27 @@ public sealed class IndexedFileKeepsItsVectorsTests
     }
 
     [Fact]
+    public async Task AFailedOrphanDeleteIsLeftForTheNextPass_NotAFailedJob()
+    {
+        // Best effort: the cleanup is a repair, and the job it runs in is not about it.
+        await using var harness = await IndexedAsync();
+        var held = harness.Vectors.CountFor("note.md");
+        await RemoveRowAsync(harness, "note.md");
+        File.Delete(Path.Combine(harness.SourceDirectory, "note.md"));
+
+        harness.Vectors.DeletesThrow = true;
+        var failed = await harness.RunIndexAsync();
+
+        failed.State.ShouldBe(JobState.Succeeded);
+        harness.Vectors.CountFor("note.md").ShouldBe(held);
+
+        harness.Vectors.DeletesThrow = false;
+        await harness.RunIndexAsync();
+
+        harness.Vectors.CountFor("note.md").ShouldBe(0);
+    }
+
+    [Fact]
     public async Task AndAFileStillInScopeIsIndexedFromNothing()
     {
         // Removing the points first must not cost the file: it is walked, found to have no

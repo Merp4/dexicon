@@ -353,6 +353,9 @@ internal sealed class IndexingHarness : IAsyncDisposable
         /// </summary>
         public bool AbandonNextDelete { get; set; }
 
+        /// <summary>Make every delete fail as an unreachable vector store does, not as a cancel.</summary>
+        public bool DeletesThrow { get; set; }
+
         public Task<IReadOnlyDictionary<string, int>?> CountByFileAsync(string collection,
             string chunkSetId, string sourceId, CancellationToken ct = default)
         {
@@ -381,6 +384,8 @@ internal sealed class IndexingHarness : IAsyncDisposable
                 AbandonNextDelete = false;
                 throw new OperationCanceledException("the pass was interrupted mid-file");
             }
+
+            if (DeletesThrow) throw new InvalidOperationException("the vector store is unreachable");
 
             // The same four-part key Qdrant filters on. Matching on filePath alone would
             // make the test agree with a delete that drops another source's file too.
