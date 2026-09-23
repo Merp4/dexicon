@@ -27,10 +27,14 @@ public sealed class SqlitePragmaTests : IDisposable
                 TimeSpan.FromSeconds(7), NullLogger<SqlitePragmas>.Instance))
             .Options);
 
+    // Opened through EF, as the application opens it, so the interceptor runs. Opening the
+    // DbConnection directly skipped it and relied on the pooled connection still carrying
+    // the pragmas from EnsureCreated, which it did not when another class's Dispose had
+    // cleared every pool in between: busy_timeout read 0 in a full run.
     private static string? Scalar(CatalogDbContext db, string sql)
     {
+        db.Database.OpenConnection();
         var connection = db.Database.GetDbConnection();
-        if (connection.State != System.Data.ConnectionState.Open) connection.Open();
         using var cmd = connection.CreateCommand();
         cmd.CommandText = sql;
         return cmd.ExecuteScalar()?.ToString();

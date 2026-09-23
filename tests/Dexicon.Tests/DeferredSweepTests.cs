@@ -98,7 +98,12 @@ public sealed class DeferredSweepTests : IDisposable
 
         await Pool(scheduler).RunOneAsync(new WorkItem(WorkType.Sweep, corpusId, corpusId), default);
 
-        var back = await TakeWithinAsync(scheduler, TimeSpan.FromSeconds(5));
+        // The requeue is a detached task with no delay, so this normally returns within
+        // milliseconds, and the window only bounds a failing run. At 5 seconds it failed
+        // here twice in full-suite runs in a Linux container, and never alone. Nothing
+        // between the refusal and the item coming back can fail silently except that
+        // task being scheduled late.
+        var back = await TakeWithinAsync(scheduler, TimeSpan.FromSeconds(30));
 
         back.ShouldNotBeNull("a sweep refused the lease is still outstanding");
         back.Item.Type.ShouldBe(WorkType.Sweep);
