@@ -906,6 +906,16 @@ public sealed class CorpusIndexer(
         log.LogInformation("Source {Source}: {Commits} commits on {Ref}",
             source.RootPath, commits.Count, options.Ref);
 
+        // Newest first, so the head of the inventory is the tip of what the settings
+        // select: where the ref points, which is what a source that stopped moving needs
+        // to show. Written when the inventory answered and not tied to the read below,
+        // because whether each commit was read and indexed is what the counts and the
+        // source's state already report; tying the two made a read failure look like a
+        // ref that had stopped. An inventory that failed returned above and leaves the
+        // last observation, and an empty inventory is an observation.
+        source.NewestCommitSha = commits.Count > 0 ? commits[0].Sha : null;
+        source.NewestCommitUtc = commits.Count > 0 ? commits[0].AuthorDate.UtcDateTime : null;
+
         // One commit per path, decided in the one place the sweep decides it too.
         //
         // Not widened to the full sha, because the arithmetic does not justify a 40

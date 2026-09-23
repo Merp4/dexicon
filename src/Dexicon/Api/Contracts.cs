@@ -310,7 +310,18 @@ public sealed record SourceSummary(
     /// correct or reproduce: the ref and the diff decide what every document in the
     /// source holds, and they were accepted at creation and then invisible.
     /// </summary>
-    GitHistoryOptions? Git = null);
+    GitHistoryOptions? Git = null,
+    /// <summary>
+    /// A git-history source's newest commit as its last inventory listed it: where the ref
+    /// points, not how far indexing got. Null for every other kind, before the first
+    /// pass, and when the settings select no commits.
+    /// Beside <see cref="Git"/> because the ref names what to follow and this says where
+    /// it had got to: a ref that stopped moving is otherwise invisible.
+    /// </summary>
+    CommitSummary? NewestCommit = null);
+
+/// <summary>A commit, by its full sha and its author date.</summary>
+public sealed record CommitSummary(string Sha, DateTime AuthoredUtc);
 
 /// <summary>
 /// Filters every source of a corpus inherits unless it sets its own. Null means the
@@ -517,7 +528,10 @@ public static class Mapping
             s.MaxFileBytes,
             SourceFilters.Globs(s.IncludeGlobs),
             SourceFilters.Globs(s.ExcludeGlobs),
-            s.Kind == SourceKind.GitHistory ? GitHistoryOptions.FromJson(s.GitOptions) : null);
+            s.Kind == SourceKind.GitHistory ? GitHistoryOptions.FromJson(s.GitOptions) : null,
+            s is { Kind: SourceKind.GitHistory, NewestCommitSha: { } sha, NewestCommitUtc: { } at }
+                ? new CommitSummary(sha, at)
+                : null);
     }
 
     public static CorpusDefaults DefaultsOf(this Corpus c) =>

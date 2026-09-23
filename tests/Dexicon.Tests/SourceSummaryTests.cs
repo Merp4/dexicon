@@ -61,6 +61,48 @@ public sealed class SourceSummaryTests
         Source().ToSummary(Corpus, Configured).Git.ShouldBeNull();
     }
 
+    /// <summary>
+    /// Where the ref had got to. Without it a source whose ref stopped moving reads the
+    /// same as one that is current.
+    /// </summary>
+    [Fact]
+    public void AHistorySourceReportsTheNewestCommitItFound()
+    {
+        var authored = new DateTime(2026, 9, 20, 21, 51, 20, DateTimeKind.Utc);
+
+        var source = Source();
+        source.Kind = SourceKind.GitHistory;
+        source.NewestCommitSha = "9d2ef0633a530462b4091ad8226d1b02faadea84";
+        source.NewestCommitUtc = authored;
+
+        source.ToSummary(Corpus, Configured).NewestCommit
+            .ShouldBe(new CommitSummary("9d2ef0633a530462b4091ad8226d1b02faadea84", authored));
+    }
+
+    [Fact]
+    public void NoNewestCommitIsReportedUntilOneWasFound()
+    {
+        var source = Source();
+        source.Kind = SourceKind.GitHistory;
+
+        source.ToSummary(Corpus, Configured).NewestCommit.ShouldBeNull("no pass has read the history yet");
+
+        // Half a record is not a commit: a sha with no date cannot say how old the
+        // source is, which is the one thing this is shown for.
+        source.NewestCommitSha = "9d2ef0633a530462b4091ad8226d1b02faadea84";
+        source.ToSummary(Corpus, Configured).NewestCommit.ShouldBeNull();
+    }
+
+    [Fact]
+    public void AFileSourceHasNoNewestCommit()
+    {
+        var source = Source();
+        source.NewestCommitSha = "9d2ef0633a530462b4091ad8226d1b02faadea84";
+        source.NewestCommitUtc = DateTime.UtcNow;
+
+        source.ToSummary(Corpus, Configured).NewestCommit.ShouldBeNull();
+    }
+
     [Fact]
     public void GlobsComeBackAsAList()
     {

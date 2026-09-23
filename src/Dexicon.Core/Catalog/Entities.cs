@@ -248,6 +248,25 @@ public sealed class Source
     /// </summary>
     public string? GitOptions { get; set; }
 
+    /// <summary>
+    /// Git-history sources only: the newest commit the last inventory found, and its
+    /// author date. What the pass saw rather than a live read of the repository, so a ref
+    /// that has stopped moving shows as a date that stops moving: a source over a local
+    /// branch nobody pulled indexed the same 174 commits for three days with nothing on
+    /// screen to say so.
+    ///
+    /// Where the ref points, not how far indexing got: the counts and the source's state
+    /// say that. Null before any pass has listed the history, and after one whose settings
+    /// selected no commits. Written by the index pass from each inventory that answers,
+    /// and never from one that failed, so a failed one leaves both as they were. Each
+    /// chunk set lists the history in its own pass; one set failing does not undo
+    /// another's listing, since both describe the same ref. The discovery sweep lists the
+    /// history too and leaves these alone: a sweep only ever adds rows (see
+    /// <see cref="Indexing.CorpusLeases"/>), and the index pass it precedes writes them.
+    /// </summary>
+    public string? NewestCommitSha { get; set; }
+    public DateTime? NewestCommitUtc { get; set; }
+
     public DateTime CreatedUtc { get; set; }
 
     public List<IndexedFile> Files { get; set; } = [];

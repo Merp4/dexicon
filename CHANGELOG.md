@@ -16,6 +16,32 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## Unreleased
+
+### ⚠️ Upgrading
+
+- One migration, `GitHistoryNewestCommit`, applied at startup. Widening only: two nullable
+  columns on `sources`, filled by the next pass over each history source.
+
+### Added
+
+- **A history source shows where its ref had got to.** Each pass records the newest commit
+  it found, and the source's row reads `newest 9d2ef06, 3d ago`, with the full sha and date
+  on hover; `SourceSummary.newestCommit` carries both. A source following `HEAD` in a
+  checkout whose local branch nobody pulled indexed the same 174 commits for three days
+  while `origin/main` gained 52, with every count on screen correct and nothing to say the
+  history had stopped. It records where the ref points, not how far indexing got, which
+  the counts and the source's state report. An inventory that fails leaves the last
+  record; one whose settings select no commits clears it.
+
+### Fixed
+
+- **A source at the workspace root has a name.** Its path is empty, and `rootPath ?? kind`
+  passed the empty string through, so the row showed no name and its buttons were
+  labelled "Remove source " with nothing after it. It is now `workspace root`.
+
+---
+
 ## 0.6.0 — 2026-09-23
 
 ### ⚠️ Upgrading

@@ -200,6 +200,74 @@ describe('the sources a corpus reads', () => {
   });
 
   /**
+   * The ref names what to follow and says nothing about whether it moves. A source over a
+   * local branch nobody pulled indexed the same commits for three days, and every count
+   * on this screen was correct.
+   */
+  it('says how old the newest commit of a history source is', async () => {
+    const threeDaysAgo = new Date(Date.now() - 3 * 86_400_000 - 60_000).toISOString();
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          source({
+            kind: 'githistory', rootPath: 'api-repo', fileCount: 174,
+            git: { ref: 'HEAD', includeMessage: true, includeStat: true, includeDiff: false, maxDiffBytes: 65536, includeMerges: false },
+            newestCommit: { sha: '9d2ef0633a530462b4091ad8226d1b02faadea84', authoredUtc: threeDaysAgo },
+          }),
+        ],
+      }),
+    );
+
+    render(<CorpusDetail {...props} />);
+
+    // What a sighted reader sees at a glance, hidden from a screen reader so the
+    // sentence below is not read after it.
+    const shown = await screen.findByText(/newest/, { selector: '[aria-hidden="true"]' });
+    expect(shown).toHaveTextContent('newest 9d2ef06, 3d ago');
+    expect(shown.querySelector('time')).toHaveAttribute('dateTime', threeDaysAgo);
+
+    // The whole sha and the exact time, for comparing with git: in the title for a
+    // pointer, and in text a screen reader reads, since a title is not reliably read.
+    const spoken = screen.getByText(/newest commit/, { selector: '.sr-only' });
+    expect(spoken).toHaveTextContent('newest commit 9d2ef0633a530462b4091ad8226d1b02faadea84');
+    expect(spoken).toHaveTextContent('3d ago');
+    expect(shown.parentElement).toHaveAttribute('title', expect.stringContaining('9d2ef0633a530462b4091ad8226d1b02faadea84'));
+  });
+
+  it('says nothing about a newest commit before one was found', async () => {
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          source({
+            kind: 'githistory', rootPath: 'api-repo', fileCount: 0,
+            git: { ref: 'HEAD', includeMessage: true, includeStat: true, includeDiff: false, maxDiffBytes: 65536, includeMerges: false },
+            newestCommit: null,
+          }),
+        ],
+      }),
+    );
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText(/message and stat/)).toBeInTheDocument();
+    expect(screen.queryByText(/newest/)).not.toBeInTheDocument();
+  });
+
+  /**
+   * A source at the workspace root has an empty path. It rendered with no name at all,
+   * and its buttons were labelled "Remove source " with nothing after it.
+   */
+  it('names a source at the workspace root', async () => {
+    getCorpus.mockResolvedValue(corpus({ sources: [source({ rootPath: '' })] }));
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText('workspace root')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove source workspace root' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit filters for workspace root' })).toBeInTheDocument();
+  });
+
+  /**
    * The corpus total counts both kinds, so neither "files" nor "commits" is true of it.
    * Saying "files" contradicted the source row directly beneath it.
    */
