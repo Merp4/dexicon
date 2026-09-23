@@ -265,8 +265,10 @@ The record is where the ref points, not how far indexing got, which the counts a
 source's state already report. It is written when the inventory answers, whether or not
 every commit is then read: a commit too large to read, for instance, still moves it, and
 the source reports the read failure. Holding it back would make a read failure look like
-a ref that had stopped. A pass whose inventory failed leaves the last record in place;
-one whose settings select no commits clears it.
+a ref that had stopped. An inventory that fails writes nothing, so the last record stays;
+one whose settings select no commits clears it. Each chunk set lists the history in its
+own pass, and one set failing does not undo another's listing: both describe the same
+ref.
 
 **The container runs as uid 10001 and `/workspaces` is a host bind mount**, so the
 repository belongs to somebody else and git refuses it outright with "detected dubious

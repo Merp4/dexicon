@@ -31,8 +31,8 @@ with no section here fails its release rather than publishing an undescribed one
   checkout whose local branch nobody pulled indexed the same 174 commits for three days
   while `origin/main` gained 52, with every count on screen correct and nothing to say the
   history had stopped. It records where the ref points, not how far indexing got, which
-  the counts and the source's state report. A pass that cannot list the history leaves
-  the last record; one whose settings select no commits clears it.
+  the counts and the source's state report. An inventory that fails leaves the last
+  record; one whose settings select no commits clears it.
 
 ### Fixed
 

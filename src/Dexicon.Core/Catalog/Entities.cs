@@ -257,7 +257,10 @@ public sealed class Source
     ///
     /// Where the ref points, not how far indexing got: the counts and the source's state
     /// say that. Null before any pass has listed the history, and after one whose settings
-    /// selected no commits. A pass whose inventory failed leaves both as they were.
+    /// selected no commits. Written from each inventory that answers, and never from one
+    /// that failed, so a failed one leaves both as they were. Each chunk set lists the
+    /// history in its own pass; one set failing does not undo another's listing, since
+    /// both describe the same ref.
     /// </summary>
     public string? NewestCommitSha { get; set; }
     public DateTime? NewestCommitUtc { get; set; }
