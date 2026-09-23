@@ -296,6 +296,9 @@ public sealed class EmbeddingProviderTests
         // whatever the code did. Two retries cost 250*2^n + jitter each, so at least
         // 1,500 ms if a refusal ever enters the loop. TheBackoffIsRealWhenItApplies is the
         // control for that number.
+        //
+        // The limit sits at the control's 1,000 ms rather than near the few milliseconds
+        // this takes on an idle machine: a CI runner took 675 ms early in a run.
         var service = Service(new RefusesLongInput(limit: 10), maxRetries: 2);
 
         var started = System.Diagnostics.Stopwatch.StartNew();
@@ -303,7 +306,7 @@ public sealed class EmbeddingProviderTests
             service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Document,
                 [new string('x', 50)], source: "a.pdf"));
 
-        started.ElapsedMilliseconds.ShouldBeLessThan(200);
+        started.ElapsedMilliseconds.ShouldBeLessThan(1_000);
     }
 
     [Fact]

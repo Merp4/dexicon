@@ -309,7 +309,9 @@ public sealed class GitHistoryTests : IDisposable
         var document = read[commits[0].Sha];
 
         document.ShouldContain(name, Case.Sensitive);
-        document.ShouldNotContain("346", Case.Sensitive);   // the octal escape quotePath produces
+        // The octal escape quotePath produces for 漢 (UTF-8 E6 BC A2). The backslashes are
+        // what a sha or a date cannot contain; "346" alone appeared in one by chance.
+        document.ShouldNotContain(@"\346\274\242", Case.Sensitive);
         document.ShouldContain($"diff --git a/{name} b/{name}", Case.Sensitive);
     }
 
