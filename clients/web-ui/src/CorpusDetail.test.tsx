@@ -1217,6 +1217,16 @@ describe('the full reindex', () => {
     expect(screen.queryByText(/Full reindex of docs/)).not.toBeInTheDocument();
   });
 
+  it('opens with focus on Cancel', async () => {
+    // The link to Chunk sets is the first control in the dialog, so focus started there.
+    // Cancel is the one control that does nothing.
+    render(<CorpusDetail {...props} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus());
+  });
+
   it('names every set and what it will embed with', async () => {
     // The job names no chunk set, so the indexer runs each of them. A corpus cut two ways
     // costs both, and nothing else on the screen says so.

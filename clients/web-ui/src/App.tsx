@@ -2413,7 +2413,7 @@ function FullReindexModal({
       </Notice>
 
       <div className="mt-4 flex flex-wrap justify-end gap-2">
-        <Button onClick={onClose}>Cancel</Button>
+        <Button onClick={onClose} autoFocus>Cancel</Button>
         <Button disabled={queueing} onClick={() => void run(false)}>
           <RefreshCw />
           Refresh instead
