@@ -268,7 +268,8 @@ the source reports the read failure. Holding it back would make a read failure l
 a ref that had stopped. An inventory that fails writes nothing, so the last record stays;
 one whose settings select no commits clears it. Each chunk set lists the history in its
 own pass, and one set failing does not undo another's listing: both describe the same
-ref.
+ref. Only the index pass writes it. The discovery sweep lists the history as well but
+only ever adds rows, and the index pass that follows it records the ref.
 
 **The container runs as uid 10001 and `/workspaces` is a host bind mount**, so the
 repository belongs to somebody else and git refuses it outright with "detected dubious
