@@ -501,8 +501,13 @@ export function Empty({
  *
  * Every caller already decides whether the modal exists by rendering it or not, so this
  * takes `open` as given rather than owning that state twice. The focus trap, the Escape
- * key, the overlay and restoring focus afterwards were fifty hand-written lines here and
- * are now the dialog primitive's problem.
+ * key and the overlay were fifty hand-written lines here and are now the dialog
+ * primitive's problem.
+ *
+ * Restoring focus afterwards is not. The primitive returns focus to its own Trigger, and a
+ * modal opened by rendering it has none, so focus fell to <body> on every close: measured
+ * in the running app on the Full reindex dialog, after Escape and after Cancel. It goes
+ * back to whatever had focus when this opened instead.
  */
 export function Modal({
   title,
@@ -515,6 +520,9 @@ export function Modal({
   children: ReactNode;
   width?: number;
 }) {
+  // Read on the first render, before the primitive moves focus into the dialog.
+  const [opener] = useState(() => document.activeElement as HTMLElement | null);
+
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent
@@ -523,6 +531,10 @@ export function Modal({
         // Not every modal has a summary line, and a described-by pointing at nothing is
         // worse than none at all.
         aria-describedby={undefined}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          if (opener?.isConnected) opener.focus();
+        }}
       >
         <DialogHeader>
           <DialogTitle className="text-base">{title}</DialogTitle>

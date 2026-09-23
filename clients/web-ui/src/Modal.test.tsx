@@ -1,5 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { Button, Input, Modal } from './ui';
 
@@ -79,6 +80,38 @@ describe('Modal', () => {
 
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('gives focus back to what opened it, however it closes', async () => {
+    // Shaped like every caller: opened by rendering it, closed by unmounting it. The
+    // primitive returns focus to its own Trigger, and a modal opened this way has none, so
+    // focus fell to <body>. Measured in the running app on the Full reindex dialog, after
+    // Escape and after Cancel alike.
+    function Opener() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>Full reindex</button>
+          {open && (
+            <Modal title="Full reindex of docs?" onClose={() => setOpen(false)}>
+              <Button onClick={() => setOpen(false)}>Cancel</Button>
+            </Modal>
+          )}
+        </>
+      );
+    }
+
+    const user = userEvent.setup();
+    render(<Opener />);
+    const opener = screen.getByRole('button', { name: 'Full reindex' });
+
+    await user.click(opener);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(opener).toHaveFocus());
+
+    await user.click(opener);
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(opener).toHaveFocus());
   });
 
   it('keeps Tab inside it', async () => {
