@@ -89,6 +89,111 @@ public sealed class IndexedFileKeepsItsVectorsTests
     }
 
     [Fact]
+    public async Task PointsNoRowNames_AreRemoved()
+    {
+        // The other record missing: points held, and no row for their path at all. A pass
+        // interrupted after writing a file's points and before saving its row leaves this,
+        // and once the file is out of scope nothing looks at that path again. Found on a
+        // live index: 11 points for a file its source had since excluded, still returned
+        // by search.
+        await using var harness = await IndexedAsync();
+        var held = harness.Vectors.CountFor("note.md");
+
+        await RemoveRowAsync(harness, "note.md");
+        File.Delete(Path.Combine(harness.SourceDirectory, "note.md"));
+        harness.Vectors.CountFor("note.md").ShouldBe(held, "the points outlive the row, as they did live");
+
+        await harness.RunIndexAsync();
+
+        harness.Vectors.CountFor("note.md").ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task AFailedOrphanDeleteIsLeftForTheNextPass_NotAFailedJob()
+    {
+        // Best effort: the cleanup is a repair, and the job it runs in is not about it.
+        await using var harness = await IndexedAsync();
+        var held = harness.Vectors.CountFor("note.md");
+        await RemoveRowAsync(harness, "note.md");
+        File.Delete(Path.Combine(harness.SourceDirectory, "note.md"));
+
+        harness.Vectors.DeletesThrow = true;
+        var failed = await harness.RunIndexAsync();
+
+        failed.State.ShouldBe(JobState.Succeeded);
+        harness.Vectors.CountFor("note.md").ShouldBe(held);
+
+        harness.Vectors.DeletesThrow = false;
+        await harness.RunIndexAsync();
+
+        harness.Vectors.CountFor("note.md").ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task AndAFileStillInScopeIsIndexedFromNothing()
+    {
+        // Removing the points first must not cost the file: it is walked, found to have no
+        // row, and indexed as new, once.
+        await using var harness = await IndexedAsync();
+        var held = harness.Vectors.CountFor("note.md");
+
+        await RemoveRowAsync(harness, "note.md");
+
+        await harness.RunIndexAsync();
+
+        harness.Vectors.CountFor("note.md").ShouldBe(held);
+        (await harness.StateOfAsync("note.md")).ChunkCount.ShouldBe(held);
+    }
+
+    [Fact]
+    public async Task OnAnUploadSource_OnlyPointsWithNoRowAtAllAreRemoved()
+    {
+        // Uploads reconcile over their attachments, the rows with stored text. An orphan is
+        // a path with no row at all: a row without stored text still names its points, and
+        // reading "not an attachment" as "not a row" would delete them.
+        await using var harness = await IndexingHarness.StartAsync();
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await AttachAsync(harness, "kept.md", "retrieval");
+        await AttachAsync(harness, "orphaned.md", "chunking");
+        await harness.RunIndexAsync();
+        var kept = harness.Vectors.CountFor("kept.md");
+        kept.ShouldBeGreaterThan(0);
+        harness.Vectors.CountFor("orphaned.md").ShouldBeGreaterThan(0);
+
+        await RemoveRowAsync(harness, "orphaned.md");
+        await using (var db = harness.NewContext())
+        {
+            (await db.Files.SingleAsync(f => f.RelativePath == "kept.md")).BlobSha256 = null;
+            await db.SaveChangesAsync();
+        }
+
+        await harness.RunIndexAsync();
+
+        harness.Vectors.CountFor("orphaned.md").ShouldBe(0);
+        harness.Vectors.CountFor("kept.md").ShouldBe(kept);
+    }
+
+    private static async Task AttachAsync(IndexingHarness harness, string name, string topic)
+    {
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var corpus = await db.Corpora.Include(c => c.Sources).Include(c => c.ChunkSets)
+            .FirstAsync(c => c.Id == IndexingHarness.CorpusId);
+        using var bytes = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(IndexingHarness.Prose(topic)));
+        var sha = (await documents.StoreAsync(bytes, name)).Sha256;
+        await documents.AttachAsync(corpus, sha, name);
+    }
+
+    private static async Task RemoveRowAsync(IndexingHarness harness, string path)
+    {
+        await using var db = harness.NewContext();
+        var file = await db.Files.SingleAsync(f => f.RelativePath == path);
+        db.FileChunkStates.RemoveRange(db.FileChunkStates.Where(s => s.FileId == file.Id));
+        db.Files.Remove(file);
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
     public async Task AnIncompleteCountIsNotTreatedAsAnEmptyOne()
     {
         // The dangerous failure. A facet at its cap reports nothing for every file past

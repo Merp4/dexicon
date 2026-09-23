@@ -342,7 +342,13 @@ public sealed class CorpusIndexer(
         // objects, so clearing a hash here is what the check reads a few lines down.
         var byPath = new Dictionary<string, FileChunkState>(attachments.Count, StringComparer.Ordinal);
         foreach (var f in attachments) byPath[f.RelativePath] = states[f.Id];
-        await ReconcileChunkCountsAsync(set, source.Id, byPath, ct);
+
+        // Every row, not only the attachments with stored text: a row without one still
+        // names its path, and its points are not orphans.
+        var named = (await db.Files.Where(f => f.SourceId == source.Id)
+                .Select(f => f.RelativePath).ToListAsync(ct))
+            .ToHashSet(StringComparer.Ordinal);
+        await ReconcileChunkCountsAsync(set, source.Id, byPath, named.Contains, ct);
 
         job.FilesTotal += attachments.Count;
         job.Phase = "extract";
@@ -1063,7 +1069,7 @@ public sealed class CorpusIndexer(
                 StringComparer.Ordinal);
 
         // Before anything is written, while the two records are both at rest.
-        await ReconcileChunkCountsAsync(set, source.Id, states, ct);
+        await ReconcileChunkCountsAsync(set, source.Id, states, known.ContainsKey, ct);
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var sinceFlush = System.Diagnostics.Stopwatch.StartNew();
@@ -1539,12 +1545,20 @@ public sealed class CorpusIndexer(
     /// 1,834-file corpus: three files short by 13,016 points, two of them holding none
     /// while reporting thousands, and no refresh repaired them.
     ///
-    /// Only ever clears a hash. It never deletes, never writes a count, and never
-    /// touches a file the two records agree on, so the worst it can cost is re-embedding
-    /// a file that did not need it.
+    /// For a file with a row, it only ever clears a hash. It never writes a count and never
+    /// touches a file the two records agree on, so the worst it can cost is re-embedding a
+    /// file that did not need it.
+    ///
+    /// Points for a path with no row at all are deleted. Nothing names them, so no later
+    /// pass would look at them: the vanished-file sweep walks rows. A pass interrupted after
+    /// writing a file's points and before saving its row leaves exactly this, and a live
+    /// index held 11 such points for a file its source had since excluded, still returned
+    /// by search. It runs before anything is written, and a file still in scope is then
+    /// indexed from nothing.
     /// </summary>
+    /// <param name="hasRow">Whether the catalogue holds a row for a path in this source.</param>
     private async Task ReconcileChunkCountsAsync(ChunkSet set, string sourceId,
-        Dictionary<string, FileChunkState> states, CancellationToken ct)
+        Dictionary<string, FileChunkState> states, Func<string, bool> hasRow, CancellationToken ct)
     {
         IReadOnlyDictionary<string, int>? actual;
         try
@@ -1564,6 +1578,23 @@ public sealed class CorpusIndexer(
         // Null means the answer was incomplete. Absent and zero are the same shape here,
         // so an incomplete answer would mark everything past the cutoff for re-embedding.
         if (actual is null) return;
+
+        foreach (var (path, held) in actual)
+        {
+            if (hasRow(path)) continue;
+            try
+            {
+                await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, sourceId, path, ct);
+                log.LogWarning("{Set}: removed {Held:N0} points for {File}, which has no catalogue row",
+                    set.Name, held, path);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Left for the next pass rather than failing this one.
+                log.LogWarning(ex, "{Set}: could not remove points for {File}, which has no catalogue row",
+                    set.Name, path);
+            }
+        }
 
         var mismatched = 0;
         foreach (var (path, state) in states)
