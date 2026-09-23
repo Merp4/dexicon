@@ -16,7 +16,32 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
-## Unreleased
+## 0.6.0 — 2026-09-23
+
+### ⚠️ Upgrading
+
+- Three migrations, applied at startup, all widening: `CorpusLease` adds two nullable
+  columns to `corpora`, `ExtractedTextPerFile` adds the `file_texts` table and a nullable
+  column to `file_chunk_states`, and `GitHistorySource` adds a nullable column to
+  `sources`.
+
+- The chunker version moves 7 to 8, so **every file re-chunks and re-embeds on the next
+  index run**. Existing chunk sets keep their size and overlap; the 256-token default
+  applies to corpora created after the upgrade.
+
+- The catalogue now holds the extracted text of every document on a mount. On one
+  deployment, 1,996 documents added 526 MB, most of a 554 MB catalogue. Plain text and code
+  are not stored.
+
+- Files can leave the index on the first refresh. A file reached only through a symbolic
+  link or junction is no longer read, and `.git/info/exclude` and ignore files in
+  subdirectories now apply. A source whose path passes through a link is refused when added,
+  and an existing one reports its corpus unavailable with the reason.
+
+- `docker-compose.yml` gains `OLLAMA_NUM_PARALLEL` and seven indexing settings, each with a
+  default, so an existing `.env` needs nothing. A deployment running its own compose file
+  should take the new one: without `OLLAMA_NUM_PARALLEL`, Ollama admits one request at a
+  time.
 
 ### Added
 
@@ -307,6 +332,7 @@ with no section here fails its release rather than publishing an undescribed one
 
   Prerequisite for [D-32](docs/decisions.md). `DEXICON__STORAGE__BUSYTIMEOUTSECONDS`,
   default 30, matching the provider's own command timeout so neither gives up first.
+
 - **Ollama is told how many requests to admit at once.** `OLLAMA_NUM_PARALLEL` was not
   settable anywhere: not in `docker-compose.yml`, not in `.env.example`. Unset, Ollama
   admits one request and the embedder waits between them. Measured A/B/A/B against a
@@ -333,25 +359,6 @@ with no section here fails its release rather than publishing an undescribed one
   under an always-excluded `.vscode/`. A directory is skipped only where no negation can
   reach into it, so one narrow exception does not disable pruning for its siblings.
 
-- **The catalogue's journal mode and busy timeout are set by Dexicon, not inherited from
-  whatever the database file carries.** Neither was established anywhere: a catalogue
-  created by the connection string reports `journal_mode=delete` and `busy_timeout=0`,
-  while a long-lived one is in WAL because journal mode is persistent in the file. A fresh
-  install and an existing one therefore behaved differently under concurrent access, with
-  nothing in the code to say which you had. WAL is now asked for explicitly and checked; if
-  the filesystem refuses it, which happens on network shares, that is logged rather than
-  passing as success.
-
-  `Cache=Shared` is gone with it. It arrived with the first walking skeleton and nothing
-  depended on it, and it decides how a blocked write fails: measured against a lock held
-  longer than the caller would wait, a shared-cache connection fails with `SQLITE_LOCKED`,
-  which no busy timeout can serve, where a private-cache one fails with `SQLITE_BUSY`,
-  which one can. Ordinary contention is unaffected either way, since a lock held for 500ms
-  is waited out in about 600ms.
-
-  Prerequisite for [D-32](docs/decisions.md). `DEXICON__STORAGE__BUSYTIMEOUTSECONDS`,
-  default 30, matching the provider's own command timeout so neither gives up first.
-
 - **A rejected credential says which caller, not just which path.** The line was the path
   and nothing else, so a browser tab left open on an expired session and someone working
   through a list of guesses wrote the identical warning, and a log full of them answered
@@ -366,6 +373,34 @@ with no section here fails its release rather than publishing an undescribed one
   it is capped at 120 characters and goes in as a property, which the console template
   escapes as it already does the path.
 
+- **An ignore file in a subdirectory is read.** Only the root's `.gitignore` and
+  `.dexiconignore` applied, so a file excluded two levels down was indexed. A nested file's
+  patterns are anchored to its own directory, and a deeper file outranks a shallower one,
+  as in git. A source's `exclude_globs` still outrank all of them. An ignore file inside a
+  directory that is already excluded is not read, which is also git's rule. The walk costs
+  the same: 1,445 to 1,489 ms on a 10,021-file tree, against 1,462 to 1,484 ms before.
+
+- **Chunk sets sit under the corpus summary, collapsed to one line.** They were below the
+  file list: 1,082 px down on a 16-file corpus, and 5,286 px, 5.8 screens, on one listing
+  100 of 1,834 files. The collapsed line names the set search uses, with its model,
+  dimensions, chunk size, overlap and chunk count, and any set that is building, pending
+  or failed appears beside it. Whether the section is open is remembered per browser.
+
+- **Full reindex says what it is about to re-embed.** It queued on the click, one button
+  from Refresh. The dialog now gives the number of chunks the catalogue holds, summed
+  across chunk sets because the job runs every set, and each set's model, size and
+  overlap. It says search keeps working while it runs, offers Refresh in its place, and
+  points to Chunk sets for a change of embedding model, which needs a new set rather than
+  a reindex.
+
+- **The Jobs list shows the runs that did something.** Routine refreshes were collapsed in
+  the client, which can only collapse what it fetched: of the last 200 jobs on one
+  instance, spanning 449 minutes, 48 did real work and none of them was among the most
+  recent thirty. `GET /api/jobs?activity=true` drops quiet runs in the query, and a failed
+  or degraded run is never counted as quiet. "Show routine refreshes" asks for all of
+  them. The list polls every 30 seconds at idle, where it polled every 4 throughout, and
+  every 4 while a job runs.
+
 ### Fixed
 
 - **A git-history source's `since` is 00:00 UTC on that date.** It was passed to git as a
@@ -373,6 +408,80 @@ with no section here fails its release rather than publishing an undescribed one
   boundary moved with every refresh: measured at 08:56 UTC, `since: 2026-01-02` left out
   that day's commits from 00:30 and 06:00, so commits dropped out of the inventory as the
   day went on and came back after midnight.
+
+- **Points the catalogue has no row for are removed.** An interrupted pass can store a
+  file's vectors before its row, and if a filter then takes the file out of scope nothing
+  looks at that path again, so its chunks stayed searchable. Each pass now deletes the
+  points in its chunk set and source for any path with no catalogue row, before it writes
+  anything. A comparison of one live index against its catalogue found 11 such points, for
+  one path, among 217,157.
+
+- **A file a nested source skips is reported once.** With sources at `outer` and
+  `outer/inner`, a file `inner` skipped was also reported by `outer`, so it was counted
+  twice and listed as two files. The first refresh after upgrading removes the duplicate
+  rows.
+
+- **A degraded job keeps every reason.** `job.Error` held one reason and each new one
+  replaced it, so a job with two missing sources named one of them, and a missing source
+  was hidden by a later embedding failure. Reasons are now joined as sentences, each once.
+  An unreachable source also outranks failed embeddings in the corpus state, which reads
+  `unavailable` rather than `degraded`.
+
+- **Closing a dialog returns focus to what opened it.** Focus went to the page body, so a
+  keyboard user started again from the top of the page after every dialog. All sixteen
+  dialogs share the fix, including one opened from a button that the same update removes.
+
+- **`.git/info/exclude` is honoured, and a worktree's `.git` file is not indexed.** Git's
+  per-clone ignore file is where `git worktree`, and tools that make worktrees inside a
+  checkout, record them, so their copies were indexed and search returned documents at
+  older commits. Reported on a checkout with four worktrees: 22,004 files walked for 5,463
+  tracked. It is read when `use_gitignore` is on, before `.gitignore`, which outranks it.
+  Separately, `.git/` in the always-excluded list matched directories only, so the `.git`
+  file in a linked worktree or submodule was indexed, and it holds an absolute host path.
+
+- **`search_index` takes one corpus name as well as a list.** `"corpus": "docs"` failed
+  while the arguments were bound, before the tool ran, and the caller saw only "An error
+  occurred invoking 'search_index'." Every other filter on the tool is a scalar, so it is
+  the form a client reaches for. The advertised schema is unchanged, and a value that is
+  neither a name nor a list of names is refused with a message that says so.
+
+- **Adding a source checks the request before starting git.** A request with a bad path
+  and a setting that cannot apply was answered about the path, after a git process had
+  been started to probe it, and the setting was reported only on the resend. Both checks
+  that need no git now run first.
+
+- **git being unavailable makes the source unavailable rather than failing the job.** The
+  repository probe ran outside the handler that the enumeration after it ran inside, so a
+  missing `git` binary or a timeout failed the whole job from one call and marked the
+  source unavailable from the other.
+
+- **A caller's own text is made safe before it is logged.** A request path arrives
+  URL-decoded, so `%0A` in one was a newline in the rejection line, and the user agent and
+  a key's name are also set by the caller. Control characters in all three are replaced
+  with U+FFFD before logging, where the console template's escaping had been the only
+  guard. Closes CodeQL alert `cs/log-forging`.
+
+- **A file that fails to read keeps its size.** It was recorded as 0 bytes although the
+  walk had measured it, so the largest files in a corpus, the likeliest to fail, showed as
+  empty. Observed: 8 failed files at `sizeBytes: 0`, one of them 71,303,168 bytes. A file
+  skipped for exceeding the size cap records its size as well.
+
+- **`POST /api/context` reads its passage from the document, as `get_context` does.** It
+  joined the chunks either side of the hit, so text the chunker did not keep, such as a
+  heading a boundary rule skipped, was missing from a passage that read as continuous.
+  The chunks still decide where the window is, so `neighbours` keeps its meaning. Code and
+  plain text on a mount, which have no stored document, are read from the chunks as
+  before.
+
+- **Every file sort ends on a unique key.** Three of the four ended on the path, which two
+  overlapping sources can both hold, so paging could repeat one file and skip another.
+  Measured on one corpus: 6 rows the size sort could not separate. All four now end on the
+  file id.
+
+- **A source still being walked says so.** A folder mid-walk showed "no files" in the
+  warning colour and then climbed to its real count. It now reads "counting…", or "22 so
+  far", while the walk runs. A source that finishes with nothing still shows the warning,
+  since that is how a mistyped path appears.
 
 - **Turning a page of the file list no longer loses it to the filter's timer.** The name
   filter waits 250ms before it queries, and the pause was armed by the first render and by
