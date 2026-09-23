@@ -298,8 +298,10 @@ public sealed class EmbeddingProviderTests
         // control for that number.
         //
         // The limit sits at the control's 1,000 ms rather than near the few milliseconds
-        // this takes on an idle machine: a CI runner took 675 ms early in a run.
-        var service = Service(new RefusesLongInput(limit: 10), maxRetries: 2);
+        // this takes on an idle machine: a CI runner took 675 ms early in a run. The call
+        // count catches a retry without depending on the clock.
+        var generator = new RefusesLongInput(limit: 10);
+        var service = Service(generator, maxRetries: 2);
 
         var started = System.Diagnostics.Stopwatch.StartNew();
         await Should.ThrowAsync<EmbeddingInputTooLongException>(() =>
@@ -307,6 +309,7 @@ public sealed class EmbeddingProviderTests
                 [new string('x', 50)], source: "a.pdf"));
 
         started.ElapsedMilliseconds.ShouldBeLessThan(1_000);
+        generator.CallTimes.Count.ShouldBe(1, "a refusal is reported, not retried");
     }
 
     [Fact]

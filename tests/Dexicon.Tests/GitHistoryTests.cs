@@ -289,8 +289,10 @@ public sealed class GitHistoryTests : IDisposable
     /// The fingerprint settles a document from the sha and the source's settings, so
     /// anything else that alters the text makes the pre-read skip hold a document git
     /// would no longer produce — and the skip is the path that avoids looking, so
-    /// nothing notices. `core.quotePath` is the one measured here because it is the one
-    /// most likely to be set for real, and the difference is visible at a glance.
+    /// nothing notices. Two settings are checked: `core.quotePath`, the one most likely to
+    /// be set for real, and `diff.noprefix`, both visible in the diff header.
+    /// `diff.context` is set as well, but a one-line file has no context for it to widen,
+    /// so nothing here observes it.
     /// </summary>
     [Fact]
     public async Task RepositoryConfigDoesNotChangeWhatACommitSays()
