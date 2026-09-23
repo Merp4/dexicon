@@ -27,7 +27,7 @@ import {
   Search, Settings, Sliders, SlidersHorizontal, Trash2, TriangleAlert,
 } from 'lucide-react';
 import { cn } from 'cn';
-import { sourceName } from './lib/sources';
+import { historyContent, sourceName } from './lib/sources';
 import { unitFor, unitOf } from './lib/units';
 import { parseHash, toHash, type View as RouteView } from './route';
 import { WorkspacePicker } from './WorkspacePicker';
@@ -1235,7 +1235,7 @@ export function CorpusDetail({
                   {s.kind === 'githistory' ? (
                     <span className="dim text-xs">
                       {s.git?.ref ?? 'HEAD'}
-                      {' · '}{s.git?.includeDiff ? 'with the diff' : 'message and stat'}
+                      {' · '}{historyContent(s.git)}
                       {s.includeGlobs?.length ? ` · only ${s.includeGlobs.join(', ')}` : ''}
                       {/* Where the ref had got to when it was last read. The ref names what
                           to follow and says nothing about whether it moves: a source over a
@@ -1470,7 +1470,6 @@ export function CorpusDetail({
           initialPath={addingSource.path}
           onClose={() => setAddingSource(null)}
           onAdded={async () => { setAddingSource(null); await onRefresh(); await load(); }}
-          onError={onError}
         />
       )}
 
@@ -2134,10 +2133,13 @@ function GitHistoryFields({
         <Input className="mono" value={value.ref} onChange={(e) => set('ref', e.target.value)} placeholder="HEAD" />
       </Field>
 
-      {check('includeMessage', 'Include the message', 'Subject and body. Off, a commit is a record of what changed with none of why.')}
+      {/* Each hint says what its own setting adds, so none of them is wrong when another
+          setting is turned off. The diff's figures are a measurement with the message and
+          the stat on, and say so. */}
+      {check('includeMessage', 'Include the message', 'Subject and body, which say why a change was made.')}
       {check('includeStat', 'Include the stat', 'Which files each commit touched, with ± counts.')}
       {check('includeDiff', 'Include the diff',
-        'Off, each commit is its message and which files it touched: measured over 201 commits, about 2,000 characters each. On, it is the patch as well, and about thirteen times that.')}
+        'The patch. Measured over 201 commits with the message and the stat, a commit was about 2,000 characters without it and about thirteen times that with it.')}
 
       {value.includeDiff && (
         <Field label="Largest diff per commit (KB)" hint="Over it the patch is left out and the document says how large it was. The stat stays.">
@@ -2174,7 +2176,6 @@ function AddSourceModal({
   initialPath = '',
   onClose,
   onAdded,
-  onError,
 }: {
   corpus: Corpus;
   /** Pre-filled when the coverage notice opened this, so the fix is one click from the
@@ -2182,9 +2183,11 @@ function AddSourceModal({
   initialPath?: string;
   onClose: () => void;
   onAdded: () => Promise<void>;
-  onError: (e: unknown) => void;
 }) {
   const [path, setPath] = useState(initialPath);
+  // In the dialog rather than the page's banner, which sits behind it. A refusal is
+  // something to fix here, and the settings it names are the ones still on screen.
+  const [error, setError] = useState<unknown>(null);
   const [useGitignore, setUseGitignore] = useState(true);
   // Commits rather than files. The two are separate sources over the same folder when
   // both are wanted, so this is a choice about what THIS source is, not a modifier.
@@ -2207,6 +2210,7 @@ function AddSourceModal({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
+    setError(null);
     try {
       // Undefined, not an empty array: an omitted filter means this source follows the
       // corpus, and an empty one means "none, whatever the corpus says". Sending [] for a
@@ -2225,13 +2229,14 @@ function AddSourceModal({
       });
       await onAdded();
     } catch (err) {
-      onError(err);
+      setError(err);
       setBusy(false);
     }
   }
 
   return (
     <Modal title={`Add a source to ${corpus.name}`} onClose={onClose}>
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <form onSubmit={submit}>
         <Field
           label="Workspace folder"

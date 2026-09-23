@@ -193,7 +193,7 @@ describe('the sources a corpus reads', () => {
 
     expect(await screen.findByText(/201 commits/)).toBeInTheDocument();
     expect(screen.getByText(/37 files/)).toBeInTheDocument();
-    expect(screen.getByText(/main.*with the diff/)).toBeInTheDocument();
+    expect(screen.getByText(/main.*message, stat and diff/)).toBeInTheDocument();
 
     // One .gitignore line, for the workspace source, and none for the history one.
     expect(screen.getAllByText(/\.gitignore honoured/)).toHaveLength(1);
@@ -265,6 +265,28 @@ describe('the sources a corpus reads', () => {
     expect(await screen.findByText('workspace root')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Remove source workspace root' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Edit filters for workspace root' })).toBeInTheDocument();
+  });
+
+  /**
+   * What each commit holds, from all three settings. It was read off the diff alone, so
+   * a source with the message turned off still said "message and stat".
+   */
+  it('says what each commit holds from all three settings', async () => {
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          source({
+            id: 's2', kind: 'githistory', rootPath: 'api-repo', fileCount: 201,
+            git: { ref: 'main', includeMessage: false, includeStat: true, includeDiff: false, maxDiffBytes: 65536, includeMerges: false },
+          }),
+        ],
+      }),
+    );
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText(/main · stat only/)).toBeInTheDocument();
+    expect(screen.queryByText(/message and stat/)).not.toBeInTheDocument();
   });
 
   /**
@@ -451,6 +473,27 @@ describe('adding a source', () => {
 
     await waitFor(() => expect(addSource).toHaveBeenCalled());
     expect(addSource.mock.calls[0][1]).toMatchObject({ git: { ref: 'origin/main', includeMessage: true } });
+  });
+
+  /**
+   * A refusal belongs where the settings it names still are. Sent to the page, it landed
+   * behind the dialog, which stayed open saying nothing.
+   */
+  it('shows a refusal in the dialog, which stays open', async () => {
+    addSource.mockRejectedValue(new ApiError(400, 'Unusable history settings',
+      "'main..other' is not a usable ref. A branch, a tag or an object name."));
+    const { user, dialog } = await openAddSource();
+
+    await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
+    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+    const ref = within(dialog).getByLabelText('Ref');
+    await user.clear(ref);
+    await user.type(ref, 'main..other');
+    await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
+
+    expect(await within(dialog).findByText(/is not a usable ref/)).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(props.onError).not.toHaveBeenCalled();
   });
 
   it('sends the filters, as a list and in bytes', async () => {

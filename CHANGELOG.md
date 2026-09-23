@@ -49,7 +49,7 @@ with no section here fails its release rather than publishing an undescribed one
   edited.** A malformed ref, a commit limit below one or a diff cap past the read ceiling
   was stored as sent, answered 200, and found on the next pass as the source being
   unavailable. It is now a 400 carrying the same reason the inventory gives, and the
-  editor shows it in the dialog. None of the checks runs git; a well-formed ref that names
+  add and edit dialogs show it, staying open. None of the checks runs git; a well-formed ref that names
   nothing still shows on the corpus after the refresh.
 
 ### Fixed
