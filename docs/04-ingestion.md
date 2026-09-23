@@ -369,7 +369,15 @@ whole. Settings that can be written and never read back are settings nobody can 
 reproduce, and these decide what every document in the source holds. The UI shows the ref
 and whether the diff is on, and counts commits rather than files; the size cap and the
 `.gitignore` toggle are not shown at all, because a commit is not read from the working
-tree.
+tree. The source's row opens an editor for them.
+
+Settings git cannot be asked with are refused with a 400 when a source is added or
+edited: a malformed ref, a commit limit below one, a diff cap past the read ceiling. They
+were stored as sent and found on the next pass, as the source being unavailable, so an
+editor saving a typo was told it had worked. The checks are the ones the inventory makes
+and none runs git, so the request is still judged before any process starts. A ref that
+is well formed but names nothing can only be found by asking git, and shows on the
+corpus after the refresh.
 
 See [D-34](decisions.md#d-34-a-commit-is-a-document).
 

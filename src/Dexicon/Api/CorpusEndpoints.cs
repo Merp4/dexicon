@@ -239,6 +239,8 @@ public static class CorpusEndpoints
                           + "walked by git log. Include globs work there, as pathspecs.",
                     statusCode: 400);
 
+            if (body.GitHistory && UnusableHistorySettings(body.Git) is { } refused) return refused;
+
             // The boundary, for every kind of source. Existence is deliberately not
             // required here: a workspace source may be added while its mount is away,
             // and a pass reports that as unavailable rather than losing the source.
@@ -402,6 +404,8 @@ public static class CorpusEndpoints
                     detail: $"Source '{sourceId}' indexes commits, so {inapplicable} would be stored "
                           + "and never read. Include globs work there, as pathspecs.",
                     statusCode: 400);
+
+            if (UnusableHistorySettings(body.Git) is { } refused) return refused;
 
             var changed = ApplyFilters(source, body);
 
@@ -724,6 +728,20 @@ public static class CorpusEndpoints
 
         return named.Count == 0 ? null : string.Join(", ", named);
     }
+
+    /// <summary>
+    /// History settings git cannot be asked with, refused where they arrive.
+    ///
+    /// They were stored as sent, so a malformed ref, a commit limit of zero or a diff cap
+    /// past the read ceiling was answered 200 and discovered on the next pass, as the
+    /// source being unavailable with the reason in a job. The same checks the inventory
+    /// makes, and none of them runs git, so a request is still judged before any process
+    /// starts. Null settings are the defaults, which are usable.
+    /// </summary>
+    internal static IResult? UnusableHistorySettings(GitHistoryOptions? git) =>
+        git is not null && GitHistory.Problem(git) is { } problem
+            ? Results.Problem(title: "Unusable history settings", detail: problem, statusCode: 400)
+            : null;
 
     /// <summary>
     /// The names <c>clear</c> understands. Anything else is a typo the caller wants to
