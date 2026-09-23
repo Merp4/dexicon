@@ -368,6 +368,12 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Fixed
 
+- **A git-history source's `since` is 00:00 UTC on that date.** It was passed to git as a
+  bare date, which git reads as that date at the current time of day in its own zone. The
+  boundary moved with every refresh: measured at 08:56 UTC, `since: 2026-01-02` left out
+  that day's commits from 00:30 and 06:00, so commits dropped out of the inventory as the
+  day went on and came back after midnight.
+
 - **Turning a page of the file list no longer loses it to the filter's timer.** The name
   filter waits 250ms before it queries, and the pause was armed by the first render and by
   any keystroke, then reset the offset when it fired whether or not the query had changed.
