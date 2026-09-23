@@ -53,6 +53,11 @@ public sealed class CorpusIndexer(
     private readonly IndexingOptions _indexing = options.Value.Indexing;
     private readonly EmbeddingOptions _embedding = options.Value.Embedding;
 
+    // This pass's reasons and whether a source was out of reach. One indexer runs one job
+    // (it is resolved per work item), and RunAsync clears both anyway.
+    private readonly List<string> _reasons = [];
+    private bool _unreachable;
+
     public async Task<IndexJob> RunAsync(string jobId, IProgress<IndexProgress>? progress, CancellationToken ct)
     {
         var job = await db.Jobs.FirstAsync(j => j.Id == jobId, ct);
@@ -66,6 +71,8 @@ public sealed class CorpusIndexer(
             : corpus.ChunkSets.ToList();
 
         var embeddingFailed = false;
+        _reasons.Clear();
+        _unreachable = false;
 
         // A source this pass could not reach: a mount that is away, a folder with no
         // repository in it. Not a failure of the job and not a success either.
@@ -254,8 +261,11 @@ public sealed class CorpusIndexer(
             // degraded, and the save below would make that the record.
             if (Holds(hold))
             {
-                corpus.State = CorpusState.Degraded;
-                foreach (var s in targets) s.State = CorpusState.Degraded;
+                // A source found out of reach before the failure still needs someone to look
+                // at it, so Unavailable outranks Degraded here as at the end of a pass.
+                var state = _unreachable ? CorpusState.Unavailable : CorpusState.Degraded;
+                corpus.State = state;
+                foreach (var s in targets) s.State = state;
             }
         }
         finally
@@ -1408,6 +1418,7 @@ public sealed class CorpusIndexer(
     /// </summary>
     private void Unreachable(Corpus corpus, IndexJob job, string reason)
     {
+        _unreachable = true;
         corpus.State = CorpusState.Unavailable;
         AddReason(job, reason);
         log.LogWarning("{Reason}", reason);
@@ -1420,17 +1431,20 @@ public sealed class CorpusIndexer(
     /// hid an unreachable source altogether.
     ///
     /// Joined as sentences, since the Jobs view shows it as one paragraph and index_status
-    /// as one line. Once each: every chunk set is its own pass over the sources, so a
-    /// missing source is found once per set.
+    /// as one line. Once each, compared whole: every chunk set is its own pass over the
+    /// sources, so a missing source is found once per set, and a reason that merely
+    /// appears inside another is still a different reason.
     /// </summary>
-    private static void AddReason(IndexJob job, string reason)
+    private void AddReason(IndexJob job, string reason)
     {
         var sentence = reason.Trim();
         if (!sentence.EndsWith('.')) sentence += ".";
+        if (_reasons.Contains(sentence)) return;
 
-        if (job.Error is not { Length: > 0 }) job.Error = sentence;
-        else if (!job.Error.Contains(sentence, StringComparison.Ordinal)) job.Error += " " + sentence;
+        _reasons.Add(sentence);
+        job.Error = string.Join(' ', _reasons);
     }
+
 
     /// <summary>
     /// Whether this job still owns the corpus, which is what licenses it to write shared

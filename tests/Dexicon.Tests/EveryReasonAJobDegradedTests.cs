@@ -65,6 +65,40 @@ public sealed class EveryReasonAJobDegradedTests
         job.Error.Split("'gone' is not available").Length.ShouldBe(2);
     }
 
+    [Fact]
+    public async Task APassThatFailsAfterAnUnreachableSourceStillReportsIt()
+    {
+        await using var harness = await IndexingHarness.StartAsync("gone");
+        Directory.Delete(harness.SourceDirectory);
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+
+        // A kind the pass does not know throws out of the source loop, which is the failure
+        // the switch in RunAsync refuses to swallow. Its id sorts after source-1 whether
+        // rows come back by key or by insertion.
+        await using (var db = harness.NewContext())
+        {
+            db.Sources.Add(new Source
+            {
+                Id = "source-9",
+                CorpusId = IndexingHarness.CorpusId,
+                Kind = (SourceKind)99,
+                RootPath = "other",
+                CreatedUtc = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var job = await harness.RunIndexAsync();
+
+        job.State.ShouldBe(JobState.Failed);
+        job.Error.ShouldNotBeNull();
+        job.Error.ShouldContain("'gone' is not available");
+        job.Error.ShouldContain("does not know how to index");
+
+        await using var check = harness.NewContext();
+        (await check.Corpora.FirstAsync()).State.ShouldBe(CorpusState.Unavailable);
+    }
+
     private sealed class FailsOn(string marker) : IEmbeddingService
     {
         private readonly IndexingHarness.FixedEmbedder _inner = new();
