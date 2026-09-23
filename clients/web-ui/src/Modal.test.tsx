@@ -1,5 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { Button, Input, Modal } from './ui';
 
@@ -79,6 +80,104 @@ describe('Modal', () => {
 
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('gives focus back to what opened it, however it closes', async () => {
+    // Shaped like every caller: opened by rendering it, closed by unmounting it. The
+    // primitive returns focus to its own Trigger, and a modal opened this way has none, so
+    // focus fell to <body>. Measured in the running app on the Full reindex dialog, after
+    // Escape and after Cancel alike.
+    function Opener() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>Full reindex</button>
+          {open && (
+            <Modal title="Full reindex of docs?" onClose={() => setOpen(false)}>
+              <Button onClick={() => setOpen(false)}>Cancel</Button>
+            </Modal>
+          )}
+        </>
+      );
+    }
+
+    const user = userEvent.setup();
+    render(<Opener />);
+    const opener = screen.getByRole('button', { name: 'Full reindex' });
+
+    await user.click(opener);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(opener).toHaveFocus());
+
+    await user.click(opener);
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(opener).toHaveFocus());
+  });
+
+  it('gives focus back to the page when one modal replaces another', async () => {
+    // Shaped like New key → Token created: a button inside the first modal closes it and
+    // opens the second in one update. The second opens from a control that the same commit
+    // removes, so it has to close back to what opened the first.
+    function Chain() {
+      const [step, setStep] = useState<'none' | 'create' | 'created'>('none');
+      return (
+        <>
+          <button type="button" onClick={() => setStep('create')}>New key</button>
+          {step === 'create' && (
+            <Modal title="New key" onClose={() => setStep('none')}>
+              <Button onClick={() => setStep('created')}>Create</Button>
+            </Modal>
+          )}
+          {step === 'created' && (
+            <Modal title="Token created" onClose={() => setStep('none')}>
+              <Button onClick={() => setStep('none')}>Done</Button>
+            </Modal>
+          )}
+        </>
+      );
+    }
+
+    const user = userEvent.setup();
+    render(<Chain />);
+    const opener = screen.getByRole('button', { name: 'New key' });
+
+    await user.click(opener);
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+    await user.click(await screen.findByRole('button', { name: 'Done' }));
+
+    await waitFor(() => expect(opener).toHaveFocus());
+  });
+
+  it('gives focus back into the modal a nested one was opened from', async () => {
+    function Nested() {
+      const [outer, setOuter] = useState(false);
+      const [inner, setInner] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOuter(true)}>Filters</button>
+          {outer && (
+            <Modal title="Filters" onClose={() => setOuter(false)}>
+              <Button onClick={() => setInner(true)}>Preview</Button>
+              {inner && (
+                <Modal title="Preview" onClose={() => setInner(false)}>
+                  <Button onClick={() => setInner(false)}>Back</Button>
+                </Modal>
+              )}
+            </Modal>
+          )}
+        </>
+      );
+    }
+
+    const user = userEvent.setup();
+    render(<Nested />);
+
+    await user.click(screen.getByRole('button', { name: 'Filters' }));
+    const preview = await screen.findByRole('button', { name: 'Preview' });
+    await user.click(preview);
+    await user.click(await screen.findByRole('button', { name: 'Back' }));
+
+    await waitFor(() => expect(preview).toHaveFocus());
   });
 
   it('keeps Tab inside it', async () => {
