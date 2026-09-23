@@ -145,6 +145,45 @@ public sealed class IndexedFileKeepsItsVectorsTests
         (await harness.StateOfAsync("note.md")).ChunkCount.ShouldBe(held);
     }
 
+    [Fact]
+    public async Task OnAnUploadSource_OnlyPointsWithNoRowAtAllAreRemoved()
+    {
+        // Uploads reconcile over their attachments, the rows with stored text. An orphan is
+        // a path with no row at all: a row without stored text still names its points, and
+        // reading "not an attachment" as "not a row" would delete them.
+        await using var harness = await IndexingHarness.StartAsync();
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await AttachAsync(harness, "kept.md", "retrieval");
+        await AttachAsync(harness, "orphaned.md", "chunking");
+        await harness.RunIndexAsync();
+        var kept = harness.Vectors.CountFor("kept.md");
+        kept.ShouldBeGreaterThan(0);
+        harness.Vectors.CountFor("orphaned.md").ShouldBeGreaterThan(0);
+
+        await RemoveRowAsync(harness, "orphaned.md");
+        await using (var db = harness.NewContext())
+        {
+            (await db.Files.SingleAsync(f => f.RelativePath == "kept.md")).BlobSha256 = null;
+            await db.SaveChangesAsync();
+        }
+
+        await harness.RunIndexAsync();
+
+        harness.Vectors.CountFor("orphaned.md").ShouldBe(0);
+        harness.Vectors.CountFor("kept.md").ShouldBe(kept);
+    }
+
+    private static async Task AttachAsync(IndexingHarness harness, string name, string topic)
+    {
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var corpus = await db.Corpora.Include(c => c.Sources).Include(c => c.ChunkSets)
+            .FirstAsync(c => c.Id == IndexingHarness.CorpusId);
+        using var bytes = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(IndexingHarness.Prose(topic)));
+        var sha = (await documents.StoreAsync(bytes, name)).Sha256;
+        await documents.AttachAsync(corpus, sha, name);
+    }
+
     private static async Task RemoveRowAsync(IndexingHarness harness, string path)
     {
         await using var db = harness.NewContext();
