@@ -57,7 +57,9 @@ public sealed record GitHistoryOptions
     /// <summary>Stop after this many commits from the tip, or null for all of them.</summary>
     public int? MaxCommits { get; init; }
 
-    /// <summary>Only commits at or after this date, or null for all of them.</summary>
+    /// <summary>
+    /// Only commits committed at or after 00:00 UTC on this date, or null for all of them.
+    /// </summary>
     public DateOnly? Since { get; init; }
 
     public string ToJson() => JsonSerializer.Serialize(this, GitHistoryJson.Options);
@@ -398,7 +400,14 @@ public static class GitHistory
 
         if (!options.IncludeMerges) args.Add("--no-merges");
         if (options.MaxCommits is { } max) args.Add($"--max-count={max}");
-        if (options.Since is { } since) args.Add($"--since={since:yyyy-MM-dd}");
+        // Midnight UTC, spelled out. A bare date is not a day to git: it is that date at the
+        // current time of day, in git's local zone. Measured at 08:56 UTC, `--since=2026-01-02`
+        // dropped that day's commits from 00:30 and 06:00, so the boundary moved with every
+        // scheduled refresh; and under TZ=Etc/GMT-14 a zone-less midnight admitted a commit
+        // from 23:30 UTC the day before. Git 2.31 (Windows) and 2.54 (Linux) both read this
+        // form as UTC whatever TZ says.
+        if (options.Since is { } since)
+            args.Add($"--since={since.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}T00:00:00Z");
 
         // Before the ref, so a ref beginning with a dash is a ref and not an option.
         args.Add("--end-of-options");

@@ -221,7 +221,7 @@ What a document holds is per source:
 | `includeDiff` | false | The patch |
 | `maxDiffBytes` | 65536 | UTF-8 bytes of the patch, per commit. Over it the patch is dropped, the stat is kept, and the document says how large it was |
 | `includeMerges` | false | A merge's default patch is empty and its message is usually generated |
-| `maxCommits`, `since` | — | Bound the walk from the tip, or by date |
+| `maxCommits`, `since` | — | Bound the walk from the tip, or by date: commits committed at or after 00:00 UTC on `since` |
 
 The diff is off because of what it costs. Measured over 201 commits of this repository:
 with patches the history is 5.99 MB and the median commit 11,393 characters; with the
