@@ -294,8 +294,15 @@ Everything has a working default except `WORKSPACE_ROOT`.
 | `DEXICON__BOOTSTRAP__TOKEN` | *(empty)* | Blank generates one and logs it once. |
 | `DEXICON__LOG__LEVEL` | `Information` | |
 
-No secret has a default value, and no secret is ever read from `appsettings.json`.
-See [10](10-security-secrets.md).
+The table lists what `docker-compose.yml` passes. Any other option binds the same way once
+added to the service's `environment`, and `DexiconOptions.cs` has them all. One of them is
+`DEXICON__STORAGE__BUSYTIMEOUTSECONDS` (default `30`): how long a catalogue write waits on
+a lock held by another connection before it fails, matching the SQLite provider's own
+command timeout so neither gives up first.
+
+No secret has a default value except `QDRANT_API_KEY`, whose default exists so that a blank
+`.env` cannot turn Qdrant's authentication on with an unusable key. No secret is ever read
+from `appsettings.json`. See [10](10-security-secrets.md).
 
 ## Image
 
