@@ -227,6 +227,33 @@ public sealed class SourceFilterUpdateTests
     }
 
     /// <summary>
+    /// History settings git cannot be asked with are refused where they arrive. They were
+    /// stored as sent and found on the next pass, as the source being unavailable with
+    /// the reason in a job, so an editor saving a typo was told it had succeeded.
+    /// </summary>
+    [Fact]
+    public void UnusableHistorySettingsAreRefused()
+    {
+        Refusal(new GitHistoryOptions { Ref = "main..other" }).ShouldContain("not a usable ref");
+        Refusal(new GitHistoryOptions { Ref = "-rf" }).ShouldContain("not a usable ref");
+        Refusal(new GitHistoryOptions { Ref = " " }).ShouldContain("not a usable ref");
+        Refusal(new GitHistoryOptions { MaxCommits = 0 }).ShouldContain("maxCommits is 0");
+        Refusal(new GitHistoryOptions { MaxDiffBytes = -1 }).ShouldContain("maxDiffBytes");
+
+        CorpusEndpoints.UnusableHistorySettings(new GitHistoryOptions { Ref = "origin/main", MaxCommits = 50 })
+            .ShouldBeNull();
+        CorpusEndpoints.UnusableHistorySettings(null).ShouldBeNull("absent settings are the defaults");
+    }
+
+    private static string Refusal(GitHistoryOptions git)
+    {
+        var problem = CorpusEndpoints.UnusableHistorySettings(git)
+            .ShouldBeOfType<Microsoft.AspNetCore.Http.HttpResults.ProblemHttpResult>();
+        problem.StatusCode.ShouldBe(400);
+        return problem.ProblemDetails.Detail.ShouldNotBeNull();
+    }
+
+    /// <summary>
     /// A name `clear` does not understand is a typo, and the caller wants to know.
     ///
     /// Unknown names were dropped on the floor and the request answered 200, so

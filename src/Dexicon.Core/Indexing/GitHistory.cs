@@ -349,18 +349,37 @@ public static class GitHistory
         return kept;
     }
 
-    private static void RequireUsableOptions(GitHistoryOptions options)
+    /// <summary>
+    /// What is wrong with these settings, or null when git can be asked with them.
+    ///
+    /// Every check here is static and none runs git, so an endpoint can refuse a request
+    /// with it before starting a process. A ref that is well formed but names nothing is
+    /// left to the inventory, the first thing that asks git, and shows as the source
+    /// being unavailable with git's reason.
+    /// </summary>
+    public static string? Problem(GitHistoryOptions options) =>
+        !IsAcceptableRef(options.Ref)
+            ? $"'{options.Ref}' is not a usable ref. A branch, a tag or an object name."
+            : OptionsProblem(options);
+
+    private static string? OptionsProblem(GitHistoryOptions options)
     {
         if (!IsAcceptableDiffCap(options.MaxDiffBytes))
-            throw new GitHistoryException(
-                $"maxDiffBytes is {options.MaxDiffBytes:N0}, which is not a usable cap. "
-                + $"It must be between 0 and {MaxDiffCap:N0}, which is the {AbsoluteCeiling:N0} "
-                + $"byte read ceiling less the {StatAllowance:N0} bytes a commit's stat may take.");
+            return $"maxDiffBytes is {options.MaxDiffBytes:N0}, which is not a usable cap. "
+                 + $"It must be between 0 and {MaxDiffCap:N0}, which is the {AbsoluteCeiling:N0} "
+                 + $"byte read ceiling less the {StatAllowance:N0} bytes a commit's stat may take.";
 
         if (!IsAcceptableCommitLimit(options.MaxCommits))
-            throw new GitHistoryException(
-                $"maxCommits is {options.MaxCommits:N0}, which is not a usable limit. "
-                + "It must be at least 1, or absent for every commit.");
+            return $"maxCommits is {options.MaxCommits:N0}, which is not a usable limit. "
+                 + "It must be at least 1, or absent for every commit.";
+
+        return null;
+    }
+
+    /// <summary>The read needs no ref, since it is given shas; the other checks apply.</summary>
+    private static void RequireUsableOptions(GitHistoryOptions options)
+    {
+        if (OptionsProblem(options) is { } problem) throw new GitHistoryException(problem);
     }
 
     internal static bool IsAcceptableRef(string? value) =>
@@ -382,14 +401,11 @@ public static class GitHistory
         GitRepository repo, GitHistoryOptions options, IReadOnlyList<string>? pathspecs,
         CancellationToken ct)
     {
-        if (!IsAcceptableRef(options.Ref))
-            throw new GitHistoryException(
-                $"'{options.Ref}' is not a usable ref. A branch, a tag or an object name.");
-
         // Here rather than only on the read path: every pass enumerates first, so a
         // source carrying a nonsense cap says so on its inventory instead of on a
-        // partial read, and it says so the same way a bad ref does.
-        RequireUsableOptions(options);
+        // partial read, and it says so the same way a bad ref does. A source stored
+        // before the endpoints refused these still reaches this.
+        if (Problem(options) is { } problem) throw new GitHistoryException(problem);
 
         var marker = Marker();
         // A sha and an ISO date, and deliberately nothing else. See the remark on

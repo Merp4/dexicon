@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CorpusDetail } from './App';
-import type { Corpus } from './api';
+import { ApiError, type Corpus } from './api';
 
 /**
  * A corpus and the places it takes content from.
@@ -193,7 +193,7 @@ describe('the sources a corpus reads', () => {
 
     expect(await screen.findByText(/201 commits/)).toBeInTheDocument();
     expect(screen.getByText(/37 files/)).toBeInTheDocument();
-    expect(screen.getByText(/main.*with the diff/)).toBeInTheDocument();
+    expect(screen.getByText(/main.*message, stat and diff/)).toBeInTheDocument();
 
     // One .gitignore line, for the workspace source, and none for the history one.
     expect(screen.getAllByText(/\.gitignore honoured/)).toHaveLength(1);
@@ -265,6 +265,28 @@ describe('the sources a corpus reads', () => {
     expect(await screen.findByText('workspace root')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Remove source workspace root' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Edit filters for workspace root' })).toBeInTheDocument();
+  });
+
+  /**
+   * What each commit holds, from all three settings. It was read off the diff alone, so
+   * a source with the message turned off still said "message and stat".
+   */
+  it('says what each commit holds from all three settings', async () => {
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          source({
+            id: 's2', kind: 'githistory', rootPath: 'api-repo', fileCount: 201,
+            git: { ref: 'main', includeMessage: false, includeStat: true, includeDiff: false, maxDiffBytes: 65536, includeMerges: false },
+          }),
+        ],
+      }),
+    );
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText(/main · stat only/)).toBeInTheDocument();
+    expect(screen.queryByText(/message and stat/)).not.toBeInTheDocument();
   });
 
   /**
@@ -430,6 +452,48 @@ describe('adding a source', () => {
 
     await waitFor(() => expect(addSource).toHaveBeenCalled());
     expect(addSource.mock.calls[0][1]).toMatchObject({ git: { includeDiff: true } });
+  });
+
+  /**
+   * The add and edit dialogs share one set of history fields. A source over a checkout's
+   * HEAD follows a local branch that moves only when someone pulls; choosing the ref when
+   * the source is added is how that is avoided rather than repaired.
+   */
+  it('lets the ref be chosen when the history is added', async () => {
+    addSource.mockResolvedValue({});
+    const { user, dialog } = await openAddSource();
+
+    await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
+    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+
+    const ref = within(dialog).getByLabelText('Ref');
+    await user.clear(ref);
+    await user.type(ref, 'origin/main');
+    await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
+
+    await waitFor(() => expect(addSource).toHaveBeenCalled());
+    expect(addSource.mock.calls[0][1]).toMatchObject({ git: { ref: 'origin/main', includeMessage: true } });
+  });
+
+  /**
+   * A refusal belongs where the settings it names still are. Sent to the page, it landed
+   * behind the dialog, which stayed open saying nothing.
+   */
+  it('shows a refusal in the dialog, which stays open', async () => {
+    addSource.mockRejectedValue(new ApiError(400, 'Unusable history settings',
+      "'main..other' is not a usable ref. A branch, a tag or an object name."));
+    const { user, dialog } = await openAddSource();
+
+    await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
+    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+    const ref = within(dialog).getByLabelText('Ref');
+    await user.clear(ref);
+    await user.type(ref, 'main..other');
+    await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
+
+    expect(await within(dialog).findByText(/is not a usable ref/)).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(props.onError).not.toHaveBeenCalled();
   });
 
   it('sends the filters, as a list and in bytes', async () => {
@@ -939,6 +1003,124 @@ describe('editing a source filter', () => {
     expect(cap.validity.stepMismatch).toBe(false);
     expect(cap.checkValidity()).toBe(true);
     expect(cap.form!.checkValidity()).toBe(true);
+  });
+});
+
+/**
+ * A history source's settings after it was added. The row had no editor, so changing the
+ * ref meant the API or removing the source and re-reading every commit.
+ */
+describe('editing a history source', () => {
+  const history = () =>
+    corpus({
+      sources: [
+        source({
+          id: 's2', kind: 'githistory', rootPath: 'api-repo', fileCount: 174,
+          includeGlobs: [], ownIncludeGlobs: null,
+          git: { ref: 'HEAD', includeMessage: true, includeStat: true, includeDiff: false, maxDiffBytes: 65536, includeMerges: false, maxCommits: null, since: null },
+        }),
+      ],
+    });
+
+  async function openEditor() {
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(history());
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: 'Edit history settings for api-repo' }));
+    return { user, dialog: await screen.findByRole('dialog') };
+  }
+
+  it('sends every setting, since the server replaces them all', async () => {
+    updateSource.mockResolvedValue({});
+    const { user, dialog } = await openEditor();
+
+    const ref = within(dialog).getByLabelText('Ref');
+    await user.clear(ref);
+    await user.type(ref, 'origin/main');
+    await user.click(within(dialog).getByRole('button', { name: /Save history settings/ }));
+
+    await waitFor(() => expect(updateSource).toHaveBeenCalled());
+    const [name, id, body] = updateSource.mock.calls[0];
+    expect([name, id]).toEqual(['docs', 's2']);
+    expect(body.git).toEqual({
+      ref: 'origin/main', includeMessage: true, includeStat: true, includeDiff: false,
+      maxDiffBytes: 65536, includeMerges: false, maxCommits: null, since: null,
+    });
+    // Following the corpus, as the source did before: nothing new pinned against it.
+    expect(body.clear).toEqual(['includeGlobs']);
+    expect(body.includeGlobs).toBeUndefined();
+  });
+
+  it('shows a refusal in the dialog, which stays open', async () => {
+    // What the server says of a ref git cannot be asked with. Reported anywhere else, it
+    // lands behind the dialog, and closing it would say the save had worked.
+    updateSource.mockRejectedValue(new ApiError(400, 'Unusable history settings',
+      "'main..other' is not a usable ref. A branch, a tag or an object name."));
+    const { user, dialog } = await openEditor();
+
+    const ref = within(dialog).getByLabelText('Ref');
+    await user.clear(ref);
+    await user.type(ref, 'main..other');
+    await user.click(within(dialog).getByRole('button', { name: /Save history settings/ }));
+
+    expect(await within(dialog).findByText(/is not a usable ref/)).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(props.onError).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The two kinds of change cost different amounts. Which commits are selected adds and
+   * removes documents; what a document holds changes every one of them.
+   */
+  it('says when a change re-reads every commit', async () => {
+    const { user, dialog } = await openEditor();
+
+    const ref = within(dialog).getByLabelText('Ref');
+    await user.clear(ref);
+    await user.type(ref, 'origin/main');
+    expect(within(dialog).getByText(/documents already indexed\s+are kept/)).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('checkbox', { name: /Include the diff/ }));
+    expect(within(dialog).getByText(/Saving re-reads every commit/)).toBeInTheDocument();
+  });
+
+  /**
+   * The content fingerprint sorts the paths before hashing, so the same paths in another
+   * order make the same documents and nothing is re-read. Warning otherwise would put
+   * someone off a harmless save.
+   */
+  it('does not call reordering the paths a re-read, and does call a new path one', async () => {
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          source({
+            id: 's2', kind: 'githistory', rootPath: 'api-repo', fileCount: 174,
+            includeGlobs: ['src/**', 'docs/**'], ownIncludeGlobs: ['src/**', 'docs/**'],
+            git: { ref: 'HEAD', includeMessage: true, includeStat: true, includeDiff: false, maxDiffBytes: 65536, includeMerges: false, maxCommits: null, since: null },
+          }),
+        ],
+      }),
+    );
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: 'Edit history settings for api-repo' }));
+    const dialog = await screen.findByRole('dialog');
+
+    const paths = within(dialog).getByLabelText('Only these paths');
+    await user.clear(paths);
+    await user.type(paths, 'docs/**, src/**');
+    expect(within(dialog).getByText(/documents already indexed\s+are kept/)).toBeInTheDocument();
+
+    await user.type(paths, ', tests/**');
+    expect(within(dialog).getByText(/Saving re-reads every commit/)).toBeInTheDocument();
+  });
+
+  it('is not offered the file settings', async () => {
+    const { dialog } = await openEditor();
+
+    expect(within(dialog).queryByLabelText(/Largest file/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/Honour \.gitignore/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/Never these/)).not.toBeInTheDocument();
   });
 });
 

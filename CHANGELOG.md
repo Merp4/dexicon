@@ -34,6 +34,24 @@ with no section here fails its release rather than publishing an undescribed one
   the counts and the source's state report. An inventory that fails leaves the last
   record; one whose settings select no commits clears it.
 
+- **A history source's settings can be edited.** Its row had no editor, so changing the
+  ref meant the API, or removing the source and re-reading every commit. The editor holds
+  the ref, the message, stat and diff with its cap, merges, a commit limit, a date and the
+  include paths, and the add dialog now shows the same fields from the same component, so
+  a ref such as `origin/main` can be chosen when the source is added. The editor says
+  which kind of change it is about to save: the ref, limit, date and merges choose which
+  commits are indexed and keep the documents already there, while the message, stat, diff
+  and paths change every document and re-read the history.
+
+### Changed
+
+- **History settings git cannot be asked with are refused when a source is added or
+  edited.** A malformed ref, a commit limit below one or a diff cap past the read ceiling
+  was stored as sent, answered 200, and found on the next pass as the source being
+  unavailable. It is now a 400 carrying the same reason the inventory gives, and the
+  add and edit dialogs show it, staying open. None of the checks runs git; a well-formed ref that names
+  nothing still shows on the corpus after the refresh.
+
 ### Fixed
 
 - **A source at the workspace root has a name.** Its path is empty, and `rootPath ?? kind`

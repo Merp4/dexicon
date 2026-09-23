@@ -27,7 +27,7 @@ import {
   Search, Settings, Sliders, SlidersHorizontal, Trash2, TriangleAlert,
 } from 'lucide-react';
 import { cn } from 'cn';
-import { sourceName } from './lib/sources';
+import { historyContent, sourceName } from './lib/sources';
 import { unitFor, unitOf } from './lib/units';
 import { parseHash, toHash, type View as RouteView } from './route';
 import { WorkspacePicker } from './WorkspacePicker';
@@ -1235,7 +1235,7 @@ export function CorpusDetail({
                   {s.kind === 'githistory' ? (
                     <span className="dim text-xs">
                       {s.git?.ref ?? 'HEAD'}
-                      {' · '}{s.git?.includeDiff ? 'with the diff' : 'message and stat'}
+                      {' · '}{historyContent(s.git)}
                       {s.includeGlobs?.length ? ` · only ${s.includeGlobs.join(', ')}` : ''}
                       {/* Where the ref had got to when it was last read. The ref names what
                           to follow and says nothing about whether it moves: a source over a
@@ -1277,11 +1277,13 @@ export function CorpusDetail({
                   {/* Adding a folder was one click; removing one meant deleting the whole
                       corpus and rebuilding it, losing its chunk sets, its history and every
                       other source with it. A path typed wrong is not worth that. */}
-                  {s.kind === 'workspace' && (
+                  {(s.kind === 'workspace' || s.kind === 'githistory') && (
                     <Button
                       variant="ghost"
                       size="icon-xs"
-                      aria-label={`Edit filters for ${sourceName(s)}`}
+                      aria-label={s.kind === 'githistory'
+                        ? `Edit history settings for ${sourceName(s)}`
+                        : `Edit filters for ${sourceName(s)}`}
                       onClick={() => setEditingSource(s)}
                     >
                       <SlidersHorizontal />
@@ -1468,11 +1470,17 @@ export function CorpusDetail({
           initialPath={addingSource.path}
           onClose={() => setAddingSource(null)}
           onAdded={async () => { setAddingSource(null); await onRefresh(); await load(); }}
-          onError={onError}
         />
       )}
 
-      {editingSource && (
+      {editingSource && (editingSource.kind === 'githistory' ? (
+        <EditHistorySourceModal
+          corpus={corpus}
+          source={editingSource}
+          onClose={() => setEditingSource(null)}
+          onSaved={async () => { setEditingSource(null); await load(); }}
+        />
+      ) : (
         <EditSourceModal
           corpus={corpus}
           source={editingSource}
@@ -1480,7 +1488,7 @@ export function CorpusDetail({
           onSaved={async () => { setEditingSource(null); await load(); }}
           onError={onError}
         />
-      )}
+      ))}
 
       {editingDefaults && (
         <CorpusDefaultsModal
@@ -1816,6 +1824,112 @@ function EditSourceModal({
 }
 
 /**
+ * A git-history source's settings, after it was added.
+ *
+ * The row had no editor, so changing the ref meant the API or deleting the source and
+ * re-reading every commit. Saving sends every setting, because the server replaces the
+ * whole set; it queues a refresh only when something moved, and refuses settings git
+ * cannot be asked with, which show here rather than as a job failing later.
+ */
+function EditHistorySourceModal({
+  corpus,
+  source,
+  onClose,
+  onSaved,
+}: {
+  corpus: Corpus;
+  source: Corpus['sources'][number];
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const initial = gitSettingsOf(source.git);
+  const [git, setGit] = useState<GitSettings>(initial);
+  const [inheritInclude, setInheritInclude] = useState(source.ownIncludeGlobs == null);
+  const [include, setInclude] = useState((source.includeGlobs ?? []).join(', '));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  // The paths as they would be applied, so inheriting what is already in force is not a
+  // change. They are pathspecs, and decide which files the stat lists and which hunks
+  // the patch holds.
+  // Compared sorted, as the content fingerprint compares them: the same paths in another
+  // order make the same documents, and the notice below would otherwise warn of a
+  // re-read that does not happen.
+  const paths = inheritInclude ? (corpus.defaults?.includeGlobs ?? []) : globList(include);
+  const sortedPaths = (list: string[]) => [...list].sort().join('\n');
+  const pathsChanged = sortedPaths(paths) !== sortedPaths(source.includeGlobs ?? []);
+
+  // Which of the two kinds of change this is, because they cost different amounts:
+  // docs/04 has the rule. What a document holds decides every document, so changing it
+  // re-reads the history; which commits are selected adds and removes documents and
+  // leaves the rest as they are.
+  const rewrites = git.includeMessage !== initial.includeMessage
+    || git.includeStat !== initial.includeStat
+    || git.includeDiff !== initial.includeDiff
+    || (git.includeDiff && git.maxDiffBytes !== initial.maxDiffBytes)
+    || pathsChanged;
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await api.updateSource(corpus.name, source.id, {
+        git,
+        clear: inheritInclude ? ['includeGlobs'] : [],
+        includeGlobs: inheritInclude ? undefined : globList(include),
+      });
+      await onSaved();
+    } catch (err) {
+      setError(err);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title={`History settings for ${sourceName(source)}`} onClose={onClose}>
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
+      <form onSubmit={submit}>
+        <GitHistoryFields value={git} onChange={setGit} />
+
+        <Inheritable
+          label="Only these paths"
+          inherited={inheritInclude}
+          inheritedLabel={corpus.defaults?.includeGlobs?.length ? corpus.defaults.includeGlobs.join(', ') : 'the whole repository'}
+          onInheritedChange={setInheritInclude}
+        >
+          <Field label="Only these paths" hint="Paths, comma separated. Commits that touched them, and only their side of the diff.">
+            <Input className="mono" value={include} onChange={(e) => setInclude(e.target.value)}
+              placeholder="src/**, docs/**" />
+          </Field>
+        </Inheritable>
+
+        {rewrites ? (
+          <Notice tone="warn" className="text-xs">
+            Saving re-reads every commit. The message, the stat, the diff and the paths decide
+            what each document holds, so every document already indexed changes.
+          </Notice>
+        ) : (
+          <Notice tone="neutral" className="text-xs">
+            Saving refreshes the corpus. The ref, the commit limit, the date and merges decide
+            which commits are indexed, not what any of them holds: documents already indexed
+            are kept, and commits no longer selected leave the index.
+          </Notice>
+        )}
+
+        <div className="mt-3.5 flex justify-end gap-2">
+          <Button type="button" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button type="submit" variant="primary" disabled={busy}>
+            {busy ? <Spinner /> : <Check />}
+            Save history settings
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/**
  * Filters every source of this corpus inherits unless it sets its own.
  *
  * Inherited live rather than copied when a source is added: ten folders under one parent
@@ -1949,12 +2063,119 @@ function CorpusDefaultsModal({
  * beginning, and in the UI never, so a corpus was stuck with the one source it was
  * created with, and the filters could not be set or seen at all.
  */
+/** A history source's settings with every field present, since a save sends them all. */
+type GitSettings = {
+  ref: string;
+  includeMessage: boolean;
+  includeStat: boolean;
+  includeDiff: boolean;
+  maxDiffBytes: number;
+  includeMerges: boolean;
+  maxCommits: number | null;
+  since: string | null;
+};
+
+/** The server's defaults, spelled out so a form can show them. docs/04 lists them. */
+const DEFAULT_GIT: GitSettings = {
+  ref: 'HEAD',
+  includeMessage: true,
+  includeStat: true,
+  includeDiff: false,
+  maxDiffBytes: 65536,
+  includeMerges: false,
+  maxCommits: null,
+  since: null,
+};
+
+function gitSettingsOf(git?: Corpus['sources'][number]['git']): GitSettings {
+  return {
+    ref: git?.ref ?? DEFAULT_GIT.ref,
+    includeMessage: git?.includeMessage ?? DEFAULT_GIT.includeMessage,
+    includeStat: git?.includeStat ?? DEFAULT_GIT.includeStat,
+    includeDiff: git?.includeDiff ?? DEFAULT_GIT.includeDiff,
+    maxDiffBytes: git?.maxDiffBytes ?? DEFAULT_GIT.maxDiffBytes,
+    includeMerges: git?.includeMerges ?? DEFAULT_GIT.includeMerges,
+    maxCommits: git?.maxCommits ?? null,
+    since: git?.since ?? null,
+  };
+}
+
+/**
+ * What a history source reads from git, shared by adding one and editing one so the two
+ * cannot drift apart. Only the settings that are git's: the include paths sit beside
+ * these in each dialog, because a file source has them too.
+ */
+function GitHistoryFields({
+  value,
+  onChange,
+}: {
+  value: GitSettings;
+  onChange: (next: GitSettings) => void;
+}) {
+  const set = <K extends keyof GitSettings>(key: K, v: GitSettings[K]) => onChange({ ...value, [key]: v });
+
+  const check = (key: 'includeMessage' | 'includeStat' | 'includeDiff' | 'includeMerges', label: string, hint: string) => (
+    <label className="mb-3.5 flex items-start gap-2.5">
+      <Checkbox checked={value[key]} onCheckedChange={(v) => set(key, v === true)} className="mt-0.5" />
+      <span className="grid gap-0.5">
+        <span className="text-sm leading-none font-semibold">{label}</span>
+        <span className="text-xs text-muted-foreground">{hint}</span>
+      </span>
+    </label>
+  );
+
+  return (
+    <>
+      <Field
+        label="Ref"
+        hint="A branch, a tag or a commit. HEAD follows whatever the checkout has out, which moves only when someone pulls; origin/main follows every fetch. One that names nothing shows on the corpus after the refresh."
+      >
+        <Input className="mono" value={value.ref} onChange={(e) => set('ref', e.target.value)} placeholder="HEAD" />
+      </Field>
+
+      {/* Each hint says what its own setting adds, so none of them is wrong when another
+          setting is turned off. The diff's figures are a measurement with the message and
+          the stat on, and say so. */}
+      {check('includeMessage', 'Include the message', 'Subject and body, which say why a change was made.')}
+      {check('includeStat', 'Include the stat', 'Which files each commit touched, with ± counts.')}
+      {check('includeDiff', 'Include the diff',
+        'The patch. Measured over 201 commits with the message and the stat, a commit was about 2,000 characters without it and about thirteen times that with it.')}
+
+      {value.includeDiff && (
+        <Field label="Largest diff per commit (KB)" hint="Over it the patch is left out and the document says how large it was. The stat stays.">
+          <Input
+            type="number"
+            min={0}
+            step="any"
+            value={value.maxDiffBytes / 1024}
+            onChange={(e) => set('maxDiffBytes', Math.round(Number(e.target.value) * 1024))}
+          />
+        </Field>
+      )}
+
+      {check('includeMerges', 'Include merge commits', 'Their default patch is empty and their message is usually generated.')}
+
+      <Field label="Newest commits only (optional)" hint="Counted from the tip. Empty for every commit.">
+        <Input
+          type="number"
+          min={1}
+          value={value.maxCommits ?? ''}
+          onChange={(e) => set('maxCommits', e.target.value === '' ? null : Number(e.target.value))}
+        />
+      </Field>
+
+      <Field label="Committed since (optional)" hint="From 00:00 UTC on this date. Empty for every commit.">
+        <Input type="date" value={value.since ?? ''} onChange={(e) => set('since', e.target.value || null)} />
+      </Field>
+    </>
+  );
+}
+
 function AddSourceModal({
   corpus,
   initialPath = '',
   onClose,
   onAdded,
-  onError,
 }: {
   corpus: Corpus;
   /** Pre-filled when the coverage notice opened this, so the fix is one click from the
@@ -1962,14 +2183,16 @@ function AddSourceModal({
   initialPath?: string;
   onClose: () => void;
   onAdded: () => Promise<void>;
-  onError: (e: unknown) => void;
 }) {
   const [path, setPath] = useState(initialPath);
+  // In the dialog rather than the page's banner, which sits behind it. A refusal is
+  // something to fix here, and the settings it names are the ones still on screen.
+  const [error, setError] = useState<unknown>(null);
   const [useGitignore, setUseGitignore] = useState(true);
   // Commits rather than files. The two are separate sources over the same folder when
   // both are wanted, so this is a choice about what THIS source is, not a modifier.
   const [gitHistory, setGitHistory] = useState(false);
-  const [includeDiff, setIncludeDiff] = useState(false);
+  const [git, setGit] = useState<GitSettings>(DEFAULT_GIT);
   // 2 MB was too small to be a useful default: it is a cap on ordinary files, since PDFs,
   // EPUBs and the other document formats are measured against DocumentMaxBytes instead, so
   // the only thing it was excluding was large text.
@@ -1987,6 +2210,7 @@ function AddSourceModal({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
+    setError(null);
     try {
       // Undefined, not an empty array: an omitted filter means this source follows the
       // corpus, and an empty one means "none, whatever the corpus says". Sending [] for a
@@ -2001,17 +2225,18 @@ function AddSourceModal({
         includeGlobs: globList(include).length ? globList(include) : undefined,
         excludeGlobs: gitHistory || !globList(exclude).length ? undefined : globList(exclude),
         gitHistory: gitHistory || undefined,
-        git: gitHistory ? { includeDiff } : undefined,
+        git: gitHistory ? git : undefined,
       });
       await onAdded();
     } catch (err) {
-      onError(err);
+      setError(err);
       setBusy(false);
     }
   }
 
   return (
     <Modal title={`Add a source to ${corpus.name}`} onClose={onClose}>
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <form onSubmit={submit}>
         <Field
           label="Workspace folder"
@@ -2043,23 +2268,7 @@ function AddSourceModal({
           </span>
         </label>
 
-        {gitHistory && (
-          <label className="mb-3.5 flex items-start gap-2.5">
-            <Checkbox
-              checked={includeDiff}
-              onCheckedChange={(v) => setIncludeDiff(v === true)}
-              className="mt-0.5"
-            />
-            <span className="grid gap-0.5">
-              <span className="text-sm leading-none font-semibold">Include the diff</span>
-              <span className="text-xs text-muted-foreground">
-                Off, each commit is its message and which files it touched: measured over
-                201 commits, about 2,000 characters each. On, it is the patch as well, and
-                about thirteen times that.
-              </span>
-            </span>
-          </label>
-        )}
+        {gitHistory && <GitHistoryFields value={git} onChange={setGit} />}
 
         {!gitHistory && (
           <Field label="Largest file (MB)" hint="Anything bigger is skipped and reported, not silently dropped.">
