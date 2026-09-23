@@ -289,8 +289,10 @@ public sealed class GitHistoryTests : IDisposable
     /// The fingerprint settles a document from the sha and the source's settings, so
     /// anything else that alters the text makes the pre-read skip hold a document git
     /// would no longer produce — and the skip is the path that avoids looking, so
-    /// nothing notices. `core.quotePath` is the one measured here because it is the one
-    /// most likely to be set for real, and the difference is visible at a glance.
+    /// nothing notices. Two settings are checked: `core.quotePath`, the one most likely to
+    /// be set for real, and `diff.noprefix`, both visible in the diff header.
+    /// `diff.context` is set as well, but a one-line file has no context for it to widen,
+    /// so nothing here observes it.
     /// </summary>
     [Fact]
     public async Task RepositoryConfigDoesNotChangeWhatACommitSays()
@@ -309,7 +311,9 @@ public sealed class GitHistoryTests : IDisposable
         var document = read[commits[0].Sha];
 
         document.ShouldContain(name, Case.Sensitive);
-        document.ShouldNotContain("346", Case.Sensitive);   // the octal escape quotePath produces
+        // The octal escape quotePath produces for 漢 (UTF-8 E6 BC A2). The backslashes are
+        // what a sha or a date cannot contain; "346" alone appeared in one by chance.
+        document.ShouldNotContain(@"\346\274\242", Case.Sensitive);
         document.ShouldContain($"diff --git a/{name} b/{name}", Case.Sensitive);
     }
 

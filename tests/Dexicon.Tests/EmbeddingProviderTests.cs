@@ -293,17 +293,20 @@ public sealed class EmbeddingProviderTests
         //
         // maxRetries is passed explicitly because the fixture defaults it to 0, and with no
         // retries configured there is no backoff to bypass: the assertion below held
-        // whatever the code did. Two retries cost 250*2^n + jitter each, so at least
-        // 1,500 ms if a refusal ever enters the loop. TheBackoffIsRealWhenItApplies is the
-        // control for that number.
-        var service = Service(new RefusesLongInput(limit: 10), maxRetries: 2);
+        // whatever the code did.
+        //
+        // The backoff is waited before each attempt after the first, so one call means no
+        // wait. Asserted on the call count rather than the clock, which a CI runner
+        // stretched to 675 ms on a correct run. TheBackoffIsRealWhenItApplies is the
+        // control that the wait exists.
+        var generator = new RefusesLongInput(limit: 10);
+        var service = Service(generator, maxRetries: 2);
 
-        var started = System.Diagnostics.Stopwatch.StartNew();
         await Should.ThrowAsync<EmbeddingInputTooLongException>(() =>
             service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Document,
                 [new string('x', 50)], source: "a.pdf"));
 
-        started.ElapsedMilliseconds.ShouldBeLessThan(200);
+        generator.CallTimes.Count.ShouldBe(1, "a refusal is reported, not retried");
     }
 
     [Fact]
