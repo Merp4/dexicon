@@ -89,6 +89,51 @@ public sealed class IndexedFileKeepsItsVectorsTests
     }
 
     [Fact]
+    public async Task PointsNoRowNames_AreRemoved()
+    {
+        // The other record missing: points held, and no row for their path at all. A pass
+        // interrupted after writing a file's points and before saving its row leaves this,
+        // and once the file is out of scope nothing looks at that path again. Found on a
+        // live index: 11 points for a file its source had since excluded, still returned
+        // by search.
+        await using var harness = await IndexedAsync();
+        var held = harness.Vectors.CountFor("note.md");
+
+        await RemoveRowAsync(harness, "note.md");
+        File.Delete(Path.Combine(harness.SourceDirectory, "note.md"));
+        harness.Vectors.CountFor("note.md").ShouldBe(held, "the points outlive the row, as they did live");
+
+        await harness.RunIndexAsync();
+
+        harness.Vectors.CountFor("note.md").ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task AndAFileStillInScopeIsIndexedFromNothing()
+    {
+        // Removing the points first must not cost the file: it is walked, found to have no
+        // row, and indexed as new, once.
+        await using var harness = await IndexedAsync();
+        var held = harness.Vectors.CountFor("note.md");
+
+        await RemoveRowAsync(harness, "note.md");
+
+        await harness.RunIndexAsync();
+
+        harness.Vectors.CountFor("note.md").ShouldBe(held);
+        (await harness.StateOfAsync("note.md")).ChunkCount.ShouldBe(held);
+    }
+
+    private static async Task RemoveRowAsync(IndexingHarness harness, string path)
+    {
+        await using var db = harness.NewContext();
+        var file = await db.Files.SingleAsync(f => f.RelativePath == path);
+        db.FileChunkStates.RemoveRange(db.FileChunkStates.Where(s => s.FileId == file.Id));
+        db.Files.Remove(file);
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
     public async Task AnIncompleteCountIsNotTreatedAsAnEmptyOne()
     {
         // The dangerous failure. A facet at its cap reports nothing for every file past
