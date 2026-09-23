@@ -251,6 +251,35 @@ public sealed class GitHistoryIndexingTests
     }
 
     /// <summary>
+    /// The inventory can succeed and the read still fail. A commit whose message is too
+    /// large to read is listed by `git log` and then refused, so recording at the
+    /// inventory would name a commit the pass never read.
+    /// </summary>
+    [Fact]
+    public async Task ACommitThePassCouldNotReadIsNotRecorded()
+    {
+        await using var harness = await IndexingHarness.StartAsync("repo");
+        Init(harness.SourceDirectory);
+        Commit(harness.SourceDirectory, "a.txt", "one\n", "the first change");
+
+        await harness.SeedCorpusAsync(SourceKind.GitHistory);
+        await harness.RunIndexAsync();
+        var seen = Head(harness.SourceDirectory);
+
+        // The same over-large message GitHistoryTests uses to make the read refuse.
+        File.WriteAllText(Path.Combine(harness.SourceDirectory, "b.txt"), "two\n");
+        File.WriteAllText(Path.Combine(harness.DataPath, "msg.txt"), new string('m', 2 * 1024 * 1024));
+        Git(harness.SourceDirectory, "add", "b.txt");
+        Git(harness.SourceDirectory, "commit", "-F", Path.Combine(harness.DataPath, "msg.txt"));
+
+        var job = await harness.RunIndexAsync();
+
+        job.State.ShouldBe(JobState.Degraded, "the read failed, so the source was unreachable");
+        Head(harness.SourceDirectory).Sha.ShouldNotBe(seen.Sha, "the inventory did list a newer commit");
+        ShouldBeTheCommit(await NewestRecordedAsync(harness), seen);
+    }
+
+    /// <summary>
     /// Settings that select no commits are an observation, and the record says so.
     /// Keeping the old commit would show a source reading history it no longer reads.
     /// </summary>
