@@ -1853,8 +1853,12 @@ function EditHistorySourceModal({
   // The paths as they would be applied, so inheriting what is already in force is not a
   // change. They are pathspecs, and decide which files the stat lists and which hunks
   // the patch holds.
+  // Compared sorted, as the content fingerprint compares them: the same paths in another
+  // order make the same documents, and the notice below would otherwise warn of a
+  // re-read that does not happen.
   const paths = inheritInclude ? (corpus.defaults?.includeGlobs ?? []) : globList(include);
-  const pathsChanged = paths.join('\n') !== (source.includeGlobs ?? []).join('\n');
+  const sortedPaths = (list: string[]) => [...list].sort().join('\n');
+  const pathsChanged = sortedPaths(paths) !== sortedPaths(source.includeGlobs ?? []);
 
   // Which of the two kinds of change this is, because they cost different amounts:
   // docs/04 has the rule. What a document holds decides every document, so changing it

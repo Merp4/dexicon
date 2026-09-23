@@ -1041,6 +1041,37 @@ describe('editing a history source', () => {
     expect(within(dialog).getByText(/Saving re-reads every commit/)).toBeInTheDocument();
   });
 
+  /**
+   * The content fingerprint sorts the paths before hashing, so the same paths in another
+   * order make the same documents and nothing is re-read. Warning otherwise would put
+   * someone off a harmless save.
+   */
+  it('does not call reordering the paths a re-read, and does call a new path one', async () => {
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          source({
+            id: 's2', kind: 'githistory', rootPath: 'api-repo', fileCount: 174,
+            includeGlobs: ['src/**', 'docs/**'], ownIncludeGlobs: ['src/**', 'docs/**'],
+            git: { ref: 'HEAD', includeMessage: true, includeStat: true, includeDiff: false, maxDiffBytes: 65536, includeMerges: false, maxCommits: null, since: null },
+          }),
+        ],
+      }),
+    );
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: 'Edit history settings for api-repo' }));
+    const dialog = await screen.findByRole('dialog');
+
+    const paths = within(dialog).getByLabelText('Only these paths');
+    await user.clear(paths);
+    await user.type(paths, 'docs/**, src/**');
+    expect(within(dialog).getByText(/documents already indexed\s+are kept/)).toBeInTheDocument();
+
+    await user.type(paths, ', tests/**');
+    expect(within(dialog).getByText(/Saving re-reads every commit/)).toBeInTheDocument();
+  });
+
   it('is not offered the file settings', async () => {
     const { dialog } = await openEditor();
 
