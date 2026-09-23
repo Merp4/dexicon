@@ -1155,13 +1155,21 @@ describe('the chunk sets on a corpus page', () => {
   });
 
   it('are opened from the full reindex dialog, which sends a model change there', async () => {
+    // jsdom has no layout, so no scrollIntoView; stubbed to see that it is asked for.
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
     render(<CorpusDetail {...props} />);
     await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
 
     await userEvent.click(await screen.findByRole('button', { name: 'Add one under Chunk sets' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(screen.getByRole('button', { name: /Chunk sets/ })).toHaveAttribute('aria-expanded', 'true');
+    const toggle = screen.getByRole('button', { name: /Chunk sets/ });
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    // Focus goes where the page went, not back to Full reindex.
+    await waitFor(() => expect(toggle).toHaveFocus());
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
   });
 });
 

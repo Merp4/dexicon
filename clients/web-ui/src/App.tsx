@@ -1060,6 +1060,7 @@ export function CorpusDetail({
     try { return localStorage.getItem(CHUNK_SETS_OPEN) === '1'; } catch { return false; }
   });
   const chunkSets = useRef<HTMLDivElement>(null);
+  const leavingForChunkSets = useRef(false);
   const showChunkSets = (open: boolean) => {
     setChunkSetsOpen(open);
     try { localStorage.setItem(CHUNK_SETS_OPEN, open ? '1' : '0'); } catch { /* blocked storage is fine */ }
@@ -1170,7 +1171,7 @@ export function CorpusDetail({
         <Button onClick={async () => { try { await api.reindex(corpus.name); } catch (e) { onError(e); } }}><RefreshCw />Refresh</Button>
         {/* Asks first. Refresh is cheap and idempotent; this one re-embeds a corpus that
             may have taken hours, and it sat one click away from it with nothing between. */}
-        <Button onClick={() => setConfirmFullReindex(true)}><RotateCcw />Full reindex</Button>
+        <Button onClick={() => { leavingForChunkSets.current = false; setConfirmFullReindex(true); }}><RotateCcw />Full reindex</Button>
         <Button variant="danger" onClick={() => setConfirmDelete(true)}><Trash2 />Delete</Button>
       </div>
 
@@ -1490,10 +1491,17 @@ export function CorpusDetail({
           onClose={() => setConfirmFullReindex(false)}
           onError={onError}
           onShowChunkSets={() => {
+            leavingForChunkSets.current = true;
             setConfirmFullReindex(false);
             showChunkSets(true);
             requestAnimationFrame(() => chunkSets.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }));
           }}
+          // Focus follows the page there, rather than returning to Full reindex while the
+          // view has moved to the chunk sets.
+          finalFocus={() =>
+            leavingForChunkSets.current
+              ? chunkSets.current?.querySelector<HTMLElement>('button[aria-expanded]') ?? null
+              : null}
         />
       )}
     </div>
@@ -2290,12 +2298,15 @@ function FullReindexModal({
   onClose,
   onError,
   onShowChunkSets,
+  finalFocus,
 }: {
   corpus: Corpus;
   onClose: () => void;
   onError: (e: unknown) => void;
   /** Close this and open the chunk sets, which is where a model change is made. */
   onShowChunkSets: () => void;
+  /** Where focus goes when this closes; see Modal. */
+  finalFocus: () => HTMLElement | null;
 }) {
   const [queueing, setQueueing] = useState(false);
 
@@ -2335,7 +2346,7 @@ function FullReindexModal({
   };
 
   return (
-    <Modal title={`Full reindex of ${corpus.name}?`} onClose={onClose} width={560}>
+    <Modal title={`Full reindex of ${corpus.name}?`} onClose={onClose} width={560} finalFocus={finalFocus}>
       <p className="mt-0 text-sm">
         Every {unitFor(corpus.sources, 1)} is read again, whether or not it changed, and
         re-embedded if it can be read and chunked — in{' '}

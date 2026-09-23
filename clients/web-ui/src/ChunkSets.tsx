@@ -144,7 +144,12 @@ export function ChunkSetsPanel({
                 {searched.failedCount > 0 && <Badge tone="danger">{searched.failedCount} failed</Badge>}
                 {others > 0 && <span>+{others} more</span>}
                 {needsAttention.map((s) => (
-                  <Badge key={s.id} tone={s.failedCount > 0 ? 'danger' : 'warn'}>
+                  <Badge
+                    key={s.id}
+                    // The tone the open list gives the same set, so unavailable and degraded
+                    // stay red; ready with work still pending is a warning.
+                    tone={s.failedCount > 0 ? 'danger' : s.state !== 'ready' ? stateTone(s.state) : 'warn'}
+                  >
                     {s.name}: {s.state}
                     {s.pendingCount > 0 && `, ${s.pendingCount.toLocaleString()} pending`}
                     {s.failedCount > 0 && `, ${s.failedCount} failed`}
@@ -157,9 +162,14 @@ export function ChunkSetsPanel({
         <Button className="shrink-0" onClick={() => setAdding(true)}>+ Add set</Button>
       </div>
 
-      <div id={listId} hidden={!open} className="mt-2.5">
-      <ErrorBanner error={error} onDismiss={() => setError(null)} />
+      {/* Outside the list, so an action that fails after the list is closed still says so. */}
+      {error != null && (
+        <div className="mt-2.5">
+          <ErrorBanner error={error} onDismiss={() => setError(null)} />
+        </div>
+      )}
 
+      <div id={listId} hidden={!open} className="mt-2.5">
       <div className="grid gap-2">
         {corpus.chunkSets.map((set) => (
           <div key={set.id} className="card py-3 px-3.5">

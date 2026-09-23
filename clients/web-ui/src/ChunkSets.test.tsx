@@ -22,6 +22,7 @@ import type { ChunkSet, Corpus, EmbeddingModelInfo } from './api';
 const listEmbeddingModels = vi.fn();
 const probeEmbeddingModel = vi.fn();
 const listEmbeddingProviders = vi.fn();
+const promoteChunkSet = vi.fn();
 
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
@@ -29,6 +30,7 @@ vi.mock('./api', async (importOriginal) => ({
     listEmbeddingModels: (...args: unknown[]) => listEmbeddingModels(...args),
     probeEmbeddingModel: (...args: unknown[]) => probeEmbeddingModel(...args),
     listEmbeddingProviders: (...args: unknown[]) => listEmbeddingProviders(...args),
+    promoteChunkSet: (...args: unknown[]) => promoteChunkSet(...args),
   },
 }));
 
@@ -297,6 +299,34 @@ describe('the chunk sets, collapsed', () => {
     collapsed([chunkSet(), chunkSet({ id: 's2', name: 'fine', isDefault: false, state: 'indexing', pendingCount: 40 })]);
 
     expect(screen.getByRole('button', { name: /Chunk sets/ })).toHaveTextContent('fine: indexing, 40 pending');
+  });
+
+  it('colours a set in the line as the open list colours it', () => {
+    // An unavailable set is red in the list; the collapsed line showed it amber.
+    const sets = [chunkSet(), chunkSet({ id: 's2', name: 'fine', isDefault: false, state: 'unavailable' })];
+    const { rerender } = render(
+      <ChunkSetsPanel corpus={corpus(sets)} onChanged={vi.fn()} open={false} onOpenChange={vi.fn()} />,
+    );
+    const inLine = screen.getByText('fine: unavailable').className;
+
+    rerender(<ChunkSetsPanel corpus={corpus(sets)} onChanged={vi.fn()} open onOpenChange={vi.fn()} />);
+
+    expect(screen.getByText('unavailable', { exact: true }).className).toBe(inLine);
+  });
+
+  it('keeps an error from an action in view after the list is closed', async () => {
+    promoteChunkSet.mockRejectedValue(new Error('the vector store is unreachable'));
+    const sets = [chunkSet(), chunkSet({ id: 's2', name: 'fine', isDefault: false })];
+    const { rerender } = render(
+      <ChunkSetsPanel corpus={corpus(sets)} onChanged={vi.fn()} open onOpenChange={vi.fn()} />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Promote' }));
+    await screen.findByText(/the vector store is unreachable/);
+    rerender(<ChunkSetsPanel corpus={corpus(sets)} onChanged={vi.fn()} open={false} onOpenChange={vi.fn()} />);
+
+    expect(screen.getByText(/the vector store is unreachable/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Promote' })).not.toBeInTheDocument();
   });
 
   it('asks to open when its line is pressed', async () => {

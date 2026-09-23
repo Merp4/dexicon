@@ -531,11 +531,17 @@ export function Modal({
   onClose,
   children,
   width = 560,
+  finalFocus,
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
   width?: number;
+  /**
+   * Where focus goes on close, for a modal that closes by sending the person somewhere else
+   * on the page. Null, or not given, returns it to whatever opened the modal.
+   */
+  finalFocus?: () => HTMLElement | null;
 }) {
   // Read on the first render, before the primitive moves focus into the dialog.
   const [origin] = useState<Origin>(() => {
@@ -557,7 +563,7 @@ export function Modal({
         aria-describedby={undefined}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          returnTo(origin)?.focus();
+          (finalFocus?.() ?? returnTo(origin))?.focus();
         }}
       >
         <DialogHeader>
