@@ -27,6 +27,7 @@ import {
   Search, Settings, Sliders, SlidersHorizontal, Trash2, TriangleAlert,
 } from 'lucide-react';
 import { cn } from 'cn';
+import { sourceName } from './lib/sources';
 import { unitFor, unitOf } from './lib/units';
 import { parseHash, toHash, type View as RouteView } from './route';
 import { WorkspacePicker } from './WorkspacePicker';
@@ -1191,7 +1192,7 @@ export function CorpusDetail({
             <span className="grid gap-1">
               {corpus.sources.map((s) => (
                 <span key={s.id} className="flex flex-wrap items-baseline gap-2">
-                  <span className="mono">{s.rootPath ?? s.kind}</span>
+                  <span className="mono">{sourceName(s)}</span>
                   {/* What this source is actually doing. The filters were settable and
                       invisible, which is the worst of both.
 
@@ -1236,6 +1237,18 @@ export function CorpusDetail({
                       {s.git?.ref ?? 'HEAD'}
                       {' · '}{s.git?.includeDiff ? 'with the diff' : 'message and stat'}
                       {s.includeGlobs?.length ? ` · only ${s.includeGlobs.join(', ')}` : ''}
+                      {/* Where the ref had got to when it was last read. The ref names what
+                          to follow and says nothing about whether it moves: a source over a
+                          local branch nobody pulled indexed the same commits for three days
+                          with nothing here to say so. Age rather than a date, because age
+                          is what makes a stuck one stand out. */}
+                      {s.newestCommit && (
+                        <span title={`${s.newestCommit.sha}\n${s.newestCommit.authoredUtc}`}>
+                          {' · newest '}
+                          <span className="mono">{s.newestCommit.sha.slice(0, 7)}</span>
+                          {`, ${relativeTime(s.newestCommit.authoredUtc)}`}
+                        </span>
+                      )}
                     </span>
                   ) : (
                     <span className="dim text-xs">
@@ -1256,7 +1269,7 @@ export function CorpusDetail({
                     <Button
                       variant="ghost"
                       size="icon-xs"
-                      aria-label={`Edit filters for ${s.rootPath ?? s.kind}`}
+                      aria-label={`Edit filters for ${sourceName(s)}`}
                       onClick={() => setEditingSource(s)}
                     >
                       <SlidersHorizontal />
@@ -1265,7 +1278,7 @@ export function CorpusDetail({
                   <Button
                     variant="ghost"
                     size="icon-xs"
-                    aria-label={`Remove source ${s.rootPath ?? s.kind}`}
+                    aria-label={`Remove source ${sourceName(s)}`}
                     onClick={() => setRemovingSource(s)}
                   >
                     <Trash2 />
@@ -1709,7 +1722,7 @@ function EditSourceModal({
   }
 
   return (
-    <Modal title={`Filters for ${source.rootPath ?? source.kind}`} onClose={onClose}>
+    <Modal title={`Filters for ${sourceName(source)}`} onClose={onClose}>
       <form onSubmit={submit}>
         <Inheritable
           label="Honour .gitignore"
@@ -2220,7 +2233,7 @@ function RemoveSourceModal({ corpus, source, onClose, onRemoved, onError }: {
   onError: (e: unknown) => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const where = source.rootPath ?? source.kind;
+  const where = sourceName(source);
 
   return (
     <Modal title={`Remove ${where}?`} onClose={onClose}>

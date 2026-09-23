@@ -1646,6 +1646,22 @@
           }
         }
       },
+      "CommitSummary": {
+        "required": [
+          "sha",
+          "authoredUtc"
+        ],
+        "type": "object",
+        "properties": {
+          "sha": {
+            "type": "string"
+          },
+          "authoredUtc": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "ContextApiRequest": {
         "required": [
           "query"
@@ -3425,6 +3441,16 @@
               },
               {
                 "$ref": "#/components/schemas/GitHistoryOptions"
+              }
+            ]
+          },
+          "newestCommit": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CommitSummary"
               }
             ]
           }

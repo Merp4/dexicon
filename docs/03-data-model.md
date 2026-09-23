@@ -128,15 +128,19 @@ CREATE TABLE chunk_sets (
 );
 
 CREATE TABLE sources (
-  id             TEXT PRIMARY KEY,
-  corpus_id      TEXT NOT NULL REFERENCES corpora(id) ON DELETE CASCADE,
-  kind           TEXT NOT NULL,             -- workspace | upload
-  root_path      TEXT,                      -- workspace: path under /workspaces
-  include_globs  TEXT,                      -- json array, optional
-  exclude_globs  TEXT,                      -- json array, optional
-  use_gitignore  INTEGER NOT NULL DEFAULT 1,
-  max_file_bytes INTEGER NOT NULL DEFAULT 262144,
-  created_utc    TEXT NOT NULL
+  id                TEXT PRIMARY KEY,
+  corpus_id         TEXT NOT NULL REFERENCES corpora(id) ON DELETE CASCADE,
+  kind              TEXT NOT NULL,          -- workspace | upload | githistory
+  root_path         TEXT,                   -- workspace, githistory: path under /workspaces
+  -- The four filters are NULL to inherit: 04 lists the three layers they resolve through.
+  include_globs     TEXT,                   -- json array
+  exclude_globs     TEXT,                   -- json array
+  use_gitignore     INTEGER,
+  max_file_bytes    INTEGER,
+  git_options       TEXT,                   -- githistory: json, the settings in 04
+  newest_commit_sha TEXT,                   -- githistory: what the last pass found
+  newest_commit_utc TEXT,                   --   and its author date
+  created_utc       TEXT NOT NULL
 );
 
 -- The ATTACHMENT. What the file is, shared by every chunk set that reads it. What each

@@ -906,6 +906,12 @@ public sealed class CorpusIndexer(
         log.LogInformation("Source {Source}: {Commits} commits on {Ref}",
             source.RootPath, commits.Count, options.Ref);
 
+        // Newest first, so the head of the inventory is the tip of what the settings
+        // select. Written only here, after git answered: a failed read returned above and
+        // leaves the last observation in place, and an empty inventory is an observation.
+        source.NewestCommitSha = commits.Count > 0 ? commits[0].Sha : null;
+        source.NewestCommitUtc = commits.Count > 0 ? commits[0].AuthorDate.UtcDateTime : null;
+
         // One commit per path, decided in the one place the sweep decides it too.
         //
         // Not widened to the full sha, because the arithmetic does not justify a 40

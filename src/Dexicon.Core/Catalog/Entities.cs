@@ -248,6 +248,19 @@ public sealed class Source
     /// </summary>
     public string? GitOptions { get; set; }
 
+    /// <summary>
+    /// Git-history sources only: the newest commit the last inventory found, and its
+    /// author date. What the pass saw rather than a live read of the repository, so a ref
+    /// that has stopped moving shows as a date that stops moving: a source over a local
+    /// branch nobody pulled indexed the same 174 commits for three days with nothing on
+    /// screen to say so.
+    ///
+    /// Null before any pass has read the history, and after one whose settings selected
+    /// no commits. A pass that could not read the history leaves both as they were.
+    /// </summary>
+    public string? NewestCommitSha { get; set; }
+    public DateTime? NewestCommitUtc { get; set; }
+
     public DateTime CreatedUtc { get; set; }
 
     public List<IndexedFile> Files { get; set; } = [];

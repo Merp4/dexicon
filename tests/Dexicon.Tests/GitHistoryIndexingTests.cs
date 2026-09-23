@@ -17,7 +17,7 @@ namespace Dexicon.Tests;
 /// </summary>
 public sealed class GitHistoryIndexingTests
 {
-    private static void Git(string repo, params string[] args)
+    private static string Git(string repo, params string[] args)
     {
         var info = new ProcessStartInfo("git")
         {
@@ -39,12 +39,20 @@ public sealed class GitHistoryIndexingTests
         var stderrTask = p.StandardError.ReadToEndAsync();
 
         p.WaitForExit();
-        stdoutTask.GetAwaiter().GetResult();
+        var stdout = stdoutTask.GetAwaiter().GetResult();
         var stderr = stderrTask.GetAwaiter().GetResult();
 
         if (p.ExitCode != 0)
             throw new InvalidOperationException($"git {string.Join(' ', args)}: {stderr}");
+
+        return stdout;
     }
+
+    /// <summary>HEAD's sha and author date, as git reports them.</summary>
+    private static (string Sha, DateTime AuthoredUtc) Head(string repo) =>
+        (Git(repo, "rev-parse", "HEAD").Trim(),
+         DateTimeOffset.Parse(Git(repo, "log", "-1", "--format=%aI").Trim(),
+             System.Globalization.CultureInfo.InvariantCulture).UtcDateTime);
 
     private static void Init(string repo)
     {
@@ -175,6 +183,103 @@ public sealed class GitHistoryIndexingTests
         second.FilesDone.ShouldBe(1, "only the commit that was not there last time");
         second.FilesSkipped.ShouldBe(1);
         (await IndexedPathsAsync(harness)).Count.ShouldBe(2);
+    }
+
+    private static void ShouldBeTheCommit((string? Sha, DateTime? AuthoredUtc) recorded, (string Sha, DateTime AuthoredUtc) commit)
+    {
+        recorded.Sha.ShouldBe(commit.Sha);
+        recorded.AuthoredUtc.ShouldBe(commit.AuthoredUtc);
+    }
+
+    private static async Task<(string? Sha, DateTime? AuthoredUtc)> NewestRecordedAsync(IndexingHarness harness)
+    {
+        await using var db = harness.NewContext();
+        var source = await db.Sources.SingleAsync();
+        return (source.NewestCommitSha, source.NewestCommitUtc);
+    }
+
+    /// <summary>
+    /// Where the ref had got to, so a source whose ref stopped moving can be seen to have
+    /// stopped. One over a local branch nobody pulled indexed the same 174 commits for
+    /// three days, and every count on screen was correct.
+    /// </summary>
+    [Fact]
+    public async Task ThePassRecordsTheNewestCommitAndFollowsItForward()
+    {
+        await using var harness = await IndexingHarness.StartAsync("repo");
+        Init(harness.SourceDirectory);
+        Commit(harness.SourceDirectory, "a.txt", "one\n", "the first change");
+        Commit(harness.SourceDirectory, "b.txt", "two\n", "the second change");
+
+        await harness.SeedCorpusAsync(SourceKind.GitHistory);
+        (await NewestRecordedAsync(harness)).Sha.ShouldBeNull("nothing has read the history yet");
+
+        await harness.RunIndexAsync();
+        var first = Head(harness.SourceDirectory);
+        ShouldBeTheCommit(await NewestRecordedAsync(harness), first);
+
+        Commit(harness.SourceDirectory, "c.txt", "three\n", "a later change");
+        await harness.RunIndexAsync();
+
+        var second = Head(harness.SourceDirectory);
+        second.Sha.ShouldNotBe(first.Sha);
+        ShouldBeTheCommit(await NewestRecordedAsync(harness), second);
+    }
+
+    /// <summary>
+    /// A pass that could not read the history saw nothing, so it says nothing. Writing
+    /// null here would claim the settings selected no commits, which is a different fact.
+    /// </summary>
+    [Fact]
+    public async Task APassThatCouldNotReadTheHistoryLeavesTheLastOne()
+    {
+        await using var harness = await IndexingHarness.StartAsync("repo");
+        Init(harness.SourceDirectory);
+        Commit(harness.SourceDirectory, "a.txt", "one\n", "the first change");
+
+        await harness.SeedCorpusAsync(SourceKind.GitHistory);
+        await harness.RunIndexAsync();
+        var seen = Head(harness.SourceDirectory);
+
+        Directory.Move(Path.Combine(harness.SourceDirectory, ".git"),
+            Path.Combine(harness.SourceDirectory, ".git-away"));
+
+        var job = await harness.RunIndexAsync();
+
+        job.State.ShouldBe(JobState.Degraded, "the source could not be reached");
+        ShouldBeTheCommit(await NewestRecordedAsync(harness), seen);
+    }
+
+    /// <summary>
+    /// Settings that select no commits are an observation, and the record says so.
+    /// Keeping the old commit would show a source reading history it no longer reads.
+    /// </summary>
+    [Fact]
+    public async Task SettingsThatSelectNoCommitsRecordNone()
+    {
+        await using var harness = await IndexingHarness.StartAsync("repo");
+        Init(harness.SourceDirectory);
+        Commit(harness.SourceDirectory, "a.txt", "one\n", "the first change");
+
+        await harness.SeedCorpusAsync(SourceKind.GitHistory);
+        await harness.RunIndexAsync();
+        (await NewestRecordedAsync(harness)).Sha.ShouldNotBeNull();
+
+        await using (var db = harness.NewContext())
+        {
+            var source = await db.Sources.SingleAsync();
+            source.GitOptions = new GitHistoryOptions
+            {
+                Since = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(2),
+            }.ToJson();
+            await db.SaveChangesAsync();
+        }
+
+        await harness.RunIndexAsync();
+
+        var none = await NewestRecordedAsync(harness);
+        none.Sha.ShouldBeNull();
+        none.AuthoredUtc.ShouldBeNull();
     }
 
     /// <summary>
