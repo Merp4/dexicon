@@ -93,8 +93,8 @@ including the per-prompt one that is installed but left switched off.
 
 ## Status
 
-Pre-1.0. The current release is [`0.4.0`](CHANGELOG.md), published as
-`ghcr.io/merp4/dexicon`.
+Pre-1.0. Releases are published as `ghcr.io/merp4/dexicon` and described in
+[CHANGELOG.md](CHANGELOG.md); the badge above shows the newest.
 
 Default settings are derived from measurement: 81 retrieval configurations evaluated over
 a document corpus and again over a code corpus, recorded in

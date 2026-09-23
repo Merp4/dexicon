@@ -322,7 +322,7 @@ Hardening, matching the compose file:
 - Every published image carries an **SBOM** and build provenance as registry attestations:
 
   ```bash
-  docker buildx imagetools inspect ghcr.io/<owner>/dexicon:0.2.2 --format '{{ json .SBOM }}'
+  docker buildx imagetools inspect ghcr.io/<owner>/dexicon:0.6.0 --format '{{ json .SBOM }}'
   ```
 - Published multi-arch (`linux/amd64`, `linux/arm64`) so it runs on Apple silicon. Both
   builder stages run on the build platform and emit architecture-independent IL
@@ -335,8 +335,8 @@ Hardening, matching the compose file:
 
 | Tag | Means | Use it for |
 |---|---|---|
-| `0.2.2` | That release, forever | Deployments |
-| `0.1` | Newest patch of that minor | Deployments that accept patches |
+| `0.6.0` | That release, forever | Deployments |
+| `0.6` | Newest patch of that minor | Deployments that accept patches |
 | `latest` | Newest release | Trying it out |
 | `edge` | Tip of `main` | Following development |
 | `sha-abc1234` | One commit | Reproducing a report |
@@ -348,7 +348,7 @@ promise a compatibility that does not exist.
 if it should not change even for a re-push:
 
 ```bash
-DEXICON_TAG=0.2.2 docker compose up -d
+DEXICON_TAG=0.6.0 docker compose up -d
 ```
 
 **Cutting a release, in order.**
@@ -360,14 +360,14 @@ DEXICON_TAG=0.2.2 docker compose up -d
    release's `major.minor` and CI checks the committed copy against the code. MinVer takes
    the version from the tag, so tagging first produces a tag whose own release build fails
    on a document still naming the previous version. This applies once per minor version;
-   every `0.2.x` after the first produces the same `0.2` and nothing changes.
+   every `0.6.x` after the first produces the same `0.6` and nothing changes.
 
    On a minor bump the build has to be told the version. MinVer auto-increments the PATCH,
-   so a plain build after `v0.2.3` reports `0.2.4-alpha…` and writes the `0.2` being moved
+   so a plain build after `v0.5.1` reports `0.5.2-alpha…` and writes the `0.5` being moved
    away from:
 
    ```bash
-   dotnet build -p:MinVerVersionOverride=0.3.0
+   dotnet build -p:MinVerVersionOverride=0.6.0
    ```
 
 3. **Tag and push.** That publishes the image and creates the GitHub Release.
@@ -392,7 +392,7 @@ hand with no argument reports `0.0.0-dev` rather than impersonating a release. E
 recording the commit and the workflow that produced it:
 
 ```bash
-gh attestation verify oci://ghcr.io/<owner>/dexicon:0.2.2 --owner <owner>
+gh attestation verify oci://ghcr.io/<owner>/dexicon:0.6.0 --owner <owner>
 ```
 
 ## Health
