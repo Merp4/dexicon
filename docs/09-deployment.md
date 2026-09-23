@@ -22,10 +22,15 @@ Nothing else. If a first run needs more steps than that, the first run is the bu
 
 ## Compose
 
-`docker-compose.yml` defines the complete deployment.
+`docker-compose.yml` defines the complete deployment. Abridged below: the file also passes
+every setting listed under [Configuration](#configuration), and comments most lines.
 
 ```yaml
 name: dexicon          # sets the network (dexicon_default), volume, and container prefixes
+
+# Defined once and referenced by the server and the client, so they cannot drift apart.
+# Never empty: see "The Qdrant API key must never be blank" below.
+x-qdrant-api-key: &qdrant-api-key ${QDRANT_API_KEY:-dexicon-local-dev-key}
 
 services:
   dexicon:
@@ -38,11 +43,13 @@ services:
     environment:
       # Service names are namespaced so these resolve unambiguously even if this
       # stack is ever attached to a shared network. See "Routing" below.
-      DEXICON__QDRANT__ENDPOINT:   http://dexicon-qdrant:6334
-      DEXICON__OLLAMA__ENDPOINT:   http://dexicon-ollama:11434
-      DEXICON__EMBEDDING__MODEL:   ${DEXICON_EMBEDDING_MODEL:-embeddinggemma}
-      DEXICON__ADMIN__PASSWORD:    ${DEXICON_ADMIN_PASSWORD:-}
-      DEXICON__BOOTSTRAP__TOKEN:   ${DEXICON_BOOTSTRAP_TOKEN:-}   # blank = generate and log once
+      DEXICON__QDRANT__ENDPOINT: http://dexicon-qdrant:6334
+      DEXICON__QDRANT__APIKEY: *qdrant-api-key
+      DEXICON__OLLAMA__ENDPOINT: http://dexicon-ollama:11434
+      DEXICON__EMBEDDING__MODEL: ${DEXICON_EMBEDDING_MODEL:-embeddinggemma}
+      # ... embedding, indexing, upload and log settings: see "Configuration"
+      DEXICON__ADMIN__PASSWORD: ${DEXICON_ADMIN_PASSWORD:-}
+      DEXICON__BOOTSTRAP__TOKEN: ${DEXICON_BOOTSTRAP_TOKEN:-}
     volumes:
       - dexicon_data:/data
       - ${WORKSPACE_ROOT:-./workspaces}:/workspaces:ro
@@ -58,17 +65,17 @@ services:
       retries: 5
       start_period: 20s
     read_only: true
-    tmpfs: [ /tmp ]
-    security_opt: [ "no-new-privileges:true" ]
-    cap_drop: [ ALL ]
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
 
   dexicon-qdrant:
-    image: qdrant/qdrant:${QDRANT_TAG:-v1.16.1}     # pinned, not :latest
+    image: qdrant/qdrant:${QDRANT_TAG:-v1.16.3}     # pinned, not :latest
     restart: unless-stopped
     volumes:
       - qdrant_data:/qdrant/storage
     environment:
-      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT__SERVICE__API_KEY: *qdrant-api-key
       QDRANT__SERVICE__GRPC_PORT: "6334"
     healthcheck:
       test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
@@ -86,12 +93,13 @@ services:
     entrypoint: ["/bin/sh", "/provision.sh"]   # pulls the embedding model, then serves
     environment:
       OLLAMA_HOST: 0.0.0.0
-      DEXICON_EMBEDDING_MODEL: ${DEXICON_EMBEDDING_MODEL:-nomic-embed-text}
+      DEXICON_EMBEDDING_MODEL: ${DEXICON_EMBEDDING_MODEL:-embeddinggemma}
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-4}   # see "Configuration"
     healthcheck:
       # Readiness means the MODEL is present, not merely that the daemon answers.
       # Without this, Dexicon starts indexing against a model still downloading and
       # spends its first minutes in embedding backoff, which reads as a bug.
-      test: ["CMD-SHELL", "ollama list | grep -q \"$${DEXICON_EMBEDDING_MODEL%%:*}\" || exit 1"]
+      test: ["CMD-SHELL", "ollama list | grep -q \"${DEXICON_EMBEDDING_MODEL:-embeddinggemma}\" || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 40          # first run pulls the model; allow ~10 minutes
@@ -356,8 +364,10 @@ DEXICON_TAG=0.6.0 docker compose up -d
 1. **Write the version's `CHANGELOG.md` section.** The tag push reads it for the GitHub
    Release body, and a tag with no section fails the release before anything reaches the
    registry, which is the last point at which stopping costs nothing.
-2. **Build, and commit the regenerated `clients/web-ui/Dexicon.json`.** It carries the
-   release's `major.minor` and CI checks the committed copy against the code. MinVer takes
+2. **Build, and commit the regenerated `clients/web-ui/Dexicon.json` and
+   `clients/web-ui/Dexicon_integration.json`.** Both carry the release's `major.minor` and
+   CI checks the committed copies against the code. Build last: a later `dotnet build` or
+   `dotnet test` without the override writes the previous version back. MinVer takes
    the version from the tag, so tagging first produces a tag whose own release build fails
    on a document still naming the previous version. This applies once per minor version;
    every `0.6.x` after the first produces the same `0.6` and nothing changes.

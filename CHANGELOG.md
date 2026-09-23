@@ -125,7 +125,7 @@ with no section here fails its release rather than publishing an undescribed one
   The stitch remains for a code file on a mount, where no text is stored because reading
   the file is the extraction.
 
-  Reaching the document needs the hash recorded: `file_chunk_states.SourceSha256` holds
+  Reaching the document needs the hash recorded: `file_chunk_states.source_sha256` holds
   the bytes each set last read a file from, so `file_texts` can be looked up by path.
   Without it the cache saves the indexer work and gives a reader nothing. Per set, not per
   file, because a job can target one set while the others keep serving, and each set
@@ -387,10 +387,11 @@ with no section here fails its release rather than publishing an undescribed one
   or failed appears beside it. Whether the section is open is remembered per browser.
 
 - **Full reindex says what it is about to re-embed.** It queued on the click, one button
-  from Refresh. The dialog now gives the number of chunks it will re-embed, summed across
-  chunk sets because the job runs every set, and each set's model, size and overlap. It
-  says search keeps working while it runs, offers Refresh in its place, and points to
-  Chunk sets for a change of embedding model, which needs a new set rather than a reindex.
+  from Refresh. The dialog now gives the number of chunks the catalogue holds, summed
+  across chunk sets because the job runs every set, and each set's model, size and
+  overlap. It says search keeps working while it runs, offers Refresh in its place, and
+  points to Chunk sets for a change of embedding model, which needs a new set rather than
+  a reindex.
 
 - **The Jobs list shows the runs that did something.** Routine refreshes were collapsed in
   the client, which can only collapse what it fetched: of the last 200 jobs on one
