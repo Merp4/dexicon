@@ -14,7 +14,7 @@ import {
   Select, SelectItem, Spinner, formatBytes, localTime, relativeTime, stateTone,
 } from './ui';
 import { Checkbox } from './ui';
-import { Trash2, TriangleAlert } from 'lucide-react';
+import { ChevronRight, Trash2, TriangleAlert } from 'lucide-react';
 import { cn } from 'cn';
 import { unitFor } from './lib/units';
 
@@ -66,7 +66,27 @@ function ConfirmModal({
   );
 }
 
-export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChanged: () => void }) {
+/**
+ * A corpus's chunk sets, as a disclosure: one line naming the set search uses, the full list
+ * when opened.
+ *
+ * It sat under the file list, which put which model a corpus uses 5.8 screens down on a
+ * 1,834-file corpus. Now it sits near the top of the page, and opening it is the caller's
+ * state so the page can remember it and the reindex dialog can open it. Collapsed must not
+ * hide work in progress, so a set that is building, pending or failed shows in the line too.
+ */
+export function ChunkSetsPanel({
+  corpus,
+  onChanged,
+  open,
+  onOpenChange,
+}: {
+  corpus: Corpus;
+  onChanged: () => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const listId = useId();
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<ChunkSet | null>(null);
   const [deleting, setDeleting] = useState<ChunkSet | null>(null);
@@ -86,18 +106,58 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
     }
   };
 
+  const searched = corpus.chunkSets.find((s) => s.isDefault) ?? corpus.chunkSets[0];
+  const others = corpus.chunkSets.length - (searched ? 1 : 0);
+  const needsAttention = corpus.chunkSets.filter(
+    (s) => s !== searched && (s.state !== 'ready' || s.pendingCount > 0 || s.failedCount > 0),
+  );
+
   return (
     <div>
-      <div className="flex justify-between items-center mb-2.5">
-        <div>
+      <div className="flex justify-between items-center gap-3">
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={listId}
+          onClick={() => onOpenChange(!open)}
+          className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-sm text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        >
+          <ChevronRight
+            aria-hidden
+            className={cn('size-4 shrink-0 transition-transform', open && 'rotate-90')}
+          />
           <strong className="text-sm">Chunk sets</strong>
-          <span className="dim text-xs ml-2">
-            each is a model and a chunking; search reaches the default one
-          </span>
-        </div>
-        <Button onClick={() => setAdding(true)}>+ Add set</Button>
+          {open ? (
+            <span className="dim text-xs">each is a model and a chunking; search reaches the default one</span>
+          ) : (
+            searched && (
+              <span className="dim text-xs flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                <span className="mono text-foreground">{corpus.name}:{searched.name}</span>
+                <span>
+                  {searched.embeddingModel} ({searched.embeddingDimensions}d) · {searched.chunkSize} / {searched.chunkOverlap}
+                  {' · '}{searched.chunkCount.toLocaleString()} chunks
+                </span>
+                <Badge tone={stateTone(searched.state)}>{searched.state}</Badge>
+                {searched.pendingCount > 0 && (
+                  <Badge tone="warn">{searched.pendingCount.toLocaleString()} pending</Badge>
+                )}
+                {searched.failedCount > 0 && <Badge tone="danger">{searched.failedCount} failed</Badge>}
+                {others > 0 && <span>+{others} more</span>}
+                {needsAttention.map((s) => (
+                  <Badge key={s.id} tone={s.failedCount > 0 ? 'danger' : 'warn'}>
+                    {s.name}: {s.state}
+                    {s.pendingCount > 0 && `, ${s.pendingCount.toLocaleString()} pending`}
+                    {s.failedCount > 0 && `, ${s.failedCount} failed`}
+                  </Badge>
+                ))}
+              </span>
+            )
+          )}
+        </button>
+        <Button className="shrink-0" onClick={() => setAdding(true)}>+ Add set</Button>
       </div>
 
+      <div id={listId} hidden={!open} className="mt-2.5">
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
 
       <div className="grid gap-2">
@@ -174,6 +234,7 @@ export function ChunkSetsPanel({ corpus, onChanged }: { corpus: Corpus; onChange
             </div>
           </div>
         ))}
+      </div>
       </div>
 
       {deleting && (

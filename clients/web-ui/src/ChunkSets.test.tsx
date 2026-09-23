@@ -112,7 +112,7 @@ beforeEach(() => {
 /** Opens the add modal and waits for the model list, so no state lands after the test. */
 async function openAddModal(sets: ChunkSet[] = [chunkSet()]) {
   const user = userEvent.setup();
-  render(<ChunkSetsPanel corpus={corpus(sets)} onChanged={vi.fn()} />);
+  render(<ChunkSetsPanel corpus={corpus(sets)} onChanged={vi.fn()} open onOpenChange={vi.fn()} />);
 
   await user.click(screen.getByRole('button', { name: /add set/i }));
   const dialog = await screen.findByRole('dialog');
@@ -278,6 +278,46 @@ describe('the Add a chunk set form', () => {
   });
 });
 
+describe('the chunk sets, collapsed', () => {
+  const collapsed = (sets: ChunkSet[], onOpenChange = vi.fn()) =>
+    render(<ChunkSetsPanel corpus={corpus(sets)} onChanged={vi.fn()} open={false} onOpenChange={onOpenChange} />);
+
+  it('names the set search uses, its model and its size, and hides the list', () => {
+    collapsed([chunkSet(), chunkSet({ id: 's2', name: 'fine', isDefault: false })]);
+
+    const toggle = screen.getByRole('button', { name: /Chunk sets/ });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveTextContent('docs:default');
+    expect(toggle).toHaveTextContent('nomic-embed-text (768d) · 768 / 100 · 110 chunks');
+    expect(toggle).toHaveTextContent('+1 more');
+    expect(screen.queryByRole('button', { name: 'Promote' })).not.toBeInTheDocument();
+  });
+
+  it('still shows a set that is building, so collapsing hides no work in progress', () => {
+    collapsed([chunkSet(), chunkSet({ id: 's2', name: 'fine', isDefault: false, state: 'indexing', pendingCount: 40 })]);
+
+    expect(screen.getByRole('button', { name: /Chunk sets/ })).toHaveTextContent('fine: indexing, 40 pending');
+  });
+
+  it('asks to open when its line is pressed', async () => {
+    const onOpenChange = vi.fn();
+    collapsed([chunkSet()], onOpenChange);
+
+    await userEvent.click(screen.getByRole('button', { name: /Chunk sets/ }));
+
+    expect(onOpenChange).toHaveBeenCalledWith(true);
+  });
+
+  it('can add a set without being opened first', async () => {
+    collapsed([chunkSet()]);
+
+    await userEvent.click(screen.getByRole('button', { name: '+ Add set' }));
+
+    expect(await screen.findByRole('dialog', { name: 'Add a chunk set' })).toBeInTheDocument();
+    await waitFor(() => expect(listEmbeddingModels).toHaveBeenCalled());
+  });
+});
+
 describe('the chunk set list', () => {
   const twoSets = (over: Partial<ChunkSet> = {}) => [
     chunkSet(),
@@ -287,7 +327,7 @@ describe('the chunk set list', () => {
   it('names each set the way search addresses it', () => {
     // `corpus:set` is what an agent passes to search_index. A bare name teaches nobody
     // that the addressing exists.
-    render(<ChunkSetsPanel corpus={corpus(twoSets())} onChanged={vi.fn()} />);
+    render(<ChunkSetsPanel corpus={corpus(twoSets())} onChanged={vi.fn()} open onOpenChange={vi.fn()} />);
     expect(screen.getByText('docs:fine')).toBeInTheDocument();
   });
 
@@ -298,6 +338,8 @@ describe('the chunk set list', () => {
       <ChunkSetsPanel
         corpus={corpus(twoSets({ pendingCount: 10, chunkCount: 40 }))}
         onChanged={vi.fn()}
+        open
+        onOpenChange={vi.fn()}
       />,
     );
 
@@ -312,6 +354,8 @@ describe('the chunk set list', () => {
       <ChunkSetsPanel
         corpus={corpus(twoSets({ pendingCount: 0, chunkCount: 361 }))}
         onChanged={vi.fn()}
+        open
+        onOpenChange={vi.fn()}
       />,
     );
 
@@ -319,7 +363,7 @@ describe('the chunk set list', () => {
   });
 
   it('does not offer to promote or delete the set search already uses', () => {
-    render(<ChunkSetsPanel corpus={corpus(twoSets())} onChanged={vi.fn()} />);
+    render(<ChunkSetsPanel corpus={corpus(twoSets())} onChanged={vi.fn()} open onOpenChange={vi.fn()} />);
 
     // One Promote and one Delete, both belonging to the non-default set.
     expect(screen.getAllByRole('button', { name: 'Promote' })).toHaveLength(1);
@@ -328,7 +372,7 @@ describe('the chunk set list', () => {
 
   it('does not offer to delete the only set', () => {
     // A corpus with no chunk sets cannot be searched at all.
-    render(<ChunkSetsPanel corpus={corpus([chunkSet()])} onChanged={vi.fn()} />);
+    render(<ChunkSetsPanel corpus={corpus([chunkSet()])} onChanged={vi.fn()} open onOpenChange={vi.fn()} />);
     expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
   });
 
@@ -339,7 +383,7 @@ describe('the chunk set list', () => {
     // point deleting a chunk set stops asking at all.
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const user = userEvent.setup();
-    render(<ChunkSetsPanel corpus={corpus(twoSets({ chunkCount: 361 }))} onChanged={vi.fn()} />);
+    render(<ChunkSetsPanel corpus={corpus(twoSets({ chunkCount: 361 }))} onChanged={vi.fn()} open onOpenChange={vi.fn()} />);
 
     await user.click(screen.getByRole('button', { name: 'Delete' }));
 

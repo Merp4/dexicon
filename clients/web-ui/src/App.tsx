@@ -1023,6 +1023,8 @@ function CreateCorpusModal({ onClose, onCreated, onError }: { onClose: () => voi
  */
 const FilePageSize = 100;
 
+const CHUNK_SETS_OPEN = 'dexicon.chunkSets.open';
+
 export function CorpusDetail({
   name,
   live,
@@ -1051,6 +1053,17 @@ export function CorpusDetail({
   const [nameFilter, setNameFilter] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmFullReindex, setConfirmFullReindex] = useState(false);
+
+  // Collapsed unless someone opened it last time, remembered per browser. The line it
+  // collapses to already says which model search uses, which is what most visits want.
+  const [chunkSetsOpen, setChunkSetsOpen] = useState(() => {
+    try { return localStorage.getItem(CHUNK_SETS_OPEN) === '1'; } catch { return false; }
+  });
+  const chunkSets = useRef<HTMLDivElement>(null);
+  const showChunkSets = (open: boolean) => {
+    setChunkSetsOpen(open);
+    try { localStorage.setItem(CHUNK_SETS_OPEN, open ? '1' : '0'); } catch { /* blocked storage is fine */ }
+  };
   const [removingSource, setRemovingSource] = useState<Corpus['sources'][number] | null>(null);
   const [addingSource, setAddingSource] = useState<{ path: string } | null>(null);
   const [viewing, setViewing] = useState<{ path: string; line?: number } | null>(null);
@@ -1289,6 +1302,15 @@ export function CorpusDetail({
         </Row>
       </div>
 
+      <div ref={chunkSets} className="card p-3.5 scroll-mt-4">
+        <ChunkSetsPanel
+          corpus={corpus}
+          onChanged={async () => { await load(); await onRefresh(); }}
+          open={chunkSetsOpen}
+          onOpenChange={showChunkSets}
+        />
+      </div>
+
       <div>
         <div className="flex gap-2 mb-2.5 flex-wrap items-center">
           {/* One-of-N, like the search mode: a status filter is a lens on the same list,
@@ -1404,10 +1426,6 @@ export function CorpusDetail({
 
 
 
-      <div className="card p-3.5">
-        <ChunkSetsPanel corpus={corpus} onChanged={async () => { await load(); await onRefresh(); }} />
-      </div>
-
       {viewing && (
         <FileViewer
           corpus={corpus.name}
@@ -1471,6 +1489,11 @@ export function CorpusDetail({
           corpus={corpus}
           onClose={() => setConfirmFullReindex(false)}
           onError={onError}
+          onShowChunkSets={() => {
+            setConfirmFullReindex(false);
+            showChunkSets(true);
+            requestAnimationFrame(() => chunkSets.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }));
+          }}
         />
       )}
     </div>
@@ -2266,10 +2289,13 @@ function FullReindexModal({
   corpus,
   onClose,
   onError,
+  onShowChunkSets,
 }: {
   corpus: Corpus;
   onClose: () => void;
   onError: (e: unknown) => void;
+  /** Close this and open the chunk sets, which is where a model change is made. */
+  onShowChunkSets: () => void;
 }) {
   const [queueing, setQueueing] = useState(false);
 
@@ -2368,7 +2394,11 @@ function FullReindexModal({
       <Notice tone="accent">
         <strong>To move to another embedding model, this is not the button.</strong> A model
         is a different vector space, so it needs a new chunk set built alongside this one and
-        promoted when it is complete. Add one under Chunk sets, below.
+        promoted when it is complete.{' '}
+        <button type="button" className="underline underline-offset-2" onClick={onShowChunkSets}>
+          Add one under Chunk sets
+        </button>
+        .
       </Notice>
 
       <div className="mt-4 flex flex-wrap justify-end gap-2">

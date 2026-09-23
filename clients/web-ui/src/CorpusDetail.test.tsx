@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CorpusDetail } from './App';
 import type { Corpus } from './api';
 
@@ -1107,6 +1107,61 @@ describe('when a run finishes', () => {
     await waitFor(() => expect(getCorpus).toHaveBeenCalledTimes(3));
     await new Promise((r) => setTimeout(r, 50));
     expect(getCorpus).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('the chunk sets on a corpus page', () => {
+  /**
+   * They sat under the file list: 5.8 screens down on a 1,834-file corpus, so which model a
+   * corpus used was effectively not on the page.
+   */
+  // Node 25 defines its own global localStorage, and without a storage file it is a stub
+  // with no methods, which shadows jsdom's. The page guards every call, so it renders either
+  // way; whether it remembers can only be observed through a working Storage.
+  beforeEach(() => {
+    const items = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      get length() { return items.size; },
+      clear: () => items.clear(),
+      getItem: (k: string) => items.get(k) ?? null,
+      key: (i: number) => [...items.keys()][i] ?? null,
+      removeItem: (k: string) => { items.delete(k); },
+      setItem: (k: string, v: string) => { items.set(k, String(v)); },
+    } satisfies Storage);
+    getCorpus.mockResolvedValue(corpus({ chunkSets: [chunkSet()] }));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('sit above the file list, collapsed, naming the set search uses', async () => {
+    render(<CorpusDetail {...props} />);
+
+    const toggle = await screen.findByRole('button', { name: /Chunk sets/ });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveTextContent('docs:default');
+
+    const files = screen.getByRole('radiogroup', { name: 'File status' });
+    expect(toggle.compareDocumentPosition(files) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('stay open once opened, in this browser', async () => {
+    const first = render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: /Chunk sets/ }));
+    expect(localStorage.getItem('dexicon.chunkSets.open')).toBe('1');
+    first.unmount();
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByRole('button', { name: /Chunk sets/ })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('are opened from the full reindex dialog, which sends a model change there', async () => {
+    render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Add one under Chunk sets' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: /Chunk sets/ })).toHaveAttribute('aria-expanded', 'true');
   });
 });
 
