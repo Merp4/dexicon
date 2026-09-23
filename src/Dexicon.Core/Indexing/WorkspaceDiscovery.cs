@@ -14,7 +14,10 @@ namespace Dexicon.Core.Indexing;
 public static class WorkspaceDiscovery
 {
     /// <param name="Owned">What this source is responsible for, shadowing applied.</param>
-    /// <param name="Skipped">Excluded by the walk itself, with the reason it gives.</param>
+    /// <param name="Skipped">
+    /// Excluded by the walk itself, with the reason it gives, shadowing applied as for
+    /// <paramref name="Owned"/>.
+    /// </param>
     /// <param name="ShadowedCount">
     /// How many of the walk's files a more specific source owns. Not a skip: those files
     /// are indexed, just not here.
@@ -40,12 +43,19 @@ public static class WorkspaceDiscovery
         // identity being (source, relative path) would index each of them twice over. The
         // most specific source owns a file; this one keeps what the deeper ones do not
         // claim.
+        //
+        // What the walk skipped is shadowed the same way. Left alone, a file an exclusion
+        // caught under a nested source was reported by every source above it, counted once
+        // by each and given a catalogue row by each, and the Files list showed it twice.
         var shadowed = SourceScope.ShadowedPrefixes(corpus.Sources, source);
         var owned = shadowed.Count == 0
             ? walk.Files
             : walk.Files.Where(f => !SourceScope.IsShadowed(f.RelativePath, shadowed)).ToList();
+        var skipped = shadowed.Count == 0
+            ? walk.SkippedFiles
+            : walk.SkippedFiles.Where(s => !SourceScope.IsShadowed(s.RelativePath, shadowed)).ToList();
 
-        return new Result(owned, walk.SkippedFiles, walk.Files.Count - owned.Count);
+        return new Result(owned, skipped, walk.Files.Count - owned.Count);
     }
 
     /// <summary>

@@ -1,4 +1,5 @@
 using Dexicon.Core.Catalog;
+using Microsoft.EntityFrameworkCore;
 
 namespace Dexicon.Tests;
 
@@ -86,12 +87,12 @@ public sealed class JobCounterTests
     }
 
     [Fact]
-    public async Task WithNestedSources_AnExcludedFileIsCountedByEachButStillAddsUp()
+    public async Task WithNestedSources_AnExcludedFileIsCountedOnceByTheSourceThatOwnsIt()
     {
-        // Shadowing applies to the walk's owned files and not to its skipped ones, so a
-        // file an exclusion catches under a nested source is reported by every source
-        // above it. That double-counts it in the total, which is worth knowing, and the
-        // thing this line has to guarantee is that it double-counts it in BOTH terms.
+        // Shadowing applied to the walk's owned files and not to its skipped ones, so a
+        // file an exclusion caught under a nested source was reported by every source above
+        // it: counted once per source, and given a catalogue row by each, which the Files
+        // list then showed as two files.
         await using var harness = await IndexingHarness.StartAsync("outer", "outer/inner");
         await harness.SeedCorpusAsync(SourceKind.Workspace);
 
@@ -101,8 +102,51 @@ public sealed class JobCounterTests
         var job = await harness.RunIndexAsync();
 
         job.State.ShouldBe(JobState.Succeeded);
-        job.FilesSkipped.ShouldBe(2, "the nested empty file is skipped once per source that saw it");
-        ShouldAddUp(job, expectedTotal: 3);
+        job.FilesSkipped.ShouldBe(1);
+        ShouldAddUp(job, expectedTotal: 2);
+
+        await using var db = harness.NewContext();
+        (await db.Files.Where(f => f.RelativePath.EndsWith("empty.md"))
+                .Select(f => new { f.SourceId, f.RelativePath }).ToListAsync())
+            .ShouldHaveSingleItem()
+            .ShouldBe(new { SourceId = IndexingHarness.SourceIdFor(1), RelativePath = "empty.md" });
+    }
+
+    [Fact]
+    public async Task WithNestedSources_TheDuplicateAnEarlierPassRecordedIsRemoved()
+    {
+        // The row the outer source wrote for the nested file before skips were shadowed.
+        // The outer walk no longer reports that path, so the next pass reconciles it away
+        // as vanished and the catalogue is left with the nested source's row alone.
+        await using var harness = await IndexingHarness.StartAsync("outer", "outer/inner");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        await harness.WriteFileAsync("empty.md", "", source: 1);
+
+        await using (var db = harness.NewContext())
+        {
+            var stale = new IndexedFile
+            {
+                Id = "stale-duplicate",
+                SourceId = IndexingHarness.SourceIdFor(0),
+                RelativePath = "inner/empty.md",
+            };
+            db.Files.Add(stale);
+            db.FileChunkStates.Add(new FileChunkState
+            {
+                FileId = stale.Id,
+                ChunkSetId = "set-1",
+                Status = FileStatus.Skipped,
+                StatusDetail = "empty",
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await harness.RunIndexAsync();
+
+        await using var check = harness.NewContext();
+        (await check.Files.Where(f => f.RelativePath.EndsWith("empty.md"))
+                .Select(f => f.SourceId).ToListAsync())
+            .ShouldBe([IndexingHarness.SourceIdFor(1)]);
     }
 
     [Fact]
