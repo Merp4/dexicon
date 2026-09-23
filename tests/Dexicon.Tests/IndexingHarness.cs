@@ -47,6 +47,9 @@ internal sealed class IndexingHarness : IAsyncDisposable
 
     public RecordingVectorStore Vectors { get; } = new();
 
+    /// <summary>What each pass embeds with. A test that needs embedding to fail replaces it.</summary>
+    public IEmbeddingService Embedder { get; set; } = new FixedEmbedder();
+
     private IndexingHarness(string dataPath, string[] sourceRoots, string[] sourceDirectories,
         ServiceProvider services)
     {
@@ -231,7 +234,7 @@ internal sealed class IndexingHarness : IAsyncDisposable
             runDb,
             new WorkspaceFileReader(scopes, options),
             Vectors,
-            new FixedEmbedder(),
+            Embedder,
             new RawProfiles(),
             new DocumentService(runDb, options, NullLogger<DocumentService>.Instance),
             new CorpusLeases(scopes, NullLogger<CorpusLeases>.Instance),

@@ -166,8 +166,9 @@ done
 ```
 
 The terminal states are `succeeded`, `failed`, `degraded` and `cancelled`. `degraded`
-means one or more files could not be embedded and were skipped; they are retried on the
-next run, and `error` says so.
+means the pass ran without covering everything: a source could not be reached, or one or
+more files could not be embedded and were skipped (those are retried on the next run).
+`error` gives every reason, one sentence each.
 
 The key needs the `ingest` scope for this, which is off unless it was ticked when the key
 was issued.

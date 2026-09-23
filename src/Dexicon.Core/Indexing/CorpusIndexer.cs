@@ -208,8 +208,10 @@ public sealed class CorpusIndexer(
                 // was wrong, so a caller polling the job for success was told yes.
                 unavailable |= corpus.State == CorpusState.Unavailable;
 
-                set.State = embeddingFailed ? CorpusState.Degraded
-                    : unavailable ? CorpusState.Unavailable
+                // Unavailable ahead of Degraded: a source nobody can reach needs someone to
+                // look at a mount, and files that failed to embed are retried next run.
+                set.State = unavailable ? CorpusState.Unavailable
+                    : embeddingFailed ? CorpusState.Degraded
                     : CorpusState.Ready;
 
                 if (!embeddingFailed && !unavailable) set.LastIndexedUtc = DateTime.UtcNow;
@@ -223,14 +225,14 @@ public sealed class CorpusIndexer(
             // not success either.
             job.State = embeddingFailed || unavailable ? JobState.Degraded : JobState.Succeeded;
 
-            corpus.State = embeddingFailed ? CorpusState.Degraded
-                : unavailable ? CorpusState.Unavailable
+            corpus.State = unavailable ? CorpusState.Unavailable
+                : embeddingFailed ? CorpusState.Degraded
                 : CorpusState.Ready;
 
             if (!embeddingFailed && !unavailable) corpus.LastIndexedUtc = DateTime.UtcNow;
 
             if (embeddingFailed)
-                job.Error = "One or more files could not be embedded and were skipped. They will be retried on the next run.";
+                AddReason(job, "One or more files could not be embedded and were skipped. They will be retried on the next run.");
         }
         catch (OperationCanceledException) when (callerCancelled.IsCancellationRequested)
         {
@@ -245,7 +247,7 @@ public sealed class CorpusIndexer(
         {
             log.LogError(ex, "Indexing job {JobId} for corpus {Corpus} failed", jobId, corpus.Name);
             job.State = JobState.Failed;
-            job.Error = ex.Message;
+            AddReason(job, ex.Message);
 
             // Only while this job still owns the corpus. A job that never got the lease,
             // or lost it, would otherwise mark a corpus someone else is working as
@@ -777,9 +779,7 @@ public sealed class CorpusIndexer(
             // sources still indexed. A path is resolved on every pass, so a source can be
             // refused without anyone editing it, and one created through a link before
             // D-35 now is. Uncaught, this failed the whole job at the first such source.
-            corpus.State = CorpusState.Unavailable;
-            job.Error = ex.Message;
-            log.LogWarning("{Error}", job.Error);
+            Unreachable(corpus, job, ex.Message);
             return;
         }
 
@@ -787,9 +787,7 @@ public sealed class CorpusIndexer(
         {
             // Not destructive: the existing index stays searchable. A missing mount is
             // an operational condition, not a reason to delete someone's corpus.
-            corpus.State = CorpusState.Unavailable;
-            job.Error = $"Workspace path '{source.RootPath}' is not available under {_indexing.WorkspaceRoot}.";
-            log.LogWarning("{Error}", job.Error);
+            Unreachable(corpus, job, $"Workspace path '{source.RootPath}' is not available under {_indexing.WorkspaceRoot}.");
             return;
         }
 
@@ -830,17 +828,13 @@ public sealed class CorpusIndexer(
         catch (UnauthorizedAccessException ex)
         {
             // As for a workspace source (IndexWorkspaceSourceAsync).
-            corpus.State = CorpusState.Unavailable;
-            job.Error = ex.Message;
-            log.LogWarning("{Error}", job.Error);
+            Unreachable(corpus, job, ex.Message);
             return;
         }
 
         if (repo is null)
         {
-            corpus.State = CorpusState.Unavailable;
-            job.Error = $"Workspace path '{source.RootPath}' is not available under {_indexing.WorkspaceRoot}.";
-            log.LogWarning("{Error}", job.Error);
+            Unreachable(corpus, job, $"Workspace path '{source.RootPath}' is not available under {_indexing.WorkspaceRoot}.");
             return;
         }
 
@@ -872,9 +866,7 @@ public sealed class CorpusIndexer(
                 // whose mount is present but whose .git is not is the same class of
                 // problem as a mount that is away, and the history indexed last time is
                 // still searchable.
-                corpus.State = CorpusState.Unavailable;
-                job.Error = $"Source '{source.RootPath}' is not a git repository, so it has no history to index.";
-                log.LogWarning("{Error}", job.Error);
+                Unreachable(corpus, job, $"Source '{source.RootPath}' is not a git repository, so it has no history to index.");
                 return;
             }
 
@@ -882,9 +874,7 @@ public sealed class CorpusIndexer(
         }
         catch (GitHistoryException ex)
         {
-            corpus.State = CorpusState.Unavailable;
-            job.Error = ex.Message;
-            log.LogWarning("{Error}", job.Error);
+            Unreachable(corpus, job, ex.Message);
             return;
         }
 
@@ -942,9 +932,7 @@ public sealed class CorpusIndexer(
         }
         catch (GitHistoryException ex)
         {
-            corpus.State = CorpusState.Unavailable;
-            job.Error = ex.Message;
-            log.LogWarning("{Error}", job.Error);
+            Unreachable(corpus, job, ex.Message);
         }
     }
 
@@ -1413,6 +1401,36 @@ public sealed class CorpusIndexer(
     /// </summary>
     public string ResolveWorkspacePath(string? relative) =>
         WorkspaceDiscovery.Resolve(_indexing.WorkspaceRoot, relative);
+
+    /// <summary>
+    /// A source this pass could not reach. Nothing already indexed is removed; the corpus
+    /// is Unavailable and the reason joins the job's others.
+    /// </summary>
+    private void Unreachable(Corpus corpus, IndexJob job, string reason)
+    {
+        corpus.State = CorpusState.Unavailable;
+        AddReason(job, reason);
+        log.LogWarning("{Reason}", reason);
+    }
+
+    /// <summary>
+    /// Adds a reason to the job's error rather than replacing what is there. One string
+    /// serves the whole job, and each reason used to overwrite the last: two unreachable
+    /// sources reported only the second, and an embedding failure at the end of the pass
+    /// hid an unreachable source altogether.
+    ///
+    /// Joined as sentences, since the Jobs view shows it as one paragraph and index_status
+    /// as one line. Once each: every chunk set is its own pass over the sources, so a
+    /// missing source is found once per set.
+    /// </summary>
+    private static void AddReason(IndexJob job, string reason)
+    {
+        var sentence = reason.Trim();
+        if (!sentence.EndsWith('.')) sentence += ".";
+
+        if (job.Error is not { Length: > 0 }) job.Error = sentence;
+        else if (!job.Error.Contains(sentence, StringComparison.Ordinal)) job.Error += " " + sentence;
+    }
 
     /// <summary>
     /// Whether this job still owns the corpus, which is what licenses it to write shared
