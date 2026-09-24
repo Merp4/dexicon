@@ -1869,6 +1869,10 @@ function EditHistorySourceModal({
     || (git.includeDiff && git.maxDiffBytes !== initial.maxDiffBytes)
     || pathsChanged;
 
+  // Turning keeping off makes the limit a window again, and everything held past it goes
+  // on the refresh. A removal the person saving should see coming.
+  const dropsKept = initial.keepIndexed && !git.keepIndexed && git.maxCommits != null;
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -1914,6 +1918,13 @@ function EditHistorySourceModal({
             Saving refreshes the corpus. The ref, the commit limit, the date and merges decide
             which commits are indexed, not what any of them holds: documents already indexed
             are kept, and commits no longer selected leave the index.
+          </Notice>
+        )}
+
+        {dropsKept && (
+          <Notice tone="warn" className="text-xs">
+            Without keeping, the limit is a window: commits past the newest{' '}
+            {git.maxCommits?.toLocaleString()} leave the index on the refresh.
           </Notice>
         )}
 
@@ -2057,13 +2068,6 @@ function CorpusDefaultsModal({
   );
 }
 
-/**
- * Add a place this corpus takes content from.
- *
- * Every field here has been in the API since the beginning and in docs/08 since the
- * beginning, and in the UI never, so a corpus was stuck with the one source it was
- * created with, and the filters could not be set or seen at all.
- */
 /** A history source's settings with every field present, since a save sends them all. */
 type GitSettings = {
   ref: string;
@@ -2073,6 +2077,7 @@ type GitSettings = {
   maxDiffBytes: number;
   includeMerges: boolean;
   maxCommits: number | null;
+  keepIndexed: boolean;
   since: string | null;
 };
 
@@ -2085,6 +2090,7 @@ const DEFAULT_GIT: GitSettings = {
   maxDiffBytes: 65536,
   includeMerges: false,
   maxCommits: null,
+  keepIndexed: false,
   since: null,
 };
 
@@ -2097,6 +2103,7 @@ function gitSettingsOf(git?: Corpus['sources'][number]['git']): GitSettings {
     maxDiffBytes: git?.maxDiffBytes ?? DEFAULT_GIT.maxDiffBytes,
     includeMerges: git?.includeMerges ?? DEFAULT_GIT.includeMerges,
     maxCommits: git?.maxCommits ?? null,
+    keepIndexed: git?.keepIndexed ?? DEFAULT_GIT.keepIndexed,
     since: git?.since ?? null,
   };
 }
@@ -2115,7 +2122,7 @@ function GitHistoryFields({
 }) {
   const set = <K extends keyof GitSettings>(key: K, v: GitSettings[K]) => onChange({ ...value, [key]: v });
 
-  const check = (key: 'includeMessage' | 'includeStat' | 'includeDiff' | 'includeMerges', label: string, hint: string) => (
+  const check = (key: 'includeMessage' | 'includeStat' | 'includeDiff' | 'includeMerges' | 'keepIndexed', label: string, hint: string) => (
     <label className="mb-3.5 flex items-start gap-2.5">
       <Checkbox checked={value[key]} onCheckedChange={(v) => set(key, v === true)} className="mt-0.5" />
       <span className="grid gap-0.5">
@@ -2161,9 +2168,16 @@ function GitHistoryFields({
           type="number"
           min={1}
           value={value.maxCommits ?? ''}
-          onChange={(e) => set('maxCommits', e.target.value === '' ? null : Number(e.target.value))}
+          onChange={(e) => {
+            const maxCommits = e.target.value === '' ? null : Number(e.target.value);
+            // Keeping means nothing without a limit, and the server refuses it there.
+            onChange({ ...value, maxCommits, keepIndexed: maxCommits == null ? false : value.keepIndexed });
+          }}
         />
       </Field>
+
+      {value.maxCommits != null && check('keepIndexed', 'Keep commits once indexed',
+        'Off, the limit is a window: each new commit pushes the oldest out. On, it sets how far back the first pass reaches, and indexed commits stay while the ref reaches them.')}
 
       <Field label="Committed since (optional)" hint="From 00:00 UTC on this date. Empty for every commit.">
         <Input type="date" value={value.since ?? ''} onChange={(e) => set('since', e.target.value || null)} />
@@ -2172,6 +2186,13 @@ function GitHistoryFields({
   );
 }
 
+/**
+ * Add a place this corpus takes content from.
+ *
+ * Every field here has been in the API since the beginning and in docs/08 since the
+ * beginning, and in the UI never, so a corpus was stuck with the one source it was
+ * created with, and the filters could not be set or seen at all.
+ */
 function AddSourceModal({
   corpus,
   initialPath = '',
