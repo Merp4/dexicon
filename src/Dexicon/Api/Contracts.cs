@@ -19,14 +19,14 @@ public sealed record CreateCorpusRequest(
     string? BoundaryMode = null,
     string? WorkspacePath = null);
 
+/// <param name="Defaults">
+/// Filters every source inherits. Sent, it REPLACES all four: they are edited together
+/// on one form, and a partial update would need a way to say "leave that one alone"
+/// that is indistinguishable from "unset it". Omit the field to leave the defaults
+/// unchanged; send a member as null to return it to the configured value.
+/// </param>
 public sealed record UpdateCorpusRequest(
     string? Description = null,
-    /// <summary>
-    /// Filters every source inherits. Sent, it REPLACES all four: they are edited together
-    /// on one form, and a partial update would need a way to say "leave that one alone"
-    /// that is indistinguishable from "unset it". Omit the field to leave the defaults
-    /// unchanged; send a member as null to return it to the configured value.
-    /// </summary>
     CorpusDefaults? Defaults = null);
 
 /// <summary>
@@ -34,6 +34,7 @@ public sealed record UpdateCorpusRequest(
 /// inherited from the corpus's default set, so "same as now but on another model" is a
 /// two-field request.
 /// </summary>
+/// <param name="MakeDefault">Promote immediately instead of backfilling first. Rarely what you want.</param>
 public sealed record CreateChunkSetRequest(
     string Name,
     string? Description = null,
@@ -46,7 +47,6 @@ public sealed record CreateChunkSetRequest(
     bool? UnitAware = null,
     bool? SentenceAware = null,
     bool? HeadingContext = null,
-    /// <summary>Promote immediately instead of backfilling first. Rarely what you want.</summary>
     bool? MakeDefault = null);
 
 /// <summary>
@@ -175,19 +175,25 @@ public sealed record ModelProfileSaved(
 public sealed record ProbeModelRequest(string Model, string? Provider = null);
 
 /// <summary>One embedding model a provider can serve.</summary>
+/// <remarks>
+/// The three template fields say how text is framed for this model, and whether that is
+/// saved or assumed.
+///
+/// <paramref name="Measured"/> is here rather than only on the probe response because the
+/// moment it matters is when somebody is choosing a chunk size, and that screen was showing
+/// "64-8192" with no reference to what the selected model can actually take. The probe
+/// measured it once and then forgot, so the answer existed and was unreachable.
+/// </remarks>
+/// <param name="DocumentTemplate">How indexed text is framed for this model.</param>
+/// <param name="QueryTemplate">How a search query is framed for this model.</param>
+/// <param name="TemplateOrigin">
+/// Whether the templates are saved (<c>Configured</c>) or assumed (<c>BuiltIn</c>, or
+/// <c>None</c> for a model embedded raw).
+/// </param>
+/// <param name="Measured">What a probe measured about this model, or null if it has never been probed.</param>
 public sealed record EmbeddingModelInfo(
     string Name, long SizeBytes, int? Dimensions, bool InUse,
-    /// <summary>How text is framed for this model, and whether that is saved or assumed.</summary>
     string DocumentTemplate, string QueryTemplate, string TemplateOrigin,
-    /// <summary>
-    /// What a probe measured about this model, or null if it has never been probed.
-    /// </summary>
-    /// <remarks>
-    /// Here rather than only on the probe response because the moment it matters is when
-    /// somebody is choosing a chunk size, and that screen was showing "64-8192" with no
-    /// reference to what the selected model can actually take. The probe measured it once
-    /// and then forgot, so the answer existed and was unreachable.
-    /// </remarks>
     ModelMeasurement? Measured);
 
 /// <summary>A probe's findings, as a caller sees them.</summary>
@@ -244,6 +250,15 @@ public sealed record CoverageGap(string Directory, IReadOnlyList<string> Files);
 
 public sealed record CoverageReport(IReadOnlyList<CoverageGap> Gaps);
 
+/// <param name="PendingCount">
+/// Discovered by a sweep and not yet indexed. Separate from
+/// <paramref name="FileCount"/>, which counts only what is searchable: widening that
+/// one would change what the number means on every screen that shows it beside a chunk
+/// count. This is what lets a corpus say what is in it before anything has been
+/// embedded. See D-32.
+/// </param>
+/// <param name="ChunkSets">Every way this corpus is cut. The default one is what search uses.</param>
+/// <param name="Defaults">Filters every source here inherits unless it sets its own.</param>
 public sealed record CorpusSummary(
     string Id,
     string Name,
@@ -256,18 +271,9 @@ public sealed record CorpusSummary(
     int ChunkCount,
     int SkippedCount,
     int FailedCount,
-    /// <summary>
-    /// Discovered by a sweep and not yet indexed. Separate from
-    /// <paramref name="FileCount"/>, which counts only what is searchable: widening that
-    /// one would change what the number means on every screen that shows it beside a chunk
-    /// count. This is what lets a corpus say what is in it before anything has been
-    /// embedded. See D-32.
-    /// </summary>
     int PendingCount,
     IReadOnlyList<SourceSummary> Sources,
-    /// <summary>Every way this corpus is cut. The default one is what search uses.</summary>
     IReadOnlyList<ChunkSetSummary> ChunkSets,
-    /// <summary>Filters every source here inherits unless it sets its own.</summary>
     CorpusDefaults? Defaults = null);
 
 /// <summary>
@@ -278,7 +284,37 @@ public sealed record CorpusSummary(
 /// anything setting them had no way to read them back and no way to show what a source is
 /// actually doing. They are persisted as a JSON array in one column; the contract is a
 /// list, because a caller should not be parsing our storage format.
+///
+/// The four <c>Own</c> fields say what this source sets for itself, null where it inherits
+/// the corpus default. <paramref name="UseGitignore"/>, <paramref name="MaxFileBytes"/>,
+/// <paramref name="IncludeGlobs"/> and <paramref name="ExcludeGlobs"/> are the EFFECTIVE
+/// values, which is what indexing uses and what a reader wants to see; the <c>Own</c> fields
+/// say which of them the source would keep if the corpus default changed, and they are what
+/// an edit form binds to.
 /// </remarks>
+/// <param name="FileCount">
+/// Files this source contributed. A corpus with one source does not need it, since
+/// the corpus total is the source total. A corpus with ten does: without it there is no
+/// way to see that one folder brought in nothing, which is what a mistyped path, an
+/// over-eager exclude glob, or an index that stopped early all look like.
+/// </param>
+/// <param name="OwnUseGitignore">What this source sets for <paramref name="UseGitignore"/> itself, null where it inherits the corpus default.</param>
+/// <param name="OwnMaxFileBytes">What this source sets for <paramref name="MaxFileBytes"/> itself, null where it inherits the corpus default.</param>
+/// <param name="OwnIncludeGlobs">What this source sets for <paramref name="IncludeGlobs"/> itself, null where it inherits the corpus default.</param>
+/// <param name="OwnExcludeGlobs">What this source sets for <paramref name="ExcludeGlobs"/> itself, null where it inherits the corpus default.</param>
+/// <param name="Git">
+/// A git-history source's settings, and null for every other kind. Returned because
+/// a setting that can be written and never read back is a setting nobody can check,
+/// correct or reproduce: the ref and the diff decide what every document in the
+/// source holds, and they were accepted at creation and then invisible.
+/// </param>
+/// <param name="NewestCommit">
+/// A git-history source's newest commit as its last inventory listed it: where the ref
+/// points, not how far indexing got. Null for every other kind, before the first
+/// pass, and when the settings select no commits.
+/// Beside <paramref name="Git"/> because the ref names what to follow and this says where
+/// it had got to: a ref that stopped moving is otherwise invisible.
+/// </param>
 public sealed record SourceSummary(
     string Id,
     string Kind,
@@ -287,37 +323,12 @@ public sealed record SourceSummary(
     int MaxFileBytes,
     IReadOnlyList<string> IncludeGlobs,
     IReadOnlyList<string> ExcludeGlobs,
-    /// <summary>
-    /// Files this source contributed. A corpus with one source does not need it, since
-    /// the corpus total is the source total. A corpus with ten does: without it there is no
-    /// way to see that one folder brought in nothing, which is what a mistyped path, an
-    /// over-eager exclude glob, or an index that stopped early all look like.
-    /// </summary>
     int FileCount = 0,
-    /// <summary>
-    /// What this source sets for itself, null where it inherits the corpus default. The
-    /// four fields above are the EFFECTIVE values, which is what indexing uses and what a
-    /// reader wants to see; these say which of them the source would keep if the corpus
-    /// default changed, and they are what an edit form binds to.
-    /// </summary>
     bool? OwnUseGitignore = null,
     int? OwnMaxFileBytes = null,
     IReadOnlyList<string>? OwnIncludeGlobs = null,
     IReadOnlyList<string>? OwnExcludeGlobs = null,
-    /// <summary>
-    /// A git-history source's settings, and null for every other kind. Returned because
-    /// a setting that can be written and never read back is a setting nobody can check,
-    /// correct or reproduce: the ref and the diff decide what every document in the
-    /// source holds, and they were accepted at creation and then invisible.
-    /// </summary>
     GitHistoryOptions? Git = null,
-    /// <summary>
-    /// A git-history source's newest commit as its last inventory listed it: where the ref
-    /// points, not how far indexing got. Null for every other kind, before the first
-    /// pass, and when the settings select no commits.
-    /// Beside <see cref="Git"/> because the ref names what to follow and this says where
-    /// it had got to: a ref that stopped moving is otherwise invisible.
-    /// </summary>
     CommitSummary? NewestCommit = null);
 
 /// <summary>A commit, by its full sha and its author date.</summary>
@@ -374,29 +385,29 @@ public sealed record UpdateSourceRequest(
 /// <paramref name="Store"/> names a text store, because the document is not being
 /// reassembled from anything.
 /// </remarks>
+/// <param name="StartLine">First line of the RETURNED WINDOW, not of the file.</param>
+/// <param name="EndLine">Last line of the returned window.</param>
+/// <param name="Truncated">More text follows this window. Fetch it with <paramref name="NextOffset"/>.</param>
+/// <param name="Offset">Character offset this window starts at.</param>
+/// <param name="TotalChars">Length of the whole file's indexed text, so a caller can show progress.</param>
+/// <param name="NextOffset">Offset to pass for the next window, or null at the end.</param>
+/// <param name="Store">
+/// Where the text came from: <c>blob_texts</c>, <c>file_texts</c>, or <c>chunks</c>
+/// when no document is stored and it was stitched back together. Said out loud
+/// because the three differ in whether they can have holes.
+/// </param>
 public sealed record IndexedFileText(
     string Corpus,
     string ChunkSet,
     string Path,
-    /// <summary>First line of the RETURNED WINDOW, not of the file.</summary>
     int StartLine,
-    /// <summary>Last line of the returned window.</summary>
     int EndLine,
     int Gaps,
-    /// <summary>More text follows this window. Fetch it with <see cref="NextOffset"/>.</summary>
     bool Truncated,
     string Text,
-    /// <summary>Character offset this window starts at.</summary>
     int Offset = 0,
-    /// <summary>Length of the whole file's indexed text, so a caller can show progress.</summary>
     int TotalChars = 0,
-    /// <summary>Offset to pass for the next window, or null at the end.</summary>
     int? NextOffset = null,
-    /// <summary>
-    /// Where the text came from: <c>blob_texts</c>, <c>file_texts</c>, or <c>chunks</c>
-    /// when no document is stored and it was stitched back together. Said out loud
-    /// because the three differ in whether they can have holes.
-    /// </summary>
     string Store = "chunks");
 
 /// <summary>
@@ -427,6 +438,15 @@ public sealed record JobSummary(
     int FilesTotal, int FilesDone, int FilesSkipped, int FilesFailed, int ChunksWritten,
     string? Error, DateTime QueuedUtc, DateTime? StartedUtc, DateTime? FinishedUtc);
 
+/// <param name="MaxCharsPerHit">
+/// Characters of each hit to return, centred on what matched. Null takes the default;
+/// 0 returns whole chunks, which is what a reader comparing two extractions wants and
+/// what an agent almost never does.
+/// </param>
+/// <param name="DistinctTitles">
+/// Collapse hits that are the same document in another format. Null defaults to true;
+/// false returns both, which is how two extractors get compared on one title.
+/// </param>
 public sealed record SearchApiRequest(
     string Query,
     IReadOnlyList<string>? Corpus = null,
@@ -436,16 +456,7 @@ public sealed record SearchApiRequest(
     string? Source = null,
     string? Language = null,
     string? Symbol = null,
-    /// <summary>
-    /// Characters of each hit to return, centred on what matched. Null takes the default;
-    /// 0 returns whole chunks, which is what a reader comparing two extractions wants and
-    /// what an agent almost never does.
-    /// </summary>
     int? MaxCharsPerHit = null,
-    /// <summary>
-    /// Collapse hits that are the same document in another format. Null defaults to true;
-    /// false returns both, which is how two extractors get compared on one title.
-    /// </summary>
     bool? DistinctTitles = null);
 
 /// <summary>
@@ -453,46 +464,46 @@ public sealed record SearchApiRequest(
 /// the search filters; what differs is the budget, which governs the whole passage rather
 /// than each hit. See docs/decisions.md D-29.
 /// </summary>
+/// <param name="Limit">Hits to consider. What reaches the passage is decided by the budget.</param>
+/// <param name="MaxChars">
+/// Characters for the whole passage, headers included. Null takes the default. A
+/// budget smaller than one chunk returns nothing and says so rather than returning
+/// the middle of a passage.
+/// </param>
+/// <param name="Neighbours">Chunks to include either side of each hit, for reading past what matched.</param>
+/// <param name="LineNumbers">Prefix each line with its number in the file. Off by default.</param>
 public sealed record ContextApiRequest(
     string Query,
     IReadOnlyList<string>? Corpus = null,
     string? Mode = null,
-    /// <summary>Hits to consider. What reaches the passage is decided by the budget.</summary>
     int? Limit = null,
     string? PathPrefix = null,
     string? Source = null,
     string? Language = null,
     string? Symbol = null,
-    /// <summary>
-    /// Characters for the whole passage, headers included. Null takes the default. A
-    /// budget smaller than one chunk returns nothing and says so rather than returning
-    /// the middle of a passage.
-    /// </summary>
     int? MaxChars = null,
-    /// <summary>Chunks to include either side of each hit, for reading past what matched.</summary>
     int? Neighbours = null,
-    /// <summary>Prefix each line with its number in the file. Off by default.</summary>
     bool? LineNumbers = null,
     bool? DistinctTitles = null);
 
+/// <param name="CorpusIds">
+/// Corpus ids this key may reach. Omitted or empty means every corpus, which is what a
+/// single-user install wants. Editable afterwards, and read per request, so a change
+/// here reaches the agent on its next call without it reconnecting.
+/// </param>
 public sealed record CreateTokenRequest(
     string Name,
     IReadOnlyList<string>? Scopes = null,
     int? ExpiresInDays = null,
-    /// <summary>
-    /// Corpus ids this key may reach. Omitted or empty means every corpus, which is what a
-    /// single-user install wants. Editable afterwards, and read per request, so a change
-    /// here reaches the agent on its next call without it reconnecting.
-    /// </summary>
     IReadOnlyList<string>? CorpusIds = null);
 
 /// <summary>Replaces a key's corpus mapping outright. An empty list means every corpus.</summary>
 public sealed record UpdateTokenCorporaRequest(IReadOnlyList<string> CorpusIds);
 
+/// <param name="CorpusIds">Empty means every corpus, which is not the same as none.</param>
 public sealed record TokenSummary(
     string Id, string Name, string Scopes,
     DateTime CreatedUtc, DateTime? LastUsedUtc, DateTime? ExpiresUtc, DateTime? RevokedUtc,
-    /// <summary>Empty means every corpus, which is not the same as none.</summary>
     IReadOnlyList<string> CorpusIds);
 
 public sealed record SignInRequest(string Password);

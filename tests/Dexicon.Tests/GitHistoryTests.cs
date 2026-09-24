@@ -339,7 +339,7 @@ public sealed class GitHistoryTests : IDisposable
     /// <summary>
     /// Signature verification is a second way a repository's own config runs a program.
     ///
-    /// `log.showSignature=true` plus `gpg.program=<anything>`, both settable in the
+    /// `log.showSignature=true` plus `gpg.program=&lt;anything&gt;`, both settable in the
     /// repository being read, make `git log` execute that program for any commit
     /// carrying a gpgsig header. Measured on a scratch repository: with the two set, a
     /// fake gpg left its marker file behind, and with `-c log.showSignature=false` it did
