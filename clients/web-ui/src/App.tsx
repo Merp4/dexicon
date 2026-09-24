@@ -2447,8 +2447,12 @@ function FileViewer({
         // Opened at a hit past the first window, read on until its last line is in, as a
         // reader pressing Read on would. The response is a window of 400,000 characters,
         // so a hit late in a book was neither marked nor scrolled to.
+        //
+        // While more follows, `endLine` is not a whole line here: a window that ends on a
+        // newline counts the next line, whose text is in the next window, and one that ends
+        // mid-line holds only the start of it. So the last complete line is one before.
         const want = throughLine ?? aroundLine;
-        while (current && want !== undefined && read.nextOffset != null && read.endLine < want) {
+        while (current && want !== undefined && read.nextOffset != null && read.endLine <= want) {
           const next = await api.fileText(corpus, path, read.nextOffset);
           read = { ...next, startLine: read.startLine, text: read.text + next.text };
         }

@@ -72,6 +72,8 @@ async function searchFor(text: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps queued Once answers, so one a test did not use reached the next.
+  fileText.mockReset();
   search.mockResolvedValue(result());
 });
 
@@ -247,6 +249,31 @@ describe('opening a hit past the first window', () => {
       .filter((s) => s.className.includes('accent-soft'))
       .map((s) => s.lastChild?.textContent);
     expect(marked).toEqual(['line 5', 'line 6']);
+  });
+
+  it('reads on for a hit on the line a window ends before', async () => {
+    // A window ending on a newline reports the next line as its endLine, with none of
+    // that line's text in it.
+    const window = (startLine: number, lines: number, nextOffset: number | null) => ({
+      corpus: 'docs', path: 'book.pdf', chunkSet: 'default', gaps: 0, totalChars: 600,
+      startLine, endLine: startLine + lines, nextOffset,
+      text: Array.from({ length: lines }, (_, i) => `line ${startLine + i}`).join('\n') + '\n',
+    });
+    fileText
+      .mockResolvedValueOnce(window(1, 3, 300))
+      .mockResolvedValueOnce(window(4, 3, null));
+    search.mockResolvedValue(result({ hits: [hit({ filePath: 'book.pdf', startLine: 4, endLine: 4 })] }));
+    const user = await searchFor('chunk sets');
+
+    await user.click(await screen.findByRole('button', { name: 'Open' }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText('line 1');
+
+    expect(fileText).toHaveBeenCalledTimes(2);
+    const marked = [...dialog.querySelectorAll('pre > span')]
+      .filter((s) => s.className.includes('accent-soft'))
+      .map((s) => s.lastChild?.textContent);
+    expect(marked).toEqual(['line 4']);
   });
 });
 
