@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DocumentsView } from './Documents';
-import type { Corpus, LibraryDocument } from './api';
+import { ApiError, type Corpus, type LibraryDocument } from './api';
 
 /**
  * The document library.
@@ -18,6 +18,7 @@ import type { Corpus, LibraryDocument } from './api';
 const listDocuments = vi.fn();
 const uploadDocuments = vi.fn();
 const attachDocument = vi.fn();
+const documentText = vi.fn();
 
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
@@ -26,7 +27,7 @@ vi.mock('./api', async (importOriginal) => ({
     uploadDocuments: (...a: unknown[]) => uploadDocuments(...a),
     attachDocument: (...a: unknown[]) => attachDocument(...a),
     detachDocument: vi.fn(),
-    documentText: vi.fn(),
+    documentText: (...a: unknown[]) => documentText(...a),
   },
 }));
 
@@ -193,5 +194,23 @@ describe('the document library', () => {
     render(<DocumentsView corpora={[corpus('library')]} {...noop} />);
 
     expect(await screen.findByText(/No text layer/)).toBeInTheDocument();
+  });
+  /**
+   * The load is the only request this dialog makes. Its failure went to the page, behind
+   * the dialog, which went on saying "Loading…" for ever; and dismissing the failure must
+   * not bring that back.
+   */
+  it('says in the dialog when the extracted text cannot be read', async () => {
+    documentText.mockRejectedValue(new ApiError(404, 'No stored text', 'Nothing is stored for this document.'));
+    const user = userEvent.setup();
+    render(<DocumentsView corpora={[corpus('library')]} {...noop} />);
+
+    await user.click(await screen.findByRole('button', { name: 'View extracted text' }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/Nothing is stored/);
+    expect(within(dialog).queryByText(/Loading…/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'Dismiss error' })).not.toBeInTheDocument();
+    expect(noop.onError).not.toHaveBeenCalled();
   });
 });

@@ -377,6 +377,15 @@ export function Spinner({ className }: { className?: string }) {
   return <Loader2 aria-hidden className={cn('size-3.5 animate-spin', className)} />;
 }
 
+/**
+ * A failure, in the server's words.
+ *
+ * A dialog renders its own, at its top, rather than handing the error to the page. The
+ * page's banner sits under an open dialog's overlay, and Radix marks everything outside
+ * the dialog aria-hidden, so a failure sent there left the dialog open with nothing in it
+ * to say why. Measured with New corpus and a name already taken: the 409's message
+ * rendered behind the overlay, inside an aria-hidden subtree.
+ */
 export function ErrorBanner({ error, onDismiss }: { error: unknown; onDismiss?: () => void }) {
   if (!error) return null;
   const message = error instanceof Error ? error.message : String(error);
