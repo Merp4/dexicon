@@ -5,7 +5,7 @@ namespace Dexicon.Tests;
 /// <summary>
 /// A boundary decides WHERE a chunk splits. It must not decide to split almost nothing.
 ///
-/// Found in a real book. "Crafting Clean Code with JavaScript and React" is prose
+/// Found in a real book on writing code, which is prose
 /// interleaved with code listings: blank lines are frequent in the prose and absent inside
 /// a listing. Its PDF produced 1,051 chunks averaging 388 characters where 70 of ~8,000
 /// were intended: seventeen times the vectors, the embedding cost and the storage, and a
