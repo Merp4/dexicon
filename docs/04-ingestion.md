@@ -221,7 +221,9 @@ What a document holds is per source:
 | `includeDiff` | false | The patch |
 | `maxDiffBytes` | 65536 | UTF-8 bytes of the patch, per commit. Over it the patch is dropped, the stat is kept, and the document says how large it was |
 | `includeMerges` | false | A merge's default patch is empty and its message is usually generated |
-| `maxCommits`, `since` | — | Bound the walk from the tip, or by date: commits committed at or after 00:00 UTC on `since` |
+| `maxCommits` | — | Bound the walk to this many commits from the tip |
+| `keepIndexed` | false | With `maxCommits`: keep a commit once indexed, rather than letting each new commit push the oldest out (below) |
+| `since` | — | Bound the walk by date: commits committed at or after 00:00 UTC on this date |
 
 The diff is off because of what it costs. Measured over 201 commits of this repository:
 with patches the history is 5.99 MB and the median commit 11,393 characters; with the
@@ -247,11 +249,22 @@ the read rather than after it, as a file's must. Measured on this repository: 77
 enumerate 201 commits, 1,069ms to read all of them with their patches.
 
 Changing any setting that alters what a document says re-indexes the history, because
-every document really is different. Changing `ref`, `maxCommits`, `since` or
-`includeMerges` does not: those decide which commits are indexed, not what any one of
+every document really is different. Changing `ref`, `maxCommits`, `keepIndexed`, `since`
+or `includeMerges` does not: those decide which commits are indexed, not what any one of
 them holds, and turning merges on adds documents without altering a single existing one.
 The include globs DO, because they are passed to git and decide which files the stat
 lists and which hunks the patch holds.
+
+**A commit limit is a window unless the source keeps what it indexed.** With `maxCommits`
+alone, the source holds the newest that many commits, and each new commit pushes the
+oldest out of the corpus on the next pass. With `keepIndexed` as well, the limit sets how
+far back the first pass reaches, and a commit once indexed stays for as long as the ref
+reaches it and `since`, merges and the include paths select it. A rewritten history or a
+ref moved to another line still removes what it no longer reaches. To tell those apart,
+the inventory lists the whole reachable history instead of stopping at the limit, which
+is a sha and a date per commit. `keepIndexed` without `maxCommits` is refused, because
+every commit is indexed already, and turning it off removes every held commit past the
+limit on the next refresh.
 
 **Each pass that lists the history records the newest commit**, its sha and author date,
 on the source, and the corpus page shows it with its age. `ref` names what to follow and
@@ -372,7 +385,8 @@ and whether the diff is on, and counts commits rather than files; the size cap a
 tree. The source's row opens an editor for them.
 
 Settings git cannot be asked with are refused with a 400 when a source is added or
-edited: a malformed ref, a commit limit below one, a diff cap past the read ceiling. They
+edited: a malformed ref, a commit limit below one, `keepIndexed` without a limit, a diff
+cap past the read ceiling. They
 were stored as sent and found on the next pass, as the source being unavailable, so an
 editor saving a typo was told it had worked. The checks are the ones the inventory makes
 and none runs git, so the request is still judged before any process starts. A ref that

@@ -1658,6 +1658,17 @@ written before the delete, the counters, the reconcile. Each of those is a defec
 been fixed once already, and a second copy of that loop is where the fixes would stop
 applying to half the sources.
 
+**Why a commit limit either rolls or keeps.** `maxCommits` alone is a window over the
+newest commits, and the shared reconcile removes each one that falls past it. That suits a
+source that only wants recent history, but in the counts the removal looks the same as a
+commit rewritten away. `keepIndexed` makes the limit a starting point instead: the
+inventory lists the whole reachable history, and a commit the catalogue already holds is
+kept while it is in that list. Held means a catalogue row rather than an indexed state, so
+a failed read is retried rather than dropped. The window stays the default so that a
+stored source keeps its meaning. Offering only `since` was the alternative: it names the
+same commits every day, so it never removes one by moving, but a count is what people
+reach for first, and a window is a fair choice once it says what it does.
+
 **Rejected.** LibGit2Sharp — though not for the reason first recorded here, and not as
 comfortably as that reason suggested.
 
@@ -1706,7 +1717,8 @@ A sixth MCP tool. History is a corpus, and `search_index` searches corpora
 
 **Revisit if.** A repository large enough that the enumeration itself is slow: 10,000
 commits enumerate in a few seconds, and a million would need the inventory to be
-incremental as well, keyed on the last sha seen.
+incremental as well, keyed on the last sha seen. A source with a limit and `keepIndexed`
+lists the whole history on every pass, so it reaches this first.
 
 ---
 
