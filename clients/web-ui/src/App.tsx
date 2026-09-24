@@ -285,7 +285,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
 
         {view === 'search' && <SearchView corpora={corpora} onError={setError} />}
         {view === 'corpora' && !selected && (
-          <CorporaView corpora={corpora} live={live} onRefresh={refreshCorpora} onOpen={setSelected} onError={setError} />
+          <CorporaView corpora={corpora} live={live} onRefresh={refreshCorpora} onOpen={setSelected} />
         )}
         {view === 'corpora' && selected && (
           <CorpusDetail name={selected} live={live} onBack={() => setSelected(null)} onRefresh={refreshCorpora} onError={setError} />
@@ -776,7 +776,6 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
           path={viewing.path}
           aroundLine={viewing.line}
           onClose={() => setViewing(null)}
-          onError={onError}
         />
       )}
 
@@ -797,13 +796,11 @@ export function CorporaView({
   live,
   onRefresh,
   onOpen,
-  onError,
 }: {
   corpora: Corpus[];
   live: Record<string, Progress>;
   onRefresh: () => Promise<void>;
   onOpen: (name: string) => void;
-  onError: (e: unknown) => void;
 }) {
   const [creating, setCreating] = useState(false);
 
@@ -863,7 +860,7 @@ export function CorporaView({
         </div>
       )}
 
-      {creating && <CreateCorpusModal onClose={() => setCreating(false)} onCreated={async () => { setCreating(false); await onRefresh(); }} onError={onError} />}
+      {creating && <CreateCorpusModal onClose={() => setCreating(false)} onCreated={async () => { setCreating(false); await onRefresh(); }} />}
     </div>
   );
 }
@@ -912,8 +909,9 @@ function ProgressBar({ job, sources }: {
   );
 }
 
-function CreateCorpusModal({ onClose, onCreated, onError }: { onClose: () => void; onCreated: () => Promise<void>; onError: (e: unknown) => void }) {
+function CreateCorpusModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => Promise<void> }) {
   const [name, setName] = useState('');
+  const [error, setError] = useState<unknown>(null);
   const [description, setDescription] = useState('');
   const [path, setPath] = useState('');
   const [models, setModels] = useState<EmbeddingModelInfo[]>([]);
@@ -943,6 +941,7 @@ function CreateCorpusModal({ onClose, onCreated, onError }: { onClose: () => voi
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
+    setError(null);
     try {
       await api.createCorpus({
         name,
@@ -956,13 +955,14 @@ function CreateCorpusModal({ onClose, onCreated, onError }: { onClose: () => voi
       });
       await onCreated();
     } catch (err) {
-      onError(err);
+      setError(err);
       setBusy(false);
     }
   }
 
   return (
     <Modal title="New corpus" onClose={onClose}>
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <form onSubmit={submit}>
         <Field label="Name" hint="Agents pass this to search_index, so keep it short and memorable.">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="api-repo" autoFocus />
@@ -1460,7 +1460,6 @@ export function CorpusDetail({
           path={viewing.path}
           aroundLine={viewing.line}
           onClose={() => setViewing(null)}
-          onError={onError}
         />
       )}
 
@@ -1486,7 +1485,6 @@ export function CorpusDetail({
           source={editingSource}
           onClose={() => setEditingSource(null)}
           onSaved={async () => { setEditingSource(null); await load(); }}
-          onError={onError}
         />
       ))}
 
@@ -1495,7 +1493,6 @@ export function CorpusDetail({
           corpus={corpus}
           onClose={() => setEditingDefaults(false)}
           onSaved={async () => { setEditingDefaults(false); await load(); }}
-          onError={onError}
         />
       )}
 
@@ -1505,7 +1502,6 @@ export function CorpusDetail({
           source={removingSource}
           onClose={() => setRemovingSource(null)}
           onRemoved={async () => { setRemovingSource(null); await load(); }}
-          onError={onError}
         />
       )}
 
@@ -1514,7 +1510,6 @@ export function CorpusDetail({
           corpus={corpus}
           onClose={() => setConfirmDelete(false)}
           onDeleted={async () => { setConfirmDelete(false); await onRefresh(); onBack(); }}
-          onError={onError}
         />
       )}
 
@@ -1522,7 +1517,6 @@ export function CorpusDetail({
         <FullReindexModal
           corpus={corpus}
           onClose={() => setConfirmFullReindex(false)}
-          onError={onError}
           onShowChunkSets={() => {
             leavingForChunkSets.current = true;
             setConfirmFullReindex(false);
@@ -1688,14 +1682,13 @@ function EditSourceModal({
   source,
   onClose,
   onSaved,
-  onError,
 }: {
   corpus: Corpus;
   source: Corpus['sources'][number];
   onClose: () => void;
   onSaved: () => Promise<void>;
-  onError: (e: unknown) => void;
 }) {
+  const [error, setError] = useState<unknown>(null);
   const d = corpus.defaults;
 
   // Seeded from what the source itself sets. A null there is the source inheriting, which
@@ -1718,6 +1711,7 @@ function EditSourceModal({
     e.preventDefault();
     if (!capMb) return;
     setBusy(true);
+    setError(null);
     try {
       // `clear` rather than a null, because the API cannot tell an absent field from an
       // explicit null and would read one as the other.
@@ -1736,13 +1730,14 @@ function EditSourceModal({
       });
       await onSaved();
     } catch (err) {
-      onError(err);
+      setError(err);
       setBusy(false);
     }
   }
 
   return (
     <Modal title={`Filters for ${sourceName(source)}`} onClose={onClose}>
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <form onSubmit={submit}>
         <Inheritable
           label="Honour .gitignore"
@@ -1940,13 +1935,12 @@ function CorpusDefaultsModal({
   corpus,
   onClose,
   onSaved,
-  onError,
 }: {
   corpus: Corpus;
   onClose: () => void;
   onSaved: () => Promise<void>;
-  onError: (e: unknown) => void;
 }) {
+  const [error, setError] = useState<unknown>(null);
   const d = corpus.defaults;
 
   const [setGitignore, setSetGitignore] = useState(d?.useGitignore != null);
@@ -1966,6 +1960,7 @@ function CorpusDefaultsModal({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
+    setError(null);
     try {
       await api.updateCorpus(corpus.name, {
         defaults: {
@@ -1977,13 +1972,14 @@ function CorpusDefaultsModal({
       });
       await onSaved();
     } catch (err) {
-      onError(err);
+      setError(err);
       setBusy(false);
     }
   }
 
   return (
     <Modal title={`Default filters for ${corpus.name}`} onClose={onClose}>
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <form onSubmit={submit}>
         <p className="mt-0 mb-3.5 text-sm text-muted-foreground">
           Every source here follows these unless it sets its own.
@@ -2339,21 +2335,20 @@ function FileViewer({
   path,
   aroundLine,
   onClose,
-  onError,
 }: {
   corpus: string;
   path: string;
   aroundLine?: number;
   onClose: () => void;
-  onError: (e: unknown) => void;
 }) {
   const [file, setFile] = useState<IndexedFileText | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [more, setMore] = useState(false);
   const highlight = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
-    api.fileText(corpus, path).then(setFile).catch(onError);
-  }, [corpus, path, onError]);
+    api.fileText(corpus, path).then(setFile).catch(setError);
+  }, [corpus, path]);
 
   /**
    * Read on from where the last window stopped.
@@ -2365,11 +2360,12 @@ function FileViewer({
   async function readOn() {
     if (!file?.nextOffset) return;
     setMore(true);
+    setError(null);
     try {
       const next = await api.fileText(corpus, path, file.nextOffset);
       setFile({ ...next, startLine: file.startLine, text: file.text + next.text });
     } catch (e) {
-      onError(e);
+      setError(e);
     } finally {
       setMore(false);
     }
@@ -2384,8 +2380,10 @@ function FileViewer({
 
   return (
     <Modal title={path} onClose={onClose} width={980}>
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       {!file ? (
-        <p className="flex items-center gap-2"><Spinner /> Reading…</p>
+        // A load that failed says so above, rather than reading for ever.
+        error == null && <p className="flex items-center gap-2"><Spinner /> Reading…</p>
       ) : (
         <>
           <div className="mb-2.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -2446,18 +2444,19 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-function RemoveSourceModal({ corpus, source, onClose, onRemoved, onError }: {
+function RemoveSourceModal({ corpus, source, onClose, onRemoved }: {
   corpus: Corpus;
   source: Corpus['sources'][number];
   onClose: () => void;
   onRemoved: () => Promise<void>;
-  onError: (e: unknown) => void;
 }) {
+  const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const where = sourceName(source);
 
   return (
     <Modal title={`Remove ${where}?`} onClose={onClose}>
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       {/* No typed confirmation, unlike deleting a corpus: this is recoverable by adding
           the folder back, and the cost of getting it wrong is a reindex rather than an
           index that no longer exists. Say what it costs and take one click. */}
@@ -2475,8 +2474,9 @@ function RemoveSourceModal({ corpus, source, onClose, onRemoved, onError }: {
           disabled={busy}
           onClick={async () => {
             setBusy(true);
+            setError(null);
             try { await api.removeSource(corpus.name, source.id); await onRemoved(); }
-            catch (e) { onError(e); setBusy(false); }
+            catch (e) { setError(e); setBusy(false); }
           }}
         >
           <Trash2 />
@@ -2487,10 +2487,12 @@ function RemoveSourceModal({ corpus, source, onClose, onRemoved, onError }: {
   );
 }
 
-function DeleteCorpusModal({ corpus, onClose, onDeleted, onError }: { corpus: Corpus; onClose: () => void; onDeleted: () => Promise<void>; onError: (e: unknown) => void }) {
+function DeleteCorpusModal({ corpus, onClose, onDeleted }: { corpus: Corpus; onClose: () => void; onDeleted: () => Promise<void> }) {
+  const [error, setError] = useState<unknown>(null);
   const [typed, setTyped] = useState('');
   return (
     <Modal title={`Delete ${corpus.name}?`} onClose={onClose}>
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <p className="mt-0 text-sm">
         This removes {corpus.chunkCount.toLocaleString()} chunks from the vector store and the corpus from the
         catalogue. The files on disk are untouched. Re-indexing it again may take a while.
@@ -2504,7 +2506,7 @@ function DeleteCorpusModal({ corpus, onClose, onDeleted, onError }: { corpus: Co
         <Button variant="danger"
           disabled={typed !== corpus.name}
           onClick={async () => {
-            try { await api.deleteCorpus(corpus.name); await onDeleted(); } catch (e) { onError(e); }
+            try { await api.deleteCorpus(corpus.name); await onDeleted(); } catch (e) { setError(e); }
           }}
         >
           <Trash2 />
@@ -2530,18 +2532,17 @@ function DeleteCorpusModal({ corpus, onClose, onDeleted, onError }: { corpus: Co
 function FullReindexModal({
   corpus,
   onClose,
-  onError,
   onShowChunkSets,
   finalFocus,
 }: {
   corpus: Corpus;
   onClose: () => void;
-  onError: (e: unknown) => void;
   /** Close this and open the chunk sets, which is where a model change is made. */
   onShowChunkSets: () => void;
   /** Where focus goes when this closes; see Modal. */
   finalFocus: () => HTMLElement | null;
 }) {
+  const [error, setError] = useState<unknown>(null);
   const [queueing, setQueueing] = useState(false);
 
   // Every set, because the job names no chunk set and the indexer then runs each of them.
@@ -2574,13 +2575,14 @@ function FullReindexModal({
       await api.reindex(corpus.name, full);
       onClose();
     } catch (e) {
-      onError(e);
+      setError(e);
       setQueueing(false);
     }
   };
 
   return (
     <Modal title={`Full reindex of ${corpus.name}?`} onClose={onClose} width={560} finalFocus={finalFocus}>
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <p className="mt-0 text-sm">
         Every {unitFor(corpus.sources, 1)} is read again, whether or not it changed, and
         re-embedded if it can be read and chunked — in{' '}
@@ -2937,7 +2939,6 @@ function AccessView({ onError }: { onError: (e: unknown) => void }) {
           corpora={corpora}
           onClose={() => setMapping(null)}
           onSaved={async () => { setMapping(null); await load(); }}
-          onError={onError}
         />
       )}
 
@@ -2946,7 +2947,6 @@ function AccessView({ onError }: { onError: (e: unknown) => void }) {
           corpora={corpora}
           onClose={() => setCreating(false)}
           onCreated={async (t) => { setCreating(false); setIssued(t); await load(); }}
-          onError={onError}
         />
       )}
 
@@ -2981,24 +2981,26 @@ function AccessView({ onError }: { onError: (e: unknown) => void }) {
  * edited at once and a partial update would need a way to say "leave that one alone" that
  * is indistinguishable from "untick it".
  */
-function CorpusMappingModal({ token, corpora, onClose, onSaved, onError }: {
+function CorpusMappingModal({ token, corpora, onClose, onSaved }: {
   token: TokenSummary;
   corpora: Corpus[];
   onClose: () => void;
   onSaved: () => Promise<void>;
-  onError: (e: unknown) => void;
 }) {
+  const [error, setError] = useState<unknown>(null);
   const [picked, setPicked] = useState<string[]>(token.corpusIds);
   const [busy, setBusy] = useState(false);
 
   return (
     <Modal title={`What ${token.name} can reach`} onClose={onClose}>
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <form
         onSubmit={async (e) => {
           e.preventDefault();
           setBusy(true);
+          setError(null);
           try { await api.setTokenCorpora(token.id, picked); await onSaved(); }
-          catch (err) { onError(err); setBusy(false); }
+          catch (err) { setError(err); setBusy(false); }
         }}
       >
         {corpora.length === 0 ? (
@@ -3037,12 +3039,12 @@ function CorpusMappingModal({ token, corpora, onClose, onSaved, onError }: {
   );
 }
 
-function CreateTokenModal({ onClose, onCreated, onError, corpora }: {
+function CreateTokenModal({ onClose, onCreated, corpora }: {
   onClose: () => void;
   onCreated: (t: Awaited<ReturnType<typeof api.createToken>>) => Promise<void>;
-  onError: (e: unknown) => void;
   corpora: Corpus[];
 }) {
+  const [error, setError] = useState<unknown>(null);
   const [name, setName] = useState('');
   const [scopes, setScopes] = useState<string[]>(['search']);
   const [picked, setPicked] = useState<string[]>([]);
@@ -3052,12 +3054,14 @@ function CreateTokenModal({ onClose, onCreated, onError, corpora }: {
 
   return (
     <Modal title="New key" onClose={onClose}>
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <form
         onSubmit={async (e) => {
           e.preventDefault();
           setBusy(true);
+          setError(null);
           try { await onCreated(await api.createToken(name, scopes, picked)); }
-          catch (err) { onError(err); setBusy(false); }
+          catch (err) { setError(err); setBusy(false); }
         }}
       >
         <Field label="Name" hint="Which agent this is for. It appears in the audit log.">

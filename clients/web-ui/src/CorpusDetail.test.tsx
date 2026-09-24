@@ -680,6 +680,20 @@ describe('removing a source', () => {
 
     expect(removeSource).not.toHaveBeenCalled();
   });
+
+  it('says why in the dialog when the server refuses', async () => {
+    const user = userEvent.setup();
+    removeSource.mockRejectedValue(new ApiError(409, 'Corpus busy', 'The corpus is being indexed. Try again when it finishes.'));
+    getCorpus.mockResolvedValue(corpus({ sources: [source({ id: 's9', rootPath: 'manuals/AI' })] }));
+    render(<CorpusDetail {...props} />);
+
+    await user.click(await screen.findByRole('button', { name: /Remove source manuals\/AI/ }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: /^Remove source$/ }));
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/being indexed/);
+    expect(props.onError).not.toHaveBeenCalled();
+  });
 });
 
 /**
@@ -1465,6 +1479,18 @@ describe('the full reindex', () => {
 
     expect(reindex).not.toHaveBeenCalled();
     expect(screen.queryByText(/Full reindex of docs/)).not.toBeInTheDocument();
+  });
+
+  it('says why in the dialog when the server refuses', async () => {
+    reindex.mockRejectedValue(new ApiError(503, 'Embedding unavailable', 'Ollama did not answer.'));
+    render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
+
+    await userEvent.click(await screen.findByRole('button', { name: /Reindex everything/ }));
+
+    const dialog = screen.getByRole('dialog');
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/did not answer/);
+    expect(props.onError).not.toHaveBeenCalled();
   });
 
   it('opens with focus on Cancel', async () => {

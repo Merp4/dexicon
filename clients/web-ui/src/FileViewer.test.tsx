@@ -178,16 +178,18 @@ describe('opening a file from the list', () => {
   });
 
   it('reports a file that is not indexed instead of showing an empty box', async () => {
-    // A path can be right and still not be in THIS chunk set.
-    const onError = vi.fn();
+    // A path can be right and still not be in THIS chunk set. Said in the viewer, where
+    // the reader is looking: the page's banner sits under the dialog's overlay, and the
+    // viewer went on saying "Reading…" for ever.
     fileText.mockRejectedValue(new ApiError(404, 'Not indexed', "No indexed file '05-search.md'."));
 
     const user = userEvent.setup();
-    render(<CorpusDetail {...props} onError={onError} />);
+    render(<CorpusDetail {...props} />);
     await user.click(await screen.findByRole('button', { name: '05-search.md' }));
 
-    await waitFor(() => expect(onError).toHaveBeenCalled());
-    expect(String(onError.mock.calls[0][0])).toContain('No indexed file');
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('No indexed file');
+    expect(within(dialog).queryByText(/Reading…/)).not.toBeInTheDocument();
   });
 
   it('closes again', async () => {

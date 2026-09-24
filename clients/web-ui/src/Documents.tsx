@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type Corpus, type DocumentText, type LibraryDocument } from './api';
 import {
-  Badge, Button, CopyButton, Empty, Field, Modal, Notice, Select, SelectItem, Spinner,
+  Badge, Button, CopyButton, Empty, ErrorBanner, Field, Modal, Notice, Select, SelectItem, Spinner,
   formatBytes, localTime, relativeTime, stateTone,
 } from './ui';
 import { cn } from 'cn';
@@ -237,11 +237,10 @@ export function DocumentsView({
           corpora={writable}
           onClose={() => setAttaching(null)}
           onAttached={async () => { setAttaching(null); await load(); await onRefresh(); }}
-          onError={onError}
         />
       )}
 
-      {inspecting && <ExtractedTextModal document={inspecting} onClose={() => setInspecting(null)} onError={onError} />}
+      {inspecting && <ExtractedTextModal document={inspecting} onClose={() => setInspecting(null)} />}
     </div>
   );
 }
@@ -251,23 +250,23 @@ function AttachModal({
   corpora,
   onClose,
   onAttached,
-  onError,
 }: {
   document: LibraryDocument;
   corpora: Corpus[];
   onClose: () => void;
   onAttached: () => Promise<void>;
-  onError: (e: unknown) => void;
 }) {
   const attachedTo = new Set(doc.attachments.map((a) => a.corpusId));
   const available = corpora.filter((c) => !attachedTo.has(c.id));
   const [target, setTarget] = useState(available[0]?.name ?? '');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
 
   const chosen = corpora.find((c) => c.name === target);
 
   return (
     <Modal title="Attach to another corpus" onClose={onClose}>
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <p className="mt-0 text-sm">
         The bytes are already stored and the text already extracted. Attaching re-chunks
         that cached text with the target corpus's settings; nothing is re-uploaded and
@@ -310,10 +309,11 @@ function AttachModal({
               disabled={!target || busy}
               onClick={async () => {
                 setBusy(true);
+                setError(null);
                 try {
                   await api.attachDocument(target, doc.sha256, doc.originalFileName ?? undefined);
                   await onAttached();
-                } catch (e) { onError(e); setBusy(false); }
+                } catch (e) { setError(e); setBusy(false); }
               }}
             >
               {busy ? <Spinner /> : null} Attach
@@ -328,24 +328,25 @@ function AttachModal({
 function ExtractedTextModal({
   document: doc,
   onClose,
-  onError,
 }: {
   document: LibraryDocument;
   onClose: () => void;
-  onError: (e: unknown) => void;
 }) {
   const [text, setText] = useState<DocumentText | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
-    api.documentText(doc.sha256).then(setText).catch(onError);
-  }, [doc.sha256, onError]);
+    api.documentText(doc.sha256).then(setText).catch(setError);
+  }, [doc.sha256]);
 
   return (
     <Modal title={doc.originalFileName ?? 'Extracted text'} onClose={onClose} width={860}>
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       {/* "What did the extractor actually see?" is the first question when results are
           wrong, and it should not require a database client to answer. */}
       {!text ? (
-        <p className="flex items-center gap-2"><Spinner /> Loading…</p>
+        // A load that failed says so above, rather than loading for ever.
+        error == null && <p className="flex items-center gap-2"><Spinner /> Loading…</p>
       ) : (
         <>
           <div className="mb-3 text-sm text-muted-foreground">

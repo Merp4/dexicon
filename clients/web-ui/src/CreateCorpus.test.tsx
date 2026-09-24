@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CorporaView } from './App';
-import type { EmbeddingModelInfo } from './api';
+import { ApiError, type EmbeddingModelInfo } from './api';
 
 /**
  * Creating a corpus, and choosing what will embed it.
@@ -39,7 +39,7 @@ function model(name: string, measured: EmbeddingModelInfo['measured'] = null): E
   };
 }
 
-const props = { corpora: [], live: {}, onRefresh: async () => {}, onOpen: vi.fn(), onError: vi.fn() };
+const props = { corpora: [], live: {}, onRefresh: async () => {}, onOpen: vi.fn() };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -132,4 +132,20 @@ describe('creating a corpus', () => {
     expect(within(dialog).getByText(/different model is a different vector space/i))
       .toBeInTheDocument();
   });
+  /**
+   * Measured on the running app: a name already taken came back 409, and the message
+   * rendered in the page's banner, under the dialog's overlay and inside the subtree
+   * Radix marks aria-hidden. The dialog stayed open with nothing in it to say why.
+   */
+  it('shows a refusal in the dialog, which stays open', async () => {
+    createCorpus.mockRejectedValue(new ApiError(409, 'Corpus already exists', "A corpus named 'docs' already exists."));
+    const { user, dialog } = await openCreate();
+
+    await user.type(within(dialog).getByLabelText(/^Name/), 'docs');
+    await user.click(within(dialog).getByRole('button', { name: /^Create$/ }));
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/already exists/);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
 });
+
