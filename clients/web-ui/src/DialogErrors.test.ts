@@ -1,7 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import appSource from './App.tsx?raw';
-import chunkSetsSource from './ChunkSets.tsx?raw';
-import documentsSource from './Documents.tsx?raw';
 
 /**
  * Every dialog shows its own failures.
@@ -15,14 +12,20 @@ import documentsSource from './Documents.tsx?raw';
  * wrong place, and a render test per dialog would only cover the dialogs someone thought
  * to write one for.
  */
-const files = { 'App.tsx': appSource, 'ChunkSets.tsx': chunkSetsSource, 'Documents.tsx': documentsSource };
+
+// Every component source, so a dialog added in a new file is read too.
+const files = import.meta.glob<string>(['./**/*.tsx', '!./**/*.test.tsx'], {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+});
 
 /**
  * Pages that render a Modal inline, and are not dialogs. Named rather than inferred from a
  * naming convention, so a dialog called anything at all is still found.
  */
 const pages: Record<string, string> = {
-  'App.tsx: AccessView':
+  './App.tsx: AccessView':
     'The keys page. Its inline modal only displays a key just created and makes no request; '
     + 'its own actions report to the page banner, which is visible when no dialog is open.',
 };
@@ -33,7 +36,7 @@ const pages: Record<string, string> = {
  * quietly stop being true.
  */
 const exempt: Record<string, string> = {
-  'ChunkSets.tsx: ConfirmModal':
+  './ChunkSets.tsx: ConfirmModal':
     'Asks and closes. Its callers close it before they act and report the failure in their '
     + 'own banner, which is visible once it has closed.',
 };
@@ -56,13 +59,17 @@ describe('dialogs', () => {
   const all = found.filter((d) => !(d.id in pages));
 
   it('were found, so a clean result means something', () => {
+    // App.tsx alone would pass a count; the glob has to have reached the other files.
+    expect(Object.keys(files)).toEqual(expect.arrayContaining(['./App.tsx', './ChunkSets.tsx', './Documents.tsx']));
     // Sixteen dialogs and one page as this is written.
     expect(all.length).toBeGreaterThanOrEqual(16);
     expect(Object.keys(pages).filter((id) => !found.some((d) => d.id === id))).toEqual([]);
   });
 
-  it('do not send their failures to the page', () => {
-    expect(all.filter((d) => /\bonError\(|catch\(onError\)/.test(d.body)).map((d) => d.id)).toEqual([]);
+  it('do not take the page error handler at all', () => {
+    // Any mention, not only a call: `onError?.(e)`, `catch( onError )` and passing it on
+    // are the same defect, and no dialog has a reason to hold it.
+    expect(all.filter((d) => /\bonError\b/.test(d.body)).map((d) => d.id)).toEqual([]);
   });
 
   it('show them in a banner of their own, unless exempt for a stated reason', () => {
