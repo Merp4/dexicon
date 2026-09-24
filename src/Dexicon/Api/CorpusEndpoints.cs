@@ -409,19 +409,7 @@ public static class CorpusEndpoints
 
             var changed = ApplyFilters(source, body);
 
-            if (body.Git is { } git)
-            {
-                // Compared as stored rather than as sent, so a request that re-states
-                // the current settings is not a change. Without that, saving the form
-                // unchanged re-indexes every commit in the repository, which is the same
-                // mistake the filter path already avoids one line above.
-                var updated = git.ToJson();
-                if (!string.Equals(source.GitOptions, updated, StringComparison.Ordinal))
-                {
-                    source.GitOptions = updated;
-                    changed = true;
-                }
-            }
+            if (body.Git is { } git && ApplyHistorySettings(source, git)) changed = true;
 
             await db.SaveChangesAsync(ct);
 
@@ -738,6 +726,24 @@ public static class CorpusEndpoints
     /// makes, and none of them runs git, so a request is still judged before any process
     /// starts. Null settings are the defaults, which are usable.
     /// </summary>
+    /// <summary>
+    /// Stores a history source's settings when they differ from what it has, and says
+    /// whether they did.
+    ///
+    /// A request that re-states the current settings is not a change. Without that,
+    /// saving the form unchanged queues a refresh, which is the mistake the filter path
+    /// already avoids. Compared as settings rather than as stored text: a row written
+    /// before a setting existed has no key for it, and the same settings serialised now
+    /// carry it at its default, so the text differed on every unchanged save.
+    /// </summary>
+    internal static bool ApplyHistorySettings(Source source, GitHistoryOptions git)
+    {
+        if (GitHistoryOptions.FromJson(source.GitOptions) == git) return false;
+
+        source.GitOptions = git.ToJson();
+        return true;
+    }
+
     internal static IResult? UnusableHistorySettings(GitHistoryOptions? git) =>
         git is not null && GitHistory.Problem(git) is { } problem
             ? Results.Problem(title: "Unusable history settings", detail: problem, statusCode: 400)
