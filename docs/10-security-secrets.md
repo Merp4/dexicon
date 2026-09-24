@@ -254,11 +254,12 @@ anything non-permissive has moved from build-time into the shipped bundle.
 ## What a history corpus holds
 
 A key that reaches a history corpus reads the repository's history, not its current tree.
-With `includeDiff` on, that includes the content of every file ever committed and later
-removed, a credential committed by mistake and deleted in the next commit among them. With
-it off, commit messages and changed paths remain. `.gitignore` only ever kept out what it
-listed at the time, and a history source takes no exclude globs, so its include globs are
-the only narrowing ([04](04-ingestion.md#git-history--a-repositorys-commits)). Scan a
+With `includeDiff` on, that includes the content of files committed and later removed,
+wherever the include globs reach, a credential committed by mistake and deleted in the
+next commit among them. With the diff off, what remains is what `includeMessage` and
+`includeStat` keep, which by default is every commit message and every changed path.
+`.gitignore` only ever kept out what it listed at the time, and a history source takes no
+exclude globs, so its include globs are the only narrowing ([04](04-ingestion.md#git-history--a-repositorys-commits)). Scan a
 repository's full history before indexing it with the diff on; this repository's CI runs
 gitleaks over its own for the same reason.
 
