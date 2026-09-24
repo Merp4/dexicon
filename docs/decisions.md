@@ -1619,6 +1619,10 @@ largest 399,527. With the message and the stat it is 449 KB and the median 1,939
 fits in a single chunk. Thirteen times smaller for the half that answers "when did this
 change and why". A repository where the diff is the point turns it on knowing the cost.
 
+The diff also repeats the tree. A repository indexed as files and as history, with the
+diff on, holds its changed lines twice under two provenances, and a search over both can
+return both.
+
 An oversized patch is stated in UTF-8 bytes rather than cut, and the stat is kept beside
 the statement because it is the cheap half and it still answers which files. A diff
 truncated mid-hunk reads as a complete change that did something other than what it did,
@@ -1680,6 +1684,25 @@ and every count, filter and status on it then needs to know which.
 Indexing the working tree at each commit, so that history search returns file content as
 of a date. That is a different product — time-travel over a corpus — and it needs the
 storage to match.
+
+One extraction unit per changed file. A unit number is rendered as a citation anchor, and
+a commit's path has no extension, so every citation would read `#page=N` for a page the
+commit does not have. The changed paths are in the stat, which is on by default, and
+search already matches them there. Revisit when a result needs hunk-level provenance, and give `UnitAnchor` a case for
+it then.
+
+A payload field listing the changed paths. No filter or ranking would read it, and the
+stat already puts the paths in the text.
+
+Sources that reach the network: an issue tracker, a wiki, a repository to clone. Each
+needs an operator-supplied URL fetched from inside the container, the SSRF path
+[D-29](#d-29-an-integration-document-and-retrieval-in-one-call) rejected outbound webhooks
+for, and a credential per source held in the catalogue in recoverable form, which
+[04](04-ingestion.md#embedding-providers) keeps out of it for embedding keys. Cloning is
+the operator's job, into the mount the server already reads.
+
+A sixth MCP tool. History is a corpus, and `search_index` searches corpora
+([D-11](#d-11-five-mcp-tools)).
 
 **Revisit if.** A repository large enough that the enumeration itself is slow: 10,000
 commits enumerate in a few seconds, and a million would need the inventory to be
