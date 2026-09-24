@@ -147,5 +147,17 @@ describe('creating a corpus', () => {
     expect(await within(dialog).findByRole('alert')).toHaveTextContent(/already exists/);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
+
+  it('says why the model list is empty when it could not be read', async () => {
+    // An empty picker with no reason reads as a provider with no models.
+    listEmbeddingModels.mockRejectedValue(new ApiError(503, 'Embedding provider unreachable', 'Ollama did not answer.'));
+    const user = userEvent.setup();
+    render(<CorporaView {...props} />);
+
+    await user.click(screen.getByRole('button', { name: /new corpus/i }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/did not answer/);
+  });
 });
 

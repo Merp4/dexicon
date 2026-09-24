@@ -932,7 +932,12 @@ function CreateCorpusModal({ onClose, onCreated }: { onClose: () => void; onCrea
         const configured = r.models.find((m) => sameModelName(m.name, r.configured));
         setModel(configured?.name ?? r.models[0]?.name ?? '');
       })
-      .catch(() => setModels([]));
+      .catch((e) => {
+        // Said, rather than an empty picker that reads as a provider with no models. The
+        // corpus can still be created, on the server's configured default.
+        setModels([]);
+        setError(e);
+      });
   }, []);
 
   const chosen = models.find((m) => m.name === model);

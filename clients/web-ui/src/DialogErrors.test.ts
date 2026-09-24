@@ -1,3 +1,4 @@
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -41,17 +42,39 @@ const exempt: Record<string, string> = {
     + 'own banner, which is visible once it has closed.',
 };
 
-/** Every top-level function that renders a Modal, by file and name. */
+/**
+ * Every top-level declaration that renders a Modal, by file and name.
+ *
+ * Parsed rather than matched with a pattern: a dialog can be a function declaration, an
+ * arrow function in a const, an `export default` or a wrapped component, and a pattern for
+ * one of those forms passes a dialog written in another without checking it at all.
+ */
 function rendering(): { id: string; body: string }[] {
   const found: { id: string; body: string }[] = [];
   for (const [file, text] of Object.entries(files)) {
-    const starts = [...text.matchAll(/^(?:export )?function (\w+)\(/gm)];
-    starts.forEach((m, i) => {
-      const body = text.slice(m.index, starts[i + 1]?.index ?? text.length);
-      if (/<Modal\b/.test(body)) found.push({ id: `${file}: ${m[1]}`, body });
-    });
+    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    for (const statement of source.statements) {
+      if (rendersModal(statement)) found.push({ id: `${file}: ${nameOf(statement)}`, body: statement.getText(source) });
+    }
   }
   return found;
+}
+
+function rendersModal(node: ts.Node): boolean {
+  if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) && node.tagName.getText() === 'Modal') {
+    return true;
+  }
+  return ts.forEachChild(node, (child) => rendersModal(child) || undefined) ?? false;
+}
+
+function nameOf(statement: ts.Statement): string {
+  if ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && statement.name) {
+    return statement.name.text;
+  }
+  if (ts.isVariableStatement(statement)) {
+    return statement.declarationList.declarations.map((d) => d.name.getText()).join(', ');
+  }
+  return 'default';
 }
 
 describe('dialogs', () => {
