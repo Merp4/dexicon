@@ -387,9 +387,10 @@ public static class GitHistory
     {
         if (!options.KeepIndexed || options.MaxCommits is not { } max) return inventory;
 
-        // Sized by the inventory, which bounds the result. The limit accepts int.MaxValue,
-        // so adding the held count to it overflows to a negative capacity.
-        var kept = new List<GitCommit>(inventory.Count);
+        // The limit plus what is held bounds the result, and so does the inventory, which in
+        // keep mode is the whole history. Summed as long: the limit accepts int.MaxValue, and
+        // as int the sum overflowed to a negative capacity.
+        var kept = new List<GitCommit>((int)Math.Min(inventory.Count, (long)max + held.Count));
         for (var i = 0; i < inventory.Count; i++)
             if (i < max || held.Contains(inventory[i].RelativePath))
                 kept.Add(inventory[i]);
