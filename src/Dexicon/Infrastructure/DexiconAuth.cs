@@ -215,7 +215,7 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
     ///
     /// The loop then takes the rest of the control range, which the Replace calls do not
     /// cover: an escape sequence reaching a terminal that tails the log is the same trick
-    /// by another route, and <c>[2J</c> clears its screen.
+    /// by another route, and <c>\u001B[2J</c> clears its screen.
     /// </summary>
     internal static string OneLine(string value)
     {

@@ -70,7 +70,7 @@ public static class ExtractorVersions
     ///    one line as it already is for EPUB and HTML, and columns no longer interleave.
     /// 5: A page number alone in a PDF's top or bottom margin is furniture, not text, and
     ///    is dropped. About one extracted block in ten was one.
-    /// 6: Whitespace inside an HTML or EPUB <pre> is kept, so a code listing arrives with
+    /// 6: Whitespace inside an HTML or EPUB <c>&lt;pre&gt;</c> is kept, so a code listing arrives with
     ///    its lines and indentation instead of as one line.
     /// </summary>
     public const int Current = 6;
