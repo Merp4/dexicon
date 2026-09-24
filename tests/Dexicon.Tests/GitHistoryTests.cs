@@ -284,6 +284,25 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
+    /// The largest limit the settings accept, beside a held commit. The capacity hint was
+    /// the limit plus the held count, which overflows to a negative capacity there, so a
+    /// limit the endpoints accept made every later pass throw.
+    /// </summary>
+    [Fact]
+    public void SelectingWithTheLargestLimitAndAHeldCommitDoesNotOverflow()
+    {
+        var inventory = new[]
+        {
+            new GitCommit(new string('a', 40), DateTimeOffset.UnixEpoch),
+            new GitCommit(new string('b', 40), DateTimeOffset.UnixEpoch),
+        };
+        var options = new GitHistoryOptions { MaxCommits = int.MaxValue, KeepIndexed = true };
+        var held = new HashSet<string>(StringComparer.Ordinal) { inventory[1].RelativePath };
+
+        GitHistory.Select(inventory, options, held).Count.ShouldBe(2);
+    }
+
+    /// <summary>
     /// A repository cannot change what its own commits say by changing its config.
     ///
     /// The fingerprint settles a document from the sha and the source's settings, so
