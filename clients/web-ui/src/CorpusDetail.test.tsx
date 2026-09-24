@@ -1372,6 +1372,25 @@ describe('the file list', () => {
     expect(screen.queryByRole('button', { name: 'book-0.pdf' })).not.toBeInTheDocument();
   });
 
+  it('keeps the newest listing when an older one answers after it', async () => {
+    // Changing the tab starts a second listing while the first is still out. When the
+    // first answers last, its rows must not replace the second's.
+    let answerFirst!: (v: unknown) => void;
+    listFiles.mockReturnValueOnce(new Promise((r) => { answerFirst = r; }));
+    render(<CorpusDetail {...props} />);
+    await waitFor(() => expect(listFiles).toHaveBeenCalledTimes(1));
+
+    listFiles.mockResolvedValueOnce({ total: 1, chunkSet: 'default', files: [file('broken.pdf')] });
+    await userEvent.click(await screen.findByRole('radio', { name: 'failed' }));
+    expect(await screen.findByRole('button', { name: 'broken.pdf' })).toBeInTheDocument();
+
+    answerFirst(page(3, 3));
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(screen.getByRole('button', { name: 'broken.pdf' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'book-0.pdf' })).not.toBeInTheDocument();
+  });
+
   it('shows the list loading again, not the failure, while a retry is on its way', async () => {
     listFiles.mockRejectedValueOnce(new ApiError(503, 'Catalogue busy', 'Try again.'));
     render(<CorpusDetail {...props} />);

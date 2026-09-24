@@ -1095,6 +1095,10 @@ export function CorpusDetail({
   const [editingSource, setEditingSource] = useState<Corpus['sources'][number] | null>(null);
   const [editingDefaults, setEditingDefaults] = useState(false);
 
+  // Which load is the latest. A filter, sort or page change starts a load while the last
+  // may still be in flight, and an answer that arrives out of order must not overwrite the
+  // newer one's rows, or clear them.
+  const generation = useRef(0);
 
   const load = useCallback(async () => {
     // Side by side, and each set when it answers. The files were fetched after the corpus
@@ -1105,8 +1109,11 @@ export function CorpusDetail({
     // A reload keeps the rows it has until the next page answers, so a filter keystroke
     // does not blank the list. A listing that fails clears them: rows left from the last
     // good answer would read as the answer to this one.
+    const mine = ++generation.current;
+    const latest = () => generation.current === mine;
+
     setFilesFailed(false);
-    const corpusLoad = api.getCorpus(name).then(setCorpus);
+    const corpusLoad = api.getCorpus(name).then((c) => { if (latest()) setCorpus(c); });
     const filesLoad = api
       .listFiles(name, {
         status: filter || undefined,
@@ -1117,11 +1124,13 @@ export function CorpusDetail({
       })
       .then(
         (f) => {
+          if (!latest()) return;
           setFiles(f.files);
           setTotalFiles(f.total);
           setFilesFailed(false);
         },
         (e: unknown) => {
+          if (!latest()) return;
           setFiles(null);
           setTotalFiles(0);
           setFilesFailed(true);
@@ -1132,7 +1141,7 @@ export function CorpusDetail({
     try {
       await Promise.all([corpusLoad, filesLoad]);
     } catch (e) {
-      onError(e);
+      if (latest()) onError(e);
     }
 
     // Its own call, and a failure here does not reach onError: a coverage report that
@@ -1140,9 +1149,10 @@ export function CorpusDetail({
     // in the dev loop has no such endpoint at all. The page is worth more than the
     // notice.
     try {
-      setGaps((await api.coverage(name)).gaps ?? []);
+      const gaps = (await api.coverage(name)).gaps ?? [];
+      if (latest()) setGaps(gaps);
     } catch {
-      setGaps([]);
+      if (latest()) setGaps([]);
     }
   }, [name, filter, nameQuery, sort, offset, onError]);
 
