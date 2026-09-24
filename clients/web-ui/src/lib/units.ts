@@ -27,3 +27,13 @@ export function unitFor(sources: Corpus['sources'] | undefined, n: number): stri
 export function unitOf(s: Corpus['sources'][number], n: number): string {
   return unitFor([s], n);
 }
+
+/**
+ * A number and its noun, singular when the number is one: `1 chunk`, `2,940 chunks`.
+ *
+ * Written inline as `${n} chunks` in a dozen places, which printed "1 chunks" on a job
+ * that wrote one and on every file that holds one.
+ */
+export function count(n: number, one: string, many = `${one}s`): string {
+  return `${n.toLocaleString()} ${n === 1 ? one : many}`;
+}

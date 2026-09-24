@@ -16,7 +16,7 @@ import {
 import { Checkbox } from './ui';
 import { ChevronRight, Trash2, TriangleAlert } from 'lucide-react';
 import { cn } from 'cn';
-import { unitFor } from './lib/units';
+import { count, unitFor } from './lib/units';
 
 /** `nomic-embed-text` and `nomic-embed-text:latest` are the same model; only :latest is implicit. */
 const bareName = (m: string) => m.replace(/:latest$/i, '');
@@ -30,18 +30,23 @@ const sameModel = (a: string, b: string) => bareName(a).toLowerCase() === bareNa
  * puts the destructive action wherever the browser likes rather than where every other
  * dialog here puts it; and after the second one a browser offers to suppress further
  * dialogs for the session, at which point deleting a chunk set stops asking at all.
+ *
+ * `tone="primary"` is for a change that is reversible but not local: promoting a set
+ * changes what every search of the corpus returns, and is undone by promoting back.
  */
 function ConfirmModal({
   title,
   confirmLabel,
   onConfirm,
   onClose,
+  tone = 'danger',
   children,
 }: {
   title: string;
   confirmLabel: string;
   onConfirm: () => void;
   onClose: () => void;
+  tone?: 'danger' | 'primary';
   children: React.ReactNode;
 }) {
   return (
@@ -49,8 +54,8 @@ function ConfirmModal({
       <p className="mt-0 text-sm">{children}</p>
       <div className="mt-4 flex justify-end gap-2">
         <Button onClick={onClose}>Cancel</Button>
-        <Button variant="danger" onClick={onConfirm}>
-          <Trash2 />
+        <Button variant={tone} onClick={onConfirm}>
+          {tone === 'danger' && <Trash2 />}
           {confirmLabel}
         </Button>
       </div>
@@ -87,6 +92,7 @@ export function ChunkSetsPanel({
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<ChunkSet | null>(null);
   const [deleting, setDeleting] = useState<ChunkSet | null>(null);
+  const [promoting, setPromoting] = useState<ChunkSet | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
 
@@ -132,7 +138,7 @@ export function ChunkSetsPanel({
                 <span className="mono text-foreground">{corpus.name}:{searched.name}</span>
                 <span>
                   {searched.embeddingModel} ({searched.embeddingDimensions}d) · {searched.chunkSize} / {searched.chunkOverlap}
-                  {' · '}{searched.chunkCount.toLocaleString()} chunks
+                  {' · '}{count(searched.chunkCount, 'chunk')}
                 </span>
                 <Badge tone={stateTone(searched.state)}>{searched.state}</Badge>
                 {searched.pendingCount > 0 && (
@@ -200,7 +206,7 @@ export function ChunkSetsPanel({
                 </div>
 
                 <div className="dim text-xs mt-1">
-                  {set.fileCount.toLocaleString()} {unitFor(corpus.sources, set.fileCount)} · {set.chunkCount.toLocaleString()} chunks ·{' '}
+                  {set.fileCount.toLocaleString()} {unitFor(corpus.sources, set.fileCount)} · {count(set.chunkCount, 'chunk')} ·{' '}
                   <span title={set.lastIndexedUtc ? localTime(set.lastIndexedUtc) : undefined}>
                     {set.lastIndexedUtc ? `indexed ${relativeTime(set.lastIndexedUtc)}` : 'never indexed'}
                   </span>
@@ -221,7 +227,7 @@ export function ChunkSetsPanel({
                         ? `${set.pendingCount.toLocaleString()} ${unitFor(corpus.sources, set.pendingCount)} still to index; promoting now would make search incomplete`
                         : 'Make this the set that search uses'
                     }
-                    onClick={() => act(set.id, () => api.promoteChunkSet(corpus.name, set.name))}
+                    onClick={() => setPromoting(set)}
                   >
                     {busy === set.id ? <Spinner /> : 'Promote'}
                   </Button>
@@ -255,9 +261,32 @@ export function ChunkSetsPanel({
             void act(set.id, () => api.deleteChunkSet(corpus.name, set.name));
           }}
         >
-          Its {deleting.chunkCount.toLocaleString()} chunks leave the vector store. The
+          Its {count(deleting.chunkCount, 'chunk')} will leave the vector store. The
           other sets of {corpus.name} are untouched, and the content can be chunked this
           way again by adding a set back.
+        </ConfirmModal>
+      )}
+
+      {/* It was one click with no question, and it changes what every search of the
+          corpus returns, including the agents' over MCP. */}
+      {promoting && (
+        <ConfirmModal
+          title={`Search ${corpus.name} with ${promoting.name}?`}
+          confirmLabel="Promote"
+          tone="primary"
+          onClose={() => setPromoting(null)}
+          onConfirm={() => {
+            const set = promoting;
+            setPromoting(null);
+            void act(set.id, () => api.promoteChunkSet(corpus.name, set.name));
+          }}
+        >
+          Searches of {corpus.name} will read {corpus.name}:{promoting.name} ({promoting.embeddingModel},{' '}
+          {count(promoting.chunkCount, 'chunk')})
+          {searched && searched.id !== promoting.id && (
+            <> in place of {corpus.name}:{searched.name} ({searched.embeddingModel})</>
+          )}
+          . Both sets are kept, and promoting {searched?.name ?? 'the other'} again puts it back.
         </ConfirmModal>
       )}
 

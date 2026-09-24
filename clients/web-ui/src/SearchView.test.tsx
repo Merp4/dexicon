@@ -184,6 +184,23 @@ describe('telling a bad index from a bad scope', () => {
     expect(screen.getByText(/degraded from requested/)).toBeInTheDocument();
   });
 
+  it('describes the scoring of the mode that ran', async () => {
+    // Hybrid fuses with DBSF (D-06). This said "reciprocal rank fusion, k=2. Ordering is
+    // meaningful, magnitude is not" after the server stopped doing that, and said it of
+    // every mode, so a keyword search was described as a fusion of two lists.
+    const user = await searchFor('chunk sets');
+    await user.click(await screen.findByRole('button', { name: 'Explain' }));
+    expect(screen.getByText(/scores:/).parentElement).toHaveTextContent(/DBSF/);
+    expect(screen.queryByText(/reciprocal rank/)).not.toBeInTheDocument();
+  });
+
+  it('describes a degraded search by the keyword scoring it fell back to', async () => {
+    search.mockResolvedValue(result({ mode: 'Keyword', degraded: true, degradedReason: 'Embeddings unavailable.' }));
+    const user = await searchFor('chunk sets');
+    await user.click(await screen.findByRole('button', { name: 'Explain' }));
+    expect(screen.getByText(/scores:/).parentElement).toHaveTextContent(/IDF/);
+  });
+
   it('points an empty result at Jobs rather than implying the content is absent', async () => {
     search.mockResolvedValue(result({ hits: [] }));
 

@@ -1329,6 +1329,88 @@ describe('the file list', () => {
   /** The options object the component passed on its most recent fetch. */
   const lastQuery = () => listFiles.mock.calls.at(-1)?.[1] as Record<string, unknown>;
 
+  it('does not tell a corpus with files to run a refresh while they are on their way', async () => {
+    // The corpus arrived first and drew the page with an empty list, whose message is
+    // "No files. Run a refresh to index this corpus." for one round trip on every visit.
+    let answer!: (v: unknown) => void;
+    listFiles.mockReturnValue(new Promise((r) => { answer = r; }));
+
+    render(<CorpusDetail {...props} />);
+    await waitFor(() => expect(listFiles).toHaveBeenCalled());
+
+    expect(screen.queryByText(/Run a refresh/)).not.toBeInTheDocument();
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
+
+    answer(page(1, 1));
+    expect(await screen.findByRole('button', { name: 'book-0.pdf' })).toBeInTheDocument();
+  });
+
+  it('still draws the corpus when its files cannot be listed', async () => {
+    // Fetched side by side, and neither waits on the other: a file list that fails must
+    // not hold the whole page on "Loading…".
+    const onError = vi.fn();
+    listFiles.mockRejectedValue(new ApiError(503, 'Catalogue busy', 'Try again.'));
+
+    render(<CorpusDetail {...props} onError={onError} />);
+
+    expect(await screen.findByRole('heading', { name: 'docs' })).toBeInTheDocument();
+    expect(await screen.findByText('The files could not be listed')).toBeInTheDocument();
+    expect(screen.queryByText(/Run a refresh/)).not.toBeInTheDocument();
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ status: 503 }));
+  });
+
+  it('does not leave the last good rows up when a later listing fails', async () => {
+    // They would read as the answer to the filter that failed.
+    listFiles.mockResolvedValue(page(3, 3));
+    render(<CorpusDetail {...props} />);
+    await screen.findByRole('button', { name: 'book-0.pdf' });
+
+    listFiles.mockRejectedValue(new ApiError(503, 'Catalogue busy', 'Try again.'));
+    await userEvent.click(screen.getByRole('radio', { name: 'failed' }));
+
+    expect(await screen.findByText('The files could not be listed')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'book-0.pdf' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the newest listing when an older one answers after it', async () => {
+    // Changing the tab starts a second listing while the first is still out. When the
+    // first answers last, its rows must not replace the second's.
+    let answerFirst!: (v: unknown) => void;
+    listFiles.mockReturnValueOnce(new Promise((r) => { answerFirst = r; }));
+    render(<CorpusDetail {...props} />);
+    await waitFor(() => expect(listFiles).toHaveBeenCalledTimes(1));
+
+    listFiles.mockResolvedValueOnce({ total: 1, chunkSet: 'default', files: [file('broken.pdf')] });
+    await userEvent.click(await screen.findByRole('radio', { name: 'failed' }));
+    expect(await screen.findByRole('button', { name: 'broken.pdf' })).toBeInTheDocument();
+
+    answerFirst(page(3, 3));
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(screen.getByRole('button', { name: 'broken.pdf' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'book-0.pdf' })).not.toBeInTheDocument();
+  });
+
+  it('shows the list loading again, not the failure, while a retry is on its way', async () => {
+    listFiles.mockRejectedValueOnce(new ApiError(503, 'Catalogue busy', 'Try again.'));
+    render(<CorpusDetail {...props} />);
+    await screen.findByText('The files could not be listed');
+
+    listFiles.mockReturnValue(new Promise(() => {}));
+    await userEvent.click(screen.getByRole('radio', { name: 'failed' }));
+
+    await waitFor(() => expect(screen.queryByText('The files could not be listed')).not.toBeInTheDocument());
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
+  });
+
+  it('says "1 chunk" of a file holding one', async () => {
+    listFiles.mockResolvedValue({ total: 1, chunkSet: 'default', files: [{ ...file('one.md'), chunkCount: 1 }] });
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText(/^1 chunk ·/)).toBeInTheDocument();
+  });
+
   it('asks for one page rather than everything', async () => {
     listFiles.mockResolvedValue(page(100, 27033));
 
@@ -1542,6 +1624,23 @@ describe('the chunk sets on a corpus page', () => {
     await waitFor(() => expect(toggle).toHaveFocus());
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
     delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+});
+
+describe('deleting a corpus', () => {
+  it('counts the chunks of every set it deletes, not only the default one', async () => {
+    // `corpus.chunkCount` is the default set's. Deleting the corpus deletes all of them,
+    // so a corpus cut two ways said 114 of its 475.
+    getCorpus.mockResolvedValue(corpus({
+      chunkCount: 114,
+      chunkSets: [chunkSet(), chunkSet({ id: 'cs2', name: 'fine', isDefault: false, chunkCount: 361 })],
+    }));
+    render(<CorpusDetail {...props} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+
+    expect(within(screen.getByRole('dialog')).getByText(/This removes 475 chunks across its 2 chunk sets from the vector store/))
+      .toBeInTheDocument();
   });
 });
 

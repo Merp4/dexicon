@@ -28,7 +28,7 @@ import {
 } from 'lucide-react';
 import { cn } from 'cn';
 import { historyContent, sourceName } from './lib/sources';
-import { unitFor, unitOf } from './lib/units';
+import { count, unitFor, unitOf } from './lib/units';
 import { parseHash, toHash, type View as RouteView } from './route';
 import { WorkspacePicker } from './WorkspacePicker';
 
@@ -560,6 +560,17 @@ function SearchSkeleton({ count = 3 }: { count?: number }) {
 
 // ── Search ──────────────────────────────────────────────────────────────────
 
+/**
+ * What a score means, by the mode that ran rather than the one asked for, since a degraded
+ * search answers in keyword. Hybrid said "reciprocal rank fusion, k=2" after the server
+ * moved to DBSF (D-06), which told anyone comparing two scores that the gap meant nothing.
+ */
+const SCORING: Record<string, string> = {
+  hybrid: 'dense and sparse scores, each normalised by its own spread, then summed (DBSF). Comparable within one search, not across searches',
+  semantic: 'cosine similarity of the query and chunk embeddings',
+  keyword: 'sparse term match, weighted by how rare each term is in the collection (IDF)',
+};
+
 export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (e: unknown) => void }) {
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<'hybrid' | 'semantic' | 'keyword'>('hybrid');
@@ -700,7 +711,7 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
             <div className="card p-3 text-xs grid gap-1">
               <div><span className="dim">resolved scope:</span> {result.scope.map((s) => s.name).join(', ') || '(none)'}</div>
               <div><span className="dim">mode used:</span> {result.mode}{result.degraded ? ' (degraded from requested)' : ''}</div>
-              <div><span className="dim">scores:</span> reciprocal rank fusion, k=2. Ordering is meaningful, magnitude is not</div>
+              <div><span className="dim">scores:</span> {SCORING[result.mode.toLowerCase()] ?? result.mode}</div>
             </div>
           )}
 
@@ -835,7 +846,7 @@ export function CorporaView({
 
                 <div className="dim mt-2 text-xs flex gap-3.5 flex-wrap">
                   <span>{c.fileCount.toLocaleString()} {unitFor(c.sources, c.fileCount)}</span>
-                  <span>{c.chunkCount.toLocaleString()} chunks</span>
+                  <span>{count(c.chunkCount, 'chunk')}</span>
                   {/* Discovered by a sweep and not yet indexed. Separate from the file count,
                       which is what is searchable: a corpus added while another indexes used to
                       read as empty until its turn came round. */}
@@ -878,7 +889,7 @@ function ProgressBar({ job, sources }: {
   const pct = job.filesTotal > 0 ? Math.min(100, (processed / job.filesTotal) * 100) : 0;
   const caption =
     `${job.phase} · ${processed.toLocaleString()}/${job.filesTotal.toLocaleString()}` +
-    ` ${unitFor(sources, job.filesTotal)} · ${job.chunksWritten.toLocaleString()} chunks`;
+    ` ${unitFor(sources, job.filesTotal)} · ${count(job.chunksWritten, 'chunk')}`;
 
   return (
     <div className="mt-2.5">
@@ -1047,7 +1058,9 @@ export function CorpusDetail({
   onError: (e: unknown) => void;
 }) {
   const [corpus, setCorpus] = useState<Corpus | null>(null);
-  const [files, setFiles] = useState<IndexedFile[]>([]);
+  // Null until the first answer, so a list on its way is not drawn as an empty one.
+  const [files, setFiles] = useState<IndexedFile[] | null>(null);
+  const [filesFailed, setFilesFailed] = useState(false);
   // What the query matched, which is what the paging arithmetic is over. Not the
   // corpus's file count: with a name filter those are different numbers.
   const [totalFiles, setTotalFiles] = useState(0);
@@ -1082,32 +1095,64 @@ export function CorpusDetail({
   const [editingSource, setEditingSource] = useState<Corpus['sources'][number] | null>(null);
   const [editingDefaults, setEditingDefaults] = useState(false);
 
+  // Which load is the latest. A filter, sort or page change starts a load while the last
+  // may still be in flight, and an answer that arrives out of order must not overwrite the
+  // newer one's rows, or clear them.
+  const generation = useRef(0);
 
   const load = useCallback(async () => {
-    try {
-      const c = await api.getCorpus(name);
-      setCorpus(c);
-      const f = await api.listFiles(name, {
+    // Side by side, and each set when it answers. The files were fetched after the corpus
+    // and started as an empty list, so every visit drew the page with no files for one
+    // round trip, and an empty list says "No files. Run a refresh to index this corpus."
+    // Independent, so a file list that fails does not hold the rest of the page back.
+    //
+    // A reload keeps the rows it has until the next page answers, so a filter keystroke
+    // does not blank the list. A listing that fails clears them: rows left from the last
+    // good answer would read as the answer to this one.
+    const mine = ++generation.current;
+    const latest = () => generation.current === mine;
+
+    setFilesFailed(false);
+    const corpusLoad = api.getCorpus(name).then((c) => { if (latest()) setCorpus(c); });
+    const filesLoad = api
+      .listFiles(name, {
         status: filter || undefined,
         name: nameQuery || undefined,
         sort,
         limit: FilePageSize,
         offset,
-      });
-      setFiles(f.files);
-      setTotalFiles(f.total);
+      })
+      .then(
+        (f) => {
+          if (!latest()) return;
+          setFiles(f.files);
+          setTotalFiles(f.total);
+          setFilesFailed(false);
+        },
+        (e: unknown) => {
+          if (!latest()) return;
+          setFiles(null);
+          setTotalFiles(0);
+          setFilesFailed(true);
+          throw e;
+        },
+      );
 
-      // Its own call, and a failure here does not reach onError: a coverage report that
-      // cannot be fetched is a missing warning, not a broken page, and an older container
-      // in the dev loop has no such endpoint at all. The page is worth more than the
-      // notice.
-      try {
-        setGaps((await api.coverage(name)).gaps ?? []);
-      } catch {
-        setGaps([]);
-      }
+    try {
+      await Promise.all([corpusLoad, filesLoad]);
     } catch (e) {
-      onError(e);
+      if (latest()) onError(e);
+    }
+
+    // Its own call, and a failure here does not reach onError: a coverage report that
+    // cannot be fetched is a missing warning, not a broken page, and an older container
+    // in the dev loop has no such endpoint at all. The page is worth more than the
+    // notice.
+    try {
+      const gaps = (await api.coverage(name)).gaps ?? [];
+      if (latest()) setGaps(gaps);
+    } catch {
+      if (latest()) setGaps([]);
     }
   }, [name, filter, nameQuery, sort, offset, onError]);
 
@@ -1159,15 +1204,15 @@ export function CorpusDetail({
 
   if (!corpus) return <Empty title="Loading…" />;
 
-  const problems = files.filter((f) => f.status !== 'indexed');
+  const problems = (files ?? []).filter((f) => f.status !== 'indexed');
 
   // The server decided both which rows match and their order, so this is the page and
   // nothing filters or slices it again. Doing either here is what limited a search to
   // the rows that happened to have been fetched.
-  const shown = files;
+  const shown = files ?? [];
 
   const pageFrom = totalFiles === 0 ? 0 : offset + 1;
-  const pageTo = offset + files.length;
+  const pageTo = offset + shown.length;
   const morePages = pageTo < totalFiles;
   const settling = nameFilter.trim() !== nameQuery;
 
@@ -1333,7 +1378,7 @@ export function CorpusDetail({
         </Row>
         <Row label="Contents">
           {corpus.fileCount.toLocaleString()} {unitFor(corpus.sources, corpus.fileCount)}
-          {' · '}{corpus.chunkCount.toLocaleString()} chunks
+          {' · '}{count(corpus.chunkCount, 'chunk')}
           {corpus.skippedCount > 0 && ` · ${corpus.skippedCount} skipped`}
           {corpus.failedCount > 0 && ` · ${corpus.failedCount} failed`}
         </Row>
@@ -1388,7 +1433,11 @@ export function CorpusDetail({
           {problems.length > 0 && <span className="dim text-xs">{problems.length} need attention</span>}
         </div>
 
-        {files.length === 0 && totalFiles === 0 && !nameQuery && !filter ? (
+        {files === null ? (
+          filesFailed
+            ? <Empty title={`The ${unitFor(corpus.sources, 0)} could not be listed`} hint="The reason is shown above." />
+            : <Empty title="Loading…" />
+        ) : files.length === 0 && totalFiles === 0 && !nameQuery && !filter ? (
           <Empty
             title={`No ${unitFor(corpus.sources, 0)}`}
             hint="Run a refresh to index this corpus."
@@ -1425,7 +1474,7 @@ export function CorpusDetail({
                   {f.relativePath}
                 </button>
                 <Badge tone={stateTone(f.status)}>{f.status}</Badge>
-                <span className="dim text-xs">{f.chunkCount} chunks · {formatBytes(f.sizeBytes)}</span>
+                <span className="dim text-xs">{count(f.chunkCount, 'chunk')} · {formatBytes(f.sizeBytes)}</span>
                 {/* This is where "why isn't my PDF searchable" gets answered. */}
                 {f.statusDetail && <span className="dim text-xs w-[100%]">↳ {f.statusDetail}</span>}
               </div>
@@ -2542,11 +2591,18 @@ function RemoveSourceModal({ corpus, source, onClose, onRemoved }: {
 function DeleteCorpusModal({ corpus, onClose, onDeleted }: { corpus: Corpus; onClose: () => void; onDeleted: () => Promise<void> }) {
   const [error, setError] = useState<unknown>(null);
   const [typed, setTyped] = useState('');
+
+  // Every set's, because deleting the corpus deletes all of them. `corpus.chunkCount` is
+  // the default set's alone, so a corpus cut two ways under-stated what this destroys.
+  const sets = corpus.chunkSets;
+  const chunks = sets.reduce((n, s) => n + s.chunkCount, 0);
+
   return (
     <Modal title={`Delete ${corpus.name}?`} onClose={onClose}>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <p className="mt-0 text-sm">
-        This removes {corpus.chunkCount.toLocaleString()} chunks from the vector store and the corpus from the
+        This removes {count(chunks, 'chunk')}
+        {sets.length > 1 && ` across its ${sets.length} chunk sets`} from the vector store and the corpus from the
         catalogue. The files on disk are untouched. Re-indexing it again may take a while.
       </p>
       {/* Typing the name, because this destroys an index that may have taken an hour. */}
@@ -2564,6 +2620,45 @@ function DeleteCorpusModal({ corpus, onClose, onDeleted }: { corpus: Corpus; onC
         >
           <Trash2 />
           Delete permanently
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * Revoking a key, asked first. It was one click on a red button with no question, and
+ * nothing on this screen can undo it: the agent holding the key is locked out on its next
+ * call and needs a new key.
+ */
+function RevokeTokenModal({ token, onClose, onRevoked }: {
+  token: TokenSummary;
+  onClose: () => void;
+  onRevoked: () => Promise<void>;
+}) {
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <Modal title={`Revoke ${token.name}?`} onClose={onClose}>
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
+      <p className="mt-0 text-sm">
+        {token.lastUsedUtc ? `It was last used ${relativeTime(token.lastUsedUtc)}. ` : 'It has never been used. '}
+        Whatever holds it will be refused on its next call, and a revoked key cannot be restored from here:
+        the agent needs a new one.
+      </p>
+      <div className="flex gap-2 justify-end">
+        <Button onClick={onClose}>Cancel</Button>
+        <Button
+          variant="danger"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setError(null);
+            try { await api.revokeToken(token.id); await onRevoked(); }
+            catch (e) { setError(e); setBusy(false); }
+          }}
+        >
+          {busy ? 'Revoking…' : 'Revoke key'}
         </Button>
       </div>
     </Modal>
@@ -2641,7 +2736,7 @@ function FullReindexModal({
         Every {unitFor(corpus.sources, 1)} is read again, whether or not it changed, and
         re-embedded if it can be read and chunked — in{' '}
         {sets.length === 1 ? 'this corpus’s chunk set' : <>all {sets.length} of this corpus’s chunk sets</>}.
-        It holds <strong>{chunks.toLocaleString()}</strong> chunks today, and embedding is
+        It holds <strong>{chunks.toLocaleString()}</strong> {chunks === 1 ? 'chunk' : 'chunks'} today, and embedding is
         the slow part.
       </p>
 
@@ -2670,7 +2765,7 @@ function FullReindexModal({
             <span className="mono dim">{s.embeddingModel}</span>
             <span className="dim">
               {s.chunkSize} / {s.chunkOverlap} overlap · {s.fileCount.toLocaleString()}{' '}
-              {unitFor(corpus.sources, s.fileCount)} · {s.chunkCount.toLocaleString()} chunks
+              {unitFor(corpus.sources, s.fileCount)} · {count(s.chunkCount, 'chunk')}
             </span>
           </div>
         ))}
@@ -2887,7 +2982,7 @@ export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: 
               <span>{merged.filesDone.toLocaleString()} indexed</span>
               <span>{merged.filesSkipped.toLocaleString()} skipped</span>
               {merged.filesFailed > 0 && <span className="text-[var(--danger-text)]">{merged.filesFailed.toLocaleString()} failed</span>}
-              <span>{merged.chunksWritten.toLocaleString()} chunks</span>
+              <span>{count(merged.chunksWritten, 'chunk')}</span>
             </div>
 
             {merged.error && (
@@ -2911,11 +3006,12 @@ export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: 
 
 // ── Access ──────────────────────────────────────────────────────────────────
 
-function AccessView({ onError }: { onError: (e: unknown) => void }) {
+export function AccessView({ onError }: { onError: (e: unknown) => void }) {
   const [tokens, setTokens] = useState<Awaited<ReturnType<typeof api.listTokens>>>([]);
   const [corpora, setCorpora] = useState<Corpus[]>([]);
   const [creating, setCreating] = useState(false);
   const [mapping, setMapping] = useState<TokenSummary | null>(null);
+  const [revoking, setRevoking] = useState<TokenSummary | null>(null);
   const [issued, setIssued] = useState<Awaited<ReturnType<typeof api.createToken>> | null>(null);
 
   const load = useCallback(async () => {
@@ -2959,7 +3055,7 @@ function AccessView({ onError }: { onError: (e: unknown) => void }) {
                 <span className="flex-1" />
                 <span className="dim text-xs" title={localTime(t.lastUsedUtc)}>used {relativeTime(t.lastUsedUtc)}</span>
                 {!t.revokedUtc && (
-                  <Button variant="danger" onClick={async () => { try { await api.revokeToken(t.id); await load(); } catch (e) { onError(e); } }}>
+                  <Button variant="danger" onClick={() => setRevoking(t)}>
                     Revoke
                   </Button>
                 )}
@@ -2986,6 +3082,14 @@ function AccessView({ onError }: { onError: (e: unknown) => void }) {
           ingest is listed to it when its client next reconnects.
         </p>
       </section>
+
+      {revoking && (
+        <RevokeTokenModal
+          token={revoking}
+          onClose={() => setRevoking(null)}
+          onRevoked={async () => { setRevoking(null); await load(); }}
+        />
+      )}
 
       {mapping && (
         <CorpusMappingModal

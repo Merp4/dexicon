@@ -5,6 +5,7 @@ import {
   formatBytes, localTime, relativeTime, stateTone,
 } from './ui';
 import { cn } from 'cn';
+import { count } from './lib/units';
 
 /**
  * The document library.
@@ -199,7 +200,7 @@ export function DocumentsView({
                   >
                     <strong className="min-w-[130px]">{a.corpusName}</strong>
                     <Badge tone={stateTone(a.status)}>{a.status}</Badge>
-                    <span className="mono">{a.chunkCount.toLocaleString()} chunks</span>
+                    <span className="mono">{count(a.chunkCount, 'chunk')}</span>
                     <span className="text-muted-foreground">from {a.chunkSize}/{a.chunkOverlap} {a.boundaryMode}</span>
                     <span className="flex-1" />
                     <Button

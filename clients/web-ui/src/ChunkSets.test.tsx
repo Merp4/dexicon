@@ -322,6 +322,7 @@ describe('the chunk sets, collapsed', () => {
     );
 
     await userEvent.click(screen.getByRole('button', { name: 'Promote' }));
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Promote' }));
     await screen.findByText(/the vector store is unreachable/);
     rerender(<ChunkSetsPanel corpus={corpus(sets)} onChanged={vi.fn()} open={false} onOpenChange={vi.fn()} />);
 
@@ -390,6 +391,43 @@ describe('the chunk set list', () => {
     );
 
     expect(screen.getByRole('button', { name: 'Promote' })).toBeEnabled();
+  });
+
+  it('asks before promoting, naming the set search moves to and the one it leaves', async () => {
+    // Promote changed what every search of the corpus returns on one click, with no
+    // question, next to an Edit button of the same size.
+    const user = userEvent.setup();
+    const onChanged = vi.fn();
+    promoteChunkSet.mockResolvedValue(undefined);
+    render(
+      <ChunkSetsPanel
+        corpus={corpus(twoSets({ embeddingModel: 'embeddinggemma', chunkCount: 361 }))}
+        onChanged={onChanged}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Promote' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Search docs with fine?' });
+    expect(promoteChunkSet).not.toHaveBeenCalled();
+    expect(dialog).toHaveTextContent(
+      'Searches of docs will read docs:fine (embeddinggemma, 361 chunks) in place of docs:default (nomic-embed-text).',
+    );
+
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(promoteChunkSet).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Promote' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Promote' }));
+    expect(promoteChunkSet).toHaveBeenCalledWith('docs', 'fine');
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+  });
+
+  it('says "1 chunk" of a set holding one', () => {
+    render(<ChunkSetsPanel corpus={corpus(twoSets({ chunkCount: 1, fileCount: 1 }))} onChanged={vi.fn()} open onOpenChange={vi.fn()} />);
+
+    expect(screen.getByText(/1 file · 1 chunk ·/)).toBeInTheDocument();
   });
 
   it('does not offer to promote or delete the set search already uses', () => {
