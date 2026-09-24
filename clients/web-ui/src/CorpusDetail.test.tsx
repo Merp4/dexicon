@@ -1329,6 +1329,30 @@ describe('the file list', () => {
   /** The options object the component passed on its most recent fetch. */
   const lastQuery = () => listFiles.mock.calls.at(-1)?.[1] as Record<string, unknown>;
 
+  it('does not tell a corpus with files to run a refresh while they are on their way', async () => {
+    // The corpus arrived first and drew the page with an empty list, whose message is
+    // "No files. Run a refresh to index this corpus." for one round trip on every visit.
+    let answer!: (v: unknown) => void;
+    listFiles.mockReturnValue(new Promise((r) => { answer = r; }));
+
+    render(<CorpusDetail {...props} />);
+    await waitFor(() => expect(listFiles).toHaveBeenCalled());
+
+    expect(screen.queryByText(/Run a refresh/)).not.toBeInTheDocument();
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
+
+    answer(page(1, 1));
+    expect(await screen.findByRole('button', { name: 'book-0.pdf' })).toBeInTheDocument();
+  });
+
+  it('says "1 chunk" of a file holding one', async () => {
+    listFiles.mockResolvedValue({ total: 1, chunkSet: 'default', files: [{ ...file('one.md'), chunkCount: 1 }] });
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText(/^1 chunk ·/)).toBeInTheDocument();
+  });
+
   it('asks for one page rather than everything', async () => {
     listFiles.mockResolvedValue(page(100, 27033));
 
@@ -1542,6 +1566,23 @@ describe('the chunk sets on a corpus page', () => {
     await waitFor(() => expect(toggle).toHaveFocus());
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
     delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+});
+
+describe('deleting a corpus', () => {
+  it('counts the chunks of every set it deletes, not only the default one', async () => {
+    // `corpus.chunkCount` is the default set's. Deleting the corpus deletes all of them,
+    // so a corpus cut two ways said 114 of its 475.
+    getCorpus.mockResolvedValue(corpus({
+      chunkCount: 114,
+      chunkSets: [chunkSet(), chunkSet({ id: 'cs2', name: 'fine', isDefault: false, chunkCount: 361 })],
+    }));
+    render(<CorpusDetail {...props} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+
+    expect(within(screen.getByRole('dialog')).getByText(/This removes 475 chunks across its 2 chunk sets from the vector store/))
+      .toBeInTheDocument();
   });
 });
 
