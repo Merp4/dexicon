@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, useContext, useId, useRef, useState } from 'react';
+import { createContext, type ReactNode, useContext, useEffect, useId, useRef, useState } from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from 'cn';
 import { Check, CircleAlert, CircleCheck, Copy, Info, Loader2, TriangleAlert, X } from 'lucide-react';
@@ -385,13 +385,24 @@ export function Spinner({ className }: { className?: string }) {
  * the dialog aria-hidden, so a failure sent there left the dialog open with nothing in it
  * to say why. Measured with New corpus and a name already taken: the 409's message
  * rendered behind the overlay, inside an aria-hidden subtree.
+ *
+ * It scrolls itself into view when a message arrives. A dialog taller than the window
+ * scrolls, and the banner is at its top while the button that failed is at its bottom:
+ * measured with New corpus in a 768px window, the banner sat 70px above the visible area.
  */
 export function ErrorBanner({ error, onDismiss }: { error: unknown; onDismiss?: () => void }) {
-  if (!error) return null;
-  const message = error instanceof Error ? error.message : String(error);
+  const ref = useRef<HTMLDivElement>(null);
+  const message = error ? (error instanceof Error ? error.message : String(error)) : null;
+
+  useEffect(() => {
+    if (message) ref.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [message]);
+
+  if (message == null) return null;
 
   return (
     <div
+      ref={ref}
       role="alert"
       className="mb-3 flex items-start justify-between gap-4 rounded-lg border border-[color-mix(in_oklab,var(--danger)_45%,transparent)] bg-[color-mix(in_oklab,var(--danger)_8%,transparent)] px-3.5 py-2.5 animate-in fade-in-0 slide-in-from-top-1 duration-200"
     >
