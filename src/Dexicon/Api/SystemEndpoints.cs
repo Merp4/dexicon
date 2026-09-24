@@ -194,34 +194,55 @@ public static class SystemEndpoints
             await ctx.Response.WriteAsync(": connected\n\n", ct);
             await ctx.Response.Body.FlushAsync(ct);
 
-            var heartbeat = Task.Delay(TimeSpan.FromSeconds(20), ct);
             try
             {
-                while (!ct.IsCancellationRequested)
-                {
-                    var next = reader.ReadAsync(ct).AsTask();
-                    var winner = await Task.WhenAny(next, heartbeat);
-
-                    if (winner == heartbeat)
-                    {
-                        await ctx.Response.WriteAsync(": ping\n\n", ct);
-                        await ctx.Response.Body.FlushAsync(ct);
-                        heartbeat = Task.Delay(TimeSpan.FromSeconds(20), ct);
-                        continue;
-                    }
-
-                    var progress = await next;
-                    // Scoped to what this caller can reach: a corpus their key is not
-                    // mapped to is not their business, and its id is not either.
-                    if (!visibleIds.Contains(progress.CorpusId)) continue;
-
-                    var json = JsonSerializer.Serialize(progress, JsonOptions.Web);
-                    await ctx.Response.WriteAsync($"event: progress\ndata: {json}\n\n", ct);
-                    await ctx.Response.Body.FlushAsync(ct);
-                }
+                await StreamProgressAsync(ctx.Response, reader, visibleIds, TimeSpan.FromSeconds(20), ct);
             }
             catch (OperationCanceledException) { /* client went away — normal */ }
         }).WithTags("Events");
+    }
+
+    /// <summary>
+    /// Writes every report the caller can see, and a ping whenever <paramref name="interval"/>
+    /// passes without one.
+    ///
+    /// One read stays pending across pings. Each ping used to start a fresh read while the
+    /// previous one was still waiting, and a channel gives an item to the oldest waiting
+    /// read, so every ping before a report cost one report: a page left open for twenty
+    /// minutes had about sixty abandoned reads ahead of the live one, and the next sixty
+    /// reports went to reads nothing awaited. The connection stayed open and kept pinging,
+    /// so the client never had a reason to reconnect, and live progress on that page stopped.
+    /// </summary>
+    internal static async Task StreamProgressAsync(
+        HttpResponse response, System.Threading.Channels.ChannelReader<IndexProgress> reader,
+        IReadOnlySet<string> visibleIds, TimeSpan interval, CancellationToken ct)
+    {
+        var heartbeat = Task.Delay(interval, ct);
+        Task<IndexProgress>? next = null;
+
+        while (!ct.IsCancellationRequested)
+        {
+            next ??= reader.ReadAsync(ct).AsTask();
+            var winner = await Task.WhenAny(next, heartbeat);
+
+            if (winner == heartbeat)
+            {
+                await response.WriteAsync(": ping\n\n", ct);
+                await response.Body.FlushAsync(ct);
+                heartbeat = Task.Delay(interval, ct);
+                continue;
+            }
+
+            var progress = await next;
+            next = null;
+            // Scoped to what this caller can reach: a corpus their key is not
+            // mapped to is not their business, and its id is not either.
+            if (!visibleIds.Contains(progress.CorpusId)) continue;
+
+            var json = JsonSerializer.Serialize(progress, JsonOptions.Web);
+            await response.WriteAsync($"event: progress\ndata: {json}\n\n", ct);
+            await response.Body.FlushAsync(ct);
+        }
     }
 
     public static void MapWorkspaceEndpoints(this IEndpointRouteBuilder app)
