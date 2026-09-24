@@ -222,6 +222,34 @@ describe('opening a hit', () => {
   });
 });
 
+describe('opening a hit past the first window', () => {
+  it('reads on until the hit is in, then marks it', async () => {
+    // The file endpoint answers with a window of 400,000 characters, so a hit late in a
+    // book was in none of what the viewer loaded.
+    const window = (startLine: number, lines: number, nextOffset: number | null) => ({
+      corpus: 'docs', path: 'book.pdf', chunkSet: 'default', gaps: 0, totalChars: 900,
+      startLine, endLine: startLine + lines, nextOffset,
+      text: Array.from({ length: lines }, (_, i) => `line ${startLine + i}`).join('\n') + '\n',
+    });
+    fileText
+      .mockResolvedValueOnce(window(1, 3, 300))
+      .mockResolvedValueOnce(window(4, 3, 600))
+      .mockResolvedValueOnce(window(7, 3, null));
+    search.mockResolvedValue(result({ hits: [hit({ filePath: 'book.pdf', startLine: 5, endLine: 6 })] }));
+    const user = await searchFor('chunk sets');
+
+    await user.click(await screen.findByRole('button', { name: 'Open' }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText('line 5');
+
+    expect(fileText.mock.calls.map((c) => c[2])).toEqual([undefined, 300]);
+    const marked = [...dialog.querySelectorAll('pre > span')]
+      .filter((s) => s.className.includes('accent-soft'))
+      .map((s) => s.lastChild?.textContent);
+    expect(marked).toEqual(['line 5', 'line 6']);
+  });
+});
+
 describe('telling a bad index from a bad scope', () => {
   it('names the scope that was actually searched', async () => {
     // The single most useful thing this screen can show: you asked for everything and got

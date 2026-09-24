@@ -29,6 +29,7 @@ import {
 import { cn } from 'cn';
 import { historyContent, sourceName } from './lib/sources';
 import { count, unitFor, unitOf } from './lib/units';
+import { splitOnTerms } from './lib/terms';
 import { parseHash, toHash, type View as RouteView } from './route';
 import { WorkspacePicker } from './WorkspacePicker';
 
@@ -475,91 +476,6 @@ const DOCUMENT_EXTENSIONS = /\.(pdf|epub|docx?|pptx?|md|markdown|txt|rtf)$/i;
 
 function isDocumentName(path: string): boolean {
   return DOCUMENT_EXTENSIONS.test(path) && !path.includes('/');
-}
-
-/**
- * Words common enough that marking them marks the passage.
- *
- * "chunking strategy and overlap size" over the books corpus produced 133 marks, 47 of
- * them the word "and". A three-character floor does not separate these on its own: "API",
- * "RRF" and "PDF" all clear it and all carry the query.
- */
-const STOPWORDS = new Set([
-  'and', 'the', 'for', 'are', 'but', 'not', 'was', 'were', 'you', 'your', 'all', 'any',
-  'can', 'has', 'had', 'its', 'our', 'out', 'own', 'how', 'why', 'who',
-  'that', 'this', 'with', 'from', 'they', 'them', 'their', 'there', 'then', 'than',
-  'have', 'what', 'when', 'where', 'which', 'while', 'will', 'would', 'should',
-  'about', 'into', 'over', 'some', 'such', 'only', 'other', 'been', 'being',
-  'does', 'did', 'each', 'more', 'most', 'much', 'very', 'just', 'also', 'here',
-]);
-
-/**
- * The parts the keyword index splits an identifier into, as `SparseEncoder.Emit` does:
- * at lower-to-upper, at a change between digit and non-digit, and before the last capital
- * of an acronym that starts a word (`HTTPServer` is `HTTP`, `Server`).
- */
-function identifierParts(run: string): string[] {
-  const upper = (c?: string) => c !== undefined && /\p{Lu}/u.test(c);
-  const lower = (c?: string) => c !== undefined && /\p{Ll}/u.test(c);
-  const digit = (c?: string) => c !== undefined && /\p{Nd}/u.test(c);
-
-  const parts: string[] = [];
-  let part = '';
-  for (let i = 0; i < run.length; i++) {
-    const c = run[i];
-    const boundary = i > 0 && (
-      (upper(c) && !upper(run[i - 1])) ||
-      digit(c) !== digit(run[i - 1]) ||
-      (upper(c) && lower(run[i + 1]) && upper(run[i - 1])));
-    if (boundary && part) { parts.push(part); part = ''; }
-    part += c;
-  }
-  if (part) parts.push(part);
-  return parts;
-}
-
-/**
- * Split text into alternating non-match / match segments for the query's terms: matches at
- * the odd indices, which is what the caller relies on.
- *
- * Both sides are read the way the keyword index reads them. The terms are each run of
- * letters and digits in the query and the parts of a compound identifier, three characters
- * or more, minus the stopwords; the query's words with underscores are kept too, so
- * `corpus_id` is marked in one piece where it appears whole. The passage is walked token by
- * token, and a token is marked whole when it is a term, or else in the parts that are.
- *
- * It marked whole query words as substrings. That left a keyword search for an identifier
- * with nothing marked in nine passages of ten, each matched on a part; and once parts were
- * terms, "set" from `ChunkSet` was marked inside "settings", which the index does not match.
- */
-function splitOnTerms(text: string, query: string): string[] {
-  const runs = query.match(/[\p{L}\p{Nd}]+/gu) ?? [];
-  const terms = new Set([
-    ...(query.match(/[\p{L}\p{Nd}_]{3,}/gu) ?? []),
-    ...runs,
-    ...runs.flatMap(identifierParts),
-  ].map((t) => t.toLowerCase()).filter((t) => t.length >= 3 && !STOPWORDS.has(t)));
-  if (terms.size === 0) return [text];
-
-  const out: string[] = [];
-  let plain = '';
-  const mark = (s: string) => { out.push(plain, s); plain = ''; };
-
-  for (const [token] of text.matchAll(/[\p{L}\p{Nd}_]+|[^\p{L}\p{Nd}_]+/gu)) {
-    if (terms.has(token.toLowerCase())) { mark(token); continue; }
-    if (!/^[\p{L}\p{Nd}_]/u.test(token)) { plain += token; continue; }
-    // An underscore separates runs in the index, as any non-alphanumeric does.
-    for (const piece of token.split(/(_+)/)) {
-      if (piece === '' || piece.startsWith('_')) { plain += piece; continue; }
-      if (terms.has(piece.toLowerCase())) { mark(piece); continue; }
-      for (const part of identifierParts(piece)) {
-        if (terms.has(part.toLowerCase())) mark(part);
-        else plain += part;
-      }
-    }
-  }
-  out.push(plain);
-  return out;
 }
 
 /**
@@ -2524,8 +2440,25 @@ function FileViewer({
   const highlight = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
-    api.fileText(corpus, path).then(setFile).catch(setError);
-  }, [corpus, path]);
+    let current = true;
+    (async () => {
+      try {
+        let read = await api.fileText(corpus, path);
+        // Opened at a hit past the first window, read on until its last line is in, as a
+        // reader pressing Read on would. The response is a window of 400,000 characters,
+        // so a hit late in a book was neither marked nor scrolled to.
+        const want = throughLine ?? aroundLine;
+        while (current && want !== undefined && read.nextOffset != null && read.endLine < want) {
+          const next = await api.fileText(corpus, path, read.nextOffset);
+          read = { ...next, startLine: read.startLine, text: read.text + next.text };
+        }
+        if (current) setFile(read);
+      } catch (e) {
+        if (current) setError(e);
+      }
+    })();
+    return () => { current = false; };
+  }, [corpus, path, aroundLine, throughLine]);
 
   /**
    * Read on from where the last window stopped.

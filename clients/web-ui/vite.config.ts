@@ -1,5 +1,5 @@
 /// <reference types="vitest/config" />
-import { defineConfig } from 'vite';
+import { defineConfig, searchForWorkspaceRoot } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +28,11 @@ export default defineConfig({
   },
   server: {
     port: 5180,
+    fs: {
+      // The default, plus the one server directory a test reads: terms.test.ts holds
+      // lib/terms.ts to SparseEncoder.cs, which lives outside this package.
+      allow: [searchForWorkspaceRoot(process.cwd()), '../../src/Dexicon.Core/Search'],
+    },
     // `npm run dev` talks to the locally-running API (scripts/dev.ps1).
     proxy: {
       '/api': 'http://127.0.0.1:8477',
