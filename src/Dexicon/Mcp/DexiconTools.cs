@@ -81,9 +81,8 @@ public sealed class DexiconTools
     /// Formatted for a model to read, not for a machine to parse. Most clients show
     /// this text verbatim, so it leads with what matters: where the match is.
     ///
-    /// Internal rather than private for the same reason as <see cref="Stitch"/>: this is
-    /// the agent-facing surface of the whole product, and it can be checked without
-    /// standing up an MCP server.
+    /// Internal rather than private: this is the agent-facing surface of the whole product,
+    /// and it can be checked without standing up an MCP server.
     /// </summary>
     internal static string Render(SearchResult result)
     {
