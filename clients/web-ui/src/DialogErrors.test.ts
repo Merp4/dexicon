@@ -17,31 +17,55 @@ import documentsSource from './Documents.tsx?raw';
  */
 const files = { 'App.tsx': appSource, 'ChunkSets.tsx': chunkSetsSource, 'Documents.tsx': documentsSource };
 
-function dialogs(): { file: string; name: string; body: string }[] {
-  const found: { file: string; name: string; body: string }[] = [];
+/**
+ * Dialogs that do not show a failure themselves, and why that is right for each. A dialog
+ * here must make no request of its own, which the test checks, so the reason cannot
+ * quietly stop being true.
+ */
+const exempt: Record<string, string> = {
+  'ChunkSets.tsx: ConfirmModal':
+    'Asks and closes. Its callers close it before they act and report the failure in their '
+    + 'own banner, which is visible once it has closed.',
+};
+
+function dialogs(): { id: string; body: string }[] {
+  const found: { id: string; body: string }[] = [];
   for (const [file, text] of Object.entries(files)) {
     const starts = [...text.matchAll(/^(?:export )?function (\w+)\(/gm)];
     // A dialog component by its name. "Renders a Modal" also takes in AccessView, a page
     // whose own actions report to the page and whose inline modal only displays a key.
     starts.forEach((m, i) => {
       const body = text.slice(m.index, starts[i + 1]?.index ?? text.length);
-      if (/(Modal|Viewer)$/.test(m[1]) && /<Modal\b/.test(body)) found.push({ file, name: m[1], body });
+      if (/(Modal|Viewer)$/.test(m[1]) && /<Modal\b/.test(body)) found.push({ id: `${file}: ${m[1]}`, body });
     });
   }
   return found;
 }
 
 describe('dialogs', () => {
-  it('handle their own failures rather than sending them to the page', () => {
-    const all = dialogs();
+  const all = dialogs();
 
-    // The scan has to have found the dialogs, or a clean result means nothing. Sixteen
-    // as this is written.
+  it('were found, so a clean result means something', () => {
+    // Sixteen as this is written.
     expect(all.length).toBeGreaterThanOrEqual(16);
+  });
 
-    const offenders = all
-      .filter((d) => /\bonError\(|catch\(onError\)/.test(d.body))
-      .map((d) => `${d.file}: ${d.name}`);
-    expect(offenders).toEqual([]);
+  it('do not send their failures to the page', () => {
+    expect(all.filter((d) => /\bonError\(|catch\(onError\)/.test(d.body)).map((d) => d.id)).toEqual([]);
+  });
+
+  it('show them in a banner of their own, unless exempt for a stated reason', () => {
+    const missing = all
+      .filter((d) => !/<ErrorBanner\b/.test(d.body) && !(d.id in exempt))
+      .map((d) => d.id);
+    expect(missing).toEqual([]);
+  });
+
+  it('are exempt only while they make no request of their own', () => {
+    const stale = all.filter((d) => d.id in exempt && /\bapi\./.test(d.body)).map((d) => d.id);
+    expect(stale).toEqual([]);
+
+    // And every exemption names a dialog that exists.
+    expect(Object.keys(exempt).filter((id) => !all.some((d) => d.id === id))).toEqual([]);
   });
 });

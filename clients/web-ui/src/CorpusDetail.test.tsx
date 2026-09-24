@@ -1493,6 +1493,22 @@ describe('the full reindex', () => {
     expect(props.onError).not.toHaveBeenCalled();
   });
 
+  it('clears the last failure when it tries again', async () => {
+    // A stale message beside a retry in flight reads as that retry's result.
+    reindex
+      .mockRejectedValueOnce(new ApiError(503, 'Embedding unavailable', 'Ollama did not answer.'))
+      .mockReturnValueOnce(new Promise(() => {}));
+    render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
+    const dialog = screen.getByRole('dialog');
+
+    await userEvent.click(within(dialog).getByRole('button', { name: /Reindex everything/ }));
+    await within(dialog).findByRole('alert');
+
+    await userEvent.click(within(dialog).getByRole('button', { name: /Reindex everything/ }));
+    await waitFor(() => expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument());
+  });
+
   it('opens with focus on Cancel', async () => {
     // The link to Chunk sets is the first control in the dialog, so focus started there.
     // Cancel is the one control that does nothing.

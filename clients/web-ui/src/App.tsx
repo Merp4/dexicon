@@ -2506,6 +2506,7 @@ function DeleteCorpusModal({ corpus, onClose, onDeleted }: { corpus: Corpus; onC
         <Button variant="danger"
           disabled={typed !== corpus.name}
           onClick={async () => {
+            setError(null);
             try { await api.deleteCorpus(corpus.name); await onDeleted(); } catch (e) { setError(e); }
           }}
         >
@@ -2571,6 +2572,7 @@ function FullReindexModal({
 
   const run = async (full: boolean) => {
     setQueueing(true);
+    setError(null);
     try {
       await api.reindex(corpus.name, full);
       onClose();
