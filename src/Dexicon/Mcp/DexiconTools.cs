@@ -431,15 +431,6 @@ public sealed class DexiconTools
     }
 
     /// <summary>
-    /// Files no source covers. Not skipped, not failed, not counted: absent, and absence
-    /// has no row in any of the figures above it. An agent that searches for one of these
-    /// gets other documents back, which is indistinguishable from a ranking result, so the
-    /// wording has to say what to do about it.
-    ///
-    /// Capped at five files per directory. The whole list belongs in the UI; what an agent
-    /// needs here is to know the corpus has a hole and roughly where.
-    /// </summary>
-    /// <summary>
     /// What a corpus's count is counting.
     ///
     /// A git-history source's units are commits, so a corpus made only of them saying
@@ -459,6 +450,15 @@ public sealed class DexiconTools
         return n == 1 ? one : one + "s";
     }
 
+    /// <summary>
+    /// Files no source covers. Not skipped, not failed, not counted: absent, and absence
+    /// has no row in any of the figures above it. An agent that searches for one of these
+    /// gets other documents back, which is indistinguishable from a ranking result, so the
+    /// wording has to say what to do about it.
+    ///
+    /// Capped at five files per directory. The whole list belongs in the UI; what an agent
+    /// needs here is to know the corpus has a hole and roughly where.
+    /// </summary>
     internal static string RenderCoverage(IReadOnlyList<SourceCoverage.Gap> gaps)
     {
         if (gaps.Count == 0) return string.Empty;

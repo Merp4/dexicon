@@ -184,29 +184,6 @@ public sealed record GitCommit(string Sha, DateTimeOffset AuthorDate)
 }
 
 /// <summary>
-/// Reading a repository's history as documents, one per commit.
-///
-/// A commit, not a file at a revision: indexing every version of every file multiplies a
-/// large repository by its history and re-indexes text that did not change. And not a
-/// hunk: a hunk has no author and no subject, and the question people ask of history is
-/// why something changed, which lives in the message.
-///
-/// Two PHASES, because a refresh has to be cheap. The first asks git only for shas and
-/// dates and is the inventory; the second asks for the message, the stat and the patch of
-/// the commits that are not already indexed. A single <c>git log -p</c> would produce every patch in the
-/// repository in order to discover that nothing had changed. Measured on this repository,
-/// 201 commits: 77ms to enumerate, 1,069ms to read all of them with their patches.
-///
-/// Phases, not processes. The inventory is one call; reading is one call per 100 commits
-/// for the messages and another for the stat and patch when either is wanted, so a first
-/// pass over 201 commits with diffs is 1 + 3 + 3. That is bounded by what is NEW, which
-/// is the number that matters: a refresh with nothing to read is the one call.
-///
-/// The git binary rather than a library. The runtime image is Alpine, so a native library
-/// means musl builds to keep working, and a handful of processes per pass is not a cost
-/// worth that.
-/// </summary>
-/// <summary>
 /// A directory git may be started in: one the workspace boundary passed and the
 /// filesystem reported.
 ///
@@ -234,6 +211,31 @@ public sealed class GitRepository
     internal static GitRepository Of(string fullPath) => new(fullPath);
 }
 
+/// <summary>
+/// Reading a repository's history as documents, one per commit.
+///
+/// A commit, not a file at a revision: indexing every version of every file multiplies a
+/// large repository by its history and re-indexes text that did not change. And not a
+/// hunk: a hunk has no author and no subject, and the question people ask of history is
+/// why something changed, which lives in the message.
+///
+/// Two PHASES, because a refresh has to be cheap. The first asks git only for shas and
+/// dates and is the inventory; the second asks for the message, the stat and the patch of
+/// the commits that are not already indexed. A single <c>git log -p</c> would produce every patch in the
+/// repository in order to discover that nothing had changed. Measured on this repository,
+/// 201 commits: 77ms to enumerate, 1,069ms to read all of them with their patches.
+///
+/// Phases, not processes. The inventory is one call; reading is one call per 100 commits
+/// for the messages and another for the stat and patch when either is wanted, so a first
+/// pass over 201 commits with diffs is 1 + 3 + 3. That is bounded by what is NEW, which
+/// is the number that matters: a refresh with nothing to read is the one call.
+///
+/// The git binary rather than a library, because the document is <c>git show</c>'s layout
+/// and a library returns structured objects: the hunk headers and stat columns would be
+/// written by hand, and any difference from git would re-index every commit. Alpine is not
+/// the reason, since LibGit2Sharp ships musl builds. D-34 weighs what a library would
+/// remove.
+/// </summary>
 public static class GitHistory
 {
     /// <summary>
@@ -298,25 +300,6 @@ public static class GitHistory
     }
 
     /// <summary>
-    /// A ref this will pass to git, or null.
-    ///
-    /// Conservative on purpose. `--end-of-options` already stops a ref being read as an
-    /// option and arguments go as a list rather than a command line, so this is the third
-    /// guard rather than the only one; what it adds is that the set of things that can
-    /// reach git is small enough to read. Branch and tag names, `HEAD` and its `~`/`^`
-    /// forms, and object names.
-    /// </summary>
-    /// <summary>
-    /// A diff cap this will size a read from.
-    ///
-    /// Operator input, stored as JSON on the source and read back on every pass, so a
-    /// value that arrived once is used for ever. Negative makes every ceiling negative
-    /// and the document's own "over the limit" line quote a negative number; near
-    /// <see cref="int.MaxValue"/> it used to overflow the ceiling's addition. Above the
-    /// absolute ceiling it is a cap that can never be the binding one, which is a
-    /// setting that silently does nothing.
-    /// </summary>
-    /// <summary>
     /// The largest cap a read can actually honour.
     ///
     /// The absolute ceiling less the stat's allowance, because a commit's read has to fit
@@ -327,6 +310,16 @@ public static class GitHistory
     /// </summary>
     internal static long MaxDiffCap => AbsoluteCeiling - StatAllowance;
 
+    /// <summary>
+    /// A diff cap this will size a read from.
+    ///
+    /// Operator input, stored as JSON on the source and read back on every pass, so a
+    /// value that arrived once is used for ever. Negative makes every ceiling negative
+    /// and the document's own "over the limit" line quote a negative number; near
+    /// <see cref="int.MaxValue"/> it used to overflow the ceiling's addition. Above the
+    /// absolute ceiling it is a cap that can never be the binding one, which is a
+    /// setting that silently does nothing.
+    /// </summary>
     internal static bool IsAcceptableDiffCap(int value) => value >= 0 && value <= MaxDiffCap;
 
     /// <summary>
@@ -454,6 +447,15 @@ public static class GitHistory
         if (OptionsProblem(options) is { } problem) throw new GitHistoryException(problem);
     }
 
+    /// <summary>
+    /// A ref this will pass to git, or null.
+    ///
+    /// Conservative on purpose. `--end-of-options` already stops a ref being read as an
+    /// option and arguments go as a list rather than a command line, so this is the third
+    /// guard rather than the only one; what it adds is that the set of things that can
+    /// reach git is small enough to read. Branch and tag names, `HEAD` and its `~`/`^`
+    /// forms, and object names.
+    /// </summary>
     internal static bool IsAcceptableRef(string? value) =>
         !string.IsNullOrWhiteSpace(value)
         && value.Length <= 200
@@ -1169,11 +1171,6 @@ public static class GitHistory
 }
 
 /// <summary>
-/// A git call that could not be made or could not be understood. Carried as an exception
-/// rather than an empty result, because reading no commits and finding no commits are
-/// different facts and the indexer records them differently.
-/// </summary>
-/// <summary>
 /// git produced more output than the call allowed, and was killed part way through it.
 ///
 /// Internal, and never reaches the indexer: <see cref="GitHistory.TailsAsync"/> answers
@@ -1189,6 +1186,11 @@ public static class GitHistory
 internal sealed class GitOutputTooLargeException(long ceiling)
     : Exception($"git produced more than {ceiling:N0} bytes.");
 
+/// <summary>
+/// A git call that could not be made or could not be understood. Carried as an exception
+/// rather than an empty result, because reading no commits and finding no commits are
+/// different facts and the indexer records them differently.
+/// </summary>
 public sealed class GitHistoryException : Exception
 {
     public GitHistoryException(string message) : base(message) { }
