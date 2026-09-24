@@ -106,7 +106,15 @@ function SignInGate({ onToken }: { onToken: (t: string) => void }) {
 
         <Field
           label="Admin password"
-          hint="On a fresh install it is printed once in the container log: docker compose logs dexicon | grep 'admin password'. Set DEXICON_ADMIN_PASSWORD in .env to pin your own."
+          // Set as code, so the command reads as one thing to copy rather than as a
+          // sentence that happens to contain a pipe.
+          hint={
+            <>
+              On a fresh install it is printed once in the container log:{' '}
+              <code className="mono">docker compose logs dexicon | grep 'admin password'</code>. Set{' '}
+              <code className="mono">DEXICON_ADMIN_PASSWORD</code> in <code className="mono">.env</code> to pin your own.
+            </>
+          }
         >
           <Input
             type="password"
@@ -469,8 +477,6 @@ function isDocumentName(path: string): boolean {
   return DOCUMENT_EXTENSIONS.test(path) && !path.includes('/');
 }
 
-const REGEX_SPECIALS = /[.*+?^${}()|[\]\\]/g;
-
 /**
  * Words common enough that marking them marks the passage.
  *
@@ -488,27 +494,72 @@ const STOPWORDS = new Set([
 ]);
 
 /**
- * Split text into alternating non-match / match segments for the query's terms.
+ * The parts the keyword index splits an identifier into, as `SparseEncoder.Emit` does:
+ * at lower-to-upper, at a change between digit and non-digit, and before the last capital
+ * of an acronym that starts a word (`HTTPServer` is `HTTP`, `Server`).
+ */
+function identifierParts(run: string): string[] {
+  const upper = (c?: string) => c !== undefined && /\p{Lu}/u.test(c);
+  const lower = (c?: string) => c !== undefined && /\p{Ll}/u.test(c);
+  const digit = (c?: string) => c !== undefined && /\p{Nd}/u.test(c);
+
+  const parts: string[] = [];
+  let part = '';
+  for (let i = 0; i < run.length; i++) {
+    const c = run[i];
+    const boundary = i > 0 && (
+      (upper(c) && !upper(run[i - 1])) ||
+      digit(c) !== digit(run[i - 1]) ||
+      (upper(c) && lower(run[i + 1]) && upper(run[i - 1])));
+    if (boundary && part) { parts.push(part); part = ''; }
+    part += c;
+  }
+  if (part) parts.push(part);
+  return parts;
+}
+
+/**
+ * Split text into alternating non-match / match segments for the query's terms: matches at
+ * the odd indices, which is what the caller relies on.
  *
- * Terms of three characters or more, minus the stopwords. `split` with ONE capture group
- * returns matches at the odd indices, which is what the caller relies on.
+ * Both sides are read the way the keyword index reads them. The terms are each run of
+ * letters and digits in the query and the parts of a compound identifier, three characters
+ * or more, minus the stopwords; the query's words with underscores are kept too, so
+ * `corpus_id` is marked in one piece where it appears whole. The passage is walked token by
+ * token, and a token is marked whole when it is a term, or else in the parts that are.
+ *
+ * It marked whole query words as substrings. That left a keyword search for an identifier
+ * with nothing marked in nine passages of ten, each matched on a part; and once parts were
+ * terms, "set" from `ChunkSet` was marked inside "settings", which the index does not match.
  */
 function splitOnTerms(text: string, query: string): string[] {
-  const terms = [...new Set((query.toLowerCase().match(/[\p{L}\p{N}_]{3,}/gu) ?? []))]
-    .filter((t) => !STOPWORDS.has(t));
-  if (terms.length === 0) return [text];
+  const runs = query.match(/[\p{L}\p{Nd}]+/gu) ?? [];
+  const terms = new Set([
+    ...(query.match(/[\p{L}\p{Nd}_]{3,}/gu) ?? []),
+    ...runs,
+    ...runs.flatMap(identifierParts),
+  ].map((t) => t.toLowerCase()).filter((t) => t.length >= 3 && !STOPWORDS.has(t)));
+  if (terms.size === 0) return [text];
 
-  const pattern = terms
-    .sort((a, b) => b.length - a.length)   // longest first, so "corpus_id" wins over "corpus"
-    .map((t) => t.replace(REGEX_SPECIALS, '\\$&'))
-    .join('|');
+  const out: string[] = [];
+  let plain = '';
+  const mark = (s: string) => { out.push(plain, s); plain = ''; };
 
-  try {
-    return text.split(new RegExp(`(${pattern})`, 'giu'));
-  } catch {
-    // A term that survives escaping and still will not compile must not lose the snippet.
-    return [text];
+  for (const [token] of text.matchAll(/[\p{L}\p{Nd}_]+|[^\p{L}\p{Nd}_]+/gu)) {
+    if (terms.has(token.toLowerCase())) { mark(token); continue; }
+    if (!/^[\p{L}\p{Nd}_]/u.test(token)) { plain += token; continue; }
+    // An underscore separates runs in the index, as any non-alphanumeric does.
+    for (const piece of token.split(/(_+)/)) {
+      if (piece === '' || piece.startsWith('_')) { plain += piece; continue; }
+      if (terms.has(piece.toLowerCase())) { mark(piece); continue; }
+      for (const part of identifierParts(piece)) {
+        if (terms.has(part.toLowerCase())) mark(part);
+        else plain += part;
+      }
+    }
   }
+  out.push(plain);
+  return out;
 }
 
 /**
@@ -579,7 +630,7 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
   const [result, setResult] = useState<SearchResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [explain, setExplain] = useState(false);
-  const [viewing, setViewing] = useState<{ corpus: string; path: string; line?: number } | null>(null);
+  const [viewing, setViewing] = useState<{ corpus: string; path: string; line?: number; through?: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -756,6 +807,16 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
                     <span className="flex-1" />
                     {h.language && <Badge>{h.language}</Badge>}
                     {result.scope.length > 1 && h.corpusName && <Badge tone="accent">{h.corpusName}</Badge>}
+                    {/* The number Explain describes. A gap between two hits of one search
+                        says something; the same figure from another search does not. */}
+                    {h.score != null && (
+                      <span
+                        className="mono dim text-xs"
+                        title={`Score. ${SCORING[result.mode.toLowerCase()] ?? result.mode}`}
+                      >
+                        {h.score.toFixed(3)}
+                      </span>
+                    )}
                     <CopyButton text={h.location ?? ''} label="Copy path" />
                     {/* A snippet is forty lines out of a file. Reading on from it used to
                         mean leaving for an editor, which for an uploaded PDF is nowhere. */}
@@ -766,6 +827,7 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
                           corpus: h.corpusName!,
                           path: h.filePath,
                           line: h.startLine,
+                          through: h.endLine,
                         })}
                       >
                         <FileText />
@@ -786,6 +848,7 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
           corpus={viewing.corpus}
           path={viewing.path}
           aroundLine={viewing.line}
+          throughLine={viewing.through}
           onClose={() => setViewing(null)}
         />
       )}
@@ -1442,9 +1505,13 @@ export function CorpusDetail({
             title={`No ${unitFor(corpus.sources, 0)}`}
             hint="Run a refresh to index this corpus."
           />
+        ) : files.length === 0 && filter && !nameQuery ? (
+          // A status tab on its own. That nothing has failed is the news, and "no file
+          // matches that, clear the filter" read as a search that had gone wrong.
+          <Empty title={`No ${filter} ${unitFor(corpus.sources, 0)}`} />
         ) : files.length === 0 ? (
           <Empty
-            title={`No ${unitFor(corpus.sources, 1)} matches that`}
+            title={`No ${filter ? `${filter} ` : ''}${unitFor(corpus.sources, 1)} matches that`}
             hint={`Searched all ${corpus.fileCount.toLocaleString()} ${unitFor(corpus.sources, corpus.fileCount)} in this corpus. Clear the filter to see them.`}
           />
         ) : (
@@ -1693,6 +1760,10 @@ function inheritsFromCorpus(
  * inherited value actually is. "Use the corpus default" on its own asks someone to accept
  * a value they cannot see, and the answer to "what will this do" is the only thing the
  * control is for.
+ *
+ * It names the field too. While inherited, this line is all there is of it, and four of
+ * them in a column read "Corpus default (nothing)", "Corpus default (everything not
+ * excluded)" with the name of each only in the checkbox's aria-label.
  */
 function Inheritable({
   label,
@@ -1716,7 +1787,7 @@ function Inheritable({
           aria-label={`${label}: use the corpus default`}
         />
         <span className="text-xs text-muted-foreground">
-          Corpus default ({inheritedLabel})
+          <span className="font-semibold text-foreground">{label}</span>: corpus default ({inheritedLabel})
         </span>
       </label>
       {!inherited && children}
@@ -2433,11 +2504,18 @@ function FileViewer({
   corpus,
   path,
   aroundLine,
+  throughLine,
   onClose,
 }: {
   corpus: string;
   path: string;
   aroundLine?: number;
+  /**
+   * The last line of the hit, marked with the first. Only the first was marked, and a hit
+   * is often forty lines, so the viewer showed where the passage began and not where it
+   * ended.
+   */
+  throughLine?: number;
   onClose: () => void;
 }) {
   const [file, setFile] = useState<IndexedFileText | null>(null);
@@ -2515,11 +2593,12 @@ function FileViewer({
           <pre className="mono m-0 max-h-[62vh] overflow-auto rounded-md bg-muted p-3 text-xs whitespace-pre">
             {lines.map((line, i) => {
               const n = file.startLine + i;
-              const isHit = aroundLine !== undefined && n === aroundLine;
+              const isHit = aroundLine !== undefined && n >= aroundLine && n <= Math.max(aroundLine, throughLine ?? aroundLine);
               return (
                 <span
                   key={i}
-                  ref={isHit ? highlight : undefined}
+                  // The first line of the hit, which is where the reader lands.
+                  ref={n === aroundLine ? highlight : undefined}
                   className={cn('block', isHit && 'rounded-sm bg-[var(--accent-soft)]')}
                 >
                   <span className="mr-3 inline-block w-10 shrink-0 text-right text-muted-foreground select-none">
@@ -3049,7 +3128,8 @@ export function AccessView({ onError }: { onError: (e: unknown) => void }) {
                 className={cn('flex flex-wrap items-center gap-2.5 px-3 py-2.5', i && 'border-t border-border')}
               >
                 <strong className="text-sm">{t.name}</strong>
-                <Badge>{t.scopes}</Badge>
+                {/* The API sends the stored form, "search,ingest". */}
+                {t.scopes.split(',').map((s) => s.trim()).filter(Boolean).map((s) => <Badge key={s}>{s}</Badge>)}
                 {t.revokedUtc && <Badge tone="danger">revoked</Badge>}
                 {t.expiresUtc && new Date(t.expiresUtc) < new Date() && <Badge tone="warn">expired</Badge>}
                 <span className="flex-1" />

@@ -994,8 +994,18 @@ describe('editing a source filter', () => {
     // cannot see, which is the one thing the control is for.
     const { dialog } = await openEdit(owning());
 
-    expect(within(dialog).getByText(/Corpus default \(\.gitignore ignored\)/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/Corpus default \(\*\*\/\*\.pdf\)/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/corpus default \(\.gitignore ignored\)/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/corpus default \(\*\*\/\*\.pdf\)/)).toBeInTheDocument();
+  });
+
+  it('names each inherited field, since the line is all there is of it', async () => {
+    // Inherited, the field itself is hidden, and the lines read "Corpus default (nothing)"
+    // one under another with the names only in the checkboxes' aria-labels.
+    const { dialog } = await openEdit(owning());
+
+    const lines = [...dialog.querySelectorAll('label > span')].map((s) => s.textContent);
+    expect(lines).toContain('Honour .gitignore: corpus default (.gitignore ignored)');
+    expect(lines).toContain('Never these: corpus default (**/*.pdf)');
   });
 
   it('clears every field the source still inherits', async () => {
@@ -1528,6 +1538,20 @@ describe('the file list', () => {
 
     expect(await screen.findByText('No file matches that')).toBeInTheDocument();
     expect(screen.getByText(/Searched all 12 files in this corpus/)).toBeInTheDocument();
+  });
+
+  it('says a status tab is empty as news, not as a search gone wrong', async () => {
+    // "No file matches that. Clear the filter to see them." under the failed tab of a
+    // corpus where nothing failed.
+    listFiles.mockResolvedValue(page(1, 1));
+    render(<CorpusDetail {...props} />);
+    await screen.findByText('book-0.pdf');
+    listFiles.mockResolvedValue({ total: 0, chunkSet: 'default', files: [] });
+
+    await userEvent.click(screen.getByRole('radio', { name: 'failed' }));
+
+    expect(await screen.findByText('No failed files')).toBeInTheDocument();
+    expect(screen.queryByText(/Clear the filter/)).not.toBeInTheDocument();
   });
 });
 

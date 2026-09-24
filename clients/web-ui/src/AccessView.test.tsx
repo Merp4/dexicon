@@ -42,6 +42,17 @@ beforeEach(() => {
   revokeToken.mockResolvedValue(undefined);
 });
 
+describe('the key list', () => {
+  it('shows each scope on its own, not the stored comma list', async () => {
+    listTokens.mockResolvedValue([token({ scopes: 'search,ingest' })]);
+    render(<AccessView onError={vi.fn()} />);
+
+    expect(await screen.findByText('ingest')).toBeInTheDocument();
+    expect(screen.getByText('search')).toBeInTheDocument();
+    expect(screen.queryByText('search,ingest')).not.toBeInTheDocument();
+  });
+});
+
 describe('revoking a key', () => {
   it('asks first, and revokes nothing on cancel', async () => {
     const user = userEvent.setup();

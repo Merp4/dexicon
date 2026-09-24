@@ -295,6 +295,16 @@ describe('the chunk sets, collapsed', () => {
     expect(screen.queryByRole('button', { name: 'Promote' })).not.toBeInTheDocument();
   });
 
+  it('has an accessible name with its parts apart', () => {
+    // The gaps are flex gaps, which are visual only, so the name was the text run
+    // together: "Chunk setsdocs:defaultnomic-embed-text…".
+    collapsed([chunkSet(), chunkSet({ id: 's2', name: 'fine', isDefault: false, state: 'indexing', pendingCount: 40 })]);
+
+    expect(screen.getByRole('button', { name: /Chunk sets/ })).toHaveAccessibleName(
+      'Chunk sets docs:default nomic-embed-text (768d) · 768 / 100 · 110 chunks ready +1 more fine: indexing, 40 pending',
+    );
+  });
+
   it('still shows a set that is building, so collapsing hides no work in progress', () => {
     collapsed([chunkSet(), chunkSet({ id: 's2', name: 'fine', isDefault: false, state: 'indexing', pendingCount: 40 })]);
 

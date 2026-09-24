@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SearchView } from './App';
@@ -15,10 +15,17 @@ import type { Corpus, SearchResult } from './api';
  * api.ts, but no component test ever asserted the screen's half of it.
  */
 const search = vi.fn();
+const fileText = vi.fn();
 
 vi.mock('./api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./api')>();
-  return { ...actual, api: { search: (...a: unknown[]) => search(...a) } };
+  return {
+    ...actual,
+    api: {
+      search: (...a: unknown[]) => search(...a),
+      fileText: (...a: unknown[]) => fileText(...a),
+    },
+  };
 });
 
 const corpora = [{ id: 'c1', name: 'docs' }, { id: 'c2', name: 'api-repo' }] as Corpus[];
@@ -135,6 +142,35 @@ describe('marking why a hit matched', () => {
     expect([...marks].map((m) => m.textContent?.toLowerCase())).not.toContain('the');
   });
 
+  it('marks the parts of an identifier the keyword index matched on', async () => {
+    // The sparse encoder indexes `RefreshAsync` as itself and as "refresh" and "async",
+    // so a passage that only says "refresh" is a match. Marking whole query words left
+    // nine keyword hits of ten for an identifier with nothing marked.
+    search.mockResolvedValue(result({
+      query: 'RefreshAsync HTTPServer',
+      hits: [hit({ content: 'Call refresh before the token expires. The server retries RefreshAsync once.' })],
+    }));
+    await searchFor('RefreshAsync HTTPServer');
+    await screen.findByText('04-ingestion.md:228-265');
+
+    const marks = [...document.querySelectorAll('mark')].map((m) => m.textContent);
+    expect(marks).toEqual(['refresh', 'server', 'RefreshAsync']);
+  });
+
+  it('marks a term where the index would match it, not inside another word', async () => {
+    // "set" is a part of `ChunkSet`, and it was marked inside "settings" and "reset". The
+    // index reads each of those as one token, so neither is a match.
+    search.mockResolvedValue(result({
+      query: 'ChunkSet',
+      hits: [hit({ content: 'Settings reset the default set; a ChunkSet and chunk_set too.' })],
+    }));
+    await searchFor('ChunkSet');
+    await screen.findByText('04-ingestion.md:228-265');
+
+    const marks = [...document.querySelectorAll('mark')].map((m) => m.textContent);
+    expect(marks).toEqual(['set', 'ChunkSet', 'chunk', 'set']);
+  });
+
   it('sets prose in the body face and code in monospace', async () => {
     // `pre` is monospace in the UA stylesheet, so the prose branch has to say font-sans or
     // a page of a book arrives in 14px monospace regardless of the class it was given.
@@ -155,6 +191,34 @@ describe('marking why a hit matched', () => {
     const code = document.querySelector('pre')!;
     expect(code.className).toMatch(/\bmono\b/);
     expect(code.className).not.toMatch(/font-sans/);
+  });
+});
+
+describe('opening a hit', () => {
+  it('marks every line of the passage, not only its first', async () => {
+    fileText.mockResolvedValue({
+      corpus: 'docs',
+      path: '04-ingestion.md',
+      chunkSet: 'default',
+      startLine: 226,
+      endLine: 268,
+      text: Array.from({ length: 43 }, (_, i) => `line ${226 + i}`).join('\n'),
+      gaps: 0,
+      totalChars: 400,
+      nextOffset: null,
+    });
+    const user = await searchFor('chunk sets');
+
+    await user.click(await screen.findByRole('button', { name: 'Open' }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText('line 226');
+
+    const marked = [...dialog.querySelectorAll('pre > span')]
+      .filter((s) => s.className.includes('accent-soft'))
+      .map((s) => s.lastChild?.textContent);
+    expect(marked[0]).toBe('line 228');
+    expect(marked.at(-1)).toBe('line 265');
+    expect(marked).toHaveLength(265 - 228 + 1);
   });
 });
 
@@ -192,6 +256,14 @@ describe('telling a bad index from a bad scope', () => {
     await user.click(await screen.findByRole('button', { name: 'Explain' }));
     expect(screen.getByText(/scores:/).parentElement).toHaveTextContent(/DBSF/);
     expect(screen.queryByText(/reciprocal rank/)).not.toBeInTheDocument();
+  });
+
+  it('shows the score Explain describes on each hit', async () => {
+    search.mockResolvedValue(result({ hits: [hit({ score: 0.8 }), hit({ score: 0.4126, filePath: 'b.md', location: 'b.md:1-9' })] }));
+    await searchFor('chunk sets');
+
+    expect(await screen.findByText('0.800')).toHaveAttribute('title', expect.stringMatching(/DBSF/));
+    expect(screen.getByText('0.413')).toBeInTheDocument();
   });
 
   it('describes a degraded search by the keyword scoring it fell back to', async () => {
