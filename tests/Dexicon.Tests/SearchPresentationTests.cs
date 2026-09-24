@@ -154,15 +154,15 @@ public sealed class SearchPresentationDistinctTests
     {
         var hits = new[]
         {
-            Hit("AI Engineering.pdf", 0.9f),
-            Hit("AI Engineering.epub", 0.8f),
-            Hit("Designing Data-Intensive Applications.pdf", 0.7f),
+            Hit("An Invented Handbook.pdf", 0.9f),
+            Hit("An Invented Handbook.epub", 0.8f),
+            Hit("A Made-Up Manual of Imaginary Machines.pdf", 0.7f),
         };
 
         var kept = SearchPresentation.DistinctByTitle(hits, 5);
 
         kept.Select(h => h.FilePath).ShouldBe(
-            ["AI Engineering.pdf", "Designing Data-Intensive Applications.pdf"]);
+            ["An Invented Handbook.pdf", "A Made-Up Manual of Imaginary Machines.pdf"]);
     }
 
     [Fact]
@@ -172,11 +172,11 @@ public sealed class SearchPresentationDistinctTests
         // would answer with the worse extraction of the same book.
         var hits = new[]
         {
-            Hit("AI Engineering.epub", 0.9f),
-            Hit("AI Engineering.pdf", 0.4f),
+            Hit("An Invented Handbook.epub", 0.9f),
+            Hit("An Invented Handbook.pdf", 0.4f),
         };
 
-        SearchPresentation.DistinctByTitle(hits, 5).Single().FilePath.ShouldBe("AI Engineering.epub");
+        SearchPresentation.DistinctByTitle(hits, 5).Single().FilePath.ShouldBe("An Invented Handbook.epub");
     }
 
     [Fact]
@@ -213,7 +213,7 @@ public sealed class SearchPresentationDistinctTests
     [Fact]
     public void TwoChunksOfOneFileAreStillOneDocument()
     {
-        var hits = new[] { Hit("AI Engineering.pdf", 0.9f), Hit("AI Engineering.pdf", 0.8f) };
+        var hits = new[] { Hit("An Invented Handbook.pdf", 0.9f), Hit("An Invented Handbook.pdf", 0.8f) };
 
         SearchPresentation.DistinctByTitle(hits, 5).Count.ShouldBe(1);
     }

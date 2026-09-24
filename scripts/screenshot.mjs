@@ -123,7 +123,7 @@ async function shot(name, { height = 900, prepare }) {
 /**
  * A screenshot of a search result REDISTRIBUTES whatever it matched.
  *
- * The first version of this script shot a corpus of O'Reilly books, and the committed
+ * The first version of this script shot a corpus of published books, and the committed
  * image carried several hundred words of two of them into a repository about to be made
  * public. The retrieval was excellent and the picture was an unlicensed reproduction.
  *

@@ -440,7 +440,7 @@ export function HealthDots({ health, connected, stale }: { health: Health | null
  * Languages whose chunks are code, and are therefore worth the monospace.
  *
  * Everything else is prose, which monospace actively harms: this corpus is ~15,000 chunks
- * of book, and a page of Designing Data-Intensive Applications set in 12px monospace is
+ * of book, and a page of a book on system design set in 12px monospace is
  * slower to read than the same page anywhere else. A path or an identifier keeps it,
  * because column alignment and character distinction are the point there.
  */
@@ -459,8 +459,8 @@ function isProse(language?: string | null): boolean {
  * Whether a file's NAME is a title rather than a path.
  *
  * By extension, because this decides how to set the name itself and the name is all there
- * is at that point. "A Project Guide to UX Design - For User Experience Designers in the
- * Field or in the Making, 3rd Edition.epub" is a sentence; in 12px monospace with
+ * is at that point. "A Made-Up Manual of Imaginary Machines - For Readers Who Have Not Yet
+ * Invented Anything, 3rd Edition.epub" is a sentence; in 12px monospace with
  * break-all it wrapped as "3rd Editio / n.epub".
  */
 const DOCUMENT_EXTENSIONS = /\.(pdf|epub|docx?|pptx?|md|markdown|txt|rtf)$/i;
@@ -720,8 +720,8 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
                 // search box and the results count off the right-hand edge with it.
                 <article key={`${h.corpusId}-${h.filePath}-${h.startLine}-${i}`} className="card min-w-0 p-3.5">
                   {/* The citation truncates; the actions do not move.
-                      A book's filename is long — "Coaching Agile Teams - A Companion for
-                      ScrumMasters, Agile Coaches, and Project Managers in Transition.epub"
+                      A book's filename is long — "An Invented Handbook - A Companion for
+                      Readers, Reviewers, and Anyone Else Who Opens a Book to Its Index.epub"
                       — and wrapping it pushed Copy path and Open onto a second line, so
                       the controls sat in a different place on every result. The full text
                       is still on the element and in Copy path, which is how anyone
