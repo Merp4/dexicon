@@ -16,7 +16,7 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
-## Unreleased
+## 0.6.1 — 2026-09-24
 
 ### ⚠️ Upgrading
 
@@ -59,8 +59,9 @@ with no section here fails its release rather than publishing an undescribed one
   hides from assistive tech, so a refused save left the dialog open with nothing in it to
   say why. Measured with New corpus and a name already taken: the 409's message rendered
   behind the overlay. The file and extracted-text viewers, on a load that failed, went on
-  saying "Reading…" for ever. Each now shows the server's message at its top and stays
-  open, and a test that reads the source holds every dialog to it.
+  saying "Reading…" for ever. Each now shows the server's message at its top, scrolled
+  into view if the dialog had scrolled past it, and stays open. A test that parses the
+  source holds every dialog to it.
 
 - **A source at the workspace root has a name.** Its path is empty, and `rootPath ?? kind`
   passed the empty string through, so the row showed no name and its buttons were

@@ -136,9 +136,9 @@ supported and recommended for anything beyond one trusted machine.
 It also avoids a collision that will otherwise happen on any developer machine: 6333, 6334
 and 11434 are the standard ports for Qdrant and Ollama, and anyone likely to want Dexicon
 is likely to already be running one of them. Two stacks both claiming 11434 fail at
-`docker compose up` with a port-in-use error; worse, if the other stack started first, the
-the port belongs to it without any indication. Publishing nothing avoids the question. The debug overlay
-uses non-standard host ports for the same reason.
+`docker compose up` with a port-in-use error; worse, if the other stack started first,
+the port belongs to it without any indication. Publishing nothing avoids the question. The
+debug overlay uses non-standard host ports for the same reason.
 
 The default host port is **8477** rather than 8080, on the same principle: 8080 is the
 most contended port on a development machine, and the resulting failure is hard to
@@ -337,7 +337,7 @@ Hardening, matching the compose file:
 - Every published image carries an **SBOM** and build provenance as registry attestations:
 
   ```bash
-  docker buildx imagetools inspect ghcr.io/<owner>/dexicon:0.6.0 --format '{{ json .SBOM }}'
+  docker buildx imagetools inspect ghcr.io/<owner>/dexicon:0.6.1 --format '{{ json .SBOM }}'
   ```
 - Published multi-arch (`linux/amd64`, `linux/arm64`) so it runs on Apple silicon. Both
   builder stages run on the build platform and emit architecture-independent IL
@@ -350,7 +350,7 @@ Hardening, matching the compose file:
 
 | Tag | Means | Use it for |
 |---|---|---|
-| `0.6.0` | That release, forever | Deployments |
+| `0.6.1` | That release, forever | Deployments |
 | `0.6` | Newest patch of that minor | Deployments that accept patches |
 | `latest` | Newest release | Trying it out |
 | `edge` | Tip of `main` | Following development |
@@ -363,7 +363,7 @@ promise a compatibility that does not exist.
 if it should not change even for a re-push:
 
 ```bash
-DEXICON_TAG=0.6.0 docker compose up -d
+DEXICON_TAG=0.6.1 docker compose up -d
 ```
 
 **Cutting a release, in order.**
@@ -409,7 +409,7 @@ hand with no argument reports `0.0.0-dev` rather than impersonating a release. E
 recording the commit and the workflow that produced it:
 
 ```bash
-gh attestation verify oci://ghcr.io/<owner>/dexicon:0.6.0 --owner <owner>
+gh attestation verify oci://ghcr.io/<owner>/dexicon:0.6.1 --owner <owner>
 ```
 
 ## Health

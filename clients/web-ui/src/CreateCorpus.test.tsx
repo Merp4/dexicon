@@ -148,6 +148,26 @@ describe('creating a corpus', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
+  it('brings the refusal into view, since the dialog may have scrolled past it', async () => {
+    // Measured in a 768px window: after pressing Create at the foot of a scrolled dialog,
+    // the banner at its top sat 70px above the visible area.
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) { scrolled.push(this); };
+    try {
+      createCorpus.mockRejectedValue(new ApiError(409, 'Corpus already exists', "A corpus named 'docs' already exists."));
+      const { user, dialog } = await openCreate();
+
+      await user.type(within(dialog).getByLabelText(/^Name/), 'docs');
+      await user.click(within(dialog).getByRole('button', { name: /^Create$/ }));
+
+      const alert = await within(dialog).findByRole('alert');
+      expect(scrolled).toContain(alert);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
   it('says why the model list is empty when it could not be read', async () => {
     // An empty picker with no reason reads as a provider with no models.
     listEmbeddingModels.mockRejectedValue(new ApiError(503, 'Embedding provider unreachable', 'Ollama did not answer.'));
