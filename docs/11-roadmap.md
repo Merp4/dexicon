@@ -279,6 +279,16 @@ row was asked for and has shipped.
 | ~~Skill and hook installation from `install-mcp.ps1`~~ | **Done** in 0.5.0. See [D-30](decisions.md#d-30-skills-and-hooks-install-with-the-client-under-a-dexicon-prefix). |
 | ~~Chunks as index entries, sized by the provider's refusal~~ | **Done** in 0.6.0, after the passage evaluation it waited for. See [D-31](decisions.md#d-31-a-chunk-is-an-index-entry-and-the-model-decides-how-big-it-can-be). |
 
+**Sizing an ask to index something new.** Most requests land on one of four seams, and
+the seam decides the size:
+
+| The ask | Where it goes | What it costs |
+|---|---|---|
+| A format with no extractor, read today as raw text or not at all: `.ipynb`, mbox, `.eml`, `.odt`, subtitles | An `ITextExtractor` in `ExtractorRegistry` | One class and its tests. No schema change, no new source kind and no version bump: the extraction cache is keyed by extractor, so files of that format re-extract on the next pass. `ExtractorVersions.Current` is for output that changed, and it is in every file's chunking fingerprint, so bumping it re-embeds every document in every corpus. |
+| Content from somewhere that is neither a folder nor an upload: a mailbox, a database query | A source kind: an inventory and a read, handed to `IndexUnitsAsync` | The git-history source is the worked example ([D-34](decisions.md#d-34-a-commit-is-a-document)). Everything after "what are the units and how is one read" is shared. |
+| A derived view of what is indexed: per-file summaries | A chunk set holds one corpus more than one way, but every strategy today cuts the text rather than writing new text | A strategy that calls a model, which is the LLM-driven chunking [04](04-ingestion.md#meaning-not-just-budget) defers. Its seam is `ChunkOptions`. |
+| Content fetched over the network: an issue tracker, a wiki, a remote repository | Not offered | Rejected in [D-34](decisions.md#d-34-a-commit-is-a-document). Clone into the workspace mount instead. |
+
 ---
 
 ## Sequencing notes

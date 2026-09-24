@@ -179,8 +179,10 @@ Covered operationally in [09](09-deployment.md); the security-relevant points:
 - No Docker socket. Ever. There is no feature that needs it.
 - Qdrant and Ollama are not published to the host in the default compose file. Qdrant with
   no API key on an exposed port bypasses per-corpus scoping entirely.
-- No outbound network calls at runtime other than Qdrant and Ollama. No telemetry, no
-  update check, no model download at request time.
+- No outbound network calls at runtime other than Qdrant, Ollama, and an OpenAI or Azure
+  OpenAI embedding provider where the operator has configured one
+  ([04](04-ingestion.md#embedding-providers)). No telemetry, no update check, no model
+  download at request time.
 
 ## Input handling
 
@@ -248,6 +250,17 @@ none of it.
 Re-run it after any dependency change that adds a package rather than bumps one. The two
 checks are the same two: whether anything new is copyleft, and whether
 anything non-permissive has moved from build-time into the shipped bundle.
+
+## What a history corpus holds
+
+A key that reaches a history corpus reads the repository's history, not its current tree.
+With `includeDiff` on, that includes the content of every file ever committed and later
+removed, a credential committed by mistake and deleted in the next commit among them. With
+it off, commit messages and changed paths remain. `.gitignore` only ever kept out what it
+listed at the time, and a history source takes no exclude globs, so its include globs are
+the only narrowing ([04](04-ingestion.md#git-history--a-repositorys-commits)). Scan a
+repository's full history before indexing it with the diff on; this repository's CI runs
+gitleaks over its own for the same reason.
 
 ## Repository files, present at first push
 
