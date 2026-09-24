@@ -745,9 +745,9 @@ describe('finding one file among many', () => {
   });
 
   const shelf = [
-    file('Designing Data-Intensive Applications, 2nd Edition.epub', 'f1'),
-    file('Designing Data-Intensive Applications, 2nd Edition.pdf', 'f2'),
-    file('Fundamentals of Software Architecture.pdf', 'f3'),
+    file('A Made-Up Manual of Imaginary Machines, 2nd Edition.epub', 'f1'),
+    file('A Made-Up Manual of Imaginary Machines, 2nd Edition.pdf', 'f2'),
+    file('An Invented Handbook.pdf', 'f3'),
     file('src/Dexicon.Core/Auth/ScopeResolver.cs', 'f4'),
   ];
 
@@ -767,14 +767,14 @@ describe('finding one file among many', () => {
     const user = userEvent.setup();
     render(<CorpusDetail {...props} />);
 
-    await user.type(await screen.findByLabelText('Filter files by name'), 'data-intensive');
+    await user.type(await screen.findByLabelText('Filter files by name'), 'made-up');
 
     // Both inside the wait. The titles that survive the filter are on screen before the
     // refetch as well, so asserting them first and the absence afterwards passes while
     // the debounced query is still in flight.
     await waitFor(() => {
-      expect(screen.getAllByRole('button', { name: /Designing Data-Intensive/ })).toHaveLength(2);
-      expect(screen.queryByRole('button', { name: /Fundamentals/ })).not.toBeInTheDocument();
+      expect(screen.getAllByRole('button', { name: /A Made-Up Manual/ })).toHaveLength(2);
+      expect(screen.queryByRole('button', { name: /An Invented Handbook/ })).not.toBeInTheDocument();
     });
   });
 
@@ -789,11 +789,11 @@ describe('finding one file among many', () => {
   });
 
   it('sets a document title in the body face and a path in monospace', async () => {
-    // "…in the Field or in the Making, 3rd Edition.epub" wrapped as "3rd Editio / n.epub":
+    // "…Who Have Not Yet Invented Anything, 3rd Edition.epub" wrapped as "3rd Editio / n.epub":
     // break-all is right for a path and wrong for a sentence.
     render(<CorpusDetail {...props} />);
 
-    const book = await screen.findByRole('button', { name: /Fundamentals of Software/ });
+    const book = await screen.findByRole('button', { name: /An Invented Handbook/ });
     expect(book.className).toMatch(/break-words/);
     expect(book.className).not.toMatch(/\bmono\b/);
 
@@ -806,7 +806,7 @@ describe('finding one file among many', () => {
 describe('files no source covers', () => {
   const gap = (over: Partial<{ directory: string; files: string[] }> = {}) => ({
     directory: 'books/manuals',
-    files: ['Internet of Things from Scratch.pdf'],
+    files: ['An Invented Handbook.pdf'],
     ...over,
   });
 
@@ -817,7 +817,7 @@ describe('files no source covers', () => {
 
     expect(await screen.findByText(/covered by no source/)).toBeInTheDocument();
     expect(screen.getByText('books/manuals')).toBeInTheDocument();
-    expect(screen.getByText('Internet of Things from Scratch.pdf')).toBeInTheDocument();
+    expect(screen.getByText('An Invented Handbook.pdf')).toBeInTheDocument();
     // The consequence, not just the fact. Without it this is a statistic.
     expect(screen.getByText(/Searching will never return it/)).toBeInTheDocument();
   });

@@ -142,7 +142,7 @@ ones came from pointing the indexer at a real shelf of 95 books rather than at f
 - **Jobs were ordered by a nullable column.** A job that failed *before* starting has a null
   `StartedUtc`, so dead failures sat permanently above the running job and anything reading
   the first entry got a stale answer.
-- **Every O'Reilly EPUB was unreadable, and blamed DRM.** Their toolchain lists the cover
+- **Every EPUB from one publisher was unreadable, and blamed DRM.** Its toolchain lists the cover
   image twice in the manifest; the spec forbids it, no reader cares, the strict parser
   refused the book. Six of nineteen books on the first shelf, reported to the user as
   "DRM-protected books cannot be read", a plausible message describing a problem they did

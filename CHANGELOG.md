@@ -1473,7 +1473,7 @@ reason this is a changelog entry rather than an advisory.
 
 - The README leads with what the tool does rather than eleven lines of prose, and its
   screenshot is of this project's own documentation. The first one was of a corpus of
-  O'Reilly books and carried several hundred legible words of two of them; the script that
+  published books and carried several hundred legible words of two of them; the script that
   takes it now names its corpus and says that overriding it means content you hold the
   rights to distribute.
 - `docs/10` records a licence review of the whole transitive dependency tree, and an audit
@@ -1499,7 +1499,7 @@ healthy.
 
 ### Fixed
 
-- **Every O'Reilly EPUB was unreadable, and the error blamed DRM.** Their toolchain lists
+- **Every EPUB from one publisher was unreadable, and the error blamed DRM.** Its toolchain lists
   the cover image twice in the manifest; the strict parser refuses the book. Six of the
   first nineteen books. An unparseable manifest is now salvaged from the archive, and DRM
   is asserted from `META-INF/encryption.xml` rather than guessed from any parse failure.

@@ -77,7 +77,7 @@ public sealed class CoverageEndpointTests : IAsyncLifetime
     {
         Write("books/manuals/AI/one.md");
         Write("books/manuals/dotnet/two.md");
-        Write("books/manuals/Internet of Things from Scratch.txt");
+        Write("books/manuals/An Invented Handbook.txt");
         await AddSource("c", "books/manuals/AI");
         await AddSource("c", "books/manuals/dotnet");
 
@@ -85,7 +85,7 @@ public sealed class CoverageEndpointTests : IAsyncLifetime
 
         report.Gaps.Count.ShouldBe(1);
         report.Gaps[0].Directory.ShouldBe("books/manuals");
-        report.Gaps[0].Files.ShouldBe(["Internet of Things from Scratch.txt"]);
+        report.Gaps[0].Files.ShouldBe(["An Invented Handbook.txt"]);
     }
 
     [Fact]

@@ -36,7 +36,7 @@ public sealed class SourceScopeTests
         shadowed.ShouldBe(["AI"]);
         SourceScope.IsShadowed("AI/one.pdf", shadowed).ShouldBeTrue();
         // The loose file the parent source was added for.
-        SourceScope.IsShadowed("Internet of Things from Scratch.pdf", shadowed).ShouldBeFalse();
+        SourceScope.IsShadowed("An Invented Handbook.pdf", shadowed).ShouldBeFalse();
     }
 
     [Fact]

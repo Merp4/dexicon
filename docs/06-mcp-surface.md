@@ -205,7 +205,7 @@ a single folder stays silent.
 
 ```
 NOT INDEXED: 1 file(s) in books/manuals are covered by no source, though its subfolders are.
-  Internet of Things from Scratch.pdf
+  An Invented Handbook.pdf
 Add a source on books/manuals, or move the file into one of its subfolders.
 ```
 

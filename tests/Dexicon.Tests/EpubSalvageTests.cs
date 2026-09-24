@@ -7,7 +7,7 @@ namespace Dexicon.Tests;
 /// <summary>
 /// EPUBs that a strict parser refuses and every e-reader opens.
 ///
-/// Indexing a real shelf of 19 O'Reilly books produced one hard failure on the first
+/// Indexing a real shelf of 19 books from one publisher produced one hard failure on the first
 /// pass: "Incorrect EPUB manifest: item with ID = 'img_cover' is not unique". The book
 /// was fine. The manifest listed a cover image twice, which the spec forbids and
 /// publishers ship anyway, and the error it raised was reported to the user as

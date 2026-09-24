@@ -320,7 +320,7 @@ public sealed class ContextAssemblyTests
     {
         // A long filename makes a header well over the 80-character estimate used while
         // selecting, and the disclosure line is charged too.
-        var name = "Adaptive Code via C# - Agile coding with design patterns and SOLID principles.pdf";
+        var name = "An Invented Handbook - a subtitle long enough that the header runs well past eighty characters.pdf";
         var result = ContextAssembler.Assemble(
             [Alone(Hit(path: name, start: 1, end: 600))], maxChars: budget, lineNumbers: false);
 

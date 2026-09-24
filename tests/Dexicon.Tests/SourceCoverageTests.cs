@@ -38,13 +38,13 @@ public sealed class SourceCoverageTests : IDisposable
     {
         Write("books/manuals/AI/one.md");
         Write("books/manuals/dotnet/two.md");
-        Write("books/manuals/Internet of Things from Scratch.txt");
+        Write("books/manuals/An Invented Handbook.txt");
 
         var gaps = Find("books/manuals/AI", "books/manuals/dotnet");
 
         gaps.Count.ShouldBe(1);
         gaps[0].DirectoryRelativePath.ShouldBe("books/manuals");
-        gaps[0].Files.ShouldBe(["Internet of Things from Scratch.txt"]);
+        gaps[0].Files.ShouldBe(["An Invented Handbook.txt"]);
     }
 
     [Fact]
@@ -233,12 +233,12 @@ public sealed class SourceCoverageTests : IDisposable
     public void TheReportNamesTheDirectoryTheFilesAndWhatToDo()
     {
         var text = DexiconTools.RenderCoverage([
-            new SourceCoverage.Gap("books/manuals", ["Internet of Things from Scratch.pdf"]),
+            new SourceCoverage.Gap("books/manuals", ["An Invented Handbook.pdf"]),
         ]);
 
         text.ShouldContain("NOT INDEXED");
         text.ShouldContain("books/manuals");
-        text.ShouldContain("Internet of Things from Scratch.pdf");
+        text.ShouldContain("An Invented Handbook.pdf");
         // Without this an agent reads the line as a statistic rather than as something to fix.
         text.ShouldContain("Add a source on books/manuals");
     }

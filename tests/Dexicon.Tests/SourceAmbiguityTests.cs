@@ -9,7 +9,7 @@ namespace Dexicon.Tests;
 /// Chunks record `file_path` relative to their SOURCE root, not to the corpus. That is
 /// invisible with one source and wrong with two: this repository's own book corpus has
 /// sources `manuals/AI` and `manuals/Philosophy`, and BOTH contain "Installation Guide, 2nd
-/// Edition.pdf" and "Intensional First-Order Logic.pdf". Two different files, one path,
+/// Edition.pdf" and "An Invented Handbook.pdf". Two different files, one path,
 /// one corpus, one chunk set.
 ///
 /// Everything downstream assumed paths were unique, and `source_id`, written into every
