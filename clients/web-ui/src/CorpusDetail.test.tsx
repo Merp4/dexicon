@@ -1345,6 +1345,20 @@ describe('the file list', () => {
     expect(await screen.findByRole('button', { name: 'book-0.pdf' })).toBeInTheDocument();
   });
 
+  it('still draws the corpus when its files cannot be listed', async () => {
+    // Fetched side by side, and neither waits on the other: a file list that fails must
+    // not hold the whole page on "Loading…".
+    const onError = vi.fn();
+    listFiles.mockRejectedValue(new ApiError(503, 'Catalogue busy', 'Try again.'));
+
+    render(<CorpusDetail {...props} onError={onError} />);
+
+    expect(await screen.findByRole('heading', { name: 'docs' })).toBeInTheDocument();
+    expect(await screen.findByText('The files could not be listed')).toBeInTheDocument();
+    expect(screen.queryByText(/Run a refresh/)).not.toBeInTheDocument();
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ status: 503 }));
+  });
+
   it('says "1 chunk" of a file holding one', async () => {
     listFiles.mockResolvedValue({ total: 1, chunkSet: 'default', files: [{ ...file('one.md'), chunkCount: 1 }] });
 

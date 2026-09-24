@@ -1058,7 +1058,9 @@ export function CorpusDetail({
   onError: (e: unknown) => void;
 }) {
   const [corpus, setCorpus] = useState<Corpus | null>(null);
-  const [files, setFiles] = useState<IndexedFile[]>([]);
+  // Null until the first answer, so a list on its way is not drawn as an empty one.
+  const [files, setFiles] = useState<IndexedFile[] | null>(null);
+  const [filesFailed, setFilesFailed] = useState(false);
   // What the query matched, which is what the paging arithmetic is over. Not the
   // corpus's file count: with a name filter those are different numbers.
   const [totalFiles, setTotalFiles] = useState(0);
@@ -1095,35 +1097,45 @@ export function CorpusDetail({
 
 
   const load = useCallback(async () => {
-    try {
-      // Together, and set together. The corpus was set first and the files fetched after
-      // it, so every visit drew the page with no files for one round trip, and an empty
-      // list says "No files. Run a refresh to index this corpus."
-      const [c, f] = await Promise.all([
-        api.getCorpus(name),
-        api.listFiles(name, {
-          status: filter || undefined,
-          name: nameQuery || undefined,
-          sort,
-          limit: FilePageSize,
-          offset,
-        }),
-      ]);
-      setCorpus(c);
-      setFiles(f.files);
-      setTotalFiles(f.total);
+    // Side by side, and each set when it answers. The files were fetched after the corpus
+    // and started as an empty list, so every visit drew the page with no files for one
+    // round trip, and an empty list says "No files. Run a refresh to index this corpus."
+    // Independent, so a file list that fails does not hold the rest of the page back.
+    const corpusLoad = api.getCorpus(name).then(setCorpus);
+    const filesLoad = api
+      .listFiles(name, {
+        status: filter || undefined,
+        name: nameQuery || undefined,
+        sort,
+        limit: FilePageSize,
+        offset,
+      })
+      .then(
+        (f) => {
+          setFiles(f.files);
+          setTotalFiles(f.total);
+          setFilesFailed(false);
+        },
+        (e: unknown) => {
+          setFilesFailed(true);
+          throw e;
+        },
+      );
 
-      // Its own call, and a failure here does not reach onError: a coverage report that
-      // cannot be fetched is a missing warning, not a broken page, and an older container
-      // in the dev loop has no such endpoint at all. The page is worth more than the
-      // notice.
-      try {
-        setGaps((await api.coverage(name)).gaps ?? []);
-      } catch {
-        setGaps([]);
-      }
+    try {
+      await Promise.all([corpusLoad, filesLoad]);
     } catch (e) {
       onError(e);
+    }
+
+    // Its own call, and a failure here does not reach onError: a coverage report that
+    // cannot be fetched is a missing warning, not a broken page, and an older container
+    // in the dev loop has no such endpoint at all. The page is worth more than the
+    // notice.
+    try {
+      setGaps((await api.coverage(name)).gaps ?? []);
+    } catch {
+      setGaps([]);
     }
   }, [name, filter, nameQuery, sort, offset, onError]);
 
@@ -1175,15 +1187,15 @@ export function CorpusDetail({
 
   if (!corpus) return <Empty title="Loading…" />;
 
-  const problems = files.filter((f) => f.status !== 'indexed');
+  const problems = (files ?? []).filter((f) => f.status !== 'indexed');
 
   // The server decided both which rows match and their order, so this is the page and
   // nothing filters or slices it again. Doing either here is what limited a search to
   // the rows that happened to have been fetched.
-  const shown = files;
+  const shown = files ?? [];
 
   const pageFrom = totalFiles === 0 ? 0 : offset + 1;
-  const pageTo = offset + files.length;
+  const pageTo = offset + shown.length;
   const morePages = pageTo < totalFiles;
   const settling = nameFilter.trim() !== nameQuery;
 
@@ -1404,7 +1416,11 @@ export function CorpusDetail({
           {problems.length > 0 && <span className="dim text-xs">{problems.length} need attention</span>}
         </div>
 
-        {files.length === 0 && totalFiles === 0 && !nameQuery && !filter ? (
+        {files === null ? (
+          filesFailed
+            ? <Empty title={`The ${unitFor(corpus.sources, 0)} could not be listed`} hint="The reason is shown above." />
+            : <Empty title="Loading…" />
+        ) : files.length === 0 && totalFiles === 0 && !nameQuery && !filter ? (
           <Empty
             title={`No ${unitFor(corpus.sources, 0)}`}
             hint="Run a refresh to index this corpus."
@@ -2610,8 +2626,8 @@ function RevokeTokenModal({ token, onClose, onRevoked }: {
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <p className="mt-0 text-sm">
         {token.lastUsedUtc ? `It was last used ${relativeTime(token.lastUsedUtc)}. ` : 'It has never been used. '}
-        Whatever holds it is refused from its next call, and a revoked key cannot be restored from here: the
-        agent needs a new one.
+        Whatever holds it will be refused on its next call, and a revoked key cannot be restored from here:
+        the agent needs a new one.
       </p>
       <div className="flex gap-2 justify-end">
         <Button onClick={onClose}>Cancel</Button>
