@@ -679,18 +679,6 @@ public static class CorpusEndpoints
         };
 
     /// <summary>
-    /// Apply a filter update to a source, returning whether anything actually moved.
-    ///
-    /// Three cases per field and only two of them are obvious. An omitted field leaves the
-    /// value alone. A field named in <see cref="UpdateSourceRequest.Clear"/> returns it to
-    /// the corpus default. A field with a value sets it.
-    ///
-    /// Clearing is said out loud rather than inferred from a null, because JSON gives no
-    /// way to tell an absent property from an explicit null once it is bound to a nullable:
-    /// inferring it would make every partial update an accidental reset of everything it
-    /// did not mention.
-    /// </summary>
-    /// <summary>
     /// The file-shaped settings a history source has no use for, or null if there are none.
     ///
     /// A commit history is walked by `git log`, not by the file walker, so only the
@@ -726,6 +714,11 @@ public static class CorpusEndpoints
     /// makes, and none of them runs git, so a request is still judged before any process
     /// starts. Null settings are the defaults, which are usable.
     /// </summary>
+    internal static IResult? UnusableHistorySettings(GitHistoryOptions? git) =>
+        git is not null && GitHistory.Problem(git) is { } problem
+            ? Results.Problem(title: "Unusable history settings", detail: problem, statusCode: 400)
+            : null;
+
     /// <summary>
     /// Stores a history source's settings when they differ from what it has, and says
     /// whether they did.
@@ -744,11 +737,6 @@ public static class CorpusEndpoints
         return true;
     }
 
-    internal static IResult? UnusableHistorySettings(GitHistoryOptions? git) =>
-        git is not null && GitHistory.Problem(git) is { } problem
-            ? Results.Problem(title: "Unusable history settings", detail: problem, statusCode: 400)
-            : null;
-
     /// <summary>
     /// The names <c>clear</c> understands. Anything else is a typo the caller wants to
     /// know about: unknown names were dropped on the floor and the request answered 200,
@@ -765,6 +753,18 @@ public static class CorpusEndpoints
         clear?.FirstOrDefault(
             name => !ClearableFilters.Contains(name, StringComparer.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// Apply a filter update to a source, returning whether anything actually moved.
+    ///
+    /// Three cases per field and only two of them are obvious. An omitted field leaves the
+    /// value alone. A field named in <see cref="UpdateSourceRequest.Clear"/> returns it to
+    /// the corpus default. A field with a value sets it.
+    ///
+    /// Clearing is said out loud rather than inferred from a null, because JSON gives no
+    /// way to tell an absent property from an explicit null once it is bound to a nullable:
+    /// inferring it would make every partial update an accidental reset of everything it
+    /// did not mention.
+    /// </summary>
     internal static bool ApplyFilters(Source source, UpdateSourceRequest body)
     {
         var clear = new HashSet<string>(body.Clear ?? [], StringComparer.OrdinalIgnoreCase);
