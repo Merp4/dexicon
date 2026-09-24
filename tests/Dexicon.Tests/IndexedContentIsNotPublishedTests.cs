@@ -23,9 +23,14 @@ namespace Dexicon.Tests;
 /// The names are held as hashes. Written out, even split across string joins, the list
 /// would be the thing the rule forbids, in the file every reader of the rule opens. Each
 /// is the SHA-256 of the name's words: lowercased, and every run of characters that are
-/// not a letter or a digit reduced to one space. To add one:
+/// not a letter or a digit reduced to one space. To add one, hash the name as written with
+/// the same normalisation, or call <see cref="HashOfName"/>:
 ///
-///   printf '%s' 'the words of the name' | sha256sum
+///   printf '%s' 'The Name, As Written' | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' ' ' \
+///     | sed 's/^ //; s/ $//' | tr -d '\n' | sha256sum
+///
+/// Hashing the name exactly as typed gives a hash the scan never produces, so the name
+/// would stay unguarded with nothing failing to say so.
 ///
 /// Holding no names, this file is scanned like any other.
 /// </summary>
@@ -69,20 +74,29 @@ public sealed class IndexedContentIsNotPublishedTests
     ];
 
     private static readonly string[] Extensions =
-        [".cs", ".md", ".ts", ".tsx", ".mjs", ".py", ".json", ".yml", ".yaml", ".props", ".csproj",
-         ".xml", ".toml", ".html", ".txt", ".sh", ".ps1", ".example"];
+        [".cs", ".md", ".ts", ".tsx", ".mjs", ".css", ".py", ".json", ".yml", ".yaml", ".props",
+         ".csproj", ".xml", ".toml", ".html", ".txt", ".sh", ".ps1", ".example"];
 
     private static readonly string[] SkipDirectories =
         ["obj", "bin", "node_modules", ".git", "dist", "generated", ".claude", "TestResults"];
 
     private static readonly Regex NotALetterOrDigit = new("[^a-z0-9]+", RegexOptions.Compiled);
 
-    /// <summary>The SHA-256 of an already normalised name, as the list holds it.</summary>
-    internal static string Hash(string normalised) =>
+    /// <summary>
+    /// A name's hash as the list holds it, from the name as written: capitals, punctuation
+    /// and spacing are normalised first, exactly as the scan normalises the text it reads.
+    /// </summary>
+    internal static string HashOfName(string name) => HashOfWords(Normalise(name));
+
+    /// <summary>
+    /// The hash of words already normalised, which is what the scan builds. Private, because
+    /// given a name as written it returns a hash nothing will ever match.
+    /// </summary>
+    private static string HashOfWords(string normalised) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(normalised)));
 
     /// <summary>A name's words as the hash is taken of them.</summary>
-    internal static string Normalise(string text) =>
+    private static string Normalise(string text) =>
         string.Join(' ', NotALetterOrDigit.Split(text.ToLowerInvariant()).Where(w => w.Length > 0));
 
     /// <summary>
@@ -109,7 +123,7 @@ public sealed class IndexedContentIsNotPublishedTests
                 for (var j = 0; j < byLength.Key; j++)
                     window.Append(j == 0 ? "" : " ").Append(words[i + j].Word);
 
-                if (wanted.TryGetValue(Hash(window.ToString()), out var name))
+                if (wanted.TryGetValue(HashOfWords(window.ToString()), out var name))
                     found.Add((name, words[i].Line));
             }
         }
@@ -119,7 +133,7 @@ public sealed class IndexedContentIsNotPublishedTests
             var wanted = byLength.ToDictionary(n => n.Sha256, StringComparer.Ordinal);
             foreach (var (word, line) in words)
                 for (var k = 0; k + byLength.Key <= word.Length; k++)
-                    if (wanted.TryGetValue(Hash(word.Substring(k, byLength.Key)), out var name))
+                    if (wanted.TryGetValue(HashOfWords(word.Substring(k, byLength.Key)), out var name))
                         found.Add((name, line));
         }
 
@@ -184,9 +198,9 @@ public sealed class IndexedContentIsNotPublishedTests
     {
         Name[] names =
         [
-            Words("an invented shorthand", 1, Hash(Normalise("zorbl"))),
-            Words("an invented title", 3, Hash(Normalise("Tidewater Clerk Almanac"))),
-            InWord("an invented project", "quillwort".Length, Hash(Normalise("quillwort"))),
+            Words("an invented shorthand", 1, HashOfName("zorbl")),
+            Words("an invented title", 3, HashOfName("Tidewater Clerk Almanac")),
+            InWord("an invented project", "quillwort".Length, HashOfName("quillwort")),
         ];
 
         string[] Found(params string[] lines) => [.. Find(lines, names).Select(f => f.Name.What)];
@@ -202,6 +216,18 @@ public sealed class IndexedContentIsNotPublishedTests
 
         Found("src/QuillwortServer.cs").ShouldBe(["an invented project"]);
         Found("quillwor").ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A name is hashed as the scan reads text, whatever form it was copied in. Hashing it
+    /// as typed gave a hash the scan never produces, which leaves the name unguarded while
+    /// the test stays green.
+    /// </summary>
+    [Fact]
+    public void ANameAsWrittenHashesToItsWords()
+    {
+        HashOfName("  Tidewater-Clerk, ALMANAC. ").ShouldBe(HashOfName("tidewater clerk almanac"));
+        HashOfName("Tidewater Clerk Almanac").ShouldNotBe(HashOfName("Tidewater Clerk Almanacs"));
     }
 
     [Fact]
