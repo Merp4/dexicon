@@ -185,6 +185,130 @@ public sealed class GitHistoryIndexingTests
         (await IndexedPathsAsync(harness)).Count.ShouldBe(2);
     }
 
+    private static async Task SetOptionsAsync(IndexingHarness harness, GitHistoryOptions options)
+    {
+        await using var db = harness.NewContext();
+        var source = await db.Sources.SingleAsync();
+        source.GitOptions = options.ToJson();
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>The sha's twelve characters, which end the commit's document path.</summary>
+    private static string ShortHead(string repo) => Git(repo, "rev-parse", "HEAD").Trim()[..12];
+
+    /// <summary>
+    /// Without <see cref="GitHistoryOptions.KeepIndexed"/>, a commit limit is a window:
+    /// each new commit pushes the oldest out. Pinned because it is a removal nobody asked
+    /// for by name, and it was the behaviour for months before anything said so.
+    /// </summary>
+    [Fact]
+    public async Task ACommitLimitIsAWindowThatMovesWithTheTip()
+    {
+        await using var harness = await IndexingHarness.StartAsync("repo");
+        Init(harness.SourceDirectory);
+        Commit(harness.SourceDirectory, "a.txt", "one\n", "the first change");
+        var first = ShortHead(harness.SourceDirectory);
+        Commit(harness.SourceDirectory, "b.txt", "two\n", "the second change");
+
+        await harness.SeedCorpusAsync(SourceKind.GitHistory);
+        await SetOptionsAsync(harness, new GitHistoryOptions { MaxCommits = 2 });
+        await harness.RunIndexAsync();
+        (await IndexedPathsAsync(harness)).Count.ShouldBe(2);
+
+        Commit(harness.SourceDirectory, "c.txt", "three\n", "the third change");
+        await harness.RunIndexAsync();
+
+        var paths = await IndexedPathsAsync(harness);
+        paths.Count.ShouldBe(2);
+        paths.ShouldNotContain(p => p.EndsWith(first, StringComparison.Ordinal),
+            "the oldest commit left the window");
+    }
+
+    [Fact]
+    public async Task KeepIndexedHoldsWhatTheLimitOnceReached()
+    {
+        await using var harness = await IndexingHarness.StartAsync("repo");
+        Init(harness.SourceDirectory);
+        Commit(harness.SourceDirectory, "a.txt", "one\n", "the first change");
+        var never = ShortHead(harness.SourceDirectory);
+        Commit(harness.SourceDirectory, "b.txt", "two\n", "the second change");
+        Commit(harness.SourceDirectory, "c.txt", "three\n", "the third change");
+
+        await harness.SeedCorpusAsync(SourceKind.GitHistory);
+        await SetOptionsAsync(harness, new GitHistoryOptions { MaxCommits = 2, KeepIndexed = true });
+        await harness.RunIndexAsync();
+
+        var paths = await IndexedPathsAsync(harness);
+        paths.Count.ShouldBe(2, "the limit still decides how far back the first pass reaches");
+        paths.ShouldNotContain(p => p.EndsWith(never, StringComparison.Ordinal));
+
+        Commit(harness.SourceDirectory, "d.txt", "four\n", "the fourth change");
+        var second = await harness.RunIndexAsync();
+
+        second.FilesDone.ShouldBe(1, "only the new commit is read");
+        second.FilesSkipped.ShouldBe(2, "both held commits stay, although one is now third from the tip");
+        (await IndexedPathsAsync(harness)).Count.ShouldBe(3);
+    }
+
+    /// <summary>
+    /// Keeping is not the same as never removing. A commit the ref no longer reaches is
+    /// gone from the history being indexed, and the setting keeps only what the
+    /// inventory still lists.
+    /// </summary>
+    [Fact]
+    public async Task KeepIndexedStillLetsGoOfWhatTheRefNoLongerReaches()
+    {
+        await using var harness = await IndexingHarness.StartAsync("repo");
+        Init(harness.SourceDirectory);
+        Commit(harness.SourceDirectory, "a.txt", "one\n", "the first change");
+        Commit(harness.SourceDirectory, "b.txt", "two\n", "the second change");
+        var kept = ShortHead(harness.SourceDirectory);
+
+        await harness.SeedCorpusAsync(SourceKind.GitHistory);
+        await SetOptionsAsync(harness, new GitHistoryOptions { MaxCommits = 1, KeepIndexed = true });
+        await harness.RunIndexAsync();
+
+        Commit(harness.SourceDirectory, "c.txt", "three\n", "a change that is rewritten away");
+        var rewritten = ShortHead(harness.SourceDirectory);
+        await harness.RunIndexAsync();
+        (await IndexedPathsAsync(harness)).Count.ShouldBe(2);
+
+        Git(harness.SourceDirectory, "reset", "--hard", "HEAD~1");
+        await harness.RunIndexAsync();
+
+        var paths = await IndexedPathsAsync(harness);
+        paths.ShouldHaveSingleItem().ShouldEndWith(kept);
+        paths.ShouldNotContain(p => p.EndsWith(rewritten, StringComparison.Ordinal));
+        harness.Vectors.CountFor(paths[0]).ShouldBeGreaterThan(0);
+    }
+
+    /// <summary>
+    /// The sweep selects through the same function. With the limit off git's command line,
+    /// a sweep that did not would record the whole history as pending, and the index pass
+    /// would then read every commit of it.
+    /// </summary>
+    [Fact]
+    public async Task KeepIndexedSweepsOnlyWhatTheLimitReaches()
+    {
+        await using var harness = await IndexingHarness.StartAsync("repo");
+        Init(harness.SourceDirectory);
+        Commit(harness.SourceDirectory, "a.txt", "one\n", "the first change");
+        Commit(harness.SourceDirectory, "b.txt", "two\n", "the second change");
+        Commit(harness.SourceDirectory, "c.txt", "three\n", "the third change");
+
+        await harness.SeedCorpusAsync(SourceKind.GitHistory);
+        await SetOptionsAsync(harness, new GitHistoryOptions { MaxCommits = 1, KeepIndexed = true });
+
+        var result = await harness.SweepAsync();
+
+        result.Swept.ShouldBe(1);
+        result.Added.ShouldBe(1);
+
+        var job = await harness.RunIndexAsync();
+        job.FilesDone.ShouldBe(1);
+        (await IndexedPathsAsync(harness)).Count.ShouldBe(1);
+    }
+
     private static void ShouldBeTheCommit((string? Sha, DateTime? AuthoredUtc) recorded, (string Sha, DateTime AuthoredUtc) commit)
     {
         recorded.Sha.ShouldBe(commit.Sha);
@@ -339,20 +463,6 @@ public sealed class GitHistoryIndexingTests
         second.FilesSkipped.ShouldBe(0);
     }
 
-    /// <summary>
-    /// A directory that is not a repository is an operational condition, not a failure
-    /// that removes what was indexed before.
-    /// </summary>
-    /// <summary>
-    /// The sweep covers a history source, so the corpus says what it holds before any
-    /// commit has been read.
-    ///
-    /// Adding a source enqueues a sweep, and the sweep walked workspace sources only —
-    /// so a new history source reported zero files and zero pending until an index job
-    /// reached the front of the queue. That is the case D-32 exists to prevent,
-    /// reintroduced for a new kind of source, and the inventory it needs is the cheap
-    /// `git log` this feature already runs.
-    /// </summary>
     [Fact]
     public async Task ASourceWhosePathIsRefusedDoesNotLoseTheSweep()
     {
@@ -389,6 +499,16 @@ public sealed class GitHistoryIndexingTests
         }
     }
 
+    /// <summary>
+    /// The sweep covers a history source, so the corpus says what it holds before any
+    /// commit has been read.
+    ///
+    /// Adding a source enqueues a sweep, and the sweep walked workspace sources only —
+    /// so a new history source reported zero files and zero pending until an index job
+    /// reached the front of the queue. That is the case D-32 exists to prevent,
+    /// reintroduced for a new kind of source, and the inventory it needs is the cheap
+    /// `git log` this feature already runs.
+    /// </summary>
     [Fact]
     public async Task ASweepRecordsTheCommitsBeforeAnyAreRead()
     {
@@ -419,6 +539,10 @@ public sealed class GitHistoryIndexingTests
         (await IndexedPathsAsync(harness)).Count.ShouldBe(2);
     }
 
+    /// <summary>
+    /// A directory that is not a repository is an operational condition, not a failure
+    /// that removes what was indexed before.
+    /// </summary>
     [Fact]
     public async Task ADirectoryWithNoRepositoryIsUnavailableRatherThanFailed()
     {

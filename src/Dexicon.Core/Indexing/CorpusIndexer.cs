@@ -903,7 +903,7 @@ public sealed class CorpusIndexer(
             return;
         }
 
-        log.LogInformation("Source {Source}: {Commits} commits on {Ref}",
+        log.LogInformation("Source {Source}: {Commits} commits listed on {Ref}",
             source.RootPath, commits.Count, options.Ref);
 
         // Newest first, so the head of the inventory is the tip of what the settings
@@ -916,6 +916,11 @@ public sealed class CorpusIndexer(
         source.NewestCommitSha = commits.Count > 0 ? commits[0].Sha : null;
         source.NewestCommitUtc = commits.Count > 0 ? commits[0].AuthorDate.UtcDateTime : null;
 
+        // The inventory is the whole reachable history when the source keeps what it
+        // indexed, so the limit is applied here, beside the commits already held.
+        var selected = GitHistory.Select(commits, options,
+            await GitHistory.HeldAsync(db, source.Id, options, ct));
+
         // One commit per path, decided in the one place the sweep decides it too.
         //
         // Not widened to the full sha, because the arithmetic does not justify a 40
@@ -926,13 +931,13 @@ public sealed class CorpusIndexer(
         // would go missing. What is worth the lines is that the loss is decided and
         // counted rather than falling out of an ordering, because at these odds nobody
         // would ever go looking.
-        var distinct = GitHistory.OnePerPath(commits);
+        var distinct = GitHistory.OnePerPath(selected);
 
-        if (distinct.Count != commits.Count)
+        if (distinct.Count != selected.Count)
             log.LogWarning(
                 "{Dropped} of {Total} commits in {Source} share a date and a twelve-character "
                 + "sha prefix with a newer one, and are not indexed",
-                commits.Count - distinct.Count, commits.Count, source.RootPath);
+                selected.Count - distinct.Count, selected.Count, source.RootPath);
 
         var byPath = distinct.ToDictionary(c => c.RelativePath, StringComparer.Ordinal);
 

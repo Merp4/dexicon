@@ -1058,7 +1058,7 @@ describe('editing a history source', () => {
     expect([name, id]).toEqual(['docs', 's2']);
     expect(body.git).toEqual({
       ref: 'origin/main', includeMessage: true, includeStat: true, includeDiff: false,
-      maxDiffBytes: 65536, includeMerges: false, maxCommits: null, since: null,
+      maxDiffBytes: 65536, includeMerges: false, maxCommits: null, keepIndexed: false, since: null,
     });
     // Following the corpus, as the source did before: nothing new pinned against it.
     expect(body.clear).toEqual(['includeGlobs']);
@@ -1127,6 +1127,63 @@ describe('editing a history source', () => {
 
     await user.type(paths, ', tests/**');
     expect(within(dialog).getByText(/Saving re-reads every commit/)).toBeInTheDocument();
+  });
+
+  /**
+   * Keeping is a property of a limit: without one every commit is indexed already, and the
+   * server refuses the setting there. Offered only beside a limit, and cleared with it.
+   */
+  it('offers keeping indexed commits only beside a commit limit', async () => {
+    updateSource.mockResolvedValue({});
+    const { user, dialog } = await openEditor();
+
+    expect(within(dialog).queryByRole('checkbox', { name: /Keep commits once indexed/ })).not.toBeInTheDocument();
+
+    const limit = within(dialog).getByLabelText(/Newest commits only/);
+    await user.type(limit, '500');
+    await user.click(within(dialog).getByRole('checkbox', { name: /Keep commits once indexed/ }));
+    await user.click(within(dialog).getByRole('button', { name: /Save history settings/ }));
+
+    await waitFor(() => expect(updateSource).toHaveBeenCalled());
+    expect(updateSource.mock.calls[0][2].git).toMatchObject({ maxCommits: 500, keepIndexed: true });
+  });
+
+  it('clears keeping when the limit is cleared', async () => {
+    updateSource.mockResolvedValue({});
+    const { user, dialog } = await openEditor();
+
+    const limit = within(dialog).getByLabelText(/Newest commits only/);
+    await user.type(limit, '500');
+    await user.click(within(dialog).getByRole('checkbox', { name: /Keep commits once indexed/ }));
+    await user.clear(limit);
+
+    expect(within(dialog).queryByRole('checkbox', { name: /Keep commits once indexed/ })).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: /Save history settings/ }));
+
+    await waitFor(() => expect(updateSource).toHaveBeenCalled());
+    expect(updateSource.mock.calls[0][2].git).toMatchObject({ maxCommits: null, keepIndexed: false });
+  });
+
+  it('warns that turning keeping off removes what is past the limit', async () => {
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          source({
+            id: 's2', kind: 'githistory', rootPath: 'api-repo', fileCount: 900,
+            includeGlobs: [], ownIncludeGlobs: null,
+            git: { ref: 'HEAD', includeMessage: true, includeStat: true, includeDiff: false, maxDiffBytes: 65536, includeMerges: false, maxCommits: 500, keepIndexed: true, since: null },
+          }),
+        ],
+      }),
+    );
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: 'Edit history settings for api-repo' }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(within(dialog).queryByText(/leave the index on the refresh/)).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole('checkbox', { name: /Keep commits once indexed/ }));
+    expect(within(dialog).getByText(/commits past the newest\s+500\s+leave the index on the refresh/)).toBeInTheDocument();
   });
 
   it('is not offered the file settings', async () => {

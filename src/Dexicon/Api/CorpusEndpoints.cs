@@ -409,19 +409,7 @@ public static class CorpusEndpoints
 
             var changed = ApplyFilters(source, body);
 
-            if (body.Git is { } git)
-            {
-                // Compared as stored rather than as sent, so a request that re-states
-                // the current settings is not a change. Without that, saving the form
-                // unchanged re-indexes every commit in the repository, which is the same
-                // mistake the filter path already avoids one line above.
-                var updated = git.ToJson();
-                if (!string.Equals(source.GitOptions, updated, StringComparison.Ordinal))
-                {
-                    source.GitOptions = updated;
-                    changed = true;
-                }
-            }
+            if (body.Git is { } git && ApplyHistorySettings(source, git)) changed = true;
 
             await db.SaveChangesAsync(ct);
 
@@ -691,18 +679,6 @@ public static class CorpusEndpoints
         };
 
     /// <summary>
-    /// Apply a filter update to a source, returning whether anything actually moved.
-    ///
-    /// Three cases per field and only two of them are obvious. An omitted field leaves the
-    /// value alone. A field named in <see cref="UpdateSourceRequest.Clear"/> returns it to
-    /// the corpus default. A field with a value sets it.
-    ///
-    /// Clearing is said out loud rather than inferred from a null, because JSON gives no
-    /// way to tell an absent property from an explicit null once it is bound to a nullable:
-    /// inferring it would make every partial update an accidental reset of everything it
-    /// did not mention.
-    /// </summary>
-    /// <summary>
     /// The file-shaped settings a history source has no use for, or null if there are none.
     ///
     /// A commit history is walked by `git log`, not by the file walker, so only the
@@ -744,6 +720,24 @@ public static class CorpusEndpoints
             : null;
 
     /// <summary>
+    /// Stores a history source's settings when they differ from what it has, and says
+    /// whether they did.
+    ///
+    /// A request that re-states the current settings is not a change. Without that,
+    /// saving the form unchanged queues a refresh, which is the mistake the filter path
+    /// already avoids. Compared as settings rather than as stored text: a row written
+    /// before a setting existed has no key for it, and the same settings serialised now
+    /// carry it at its default, so the text differed on every unchanged save.
+    /// </summary>
+    internal static bool ApplyHistorySettings(Source source, GitHistoryOptions git)
+    {
+        if (GitHistoryOptions.FromJson(source.GitOptions) == git) return false;
+
+        source.GitOptions = git.ToJson();
+        return true;
+    }
+
+    /// <summary>
     /// The names <c>clear</c> understands. Anything else is a typo the caller wants to
     /// know about: unknown names were dropped on the floor and the request answered 200,
     /// so `clear: ["maxfilebytes"]` — or a field renamed one day — left the setting in
@@ -759,6 +753,18 @@ public static class CorpusEndpoints
         clear?.FirstOrDefault(
             name => !ClearableFilters.Contains(name, StringComparer.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// Apply a filter update to a source, returning whether anything actually moved.
+    ///
+    /// Three cases per field and only two of them are obvious. An omitted field leaves the
+    /// value alone. A field named in <see cref="UpdateSourceRequest.Clear"/> returns it to
+    /// the corpus default. A field with a value sets it.
+    ///
+    /// Clearing is said out loud rather than inferred from a null, because JSON gives no
+    /// way to tell an absent property from an explicit null once it is bound to a nullable:
+    /// inferring it would make every partial update an accidental reset of everything it
+    /// did not mention.
+    /// </summary>
     internal static bool ApplyFilters(Source source, UpdateSourceRequest body)
     {
         var clear = new HashSet<string>(body.Clear ?? [], StringComparer.OrdinalIgnoreCase);

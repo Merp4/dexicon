@@ -3,6 +3,8 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Dexicon.Core.Catalog;
+using Microsoft.EntityFrameworkCore;
 
 namespace Dexicon.Core.Indexing;
 
@@ -58,6 +60,21 @@ public sealed record GitHistoryOptions
     public int? MaxCommits { get; init; }
 
     /// <summary>
+    /// What <see cref="MaxCommits"/> means once commits are indexed.
+    ///
+    /// Off, the limit is a window: the source holds the newest that many, and each new
+    /// commit pushes the oldest out on the next pass. On, the limit sets how far back the
+    /// first pass reaches, and a commit once indexed stays for as long as the ref reaches
+    /// it and the other settings select it. Rewritten history, a ref moved to another
+    /// line, a later <see cref="Since"/> or narrower paths still remove it.
+    ///
+    /// Off by default, because a window is what a limit meant before this existed and a
+    /// stored source should not change meaning under an upgrade. It does nothing without
+    /// a limit, so it is refused there rather than stored and ignored.
+    /// </summary>
+    public bool KeepIndexed { get; init; }
+
+    /// <summary>
     /// Only commits committed at or after 00:00 UTC on this date, or null for all of them.
     /// </summary>
     public DateOnly? Since { get; init; }
@@ -79,10 +96,10 @@ public sealed record GitHistoryOptions
     /// cosmetic: anything added re-reads and re-embeds every commit in the repository
     /// the first time it changes.
     ///
-    /// Out: <see cref="Ref"/>, <see cref="MaxCommits"/>, <see cref="Since"/> and
-    /// <see cref="IncludeMerges"/>, which decide WHICH commits are indexed and not what
-    /// any one of them holds. Turning merges on adds documents; it does not alter a
-    /// single existing one.
+    /// Out: <see cref="Ref"/>, <see cref="MaxCommits"/>, <see cref="KeepIndexed"/>,
+    /// <see cref="Since"/> and <see cref="IncludeMerges"/>, which decide WHICH commits are
+    /// indexed and not what any one of them holds. Turning merges on adds documents; it
+    /// does not alter a single existing one.
     ///
     /// <see cref="MaxDiffBytes"/> only when there is a diff for it to cap.
     /// </summary>
@@ -349,6 +366,57 @@ public static class GitHistory
         return kept;
     }
 
+    private static readonly IReadOnlySet<string> NothingHeld = new HashSet<string>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The commits a pass works on, from the inventory: all of it, unless
+    /// <see cref="GitHistoryOptions.KeepIndexed"/> is on, in which case the newest
+    /// <see cref="GitHistoryOptions.MaxCommits"/> and every commit the source already
+    /// holds.
+    ///
+    /// Only a commit the inventory lists can be kept, and the inventory is everything the
+    /// ref reaches under the other settings. A held commit that is not in it is left out
+    /// here and removed by the reconcile, exactly as it is without the setting. The sweep
+    /// and the index pass both select through this, for the reason they share
+    /// <see cref="OnePerPath"/>: a sweep that recorded a commit the index would drop
+    /// reports an inventory the index can never fill.
+    /// </summary>
+    /// <param name="held">From <see cref="HeldAsync"/>.</param>
+    public static IReadOnlyList<GitCommit> Select(
+        IReadOnlyList<GitCommit> inventory, GitHistoryOptions options, IReadOnlySet<string> held)
+    {
+        if (!options.KeepIndexed || options.MaxCommits is not { } max) return inventory;
+
+        // The limit plus what is held bounds the result, and so does the inventory, which in
+        // keep mode is the whole history. Summed as long: the limit accepts int.MaxValue, and
+        // as int the sum overflowed to a negative capacity.
+        var kept = new List<GitCommit>((int)Math.Min(inventory.Count, (long)max + held.Count));
+        for (var i = 0; i < inventory.Count; i++)
+            if (i < max || held.Contains(inventory[i].RelativePath))
+                kept.Add(inventory[i]);
+
+        return kept;
+    }
+
+    /// <summary>
+    /// The document paths a history source has rows for, which is what
+    /// <see cref="Select"/> keeps. Rows rather than indexed states, so a commit whose read
+    /// failed is kept and retried like any other failure. Not queried when
+    /// <see cref="Select"/> would not read it.
+    /// </summary>
+    public static async Task<IReadOnlySet<string>> HeldAsync(
+        CatalogDbContext db, string sourceId, GitHistoryOptions options, CancellationToken ct)
+    {
+        if (!options.KeepIndexed || options.MaxCommits is null) return NothingHeld;
+
+        var paths = await db.Files.AsNoTracking()
+            .Where(f => f.SourceId == sourceId)
+            .Select(f => f.RelativePath)
+            .ToListAsync(ct);
+
+        return paths.ToHashSet(StringComparer.Ordinal);
+    }
+
     /// <summary>
     /// What is wrong with these settings, or null when git can be asked with them.
     ///
@@ -373,6 +441,10 @@ public static class GitHistory
             return $"maxCommits is {options.MaxCommits:N0}, which is not a usable limit. "
                  + "It must be at least 1, or absent for every commit.";
 
+        if (options.KeepIndexed && options.MaxCommits is null)
+            return "keepIndexed applies only with maxCommits. Without a limit, every commit "
+                 + "the ref reaches is indexed already.";
+
         return null;
     }
 
@@ -391,7 +463,9 @@ public static class GitHistory
                           || c is '/' or '_' or '-' or '.' or '~' or '^' or '@' or '{' or '}');
 
     /// <summary>
-    /// Every commit the settings select, newest first, as shas and dates.
+    /// Every commit the settings select, newest first, as shas and dates. With
+    /// <see cref="GitHistoryOptions.KeepIndexed"/> the commit limit is not applied here,
+    /// and <see cref="Select"/> applies it.
     ///
     /// This is the inventory, and it is deliberately the cheap half: no patches, no
     /// bodies. A refresh of a repository whose tip has not moved reads this, finds every
@@ -415,7 +489,10 @@ public static class GitHistory
         var args = new List<string> { "log", $"--format={marker}%H%x00%aI" };
 
         if (!options.IncludeMerges) args.Add("--no-merges");
-        if (options.MaxCommits is { } max) args.Add($"--max-count={max}");
+        // Kept commits are checked against the whole reachable history, which is how one
+        // the ref still reaches is told apart from one it no longer does. A list cut at the
+        // limit would say the same thing about both.
+        if (options.MaxCommits is { } max && !options.KeepIndexed) args.Add($"--max-count={max}");
         // Midnight UTC, spelled out. A bare date is not a day to git: it is that date at the
         // current time of day, in git's local zone. Measured at 08:56 UTC, `--since=2026-01-02`
         // dropped that day's commits from 00:30 and 06:00, so the boundary moved with every

@@ -239,10 +239,39 @@ public sealed class SourceFilterUpdateTests
         Refusal(new GitHistoryOptions { Ref = " " }).ShouldContain("not a usable ref");
         Refusal(new GitHistoryOptions { MaxCommits = 0 }).ShouldContain("maxCommits is 0");
         Refusal(new GitHistoryOptions { MaxDiffBytes = -1 }).ShouldContain("maxDiffBytes");
+        Refusal(new GitHistoryOptions { KeepIndexed = true }).ShouldContain("keepIndexed applies only with maxCommits");
 
         CorpusEndpoints.UnusableHistorySettings(new GitHistoryOptions { Ref = "origin/main", MaxCommits = 50 })
             .ShouldBeNull();
+        CorpusEndpoints.UnusableHistorySettings(new GitHistoryOptions { MaxCommits = 50, KeepIndexed = true })
+            .ShouldBeNull();
         CorpusEndpoints.UnusableHistorySettings(null).ShouldBeNull("absent settings are the defaults");
+    }
+
+    /// <summary>
+    /// Settings re-sent unchanged are not a change, whatever their stored text looks like.
+    /// A row written before a setting existed has no key for it, and the same settings
+    /// serialised now carry it at its default, so comparing the text queued a refresh for
+    /// every unchanged save of a source that predated the setting.
+    /// </summary>
+    [Fact]
+    public void HistorySettingsWrittenBeforeANewFieldAreNotChangedByReSendingThem()
+    {
+        const string storedBeforeKeepIndexed =
+            """{"ref":"origin/main","includeMessage":true,"includeStat":true,"includeDiff":false,"maxDiffBytes":65536,"includeMerges":false}""";
+        var source = new Source
+        {
+            Id = "s", CorpusId = "c", Kind = SourceKind.GitHistory, RootPath = "",
+            CreatedUtc = DateTime.UtcNow, GitOptions = storedBeforeKeepIndexed,
+        };
+
+        CorpusEndpoints.ApplyHistorySettings(source, new GitHistoryOptions { Ref = "origin/main" })
+            .ShouldBeFalse("the same settings, re-sent");
+        source.GitOptions.ShouldBe(storedBeforeKeepIndexed);
+
+        CorpusEndpoints.ApplyHistorySettings(source, new GitHistoryOptions { Ref = "origin/main", MaxCommits = 5 })
+            .ShouldBeTrue();
+        GitHistoryOptions.FromJson(source.GitOptions).MaxCommits.ShouldBe(5);
     }
 
     private static string Refusal(GitHistoryOptions git)

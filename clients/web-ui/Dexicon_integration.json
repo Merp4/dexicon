@@ -745,6 +745,9 @@
             ],
             "format": "int32"
           },
+          "keepIndexed": {
+            "type": "boolean"
+          },
           "since": {
             "type": [
               "null",
