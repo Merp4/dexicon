@@ -239,8 +239,11 @@ public sealed class SourceFilterUpdateTests
         Refusal(new GitHistoryOptions { Ref = " " }).ShouldContain("not a usable ref");
         Refusal(new GitHistoryOptions { MaxCommits = 0 }).ShouldContain("maxCommits is 0");
         Refusal(new GitHistoryOptions { MaxDiffBytes = -1 }).ShouldContain("maxDiffBytes");
+        Refusal(new GitHistoryOptions { KeepIndexed = true }).ShouldContain("keepIndexed applies only with maxCommits");
 
         CorpusEndpoints.UnusableHistorySettings(new GitHistoryOptions { Ref = "origin/main", MaxCommits = 50 })
+            .ShouldBeNull();
+        CorpusEndpoints.UnusableHistorySettings(new GitHistoryOptions { MaxCommits = 50, KeepIndexed = true })
             .ShouldBeNull();
         CorpusEndpoints.UnusableHistorySettings(null).ShouldBeNull("absent settings are the defaults");
     }
