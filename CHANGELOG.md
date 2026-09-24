@@ -16,7 +16,7 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
-## Unreleased
+## 0.6.1 — 2026-09-24
 
 ### ⚠️ Upgrading
 
