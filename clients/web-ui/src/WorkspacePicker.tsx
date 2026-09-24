@@ -23,10 +23,14 @@ export function WorkspacePicker({
   emptyLabel,
   disabled,
 }: {
-  /** Selected path, relative to the workspace root. '' is the root itself. */
-  value: string;
+  /**
+   * Selected path, relative to the workspace root. '' is the root itself, chosen; null is
+   * nothing chosen. They were one value, so a form could not tell someone who picked the
+   * root from someone who had not picked yet, and treated both as the second.
+   */
+  value: string | null;
   onChange: (path: string) => void;
-  /** What selecting the root means in this form — it differs between creating and adding. */
+  /** What having nothing chosen means in this form — it differs between creating and adding. */
   emptyLabel: string;
   disabled?: boolean;
 }) {
@@ -73,7 +77,7 @@ export function WorkspacePicker({
           onClick={() => onChange('')}
           className="rounded px-1.5 py-0.5 hover:bg-muted disabled:opacity-50"
         >
-          {segments.length === 0 ? emptyLabel : 'workspace root'}
+          {value === null ? emptyLabel : 'workspace root'}
         </button>
 
         {segments.map((seg, i) => (
@@ -142,12 +146,14 @@ export function WorkspacePicker({
       </div>
 
       <p className="border-t border-border px-2 py-1.5 text-xs">
-        {value ? (
+        {value === null ? (
+          <span className="opacity-70">{emptyLabel}</span>
+        ) : value === '' ? (
+          <>Indexing the workspace root and everything beneath it.</>
+        ) : (
           <>
             Indexing <code className="mono rounded bg-muted px-1 py-0.5">{value}</code> and everything beneath it.
           </>
-        ) : (
-          <span className="opacity-70">{emptyLabel}</span>
         )}
       </p>
     </div>

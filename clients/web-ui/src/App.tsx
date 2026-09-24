@@ -1010,7 +1010,9 @@ function CreateCorpusModal({ onClose, onCreated }: { onClose: () => void; onCrea
           label="Workspace folder"
           hint="Only paths bind-mounted into the container are reachable. Set WORKSPACE_ROOT to change what is available."
         >
-          <WorkspacePicker value={path} onChange={setPath} emptyLabel="(add a source later)" disabled={busy} />
+          {/* The root here means no source yet, which is what the request sends for it, so
+              the picker is told nothing is chosen rather than that the root is. */}
+          <WorkspacePicker value={path || null} onChange={setPath} emptyLabel="(add a source later)" disabled={busy} />
         </Field>
         <div className="flex gap-2 justify-end mt-4">
           <Button type="button" onClick={onClose}>Cancel</Button>
@@ -1072,7 +1074,9 @@ export function CorpusDetail({
     try { localStorage.setItem(CHUNK_SETS_OPEN, open ? '1' : '0'); } catch { /* blocked storage is fine */ }
   };
   const [removingSource, setRemovingSource] = useState<Corpus['sources'][number] | null>(null);
-  const [addingSource, setAddingSource] = useState<{ path: string } | null>(null);
+  // A null path is the form opened with nothing chosen; '' is the workspace root, which the
+  // coverage notice passes for a gap there.
+  const [addingSource, setAddingSource] = useState<{ path: string | null } | null>(null);
   const [viewing, setViewing] = useState<{ path: string; line?: number } | null>(null);
   const [gaps, setGaps] = useState<CoverageGap[]>([]);
   const [editingSource, setEditingSource] = useState<Corpus['sources'][number] | null>(null);
@@ -1308,7 +1312,7 @@ export function CorpusDetail({
           )}
           {(
             <span className="mt-1.5 flex flex-wrap gap-2">
-              <Button className="px-2 py-0.5 text-xs" onClick={() => setAddingSource({ path: '' })}>
+              <Button className="px-2 py-0.5 text-xs" onClick={() => setAddingSource({ path: null })}>
                 <Plus />
                 Add source
               </Button>
@@ -2195,18 +2199,22 @@ function GitHistoryFields({
  */
 function AddSourceModal({
   corpus,
-  initialPath = '',
+  initialPath = null,
   onClose,
   onAdded,
 }: {
   corpus: Corpus;
   /** Pre-filled when the coverage notice opened this, so the fix is one click from the
-   *  warning rather than a path the reader has to retype. */
-  initialPath?: string;
+   *  warning rather than a path the reader has to retype. '' is the workspace root, for a
+   *  gap there; null is nothing chosen yet. */
+  initialPath?: string | null;
   onClose: () => void;
   onAdded: () => Promise<void>;
 }) {
-  const [path, setPath] = useState(initialPath);
+  // Null until something is chosen. The root is the empty string, and the submit was
+  // disabled while the path was falsy, so a source at the root could not be added from
+  // here at all, including from the coverage notice's own button for a gap there.
+  const [path, setPath] = useState<string | null>(initialPath);
   // In the dialog rather than the page's banner, which sits behind it. A refusal is
   // something to fix here, and the settings it names are the ones still on screen.
   const [error, setError] = useState<unknown>(null);
@@ -2227,10 +2235,18 @@ function AddSourceModal({
   // deliberately two sources over one root, so warning about the second on the path
   // alone told the reader that the thing this feature exists for was a mistake.
   const wantedKind = gitHistory ? 'githistory' : 'workspace';
-  const alreadyHere = corpus.sources.some((s) => s.rootPath === path && s.kind === wantedKind);
+  const alreadyHere = path !== null
+    && corpus.sources.some((s) => s.rootPath === path && s.kind === wantedKind);
+
+  // A file source at the root takes everything under it that no deeper source claims,
+  // which on a shared mount can be far more than the loose files a coverage gap names.
+  // Said before it is added, and the button names it. A history source at the root is the
+  // repository's history and nothing more, so it gets neither.
+  const wholeRoot = path === '' && !gitHistory;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (path === null) return;
     setBusy(true);
     setError(null);
     try {
@@ -2272,6 +2288,14 @@ function AddSourceModal({
             {gitHistory
               ? 'This corpus already indexes that folder’s history. Adding it again indexes every commit twice.'
               : 'This corpus already indexes that folder. Adding it again indexes everything twice.'}
+          </Notice>
+        )}
+
+        {wholeRoot && !alreadyHere && (
+          <Notice tone="warn" className="-mt-2 mb-3.5 text-xs">
+            A source at the workspace root takes everything under it that no other source in
+            this corpus covers: the loose files at the top and every folder without a source of
+            its own. Folders another source covers stay with that source.
           </Notice>
         )}
 
@@ -2338,9 +2362,9 @@ function AddSourceModal({
 
         <div className="mt-4 flex justify-end gap-2">
           <Button type="button" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" type="submit" disabled={!path || busy}>
+          <Button variant="primary" type="submit" disabled={path === null || busy}>
             {busy ? <Spinner /> : <Plus />}
-            Add source
+            {wholeRoot ? 'Add the workspace root' : 'Add source'}
           </Button>
         </div>
       </form>

@@ -375,6 +375,34 @@ describe('adding a source', () => {
     expect(within(dialog).getByRole('button', { name: /^Add source$/ })).toBeDisabled();
   });
 
+  /**
+   * The root is a choice like any other, made with its breadcrumb. A file source there
+   * takes everything no deeper source claims, so the form says so and the button names it.
+   */
+  it('can choose the workspace root, and says what a file source there takes', async () => {
+    addSource.mockResolvedValue({});
+    const { user, dialog } = await openAddSource();
+
+    await user.click(within(dialog).getByRole('button', { name: '(choose a folder)' }));
+
+    expect(within(dialog).getByText(/Indexing the workspace root and everything beneath it/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/takes everything under it that no other source/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: /^Add the workspace root$/ }));
+
+    await waitFor(() => expect(addSource).toHaveBeenCalled());
+    expect(addSource.mock.calls[0][1]).toMatchObject({ workspacePath: '' });
+  });
+
+  it('does not warn about a history source at the root, which is the repository only', async () => {
+    const { user, dialog } = await openAddSource();
+
+    await user.click(within(dialog).getByRole('button', { name: '(choose a folder)' }));
+    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+
+    expect(within(dialog).queryByText(/takes everything under it/)).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /^Add source$/ })).toBeEnabled();
+  });
+
   it('warns before indexing the same folder twice', async () => {
     const { user, dialog } = await openAddSource();
 
@@ -846,6 +874,29 @@ describe('files no source covers', () => {
     const dialog = await screen.findByRole('dialog');
     expect(await within(dialog).findByText('books/manuals')).toBeInTheDocument();
     expect(within(dialog).getByText(/Indexing/)).toBeInTheDocument();
+  });
+
+  /**
+   * A gap at the workspace root opened the form with the root chosen, and the form could
+   * not be sent: the root is the empty string, and the submit was disabled while the path
+   * was falsy. The notice's own button led somewhere with no way forward.
+   */
+  it('adds a source on the workspace root from a gap there', async () => {
+    const user = userEvent.setup();
+    addSource.mockResolvedValue({});
+    coverage.mockResolvedValue({ gaps: [gap({ directory: '', files: ['README.md'] })] });
+
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: /Add a source on the workspace root/ }));
+
+    // The form's own submit, found by what it is rather than by its label.
+    const dialog = await screen.findByRole('dialog');
+    const submit = dialog.querySelector<HTMLButtonElement>('button[type="submit"]');
+    expect(submit).not.toBeNull();
+    await user.click(submit!);
+
+    await waitFor(() => expect(addSource).toHaveBeenCalled());
+    expect(addSource.mock.calls[0][1]).toMatchObject({ workspacePath: '' });
   });
 
   it('keeps the page when the endpoint is missing or fails', async () => {
