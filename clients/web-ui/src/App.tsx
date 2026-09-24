@@ -2380,7 +2380,9 @@ function FileViewer({
 
   return (
     <Modal title={path} onClose={onClose} width={980}>
-      <ErrorBanner error={error} onDismiss={() => setError(null)} />
+      {/* A load that failed is what the viewer has to show, so it stays until the dialog
+          closes: dismissing it would bring back "Reading…" with nothing being read. */}
+      <ErrorBanner error={error} onDismiss={file ? () => setError(null) : undefined} />
       {!file ? (
         // A load that failed says so above, rather than reading for ever.
         error == null && <p className="flex items-center gap-2"><Spinner /> Reading…</p>

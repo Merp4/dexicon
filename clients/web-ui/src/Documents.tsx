@@ -341,7 +341,8 @@ function ExtractedTextModal({
 
   return (
     <Modal title={doc.originalFileName ?? 'Extracted text'} onClose={onClose} width={860}>
-      <ErrorBanner error={error} onDismiss={() => setError(null)} />
+      {/* The load is the only request here, so its failure stays until the dialog closes. */}
+      <ErrorBanner error={error} onDismiss={text ? () => setError(null) : undefined} />
       {/* "What did the extractor actually see?" is the first question when results are
           wrong, and it should not require a database client to answer. */}
       {!text ? (

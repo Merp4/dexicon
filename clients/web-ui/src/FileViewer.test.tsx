@@ -190,6 +190,8 @@ describe('opening a file from the list', () => {
     const dialog = await screen.findByRole('dialog');
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('No indexed file');
     expect(within(dialog).queryByText(/Reading…/)).not.toBeInTheDocument();
+    // Dismissing it would bring "Reading…" back with nothing being read.
+    expect(within(dialog).queryByRole('button', { name: 'Dismiss error' })).not.toBeInTheDocument();
   });
 
   it('closes again', async () => {

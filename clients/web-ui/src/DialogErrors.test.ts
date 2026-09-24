@@ -18,6 +18,16 @@ import documentsSource from './Documents.tsx?raw';
 const files = { 'App.tsx': appSource, 'ChunkSets.tsx': chunkSetsSource, 'Documents.tsx': documentsSource };
 
 /**
+ * Pages that render a Modal inline, and are not dialogs. Named rather than inferred from a
+ * naming convention, so a dialog called anything at all is still found.
+ */
+const pages: Record<string, string> = {
+  'App.tsx: AccessView':
+    'The keys page. Its inline modal only displays a key just created and makes no request; '
+    + 'its own actions report to the page banner, which is visible when no dialog is open.',
+};
+
+/**
  * Dialogs that do not show a failure themselves, and why that is right for each. A dialog
  * here must make no request of its own, which the test checks, so the reason cannot
  * quietly stop being true.
@@ -28,26 +38,27 @@ const exempt: Record<string, string> = {
     + 'own banner, which is visible once it has closed.',
 };
 
-function dialogs(): { id: string; body: string }[] {
+/** Every top-level function that renders a Modal, by file and name. */
+function rendering(): { id: string; body: string }[] {
   const found: { id: string; body: string }[] = [];
   for (const [file, text] of Object.entries(files)) {
     const starts = [...text.matchAll(/^(?:export )?function (\w+)\(/gm)];
-    // A dialog component by its name. "Renders a Modal" also takes in AccessView, a page
-    // whose own actions report to the page and whose inline modal only displays a key.
     starts.forEach((m, i) => {
       const body = text.slice(m.index, starts[i + 1]?.index ?? text.length);
-      if (/(Modal|Viewer)$/.test(m[1]) && /<Modal\b/.test(body)) found.push({ id: `${file}: ${m[1]}`, body });
+      if (/<Modal\b/.test(body)) found.push({ id: `${file}: ${m[1]}`, body });
     });
   }
   return found;
 }
 
 describe('dialogs', () => {
-  const all = dialogs();
+  const found = rendering();
+  const all = found.filter((d) => !(d.id in pages));
 
   it('were found, so a clean result means something', () => {
-    // Sixteen as this is written.
+    // Sixteen dialogs and one page as this is written.
     expect(all.length).toBeGreaterThanOrEqual(16);
+    expect(Object.keys(pages).filter((id) => !found.some((d) => d.id === id))).toEqual([]);
   });
 
   it('do not send their failures to the page', () => {
