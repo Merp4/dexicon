@@ -128,13 +128,13 @@ describe('the document library', () => {
     const card = row.closest('article')!;
 
     expect(within(card).getByText('980 chunks')).toBeInTheDocument();
-    expect(within(card).getByText(/from 768\/100 language-aware/)).toBeInTheDocument();
+    expect(within(card).getByText(/from 768 tokens \/ 100 overlap, language-aware/)).toBeInTheDocument();
     // Formatted the way the component formats it. The literal used to be hard-coded with
     // a `.replace(',', ',')` beside it, which replaced a comma with a comma and did
     // nothing; the separator it was presumably meant to normalise is locale-dependent,
     // so under de-DE or fr-FR this asserted on a string the component never renders.
     expect(within(card).getByText(`${(2940).toLocaleString()} chunks`)).toBeInTheDocument();
-    expect(within(card).getByText(/from 256\/40 blank-line/)).toBeInTheDocument();
+    expect(within(card).getByText(/from 256 tokens \/ 40 overlap, blank-line/)).toBeInTheDocument();
   });
 
   it('will not upload until a destination is chosen', async () => {
@@ -143,6 +143,17 @@ describe('the document library', () => {
     render(<DocumentsView corpora={[]} {...noop} />);
 
     expect(await screen.findByRole('button', { name: /choose files/i })).toBeDisabled();
+  });
+
+  it('gives the chunk settings in the upload picker their units', async () => {
+    // It read "books — 1843/258": two numbers and no way to know what they measure.
+    const user = userEvent.setup();
+    render(<DocumentsView corpora={[corpus('library')]} {...noop} />);
+
+    await user.click(await screen.findByLabelText(/upload into/i));
+    const options = (await screen.findAllByRole('option')).map((o) => o.textContent);
+
+    expect(options).toEqual(['library — 768 tokens / 100 overlap']);
   });
 
   it('says there is nowhere to put a file rather than offering an empty picker', async () => {
@@ -171,7 +182,7 @@ describe('the document library', () => {
   });
 
   it('says how the attached copy will be chunked before it is attached', async () => {
-    // "Nothing is re-uploaded" is the reassurance; "chunked as default (768/100)" is the
+    // "Nothing is re-uploaded" is the reassurance; "chunked as default (768 tokens / 100 overlap)" is the
     // consequence. Both belong on screen before the button is pressed.
     const user = userEvent.setup();
     render(<DocumentsView corpora={[corpus('library'), corpus('archive')]} {...noop} />);
@@ -181,7 +192,7 @@ describe('the document library', () => {
 
     expect(within(dialog).getByText(/nothing is re-uploaded/i)).toBeInTheDocument();
     await waitFor(() =>
-      expect(within(dialog).getByText(/768\/100/)).toBeInTheDocument(),
+      expect(within(dialog).getByText(/768 tokens \/ 100 overlap/)).toBeInTheDocument(),
     );
   });
 
