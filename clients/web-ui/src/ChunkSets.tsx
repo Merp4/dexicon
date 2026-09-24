@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { Fragment, useEffect, useId, useRef, useState } from 'react';
 import {
   api,
   getToken,
@@ -129,34 +129,40 @@ export function ChunkSetsPanel({
             aria-hidden
             className={cn('size-4 shrink-0 transition-transform', open && 'rotate-90')}
           />
-          <strong className="text-sm">Chunk sets</strong>
+          {/* The `{' '}` between parts is for the button's accessible name, which is its
+              text run together: the gaps here are flex gaps, which are visual only, so a
+              screen reader heard "Chunk setsdocs:default". A space between flex items
+              is not rendered, so the layout is unchanged. */}
+          <strong className="text-sm">Chunk sets</strong>{' '}
           {open ? (
             <span className="dim text-xs">each is a model and a chunking; search reaches the default one</span>
           ) : (
             searched && (
               <span className="dim text-xs flex flex-wrap items-center gap-x-1.5 gap-y-1">
-                <span className="mono text-foreground">{corpus.name}:{searched.name}</span>
+                <span className="mono text-foreground">{corpus.name}:{searched.name}</span>{' '}
                 <span>
                   {searched.embeddingModel} ({searched.embeddingDimensions}d) · {searched.chunkSize} / {searched.chunkOverlap}
                   {' · '}{count(searched.chunkCount, 'chunk')}
-                </span>
+                </span>{' '}
                 <Badge tone={stateTone(searched.state)}>{searched.state}</Badge>
                 {searched.pendingCount > 0 && (
-                  <Badge tone="warn">{searched.pendingCount.toLocaleString()} pending</Badge>
+                  <>{' '}<Badge tone="warn">{searched.pendingCount.toLocaleString()} pending</Badge></>
                 )}
-                {searched.failedCount > 0 && <Badge tone="danger">{searched.failedCount} failed</Badge>}
-                {others > 0 && <span>+{others} more</span>}
+                {searched.failedCount > 0 && <>{' '}<Badge tone="danger">{searched.failedCount} failed</Badge></>}
+                {others > 0 && <>{' '}<span>+{others} more</span></>}
                 {needsAttention.map((s) => (
-                  <Badge
-                    key={s.id}
-                    // The tone the open list gives the same set, so unavailable and degraded
-                    // stay red; ready with work still pending is a warning.
-                    tone={s.failedCount > 0 ? 'danger' : s.state !== 'ready' ? stateTone(s.state) : 'warn'}
-                  >
-                    {s.name}: {s.state}
-                    {s.pendingCount > 0 && `, ${s.pendingCount.toLocaleString()} pending`}
-                    {s.failedCount > 0 && `, ${s.failedCount} failed`}
-                  </Badge>
+                  <Fragment key={s.id}>
+                    {' '}
+                    <Badge
+                      // The tone the open list gives the same set, so unavailable and degraded
+                      // stay red; ready with work still pending is a warning.
+                      tone={s.failedCount > 0 ? 'danger' : s.state !== 'ready' ? stateTone(s.state) : 'warn'}
+                    >
+                      {s.name}: {s.state}
+                      {s.pendingCount > 0 && `, ${s.pendingCount.toLocaleString()} pending`}
+                      {s.failedCount > 0 && `, ${s.failedCount} failed`}
+                    </Badge>
+                  </Fragment>
                 ))}
               </span>
             )

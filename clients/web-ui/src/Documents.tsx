@@ -105,7 +105,7 @@ export function DocumentsView({
             {writable.map((c) => (
               <SelectItem key={c.id} value={c.name}>
                 {c.name} — {c.chunkSets.length === 1
-                  ? `${c.chunkSets[0].chunkSize}/${c.chunkSets[0].chunkOverlap}`
+                  ? `${c.chunkSets[0].chunkSize} tokens / ${c.chunkSets[0].chunkOverlap} overlap`
                   : `${c.chunkSets.length} chunk sets`}
               </SelectItem>
             ))}
@@ -201,7 +201,7 @@ export function DocumentsView({
                     <strong className="min-w-[130px]">{a.corpusName}</strong>
                     <Badge tone={stateTone(a.status)}>{a.status}</Badge>
                     <span className="mono">{count(a.chunkCount, 'chunk')}</span>
-                    <span className="text-muted-foreground">from {a.chunkSize}/{a.chunkOverlap} {a.boundaryMode}</span>
+                    <span className="text-muted-foreground">from {a.chunkSize} tokens / {a.chunkOverlap} overlap, {a.boundaryMode}</span>
                     <span className="flex-1" />
                     <Button
                       variant="danger"
@@ -296,7 +296,7 @@ function AttachModal({
               {chosen.chunkSets.map((s, i) => (
                 <span key={s.id}>
                   {i > 0 && ', '}
-                  <strong>{s.name}</strong> ({s.chunkSize}/{s.chunkOverlap}, {s.boundaryMode})
+                  <strong>{s.name}</strong> ({s.chunkSize} tokens / {s.chunkOverlap} overlap, {s.boundaryMode})
                 </span>
               ))}
               .

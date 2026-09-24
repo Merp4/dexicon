@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SearchView } from './App';
@@ -15,10 +15,17 @@ import type { Corpus, SearchResult } from './api';
  * api.ts, but no component test ever asserted the screen's half of it.
  */
 const search = vi.fn();
+const fileText = vi.fn();
 
 vi.mock('./api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./api')>();
-  return { ...actual, api: { search: (...a: unknown[]) => search(...a) } };
+  return {
+    ...actual,
+    api: {
+      search: (...a: unknown[]) => search(...a),
+      fileText: (...a: unknown[]) => fileText(...a),
+    },
+  };
 });
 
 const corpora = [{ id: 'c1', name: 'docs' }, { id: 'c2', name: 'api-repo' }] as Corpus[];
@@ -65,6 +72,8 @@ async function searchFor(text: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps queued Once answers, so one a test did not use reached the next.
+  fileText.mockReset();
   search.mockResolvedValue(result());
 });
 
@@ -135,6 +144,35 @@ describe('marking why a hit matched', () => {
     expect([...marks].map((m) => m.textContent?.toLowerCase())).not.toContain('the');
   });
 
+  it('marks the parts of an identifier the keyword index matched on', async () => {
+    // The sparse encoder indexes `RefreshAsync` as itself and as "refresh" and "async",
+    // so a passage that only says "refresh" is a match. Marking whole query words left
+    // nine keyword hits of ten for an identifier with nothing marked.
+    search.mockResolvedValue(result({
+      query: 'RefreshAsync HTTPServer',
+      hits: [hit({ content: 'Call refresh before the token expires. The server retries RefreshAsync once.' })],
+    }));
+    await searchFor('RefreshAsync HTTPServer');
+    await screen.findByText('04-ingestion.md:228-265');
+
+    const marks = [...document.querySelectorAll('mark')].map((m) => m.textContent);
+    expect(marks).toEqual(['refresh', 'server', 'RefreshAsync']);
+  });
+
+  it('marks a term where the index would match it, not inside another word', async () => {
+    // "set" is a part of `ChunkSet`, and it was marked inside "settings" and "reset". The
+    // index reads each of those as one token, so neither is a match.
+    search.mockResolvedValue(result({
+      query: 'ChunkSet',
+      hits: [hit({ content: 'Settings reset the default set; a ChunkSet and chunk_set too.' })],
+    }));
+    await searchFor('ChunkSet');
+    await screen.findByText('04-ingestion.md:228-265');
+
+    const marks = [...document.querySelectorAll('mark')].map((m) => m.textContent);
+    expect(marks).toEqual(['set', 'ChunkSet', 'chunk', 'set']);
+  });
+
   it('sets prose in the body face and code in monospace', async () => {
     // `pre` is monospace in the UA stylesheet, so the prose branch has to say font-sans or
     // a page of a book arrives in 14px monospace regardless of the class it was given.
@@ -155,6 +193,87 @@ describe('marking why a hit matched', () => {
     const code = document.querySelector('pre')!;
     expect(code.className).toMatch(/\bmono\b/);
     expect(code.className).not.toMatch(/font-sans/);
+  });
+});
+
+describe('opening a hit', () => {
+  it('marks every line of the passage, not only its first', async () => {
+    fileText.mockResolvedValue({
+      corpus: 'docs',
+      path: '04-ingestion.md',
+      chunkSet: 'default',
+      startLine: 226,
+      endLine: 268,
+      text: Array.from({ length: 43 }, (_, i) => `line ${226 + i}`).join('\n'),
+      gaps: 0,
+      totalChars: 400,
+      nextOffset: null,
+    });
+    const user = await searchFor('chunk sets');
+
+    await user.click(await screen.findByRole('button', { name: 'Open' }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText('line 226');
+
+    const marked = [...dialog.querySelectorAll('pre > span')]
+      .filter((s) => s.className.includes('accent-soft'))
+      .map((s) => s.lastChild?.textContent);
+    expect(marked[0]).toBe('line 228');
+    expect(marked.at(-1)).toBe('line 265');
+    expect(marked).toHaveLength(265 - 228 + 1);
+  });
+});
+
+describe('opening a hit past the first window', () => {
+  it('reads on until the hit is in, then marks it', async () => {
+    // The file endpoint answers with a window of 400,000 characters, so a hit late in a
+    // book was in none of what the viewer loaded.
+    const window = (startLine: number, lines: number, nextOffset: number | null) => ({
+      corpus: 'docs', path: 'book.pdf', chunkSet: 'default', gaps: 0, totalChars: 900,
+      startLine, endLine: startLine + lines, nextOffset,
+      text: Array.from({ length: lines }, (_, i) => `line ${startLine + i}`).join('\n') + '\n',
+    });
+    fileText
+      .mockResolvedValueOnce(window(1, 3, 300))
+      .mockResolvedValueOnce(window(4, 3, 600))
+      .mockResolvedValueOnce(window(7, 3, null));
+    search.mockResolvedValue(result({ hits: [hit({ filePath: 'book.pdf', startLine: 5, endLine: 6 })] }));
+    const user = await searchFor('chunk sets');
+
+    await user.click(await screen.findByRole('button', { name: 'Open' }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText('line 5');
+
+    expect(fileText.mock.calls.map((c) => c[2])).toEqual([undefined, 300]);
+    const marked = [...dialog.querySelectorAll('pre > span')]
+      .filter((s) => s.className.includes('accent-soft'))
+      .map((s) => s.lastChild?.textContent);
+    expect(marked).toEqual(['line 5', 'line 6']);
+  });
+
+  it('reads on for a hit on the line a window ends before', async () => {
+    // A window ending on a newline reports the next line as its endLine, with none of
+    // that line's text in it.
+    const window = (startLine: number, lines: number, nextOffset: number | null) => ({
+      corpus: 'docs', path: 'book.pdf', chunkSet: 'default', gaps: 0, totalChars: 600,
+      startLine, endLine: startLine + lines, nextOffset,
+      text: Array.from({ length: lines }, (_, i) => `line ${startLine + i}`).join('\n') + '\n',
+    });
+    fileText
+      .mockResolvedValueOnce(window(1, 3, 300))
+      .mockResolvedValueOnce(window(4, 3, null));
+    search.mockResolvedValue(result({ hits: [hit({ filePath: 'book.pdf', startLine: 4, endLine: 4 })] }));
+    const user = await searchFor('chunk sets');
+
+    await user.click(await screen.findByRole('button', { name: 'Open' }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText('line 1');
+
+    expect(fileText).toHaveBeenCalledTimes(2);
+    const marked = [...dialog.querySelectorAll('pre > span')]
+      .filter((s) => s.className.includes('accent-soft'))
+      .map((s) => s.lastChild?.textContent);
+    expect(marked).toEqual(['line 4']);
   });
 });
 
@@ -192,6 +311,14 @@ describe('telling a bad index from a bad scope', () => {
     await user.click(await screen.findByRole('button', { name: 'Explain' }));
     expect(screen.getByText(/scores:/).parentElement).toHaveTextContent(/DBSF/);
     expect(screen.queryByText(/reciprocal rank/)).not.toBeInTheDocument();
+  });
+
+  it('shows the score Explain describes on each hit', async () => {
+    search.mockResolvedValue(result({ hits: [hit({ score: 0.8 }), hit({ score: 0.4126, filePath: 'b.md', location: 'b.md:1-9' })] }));
+    await searchFor('chunk sets');
+
+    expect(await screen.findByText('0.800')).toHaveAttribute('title', expect.stringMatching(/DBSF/));
+    expect(screen.getByText('0.413')).toBeInTheDocument();
   });
 
   it('describes a degraded search by the keyword scoring it fell back to', async () => {
