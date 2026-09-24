@@ -1101,6 +1101,11 @@ export function CorpusDetail({
     // and started as an empty list, so every visit drew the page with no files for one
     // round trip, and an empty list says "No files. Run a refresh to index this corpus."
     // Independent, so a file list that fails does not hold the rest of the page back.
+    //
+    // A reload keeps the rows it has until the next page answers, so a filter keystroke
+    // does not blank the list. A listing that fails clears them: rows left from the last
+    // good answer would read as the answer to this one.
+    setFilesFailed(false);
     const corpusLoad = api.getCorpus(name).then(setCorpus);
     const filesLoad = api
       .listFiles(name, {
@@ -1117,6 +1122,8 @@ export function CorpusDetail({
           setFilesFailed(false);
         },
         (e: unknown) => {
+          setFiles(null);
+          setTotalFiles(0);
           setFilesFailed(true);
           throw e;
         },

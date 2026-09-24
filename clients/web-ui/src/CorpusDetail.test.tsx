@@ -1359,6 +1359,31 @@ describe('the file list', () => {
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ status: 503 }));
   });
 
+  it('does not leave the last good rows up when a later listing fails', async () => {
+    // They would read as the answer to the filter that failed.
+    listFiles.mockResolvedValue(page(3, 3));
+    render(<CorpusDetail {...props} />);
+    await screen.findByRole('button', { name: 'book-0.pdf' });
+
+    listFiles.mockRejectedValue(new ApiError(503, 'Catalogue busy', 'Try again.'));
+    await userEvent.click(screen.getByRole('radio', { name: 'failed' }));
+
+    expect(await screen.findByText('The files could not be listed')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'book-0.pdf' })).not.toBeInTheDocument();
+  });
+
+  it('shows the list loading again, not the failure, while a retry is on its way', async () => {
+    listFiles.mockRejectedValueOnce(new ApiError(503, 'Catalogue busy', 'Try again.'));
+    render(<CorpusDetail {...props} />);
+    await screen.findByText('The files could not be listed');
+
+    listFiles.mockReturnValue(new Promise(() => {}));
+    await userEvent.click(screen.getByRole('radio', { name: 'failed' }));
+
+    await waitFor(() => expect(screen.queryByText('The files could not be listed')).not.toBeInTheDocument());
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
+  });
+
   it('says "1 chunk" of a file holding one', async () => {
     listFiles.mockResolvedValue({ total: 1, chunkSet: 'default', files: [{ ...file('one.md'), chunkCount: 1 }] });
 
