@@ -726,12 +726,20 @@ public sealed class CorpusIndexer(
             : [.. symbols.Where(s => half.Contains(s, StringComparison.Ordinal))];
 
     /// <summary>
+    /// The set's own settings, with no model measurement to reconcile them against. The
+    /// indexing paths all pass the reconciled options; this is for callers that have only
+    /// a set. If the two ever disagree the effect is a file that looks changed and is
+    /// chunked again, never a stale chunk kept as current.
+    /// </summary>
+    internal static string ChunkingFingerprint(ChunkSet set, string blobSha, ModelTemplates templates) =>
+        ChunkingFingerprint(set, blobSha, templates, set.Options());
+
+    /// <summary>
     /// Identity of "this blob, chunked THIS way". Two corpora holding the same document
     /// with different settings produce different fingerprints, so neither can mistake
     /// the other's work for its own, and changing a setting invalidates exactly the
     /// attachments it should.
-    /// </summary>
-    /// <summary>
+    ///
     /// The staleness key: everything that determines what ends up in Qdrant. If any part
     /// changes, the file is re-chunked; if none has, it is skipped at zero embedding
     /// cost. The extractor version is in here because an extraction fix changes the text
@@ -745,15 +753,6 @@ public sealed class CorpusIndexer(
     /// existing chunk in place while every new query used the new framing, leaving the
     /// two sides of a retrieval disagreeing with no error raised.
     /// </param>
-    /// <summary>
-    /// The set's own settings, with no model measurement to reconcile them against. The
-    /// indexing paths all pass the reconciled options; this is for callers that have only
-    /// a set. If the two ever disagree the effect is a file that looks changed and is
-    /// chunked again, never a stale chunk kept as current.
-    /// </summary>
-    internal static string ChunkingFingerprint(ChunkSet set, string blobSha, ModelTemplates templates) =>
-        ChunkingFingerprint(set, blobSha, templates, set.Options());
-
     internal static string ChunkingFingerprint(
         ChunkSet set, string blobSha, ModelTemplates templates, ChunkOptions chunking) =>
         HashContent($"{blobSha}|{chunking.ChunkSizeTokens}|{chunking.OverlapTokens}|" +

@@ -21,13 +21,6 @@ namespace Dexicon.Core.Embedding;
 /// </summary>
 public interface IEmbeddingService
 {
-    /// <param name="purpose">
-    /// Whether this text is being indexed or searched with. Most embedding models are
-    /// trained with a task instruction wrapped around the input and retrieve measurably
-    /// worse without it, so the framing is applied here rather than at the call sites:
-    /// the caller knows which it has, and nothing else does. Passing it as an argument
-    /// makes it impossible to forget at one of the two places that embed text.
-    /// </param>
     /// <summary>
     /// How many tokens the model actually made of <paramref name="text"/>, or null when
     /// the provider does not say.
@@ -47,6 +40,13 @@ public interface IEmbeddingService
     /// </remarks>
     Task<int?> CountTokensAsync(EmbeddingTarget target, string text, CancellationToken ct = default);
 
+    /// <param name="purpose">
+    /// Whether this text is being indexed or searched with. Most embedding models are
+    /// trained with a task instruction wrapped around the input and retrieve measurably
+    /// worse without it, so the framing is applied here rather than at the call sites:
+    /// the caller knows which it has, and nothing else does. Passing it as an argument
+    /// makes it impossible to forget at one of the two places that embed text.
+    /// </param>
     /// <param name="source">
     /// What this batch of inputs is, for the log. Every caller that embeds documents does
     /// so a file at a time, so one label describes the whole batch exactly and no guessing

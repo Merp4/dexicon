@@ -371,15 +371,6 @@ public sealed class Blob
 }
 
 /// <summary>
-/// Extracted text for a blob, cached. This is what makes re-chunking cheap and what
-/// lets the SAME document be chunked differently per corpus.
-///
-/// Extraction is deterministic in the bytes and expensive: a 437-page PDF costs about
-/// 1.5 s of layout analysis. Chunking is cheap and corpus-specific. Splitting them means
-/// changing a corpus's chunk size, or attaching a document to a second corpus with
-/// different settings, re-chunks and re-embeds without ever re-opening the PDF.
-/// </summary>
-/// <summary>
 /// Extracted text for a WORKSPACE file, cached against the bytes it came from.
 ///
 /// <see cref="BlobText"/> does this for uploads, and is why "changing a chunk size never
@@ -432,6 +423,15 @@ public sealed class FileText
     public string? EmptyReason { get; set; }
 }
 
+/// <summary>
+/// Extracted text for a blob, cached. This is what makes re-chunking cheap and what
+/// lets the SAME document be chunked differently per corpus.
+///
+/// Extraction is deterministic in the bytes and expensive: a 437-page PDF costs about
+/// 1.5 s of layout analysis. Chunking is cheap and corpus-specific. Splitting them means
+/// changing a corpus's chunk size, or attaching a document to a second corpus with
+/// different settings, re-chunks and re-embeds without ever re-opening the PDF.
+/// </summary>
 public sealed class BlobText
 {
     public required string Sha256 { get; set; }
@@ -461,18 +461,6 @@ public sealed class BlobText
     public string? EmptyReason { get; set; }
 }
 
-/// <summary>
-/// Persisted by NAME, so the numbers are free to change.
-///
-/// <c>Rebuild</c> is a full pass targeting ONE chunk set: the backfill that builds a
-/// replacement while the live set keeps serving. It behaves like <c>Full</c> and is named
-/// separately so the jobs list can tell "backfilling a new set" from "re-indexing
-/// everything", which are different reasons for a corpus to be busy.
-///
-/// A <c>Delete</c> kind existed and was never read or written: deletes are synchronous,
-/// because a delete that is queued behind an hour of indexing is a delete that has not
-/// happened.
-/// </summary>
 /// <summary>
 /// A saved task-template override for one embedding model.
 ///
@@ -543,6 +531,18 @@ public sealed class EmbeddingModelMeasurement
     public DateTime MeasuredUtc { get; set; }
 }
 
+/// <summary>
+/// Persisted by NAME, so the numbers are free to change.
+///
+/// <c>Rebuild</c> is a full pass targeting ONE chunk set: the backfill that builds a
+/// replacement while the live set keeps serving. It behaves like <c>Full</c> and is named
+/// separately so the jobs list can tell "backfilling a new set" from "re-indexing
+/// everything", which are different reasons for a corpus to be busy.
+///
+/// A <c>Delete</c> kind existed and was never read or written: deletes are synchronous,
+/// because a delete that is queued behind an hour of indexing is a delete that has not
+/// happened.
+/// </summary>
 public enum JobKind { Full = 0, Refresh = 1, Rebuild = 2 }
 
 public enum JobState { Queued = 0, Running = 1, Succeeded = 2, Failed = 3, Degraded = 4, Cancelled = 5 }

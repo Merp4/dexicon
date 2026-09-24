@@ -18,14 +18,6 @@ import { ChevronRight, Trash2, TriangleAlert } from 'lucide-react';
 import { cn } from 'cn';
 import { unitFor } from './lib/units';
 
-/**
- * Chunk sets for one corpus.
- *
- * The screen exists to make the SAFE migration obvious and the unsafe one awkward.
- * Adding a set never touches what search returns; promoting it does, once, and only
- * when it is complete. So "Add" is an ordinary button and "Promote" is the one that
- * announces what it is about to change.
- */
 /** `nomic-embed-text` and `nomic-embed-text:latest` are the same model; only :latest is implicit. */
 const bareName = (m: string) => m.replace(/:latest$/i, '');
 const sameModel = (a: string, b: string) => bareName(a).toLowerCase() === bareName(b).toLowerCase();
@@ -69,6 +61,11 @@ function ConfirmModal({
 /**
  * A corpus's chunk sets, as a disclosure: one line naming the set search uses, the full list
  * when opened.
+ *
+ * The screen exists to make the SAFE migration obvious and the unsafe one awkward.
+ * Adding a set never touches what search returns; promoting it does, once, and only
+ * when it is complete. So "Add" is an ordinary button and "Promote" is the one that
+ * announces what it is about to change.
  *
  * It sat under the file list, which put which model a corpus uses 5.8 screens down on a
  * 1,834-file corpus. Now it sits near the top of the page, and opening it is the caller's

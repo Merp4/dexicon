@@ -423,20 +423,6 @@ function authHeaders(): HeadersInit {
 }
 
 /**
- * Live indexing progress, for as long as the page is open.
- *
- * `fetch` rather than `EventSource`, which cannot carry an Authorization header, and the
- * token is intentionally not a cookie.
- *
- * RECONNECTS. The first version read the stream once: a normal end broke the loop without
- * telling anyone, and an error reported itself and then stopped. Either way progress went
- * quiet for the life of the page while the header still said "connected", and the only
- * cure was a reload. Every server restart did it, which is why it looked intermittent.
- *
- * `onOpen` exists because the header offers to say "reconnecting" and nothing could ever
- * take that back.
- */
-/**
  * What `/api/events` actually puts on the wire: `IndexProgress`, serialised as it stands.
  *
  * NOT a `JobSummary`, which is what this was typed as. The two differ in the two fields
@@ -487,6 +473,20 @@ export const progressOf = (j: JobSummary): Progress => ({
   error: j.error,
 });
 
+/**
+ * Live indexing progress, for as long as the page is open.
+ *
+ * `fetch` rather than `EventSource`, which cannot carry an Authorization header, and the
+ * token is intentionally not a cookie.
+ *
+ * RECONNECTS. The first version read the stream once: a normal end broke the loop without
+ * telling anyone, and an error reported itself and then stopped. Either way progress went
+ * quiet for the life of the page while the header still said "connected", and the only
+ * cure was a reload. Every server restart did it, which is why it looked intermittent.
+ *
+ * `onOpen` exists because the header offers to say "reconnecting" and nothing could ever
+ * take that back.
+ */
 export function subscribeToProgress(
   onProgress: (p: Progress) => void,
   onError?: () => void,
