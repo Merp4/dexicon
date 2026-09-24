@@ -49,22 +49,35 @@ const exempt: Record<string, string> = {
  * arrow function in a const, an `export default` or a wrapped component, and a pattern for
  * one of those forms passes a dialog written in another without checking it at all.
  */
-function rendering(): { id: string; body: string }[] {
-  const found: { id: string; body: string }[] = [];
+function rendering(): { id: string; node: ts.Statement }[] {
+  const found: { id: string; node: ts.Statement }[] = [];
   for (const [file, text] of Object.entries(files)) {
     const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
     for (const statement of source.statements) {
-      if (rendersModal(statement)) found.push({ id: `${file}: ${nameOf(statement)}`, body: statement.getText(source) });
+      if (renders(statement, 'Modal')) found.push({ id: `${file}: ${nameOf(statement)}`, node: statement });
     }
   }
   return found;
 }
 
-function rendersModal(node: ts.Node): boolean {
-  if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) && node.tagName.getText() === 'Modal') {
-    return true;
-  }
-  return ts.forEachChild(node, (child) => rendersModal(child) || undefined) ?? false;
+// The checks below read the syntax tree, not the text, so a comment or a string that
+// happens to spell "<ErrorBanner" or "onError" neither satisfies nor trips them.
+
+function some(node: ts.Node, test: (n: ts.Node) => boolean): boolean {
+  return test(node) || (ts.forEachChild(node, (child) => some(child, test) || undefined) ?? false);
+}
+
+function renders(node: ts.Node, tag: string): boolean {
+  return some(node, (n) => (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) && n.tagName.getText() === tag);
+}
+
+function mentions(node: ts.Node, identifier: string): boolean {
+  return some(node, (n) => ts.isIdentifier(n) && n.text === identifier);
+}
+
+/** Any `api.something`: the client every request goes through. */
+function callsTheApi(node: ts.Node): boolean {
+  return some(node, (n) => ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'api');
 }
 
 function nameOf(statement: ts.Statement): string {
@@ -92,18 +105,18 @@ describe('dialogs', () => {
   it('do not take the page error handler at all', () => {
     // Any mention, not only a call: `onError?.(e)`, `catch( onError )` and passing it on
     // are the same defect, and no dialog has a reason to hold it.
-    expect(all.filter((d) => /\bonError\b/.test(d.body)).map((d) => d.id)).toEqual([]);
+    expect(all.filter((d) => mentions(d.node, 'onError')).map((d) => d.id)).toEqual([]);
   });
 
   it('show them in a banner of their own, unless exempt for a stated reason', () => {
     const missing = all
-      .filter((d) => !/<ErrorBanner\b/.test(d.body) && !(d.id in exempt))
+      .filter((d) => !renders(d.node, 'ErrorBanner') && !(d.id in exempt))
       .map((d) => d.id);
     expect(missing).toEqual([]);
   });
 
   it('are exempt only while they make no request of their own', () => {
-    const stale = all.filter((d) => d.id in exempt && /\bapi\./.test(d.body)).map((d) => d.id);
+    const stale = all.filter((d) => d.id in exempt && callsTheApi(d.node)).map((d) => d.id);
     expect(stale).toEqual([]);
 
     // And every exemption names a dialog that exists.
