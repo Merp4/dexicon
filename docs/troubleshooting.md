@@ -149,6 +149,24 @@ configuration that nothing reads, and has caught two such cases.
 
 ---
 
+## "A history source's newest commit stopped moving"
+
+The source follows a ref, and nothing moves that ref but git on the host. The row says
+which case it is:
+
+- **"52 behind origin/main"**: it follows a local branch, often through `HEAD`, and
+  nobody has pulled. Edit the source and pick **Follow origin/main instead**, or pull.
+- **"fetched 3d ago"**: it follows a remote-tracking branch and the host has not fetched
+  since. Schedule `git fetch`, or run `git maintenance start` and follow the prefetched
+  ref, as [04](04-ingestion.md#following-a-remote-without-dexicon-fetching) describes.
+- **A prefetched ref**: `git maintenance` has stopped running, or cannot reach the
+  credential. A prefetch records no time, so a newest commit that stops moving is the
+  only sign.
+
+Dexicon does not fetch.
+
+---
+
 ## Getting more detail
 
 ```bash

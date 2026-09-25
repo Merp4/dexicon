@@ -259,6 +259,13 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "ref",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2533,6 +2540,31 @@
           }
         }
       },
+      "GitFollowed": {
+        "required": [
+          "ref",
+          "name",
+          "shadowed"
+        ],
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "shadowed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "GitHead": {
         "required": [
           "branch",
@@ -2696,6 +2728,16 @@
               "string"
             ],
             "format": "date-time"
+          },
+          "followed": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GitFollowed"
+              }
+            ]
           }
         }
       },
@@ -2799,6 +2841,12 @@
           },
           "gone": {
             "type": "boolean"
+          },
+          "refusal": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },

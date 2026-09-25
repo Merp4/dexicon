@@ -255,6 +255,27 @@ public sealed class GitRefsTests : IDisposable
         local.Single(r => r.Name == "refs/heads/main").Refusal.ShouldBeNull();
     }
 
+    /// <summary>
+    /// An upstream the rule refuses says so, so the picker does not offer it in place of the
+    /// branch: a usable branch can track a remote branch whose name is not usable.
+    /// </summary>
+    [Fact]
+    public async Task AnUpstreamTheRuleRefusesSaysWhy()
+    {
+        Git(Clone, "branch", "tracks-refused");
+        Git(Clone, "config", "branch.tracks-refused.remote", "origin");
+        Git(Clone, "config", "branch.tracks-refused.merge", "refs/heads/feat+x");
+
+        var local = (await RefsAsync()).Local.Refs;
+
+        var refused = local.Single(r => r.Name == "refs/heads/tracks-refused");
+        refused.Refusal.ShouldBeNull("the branch itself is usable");
+        refused.Upstream.ShouldNotBeNull().Name.ShouldBe("refs/remotes/origin/feat+x");
+        refused.Upstream.Refusal.ShouldNotBeNull().ShouldContain("not a usable ref");
+
+        local.Single(r => r.Name == "refs/heads/main").Upstream.ShouldNotBeNull().Refusal.ShouldBeNull();
+    }
+
     [Fact]
     public async Task DetachedAndUnbornHeadsAreReportedAsSuch()
     {
@@ -331,6 +352,111 @@ public sealed class GitRefsTests : IDisposable
         var prefetched = refs.Prefetched.Refs.ShouldHaveSingleItem();
         prefetched.Mirrors.ShouldBe("refs/remotes/origin/main");
         prefetched.SameAsMirrored.ShouldBe(true);
+    }
+
+    /// <summary>Refs created in one <c>update-ref</c>, all at <paramref name="sha"/>.</summary>
+    private void CreateRefs(string prefix, int count, string sha)
+    {
+        var info = new ProcessStartInfo("git", ["update-ref", "--stdin"])
+        {
+            WorkingDirectory = Clone,
+            RedirectStandardInput = true,
+            UseShellExecute = false,
+        };
+        using var p = Process.Start(info)!;
+        for (var i = 0; i < count; i++) p.StandardInput.Write($"create {prefix}{i:D4} {sha}\n");
+        p.StandardInput.Close();
+        p.WaitForExit();
+        p.ExitCode.ShouldBe(0);
+    }
+
+    /// <summary>
+    /// The checked-out branch is listed when 200 newer branches push it past the cap, with
+    /// its upstream, since that is where the picker reads how far behind it is.
+    /// </summary>
+    [Fact]
+    public async Task TheCheckedOutBranchIsListedPastTheCap()
+    {
+        PushedElsewhere(2);
+        Git(Clone, "fetch", "--quiet");
+
+        Git(Clone, "checkout", "--quiet", "-b", "newer");
+        CreateRefs("refs/heads/many/", GitHistory.RefsPerGroup + 5, CommitLater(Clone, "newer than main"));
+        Git(Clone, "checkout", "--quiet", "main");
+
+        var local = (await RefsAsync()).Local;
+
+        local.Truncated.ShouldBeTrue("the setup: main is past the cap");
+        local.Refs.Take(GitHistory.RefsPerGroup).ShouldNotContain(r => r.Name == "refs/heads/main", "the setup");
+        local.Refs.Single(r => r.Name == "refs/heads/main").Upstream.ShouldNotBeNull().Behind.ShouldBe(2);
+        local.Refs.Count.ShouldBe(GitHistory.RefsPerGroup + 1);
+    }
+
+    /// <summary>
+    /// The ref a source follows is resolved the way git resolves it, so the picker shows the
+    /// ref the source walks: a tag named <c>main</c> is the tag, not the branch, and a
+    /// short name the picker cannot see the tags for is not guessed from its spelling.
+    /// </summary>
+    [Fact]
+    public async Task TheFollowedRefIsResolvedTheWayGitResolvesIt()
+    {
+        Git(Clone, "fetch", "--quiet");
+        CreateRefs("refs/prefetch/remotes/origin/copy", 1, Git(Clone, "rev-parse", "HEAD").Trim());
+
+        async Task<GitFollowed> Followed(string @ref) =>
+            (await GitHistory.RefsAsync(Repo(), default, @ref)).Followed.ShouldNotBeNull();
+        async Task<string?> Resolved(string @ref) => (await Followed(@ref)).Name;
+
+        (await Resolved("main")).ShouldBe("refs/heads/main");
+        (await Followed("main")).Shadowed.ShouldBeEmpty();
+        (await Resolved("refs/heads/main")).ShouldBe("refs/heads/main");
+        (await Resolved("origin/main")).ShouldBe("refs/remotes/origin/main");
+        (await Resolved("prefetch/remotes/origin/copy0000")).ShouldBe("refs/prefetch/remotes/origin/copy0000");
+
+        Git(Clone, "tag", "main");
+        var tagged = await Followed("main");
+        tagged.Name.ShouldBe("refs/tags/main");
+        tagged.Shadowed.ShouldBe(["refs/heads/main"]);
+        (await Followed("refs/heads/main")).ShouldSatisfyAllConditions(
+            f => f.Name.ShouldBe("refs/heads/main", "a full name is looked up as it is"),
+            f => f.Shadowed.ShouldBeEmpty());
+
+        // refs/<name> comes before the tags, so a tag cannot take a prefetched ref's short
+        // name: the tag is what is passed over.
+        Git(Clone, "tag", "prefetch/remotes/origin/copy0000");
+        var prefetchedFirst = await Followed("prefetch/remotes/origin/copy0000");
+        prefetchedFirst.Name.ShouldBe("refs/prefetch/remotes/origin/copy0000");
+        prefetchedFirst.Shadowed.ShouldBe(["refs/tags/prefetch/remotes/origin/copy0000"]);
+
+        (await Resolved("HEAD")).ShouldBeNull("HEAD's branch is the listing's head");
+        (await Resolved(Git(Clone, "rev-parse", "HEAD").Trim())).ShouldBeNull("a commit is not a ref");
+        (await Resolved("feat+x")).ShouldBeNull("a ref the rule refuses is not passed to git");
+        (await Resolved("nothing-here")).ShouldBeNull();
+
+        (await RefsAsync()).Followed.ShouldBeNull("nothing was asked about");
+    }
+
+    /// <summary>A followed branch past the cap is listed, so the picker can show it as picked.</summary>
+    [Fact]
+    public async Task TheFollowedRefIsListedPastTheCap()
+    {
+        Git(Clone, "branch", "old");
+        Git(Clone, "checkout", "--quiet", "-b", "newer");
+        CreateRefs("refs/heads/many/", GitHistory.RefsPerGroup + 5, CommitLater(Clone, "newer than old"));
+
+        var refs = await GitHistory.RefsAsync(Repo(), default, "old");
+
+        refs.Followed.ShouldNotBeNull().Name.ShouldBe("refs/heads/old");
+        refs.Local.Refs.ShouldContain(r => r.Name == "refs/heads/old");
+        (await RefsAsync()).Local.Refs.ShouldNotContain(r => r.Name == "refs/heads/old", "the control: unasked, it is past the cap");
+
+        // A tag of the same name takes the name, and the branch it hides is still listed, so
+        // the picker can offer it in the tag's place.
+        Git(Clone, "tag", "old");
+        var shadowed = await GitHistory.RefsAsync(Repo(), default, "old");
+        shadowed.Followed.ShouldNotBeNull().Name.ShouldBe("refs/tags/old");
+        shadowed.Followed.Shadowed.ShouldBe(["refs/heads/old"]);
+        shadowed.Local.Refs.ShouldContain(r => r.Name == "refs/heads/old");
     }
 
     /// <summary>
@@ -428,6 +554,11 @@ public sealed class GitRefsTests : IDisposable
         ok.IsRepository.ShouldBeTrue();
         ok.Path.ShouldBe("repo");
         ok.Listing.ShouldNotBeNull().Head.Branch.ShouldBe("refs/heads/main");
+
+        var asked = (await SystemEndpoints.RepositoryRefsAsync(_root, "repo", default, "origin/main"))
+            .ShouldBeOfType<Ok<GitRefsResponse>>().Value.ShouldNotBeNull();
+        var followed = asked.Listing.ShouldNotBeNull().Followed.ShouldNotBeNull();
+        (followed.Ref, followed.Name).ShouldBe(("origin/main", "refs/remotes/origin/main"));
 
         Directory.CreateDirectory(Path.Combine(Clone, "src"));
         var sub = (await SystemEndpoints.RepositoryRefsAsync(_root, "repo/src", default))

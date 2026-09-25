@@ -286,11 +286,11 @@ public static class SystemEndpoints
 
         // What a folder's repository could be followed at, so a history source is pointed
         // at a branch picked from the repository rather than at a name typed from memory.
-        app.MapGet("/api/workspaces/git", async (string? path, RequestContext rc,
+        app.MapGet("/api/workspaces/git", async (string? path, string? @ref, RequestContext rc,
             IOptions<DexiconOptions> opts, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            return await RepositoryRefsAsync(opts.Value.Indexing.WorkspaceRoot, path, ct);
+            return await RepositoryRefsAsync(opts.Value.Indexing.WorkspaceRoot, path, ct, @ref);
         }).Produces<GitRefsResponse>().WithTags("Workspaces");
     }
 
@@ -302,8 +302,13 @@ public static class SystemEndpoints
     /// 404 when nothing is mounted there. A folder that is not a repository's root is an
     /// answer, not an error, since the picker offers the folder anyway. git failing to
     /// answer is 503 with its reason, and the picker falls back to a typed ref.
+    ///
+    /// <paramref name="ref"/>, the ref a source follows, is resolved in the listing. A ref
+    /// the ref rule refuses resolves to nothing rather than failing the listing, so a branch
+    /// can still be picked in its place.
     /// </summary>
-    internal static async Task<IResult> RepositoryRefsAsync(string workspaceRoot, string? path, CancellationToken ct)
+    internal static async Task<IResult> RepositoryRefsAsync(
+        string workspaceRoot, string? path, CancellationToken ct, string? @ref = null)
     {
         GitRepository? repo;
         try { repo = GitHistory.RepositoryIn(workspaceRoot, path); }
@@ -323,7 +328,7 @@ public static class SystemEndpoints
         try
         {
             return await GitHistory.IsRepositoryAsync(repo, ct)
-                ? Results.Ok(new GitRefsResponse(relative, true, await GitHistory.RefsAsync(repo, ct)))
+                ? Results.Ok(new GitRefsResponse(relative, true, await GitHistory.RefsAsync(repo, ct, @ref)))
                 : Results.Ok(new GitRefsResponse(relative, false, null));
         }
         catch (GitHistoryException ex)

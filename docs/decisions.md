@@ -1712,6 +1712,15 @@ for, and a credential per source held in the catalogue in recoverable form, whic
 [04](04-ingestion.md#embedding-providers) keeps out of it for embedding keys. Cloning is
 the operator's job, into the mount the server already reads.
 
+**Note, 2026-09-25: keeping a clone current is the host's job too.** Following a remote was
+asked for again, with Dexicon fetching opt-in. An opt-in fetch was designed: a mirror under
+`/data`, since `/workspaces` is read-only (D-15), a per-host token from the environment, and
+the fetch hardened against the repository's own config. It was dropped for the simpler
+answer. The host already holds a working login, and `git maintenance start` or a scheduled
+`git fetch` uses it. The picker lists refs a fetch or prefetch left and says how current
+they are, so a source follows the remote without Dexicon reaching the network or holding a
+credential. See [04](04-ingestion.md#following-a-remote-without-dexicon-fetching).
+
 A sixth MCP tool. History is a corpus, and `search_index` searches corpora
 ([D-11](#d-11-five-mcp-tools)).
 
