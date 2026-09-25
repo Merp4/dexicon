@@ -198,7 +198,11 @@ public sealed record GitCommit(string Sha, DateTimeOffset AuthorDate)
 /// </summary>
 public sealed class GitRepository
 {
-    private GitRepository(string fullPath) => FullPath = fullPath;
+    private GitRepository(string fullPath, string workspaceRoot)
+    {
+        FullPath = fullPath;
+        WorkspaceRoot = workspaceRoot;
+    }
 
     /// <summary>
     /// The directory, as the filesystem spells it. Every character of it was produced by
@@ -208,7 +212,14 @@ public sealed class GitRepository
     /// </summary>
     public string FullPath { get; }
 
-    internal static GitRepository Of(string fullPath) => new(fullPath);
+    /// <summary>
+    /// The boundary this repository was resolved against. A file read from under its git
+    /// directory is held to it too, because a <c>.git</c> file or a separate git directory
+    /// can point anywhere: see <see cref="GitHistory.LastFetchAsync"/>.
+    /// </summary>
+    internal string WorkspaceRoot { get; }
+
+    internal static GitRepository Of(string fullPath, string workspaceRoot) => new(fullPath, workspaceRoot);
 }
 
 /// <summary>
@@ -236,7 +247,7 @@ public sealed class GitRepository
 /// the reason, since LibGit2Sharp ships musl builds. D-34 weighs what a library would
 /// remove.
 /// </summary>
-public static class GitHistory
+public static partial class GitHistory
 {
     /// <summary>
     /// The directory <paramref name="relativePath"/> names under
@@ -256,7 +267,7 @@ public static class GitHistory
     /// </summary>
     public static GitRepository? RepositoryIn(string workspaceRoot, string? relativePath) =>
         WorkspaceDiscovery.ResolveExisting(workspaceRoot, relativePath) is { } path
-            ? GitRepository.Of(path)
+            ? GitRepository.Of(path, workspaceRoot)
             : null;
 
     /// <summary>
@@ -419,9 +430,15 @@ public static class GitHistory
     /// being unavailable with git's reason.
     /// </summary>
     public static string? Problem(GitHistoryOptions options) =>
-        !IsAcceptableRef(options.Ref)
-            ? $"'{options.Ref}' is not a usable ref. A branch, a tag or an object name."
-            : OptionsProblem(options);
+        RefProblem(options.Ref) ?? OptionsProblem(options);
+
+    /// <summary>
+    /// Why this ref will not be passed to git, or null. The same words wherever a ref is
+    /// refused: a setting sent to an endpoint, and a branch listed by
+    /// <see cref="RefsAsync"/> that cannot be picked.
+    /// </summary>
+    internal static string? RefProblem(string? value) =>
+        IsAcceptableRef(value) ? null : $"'{value}' is not a usable ref. A branch, a tag or an object name.";
 
     private static string? OptionsProblem(GitHistoryOptions options)
     {
@@ -957,9 +974,10 @@ public static class GitHistory
     /// </summary>
     private static async Task<(bool Ok, string Stdout, string Stderr)> RunAsync(
         GitRepository repo, IReadOnlyList<string> args, CancellationToken ct, string? stdin = null,
-        long? maxBytes = null)
+        long? maxBytes = null, TimeSpan? timeout = null)
     {
         var info = StartInfo(repo, args, redirectStdin: stdin is not null);
+        var limit = timeout ?? Timeout;
 
         using var process = new Process { StartInfo = info };
 
@@ -974,7 +992,7 @@ public static class GitHistory
         }
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        deadline.CancelAfter(Timeout);
+        deadline.CancelAfter(limit);
 
         // Both streams read concurrently. Waiting for exit with either pipe unread is the
         // classic deadlock: git fills the buffer and blocks, and nothing drains it.
@@ -1044,7 +1062,9 @@ public static class GitHistory
             // The caller's cancellation is the caller's to see. Only the deadline is this
             // method's own failure, and only that becomes an exception of ours.
             ct.ThrowIfCancellationRequested();
-            throw new GitHistoryException($"git did not finish within {Timeout.TotalMinutes:N0} minutes.");
+            throw new GitHistoryException(limit >= TimeSpan.FromMinutes(1)
+                ? $"git did not finish within {limit.TotalMinutes:N0} minutes."
+                : $"git did not finish within {limit.TotalSeconds:N0} seconds.");
         }
 
         return (process.ExitCode == 0, stdout.ToString(), await stderrTask);

@@ -58,6 +58,14 @@ public sealed class CorpusIndexer(
     private readonly List<string> _reasons = [];
     private bool _unreachable;
 
+    // Sources whose tracking this pass has read. A job lists a history once per chunk set,
+    // and how current the ref is has one answer per pass.
+    private readonly HashSet<string> _tracked = new(StringComparer.Ordinal);
+
+    /// <summary>How a history source's tracking is read. Replaced in tests, to make it fail.</summary>
+    internal Func<GitRepository, string, DateTime, CancellationToken, Task<GitTracking>> ReadTracking { get; init; }
+        = GitHistory.TrackingAsync;
+
     private const string EmbeddingFailedReason =
         "One or more files could not be embedded and were skipped. They will be retried on the next run.";
 
@@ -76,6 +84,7 @@ public sealed class CorpusIndexer(
         var embeddingFailed = false;
         _reasons.Clear();
         _unreachable = false;
+        _tracked.Clear();
 
         // A source this pass could not reach: a mount that is away, a folder with no
         // repository in it. Not a failure of the job and not a success either.
@@ -838,6 +847,31 @@ public sealed class CorpusIndexer(
     /// decided by its sha and this source's settings and a commit cannot change. A
     /// refresh of a repository whose tip has not moved therefore costs one `git log`.
     /// </summary>
+    /// <summary>
+    /// How current the ref this source follows is, for the source's row: the stall a
+    /// local branch nobody pulls produces, 52 commits behind its upstream with every count
+    /// on screen correct, shows there as a number.
+    ///
+    /// After an inventory that answered, so a source git cannot list keeps its last
+    /// record, as for the newest commit. Once per pass. A read that fails keeps the last
+    /// record and changes nothing else: this is a display, and git answering the inventory
+    /// but not this is no reason to call the source unavailable or the job degraded.
+    /// </summary>
+    private async Task RecordTrackingAsync(GitRepository repo, Source source, string @ref, CancellationToken ct)
+    {
+        if (!_tracked.Add(source.Id)) return;
+
+        try
+        {
+            source.GitTracking = (await ReadTracking(repo, @ref, DateTime.UtcNow, ct)).ToJson();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            log.LogWarning(ex, "Source {Source}: how current {Ref} is could not be read; the last record is kept",
+                source.RootPath, @ref);
+        }
+    }
+
     private async Task IndexGitHistorySourceAsync(Corpus corpus, ChunkSet set, ModelTemplates templates,
         ChunkOptions chunking,
         Source source, IndexJob job,
@@ -914,6 +948,8 @@ public sealed class CorpusIndexer(
         // last observation, and an empty inventory is an observation.
         source.NewestCommitSha = commits.Count > 0 ? commits[0].Sha : null;
         source.NewestCommitUtc = commits.Count > 0 ? commits[0].AuthorDate.UtcDateTime : null;
+
+        await RecordTrackingAsync(repo, source, options.Ref, ct);
 
         // The inventory is the whole reachable history when the source keeps what it
         // indexed, so the limit is applied here, beside the commits already held.

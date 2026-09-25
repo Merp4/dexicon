@@ -140,6 +140,7 @@ CREATE TABLE sources (
   git_options       TEXT,                   -- githistory: json, the settings in 04
   newest_commit_sha TEXT,                   -- githistory: what the last pass found
   newest_commit_utc TEXT,                   --   and its author date
+  git_tracking      TEXT,                   -- githistory: json, how current the followed ref was
   created_utc       TEXT NOT NULL
 );
 

@@ -284,6 +284,26 @@ own pass, and one set failing does not undo another's listing: both describe the
 ref. Only the index pass writes it. The discovery sweep lists the history as well but
 only ever adds rows, and the index pass that follows it records the ref.
 
+**The same pass records how current the ref is**, as `tracking` on the source. For a ref
+that resolves to a local branch with an upstream: the upstream, and how far ahead and
+behind the branch is as of the last fetch, which the corpus page shows as "52 behind
+origin/main". For a remote-tracking ref: when a `git fetch` last ran, which is FETCH_HEAD's
+time. Every fetch rewrites that file, including one that brings nothing, and a fetch from
+a linked worktree writes the worktree's own, so the newest counts; a FETCH_HEAD outside
+the workspace is not read. Dexicon never fetches, so "behind" is as of the host's last
+fetch. The record is read once per pass, only after an inventory that answered, and a
+read that fails keeps the last record and changes nothing else about the pass, because it
+is a display. It is returned only for the ref it was observed for, so a changed ref shows
+nothing until the next pass. The distance is git's `%(upstream:track)` in the C locale,
+and a wording that is not git's own becomes no count rather than a guessed one.
+
+`GET /api/workspaces/git?path=` lists a folder's refs for choosing one: the branch HEAD is
+on, local branches with their upstreams, remote-tracking branches, and refs under
+`refs/prefetch/`, each with its tip and commit date, newest first and 200 of each kind. A
+name the `ref` rule refuses is listed with the reason and cannot be followed. It reads the
+refs and FETCH_HEAD's time and nothing else: no remote URL, which can carry a credential,
+and no configuration.
+
 **The container runs as uid 10001 and `/workspaces` is a host bind mount**, so the
 repository belongs to somebody else and git refuses it outright with "detected dubious
 ownership". Every call therefore passes `-c safe.directory=<the repository>`: one

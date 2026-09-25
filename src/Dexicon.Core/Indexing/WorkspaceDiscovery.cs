@@ -195,6 +195,34 @@ public static class WorkspaceDiscovery
     }
 
     /// <summary>
+    /// The file at <paramref name="fullPath"/>, if it exists inside
+    /// <paramref name="workspaceRoot"/> by the same rule as a directory: contained on the
+    /// text, reached segment by segment with no link on the way, and not a link itself.
+    /// Null for anything else, including a path this cannot read.
+    ///
+    /// For a path git reports rather than one a caller typed. A repository's git directory
+    /// need not be under its working tree: a <c>.git</c> file or <c>core.worktree</c> can
+    /// put it anywhere, and reading a file there because git named it would be reading
+    /// outside the workspace on the repository's say-so.
+    /// </summary>
+    internal static FileInfo? ExistingFileInside(string workspaceRoot, string fullPath)
+    {
+        var root = Path.GetFullPath(workspaceRoot);
+        var full = Path.GetFullPath(fullPath);
+        if (!CorpusIndexer.IsInside(full, root) || Path.GetDirectoryName(full) is not { } parent) return null;
+
+        try
+        {
+            if (ResolveExisting(workspaceRoot, Path.GetRelativePath(root, parent)) is not { } directory) return null;
+
+            var file = new FileInfo(Path.Combine(directory, Path.GetFileName(full)));
+            return file.Exists && file.LinkTarget is null ? file : null;
+        }
+        catch (UnauthorizedAccessException) { return null; }
+        catch (IOException) { return null; }
+    }
+
+    /// <summary>
     /// Walks the part of <paramref name="target"/> that exists, one segment at a time
     /// against the entries <see cref="Directory"/> reports, refusing any segment that is a
     /// link. Returns the deepest directory it reached, and sets <paramref name="outcome"/>

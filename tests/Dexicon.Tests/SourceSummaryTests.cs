@@ -36,6 +36,40 @@ public sealed class SourceSummaryTests
         ExcludeGlobs = exclude,
     };
 
+    private static Source History(string @ref, string? tracking) => new()
+    {
+        Id = "s2",
+        CorpusId = "c1",
+        Kind = SourceKind.GitHistory,
+        RootPath = "api-repo",
+        GitOptions = new GitHistoryOptions { Ref = @ref }.ToJson(),
+        GitTracking = tracking,
+    };
+
+    /// <summary>
+    /// Tracking is shown for the ref it was observed for. After the ref is changed, until
+    /// the next pass, the old ref's distance would describe a history the source no longer
+    /// follows.
+    /// </summary>
+    [Fact]
+    public void TrackingIsShownOnlyForTheRefItWasObservedFor()
+    {
+        var observed = new GitTracking("HEAD", "refs/heads/main",
+            new GitUpstream("refs/remotes/origin/main", "origin/main", 0, 52, false), null, DateTime.UtcNow);
+
+        History("HEAD", observed.ToJson()).ToSummary(Corpus, Configured).Tracking.ShouldBe(observed);
+        History("refs/remotes/origin/main", observed.ToJson()).ToSummary(Corpus, Configured).Tracking.ShouldBeNull();
+    }
+
+    [Fact]
+    public void AnUnreadableTrackingRecordDoesNotBreakTheSourceList()
+    {
+        var summary = History("HEAD", "{ not json").ToSummary(Corpus, Configured);
+
+        summary.Tracking.ShouldBeNull();
+        summary.Git.ShouldNotBeNull().Ref.ShouldBe("HEAD");
+    }
+
     /// <summary>
     /// A setting that can be written and never read back is one nobody can check,
     /// correct or reproduce. The ref and the diff decide what every document in a
