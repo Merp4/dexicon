@@ -1383,7 +1383,7 @@ describe('choosing what a history source follows', () => {
     const options = (await screen.findAllByRole('option')).map((o) => o.textContent);
     expect(options).toEqual([
       'main · 52 behind origin/main',
-      'feat+x · cannot be followed',
+      "feat+x · cannot be followed. 'refs/heads/feat+x' is not a usable ref. A branch, a tag or an object name.",
       'origin/main · last commit 3d ago',
       'origin/main (prefetched) · last commit 3d ago, ahead of origin/main',
     ]);
@@ -1397,9 +1397,10 @@ describe('choosing what a history source follows', () => {
     await user.click(await within(dialog).findByRole('radio', { name: 'A branch' }));
     await user.click(within(dialog).getByRole('combobox', { name: 'Branch' }));
 
-    const refused = await screen.findByRole('option', { name: /feat\+x/ });
+    // In its text, which is also its accessible name. A title would be the only place, and a
+    // disabled item takes no pointer events, so nothing could hover it to read one.
+    const refused = await screen.findByRole('option', { name: /feat\+x · cannot be followed\. .*not a usable ref/ });
     expect(refused).toHaveAttribute('aria-disabled', 'true');
-    expect(refused).toHaveAttribute('title', expect.stringContaining('not a usable ref'));
   });
 
   it('falls back to typing a ref when the branches cannot be listed', async () => {
@@ -1410,17 +1411,47 @@ describe('choosing what a history source follows', () => {
     expect(await within(dialog).findByText(/branches could not be listed/)).toHaveTextContent(/git could not be started/);
     expect(within(dialog).queryByRole('radio', { name: 'A branch' })).not.toBeInTheDocument();
 
+    // Shown without being chosen: the box is the one control left that says what is followed.
+    expect(within(dialog).getByRole('radio', { name: 'Other ref' })).toBeChecked();
+    expect(within(dialog).getByLabelText('Ref')).toHaveValue('HEAD');
+
     await typeRef(user, dialog, 'v1.2.0');
     await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
     await waitFor(() => expect(addSource).toHaveBeenCalled());
     expect(addSource.mock.calls[0][1].git.ref).toBe('v1.2.0');
   });
 
-  it('says a folder that is not a repository has no history of its own', async () => {
+  it('says a folder that is not a repository has no history of its own, and offers the box', async () => {
     repositoryRefs.mockResolvedValue({ path: 'api-repo', isRepository: false, listing: null });
     const { dialog } = await openAddHistory();
 
     expect(await within(dialog).findByText(/not a repository's root/)).toBeInTheDocument();
+    expect(within(dialog).getByRole('radio', { name: 'Other ref' })).toBeChecked();
+    expect(within(dialog).getByLabelText('Ref')).toHaveValue('HEAD');
+  });
+
+  it('offers the box before a folder is chosen, and the checked-out branch once it is', async () => {
+    const user = userEvent.setup();
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: /add source/i }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+
+    expect(within(dialog).getByText('Choose a folder to list its branches.')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Ref')).toHaveValue('HEAD');
+
+    await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
+    expect(await within(dialog).findByText(/the branch the checkout has out/)).toBeInTheDocument();
+    expect(within(dialog).getByRole('radio', { name: 'Checked-out branch' })).toBeChecked();
+  });
+
+  it('says what the checked-out branch means when it is chosen without a listing', async () => {
+    repositoryRefs.mockRejectedValue(new ApiError(503, 'git could not be asked', 'git could not be started.'));
+    const { user, dialog } = await openAddHistory();
+    await within(dialog).findByText(/branches could not be listed/);
+
+    await user.click(within(dialog).getByRole('radio', { name: 'Checked-out branch' }));
+    expect(within(dialog).getByText(/whatever branch the checkout has out when the source refreshes/)).toBeInTheDocument();
   });
 
   it('returns to the checked-out branch when the folder changes', async () => {

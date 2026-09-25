@@ -54,7 +54,14 @@ export function GitRefPicker({
 
   const listing = read?.result?.isRepository ? read.result.listing : null;
   const picked = listing ? listedRef(listing, value) : null;
-  const mode: Mode = chosen ?? (value === 'HEAD' ? 'head' : picked ? 'branch' : 'other');
+  const loading = repositoryPath !== null && !read?.result && read?.error === undefined;
+
+  // Without a listing, and none on the way, the text box is the one control that can say
+  // what is followed, so it is what shows until someone chooses otherwise.
+  const mode: Mode = chosen
+    ?? (listing
+      ? (value === 'HEAD' ? 'head' : picked ? 'branch' : 'other')
+      : (loading && value === 'HEAD' ? 'head' : 'other'));
 
   const headRef = listing?.head.branch
     ? listing.local.refs.find((r) => r.name === listing.head.branch)
@@ -68,8 +75,6 @@ export function GitRefPicker({
       if (first) onChange(first.name);
     }
   };
-
-  const loading = repositoryPath !== null && !read?.result && read?.error === undefined;
 
   return (
     <div className="mb-3.5 grid gap-2">
@@ -99,6 +104,12 @@ export function GitRefPicker({
           This folder is not a repository's root, so it has no history of its own. Choose the folder that holds
           .git.
         </Notice>
+      )}
+
+      {mode === 'head' && !listing && !loading && (
+        <p className="m-0 text-xs">
+          Follows <span className="mono">HEAD</span>, whatever branch the checkout has out when the source refreshes.
+        </p>
       )}
 
       {mode === 'head' && listing && (
@@ -222,17 +233,18 @@ export function GitRefPicker({
 
 /**
  * One ref in the picker. Short on purpose: an item's text is also what the closed select
- * shows. A name the server refuses is listed, disabled, with the reason on hover, so a
- * branch that exists is never simply missing.
+ * shows. A name the server refuses is listed, disabled, with the reason in its text, so a
+ * branch that exists is never simply missing. The reason is not a title: a disabled item
+ * takes no pointer events, so nothing could hover it.
  */
 function RefItem({ r, children }: { r: GitRef; children: React.ReactNode }) {
   return (
-    <SelectItem value={r.name} disabled={!!r.refusal} title={r.refusal ?? undefined}>
+    <SelectItem value={r.name} disabled={!!r.refusal}>
       <bdi className="mono">{refLabel(r.name)}</bdi>
       {/* The separator is a text node of its own. Inside the span, its leading space was
           at an element's edge, which an accessible name drops: "main· 52 behind". */}
       {(r.refusal || children) && ' · '}
-      <span className="dim text-xs">{r.refusal ? 'cannot be followed' : children}</span>
+      <span className="dim text-xs">{r.refusal ? `cannot be followed. ${r.refusal}` : children}</span>
     </SelectItem>
   );
 }

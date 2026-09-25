@@ -47,9 +47,10 @@ describe('the listed ref a stored value names', () => {
     expect(listedRef(listing, 'refs/prefetch/origin/main')?.kind).toBe('prefetched');
   });
 
-  it('matches a short name as a branch, then a remote-tracking ref', () => {
+  it('matches a short name as a branch, then a remote-tracking ref, then a prefetched one', () => {
     expect(listedRef(listing, 'main')?.ref.name).toBe('refs/heads/main');
     expect(listedRef(listing, 'origin/main')?.ref.name).toBe('refs/remotes/origin/main');
+    expect(listedRef(listing, 'prefetch/origin/main')?.kind).toBe('prefetched');
     expect(listedRef(listing, 'v1.2.0')).toBeNull();
     expect(listedRef(listing, 'HEAD')).toBeNull();
   });
