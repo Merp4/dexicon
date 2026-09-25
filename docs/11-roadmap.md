@@ -254,12 +254,13 @@ it, and anyone proposing a reranker has a baseline to beat.
 - ✅ The repository made public, 2026-09-16, which is also what enables the provenance
   attestation the release workflow skips on a private repo.
 
-**Done when:** the repository is public and the quickstart has been followed on a clean
-machine by someone who did not write it.
+**Done when:** ✅ the repository is public and Dexicon has been installed from the
+quickstart on a clean machine. Met on 2026-09-25, when the maintainer installed it afresh
+on a second machine.
 
-**Closed** by the maintainer on 2026-09-25, after installing Dexicon afresh on a second
-machine. That install is the evidence for the second half. Nobody outside the project has
-reported following the quickstart yet.
+The criterion as first written also required that install to be made by someone who did
+not write Dexicon. The maintainer dropped that condition when closing the milestone. Nobody
+outside the project has reported following the quickstart yet.
 
 ---
 
