@@ -207,8 +207,12 @@ internal sealed class IndexingHarness : IAsyncDisposable
         await db.SaveChangesAsync();
     }
 
-    /// <summary>Queue a job and run it to completion, as the worker does.</summary>
-    public async Task<IndexJob> RunIndexAsync(JobKind kind = JobKind.Refresh)
+    /// <summary>
+    /// Queue a job and run it to completion, as the worker does. <paramref name="readTracking"/>
+    /// replaces how a history source's tracking is read, so a test can make it fail.
+    /// </summary>
+    public async Task<IndexJob> RunIndexAsync(JobKind kind = JobKind.Refresh,
+        Func<GitRepository, string, DateTime, CancellationToken, Task<GitTracking>>? readTracking = null)
     {
         string jobId;
         await using (var db = NewContext())
@@ -239,7 +243,10 @@ internal sealed class IndexingHarness : IAsyncDisposable
             new DocumentService(runDb, options, NullLogger<DocumentService>.Instance),
             new CorpusLeases(scopes, NullLogger<CorpusLeases>.Instance),
             options,
-            NullLogger<CorpusIndexer>.Instance);
+            NullLogger<CorpusIndexer>.Instance)
+        {
+            ReadTracking = readTracking ?? GitHistory.TrackingAsync,
+        };
 
         return await indexer.RunAsync(jobId, null, CancellationToken.None);
     }

@@ -557,6 +557,26 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
+    /// git's stderr is drained to the end, so git never blocks on a full pipe, and kept to
+    /// a bound, so a flood of diagnostics cannot allocate without limit. The output
+    /// ceilings covered stdout alone.
+    /// </summary>
+    [Fact]
+    public async Task StderrIsDrainedWholeAndKeptToABound()
+    {
+        var flood = new string('x', GitHistory.StderrKept * 4);
+        using var reader = new StringReader(flood + "tail");
+
+        var kept = await GitHistory.DrainAsync(reader, GitHistory.StderrKept, default);
+
+        kept.Length.ShouldBe(GitHistory.StderrKept);
+        (await reader.ReadToEndAsync()).ShouldBeEmpty("the rest was read, so a pipe would not block");
+
+        using var short_ = new StringReader("fatal: not a git repository\n");
+        (await GitHistory.DrainAsync(short_, GitHistory.StderrKept, default)).ShouldBe("fatal: not a git repository\n");
+    }
+
+    /// <summary>
     /// Adding a history source at a folder: 400 when the folder has no repository, 503
     /// when git could not be asked. The second was a 500, and a 400 would send someone to
     /// check a path that is right.

@@ -162,6 +162,15 @@ public sealed record ReadinessResponse(string Status, bool Qdrant, bool Catalogu
 
 public sealed record WorkspaceListing(string Root, string Path, IReadOnlyList<WorkspaceEntry> Entries);
 
+/// <summary>A folder's repository, as the history source's picker reads it.</summary>
+/// <param name="Path">The folder, relative to the workspace root; empty for the root itself.</param>
+/// <param name="IsRepository">
+/// Whether the folder is a repository's root. A subfolder of one is not: a source there
+/// would walk the whole repository's history.
+/// </param>
+/// <param name="Listing">The refs, when it is one.</param>
+public sealed record GitRefsResponse(string Path, bool IsRepository, GitRefListing? Listing);
+
 public sealed record UploadFailure(string File, string Error);
 
 public sealed record UploadResponse(
@@ -315,6 +324,12 @@ public sealed record CorpusSummary(
 /// Beside <paramref name="Git"/> because the ref names what to follow and this says where
 /// it had got to: a ref that stopped moving is otherwise invisible.
 /// </param>
+/// <param name="Tracking">
+/// How current the followed ref was at the last pass: the local branch it resolved to, how
+/// far behind its upstream that was, and when a fetch last ran. Only when it was observed
+/// for the ref the source follows now, so a changed ref never shows the old one's numbers.
+/// Null for every other kind and before the first pass.
+/// </param>
 public sealed record SourceSummary(
     string Id,
     string Kind,
@@ -329,7 +344,8 @@ public sealed record SourceSummary(
     IReadOnlyList<string>? OwnIncludeGlobs = null,
     IReadOnlyList<string>? OwnExcludeGlobs = null,
     GitHistoryOptions? Git = null,
-    CommitSummary? NewestCommit = null);
+    CommitSummary? NewestCommit = null,
+    GitTracking? Tracking = null);
 
 /// <summary>A commit, by its full sha and its author date.</summary>
 public sealed record CommitSummary(string Sha, DateTime AuthoredUtc);
@@ -525,6 +541,7 @@ public static class Mapping
         int fileCount = 0)
     {
         var effective = SourceFilters.Resolve(corpus, s, configured);
+        var git = s.Kind == SourceKind.GitHistory ? GitHistoryOptions.FromJson(s.GitOptions) : null;
 
         return new SourceSummary(
             s.Id,
@@ -539,9 +556,12 @@ public static class Mapping
             s.MaxFileBytes,
             SourceFilters.Globs(s.IncludeGlobs),
             SourceFilters.Globs(s.ExcludeGlobs),
-            s.Kind == SourceKind.GitHistory ? GitHistoryOptions.FromJson(s.GitOptions) : null,
+            git,
             s is { Kind: SourceKind.GitHistory, NewestCommitSha: { } sha, NewestCommitUtc: { } at }
                 ? new CommitSummary(sha, at)
+                : null,
+            git is not null && GitTracking.FromJson(s.GitTracking) is { } tracking && tracking.Ref == git.Ref
+                ? tracking
                 : null);
     }
 

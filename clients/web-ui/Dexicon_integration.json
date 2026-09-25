@@ -757,6 +757,83 @@
           }
         }
       },
+      "GitTracking": {
+        "required": [
+          "ref",
+          "branch",
+          "upstream",
+          "lastFetchUtc",
+          "observedUtc"
+        ],
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "branch": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "upstream": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GitUpstream"
+              }
+            ]
+          },
+          "lastFetchUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "observedUtc": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "GitUpstream": {
+        "required": [
+          "name",
+          "shortName",
+          "ahead",
+          "behind",
+          "gone"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "shortName": {
+            "type": "string"
+          },
+          "ahead": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "behind": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "gone": {
+            "type": "boolean"
+          }
+        }
+      },
       "JobSummary": {
         "required": [
           "id",
@@ -1171,6 +1248,16 @@
               },
               {
                 "$ref": "#/components/schemas/CommitSummary"
+              }
+            ]
+          },
+          "tracking": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GitTracking"
               }
             ]
           }

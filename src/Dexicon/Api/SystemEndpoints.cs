@@ -283,6 +283,53 @@ public static class SystemEndpoints
                 Path.GetRelativePath(root, full).Replace('\\', '/'),
                 entries));
         }).Produces<WorkspaceListing>().WithTags("Workspaces");
+
+        // What a folder's repository could be followed at, so a history source is pointed
+        // at a branch picked from the repository rather than at a name typed from memory.
+        app.MapGet("/api/workspaces/git", async (string? path, RequestContext rc,
+            IOptions<DexiconOptions> opts, CancellationToken ct) =>
+        {
+            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+            return await RepositoryRefsAsync(opts.Value.Indexing.WorkspaceRoot, path, ct);
+        }).Produces<GitRefsResponse>().WithTags("Workspaces");
+    }
+
+    /// <summary>
+    /// The refs of the repository at <paramref name="path"/>, or that there is none.
+    ///
+    /// The path is resolved the way a history source's is, so the picker lists exactly
+    /// what a source added there would walk: 400 outside the workspace or through a link,
+    /// 404 when nothing is mounted there. A folder that is not a repository's root is an
+    /// answer, not an error, since the picker offers the folder anyway. git failing to
+    /// answer is 503 with its reason, and the picker falls back to a typed ref.
+    /// </summary>
+    internal static async Task<IResult> RepositoryRefsAsync(string workspaceRoot, string? path, CancellationToken ct)
+    {
+        GitRepository? repo;
+        try { repo = GitHistory.RepositoryIn(workspaceRoot, path); }
+        catch (UnauthorizedAccessException ex)
+        { return Results.Problem(title: "Path refused", detail: ex.Message, statusCode: 400); }
+
+        if (repo is null)
+            return Results.Problem(
+                title: "Not mounted",
+                detail: $"'{path}' does not exist under {workspaceRoot}. " +
+                        "Dexicon can only index paths bind-mounted into the container. See WORKSPACE_ROOT.",
+                statusCode: 404);
+
+        var relative = Path.GetRelativePath(Path.GetFullPath(workspaceRoot), repo.FullPath).Replace('\\', '/');
+        if (relative == ".") relative = string.Empty;
+
+        try
+        {
+            return await GitHistory.IsRepositoryAsync(repo, ct)
+                ? Results.Ok(new GitRefsResponse(relative, true, await GitHistory.RefsAsync(repo, ct)))
+                : Results.Ok(new GitRefsResponse(relative, false, null));
+        }
+        catch (GitHistoryException ex)
+        {
+            return Results.Problem(title: "git could not be asked", detail: ex.Message, statusCode: 503);
+        }
     }
 
     public static void MapAdminEndpoints(this IEndpointRouteBuilder app)

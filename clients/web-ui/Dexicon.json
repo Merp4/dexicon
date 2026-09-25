@@ -247,6 +247,34 @@
         }
       }
     },
+    "/api/workspaces/git": {
+      "get": {
+        "tags": [
+          "Workspaces"
+        ],
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitRefsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/corpora": {
       "post": {
         "tags": [
@@ -2505,6 +2533,27 @@
           }
         }
       },
+      "GitHead": {
+        "required": [
+          "branch",
+          "sha"
+        ],
+        "type": "object",
+        "properties": {
+          "branch": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "sha": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
       "GitHistoryOptions": {
         "type": "object",
         "properties": {
@@ -2543,6 +2592,213 @@
               "string"
             ],
             "format": "date"
+          }
+        }
+      },
+      "GitRef": {
+        "required": [
+          "name",
+          "shortName",
+          "sha",
+          "committedUtc"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "shortName": {
+            "type": "string"
+          },
+          "sha": {
+            "type": "string"
+          },
+          "committedUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "upstream": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GitUpstream"
+              }
+            ]
+          },
+          "mirrors": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "sameAsMirrored": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "refusal": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "GitRefGroup": {
+        "required": [
+          "refs",
+          "truncated"
+        ],
+        "type": "object",
+        "properties": {
+          "refs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GitRef"
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "GitRefListing": {
+        "required": [
+          "head",
+          "local",
+          "remoteTracking",
+          "prefetched",
+          "lastFetchUtc"
+        ],
+        "type": "object",
+        "properties": {
+          "head": {
+            "$ref": "#/components/schemas/GitHead"
+          },
+          "local": {
+            "$ref": "#/components/schemas/GitRefGroup"
+          },
+          "remoteTracking": {
+            "$ref": "#/components/schemas/GitRefGroup"
+          },
+          "prefetched": {
+            "$ref": "#/components/schemas/GitRefGroup"
+          },
+          "lastFetchUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "GitRefsResponse": {
+        "required": [
+          "path",
+          "isRepository",
+          "listing"
+        ],
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "isRepository": {
+            "type": "boolean"
+          },
+          "listing": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GitRefListing"
+              }
+            ]
+          }
+        }
+      },
+      "GitTracking": {
+        "required": [
+          "ref",
+          "branch",
+          "upstream",
+          "lastFetchUtc",
+          "observedUtc"
+        ],
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "branch": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "upstream": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GitUpstream"
+              }
+            ]
+          },
+          "lastFetchUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "observedUtc": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "GitUpstream": {
+        "required": [
+          "name",
+          "shortName",
+          "ahead",
+          "behind",
+          "gone"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "shortName": {
+            "type": "string"
+          },
+          "ahead": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "behind": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "gone": {
+            "type": "boolean"
           }
         }
       },
@@ -3454,6 +3710,16 @@
               },
               {
                 "$ref": "#/components/schemas/CommitSummary"
+              }
+            ]
+          },
+          "tracking": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GitTracking"
               }
             ]
           }

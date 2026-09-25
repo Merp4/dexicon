@@ -267,6 +267,16 @@ public sealed class Source
     public string? NewestCommitSha { get; set; }
     public DateTime? NewestCommitUtc { get; set; }
 
+    /// <summary>
+    /// Git-history sources only: how current the followed ref was when the last pass
+    /// listed the history. The local branch it resolved to, that branch's upstream and
+    /// how far behind it was, and when a fetch last ran. JSON, read through
+    /// <see cref="Indexing.GitTracking.FromJson"/>, for the reason <see cref="GitOptions"/>
+    /// is. Written once per pass after an inventory that answered; a read of it that fails
+    /// leaves the last record, and the sweep leaves it alone, as for the newest commit.
+    /// </summary>
+    public string? GitTracking { get; set; }
+
     public DateTime CreatedUtc { get; set; }
 
     public List<IndexedFile> Files { get; set; } = [];

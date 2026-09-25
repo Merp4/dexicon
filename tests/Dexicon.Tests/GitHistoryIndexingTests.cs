@@ -567,4 +567,103 @@ public sealed class GitHistoryIndexingTests
         corpus.State.ShouldBe(CorpusState.Unavailable);
         corpus.LastIndexedUtc.ShouldBeNull("nothing was indexed, so nothing was indexed at");
     }
+
+    /// <summary>
+    /// A repository whose local main is <paramref name="behind"/> commits behind
+    /// origin/main, as a fetch nobody followed with a pull leaves it. The remote-tracking
+    /// ref is set directly, so no remote is contacted.
+    /// </summary>
+    private static void BehindItsUpstream(string repo, int behind)
+    {
+        Init(repo);
+        Commit(repo, "a.txt", "one\n", "the first change");
+        Git(repo, "checkout", "--quiet", "-b", "ahead");
+        for (var i = 0; i < behind; i++) Commit(repo, "a.txt", $"more {i}\n", $"upstream {i}");
+        Git(repo, "update-ref", "refs/remotes/origin/main", "ahead");
+        Git(repo, "checkout", "--quiet", "main");
+        Git(repo, "branch", "--quiet", "-D", "ahead");
+        Git(repo, "config", "remote.origin.url", "https://example.invalid/repo.git");
+        Git(repo, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*");
+        Git(repo, "config", "branch.main.remote", "origin");
+        Git(repo, "config", "branch.main.merge", "refs/heads/main");
+    }
+
+    private static async Task<string?> TrackingRecordedAsync(IndexingHarness harness)
+    {
+        await using var db = harness.NewContext();
+        return (await db.Sources.SingleAsync()).GitTracking;
+    }
+
+    /// <summary>
+    /// How far the followed branch was behind its upstream, recorded by the pass, so the
+    /// source's row can say so: dexhistory sat 52 behind origin/main for three days with
+    /// every count on screen correct.
+    /// </summary>
+    [Fact]
+    public async Task ThePassRecordsHowFarBehindItsUpstreamTheFollowedBranchIs()
+    {
+        await using var harness = await IndexingHarness.StartAsync("repo");
+        BehindItsUpstream(harness.SourceDirectory, behind: 3);
+
+        await harness.SeedCorpusAsync(SourceKind.GitHistory);
+        (await TrackingRecordedAsync(harness)).ShouldBeNull("nothing has read the history yet");
+
+        (await harness.RunIndexAsync()).State.ShouldBe(JobState.Succeeded);
+
+        var tracking = GitTracking.FromJson(await TrackingRecordedAsync(harness)).ShouldNotBeNull();
+        tracking.Ref.ShouldBe("HEAD");
+        tracking.Branch.ShouldBe("refs/heads/main");
+        var upstream = tracking.Upstream.ShouldNotBeNull();
+        upstream.ShortName.ShouldBe("origin/main");
+        (upstream.Ahead, upstream.Behind).ShouldBe((0, 3));
+    }
+
+    /// <summary>
+    /// The record is a display. A read of it that fails keeps the last one and changes
+    /// nothing about the pass: git answering the inventory but not this is no reason to
+    /// call the source unavailable or the job degraded.
+    /// </summary>
+    [Fact]
+    public async Task ATrackingReadThatFailsKeepsTheLastRecordAndDoesNotDegradeThePass()
+    {
+        await using var harness = await IndexingHarness.StartAsync("repo");
+        BehindItsUpstream(harness.SourceDirectory, behind: 2);
+        await harness.SeedCorpusAsync(SourceKind.GitHistory);
+        await harness.RunIndexAsync();
+        var recorded = (await TrackingRecordedAsync(harness)).ShouldNotBeNull();
+
+        foreach (var failure in new Exception[]
+                 {
+                     new GitHistoryException("git did not finish within 30 seconds."),
+                     new InvalidOperationException("anything else"),
+                 })
+        {
+            var job = await harness.RunIndexAsync(readTracking: (_, _, _, _) => throw failure);
+
+            job.State.ShouldBe(JobState.Succeeded, failure.GetType().Name);
+            job.Error.ShouldBeNull(failure.GetType().Name);
+            (await TrackingRecordedAsync(harness)).ShouldBe(recorded, failure.GetType().Name);
+        }
+    }
+
+    /// <summary>
+    /// A job lists a history once per chunk set. How current the ref is has one answer per
+    /// pass, so it is read once.
+    /// </summary>
+    [Fact]
+    public async Task TheTrackingReadRunsOncePerPassNotOncePerChunkSet()
+    {
+        await using var harness = await IndexingHarness.StartAsync("repo");
+        BehindItsUpstream(harness.SourceDirectory, behind: 1);
+        await harness.SeedCorpusAsync(SourceKind.GitHistory, sets: 2);
+
+        var reads = 0;
+        await harness.RunIndexAsync(readTracking: (repo, @ref, at, ct) =>
+        {
+            Interlocked.Increment(ref reads);
+            return GitHistory.TrackingAsync(repo, @ref, at, ct);
+        });
+
+        reads.ShouldBe(1);
+    }
 }
