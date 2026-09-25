@@ -996,7 +996,7 @@ public static partial class GitHistory
 
         // Both streams read concurrently. Waiting for exit with either pipe unread is the
         // classic deadlock: git fills the buffer and blocks, and nothing drains it.
-        var stderrTask = process.StandardError.ReadToEndAsync(deadline.Token);
+        var stderrTask = DrainAsync(process.StandardError, StderrKept, deadline.Token);
         var stdout = new StringBuilder();
         var over = false;
         var read = 0L;
@@ -1068,6 +1068,34 @@ public static partial class GitHistory
         }
 
         return (process.ExitCode == 0, stdout.ToString(), await stderrTask);
+    }
+
+    /// <summary>
+    /// How much of git's stderr is kept. Only its first line is ever reported
+    /// (<see cref="Summarise"/>), cut to 300 characters, so this is room for a few lines of
+    /// diagnostics and not a cap anyone meets in normal use.
+    /// </summary>
+    internal const int StderrKept = 64 * 1024;
+
+    /// <summary>
+    /// Reads a stream to its end and keeps at most <paramref name="kept"/> characters.
+    ///
+    /// Read to the end rather than stopped at the cap, because a pipe nobody drains fills
+    /// and blocks git. Kept to a bound rather than whole, because it was read whole: the
+    /// output ceilings covered stdout alone, so a git call that wrote a flood of
+    /// diagnostics could allocate without limit while the call's ceiling said otherwise.
+    /// </summary>
+    internal static async Task<string> DrainAsync(TextReader reader, int kept, CancellationToken ct)
+    {
+        var text = new StringBuilder();
+        var buffer = new char[16 * 1024];
+        while (true)
+        {
+            var n = await reader.ReadAsync(buffer, ct);
+            if (n == 0) break;
+            if (text.Length < kept) text.Append(buffer, 0, Math.Min(n, kept - text.Length));
+        }
+        return text.ToString();
     }
 
     /// <summary>
