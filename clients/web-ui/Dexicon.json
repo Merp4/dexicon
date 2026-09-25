@@ -259,6 +259,13 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "ref",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2533,6 +2540,24 @@
           }
         }
       },
+      "GitFollowed": {
+        "required": [
+          "ref",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
       "GitHead": {
         "required": [
           "branch",
@@ -2696,6 +2721,16 @@
               "string"
             ],
             "format": "date-time"
+          },
+          "followed": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GitFollowed"
+              }
+            ]
           }
         }
       },

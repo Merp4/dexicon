@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, type GitRef, type GitRefsResponse } from './api';
 import {
   Button, Field, Input, Notice, Segmented, Select, SelectGroup, SelectItem, SelectLabel, relativeTime,
@@ -36,6 +36,13 @@ export function GitRefPicker({
   // when the listing arrives, so a stored ref shows in the mode it belongs to.
   const [chosen, setChosen] = useState<Mode | null>(null);
 
+  // The value when the folder was read, which is the stored one, or HEAD after the folder
+  // changes. The server resolves it as git would, since the listing holds no tags and a
+  // short name's spelling cannot say which ref git walks for it. Kept in a ref so that
+  // picking or typing does not read the repository again.
+  const asked = useRef(value);
+  useEffect(() => { asked.current = value; });
+
   useEffect(() => {
     setChosen(null);
     if (repositoryPath === null) {
@@ -45,7 +52,7 @@ export function GitRefPicker({
 
     let current = true;
     setRead({ path: repositoryPath });
-    api.repositoryRefs(repositoryPath).then(
+    api.repositoryRefs(repositoryPath, asked.current).then(
       (result) => { if (current) setRead({ path: repositoryPath, result }); },
       (error: unknown) => { if (current) setRead({ path: repositoryPath, error }); },
     );
@@ -62,6 +69,13 @@ export function GitRefPicker({
     ?? (listing
       ? (value === 'HEAD' ? 'head' : picked ? 'branch' : 'other')
       : (loading && value === 'HEAD' ? 'head' : 'other'));
+
+  // A short name that is both a tag and a branch: git walks the tag, which a person
+  // reading the name would not expect.
+  const shadowed = !!listing
+    && listing.followed?.ref === value
+    && listing.followed.name === `refs/tags/${value}`
+    && [...listing.local.refs, ...listing.remoteTracking.refs].some((r) => r.shortName === value);
 
   const headRef = listing?.head.branch
     ? listing.local.refs.find((r) => r.name === listing.head.branch)
@@ -183,8 +197,10 @@ export function GitRefPicker({
                   {listing.prefetched.refs.map((r) => (
                     <RefItem key={r.name} r={r}>
                       {r.committedUtc ? `last commit ${relativeTime(r.committedUtc)}` : null}
+                      {/* Differs, not ahead: a fetch after the prefetch leaves the copy behind,
+                          and only the tips are compared. */}
                       {r.mirrors && r.sameAsMirrored != null
-                        ? `, ${r.sameAsMirrored ? 'same as' : 'ahead of'} ${refLabel(r.mirrors)}`
+                        ? `, ${r.sameAsMirrored ? 'same as' : 'differs from'} ${refLabel(r.mirrors)}`
                         : null}
                     </RefItem>
                   ))}
@@ -226,6 +242,12 @@ export function GitRefPicker({
         <Field label="Ref" hint="A branch, a tag or a commit, as git names it. One that names nothing shows on the corpus after the refresh.">
           <Input className="mono" value={value} onChange={(e) => onChange(e.target.value)} placeholder="HEAD" />
         </Field>
+      )}
+      {mode === 'other' && shadowed && (
+        <p className="dim m-0 text-xs">
+          <span className="mono">{value}</span> is also a tag here. git takes a tag before a branch of the same name,
+          so the tag is what is indexed. Pick the branch under A branch to follow it instead.
+        </p>
       )}
     </div>
   );

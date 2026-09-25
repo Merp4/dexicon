@@ -28,11 +28,26 @@ public sealed record GitRefGroup(IReadOnlyList<GitRef> Refs, bool Truncated);
 /// <param name="Sha">The commit HEAD is at. Null before the first commit.</param>
 public sealed record GitHead(string? Branch, string? Sha);
 
+/// <summary>A ref as a source stores it, and the ref git walks for it.</summary>
+/// <param name="Ref">The ref as asked about.</param>
+/// <param name="Name">
+/// The full name git resolves it to, in git's order for a short name, so a tag named like a
+/// branch is the tag. Null for <c>HEAD</c>, whose branch is the listing's head, for a ref
+/// the ref rule refuses, and for anything that names no ref, such as a commit.
+/// </param>
+public sealed record GitFollowed(string Ref, string? Name);
+
 /// <summary>What a repository could be followed at.</summary>
+/// <param name="Local">
+/// Local branches, newest first. The checked-out branch and the followed ref are listed even
+/// when the cap would leave them out, since the picker describes both.
+/// </param>
 /// <param name="Prefetched">Refs under <c>refs/prefetch/</c>, written by <c>git maintenance</c>'s prefetch task.</param>
 /// <param name="LastFetchUtc">When a <c>git fetch</c> last ran, from FETCH_HEAD. A prefetch does not write it.</param>
+/// <param name="Followed">What the ref a source follows resolves to. Null when the listing was not asked about one.</param>
 public sealed record GitRefListing(
-    GitHead Head, GitRefGroup Local, GitRefGroup RemoteTracking, GitRefGroup Prefetched, DateTime? LastFetchUtc);
+    GitHead Head, GitRefGroup Local, GitRefGroup RemoteTracking, GitRefGroup Prefetched, DateTime? LastFetchUtc,
+    GitFollowed? Followed = null);
 
 /// <summary>
 /// How current the ref a source follows was, observed by the pass that indexed it.
@@ -94,7 +109,11 @@ public static partial class GitHistory
     /// and this reads what it left. Not read: remote URLs, which can carry a credential,
     /// FETCH_HEAD's contents, which name the remotes, and any configuration.
     /// </summary>
-    public static async Task<GitRefListing> RefsAsync(GitRepository repo, CancellationToken ct)
+    /// <param name="follows">
+    /// The ref a source follows, resolved as <see cref="GitRefListing.Followed"/> so the
+    /// picker shows the ref git walks for it rather than guessing from its short name.
+    /// </param>
+    public static async Task<GitRefListing> RefsAsync(GitRepository repo, CancellationToken ct, string? follows = null)
     {
         var head = await HeadAsync(repo, ct);
         var local = await GroupAsync(repo, "refs/heads/", ct);
@@ -104,6 +123,29 @@ public static partial class GitHistory
         // that ran it: 2.31 writes refs/prefetch/origin/main, 2.54 writes
         // refs/prefetch/remotes/origin/main. Both measured.
         var prefetched = await GroupAsync(repo, "refs/prefetch/", ct);
+
+        var followed = follows is null ? null
+            : new GitFollowed(follows,
+                follows == "HEAD" || RefProblem(follows) is not null ? null : await ResolveAsync(repo, follows, ct));
+
+        // The checked-out branch and the followed ref, when newer refs have pushed them past
+        // the cap. Without them the picker could not say how far the checked-out branch is
+        // behind, or show a followed branch as picked.
+        var listed = local.Refs.Concat(remote.Refs).Concat(prefetched.Refs)
+            .Select(r => r.Name).ToHashSet(StringComparer.Ordinal);
+        var missing = new[] { head.Branch, followed?.Name }.OfType<string>()
+            .Where(n => !listed.Contains(n)).Distinct(StringComparer.Ordinal).ToList();
+
+        if (missing.Count > 0)
+            foreach (var r in await ExactAsync(repo, missing, ct))
+            {
+                if (r.Name.StartsWith("refs/heads/", StringComparison.Ordinal))
+                    local = local with { Refs = [.. local.Refs, r] };
+                else if (r.Name.StartsWith("refs/remotes/", StringComparison.Ordinal))
+                    remote = remote with { Refs = [.. remote.Refs, r] };
+                else if (r.Name.StartsWith("refs/prefetch/", StringComparison.Ordinal))
+                    prefetched = prefetched with { Refs = [.. prefetched.Refs, r] };
+            }
 
         var remoteTips = remote.Refs.ToDictionary(r => r.Name, r => r.Sha, StringComparer.Ordinal);
 
@@ -128,7 +170,7 @@ public static partial class GitHistory
             ],
         };
 
-        return new GitRefListing(head, local, remote, prefetched, await LastFetchAsync(repo, ct));
+        return new GitRefListing(head, local, remote, prefetched, await LastFetchAsync(repo, ct), followed);
     }
 
     /// <summary>
@@ -174,29 +216,45 @@ public static partial class GitHistory
         if (!ok) throw new GitHistoryException($"git for-each-ref failed: {Summarise(stderr)}");
 
         var rows = stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        var refs = new List<GitRef>();
-
-        foreach (var row in rows)
-        {
-            var f = row.Split('\0');
-            if (f.Length != 8) continue;
-
-            // origin/HEAD and its like: a pointer to another ref in the same list.
-            if (f[4].Length > 0) continue;
-
-            refs.Add(new GitRef(
-                Name: f[0],
-                ShortName: f[1],
-                Sha: f[2],
-                CommittedUtc: DateTimeOffset.TryParse(f[3], CultureInfo.InvariantCulture,
-                    DateTimeStyles.RoundtripKind, out var at) ? at.UtcDateTime : null,
-                Upstream: UpstreamFrom(f[5], f[6], f[7]),
-                Refusal: RefProblem(f[0])));
-        }
+        var refs = rows.Select(RefFrom).OfType<GitRef>().ToList();
 
         return new GitRefGroup(
             [.. refs.Take(RefsPerGroup)],
             Truncated: refs.Count > RefsPerGroup || rows.Length >= asked);
+    }
+
+    /// <summary>These refs in the listing's form, where they exist. A pattern also matches refs beneath it, so only exact names count.</summary>
+    private static async Task<IReadOnlyList<GitRef>> ExactAsync(
+        GitRepository repo, IReadOnlyList<string> names, CancellationToken ct)
+    {
+        var (ok, stdout, stderr) = await AskAsync(repo, ["for-each-ref", $"--format={RefFormat}", .. names], ct);
+        if (!ok) throw new GitHistoryException($"git for-each-ref failed: {Summarise(stderr)}");
+
+        var wanted = names.ToHashSet(StringComparer.Ordinal);
+        return
+        [
+            .. stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(RefFrom).OfType<GitRef>().Where(r => wanted.Contains(r.Name)),
+        ];
+    }
+
+    /// <summary>One row of <see cref="RefFormat"/>, or null for a symbolic ref or a row that does not parse.</summary>
+    private static GitRef? RefFrom(string row)
+    {
+        var f = row.Split('\0');
+        if (f.Length != 8) return null;
+
+        // origin/HEAD and its like: a pointer to another ref in the same list.
+        if (f[4].Length > 0) return null;
+
+        return new GitRef(
+            Name: f[0],
+            ShortName: f[1],
+            Sha: f[2],
+            CommittedUtc: DateTimeOffset.TryParse(f[3], CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind, out var at) ? at.UtcDateTime : null,
+            Upstream: UpstreamFrom(f[5], f[6], f[7]),
+            Refusal: RefProblem(f[0]));
     }
 
     private static GitUpstream? UpstreamFrom(string name, string shortName, string track)
@@ -311,6 +369,21 @@ public static partial class GitHistory
     {
         if (@ref == "HEAD") return ((await HeadAsync(repo, ct)).Branch, false);
 
+        return await ResolveAsync(repo, @ref, ct) switch
+        {
+            { } name when name.StartsWith("refs/heads/", StringComparison.Ordinal) => (name, false),
+            { } name when name.StartsWith("refs/remotes/", StringComparison.Ordinal) => (null, true),
+            _ => (null, false),
+        };
+    }
+
+    /// <summary>
+    /// The full name of the ref <paramref name="ref"/> names, in the order git resolves a
+    /// short name (<c>refs/</c>, then tags, then branches, then remotes), or null when it
+    /// names none. A full name is looked up as it is.
+    /// </summary>
+    private static async Task<string?> ResolveAsync(GitRepository repo, string @ref, CancellationToken ct)
+    {
         string[] candidates = @ref.StartsWith("refs/", StringComparison.Ordinal)
             ? [@ref]
             : [$"refs/{@ref}", $"refs/tags/{@ref}", $"refs/heads/{@ref}", $"refs/remotes/{@ref}"];
@@ -320,13 +393,7 @@ public static partial class GitHistory
 
         // A pattern also matches refs beneath it, so only exact names count.
         var present = stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
-
-        return candidates.FirstOrDefault(present.Contains) switch
-        {
-            { } name when name.StartsWith("refs/heads/", StringComparison.Ordinal) => (name, false),
-            { } name when name.StartsWith("refs/remotes/", StringComparison.Ordinal) => (null, true),
-            _ => (null, false),
-        };
+        return candidates.FirstOrDefault(present.Contains);
     }
 
     /// <summary>The tips of exactly these refs, where they exist. A pattern also matches refs beneath it, so only exact names count.</summary>

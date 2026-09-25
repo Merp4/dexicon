@@ -333,6 +333,90 @@ public sealed class GitRefsTests : IDisposable
         prefetched.SameAsMirrored.ShouldBe(true);
     }
 
+    /// <summary>Refs created in one <c>update-ref</c>, all at <paramref name="sha"/>.</summary>
+    private void CreateRefs(string prefix, int count, string sha)
+    {
+        var info = new ProcessStartInfo("git", ["update-ref", "--stdin"])
+        {
+            WorkingDirectory = Clone,
+            RedirectStandardInput = true,
+            UseShellExecute = false,
+        };
+        using var p = Process.Start(info)!;
+        for (var i = 0; i < count; i++) p.StandardInput.Write($"create {prefix}{i:D4} {sha}\n");
+        p.StandardInput.Close();
+        p.WaitForExit();
+        p.ExitCode.ShouldBe(0);
+    }
+
+    /// <summary>
+    /// The checked-out branch is listed when 200 newer branches push it past the cap, with
+    /// its upstream, since that is where the picker reads how far behind it is.
+    /// </summary>
+    [Fact]
+    public async Task TheCheckedOutBranchIsListedPastTheCap()
+    {
+        PushedElsewhere(2);
+        Git(Clone, "fetch", "--quiet");
+
+        Git(Clone, "checkout", "--quiet", "-b", "newer");
+        CreateRefs("refs/heads/many/", GitHistory.RefsPerGroup + 5, CommitLater(Clone, "newer than main"));
+        Git(Clone, "checkout", "--quiet", "main");
+
+        var local = (await RefsAsync()).Local;
+
+        local.Truncated.ShouldBeTrue("the setup: main is past the cap");
+        local.Refs.Take(GitHistory.RefsPerGroup).ShouldNotContain(r => r.Name == "refs/heads/main", "the setup");
+        local.Refs.Single(r => r.Name == "refs/heads/main").Upstream.ShouldNotBeNull().Behind.ShouldBe(2);
+        local.Refs.Count.ShouldBe(GitHistory.RefsPerGroup + 1);
+    }
+
+    /// <summary>
+    /// The ref a source follows is resolved the way git resolves it, so the picker shows the
+    /// ref the source walks: a tag named <c>main</c> is the tag, not the branch, and a
+    /// short name the picker cannot see the tags for is not guessed from its spelling.
+    /// </summary>
+    [Fact]
+    public async Task TheFollowedRefIsResolvedTheWayGitResolvesIt()
+    {
+        Git(Clone, "fetch", "--quiet");
+        CreateRefs("refs/prefetch/remotes/origin/copy", 1, Git(Clone, "rev-parse", "HEAD").Trim());
+
+        async Task<string?> Resolved(string @ref) =>
+            (await GitHistory.RefsAsync(Repo(), default, @ref)).Followed.ShouldNotBeNull().Name;
+
+        (await Resolved("main")).ShouldBe("refs/heads/main");
+        (await Resolved("refs/heads/main")).ShouldBe("refs/heads/main");
+        (await Resolved("origin/main")).ShouldBe("refs/remotes/origin/main");
+        (await Resolved("prefetch/remotes/origin/copy0000")).ShouldBe("refs/prefetch/remotes/origin/copy0000");
+
+        Git(Clone, "tag", "main");
+        (await Resolved("main")).ShouldBe("refs/tags/main");
+        (await Resolved("refs/heads/main")).ShouldBe("refs/heads/main", "a full name is looked up as it is");
+
+        (await Resolved("HEAD")).ShouldBeNull("HEAD's branch is the listing's head");
+        (await Resolved(Git(Clone, "rev-parse", "HEAD").Trim())).ShouldBeNull("a commit is not a ref");
+        (await Resolved("feat+x")).ShouldBeNull("a ref the rule refuses is not passed to git");
+        (await Resolved("nothing-here")).ShouldBeNull();
+
+        (await RefsAsync()).Followed.ShouldBeNull("nothing was asked about");
+    }
+
+    /// <summary>A followed branch past the cap is listed, so the picker can show it as picked.</summary>
+    [Fact]
+    public async Task TheFollowedRefIsListedPastTheCap()
+    {
+        Git(Clone, "branch", "old");
+        Git(Clone, "checkout", "--quiet", "-b", "newer");
+        CreateRefs("refs/heads/many/", GitHistory.RefsPerGroup + 5, CommitLater(Clone, "newer than old"));
+
+        var refs = await GitHistory.RefsAsync(Repo(), default, "old");
+
+        refs.Followed.ShouldBe(new GitFollowed("old", "refs/heads/old"));
+        refs.Local.Refs.ShouldContain(r => r.Name == "refs/heads/old");
+        (await RefsAsync()).Local.Refs.ShouldNotContain(r => r.Name == "refs/heads/old", "the control: unasked, it is past the cap");
+    }
+
     /// <summary>
     /// An alias cannot stand in for the listing's subcommands, because every one is a
     /// builtin and git ignores an alias that shadows one. The non-builtin alias is the
@@ -428,6 +512,10 @@ public sealed class GitRefsTests : IDisposable
         ok.IsRepository.ShouldBeTrue();
         ok.Path.ShouldBe("repo");
         ok.Listing.ShouldNotBeNull().Head.Branch.ShouldBe("refs/heads/main");
+
+        var asked = (await SystemEndpoints.RepositoryRefsAsync(_root, "repo", default, "origin/main"))
+            .ShouldBeOfType<Ok<GitRefsResponse>>().Value.ShouldNotBeNull();
+        asked.Listing.ShouldNotBeNull().Followed.ShouldBe(new GitFollowed("origin/main", "refs/remotes/origin/main"));
 
         Directory.CreateDirectory(Path.Combine(Clone, "src"));
         var sub = (await SystemEndpoints.RepositoryRefsAsync(_root, "repo/src", default))

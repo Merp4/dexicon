@@ -298,12 +298,15 @@ is a display. It is returned only for the ref it was observed for, so a changed 
 nothing until the next pass. The distance is git's `%(upstream:track)` in the C locale,
 and a wording that is not git's own becomes no count rather than a guessed one.
 
-`GET /api/workspaces/git?path=` lists a folder's refs for choosing one: the branch HEAD is
-on, local branches with their upstreams, remote-tracking branches, and refs under
+`GET /api/workspaces/git?path=&ref=` lists a folder's refs for choosing one: the branch
+HEAD is on, local branches with their upstreams, remote-tracking branches, and refs under
 `refs/prefetch/`, each with its tip and commit date, newest first and 200 of each kind. A
-name the `ref` rule refuses is listed with the reason and cannot be followed. It reads the
-refs and FETCH_HEAD's time and nothing else: no remote URL, which can carry a credential,
-and no configuration.
+name the `ref` rule refuses is listed with the reason and cannot be followed. `ref`, the
+ref a source follows, comes back as `followed`, resolved the way git resolves a short
+name, so a tag named `main` is reported as the tag git walks rather than the branch. The
+checked-out branch and the followed ref are listed even past the 200. It reads the refs
+and FETCH_HEAD's time and nothing else: no remote URL, which can carry a credential, and
+no configuration.
 
 #### Following a remote without Dexicon fetching
 

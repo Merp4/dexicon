@@ -42,16 +42,26 @@ describe('the listed ref a stored value names', () => {
     lastFetchUtc: null,
   };
 
+  const resolved = (ref: string, name: string | null): GitRefListing => ({ ...listing, followed: { ref, name } });
+
   it('matches a full name exactly, in any group', () => {
     expect(listedRef(listing, 'refs/remotes/origin/main')?.kind).toBe('remote');
     expect(listedRef(listing, 'refs/prefetch/origin/main')?.kind).toBe('prefetched');
   });
 
-  it('matches a short name as a branch, then a remote-tracking ref, then a prefetched one', () => {
-    expect(listedRef(listing, 'main')?.ref.name).toBe('refs/heads/main');
-    expect(listedRef(listing, 'origin/main')?.ref.name).toBe('refs/remotes/origin/main');
-    expect(listedRef(listing, 'prefetch/origin/main')?.kind).toBe('prefetched');
-    expect(listedRef(listing, 'v1.2.0')).toBeNull();
-    expect(listedRef(listing, 'HEAD')).toBeNull();
+  it('matches a short name as the server resolved it, and not by its spelling', () => {
+    expect(listedRef(resolved('main', 'refs/heads/main'), 'main')?.ref.name).toBe('refs/heads/main');
+    expect(listedRef(resolved('origin/main', 'refs/remotes/origin/main'), 'origin/main')?.kind).toBe('remote');
+    expect(listedRef(resolved('prefetch/origin/main', 'refs/prefetch/origin/main'), 'prefetch/origin/main')?.kind)
+      .toBe('prefetched');
+
+    // git walks the tag, which the listing does not hold.
+    expect(listedRef(resolved('main', 'refs/tags/main'), 'main')).toBeNull();
+
+    // Unresolved, or resolved for another value: a short name is not guessed at.
+    expect(listedRef(listing, 'main')).toBeNull();
+    expect(listedRef(resolved('main', 'refs/heads/main'), 'origin/main')).toBeNull();
+    expect(listedRef(resolved('v1.2.0', null), 'v1.2.0')).toBeNull();
+    expect(listedRef(resolved('HEAD', null), 'HEAD')).toBeNull();
   });
 });

@@ -62,7 +62,7 @@ async function typeRef(user: User, dialog: HTMLElement, text: string) {
 
 /**
  * A repository as the server lists one: the checkout on main, 52 behind origin/main, a
- * branch the ref rule refuses, and a prefetched copy of origin/main that has moved past it.
+ * branch the ref rule refuses, and a prefetched copy of origin/main at a different commit.
  */
 function refs(over: Partial<GitRefListing> = {}): GitRefsResponse {
   const at = threeDaysAgo();
@@ -99,6 +99,24 @@ function refs(over: Partial<GitRefListing> = {}): GitRefsResponse {
       ...over,
     },
   };
+}
+
+/**
+ * The listing as the server answers for a ref: resolved against the fixture's refs and
+ * `tags` in git's order, `refs/`, then tags, then branches, then remotes. The server's
+ * own resolution is tested against real repositories in GitRefsTests.
+ */
+function refsFor(ref: string | undefined, tags: string[] = []): GitRefsResponse {
+  const response = refs();
+  if (ref === undefined) return response;
+
+  const l = response.listing!;
+  const names = [...l.local.refs, ...l.remoteTracking.refs, ...l.prefetched.refs].map((r) => r.name).concat(tags);
+  const candidates = ref === 'HEAD' ? []
+    : ref.startsWith('refs/') ? [ref]
+    : [`refs/${ref}`, `refs/tags/${ref}`, `refs/heads/${ref}`, `refs/remotes/${ref}`];
+
+  return { ...response, listing: { ...l, followed: { ref, name: candidates.find((c) => names.includes(c)) ?? null } } };
 }
 
 function source(over: Partial<Corpus['sources'][number]> = {}): Corpus['sources'][number] {
@@ -178,7 +196,7 @@ beforeEach(() => {
   coverage.mockResolvedValue({ gaps: [] });
   updateSource.mockResolvedValue({});
   updateCorpus.mockResolvedValue({});
-  repositoryRefs.mockResolvedValue(refs());
+  repositoryRefs.mockImplementation(async (_path: string, ref?: string) => refsFor(ref));
   browse.mockResolvedValue({
     entries: [
       { name: 'api-repo', relativePath: 'api-repo', isDirectory: true, childCount: 4 },
@@ -564,7 +582,7 @@ describe('adding a source', () => {
     expect(addSource.mock.calls[0][1]).toMatchObject({
       git: { ref: 'refs/remotes/origin/main', includeMessage: true },
     });
-    expect(repositoryRefs).toHaveBeenCalledWith('api-repo');
+    expect(repositoryRefs).toHaveBeenCalledWith('api-repo', 'HEAD');
   });
 
   /**
@@ -1385,7 +1403,7 @@ describe('choosing what a history source follows', () => {
       'main · 52 behind origin/main',
       "feat+x · cannot be followed. 'refs/heads/feat+x' is not a usable ref. A branch, a tag or an object name.",
       'origin/main · last commit 3d ago',
-      'origin/main (prefetched) · last commit 3d ago, ahead of origin/main',
+      'origin/main (prefetched) · last commit 3d ago, differs from origin/main',
     ]);
     expect(screen.getByText(/^Remote-tracking, last git fetch 3d ago/)).toBeInTheDocument();
     expect(screen.getByText(/^Prefetched by git maintenance/)).toBeInTheDocument();
@@ -1482,6 +1500,36 @@ describe('choosing what a history source follows', () => {
     await user.click(within(dialog).getByRole('button', { name: /Save history settings/ }));
     await waitFor(() => expect(updateSource).toHaveBeenCalled());
     expect(updateSource.mock.calls[0][2].git.ref).toBe('origin/main');
+    expect(repositoryRefs).toHaveBeenCalledWith('api-repo', 'origin/main');
+  });
+
+  it('does not show a short name as the branch when git would walk a tag of that name', async () => {
+    // git resolves `main` to the tag before the branch, and the listing holds no tags, so
+    // only the server's resolution can say which one the source follows.
+    repositoryRefs.mockImplementation(async (_path: string, ref?: string) => refsFor(ref, ['refs/tags/main']));
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(historyAt('main'));
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: 'Edit history settings for api-repo' }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(await within(dialog).findByText(/is also a tag here/)).toHaveTextContent(
+      'main is also a tag here. git takes a tag before a branch of the same name, so the tag is what is indexed.',
+    );
+    expect(within(dialog).getByRole('radio', { name: 'Other ref' })).toHaveAttribute('aria-checked', 'true');
+    expect(within(dialog).getByLabelText('Ref')).toHaveValue('main');
+  });
+
+  it('shows a short name as the branch git resolves it to', async () => {
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(historyAt('main'));
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: 'Edit history settings for api-repo' }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(await within(dialog).findByRole('radio', { name: 'A branch' })).toHaveAttribute('aria-checked', 'true');
+    expect(within(dialog).getByRole('combobox', { name: 'Branch' })).toHaveTextContent(/^main/);
+    expect(within(dialog).queryByText(/is also a tag here/)).not.toBeInTheDocument();
   });
 
   it('keeps a tag as Other ref', async () => {

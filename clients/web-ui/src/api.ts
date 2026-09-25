@@ -403,8 +403,9 @@ export const api = {
    * the workspace root, and is sent as such: an omitted path would mean the same, but the
    * root is a choice here, as it is in the picker.
    */
-  repositoryRefs: (path: string) =>
-    call(() => getApiWorkspacesGit({ query: { path } })),
+  /** `ref`, the ref a source follows, comes back resolved as git resolves it, in `listing.followed`. */
+  repositoryRefs: (path: string, ref?: string) =>
+    call(() => getApiWorkspacesGit({ query: { path, ref } })),
 
   /**
    * Exchange the admin password for a session bearer.

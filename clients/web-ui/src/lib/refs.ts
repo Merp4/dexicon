@@ -17,23 +17,21 @@ export type RefKind = 'local' | 'remote' | 'prefetched';
 
 /**
  * The listed ref a stored value names. A full name matches exactly. A short name, as a
- * source saved before the picker stored one, matches a branch, then a remote-tracking ref,
- * which is git's order for those two, then a prefetched ref: `prefetch/origin/main` is a
- * short name git resolves too.
+ * source saved before the picker stored one, matches the ref the server resolved it to
+ * when the listing was asked about it, and nothing otherwise: git resolves a tag before a
+ * branch, and the listing holds no tags, so a short name's spelling cannot say which
+ * listed ref it is.
  */
 export function listedRef(listing: GitRefListing, value: string): { kind: RefKind; ref: GitRef } | null {
+  const name = value === listing.followed?.ref ? listing.followed.name ?? value : value;
+
   const groups: [RefKind, GitRef[]][] = [
     ['local', listing.local.refs],
     ['remote', listing.remoteTracking.refs],
     ['prefetched', listing.prefetched.refs],
   ];
-
   for (const [kind, refs] of groups) {
-    const ref = refs.find((r) => r.name === value);
-    if (ref) return { kind, ref };
-  }
-  for (const [kind, refs] of groups) {
-    const ref = refs.find((r) => r.shortName === value);
+    const ref = refs.find((r) => r.name === name);
     if (ref) return { kind, ref };
   }
   return null;
