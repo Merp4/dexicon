@@ -46,6 +46,7 @@ import {
   getApiJobs,
   getApiTokens,
   getApiWorkspaces,
+  getApiWorkspacesGit,
   getHealthz,
   patchApiCorporaByNameOrId,
   patchApiCorporaByNameOrIdChunkSetsBySetName,
@@ -131,6 +132,11 @@ export type {
   SearchResult,
   TokenSummary,
   WorkspaceListing,
+  GitRef,
+  GitRefListing,
+  GitRefsResponse,
+  GitTracking,
+  GitUpstream,
 } from './generated';
 
 /**
@@ -391,6 +397,14 @@ export const api = {
 
   browse: (path?: string) =>
     call(() => getApiWorkspaces({ query: path ? { path } : {} })),
+
+  /**
+   * What the repository in a workspace folder could be followed at. The empty string is
+   * the workspace root, and is sent as such: an omitted path would mean the same, but the
+   * root is a choice here, as it is in the picker.
+   */
+  repositoryRefs: (path: string) =>
+    call(() => getApiWorkspacesGit({ query: { path } })),
 
   /**
    * Exchange the admin password for a session bearer.

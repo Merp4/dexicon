@@ -28,10 +28,12 @@ import {
 } from 'lucide-react';
 import { cn } from 'cn';
 import { historyContent, sourceName } from './lib/sources';
+import { distance, isStale, refLabel } from './lib/refs';
 import { count, unitFor, unitOf } from './lib/units';
 import { splitOnTerms } from './lib/terms';
 import { parseHash, toHash, type View as RouteView } from './route';
 import { WorkspacePicker } from './WorkspacePicker';
+import { GitRefPicker } from './GitRefPicker';
 
 /** `nomic-embed-text` and `nomic-embed-text:latest` are the same model. */
 const sameModelName = (a: string, b: string) =>
@@ -1285,7 +1287,19 @@ export function CorpusDetail({
                       obeyed three things it does not read, and called its commits files. */}
                   {s.kind === 'githistory' ? (
                     <span className="dim text-xs">
-                      {s.git?.ref ?? 'HEAD'}
+                      <bdi className="mono">{refLabel(s.git?.ref ?? 'HEAD')}</bdi>
+                      {(s.git?.ref ?? 'HEAD') === 'HEAD' && s.tracking?.branch && ` (${refLabel(s.tracking.branch)})`}
+                      {/* How current the ref was at the last pass. Behind is the stall that
+                          went unseen for three days, so it is said in the warning colour; a
+                          branch that is merely ahead is local work and says nothing. */}
+                      {s.tracking?.upstream && isStale(s.tracking.upstream) && (
+                        <span className="text-[var(--warn-text)]">
+                          {' · '}{distance(s.tracking.upstream)}
+                          {s.tracking.lastFetchUtc && ` as of the fetch ${relativeTime(s.tracking.lastFetchUtc)}`}
+                        </span>
+                      )}
+                      {s.tracking && !s.tracking.branch && s.tracking.lastFetchUtc
+                        && ` · fetched ${relativeTime(s.tracking.lastFetchUtc)}`}
                       {' · '}{historyContent(s.git)}
                       {s.includeGlobs?.length ? ` · only ${s.includeGlobs.join(', ')}` : ''}
                       {/* Where the ref had got to when it was last read. The ref names what
@@ -1952,7 +1966,7 @@ function EditHistorySourceModal({
     <Modal title={`History settings for ${sourceName(source)}`} onClose={onClose}>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <form onSubmit={submit}>
-        <GitHistoryFields value={git} onChange={setGit} />
+        <GitHistoryFields value={git} onChange={setGit} repositoryPath={source.rootPath ?? ''} />
 
         <Inheritable
           label="Only these paths"
@@ -2174,9 +2188,12 @@ function gitSettingsOf(git?: Corpus['sources'][number]['git']): GitSettings {
 function GitHistoryFields({
   value,
   onChange,
+  repositoryPath,
 }: {
   value: GitSettings;
   onChange: (next: GitSettings) => void;
+  /** The folder whose branches are offered; '' is the root, null before one is chosen. */
+  repositoryPath: string | null;
 }) {
   const set = <K extends keyof GitSettings>(key: K, v: GitSettings[K]) => onChange({ ...value, [key]: v });
 
@@ -2192,12 +2209,7 @@ function GitHistoryFields({
 
   return (
     <>
-      <Field
-        label="Ref"
-        hint="A branch, a tag or a commit. HEAD follows whatever the checkout has out, which moves only when someone pulls; origin/main follows every fetch. One that names nothing shows on the corpus after the refresh."
-      >
-        <Input className="mono" value={value.ref} onChange={(e) => set('ref', e.target.value)} placeholder="HEAD" />
-      </Field>
+      <GitRefPicker value={value.ref} onChange={(ref) => set('ref', ref)} repositoryPath={repositoryPath} />
 
       {/* Each hint says what its own setting adds, so none of them is wrong when another
           setting is turned off. The diff's figures are a measurement with the message and
@@ -2334,7 +2346,18 @@ function AddSourceModal({
           label="Workspace folder"
           hint="Only paths bind-mounted into the container are reachable. Set WORKSPACE_ROOT to change what is available."
         >
-          <WorkspacePicker value={path} onChange={setPath} emptyLabel="(choose a folder)" disabled={busy} />
+          <WorkspacePicker
+            value={path}
+            onChange={(next) => {
+              setPath(next);
+              // A branch belongs to the repository it was picked from. Another folder's
+              // repository may not have it, and a pick carried across would be a name
+              // nobody chose there; the checked-out branch always exists.
+              if (next !== path) setGit((g) => ({ ...g, ref: DEFAULT_GIT.ref }));
+            }}
+            emptyLabel="(choose a folder)"
+            disabled={busy}
+          />
         </Field>
 
         {alreadyHere && (
@@ -2368,7 +2391,7 @@ function AddSourceModal({
           </span>
         </label>
 
-        {gitHistory && <GitHistoryFields value={git} onChange={setGit} />}
+        {gitHistory && <GitHistoryFields value={git} onChange={setGit} repositoryPath={path} />}
 
         {!gitHistory && (
           <Field label="Largest file (MB)" hint="Anything bigger is skipped and reported, not silently dropped.">

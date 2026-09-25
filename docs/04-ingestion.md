@@ -271,8 +271,9 @@ on the source, and the corpus page shows it with its age. `ref` names what to fo
 says nothing about whether it moves. `HEAD` in a checkout follows whatever branch that
 checkout is on, and a local branch moves only when someone pulls: one deployment's
 history source indexed the same 174 commits for three days while `origin/main` gained 52,
-with every count on screen correct. Pointing the source at `origin/main` follows every
-fetch instead.
+with every count on screen correct. Pointing the source at `origin/main` follows each
+`git fetch` on the host instead; see [Following a remote](#following-a-remote-without-dexicon-fetching)
+for keeping one current.
 
 The record is where the ref points, not how far indexing got, which the counts and the
 source's state already report. It is written when the inventory answers, whether or not
@@ -303,6 +304,35 @@ on, local branches with their upstreams, remote-tracking branches, and refs unde
 name the `ref` rule refuses is listed with the reason and cannot be followed. It reads the
 refs and FETCH_HEAD's time and nothing else: no remote URL, which can carry a credential,
 and no configuration.
+
+#### Following a remote without Dexicon fetching
+
+Dexicon does not fetch. A fetch needs the network and a credential for a private
+repository, and the host already has both: whatever login git uses there (Git Credential
+Manager on Windows, a credential store or an SSH agent elsewhere). So the host fetches, on
+a schedule, and a source follows what it leaves. Two ways, both run by the host's own git
+as the user who owns the checkout:
+
+- **`git maintenance start`**, run once in the repository on the host. It registers a
+  scheduled task (Task Scheduler on Windows, launchd on macOS, systemd or cron on Linux)
+  whose prefetch runs
+  hourly and writes every remote branch under `refs/prefetch/`. It never moves
+  `origin/main` or your local branches, by design, so follow the prefetched ref: the picker
+  lists it as `origin/main (prefetched)`. Where it writes depends on the git version that
+  ran it, `refs/prefetch/origin/main` on 2.31 and `refs/prefetch/remotes/origin/main` on
+  newer ones, and the picker lists either. A prefetch leaves no record of when it ran, so
+  such a ref is dated only by its newest commit.
+- **A scheduled `git fetch`** (Task Scheduler, cron). It moves `origin/main` and writes
+  FETCH_HEAD, so the page can say when it last ran. Follow `origin/main`.
+
+Whether a scheduled task can reach your credentials when you are logged off depends on the
+host and how the credential is stored; check that it ran before relying on it. The row's
+"fetched 3d ago", or a prefetched ref whose newest commit stops moving, is how to tell.
+
+A branch deleted upstream stays where the last fetch left it until its ref is pruned. Once
+the ref is gone, the source reports unavailable and removes nothing, as for any ref that
+names nothing. A branch force-pushed upstream is followed: commits it no longer reaches
+leave the index on the next refresh, as for any rewritten history.
 
 **The container runs as uid 10001 and `/workspaces` is a host bind mount**, so the
 repository belongs to somebody else and git refuses it outright with "detected dubious

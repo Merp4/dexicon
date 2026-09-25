@@ -299,7 +299,7 @@ export function Select({
   );
 }
 
-export { SelectItem } from '@/components/ui/select';
+export { SelectGroup, SelectItem, SelectLabel } from '@/components/ui/select';
 
 // Re-exported rather than imported straight from the library by call sites: this file is
 // the one place the app's vocabulary is defined, and a screen reaching past it is how two

@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CorpusDetail } from './App';
-import { ApiError, type Corpus } from './api';
+import { ApiError, type Corpus, type GitRefListing, type GitRefsResponse } from './api';
 
 /**
  * A corpus and the places it takes content from.
@@ -22,6 +22,7 @@ const coverage = vi.fn();
 const updateSource = vi.fn();
 const updateCorpus = vi.fn();
 const reindex = vi.fn();
+const repositoryRefs = vi.fn();
 
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
@@ -35,9 +36,70 @@ vi.mock('./api', async (importOriginal) => ({
     updateSource: (...a: unknown[]) => updateSource(...a),
     updateCorpus: (...a: unknown[]) => updateCorpus(...a),
     reindex: (...a: unknown[]) => reindex(...a),
+    repositoryRefs: (...a: unknown[]) => repositoryRefs(...a),
     deleteCorpus: vi.fn(),
   },
 }));
+
+const threeDaysAgo = () => new Date(Date.now() - 3 * 86_400_000).toISOString();
+
+type User = ReturnType<typeof userEvent.setup>;
+
+/** Picks a ref from the branch list, the way a person does. */
+async function pickBranch(user: User, dialog: HTMLElement, option: RegExp) {
+  await user.click(await within(dialog).findByRole('radio', { name: 'A branch' }));
+  await user.click(within(dialog).getByRole('combobox', { name: 'Branch' }));
+  await user.click(await screen.findByRole('option', { name: option }));
+}
+
+/** Types a ref, for a tag, a commit, or anything the list does not offer. */
+async function typeRef(user: User, dialog: HTMLElement, text: string) {
+  await user.click(await within(dialog).findByRole('radio', { name: 'Other ref' }));
+  const ref = within(dialog).getByLabelText('Ref');
+  await user.clear(ref);
+  await user.type(ref, text);
+}
+
+/**
+ * A repository as the server lists one: the checkout on main, 52 behind origin/main, a
+ * branch the ref rule refuses, and a prefetched copy of origin/main that has moved past it.
+ */
+function refs(over: Partial<GitRefListing> = {}): GitRefsResponse {
+  const at = threeDaysAgo();
+  return {
+    path: 'api-repo',
+    isRepository: true,
+    listing: {
+      head: { branch: 'refs/heads/main', sha: 'a'.repeat(40) },
+      local: {
+        truncated: false,
+        refs: [
+          {
+            name: 'refs/heads/main', shortName: 'main', sha: 'a'.repeat(40), committedUtc: at,
+            upstream: { name: 'refs/remotes/origin/main', shortName: 'origin/main', ahead: 0, behind: 52, gone: false },
+          },
+          {
+            name: 'refs/heads/feat+x', shortName: 'feat+x', sha: 'b'.repeat(40), committedUtc: at,
+            refusal: "'refs/heads/feat+x' is not a usable ref. A branch, a tag or an object name.",
+          },
+        ],
+      },
+      remoteTracking: {
+        truncated: false,
+        refs: [{ name: 'refs/remotes/origin/main', shortName: 'origin/main', sha: 'c'.repeat(40), committedUtc: at }],
+      },
+      prefetched: {
+        truncated: false,
+        refs: [{
+          name: 'refs/prefetch/remotes/origin/main', shortName: 'prefetch/remotes/origin/main', sha: 'd'.repeat(40),
+          committedUtc: at, mirrors: 'refs/remotes/origin/main', sameAsMirrored: false,
+        }],
+      },
+      lastFetchUtc: at,
+      ...over,
+    },
+  };
+}
 
 function source(over: Partial<Corpus['sources'][number]> = {}): Corpus['sources'][number] {
   return {
@@ -116,6 +178,7 @@ beforeEach(() => {
   coverage.mockResolvedValue({ gaps: [] });
   updateSource.mockResolvedValue({});
   updateCorpus.mockResolvedValue({});
+  repositoryRefs.mockResolvedValue(refs());
   browse.mockResolvedValue({
     entries: [
       { name: 'api-repo', relativePath: 'api-repo', isDirectory: true, childCount: 4 },
@@ -193,7 +256,7 @@ describe('the sources a corpus reads', () => {
 
     expect(await screen.findByText(/201 commits/)).toBeInTheDocument();
     expect(screen.getByText(/37 files/)).toBeInTheDocument();
-    expect(screen.getByText(/main.*message, stat and diff/)).toBeInTheDocument();
+    expect(screen.getByText(/message, stat and diff/)).toHaveTextContent(/^main · message, stat and diff/);
 
     // One .gitignore line, for the workspace source, and none for the history one.
     expect(screen.getAllByText(/\.gitignore honoured/)).toHaveLength(1);
@@ -285,7 +348,7 @@ describe('the sources a corpus reads', () => {
 
     render(<CorpusDetail {...props} />);
 
-    expect(await screen.findByText(/main · stat only/)).toBeInTheDocument();
+    expect(await screen.findByText(/stat only/)).toHaveTextContent(/main · stat only/);
     expect(screen.queryByText(/message and stat/)).not.toBeInTheDocument();
   });
 
@@ -494,13 +557,14 @@ describe('adding a source', () => {
     await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
     await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
 
-    const ref = within(dialog).getByLabelText('Ref');
-    await user.clear(ref);
-    await user.type(ref, 'origin/main');
+    await pickBranch(user, dialog, /^origin\/main · last commit/);
     await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
 
     await waitFor(() => expect(addSource).toHaveBeenCalled());
-    expect(addSource.mock.calls[0][1]).toMatchObject({ git: { ref: 'origin/main', includeMessage: true } });
+    expect(addSource.mock.calls[0][1]).toMatchObject({
+      git: { ref: 'refs/remotes/origin/main', includeMessage: true },
+    });
+    expect(repositoryRefs).toHaveBeenCalledWith('api-repo');
   });
 
   /**
@@ -514,9 +578,7 @@ describe('adding a source', () => {
 
     await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
     await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
-    const ref = within(dialog).getByLabelText('Ref');
-    await user.clear(ref);
-    await user.type(ref, 'main..other');
+    await typeRef(user, dialog, 'main..other');
     await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
 
     expect(await within(dialog).findByText(/is not a usable ref/)).toBeInTheDocument();
@@ -1109,16 +1171,14 @@ describe('editing a history source', () => {
     updateSource.mockResolvedValue({});
     const { user, dialog } = await openEditor();
 
-    const ref = within(dialog).getByLabelText('Ref');
-    await user.clear(ref);
-    await user.type(ref, 'origin/main');
+    await pickBranch(user, dialog, /^origin\/main · last commit/);
     await user.click(within(dialog).getByRole('button', { name: /Save history settings/ }));
 
     await waitFor(() => expect(updateSource).toHaveBeenCalled());
     const [name, id, body] = updateSource.mock.calls[0];
     expect([name, id]).toEqual(['docs', 's2']);
     expect(body.git).toEqual({
-      ref: 'origin/main', includeMessage: true, includeStat: true, includeDiff: false,
+      ref: 'refs/remotes/origin/main', includeMessage: true, includeStat: true, includeDiff: false,
       maxDiffBytes: 65536, includeMerges: false, maxCommits: null, keepIndexed: false, since: null,
     });
     // Following the corpus, as the source did before: nothing new pinned against it.
@@ -1133,9 +1193,7 @@ describe('editing a history source', () => {
       "'main..other' is not a usable ref. A branch, a tag or an object name."));
     const { user, dialog } = await openEditor();
 
-    const ref = within(dialog).getByLabelText('Ref');
-    await user.clear(ref);
-    await user.type(ref, 'main..other');
+    await typeRef(user, dialog, 'main..other');
     await user.click(within(dialog).getByRole('button', { name: /Save history settings/ }));
 
     expect(await within(dialog).findByText(/is not a usable ref/)).toBeInTheDocument();
@@ -1150,9 +1208,7 @@ describe('editing a history source', () => {
   it('says when a change re-reads every commit', async () => {
     const { user, dialog } = await openEditor();
 
-    const ref = within(dialog).getByLabelText('Ref');
-    await user.clear(ref);
-    await user.type(ref, 'origin/main');
+    await pickBranch(user, dialog, /^origin\/main · last commit/);
     expect(within(dialog).getByText(/documents already indexed\s+are kept/)).toBeInTheDocument();
 
     await user.click(within(dialog).getByRole('checkbox', { name: /Include the diff/ }));
@@ -1253,6 +1309,180 @@ describe('editing a history source', () => {
     expect(within(dialog).queryByLabelText(/Largest file/)).not.toBeInTheDocument();
     expect(within(dialog).queryByText(/Honour \.gitignore/)).not.toBeInTheDocument();
     expect(within(dialog).queryByText(/Never these/)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * What a history source follows, picked from the repository.
+ *
+ * It was a text box, and nothing said a local branch was behind: dexhistory sat on one 52
+ * commits behind origin/main for three days with every count correct.
+ */
+describe('choosing what a history source follows', () => {
+  async function openAddHistory() {
+    const user = userEvent.setup();
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: /add source/i }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
+    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+    return { user, dialog };
+  }
+
+  const historyAt = (ref: string, tracking: Corpus['sources'][number]['tracking'] = null) =>
+    corpus({
+      sources: [
+        source({
+          id: 's2', kind: 'githistory', rootPath: 'api-repo', fileCount: 174, includeGlobs: [], ownIncludeGlobs: null,
+          git: { ref, includeMessage: true, includeStat: true, includeDiff: false, maxDiffBytes: 65536, includeMerges: false, maxCommits: null, since: null },
+          tracking,
+        }),
+      ],
+    });
+
+  it('follows the checked-out branch by default and says how far behind it is', async () => {
+    const { dialog } = await openAddHistory();
+
+    expect(await within(dialog).findByRole('radio', { name: 'Checked-out branch' })).toHaveAttribute('aria-checked', 'true');
+    expect(await within(dialog).findByText(/Follows/)).toHaveTextContent(
+      /Follows main, the branch the checkout has out, 52 behind origin\/main as of the last fetch 3d ago/);
+  });
+
+  it('offers the upstream when the checked-out branch is behind', async () => {
+    addSource.mockResolvedValue({});
+    const { user, dialog } = await openAddHistory();
+
+    await user.click(await within(dialog).findByRole('button', { name: 'Follow origin/main instead' }));
+    await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
+
+    await waitFor(() => expect(addSource).toHaveBeenCalled());
+    expect(addSource.mock.calls[0][1].git.ref).toBe('refs/remotes/origin/main');
+  });
+
+  it('says a picked local branch is behind, and offers its upstream there too', async () => {
+    addSource.mockResolvedValue({});
+    const { user, dialog } = await openAddHistory();
+
+    // "A branch" starts on the branch the checkout has out.
+    await user.click(await within(dialog).findByRole('radio', { name: 'A branch' }));
+    expect(await within(dialog).findByText(/main is 52 behind origin\/main as of the last fetch/)).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Follow origin/main instead' }));
+    await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
+
+    await waitFor(() => expect(addSource).toHaveBeenCalled());
+    expect(addSource.mock.calls[0][1].git.ref).toBe('refs/remotes/origin/main');
+  });
+
+  it('lists local, remote-tracking and prefetched branches, and says how current each group is', async () => {
+    const { user, dialog } = await openAddHistory();
+
+    await user.click(await within(dialog).findByRole('radio', { name: 'A branch' }));
+    await user.click(within(dialog).getByRole('combobox', { name: 'Branch' }));
+
+    const options = (await screen.findAllByRole('option')).map((o) => o.textContent);
+    expect(options).toEqual([
+      'main · 52 behind origin/main',
+      'feat+x · cannot be followed',
+      'origin/main · last commit 3d ago',
+      'origin/main (prefetched) · last commit 3d ago, ahead of origin/main',
+    ]);
+    expect(screen.getByText(/^Remote-tracking, last git fetch 3d ago/)).toBeInTheDocument();
+    expect(screen.getByText(/^Prefetched by git maintenance/)).toBeInTheDocument();
+  });
+
+  it('shows a branch it cannot follow, disabled, with the reason', async () => {
+    const { user, dialog } = await openAddHistory();
+
+    await user.click(await within(dialog).findByRole('radio', { name: 'A branch' }));
+    await user.click(within(dialog).getByRole('combobox', { name: 'Branch' }));
+
+    const refused = await screen.findByRole('option', { name: /feat\+x/ });
+    expect(refused).toHaveAttribute('aria-disabled', 'true');
+    expect(refused).toHaveAttribute('title', expect.stringContaining('not a usable ref'));
+  });
+
+  it('falls back to typing a ref when the branches cannot be listed', async () => {
+    repositoryRefs.mockRejectedValue(new ApiError(503, 'git could not be asked', 'git could not be started.'));
+    addSource.mockResolvedValue({});
+    const { user, dialog } = await openAddHistory();
+
+    expect(await within(dialog).findByText(/branches could not be listed/)).toHaveTextContent(/git could not be started/);
+    expect(within(dialog).queryByRole('radio', { name: 'A branch' })).not.toBeInTheDocument();
+
+    await typeRef(user, dialog, 'v1.2.0');
+    await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
+    await waitFor(() => expect(addSource).toHaveBeenCalled());
+    expect(addSource.mock.calls[0][1].git.ref).toBe('v1.2.0');
+  });
+
+  it('says a folder that is not a repository has no history of its own', async () => {
+    repositoryRefs.mockResolvedValue({ path: 'api-repo', isRepository: false, listing: null });
+    const { dialog } = await openAddHistory();
+
+    expect(await within(dialog).findByText(/not a repository's root/)).toBeInTheDocument();
+  });
+
+  it('returns to the checked-out branch when the folder changes', async () => {
+    // A branch belongs to the repository it was picked from; another folder's may not have it.
+    addSource.mockResolvedValue({});
+    const { user, dialog } = await openAddHistory();
+    await pickBranch(user, dialog, /^origin\/main · last commit/);
+
+    await user.click(within(dialog).getByRole('button', { name: /notes/ }));
+    await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
+
+    await waitFor(() => expect(addSource).toHaveBeenCalled());
+    expect(addSource.mock.calls[0][1]).toMatchObject({ workspacePath: expect.stringContaining('notes'), git: { ref: 'HEAD' } });
+  });
+
+  it('does not rewrite a short branch name on an unchanged save', async () => {
+    // A source saved before the picker holds `origin/main`. It shows as picked, and a save
+    // that changes nothing else sends it as it was.
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(historyAt('origin/main'));
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: 'Edit history settings for api-repo' }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(await within(dialog).findByRole('radio', { name: 'A branch' })).toHaveAttribute('aria-checked', 'true');
+    expect(within(dialog).getByRole('combobox', { name: 'Branch' })).toHaveTextContent(/origin\/main/);
+
+    await user.click(within(dialog).getByRole('button', { name: /Save history settings/ }));
+    await waitFor(() => expect(updateSource).toHaveBeenCalled());
+    expect(updateSource.mock.calls[0][2].git.ref).toBe('origin/main');
+  });
+
+  it('keeps a tag as Other ref', async () => {
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(historyAt('v1.2.0'));
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: 'Edit history settings for api-repo' }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(await within(dialog).findByRole('radio', { name: 'Other ref' })).toHaveAttribute('aria-checked', 'true');
+    expect(within(dialog).getByLabelText('Ref')).toHaveValue('v1.2.0');
+  });
+
+  it('says on the row how far behind its upstream the followed branch was', async () => {
+    getCorpus.mockResolvedValue(historyAt('HEAD', {
+      ref: 'HEAD', branch: 'refs/heads/main', observedUtc: new Date().toISOString(), lastFetchUtc: threeDaysAgo(),
+      upstream: { name: 'refs/remotes/origin/main', shortName: 'origin/main', ahead: 0, behind: 52, gone: false },
+    }));
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText(/52 behind origin\/main/)).toHaveTextContent('· 52 behind origin/main as of the fetch 3d ago');
+    expect(screen.getByText(/message and stat/)).toHaveTextContent(/^HEAD \(main\)/);
+  });
+
+  it('says on the row when a followed remote was last fetched', async () => {
+    getCorpus.mockResolvedValue(historyAt('refs/remotes/origin/main', {
+      ref: 'refs/remotes/origin/main', branch: null, upstream: null,
+      observedUtc: new Date().toISOString(), lastFetchUtc: threeDaysAgo(),
+    }));
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText(/message and stat/)).toHaveTextContent(/^origin\/main · fetched 3d ago · message and stat/);
   });
 });
 

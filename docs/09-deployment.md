@@ -221,6 +221,11 @@ container's real name, never a bare service alias, for the reason above.
 
 ## Indexing a tree outside the workspace root
 
+A git-history source over a repository in the mount follows what the host's git leaves
+there, since the mount is read-only and Dexicon does not fetch. To follow a remote, keep
+the checkout current from the host; [04](04-ingestion.md#following-a-remote-without-dexicon-fetching)
+shows two ways.
+
 `WORKSPACE_ROOT` is the only thing the indexer can see, and it is one directory. To index
 a second tree, such as a folder of documents or another checkout, mount it
 *underneath* the root:
