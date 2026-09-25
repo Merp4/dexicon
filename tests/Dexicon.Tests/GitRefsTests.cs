@@ -70,6 +70,25 @@ public sealed class GitRefsTests : IDisposable
         return stdout.GetAwaiter().GetResult();
     }
 
+    /// <summary>A commit dated a day ahead, so it sorts before everything else by committer date.</summary>
+    private static string CommitLater(string dir, string message)
+    {
+        var info = new ProcessStartInfo("git", ["-c", "user.name=A Test", "-c", "user.email=test@example.invalid",
+            "-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "-m", message])
+        {
+            WorkingDirectory = dir,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        info.Environment["GIT_COMMITTER_DATE"] = DateTimeOffset.UtcNow.AddDays(1).ToString("yyyy-MM-ddTHH:mm:ssZ");
+        using var p = Process.Start(info)!;
+        p.StandardOutput.ReadToEnd();
+        p.WaitForExit();
+        if (p.ExitCode != 0) throw new InvalidOperationException(p.StandardError.ReadToEnd());
+        return Git(dir, "rev-parse", "HEAD").Trim();
+    }
+
     private static void Commit(string dir, string path, string content, string message)
     {
         File.AppendAllText(Path.Combine(dir, path), content);
@@ -276,6 +295,42 @@ public sealed class GitRefsTests : IDisposable
         local.Truncated.ShouldBeTrue();
 
         (await RefsAsync()).RemoteTracking.Truncated.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// Whether a prefetched ref matches the remote-tracking ref it copies is answered even
+    /// when that ref is past the listing's cap: 200 newer remote branches push origin/main
+    /// out of the list, and it still exists.
+    /// </summary>
+    [Fact]
+    public async Task APrefetchedRefIsComparedWithItsMirrorPastTheListingsCap()
+    {
+        var mirrored = Git(Clone, "rev-parse", "refs/remotes/origin/main").Trim();
+
+        Git(Clone, "checkout", "--quiet", "-b", "newer");
+        var newer = CommitLater(Clone, "newer than origin/main");
+        var info = new ProcessStartInfo("git", ["update-ref", "--stdin"])
+        {
+            WorkingDirectory = Clone,
+            RedirectStandardInput = true,
+            UseShellExecute = false,
+        };
+        using (var p = Process.Start(info)!)
+        {
+            for (var i = 0; i < GitHistory.RefsPerGroup + 5; i++)
+                p.StandardInput.Write($"create refs/remotes/origin/many/{i:D4} {newer}\n");
+            p.StandardInput.Write($"create refs/prefetch/remotes/origin/main {mirrored}\n");
+            p.StandardInput.Close();
+            p.WaitForExit();
+            p.ExitCode.ShouldBe(0);
+        }
+
+        var refs = await RefsAsync();
+
+        refs.RemoteTracking.Refs.ShouldNotContain(r => r.Name == "refs/remotes/origin/main", "the setup: it is past the cap");
+        var prefetched = refs.Prefetched.Refs.ShouldHaveSingleItem();
+        prefetched.Mirrors.ShouldBe("refs/remotes/origin/main");
+        prefetched.SameAsMirrored.ShouldBe(true);
     }
 
     /// <summary>

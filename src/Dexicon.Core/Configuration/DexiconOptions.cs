@@ -42,9 +42,9 @@ public sealed class OllamaOptions
 
 public sealed class EmbeddingOptions
 {
-    /// <summary>Default model for new chunk sets.</summary>
     /// <summary>
-    /// The model a corpus gets when its creator does not choose one.
+    /// The default model for new chunk sets: the one a corpus gets when its creator does
+    /// not choose one.
     ///
     /// `embeddinggemma` because it led both retrieval sweeps; see
     /// docs/benchmarks.md. This is the default for new corpora only: an existing chunk

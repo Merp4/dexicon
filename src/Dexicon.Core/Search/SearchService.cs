@@ -221,9 +221,9 @@ public sealed class SearchService(
         };
     }
 
-    /// <summary>Agents repeat queries far more than people do, so this cache earns its keep.</summary>
     /// <summary>
-    /// The query vector for one MODEL. Keyed by model as well as text: a scope spanning
+    /// The query vector for one MODEL, cached: agents repeat queries far more than people
+    /// do, so the cache earns its keep. Keyed by model as well as text: a scope spanning
     /// two chunk sets on different models needs a vector from each, and caching on the
     /// query alone would serve the first model's vector to the second collection: a
     /// comparison between two unrelated vector spaces, whose results are meaningless.

@@ -106,6 +106,14 @@ public static partial class GitHistory
         var prefetched = await GroupAsync(repo, "refs/prefetch/", ct);
 
         var remoteTips = remote.Refs.ToDictionary(r => r.Name, r => r.Sha, StringComparer.Ordinal);
+
+        // A mirrored ref can be past the listing's cap and still exist, so the ones the
+        // listing does not hold are asked for by name, rather than reported as unknown.
+        var unlisted = prefetched.Refs.Select(p => MirroredBy(p.Name)).OfType<string>()
+            .Where(m => !remoteTips.ContainsKey(m)).Distinct(StringComparer.Ordinal).ToList();
+        if (unlisted.Count > 0)
+            foreach (var (name, sha) in await TipsAsync(repo, unlisted, ct)) remoteTips[name] = sha;
+
         prefetched = prefetched with
         {
             Refs =
@@ -319,6 +327,21 @@ public static partial class GitHistory
             { } name when name.StartsWith("refs/remotes/", StringComparison.Ordinal) => (null, true),
             _ => (null, false),
         };
+    }
+
+    /// <summary>The tips of exactly these refs, where they exist. A pattern also matches refs beneath it, so only exact names count.</summary>
+    private static async Task<IEnumerable<(string Name, string Sha)>> TipsAsync(
+        GitRepository repo, IReadOnlyList<string> names, CancellationToken ct)
+    {
+        var (ok, stdout, stderr) = await AskAsync(repo, ["for-each-ref", "--format=%(refname)%00%(objectname)", .. names], ct);
+        if (!ok) throw new GitHistoryException($"git for-each-ref failed: {Summarise(stderr)}");
+
+        var wanted = names.ToHashSet(StringComparer.Ordinal);
+        return stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(row => row.Split('\0'))
+            .Where(f => f.Length == 2 && wanted.Contains(f[0]))
+            .Select(f => (f[0], f[1]))
+            .ToList();
     }
 
     private static async Task<GitUpstream?> UpstreamOfAsync(GitRepository repo, string branch, CancellationToken ct)

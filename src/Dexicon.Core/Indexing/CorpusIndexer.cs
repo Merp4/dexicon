@@ -839,15 +839,6 @@ public sealed class CorpusIndexer(
     }
 
     /// <summary>
-    /// One pass over a repository's history, one document per commit.
-    ///
-    /// The enumeration is the inventory and is deliberately cheap: shas and dates, no
-    /// messages and no patches. Which of them still need reading is then settled against the
-    /// catalogue before git is asked for anything else, because a commit's text is
-    /// decided by its sha and this source's settings and a commit cannot change. A
-    /// refresh of a repository whose tip has not moved therefore costs one `git log`.
-    /// </summary>
-    /// <summary>
     /// How current the ref this source follows is, for the source's row: the stall a
     /// local branch nobody pulls produces, 52 commits behind its upstream with every count
     /// on screen correct, shows there as a number.
@@ -872,6 +863,15 @@ public sealed class CorpusIndexer(
         }
     }
 
+    /// <summary>
+    /// One pass over a repository's history, one document per commit.
+    ///
+    /// The enumeration is the inventory and is deliberately cheap: shas and dates, no
+    /// messages and no patches. Which of them still need reading is then settled against the
+    /// catalogue before git is asked for anything else, because a commit's text is
+    /// decided by its sha and this source's settings and a commit cannot change. A
+    /// refresh of a repository whose tip has not moved therefore costs one `git log`.
+    /// </summary>
     private async Task IndexGitHistorySourceAsync(Corpus corpus, ChunkSet set, ModelTemplates templates,
         ChunkOptions chunking,
         Source source, IndexJob job,
