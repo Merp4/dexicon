@@ -403,16 +403,14 @@ export const api = {
     call(() => postApiSession({ body: { password } satisfies SignInRequest })),
 
   /**
-   * End this session on the server, with the token as it is when this is called.
+   * End a session on the server: the one named, or the one stored when this is called.
    *
-   * The interceptor reads storage when the request goes out, which is after the caller
-   * has cleared it: the DELETE went out with no token, the server had nothing to revoke
-   * and answered 204 anyway, and the session stayed usable until it expired. Read that
-   * late, it could also revoke a session stored after this one, when a sign-out caused by
-   * a 401 ran behind a new sign-in.
+   * Sent with the request rather than left to the interceptor, which reads storage when
+   * the request goes out. By then the caller has cleared it: the DELETE went out with no
+   * token, the server had nothing to revoke and answered 204 anyway, and the session
+   * stayed usable until it expired.
    */
-  signOut: () => {
-    const token = getToken();
+  signOut: (token: string | null = getToken()) => {
     if (!token) return Promise.resolve();
     return call(() => deleteApiSession({ headers: { Authorization: `Bearer ${token}` } }));
   },
