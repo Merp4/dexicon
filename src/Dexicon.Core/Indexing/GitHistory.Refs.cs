@@ -35,7 +35,11 @@ public sealed record GitHead(string? Branch, string? Sha);
 /// branch is the tag. Null for <c>HEAD</c>, whose branch is the listing's head, for a ref
 /// the ref rule refuses, and for anything that names no ref, such as a commit.
 /// </param>
-public sealed record GitFollowed(string Ref, string? Name);
+/// <param name="Shadowed">
+/// Refs the same short name also matches, which git passes over for <paramref name="Name"/>,
+/// in git's order: the branch <c>main</c> behind a tag <c>main</c>. Empty when there are none.
+/// </param>
+public sealed record GitFollowed(string Ref, string? Name, IReadOnlyList<string> Shadowed);
 
 /// <summary>What a repository could be followed at.</summary>
 /// <param name="Local">
@@ -124,16 +128,22 @@ public static partial class GitHistory
         // refs/prefetch/remotes/origin/main. Both measured.
         var prefetched = await GroupAsync(repo, "refs/prefetch/", ct);
 
-        var followed = follows is null ? null
-            : new GitFollowed(follows,
-                follows == "HEAD" || RefProblem(follows) is not null ? null : await ResolveAsync(repo, follows, ct));
+        GitFollowed? followed = null;
+        if (follows is not null)
+        {
+            var (name, shadowed) = follows == "HEAD" || RefProblem(follows) is not null
+                ? (null, [])
+                : await ResolveAsync(repo, follows, ct);
+            followed = new GitFollowed(follows, name, shadowed);
+        }
 
-        // The checked-out branch and the followed ref, when newer refs have pushed them past
-        // the cap. Without them the picker could not say how far the checked-out branch is
-        // behind, or show a followed branch as picked.
+        // The checked-out branch, the followed ref and any branch it shadows, when newer refs
+        // have pushed them past the cap. Without them the picker could not say how far the
+        // checked-out branch is behind, show a followed branch as picked, or offer the branch
+        // a tag of the same name hides.
         var listed = local.Refs.Concat(remote.Refs).Concat(prefetched.Refs)
             .Select(r => r.Name).ToHashSet(StringComparer.Ordinal);
-        var missing = new[] { head.Branch, followed?.Name }.OfType<string>()
+        var missing = new[] { head.Branch, followed?.Name }.Concat(followed?.Shadowed ?? []).OfType<string>()
             .Where(n => !listed.Contains(n)).Distinct(StringComparer.Ordinal).ToList();
 
         if (missing.Count > 0)
@@ -369,7 +379,7 @@ public static partial class GitHistory
     {
         if (@ref == "HEAD") return ((await HeadAsync(repo, ct)).Branch, false);
 
-        return await ResolveAsync(repo, @ref, ct) switch
+        return (await ResolveAsync(repo, @ref, ct)).Name switch
         {
             { } name when name.StartsWith("refs/heads/", StringComparison.Ordinal) => (name, false),
             { } name when name.StartsWith("refs/remotes/", StringComparison.Ordinal) => (null, true),
@@ -380,9 +390,11 @@ public static partial class GitHistory
     /// <summary>
     /// The full name of the ref <paramref name="ref"/> names, in the order git resolves a
     /// short name (<c>refs/</c>, then tags, then branches, then remotes), or null when it
-    /// names none. A full name is looked up as it is.
+    /// names none, and the refs further down that order that git passes over for it. A full
+    /// name is looked up as it is and shadows nothing.
     /// </summary>
-    private static async Task<string?> ResolveAsync(GitRepository repo, string @ref, CancellationToken ct)
+    private static async Task<(string? Name, IReadOnlyList<string> Shadowed)> ResolveAsync(
+        GitRepository repo, string @ref, CancellationToken ct)
     {
         string[] candidates = @ref.StartsWith("refs/", StringComparison.Ordinal)
             ? [@ref]
@@ -393,7 +405,8 @@ public static partial class GitHistory
 
         // A pattern also matches refs beneath it, so only exact names count.
         var present = stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
-        return candidates.FirstOrDefault(present.Contains);
+        var found = candidates.Where(present.Contains).ToList();
+        return found.Count == 0 ? (null, []) : (found[0], found[1..]);
     }
 
     /// <summary>The tips of exactly these refs, where they exist. A pattern also matches refs beneath it, so only exact names count.</summary>

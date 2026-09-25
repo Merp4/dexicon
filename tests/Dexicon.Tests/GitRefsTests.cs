@@ -382,17 +382,30 @@ public sealed class GitRefsTests : IDisposable
         Git(Clone, "fetch", "--quiet");
         CreateRefs("refs/prefetch/remotes/origin/copy", 1, Git(Clone, "rev-parse", "HEAD").Trim());
 
-        async Task<string?> Resolved(string @ref) =>
-            (await GitHistory.RefsAsync(Repo(), default, @ref)).Followed.ShouldNotBeNull().Name;
+        async Task<GitFollowed> Followed(string @ref) =>
+            (await GitHistory.RefsAsync(Repo(), default, @ref)).Followed.ShouldNotBeNull();
+        async Task<string?> Resolved(string @ref) => (await Followed(@ref)).Name;
 
         (await Resolved("main")).ShouldBe("refs/heads/main");
+        (await Followed("main")).Shadowed.ShouldBeEmpty();
         (await Resolved("refs/heads/main")).ShouldBe("refs/heads/main");
         (await Resolved("origin/main")).ShouldBe("refs/remotes/origin/main");
         (await Resolved("prefetch/remotes/origin/copy0000")).ShouldBe("refs/prefetch/remotes/origin/copy0000");
 
         Git(Clone, "tag", "main");
-        (await Resolved("main")).ShouldBe("refs/tags/main");
-        (await Resolved("refs/heads/main")).ShouldBe("refs/heads/main", "a full name is looked up as it is");
+        var tagged = await Followed("main");
+        tagged.Name.ShouldBe("refs/tags/main");
+        tagged.Shadowed.ShouldBe(["refs/heads/main"]);
+        (await Followed("refs/heads/main")).ShouldSatisfyAllConditions(
+            f => f.Name.ShouldBe("refs/heads/main", "a full name is looked up as it is"),
+            f => f.Shadowed.ShouldBeEmpty());
+
+        // refs/<name> comes before the tags, so a tag cannot take a prefetched ref's short
+        // name: the tag is what is passed over.
+        Git(Clone, "tag", "prefetch/remotes/origin/copy0000");
+        var prefetchedFirst = await Followed("prefetch/remotes/origin/copy0000");
+        prefetchedFirst.Name.ShouldBe("refs/prefetch/remotes/origin/copy0000");
+        prefetchedFirst.Shadowed.ShouldBe(["refs/tags/prefetch/remotes/origin/copy0000"]);
 
         (await Resolved("HEAD")).ShouldBeNull("HEAD's branch is the listing's head");
         (await Resolved(Git(Clone, "rev-parse", "HEAD").Trim())).ShouldBeNull("a commit is not a ref");
@@ -412,9 +425,17 @@ public sealed class GitRefsTests : IDisposable
 
         var refs = await GitHistory.RefsAsync(Repo(), default, "old");
 
-        refs.Followed.ShouldBe(new GitFollowed("old", "refs/heads/old"));
+        refs.Followed.ShouldNotBeNull().Name.ShouldBe("refs/heads/old");
         refs.Local.Refs.ShouldContain(r => r.Name == "refs/heads/old");
         (await RefsAsync()).Local.Refs.ShouldNotContain(r => r.Name == "refs/heads/old", "the control: unasked, it is past the cap");
+
+        // A tag of the same name takes the name, and the branch it hides is still listed, so
+        // the picker can offer it in the tag's place.
+        Git(Clone, "tag", "old");
+        var shadowed = await GitHistory.RefsAsync(Repo(), default, "old");
+        shadowed.Followed.ShouldNotBeNull().Name.ShouldBe("refs/tags/old");
+        shadowed.Followed.Shadowed.ShouldBe(["refs/heads/old"]);
+        shadowed.Local.Refs.ShouldContain(r => r.Name == "refs/heads/old");
     }
 
     /// <summary>
@@ -515,7 +536,8 @@ public sealed class GitRefsTests : IDisposable
 
         var asked = (await SystemEndpoints.RepositoryRefsAsync(_root, "repo", default, "origin/main"))
             .ShouldBeOfType<Ok<GitRefsResponse>>().Value.ShouldNotBeNull();
-        asked.Listing.ShouldNotBeNull().Followed.ShouldBe(new GitFollowed("origin/main", "refs/remotes/origin/main"));
+        var followed = asked.Listing.ShouldNotBeNull().Followed.ShouldNotBeNull();
+        (followed.Ref, followed.Name).ShouldBe(("origin/main", "refs/remotes/origin/main"));
 
         Directory.CreateDirectory(Path.Combine(Clone, "src"));
         var sub = (await SystemEndpoints.RepositoryRefsAsync(_root, "repo/src", default))

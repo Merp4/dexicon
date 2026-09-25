@@ -116,7 +116,8 @@ function refsFor(ref: string | undefined, tags: string[] = []): GitRefsResponse 
     : ref.startsWith('refs/') ? [ref]
     : [`refs/${ref}`, `refs/tags/${ref}`, `refs/heads/${ref}`, `refs/remotes/${ref}`];
 
-  return { ...response, listing: { ...l, followed: { ref, name: candidates.find((c) => names.includes(c)) ?? null } } };
+  const [name = null, ...shadowed] = candidates.filter((c) => names.includes(c));
+  return { ...response, listing: { ...l, followed: { ref, name, shadowed } } };
 }
 
 function source(over: Partial<Corpus['sources'][number]> = {}): Corpus['sources'][number] {
@@ -1532,7 +1533,8 @@ describe('choosing what a history source follows', () => {
     expect(within(dialog).queryByText(/is also a tag here/)).not.toBeInTheDocument();
   });
 
-  it('keeps a tag as Other ref', async () => {
+  it('keeps a tag as Other ref, with no note when it hides nothing', async () => {
+    repositoryRefs.mockImplementation(async (_path: string, ref?: string) => refsFor(ref, ['refs/tags/v1.2.0']));
     const user = userEvent.setup();
     getCorpus.mockResolvedValue(historyAt('v1.2.0'));
     render(<CorpusDetail {...props} />);
@@ -1541,6 +1543,22 @@ describe('choosing what a history source follows', () => {
 
     expect(await within(dialog).findByRole('radio', { name: 'Other ref' })).toHaveAttribute('aria-checked', 'true');
     expect(within(dialog).getByLabelText('Ref')).toHaveValue('v1.2.0');
+    expect(within(dialog).queryByText(/is also a tag here/)).not.toBeInTheDocument();
+  });
+
+  it('says a tag hides a branch the listing does not hold', async () => {
+    // Past the cap, the branch is not in the list; the server still reports what the tag hides.
+    repositoryRefs.mockResolvedValue({
+      ...refs(),
+      listing: { ...refs().listing!, followed: { ref: 'release', name: 'refs/tags/release', shadowed: ['refs/heads/release'] } },
+    });
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(historyAt('release'));
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: 'Edit history settings for api-repo' }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(await within(dialog).findByText(/is also a tag here/)).toHaveTextContent(/^release is also a tag here/);
   });
 
   it('says on the row how far behind its upstream the followed branch was', async () => {

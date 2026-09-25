@@ -2543,7 +2543,8 @@
       "GitFollowed": {
         "required": [
           "ref",
-          "name"
+          "name",
+          "shadowed"
         ],
         "type": "object",
         "properties": {
@@ -2555,6 +2556,12 @@
               "null",
               "string"
             ]
+          },
+          "shadowed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

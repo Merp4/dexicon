@@ -303,9 +303,9 @@ public static class SystemEndpoints
     /// answer, not an error, since the picker offers the folder anyway. git failing to
     /// answer is 503 with its reason, and the picker falls back to a typed ref.
     ///
-    /// <paramref name="ref"/>, the ref a source follows, is resolved in the listing. One the
-    /// ref rule refuses resolves to nothing rather than failing the listing, so a branch can
-    /// still be picked in its place.
+    /// <paramref name="ref"/>, the ref a source follows, is resolved in the listing. A ref
+    /// the ref rule refuses resolves to nothing rather than failing the listing, so a branch
+    /// can still be picked in its place.
     /// </summary>
     internal static async Task<IResult> RepositoryRefsAsync(
         string workspaceRoot, string? path, CancellationToken ct, string? @ref = null)

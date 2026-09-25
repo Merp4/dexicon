@@ -42,7 +42,7 @@ describe('the listed ref a stored value names', () => {
     lastFetchUtc: null,
   };
 
-  const resolved = (ref: string, name: string | null): GitRefListing => ({ ...listing, followed: { ref, name } });
+  const resolved = (ref: string, name: string | null): GitRefListing => ({ ...listing, followed: { ref, name, shadowed: [] } });
 
   it('matches a full name exactly, in any group', () => {
     expect(listedRef(listing, 'refs/remotes/origin/main')?.kind).toBe('remote');

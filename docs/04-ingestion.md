@@ -303,8 +303,9 @@ HEAD is on, local branches with their upstreams, remote-tracking branches, and r
 `refs/prefetch/`, each with its tip and commit date, newest first and 200 of each kind. A
 name the `ref` rule refuses is listed with the reason and cannot be followed. `ref`, the
 ref a source follows, comes back as `followed`, resolved the way git resolves a short
-name, so a tag named `main` is reported as the tag git walks rather than the branch. The
-checked-out branch and the followed ref are listed even past the 200. It reads the refs
+name, so a tag named `main` is reported as the tag git walks rather than the branch, and
+the branch it hides is named in `shadowed`. The checked-out branch, the followed ref and
+any ref it shadows are listed even past the 200. It reads the refs
 and FETCH_HEAD's time and nothing else: no remote URL, which can carry a credential, and
 no configuration.
 

@@ -71,11 +71,12 @@ export function GitRefPicker({
       : (loading && value === 'HEAD' ? 'head' : 'other'));
 
   // A short name that is both a tag and a branch: git walks the tag, which a person
-  // reading the name would not expect.
+  // reading the name would not expect. The server says what the tag hides, since the branch
+  // can be past the listing's cap and the listing holds no tags.
   const shadowed = !!listing
     && listing.followed?.ref === value
-    && listing.followed.name === `refs/tags/${value}`
-    && [...listing.local.refs, ...listing.remoteTracking.refs].some((r) => r.shortName === value);
+    && !!listing.followed.name?.startsWith('refs/tags/')
+    && (listing.followed.shadowed?.length ?? 0) > 0;
 
   const headRef = listing?.head.branch
     ? listing.local.refs.find((r) => r.name === listing.head.branch)
