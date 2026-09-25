@@ -1422,6 +1422,39 @@ describe('choosing what a history source follows', () => {
     expect(refused).toHaveAttribute('aria-disabled', 'true');
   });
 
+  it('does not start A branch on a checked-out branch it cannot follow', async () => {
+    repositoryRefs.mockResolvedValue(refs({ head: { branch: 'refs/heads/feat+x', sha: 'b'.repeat(40) } }));
+    addSource.mockResolvedValue({});
+    const { user, dialog } = await openAddHistory();
+
+    await user.click(await within(dialog).findByRole('radio', { name: 'A branch' }));
+    await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
+
+    await waitFor(() => expect(addSource).toHaveBeenCalled());
+    expect(addSource.mock.calls[0][1].git.ref).toBe('refs/heads/main');
+  });
+
+  it('says why an upstream it cannot follow is not offered instead', async () => {
+    const reason = "'refs/remotes/origin/feat+x' is not a usable ref. A branch, a tag or an object name.";
+    const listing = refs().listing!;
+    const [main, ...rest] = listing.local.refs;
+    repositoryRefs.mockResolvedValue(refs({
+      local: {
+        ...listing.local,
+        refs: [{ ...main, upstream: { ...main.upstream!, name: 'refs/remotes/origin/feat+x', shortName: 'origin/feat+x', refusal: reason } }, ...rest],
+      },
+    }));
+    const { user, dialog } = await openAddHistory();
+
+    expect(await within(dialog).findByText(/cannot be followed instead/)).toHaveTextContent(
+      `origin/feat+x cannot be followed instead. ${reason}`);
+    expect(within(dialog).queryByRole('button', { name: /instead/ })).not.toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('radio', { name: 'A branch' }));
+    expect(await within(dialog).findByText(/cannot be followed instead/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: /instead/ })).not.toBeInTheDocument();
+  });
+
   it('falls back to typing a ref when the branches cannot be listed', async () => {
     repositoryRefs.mockRejectedValue(new ApiError(503, 'git could not be asked', 'git could not be started.'));
     addSource.mockResolvedValue({});

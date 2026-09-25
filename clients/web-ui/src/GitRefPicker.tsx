@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, type GitRef, type GitRefsResponse } from './api';
+import { api, type GitRef, type GitRefsResponse, type GitUpstream } from './api';
 import {
   Button, Field, Input, Notice, Segmented, Select, SelectGroup, SelectItem, SelectLabel, relativeTime,
 } from './ui';
@@ -86,7 +86,8 @@ export function GitRefPicker({
     setChosen(next);
     if (next === 'head') onChange('HEAD');
     if (next === 'branch' && listing && !picked) {
-      const first = headRef ?? listing.local.refs.find((r) => !r.refusal);
+      // A checked-out branch the server refuses is listed, disabled; it is not a default.
+      const first = (headRef && !headRef.refusal ? headRef : undefined) ?? listing.local.refs.find((r) => !r.refusal);
       if (first) onChange(first.name);
     }
   };
@@ -148,18 +149,13 @@ export function GitRefPicker({
           {headRef?.upstream && isStale(headRef.upstream) && !headRef.upstream.gone && (
             <Notice tone="warn" className="flex flex-wrap items-center gap-2 text-xs">
               <span>A local branch moves only when someone pulls.</span>
-              {/* type="button": this sits inside the add dialog's form, and a button there
-                  submits by default, which added the source before the ref changed. */}
-              <Button
-                type="button"
-                size="xs"
-                onClick={() => {
+              <FollowUpstream
+                upstream={headRef.upstream}
+                onFollow={(name) => {
                   setChosen('branch');
-                  onChange(headRef.upstream!.name);
+                  onChange(name);
                 }}
-              >
-                Follow {headRef.upstream.shortName} instead
-              </Button>
+              />
             </Notice>
           )}
           <p className="dim m-0 text-xs">
@@ -216,11 +212,7 @@ export function GitRefPicker({
                 {refLabel(picked.ref.name)} is {distance(picked.ref.upstream)} as of the last fetch. A local branch
                 moves only when someone pulls.
               </span>
-              {!picked.ref.upstream.gone && (
-                <Button type="button" size="xs" onClick={() => onChange(picked.ref.upstream!.name)}>
-                  Follow {picked.ref.upstream.shortName} instead
-                </Button>
-              )}
+              {!picked.ref.upstream.gone && <FollowUpstream upstream={picked.ref.upstream} onFollow={onChange} />}
             </Notice>
           )}
           {picked?.kind === 'remote' && (
@@ -251,6 +243,27 @@ export function GitRefPicker({
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * The offer to follow a branch's upstream in its place, or why it cannot be: an upstream
+ * the server refuses would only be refused again on save.
+ */
+function FollowUpstream({ upstream, onFollow }: { upstream: GitUpstream; onFollow: (name: string) => void }) {
+  if (upstream.refusal)
+    return (
+      <span>
+        <bdi className="mono">{upstream.shortName}</bdi> cannot be followed instead. {upstream.refusal}
+      </span>
+    );
+
+  // type="button": this sits inside the add dialog's form, and a button there submits by
+  // default, which added the source before the ref changed.
+  return (
+    <Button type="button" size="xs" onClick={() => onFollow(upstream.name)}>
+      Follow {upstream.shortName} instead
+    </Button>
   );
 }
 

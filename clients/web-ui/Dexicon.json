@@ -2841,6 +2841,12 @@
           },
           "gone": {
             "type": "boolean"
+          },
+          "refusal": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },

@@ -255,6 +255,27 @@ public sealed class GitRefsTests : IDisposable
         local.Single(r => r.Name == "refs/heads/main").Refusal.ShouldBeNull();
     }
 
+    /// <summary>
+    /// An upstream the rule refuses says so, so the picker does not offer it in place of the
+    /// branch: a usable branch can track a remote branch whose name is not usable.
+    /// </summary>
+    [Fact]
+    public async Task AnUpstreamTheRuleRefusesSaysWhy()
+    {
+        Git(Clone, "branch", "tracks-refused");
+        Git(Clone, "config", "branch.tracks-refused.remote", "origin");
+        Git(Clone, "config", "branch.tracks-refused.merge", "refs/heads/feat+x");
+
+        var local = (await RefsAsync()).Local.Refs;
+
+        var refused = local.Single(r => r.Name == "refs/heads/tracks-refused");
+        refused.Refusal.ShouldBeNull("the branch itself is usable");
+        refused.Upstream.ShouldNotBeNull().Name.ShouldBe("refs/remotes/origin/feat+x");
+        refused.Upstream.Refusal.ShouldNotBeNull().ShouldContain("not a usable ref");
+
+        local.Single(r => r.Name == "refs/heads/main").Upstream.ShouldNotBeNull().Refusal.ShouldBeNull();
+    }
+
     [Fact]
     public async Task DetachedAndUnbornHeadsAreReportedAsSuch()
     {

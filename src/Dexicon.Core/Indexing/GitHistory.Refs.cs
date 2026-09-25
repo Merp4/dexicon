@@ -8,7 +8,11 @@ namespace Dexicon.Core.Indexing;
 /// <param name="Ahead">Commits on the branch that the upstream lacks. Null when git's answer could not be read.</param>
 /// <param name="Behind">Commits on the upstream that the branch lacks. Null when git's answer could not be read.</param>
 /// <param name="Gone">The branch names an upstream that no longer exists.</param>
-public sealed record GitUpstream(string Name, string ShortName, int? Ahead, int? Behind, bool Gone);
+/// <param name="Refusal">
+/// Why the upstream cannot be followed, in the words a typed ref is refused with, so the
+/// picker does not offer it in the branch's place. Null when it can.
+/// </param>
+public sealed record GitUpstream(string Name, string ShortName, int? Ahead, int? Behind, bool Gone, string? Refusal = null);
 
 /// <summary>One ref, as the picker offers it.</summary>
 /// <param name="Name">The full name, which is what a source stores when this is picked.</param>
@@ -271,7 +275,7 @@ public static partial class GitHistory
     {
         if (name.Length == 0) return null;
         var (ahead, behind, gone) = ParseTrack(track);
-        return new GitUpstream(name, shortName, ahead, behind, gone);
+        return new GitUpstream(name, shortName, ahead, behind, gone, RefProblem(name));
     }
 
     /// <summary>
