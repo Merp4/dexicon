@@ -17,8 +17,8 @@ public sealed class ProcessLanguageCollection
 /// <summary>
 /// Every git call runs in the C locale, whatever language the service was started in.
 ///
-/// Read from how the process is started rather than from what git prints: neither git this
-/// was measured on, the image's 2.54.0 and Git for Windows 2.31.1, has translations, so a
+/// Read from how the process is started rather than from what git prints. Neither git
+/// version measured has translations, the image's 2.54.0 or Git for Windows 2.31.1, so a
 /// test of the output would pass with or without the pin and prove nothing.
 /// </summary>
 [Collection(ProcessLanguageCollection.Name)]

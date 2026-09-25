@@ -700,15 +700,6 @@ public static class CorpusEndpoints
     }
 
     /// <summary>
-    /// History settings git cannot be asked with, refused where they arrive.
-    ///
-    /// They were stored as sent, so a malformed ref, a commit limit of zero or a diff cap
-    /// past the read ceiling was answered 200 and discovered on the next pass, as the
-    /// source being unavailable with the reason in a job. The same checks the inventory
-    /// makes, and none of them runs git, so a request is still judged before any process
-    /// starts. Null settings are the defaults, which are usable.
-    /// </summary>
-    /// <summary>
     /// Why a history source cannot be added at this path, or null when it can.
     ///
     /// Two different answers. A folder with no repository at its root is the caller's to
@@ -740,6 +731,15 @@ public static class CorpusEndpoints
             statusCode: 400);
     }
 
+    /// <summary>
+    /// History settings git cannot be asked with, refused where they arrive.
+    ///
+    /// They were stored as sent, so a malformed ref, a commit limit of zero or a diff cap
+    /// past the read ceiling was answered 200 and discovered on the next pass, as the
+    /// source being unavailable with the reason in a job. The same checks the inventory
+    /// makes, and none of them runs git, so a request is still judged before any process
+    /// starts. Null settings are the defaults, which are usable.
+    /// </summary>
     internal static IResult? UnusableHistorySettings(GitHistoryOptions? git) =>
         git is not null && GitHistory.Problem(git) is { } problem
             ? Results.Problem(title: "Unusable history settings", detail: problem, statusCode: 400)
