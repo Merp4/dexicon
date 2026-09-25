@@ -557,6 +557,39 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
+    /// Adding a history source at a folder: 400 when the folder has no repository, 503
+    /// when git could not be asked. The second was a 500, and a 400 would send someone to
+    /// check a path that is right.
+    /// </summary>
+    [Fact]
+    public async Task AGitThatCannotBeAskedIsNotReportedAsTheWrongFolder()
+    {
+        var root = Path.GetDirectoryName(_repo)!;
+        var name = Path.GetFileName(_repo);
+
+        (await Dexicon.Api.CorpusEndpoints.NotAHistoryRootAsync(root, name, GitHistory.IsRepositoryAsync, default))
+            .ShouldBeNull("the folder holds a repository");
+
+        var plain = Path.Combine(Path.GetTempPath(), $"plain-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(plain);
+        try
+        {
+            var notOne = await Dexicon.Api.CorpusEndpoints.NotAHistoryRootAsync(
+                Path.GetDirectoryName(plain)!, Path.GetFileName(plain), GitHistory.IsRepositoryAsync, default);
+            notOne.ShouldBeOfType<Microsoft.AspNetCore.Http.HttpResults.ProblemHttpResult>()
+                .StatusCode.ShouldBe(400);
+        }
+        finally { Directory.Delete(plain, recursive: true); }
+
+        var unasked = await Dexicon.Api.CorpusEndpoints.NotAHistoryRootAsync(root, name,
+            (_, _) => throw new GitHistoryException("git could not be started. A git-history source needs the git binary on PATH."),
+            default);
+        var problem = unasked.ShouldBeOfType<Microsoft.AspNetCore.Http.HttpResults.ProblemHttpResult>();
+        problem.StatusCode.ShouldBe(503);
+        problem.ProblemDetails.Detail.ShouldNotBeNull().ShouldContain("could not be started");
+    }
+
+    /// <summary>
     /// A subdirectory of a repository is not a repository.
     ///
     /// `rev-parse --is-inside-work-tree` says true from `/repo/src`, and a source

@@ -959,6 +959,104 @@ public static class GitHistory
         GitRepository repo, IReadOnlyList<string> args, CancellationToken ct, string? stdin = null,
         long? maxBytes = null)
     {
+        var info = StartInfo(repo, args, redirectStdin: stdin is not null);
+
+        using var process = new Process { StartInfo = info };
+
+        try
+        {
+            process.Start();
+        }
+        catch (Exception ex)
+        {
+            throw new GitHistoryException(
+                "git could not be started. A git-history source needs the git binary on PATH.", ex);
+        }
+
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(Timeout);
+
+        // Both streams read concurrently. Waiting for exit with either pipe unread is the
+        // classic deadlock: git fills the buffer and blocks, and nothing drains it.
+        var stderrTask = process.StandardError.ReadToEndAsync(deadline.Token);
+        var stdout = new StringBuilder();
+        var over = false;
+        var read = 0L;
+
+        try
+        {
+            if (stdin is not null)
+            {
+                await process.StandardInput.WriteAsync(stdin.AsMemory(), deadline.Token);
+                process.StandardInput.Close();
+            }
+
+            // Read in chunks rather than to the end, so a ceiling can be enforced while
+            // the output is arriving. Reading it all and measuring afterwards is not a
+            // bound: by then it is allocated.
+            var buffer = new char[32 * 1024];
+            while (true)
+            {
+                var n = await process.StandardOutput.ReadAsync(buffer, deadline.Token);
+                if (n == 0) break;
+
+                // Counted in UTF-8 bytes, because that is the unit every ceiling here is
+                // named in: MaxDiffBytes is the operator's setting and StatAllowance and
+                // AbsoluteCeiling are sized against it. Against StringBuilder.Length it
+                // was UTF-16 code units, so a patch of three-byte characters read three
+                // times the stated ceiling before being stopped — the same mistake
+                // Document already carries a comment about, one measurement further up.
+                //
+                // Per chunk rather than over the whole buffer again, so the cost is one
+                // pass over what was just read.
+                if (maxBytes is { } cap)
+                {
+                    read += Encoding.UTF8.GetByteCount(buffer, 0, n);
+                    if (read > cap)
+                    {
+                        over = true;
+                        break;
+                    }
+                }
+
+                stdout.Append(buffer, 0, n);
+            }
+
+            if (over)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
+                throw new GitOutputTooLargeException(maxBytes!.Value);
+            }
+
+            await process.WaitForExitAsync(deadline.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // Killed either way, and that is the point of catching both.
+            //
+            // A cancelled wait abandons the readers and returns; the child keeps running,
+            // now writing into pipes nobody drains, so it fills them and blocks for as
+            // long as the process lives. Leaving that to the timeout branch alone meant a
+            // cancelled JOB — a stopped index, a lost lease, a shutdown — leaked a git
+            // process per call, which is the case most likely to produce several.
+            try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
+
+            // The caller's cancellation is the caller's to see. Only the deadline is this
+            // method's own failure, and only that becomes an exception of ours.
+            ct.ThrowIfCancellationRequested();
+            throw new GitHistoryException($"git did not finish within {Timeout.TotalMinutes:N0} minutes.");
+        }
+
+        return (process.ExitCode == 0, stdout.ToString(), await stderrTask);
+    }
+
+    /// <summary>
+    /// How every git call here is started: the repository, the argument list, and the
+    /// configuration pinned around it. Its own method so the pins can be read by a test
+    /// without a git that shows the difference each one makes.
+    /// </summary>
+    internal static ProcessStartInfo StartInfo(GitRepository repo, IReadOnlyList<string> args, bool redirectStdin)
+    {
         // A GitRepository and not a string: the only way to make one is
         // GitHistory.RepositoryIn, which holds the path against the workspace boundary.
         // The file name is the literal "git" and the arguments go as a list, so nothing
@@ -968,7 +1066,7 @@ public static class GitHistory
             WorkingDirectory = repo.FullPath,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            RedirectStandardInput = stdin is not null,
+            RedirectStandardInput = redirectStdin,
             UseShellExecute = false,
             CreateNoWindow = true,
             StandardOutputEncoding = Encoding.UTF8,
@@ -1080,93 +1178,18 @@ public static class GitHistory
         info.Environment["GIT_TERMINAL_PROMPT"] = "0";
         info.Environment["GIT_OPTIONAL_LOCKS"] = "0";
 
-        using var process = new Process { StartInfo = info };
+        // The C locale, so what git prints does not depend on the process's language.
+        // The stat's summary line (" 1 file changed") is translated where git has
+        // translations, and it goes into a commit's document, which the fingerprint does
+        // not cover. Measured on the shipped image's git 2.54.0 and Git for Windows
+        // 2.31.1: neither has translations, so this changes nothing there. A deployment
+        // outside the image, on a host whose git does, would otherwise index the same
+        // commit in whichever language the service was started in. LANGUAGE goes too:
+        // gettext prefers it to LC_ALL for messages unless the locale is C.
+        info.Environment["LC_ALL"] = "C";
+        info.Environment.Remove("LANGUAGE");
 
-        try
-        {
-            process.Start();
-        }
-        catch (Exception ex)
-        {
-            throw new GitHistoryException(
-                "git could not be started. A git-history source needs the git binary on PATH.", ex);
-        }
-
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        deadline.CancelAfter(Timeout);
-
-        // Both streams read concurrently. Waiting for exit with either pipe unread is the
-        // classic deadlock: git fills the buffer and blocks, and nothing drains it.
-        var stderrTask = process.StandardError.ReadToEndAsync(deadline.Token);
-        var stdout = new StringBuilder();
-        var over = false;
-        var read = 0L;
-
-        try
-        {
-            if (stdin is not null)
-            {
-                await process.StandardInput.WriteAsync(stdin.AsMemory(), deadline.Token);
-                process.StandardInput.Close();
-            }
-
-            // Read in chunks rather than to the end, so a ceiling can be enforced while
-            // the output is arriving. Reading it all and measuring afterwards is not a
-            // bound: by then it is allocated.
-            var buffer = new char[32 * 1024];
-            while (true)
-            {
-                var n = await process.StandardOutput.ReadAsync(buffer, deadline.Token);
-                if (n == 0) break;
-
-                // Counted in UTF-8 bytes, because that is the unit every ceiling here is
-                // named in: MaxDiffBytes is the operator's setting and StatAllowance and
-                // AbsoluteCeiling are sized against it. Against StringBuilder.Length it
-                // was UTF-16 code units, so a patch of three-byte characters read three
-                // times the stated ceiling before being stopped — the same mistake
-                // Document already carries a comment about, one measurement further up.
-                //
-                // Per chunk rather than over the whole buffer again, so the cost is one
-                // pass over what was just read.
-                if (maxBytes is { } cap)
-                {
-                    read += Encoding.UTF8.GetByteCount(buffer, 0, n);
-                    if (read > cap)
-                    {
-                        over = true;
-                        break;
-                    }
-                }
-
-                stdout.Append(buffer, 0, n);
-            }
-
-            if (over)
-            {
-                try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
-                throw new GitOutputTooLargeException(maxBytes!.Value);
-            }
-
-            await process.WaitForExitAsync(deadline.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            // Killed either way, and that is the point of catching both.
-            //
-            // A cancelled wait abandons the readers and returns; the child keeps running,
-            // now writing into pipes nobody drains, so it fills them and blocks for as
-            // long as the process lives. Leaving that to the timeout branch alone meant a
-            // cancelled JOB — a stopped index, a lost lease, a shutdown — leaked a git
-            // process per call, which is the case most likely to produce several.
-            try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
-
-            // The caller's cancellation is the caller's to see. Only the deadline is this
-            // method's own failure, and only that becomes an exception of ours.
-            ct.ThrowIfCancellationRequested();
-            throw new GitHistoryException($"git did not finish within {Timeout.TotalMinutes:N0} minutes.");
-        }
-
-        return (process.ExitCode == 0, stdout.ToString(), await stderrTask);
+        return info;
     }
 }
 

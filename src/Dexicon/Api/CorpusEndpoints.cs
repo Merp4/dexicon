@@ -259,16 +259,10 @@ public static class CorpusEndpoints
                 var root = opts.Value.Indexing.WorkspaceRoot;
                 WorkspaceDiscovery.Resolve(root, body.WorkspacePath);
 
-                if (body.GitHistory)
-                {
-                    var repo = GitHistory.RepositoryIn(root, body.WorkspacePath);
-                    if (repo is null || !await GitHistory.IsRepositoryAsync(repo, ct))
-                        return Results.Problem(
-                            title: "Not a git repository",
-                            detail: $"'{body.WorkspacePath}' has no git repository in it, so there is no "
-                                  + "history to index. Point this at the folder holding .git.",
-                            statusCode: 400);
-                }
+                if (body.GitHistory
+                    && await NotAHistoryRootAsync(root, body.WorkspacePath, GitHistory.IsRepositoryAsync, ct)
+                        is { } notARepository)
+                    return notARepository;
             }
             catch (UnauthorizedAccessException ex)
             {
@@ -703,6 +697,38 @@ public static class CorpusEndpoints
         if (excludeGlobs is not null) named.Add("excludeGlobs");
 
         return named.Count == 0 ? null : string.Join(", ", named);
+    }
+
+    /// <summary>
+    /// Why a history source cannot be added at this path, or null when it can.
+    ///
+    /// Two different answers. A folder with no repository at its root is the caller's to
+    /// fix, so 400 and where to point instead. git that cannot be asked at all, because the
+    /// binary is missing or the question timed out, says nothing about the folder: it came
+    /// out as a 500, and a 400 would send someone to check a path that is right. So 503,
+    /// with git's reason. <paramref name="isRepository"/> is the probe, passed in so a test
+    /// can make it fail the way a deployment's git does.
+    /// </summary>
+    internal static async Task<IResult?> NotAHistoryRootAsync(
+        string workspaceRoot, string workspacePath,
+        Func<GitRepository, CancellationToken, Task<bool>> isRepository, CancellationToken ct)
+    {
+        var repo = GitHistory.RepositoryIn(workspaceRoot, workspacePath);
+
+        try
+        {
+            if (repo is not null && await isRepository(repo, ct)) return null;
+        }
+        catch (GitHistoryException ex)
+        {
+            return Results.Problem(title: "git could not be asked", detail: ex.Message, statusCode: 503);
+        }
+
+        return Results.Problem(
+            title: "Not a git repository",
+            detail: $"'{workspacePath}' has no git repository in it, so there is no "
+                  + "history to index. Point this at the folder holding .git.",
+            statusCode: 400);
     }
 
     /// <summary>
