@@ -235,7 +235,7 @@ it, and anyone proposing a reranker has a baseline to beat.
 
 ---
 
-## M4 — Open-source ready — **partly done**
+## M4 — Open-source ready ✅ **COMPLETE (2026-09-25)**
 
 - ✅ `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, issue and PR templates.
 - ✅ `docs/troubleshooting.md` covering the real first-hour failures.
@@ -255,8 +255,11 @@ it, and anyone proposing a reranker has a baseline to beat.
   attestation the release workflow skips on a private repo.
 
 **Done when:** the repository is public and the quickstart has been followed on a clean
-machine by someone who did not write it. The first half holds; the second has not been
-attempted, and it is the only thing left in this milestone.
+machine by someone who did not write it.
+
+**Closed** by the maintainer on 2026-09-25, after installing Dexicon afresh on a second
+machine. That install is the evidence for the second half. Nobody outside the project has
+reported following the quickstart yet.
 
 ---
 
