@@ -128,3 +128,46 @@ describe('a successful request', () => {
     await expect(api.deleteCorpus('docs')).resolves.toBeNull();
   });
 });
+
+/**
+ * Signing out ends the session on the server.
+ *
+ * The page clears the token as soon as it asks to sign out, and the interceptor reads the
+ * token when the request goes out, which is later. The DELETE left with no Authorization
+ * header, the server answered 204 with nothing to revoke, and the session went on working
+ * until it expired. Measured live: the old token read /api/corpora with 200 after Sign out.
+ */
+describe('signing out', () => {
+  const noContent = () => new Response(null, { status: 204 });
+
+  it('sends the session it ends, though the page clears it at once', async () => {
+    setToken('dxs_session');
+    fetchMock.mockResolvedValue(noContent());
+
+    const done = api.signOut();
+    setToken(null);
+    await done;
+
+    const request = fetchMock.mock.calls[0][0] as Request;
+    expect(request.method).toBe('DELETE');
+    expect(request.headers.get('Authorization')).toBe('Bearer dxs_session');
+  });
+
+  it('does not end a session stored after it was asked', async () => {
+    // A sign-out caused by a 401 can run behind a new sign-in in the same tab.
+    setToken('dxs_old');
+    fetchMock.mockResolvedValue(noContent());
+
+    const done = api.signOut();
+    setToken('dxs_new');
+    await done;
+
+    expect((fetchMock.mock.calls[0][0] as Request).headers.get('Authorization')).toBe('Bearer dxs_old');
+  });
+
+  it('asks nothing of the server with no session to end', async () => {
+    await api.signOut();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

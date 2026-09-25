@@ -63,8 +63,23 @@ const ALL_CORPORA = ':all';
  */
 export default function App() {
   const [token, setTok] = useState<string | null>(getToken());
+
+  /**
+   * `failed` is the session a request was refused for, when a 401 is the reason. A request
+   * sent before a new sign-in can come back 401 after it, for the old session; signing out
+   * then would end the new one, so a refusal for a session no longer stored is ignored.
+   * Without `failed` it is the Sign out button, which ends the session stored now.
+   */
+  const signOut = (failed?: string | null) => {
+    const current = getToken();
+    if (failed !== undefined && failed !== current) return;
+    void api.signOut(current);
+    setToken(null);
+    setTok(null);
+  };
+
   if (!token) return <SignInGate onToken={(t) => { setToken(t); setTok(t); }} />;
-  return <Shell onSignOut={() => { void api.signOut(); setToken(null); setTok(null); }} />;
+  return <Shell onSignOut={signOut} />;
 }
 
 /**
@@ -136,7 +151,7 @@ function SignInGate({ onToken }: { onToken: (t: string) => void }) {
   );
 }
 
-function Shell({ onSignOut }: { onSignOut: () => void }) {
+function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
   // Seeded from the URL, so a reload, a bookmark and a shared link all open the screen they
   // name. Before this, every reload landed on Search whatever you were reading.
   const initial = parseHash(window.location.hash);
@@ -180,11 +195,13 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   useEffect(() => {
     void refreshCorpora();
     const tick = async () => {
+      // The session this poll is sent with, so a 401 names the one it was refused for.
+      const sent = getToken();
       try {
         setHealth(await api.health());
         setHealthStale(false);
       } catch (e) {
-        if (e instanceof ApiError && e.status === 401) { onSignOut(); return; }
+        if (e instanceof ApiError && e.status === 401) { onSignOut(sent); return; }
         // A failed poll is NOT an outage. /healthz can be slow while indexing
         // saturates Ollama, and blanking the state would paint both dots red during
         // perfectly normal work, and a false alarm is as bad as a missed one. Keep the
@@ -279,7 +296,8 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
         </nav>
 
         <HealthDots health={health} connected={connected} stale={healthStale} />
-        <Button onClick={onSignOut}>
+        {/* Wrapped: passed directly, the click event would arrive as `failed`. */}
+        <Button onClick={() => onSignOut()}>
           <LogOut />
           Sign out
         </Button>

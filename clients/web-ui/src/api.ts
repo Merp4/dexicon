@@ -92,11 +92,12 @@ import { getToken } from './token';
  * attached should not be a property of a generated file. The client skips its own auth
  * step when the header is already set, so the two do not fight.
  *
- * Read per request, not captured: the token arrives after this module is imported.
+ * Read per request, not captured: the token arrives after this module is imported. A
+ * header the caller set is left alone, which is how `signOut` sends the session it ends.
  */
 client.interceptors.request.use((request) => {
   const token = getToken();
-  if (token) request.headers.set('Authorization', `Bearer ${token}`);
+  if (token && !request.headers.has('Authorization')) request.headers.set('Authorization', `Bearer ${token}`);
   return request;
 });
 
@@ -401,7 +402,18 @@ export const api = {
   signIn: (password: string) =>
     call(() => postApiSession({ body: { password } satisfies SignInRequest })),
 
-  signOut: () => call(() => deleteApiSession()),
+  /**
+   * End a session on the server: the one named, or the one stored when this is called.
+   *
+   * Sent with the request rather than left to the interceptor, which reads storage when
+   * the request goes out. By then the caller has cleared it: the DELETE went out with no
+   * token, the server had nothing to revoke and answered 204 anyway, and the session
+   * stayed usable until it expired.
+   */
+  signOut: (token: string | null = getToken()) => {
+    if (!token) return Promise.resolve();
+    return call(() => deleteApiSession({ headers: { Authorization: `Bearer ${token}` } }));
+  },
 
   /**
    * Replace which corpora a key may reach. An empty list means every corpus.
