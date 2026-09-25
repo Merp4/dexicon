@@ -16,6 +16,79 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## 0.6.2 — 2026-09-25
+
+### ⚠️ Upgrading
+
+- No migrations, and nothing re-chunks or re-embeds.
+
+### Security
+
+- **Signing out ends the session on the server.** The UI cleared its token before the
+  sign-out request went out, so the request carried none, the server had nothing to revoke
+  and answered 204, and the session stayed usable until it expired. The request now names
+  the session it ends. A 401 for a session that is no longer the stored one does not sign
+  the page out, so a refusal that arrives late for an old session cannot end a newer one.
+
+### Added
+
+- **A commit limit can keep what it indexed.** `maxCommits` alone is a window: each new
+  commit pushes the oldest out of the corpus on the next pass. `keepIndexed`, off by
+  default and refused without `maxCommits`, makes the limit a starting point: a commit
+  once indexed stays while the ref reaches it and the other settings still select it. A
+  keeping source lists the whole reachable history on every pass. The history editor
+  offers it beside a commit limit and warns before a save that turns it off, since every
+  held commit past the limit then leaves on the refresh.
+
+- **Each search hit shows its score, and Explain says how it was made**: DBSF over the
+  dense and sparse lists for hybrid, cosine similarity for semantic, an IDF-weighted term
+  match for keyword. Explain said reciprocal rank fusion for all three, which hybrid
+  stopped using in 0.3.0.
+
+### Changed
+
+- **Promote and Revoke ask first.** Each acted on one click. Promote now names the set
+  search moves to and the one it leaves, with both models; Revoke says a revoked key cannot
+  be restored from the page.
+
+- **A passage marks what the keyword index matched.** The terms are each word of the query
+  and the parts of a compound identifier, with the index's term lengths and stopwords, and
+  the passage is read token by token the same way. It marked whole query words as
+  substrings, so most keyword hits for an identifier had nothing marked, and a part could be
+  marked inside an unrelated word. Common words the query has on their own are still left
+  unmarked.
+
+- **Opening a hit marks all of it, wherever it is.** The viewer marked only the first line,
+  and loaded only the first 400,000 characters of a file, so a hit further into a book was
+  neither marked nor scrolled to. It now reads on until the hit's last line is in.
+
+- Chunk sizes on Documents carry their units, Access shows one badge per scope, an empty
+  status tab says "No failed files", and an inherited filter field is named on its line.
+  docs/08 describes the Search screen as it is; it listed controls the page never had.
+
+### Fixed
+
+- **Live progress keeps arriving on a page left open.** The progress stream lost one event
+  for every 20-second idle ping it had sent, so a page open for 20 minutes lost the next 60
+  or so: bars froze and a finished refresh never reloaded the corpus. The connection stayed
+  open, so nothing reconnected.
+
+- **Deleting a corpus counts every chunk set it deletes.** It gave the default set's count.
+
+- **The corpus page no longer says "Run a refresh" while its files load.** It drew the
+  page with an empty list for one round trip on every visit. The corpus now also draws when
+  the file list fails, and a listing that answers after a newer one no longer replaces it.
+
+- **A source can be added at the workspace root.** Its path is empty and the submit was
+  disabled for an empty path, so the coverage notice's button for a gap at the root opened
+  a form that could not be sent. A file source there now warns that it takes everything no
+  deeper source claims.
+
+- "1 chunk", not "1 chunks", and the chunk-set summary's accessible name has spaces
+  between its parts.
+
+---
+
 ## 0.6.1 — 2026-09-24
 
 ### ⚠️ Upgrading
