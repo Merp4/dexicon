@@ -36,7 +36,7 @@ with no section here fails its release rather than publishing an undescribed one
   commit pushes the oldest out of the corpus on the next pass. `keepIndexed`, off by
   default and refused without `maxCommits`, makes the limit a starting point: a commit
   once indexed stays while the ref reaches it and the other settings still select it. A
-  keeping source lists the whole reachable history on every pass. The history editor
+  source with `keepIndexed` on lists the whole reachable history on every pass. The history editor
   offers it beside a commit limit and warns before a save that turns it off, since every
   held commit past the limit then leaves on the refresh.
 
