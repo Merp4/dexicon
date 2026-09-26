@@ -8,7 +8,7 @@ namespace Dexicon.Tests;
 /// The command a new key comes with, and every copy of it in the docs, registers Dexicon at
 /// Claude Code's user scope. Its project and local scopes are keyed by the literal
 /// working-directory string, so a server added from one shell can be missing from a session
-/// started in another. The command and four documented copies once all left the scope out.
+/// started in another. The command and all five documented copies once left the scope out.
 /// </summary>
 public sealed class McpAddCommandTests
 {
