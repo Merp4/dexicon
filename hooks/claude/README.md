@@ -29,9 +29,13 @@ them and so `-Uninstall` knows what it owns.
 
 ## Configuration
 
-One file, `~/.claude/dexicon-hooks.env`, holds the connection, the key and every knob. The
-keys are named after the `POST /api/context` fields they set, and an unset one is not sent
-at all, so the server's own default applies rather than the hook carrying a copy of it.
+One file, `dexicon-hooks.env`, holds the connection, the key and every knob. The installer
+writes it into the `.claude` directory the hooks are installed under, `~/.claude` at user
+scope and a project's `.claude` at project scope, and the hooks read it from there, falling
+back to `~/.claude/dexicon-hooks.env` when there is none beside them. `DEXICON_HOOKS_ENV`
+names another file. The keys are named after the `POST /api/context` fields they set, and an
+unset one is not sent at all, so the server's own default applies rather than the hook
+carrying a copy of it.
 
 | Key | Sets |
 |---|---|

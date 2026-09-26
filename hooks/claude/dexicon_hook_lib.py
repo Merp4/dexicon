@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# dexicon-hook-version: 1
+# dexicon-hook-version: 2
 """Shared by the Dexicon hooks: the config file, one HTTP call, and a warning channel.
 
 Installed beside the hooks, so `sys.path` gets the hook's own directory rather than relying
@@ -24,7 +24,20 @@ DEFAULT_CONNECT_TIMEOUT = 2.0
 DEFAULT_TIMEOUT = 10.0
 
 CONFIG_ENV = "DEXICON_HOOKS_ENV"
-DEFAULT_CONFIG = os.path.join(os.path.expanduser("~"), ".claude", "dexicon-hooks.env")
+CONFIG_NAME = "dexicon-hooks.env"
+
+
+def default_config() -> str:
+    """The config the installer wrote beside these hooks, else the user's.
+
+    The installer writes it into the `.claude` directory whose `hooks` directory holds this
+    file: `~/.claude` at user scope, a project's `.claude` at project scope. Reading only
+    `~/.claude` left a project-scope install reading the user's file, or none at all.
+    """
+    beside = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), CONFIG_NAME)
+    if os.path.exists(beside):
+        return beside
+    return os.path.join(os.path.expanduser("~"), ".claude", CONFIG_NAME)
 
 
 def _use_utf8() -> None:
@@ -58,7 +71,7 @@ def load_config() -> dict:
     The process environment wins over the file, so a single run can be pointed elsewhere
     without editing anything.
     """
-    path = os.environ.get(CONFIG_ENV) or DEFAULT_CONFIG
+    path = os.environ.get(CONFIG_ENV) or default_config()
     cfg = {}
     try:
         with open(path, "r", encoding="utf-8") as fh:

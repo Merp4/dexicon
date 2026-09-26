@@ -1,5 +1,5 @@
 ---
-# dexicon-skill-version: 1
+# dexicon-skill-version: 2
 name: dexicon-search
 description: Search indexed code and documents by meaning using the Dexicon MCP server. Use when looking for where something is implemented, how a concept is handled, or what a document says about a topic — anything where you know the idea but not the term. Also covers reading an indexed file back and diagnosing an empty result.
 ---
@@ -13,18 +13,20 @@ connected, and nothing in this file applies.
 ## Invoked directly
 
 A slash invocation is a request to search now, not to read guidance. Take the text after the
-command as the query, run `search_index` over every visible corpus unless that text names
-one, and report the hits with their paths and line numbers. With nothing after it, run
-`list_corpora` and say what is indexed.
+command as the query, run `search_index`, and report the hits with their paths and line
+numbers. If the text names a corpus, search that one. Otherwise, when more than one is
+indexed, search the one or two whose `list_corpora` descriptions fit the query, and widen to
+all of them only when none fits or that search comes back thin. With nothing after the
+command, run `list_corpora` and say what is indexed.
 
 The rest of this file is for deciding when to search without being asked, and does not need
 repeating back.
 
 ## The tools
 
-Start with `list_corpora`. It returns the names you are allowed to pass, their sizes, and
-their state — and those names are the only legal values for `search_index`'s `corpus`.
-Guessing one wastes a call.
+Start with `list_corpora`. It returns the names you are allowed to pass, their sizes, their
+state and what each holds, and those names are the only legal values for `search_index`'s
+`corpus`. Guessing one wastes a call.
 
 ## When this beats grep
 
@@ -62,9 +64,12 @@ from yours; `keyword` when you want exact-match behaviour, or when embeddings ar
 Narrow with `pathPrefix`, `language` or `symbol` before raising `limit`. Twenty results
 across the whole index is usually worse than eight from `src/Auth/`.
 
-Omitting `corpus` searches everything visible to you. Name one when you know which it is:
-a targeted search gives better ranking than a broad one, because the competition is
-relevant rather than merely abundant.
+Omitting `corpus` searches everything visible to you, and with several corpora of different
+kinds that is noisy: asked of five corpora, a question about one project's design drew 6 of
+its top 10 hits from the four that did not hold the answer. Pick the one or two whose
+descriptions fit and name them. A targeted search ranks better, because the competition is
+relevant rather than merely abundant. Search everything when no description fits, or when a
+targeted search came back empty and you need to know whether the answer is anywhere.
 
 ### Chunk sets: `corpus:set`
 

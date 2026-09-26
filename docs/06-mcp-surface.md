@@ -79,7 +79,7 @@ The one that matters.
     "properties": {
       "query":  { "type": "string", "description": "Natural language question or code fragment." },
       "corpus": { "type": "array", "items": { "type": "string" },
-                  "description": "Corpus names to search, optionally qualified as corpus:set. Omit to search everything you can see. Use list_corpora to discover them." },
+                  "description": "Corpus names to search, optionally qualified as corpus:set. With several corpora, name the one or two whose list_corpora descriptions fit the question. Omit to search everything you can see." },
       "mode":   { "type": "string", "enum": ["hybrid", "semantic", "keyword"], "default": "hybrid",
                   "description": "hybrid blends meaning and exact terms; keyword is exact-match only and works when embeddings are unavailable." },
       "limit":  { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 },
