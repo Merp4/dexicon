@@ -273,11 +273,15 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
   return (
     <div className="flex flex-col min-h-[100dvh]">
       <header
-        className="flex flex-wrap items-center gap-4 border-b border-border bg-card px-4 py-2.5"
+        className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border bg-card px-4 py-2.5"
       >
         <strong className="text-base">Dexicon</strong>
 
-        <nav className="flex gap-1 flex-1 flex-wrap">
+        {/* One row needs about 1,056px: the name 61, the chips 667, the health dots 151,
+            Sign out 97, gaps and padding 80. Narrower, the chips wrapped inside the bar into
+            two ragged rows, which a browser at half of a 1920 screen always hit. There the
+            nav takes a row of its own under the rest instead. */}
+        <nav className="order-last flex basis-full flex-wrap gap-1 min-[1120px]:order-none min-[1120px]:flex-1 min-[1120px]:basis-auto">
           {nav.map((n) => (
             <Chip
               key={n.id}
@@ -297,12 +301,14 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
           ))}
         </nav>
 
-        <HealthDots health={health} connected={connected} stale={healthStale} />
-        {/* Wrapped: passed directly, the click event would arrive as `failed`. */}
-        <Button onClick={() => onSignOut()}>
-          <LogOut />
-          Sign out
-        </Button>
+        <div className="ml-auto flex items-center gap-4">
+          <HealthDots health={health} connected={connected} stale={healthStale} />
+          {/* Wrapped: passed directly, the click event would arrive as `failed`. */}
+          <Button onClick={() => onSignOut()}>
+            <LogOut />
+            Sign out
+          </Button>
+        </div>
       </header>
 
       <main className="mx-auto w-full max-w-[1180px] flex-1 p-4">
