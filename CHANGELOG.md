@@ -16,6 +16,88 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## 0.6.3 — 2026-09-26
+
+### ⚠️ Upgrading
+
+- One migration, `GitHistoryTracking`, applied at startup. Widening only: one nullable
+  column on `sources`, filled by the next pass over each history source. Nothing re-chunks
+  or re-embeds.
+- The skill (`dexicon-skill-version: 2`), the SessionStart hook and the hook library
+  (`dexicon-hook-version: 2`) change. Running `scripts/install-mcp.ps1` again upgrades
+  installed copies and leaves edited ones alone.
+- `install-mcp.ps1` now registers Claude Code at user scope unless `-Scope` is passed. An
+  install made under the old default put the skill and hooks in a project's `.claude`,
+  which `-Uninstall -Scope project -Project <that repo>` removes, and registered the MCP
+  server at Claude Code's local scope, which `claude mcp remove dexicon --scope local`, run
+  in that repo, removes.
+
+### Added
+
+- **Choose what a history source follows from the repository's own refs.** The history
+  editor's Ref box becomes **Follow**: the checked-out branch, a branch picked from the
+  repository's local, remote-tracking and prefetched refs, or another ref typed in for a
+  tag or a commit. Local branches say how far they are from their upstream as of the last
+  fetch ("52 behind origin/main"), the remote-tracking group says when `git fetch` last
+  ran, and a branch that is behind offers its upstream instead. A pick stores the full
+  name, so a tag of the same name cannot take its place; a stored short name shows as
+  picked as git resolves it, and one that resolves to a tag hiding a branch says so. The
+  refs come from `GET /api/workspaces/git?path=&ref=`, which reads refs and FETCH_HEAD's
+  time and nothing else: no remote URL and no configuration.
+
+- **A history source's row says how current its ref was.** Each pass records the branch
+  the ref resolved to, its upstream and the distance, and when a fetch last ran, in
+  `sources.git_tracking`, returned as `SourceSummary.tracking` for the ref it was observed
+  for. The row reads `HEAD (main)`, "52 behind origin/main as of the fetch 3d ago" in the
+  warning colour, or "fetched 3d ago" for a remote-tracking ref. A read that fails keeps
+  the last record and changes nothing else about the pass.
+
+- **Keeping a mounted repository current is the host's job, and docs/04 says how.**
+  Dexicon does not fetch, and holds no credential to. "Following a remote without Dexicon
+  fetching" covers `git maintenance start`, whose hourly prefetch writes `refs/prefetch/`
+  and never moves `origin/main`, and a scheduled `git fetch`, both with the host's own
+  login.
+
+### Changed
+
+- **Agents are told to name the corpus that fits.** With several corpora of different
+  kinds, a search across all of them lets hits from the corpora that cannot hold the
+  answer take the places of the one that can: a question about one project's design,
+  asked of five corpora, drew 6 of its top 10 hits from the four that did not hold it.
+  The skill has a direct `/dexicon-search` search the one or two corpora whose
+  descriptions fit and widen only when that comes back empty or thin; the SessionStart
+  hook says the same when more than one corpus is listed; and `search_index`'s `corpus`
+  description says so to every MCP client.
+
+- **Claude Code is registered at user scope.** Its project and local scopes are keyed by
+  the literal working-directory string, so a server added from one shell could be missing
+  from a session started in another. The Access dialog's ready-to-paste command and every
+  documented copy end in `--scope user`; the installer defaults to it for anything that
+  only touches Claude Code, and honours `-Scope project`, which it used to drop. A
+  project-scope `.mcp.json` or `dexicon-hooks.env` holds the key in plain text, and the
+  docs and the installer say to keep it out of version control.
+
+- **The header wraps in reading order.** Narrower than about 1,056px, its chips wrapped
+  inside the bar into two ragged rows; the nav and then the status group now take rows of
+  their own, in the order they are read and tabbed through. A chunk set's description
+  wraps beside its buttons instead of pushing them onto a row of their own.
+
+### Fixed
+
+- **Hooks installed into a project read that project's configuration.** The installer
+  wrote `dexicon-hooks.env` into the project's `.claude`, and the hooks read
+  `~/.claude/dexicon-hooks.env` alone, so they read the user's file or none, and did
+  nothing without error. They now read the file beside their `hooks` directory first.
+
+- **Adding a history source when git cannot be asked is a 503 with git's reason.** A
+  missing git or a timeout came out as a 500.
+
+- **git runs in the C locale.** Where git has translations, the `--stat` summary line
+  that goes into each commit's document was translated. Neither the image's git 2.54.0
+  nor Git for Windows 2.31.1 translates, so nothing changes there.
+
+---
+
 ## 0.6.2 — 2026-09-25
 
 ### ⚠️ Upgrading
