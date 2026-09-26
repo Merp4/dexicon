@@ -31,15 +31,22 @@ for a query. See [13](13-integration.md).
 
 ## Claude Code
 
-No config file; the CLI writes it.
+No config file; the CLI writes it. Use `--scope user` so every project's session has it,
+rather than only the one whose directory you happened to run this from:
 
 ```bash
 claude mcp add --transport http dexicon http://localhost:8477/mcp \
-  --header "Authorization: Bearer dex_…"
+  --header "Authorization: Bearer dex_…" --scope user
 ```
 
-Add `--scope user` for every project rather than the current one. Verify with
-`claude mcp list`; Dexicon should report `✔ Connected`.
+Verify with `claude mcp list`; Dexicon should report `✔ Connected`.
+
+Claude Code's `project` and `local` scopes key the registration by the literal working
+directory string, case and slash direction included, so a server added from one shell can be
+invisible to a session launched from another that reports the same path differently. `user`
+scope does not depend on where or how you ran the command. Use `--scope project` only to
+commit the connection into one repo's `.mcp.json` for teammates who clone it, and run the
+command from inside that repo: that scope writes to the CLI's own working directory.
 
 ## Cursor
 
@@ -214,6 +221,12 @@ It merges into an existing config rather than replacing it, backs the file up fi
 prints what it wrote, excluding the token. `-WhatIf` shows the change without making it.
 `-Project` is the directory to write into for project scope, defaulting to the current one
 rather than the Dexicon checkout.
+
+`-Client claude-code` defaults to `-Scope user`, for the reason under
+[Claude Code](#claude-code) above, rather than the `project` default every other client
+gets; pass `-Scope project` to opt into a per-repo `.mcp.json` entry instead, written into
+`-Project`. `-What skill`, `-What hooks` and `-What all` default to `user` the same way,
+since those only ever touch Claude Code.
 
 It will not invent a token: pass `-Token`, or let it read the one in `.env`
 (`DEXICON_BOOTSTRAP_TOKEN`) when you have set one. There is no path where the installer
