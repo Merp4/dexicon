@@ -230,8 +230,10 @@ key in plain text, so keep it out of version control. `-What skill`, `-What hook
 `-Uninstall` default to `user` the same way, since they only touch Claude Code, and so does
 `-What all` unless another client is named with it.
 
-An install made before this default, into a project's `.claude` and `.mcp.json`, is
-removed with `-Uninstall -Scope project -Project <that repo>`.
+An install made before this default put the skill and hooks in the project's `.claude`, and
+`-Uninstall -Scope project -Project <that repo>` removes those. `-Uninstall` does not touch
+MCP registrations: the old one is at Claude Code's local scope, and
+`claude mcp remove dexicon --scope local`, run in that repo, removes it and its key.
 
 It will not invent a token: pass `-Token`, or let it read the one in `.env`
 (`DEXICON_BOOTSTRAP_TOKEN`) when you have set one. There is no path where the installer

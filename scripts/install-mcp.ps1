@@ -26,7 +26,9 @@
   server or hook added from one shell can be invisible to a session launched from another
   that reports the same path differently. -Scope project writes a per-repo entry instead,
   and for Claude Code that .mcp.json holds the key in plain text: keep it out of version
-  control. An install made before this default is removed with -Uninstall -Scope project.
+  control. -Uninstall -Scope project removes the skill and hooks an older install put in a
+  project; it does not remove MCP registrations, and the older one, at Claude Code's local
+  scope, is removed by running `claude mcp remove dexicon --scope local` in that project.
 
 .PARAMETER Project
   The project directory to write into for -Scope project. Defaults to the current directory,
