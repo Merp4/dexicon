@@ -25,7 +25,8 @@ with no section here fails its release rather than publishing an undescribed one
   or re-embeds.
 - The skill (`dexicon-skill-version: 2`), the SessionStart hook and the hook library
   (`dexicon-hook-version: 2`) change. Running `scripts/install-mcp.ps1` again upgrades
-  installed copies and leaves edited ones alone.
+  installed copies. A copy whose version marker was removed is left alone; one edited with
+  its marker in place is replaced.
 - `install-mcp.ps1` now registers Claude Code at user scope unless `-Scope` is passed. An
   install made under the old default put the skill and hooks in a project's `.claude`,
   which `-Uninstall -Scope project -Project <that repo>` removes, and registered the MCP
@@ -53,8 +54,8 @@ with no section here fails its release rather than publishing an undescribed one
   the last record and changes nothing else about the pass.
 
 - **Keeping a mounted repository current is the host's job, and docs/04 says how.**
-  Dexicon does not fetch, and holds no credential to. "Following a remote without Dexicon
-  fetching" covers `git maintenance start`, whose hourly prefetch writes `refs/prefetch/`
+  Dexicon does not fetch, and holds no credential for a remote. "Following a remote
+  without Dexicon fetching" covers `git maintenance start`, whose hourly prefetch writes `refs/prefetch/`
   and never moves `origin/main`, and a scheduled `git fetch`, both with the host's own
   login.
 
