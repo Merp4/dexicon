@@ -50,7 +50,7 @@ restarting the agent:
 
 ```bash
 claude mcp add --transport http dexicon http://localhost:8477/mcp \
-  --header "Authorization: Bearer dex_…"
+  --header "Authorization: Bearer dex_…" --scope user
 ```
 
 [docs/12](docs/12-clients.md) covers Cursor, VS Code, Windsurf, Cline, Claude Desktop and

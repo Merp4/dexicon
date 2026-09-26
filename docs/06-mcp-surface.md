@@ -29,7 +29,7 @@ listed in the message, which every client handles today.
 
 ```bash
 claude mcp add --transport http dexicon http://localhost:8477/mcp \
-  --header "Authorization: Bearer ${DEXICON_TOKEN}" \
+  --header "Authorization: Bearer ${DEXICON_TOKEN}" --scope user
 ```
 
 No other header is needed. Which corpora the key reaches is set in the UI, which is the

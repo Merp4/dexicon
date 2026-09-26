@@ -20,7 +20,15 @@
   chose, and it would not work.
 
 .PARAMETER Scope
-  project (default) or user, for the clients that have both.
+  project (default) or user, for the clients that have both. Claude Code (-Client
+  claude-code, -What skill or hooks, -What all with no other client, -Uninstall) defaults to
+  user instead: its project/local scope is keyed by the exact working-directory string, so a
+  server or hook added from one shell can be invisible to a session launched from another
+  that reports the same path differently. -Scope project writes a per-repo entry instead,
+  and for Claude Code that .mcp.json holds the key in plain text: keep it out of version
+  control. -Uninstall -Scope project removes the skill and hooks an older install put in a
+  project; it does not remove MCP registrations, and the older one, at Claude Code's local
+  scope, is removed by running `claude mcp remove dexicon --scope local` in that project.
 
 .PARAMETER Project
   The project directory to write into for -Scope project. Defaults to the current directory,
@@ -34,7 +42,8 @@
   ./scripts/install-mcp.ps1 -List
   ./scripts/install-mcp.ps1 -Client cursor
   ./scripts/install-mcp.ps1 -Client vscode -Project ~/src/my-app -WhatIf
-  ./scripts/install-mcp.ps1 -Client claude-code -Scope user -Token dex_...
+  ./scripts/install-mcp.ps1 -Client claude-code -Token dex_...
+  ./scripts/install-mcp.ps1 -Client claude-code -Scope project -Project ~/src/my-app
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
@@ -423,6 +432,19 @@ function Uninstall-Artefacts([string]$claudeHome) {
 }
 
 # ── What to install ──────────────────────────────────────────────────────────
+# The skill and the hooks are Claude Code's, so -What all does not need to be told.
+if ($What -eq 'all' -and -not $Client) { $Client = 'claude-code' }
+
+# Dexicon is meant to work the same way everywhere: install once and every session in every
+# repo has it. Claude Code's own project/local scope is keyed by the literal cwd string (case
+# and slash direction included), which this script cannot steer reliably, so anything that
+# only ever touches Claude Code defaults to the one scope that is not cwd-dependent, unless
+# a scope was explicitly asked for. -Uninstall only ever removes Claude Code artefacts too.
+# -What all counts through $Client, set just above when no other client was named: with
+# -Client cursor it writes Cursor's config, which keeps the project default.
+$targetsClaudeCode = $Uninstall -or ($Client -eq 'claude-code') -or ($What -in @('skill', 'hooks'))
+if (-not $PSBoundParameters.ContainsKey('Scope') -and $targetsClaudeCode) { $Scope = 'user' }
+
 $claudeProject = (Resolve-Path -LiteralPath $Project -ErrorAction SilentlyContinue)?.Path
 if (-not $claudeProject) { $claudeProject = $Project }
 $claudeHome = Get-ClaudeHome $Scope $claudeProject
@@ -431,9 +453,6 @@ if ($Uninstall) {
   Uninstall-Artefacts $claudeHome
   exit 0
 }
-
-# The skill and the hooks are Claude Code's, so -What all does not need to be told.
-if ($What -eq 'all' -and -not $Client) { $Client = 'claude-code' }
 
 if ($What -in @('skill', 'all')) { Install-Skill $claudeHome }
 
@@ -514,11 +533,11 @@ if ($Token -notmatch '^dex_') {
 # ── Claude Code has its own CLI, and it owns the file ────────────────────────
 if ($Client -eq 'claude-code') {
   $header = "Authorization: Bearer $Token"
-  $args_ = @('mcp', 'add', '--transport', 'http', $Name, $Url, '--header', $header)
-  if ($Scope -eq 'user') { $args_ += @('--scope', 'user') }
+  $args_ = @('mcp', 'add', '--transport', 'http', $Name, $Url, '--header', $header, '--scope', $Scope)
 
-  if (-not $PSCmdlet.ShouldProcess('claude', "mcp add $Name $Url")) {
+  if (-not $PSCmdlet.ShouldProcess('claude', "mcp add $Name $Url (scope: $Scope)")) {
     Info "would run: claude $((Hide-Token ($args_ -join ' ') $Token))"
+    if ($Scope -eq 'project') { Info "in directory: $claudeProject" }
     exit 0
   }
 
@@ -526,10 +545,24 @@ if ($Client -eq 'claude-code') {
     Die "  'claude' is not on PATH. Install Claude Code, or configure another client."
   }
 
-  & claude @args_
+  # --scope project writes .mcp.json into the CLI's own working directory, so run it from
+  # -Project rather than wherever this script happens to be standing. --scope user is one
+  # global registration and does not care where it runs.
+  if ($Scope -eq 'project') {
+    Push-Location -LiteralPath $claudeProject
+    try { & claude @args_ } finally { Pop-Location }
+  } else {
+    & claude @args_
+  }
   if ($LASTEXITCODE -ne 0) { Die "`n  claude mcp add failed (exit $LASTEXITCODE)." }
 
-  Ok "`nAdded '$Name'."
+  Ok "`nAdded '$Name' ($Scope scope)."
+  if ($Scope -eq 'user') {
+    Info "Global: every project's Claude Code session picks this up, with no per-repo setup."
+  } else {
+    Info "Written to .mcp.json in ${claudeProject}: sessions started in that project only."
+    Info "That file holds the key in plain text. Keep it out of version control."
+  }
   Info "Verify with: claude mcp list   (Dexicon should report Connected)"
   Write-Host ''
   exit 0

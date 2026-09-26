@@ -31,15 +31,23 @@ for a query. See [13](13-integration.md).
 
 ## Claude Code
 
-No config file; the CLI writes it.
+No config file; the CLI writes it. Use `--scope user` so every project's session has it,
+rather than only the one whose directory you happened to run this from:
 
 ```bash
 claude mcp add --transport http dexicon http://localhost:8477/mcp \
-  --header "Authorization: Bearer dex_…"
+  --header "Authorization: Bearer dex_…" --scope user
 ```
 
-Add `--scope user` for every project rather than the current one. Verify with
-`claude mcp list`; Dexicon should report `✔ Connected`.
+Verify with `claude mcp list`; Dexicon should report `✔ Connected`.
+
+Claude Code's `project` and `local` scopes key the registration by the literal working
+directory string, case and slash direction included, so a server added from one shell can be
+invisible to a session launched from another that reports the same path differently. `user`
+scope does not depend on where or how you ran the command. `--scope project` writes the
+connection into `.mcp.json` in the directory the command runs from, so run it from inside
+the repo it is for. That file holds the key in plain text: keep it out of version control,
+since anyone who can read it can search with the key.
 
 ## Cursor
 
@@ -214,6 +222,18 @@ It merges into an existing config rather than replacing it, backs the file up fi
 prints what it wrote, excluding the token. `-WhatIf` shows the change without making it.
 `-Project` is the directory to write into for project scope, defaulting to the current one
 rather than the Dexicon checkout.
+
+`-Client claude-code` defaults to `-Scope user`, for the reason under
+[Claude Code](#claude-code) above, rather than the `project` default every other client
+gets. `-Scope project` writes a per-repo `.mcp.json` into `-Project` instead, holding the
+key in plain text, so keep it out of version control. `-What skill`, `-What hooks` and
+`-Uninstall` default to `user` the same way, since they only touch Claude Code, and so does
+`-What all` unless another client is named with it.
+
+An install made before this default put the skill and hooks in the project's `.claude`, and
+`-Uninstall -Scope project -Project <that repo>` removes those. `-Uninstall` does not touch
+MCP registrations: the old one is at Claude Code's local scope, and
+`claude mcp remove dexicon --scope local`, run in that repo, removes it and its key.
 
 It will not invent a token: pass `-Token`, or let it read the one in `.env`
 (`DEXICON_BOOTSTRAP_TOKEN`) when you have set one. There is no path where the installer
