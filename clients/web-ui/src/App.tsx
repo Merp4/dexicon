@@ -273,11 +273,17 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
   return (
     <div className="flex flex-col min-h-[100dvh]">
       <header
-        className="flex flex-wrap items-center gap-4 border-b border-border bg-card px-4 py-2.5"
+        className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border bg-card px-4 py-2.5"
       >
         <strong className="text-base">Dexicon</strong>
 
-        <nav className="flex gap-1 flex-1 flex-wrap">
+        {/* Its own width, never shrunk. As a shrinking flex-1 item the chips wrapped inside
+            the bar into two ragged rows whenever the bar was narrower than about 1,056px,
+            which a browser at half of a 1920 screen always is. Unshrunk, the bar wraps the
+            nav, then the status group, onto rows of their own instead, in the order they
+            are read and tabbed through: no `order`, so what is seen is what is announced.
+            `max-w-full` leaves only a phone's width to wrap the chips themselves. */}
+        <nav className="flex max-w-full shrink-0 flex-wrap gap-1">
           {nav.map((n) => (
             <Chip
               key={n.id}
@@ -297,12 +303,14 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
           ))}
         </nav>
 
-        <HealthDots health={health} connected={connected} stale={healthStale} />
-        {/* Wrapped: passed directly, the click event would arrive as `failed`. */}
-        <Button onClick={() => onSignOut()}>
-          <LogOut />
-          Sign out
-        </Button>
+        <div className="ml-auto flex shrink-0 items-center gap-4">
+          <HealthDots health={health} connected={connected} stale={healthStale} />
+          {/* Wrapped: passed directly, the click event would arrive as `failed`. */}
+          <Button onClick={() => onSignOut()}>
+            <LogOut />
+            Sign out
+          </Button>
+        </div>
       </header>
 
       <main className="mx-auto w-full max-w-[1180px] flex-1 p-4">

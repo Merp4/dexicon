@@ -183,7 +183,10 @@ export function ChunkSetsPanel({
         {corpus.chunkSets.map((set) => (
           <div key={set.id} className="card py-3 px-3.5">
             <div className="flex flex-wrap justify-between gap-4 items-start">
-              <div className="min-w-0">
+              {/* Grows and shrinks from 16rem, so a description wraps inside it. Sized by its
+                  content, a one-line description pushed a non-default set's four buttons
+                  onto a row of their own. */}
+              <div className="min-w-0 flex-1 basis-64">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="mono font-semibold">
                     {corpus.name}:{set.name}
