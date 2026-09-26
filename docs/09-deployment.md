@@ -15,7 +15,7 @@ ticking the corpora it may reach. The dialog hands you the command:
 
 ```bash
 claude mcp add --transport http dexicon http://localhost:8477/mcp \
-  --header "Authorization: Bearer dex_..."
+  --header "Authorization: Bearer dex_..." --scope user
 ```
 
 Nothing else. If a first run needs more steps than that, the first run is the bug.

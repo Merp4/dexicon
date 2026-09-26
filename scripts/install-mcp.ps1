@@ -20,11 +20,13 @@
   chose, and it would not work.
 
 .PARAMETER Scope
-  project (default) or user, for the clients that have both. claude-code (client, or -What
-  skill/hooks/all) defaults to user instead: its project/local scope is keyed by the exact
-  working-directory string, so a server or hook added from one shell can be invisible to a
-  session launched from another that reports the same path differently. Pass -Scope project
-  to opt into a committed, per-repo entry there anyway.
+  project (default) or user, for the clients that have both. Claude Code (-Client
+  claude-code, -What skill or hooks, -What all with no other client, -Uninstall) defaults to
+  user instead: its project/local scope is keyed by the exact working-directory string, so a
+  server or hook added from one shell can be invisible to a session launched from another
+  that reports the same path differently. -Scope project writes a per-repo entry instead,
+  and for Claude Code that .mcp.json holds the key in plain text: keep it out of version
+  control. An install made before this default is removed with -Uninstall -Scope project.
 
 .PARAMETER Project
   The project directory to write into for -Scope project. Defaults to the current directory,
@@ -436,7 +438,9 @@ if ($What -eq 'all' -and -not $Client) { $Client = 'claude-code' }
 # and slash direction included), which this script cannot steer reliably, so anything that
 # only ever touches Claude Code defaults to the one scope that is not cwd-dependent, unless
 # a scope was explicitly asked for. -Uninstall only ever removes Claude Code artefacts too.
-$targetsClaudeCode = $Uninstall -or ($Client -eq 'claude-code') -or ($What -in @('skill', 'hooks', 'all'))
+# -What all counts through $Client, set just above when no other client was named: with
+# -Client cursor it writes Cursor's config, which keeps the project default.
+$targetsClaudeCode = $Uninstall -or ($Client -eq 'claude-code') -or ($What -in @('skill', 'hooks'))
 if (-not $PSBoundParameters.ContainsKey('Scope') -and $targetsClaudeCode) { $Scope = 'user' }
 
 $claudeProject = (Resolve-Path -LiteralPath $Project -ErrorAction SilentlyContinue)?.Path
@@ -555,6 +559,7 @@ if ($Client -eq 'claude-code') {
     Info "Global: every project's Claude Code session picks this up, with no per-repo setup."
   } else {
     Info "Written to .mcp.json in ${claudeProject}: sessions started in that project only."
+    Info "That file holds the key in plain text. Keep it out of version control."
   }
   Info "Verify with: claude mcp list   (Dexicon should report Connected)"
   Write-Host ''

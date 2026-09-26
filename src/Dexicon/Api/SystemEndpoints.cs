@@ -295,6 +295,15 @@ public static class SystemEndpoints
     }
 
     /// <summary>
+    /// The command the Access dialog hands over with a new key. User scope, because Claude
+    /// Code keys its project and local scopes by the literal working-directory string, so a
+    /// server added from one shell can be missing from a session started in another.
+    /// </summary>
+    internal static string McpAddCommand(string key) =>
+        "claude mcp add --transport http dexicon http://localhost:8477/mcp \\\n" +
+        $"  --header \"Authorization: Bearer {key}\" --scope user";
+
+    /// <summary>
     /// The refs of the repository at <paramref name="path"/>, or that there is none.
     ///
     /// The path is resolved the way a history source's is, so the picker lists exactly
@@ -419,11 +428,7 @@ public static class SystemEndpoints
             }
 
             // The highest-value thing on the page: the step between installed and working.
-            var command =
-                $"claude mcp add --transport http dexicon http://localhost:8477/mcp \\\n" +
-                $"  --header \"Authorization: Bearer {issued.Presented}\"";
-
-            return Results.Ok(new CreatedTokenResponse(row.ToSummary(), issued.Presented, command));
+            return Results.Ok(new CreatedTokenResponse(row.ToSummary(), issued.Presented, McpAddCommand(issued.Presented)));
         }).Produces<CreatedTokenResponse>();
 
         t.MapDelete("/{id}", async (string id, RequestContext rc, TokenService tokens, IMemoryCacheEvictor evictor,

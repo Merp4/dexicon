@@ -44,9 +44,10 @@ Verify with `claude mcp list`; Dexicon should report `✔ Connected`.
 Claude Code's `project` and `local` scopes key the registration by the literal working
 directory string, case and slash direction included, so a server added from one shell can be
 invisible to a session launched from another that reports the same path differently. `user`
-scope does not depend on where or how you ran the command. Use `--scope project` only to
-commit the connection into one repo's `.mcp.json` for teammates who clone it, and run the
-command from inside that repo: that scope writes to the CLI's own working directory.
+scope does not depend on where or how you ran the command. `--scope project` writes the
+connection into `.mcp.json` in the directory the command runs from, so run it from inside
+the repo it is for. That file holds the key in plain text: keep it out of version control,
+since anyone who can read it can search with the key.
 
 ## Cursor
 
@@ -224,9 +225,13 @@ rather than the Dexicon checkout.
 
 `-Client claude-code` defaults to `-Scope user`, for the reason under
 [Claude Code](#claude-code) above, rather than the `project` default every other client
-gets; pass `-Scope project` to opt into a per-repo `.mcp.json` entry instead, written into
-`-Project`. `-What skill`, `-What hooks` and `-What all` default to `user` the same way,
-since those only ever touch Claude Code.
+gets. `-Scope project` writes a per-repo `.mcp.json` into `-Project` instead, holding the
+key in plain text, so keep it out of version control. `-What skill`, `-What hooks` and
+`-Uninstall` default to `user` the same way, since they only touch Claude Code, and so does
+`-What all` unless another client is named with it.
+
+An install made before this default, into a project's `.claude` and `.mcp.json`, is
+removed with `-Uninstall -Scope project -Project <that repo>`.
 
 It will not invent a token: pass `-Token`, or let it read the one in `.env`
 (`DEXICON_BOOTSTRAP_TOKEN`) when you have set one. There is no path where the installer
