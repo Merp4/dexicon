@@ -33,7 +33,8 @@ One file, `dexicon-hooks.env`, holds the connection, the key and every knob. The
 writes it into the `.claude` directory the hooks are installed under, `~/.claude` at user
 scope and a project's `.claude` at project scope, and the hooks read it from there, falling
 back to `~/.claude/dexicon-hooks.env` when there is none beside them. `DEXICON_HOOKS_ENV`
-names another file. The keys are named after the `POST /api/context` fields they set, and an
+names another file. The file holds the key in plain text, so a project-scope install puts a
+key inside the project: keep `.claude/dexicon-hooks.env` out of version control there. The keys are named after the `POST /api/context` fields they set, and an
 unset one is not sent at all, so the server's own default applies rather than the hook
 carrying a copy of it.
 
