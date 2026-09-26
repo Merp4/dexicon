@@ -55,6 +55,16 @@ public sealed class ProgressStreamTests
     private static IndexProgress Report(string jobId, string corpusId = "c1") =>
         new(jobId, corpusId, "extract", 16, 0, 16, 0, 0, null, null);
 
+    /// <summary>
+    /// How long a report may take to reach the page before the test calls it lost. These
+    /// tests assert that it arrives, not how fast, and WaitFor returns the moment it does,
+    /// so a long window costs a passing run nothing. Five seconds failed 2 of 60 CI runs,
+    /// both on changes that did not touch the stream: on a two-core runner running test
+    /// classes in parallel, some of them blocking pool threads on git's process I/O, a
+    /// continuation can wait that long for a thread.
+    /// </summary>
+    private static readonly TimeSpan Arrival = TimeSpan.FromSeconds(30);
+
     private static async Task<bool> WaitFor(Func<bool> condition, TimeSpan within)
     {
         var until = DateTime.UtcNow + within;
@@ -93,7 +103,7 @@ public sealed class ProgressStreamTests
             response, reader, new HashSet<string>(StringComparer.Ordinal) { "c1" },
             TimeSpan.FromMilliseconds(20), cts.Token);
 
-        (await WaitFor(() => Count(body.Text, ": ping") >= 5, TimeSpan.FromSeconds(10)))
+        (await WaitFor(() => Count(body.Text, ": ping") >= 5, Arrival))
             .ShouldBeTrue("the premise: the stream sat idle through several pings");
 
         broadcaster.Publish(Report("j1"));
@@ -102,7 +112,7 @@ public sealed class ProgressStreamTests
         var arrived = await WaitFor(
             () => body.Text.Contains("\"jobId\":\"j1\"", StringComparison.Ordinal)
                   && body.Text.Contains("\"jobId\":\"j2\"", StringComparison.Ordinal),
-            TimeSpan.FromSeconds(5));
+            Arrival);
 
         await cts.CancelAsync();
         try { await streaming; } catch (OperationCanceledException) { }
@@ -127,7 +137,7 @@ public sealed class ProgressStreamTests
         broadcaster.Publish(Report("hidden", corpusId: "c2"));
         broadcaster.Publish(Report("shown"));
 
-        var shown = await WaitFor(() => body.Text.Contains("\"jobId\":\"shown\"", StringComparison.Ordinal), TimeSpan.FromSeconds(5));
+        var shown = await WaitFor(() => body.Text.Contains("\"jobId\":\"shown\"", StringComparison.Ordinal), Arrival);
 
         await cts.CancelAsync();
         try { await streaming; } catch (OperationCanceledException) { }
