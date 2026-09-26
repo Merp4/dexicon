@@ -12,6 +12,7 @@ blocks the prompt and erases it.
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -57,15 +58,19 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(routes):
-    Handler.routes = routes
-    server = HTTPServer(("127.0.0.1", 0), Handler)
+    # A handler class per server: routes set on Handler itself would change every server
+    # already running, so an earlier server would answer with a later one's fixtures.
+    handler = type("RoutedHandler", (Handler,), {"routes": routes})
+    server = HTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
 
 
 def run(hook, config, stdin="", extra_env=None):
+    """Runs a hook with `config` as DEXICON_HOOKS_ENV, or with none when it is None."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("DEXICON_")}
-    env["DEXICON_HOOKS_ENV"] = config
+    if config is not None:
+        env["DEXICON_HOOKS_ENV"] = config
     env.update(extra_env or {})
     proc = subprocess.run([sys.executable, hook], input=stdin, env=env,
                           capture_output=True, text=True, timeout=60)
@@ -106,6 +111,40 @@ def main(tmp):
 
     p = run(CORPORA_HOOK, good, extra_env={"DEXICON_CORPORA_DESCRIPTION_CHARS": "0"})
     check("description cap of 0 drops the text", "long long" not in p.stdout)
+
+    p = run(CORPORA_HOOK, good)
+    check("with several corpora, says to name one", "one or two whose descriptions fit" in p.stdout,
+          p.stdout[-160:])
+
+    single = serve({"/api/corpora": (200, CORPORA_OK[:1])})
+    one = write_config(os.path.join(tmp, "one.env"), "http://127.0.0.1:%d" % single.server_port)
+    p = run(CORPORA_HOOK, one)
+    check("with one corpus, does not", "one or two" not in p.stdout and "docs:" in p.stdout,
+          p.stdout[-160:])
+
+    print("\nWhere the config is read from")
+    # The installer writes the config into the .claude directory that holds the hooks
+    # directory, a project's at project scope. Without DEXICON_HOOKS_ENV, a copy installed
+    # there reads that file. It read ~/.claude's alone, so a project install read the user's
+    # config or none.
+    project = os.path.join(tmp, "proj", ".claude")
+    hooks_dir = os.path.join(project, "hooks")
+    os.makedirs(hooks_dir)
+    for f in ("dexicon-corpora.py", "dexicon_hook_lib.py"):
+        shutil.copy(os.path.join(HERE, f), hooks_dir)
+    installed = os.path.join(hooks_dir, "dexicon-corpora.py")
+    home = os.path.join(tmp, "home")
+    os.makedirs(os.path.join(home, ".claude"))
+    as_home = {"HOME": home, "USERPROFILE": home}
+
+    write_config(os.path.join(project, "dexicon-hooks.env"), url)
+    p = run(installed, None, extra_env=as_home)
+    check("reads the config beside its hooks directory", "docs:" in p.stdout, p.stderr[:120])
+
+    os.remove(os.path.join(project, "dexicon-hooks.env"))
+    write_config(os.path.join(home, ".claude", "dexicon-hooks.env"), url)
+    p = run(installed, None, extra_env=as_home)
+    check("falls back to ~/.claude when none is beside it", "docs:" in p.stdout, p.stderr[:120])
 
     print("\nUserPromptSubmit")
     p = run(CONTEXT_HOOK, good, prompt)

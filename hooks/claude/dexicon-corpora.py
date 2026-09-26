@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# dexicon-hook-version: 1
+# dexicon-hook-version: 2
 """Dexicon SessionStart hook: say what is indexed.
 
 An agent that does not search because it does not know anything is indexed looks exactly
@@ -91,7 +91,14 @@ def main() -> int:
 
     print("Dexicon is connected and holds these corpora, searchable with search_index:")
     print("\n".join(lines))
-    print("Pass one of those names as the corpus argument; omitting it searches all of them.")
+    if len(lines) > 1:
+        # Searching all of them lets hits from the corpora that cannot hold the answer take
+        # the places of the one that can: 6 of the top 10 for a question about one project's
+        # design, asked of five corpora, came from the other four.
+        print("Pass the one or two whose descriptions fit the question as the corpus argument. "
+              "Omitting it searches all of them, and hits from the others crowd out the answer.")
+    else:
+        print("Pass that name as the corpus argument, or omit it.")
     return 0
 
 

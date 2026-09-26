@@ -1135,6 +1135,13 @@ everything. An unset key is not sent at all, so the server's default applies and
 does not carry a second copy of it to drift from. Editing that file is the whole
 configuration story: nothing to change inside a script the installer overwrites on upgrade.
 
+**Amended 2026-09-26: where the file is read from.** At project scope the installer writes
+the file into the project's `.claude`, while the hooks read `~/.claude`'s alone, so a
+project install read the user's file or none, and did nothing without error. The hooks now
+read the file in the `.claude` directory that holds their `hooks` directory first, and fall
+back to `~/.claude/dexicon-hooks.env`; `DEXICON_HOOKS_ENV` overrides both. At project scope
+that file, key included, sits inside a repository, and stays out of its version control.
+
 **Why `SessionStart` is the safe one and `UserPromptSubmit` is opt-in.** `SessionStart`
 fires once and lists corpora, which is a catalogue read with no embedding in it. It answers
 the failure this project keeps hitting, an agent that does not search because it does not
