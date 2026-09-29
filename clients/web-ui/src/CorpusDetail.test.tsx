@@ -284,6 +284,30 @@ describe('the sources a corpus reads', () => {
   });
 
   /**
+   * Uploads are not walked. Their source stores int.MaxValue as its cap, and on the file
+   * settings' line it read "upload · .gitignore ignored · code and text ≤ 2.0 GB", when the
+   * server caps each upload as it arrives.
+   */
+  it('describes uploaded documents by what they are, not by the file settings', async () => {
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          source({ id: 's1', rootPath: 'api-repo', fileCount: 12 }),
+          source({ id: 's2', kind: 'upload', rootPath: null, useGitignore: false, maxFileBytes: 2_147_483_647, fileCount: 3 }),
+        ],
+      }),
+    );
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText('uploaded documents')).toBeInTheDocument();
+    expect(screen.getByText('attached on the Documents page')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove source uploaded documents' })).toBeInTheDocument();
+    expect(screen.queryByText(/2\.0 GB/)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/\.gitignore/)).toHaveLength(1);
+  });
+
+  /**
    * The ref names what to follow and says nothing about whether it moves. A source over a
    * local branch nobody pulled indexed the same commits for three days, and every count
    * on this screen was correct.

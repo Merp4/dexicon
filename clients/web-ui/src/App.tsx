@@ -1253,17 +1253,21 @@ export function CorpusDetail({
             // Columns from sm up, so the counts, the settings and the buttons line up down
             // the list: with thirteen sources each row's buttons sat wherever its text
             // ended. Below sm each row wraps on its own.
+            //
+            // The name column is fit-content(40%), not max-content: a deep path widened the
+            // page to 1178 px in a 700 px window and left the settings column 0 px wide.
+            // minmax(0, max-content) stopped the overflow and still took all the space.
             <span
               className={cn(
                 'grid gap-x-3 gap-y-1.5 sm:items-baseline',
                 corpus.sources.length > 1
-                  ? 'sm:grid-cols-[max-content_max-content_minmax(0,1fr)_max-content]'
-                  : 'sm:grid-cols-[max-content_minmax(0,1fr)_max-content]',
+                  ? 'sm:grid-cols-[fit-content(40%)_max-content_minmax(0,1fr)_max-content]'
+                  : 'sm:grid-cols-[fit-content(40%)_minmax(0,1fr)_max-content]',
               )}
             >
               {corpus.sources.map((s) => (
                 <span key={s.id} className="flex flex-wrap items-baseline gap-2 sm:contents">
-                  <span className="mono">{sourceName(s)}</span>
+                  <span className="mono min-w-0 [overflow-wrap:anywhere]">{sourceName(s)}</span>
                   {/* What this source is actually doing. The filters were settable and
                       invisible, which is the worst of both.
 
@@ -1304,7 +1308,7 @@ export function CorpusDetail({
                       counts is commits. Rendering the file settings against one said it
                       obeyed three things it does not read, and called its commits files. */}
                   {s.kind === 'githistory' ? (
-                    <span className="dim text-xs">
+                    <span className="dim min-w-0 text-xs [overflow-wrap:anywhere]">
                       <bdi className="mono">{refLabel(s.git?.ref ?? 'HEAD')}</bdi>
                       {(s.git?.ref ?? 'HEAD') === 'HEAD' && s.tracking?.branch && ` (${refLabel(s.tracking.branch)})`}
                       {/* How current the ref was at the last pass. Behind is the stall that
@@ -1345,8 +1349,13 @@ export function CorpusDetail({
                         </span>
                       )}
                     </span>
+                  ) : s.kind === 'upload' ? (
+                    // Nothing is walked, so there is no .gitignore and no walk's size
+                    // limit: the server caps each upload as it arrives. Its stored cap is
+                    // int.MaxValue, which a row read out as "code and text ≤ 2.0 GB".
+                    <span className="dim min-w-0 text-xs [overflow-wrap:anywhere]">attached on the Documents page</span>
                   ) : (
-                    <span className="dim text-xs">
+                    <span className="dim min-w-0 text-xs [overflow-wrap:anywhere]">
                       {s.useGitignore ? '.gitignore respected' : '.gitignore ignored'}
                       {/* Code and text only: PDFs and the other documents have the server's
                           own limit, so "≤ 64 MB" on a shelf of books said something false. */}
@@ -1867,7 +1876,8 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   return (
     <div className="flex gap-3">
       <span className="dim w-[96px] shrink-0">{label}</span>
-      <span className="flex-1">{children}</span>
+      {/* min-w-0, or a flex item keeps its content's width and a long path widens the page. */}
+      <span className="min-w-0 flex-1">{children}</span>
     </div>
   );
 }
