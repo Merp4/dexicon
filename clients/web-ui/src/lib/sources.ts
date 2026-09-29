@@ -9,6 +9,8 @@ import type { Corpus } from '../api';
  */
 export function sourceName(s: Corpus['sources'][number]): string {
   if (s.rootPath === '') return 'workspace root';
+  // It has no path. The bare kind read "upload", and "Remove source upload".
+  if (s.kind === 'upload') return 'uploaded documents';
   return s.rootPath ?? s.kind;
 }
 

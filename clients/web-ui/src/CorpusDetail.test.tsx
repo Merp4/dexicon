@@ -220,7 +220,9 @@ describe('the sources a corpus reads', () => {
     render(<CorpusDetail {...props} />);
 
     expect(await screen.findByText('api-repo')).toBeInTheDocument();
-    expect(screen.getByText(/\.gitignore honoured/)).toBeInTheDocument();
+    expect(screen.getByText(/\.gitignore respected/)).toBeInTheDocument();
+    // The limit is for code and text; documents have the server's own.
+    expect(screen.getByText(/code and text ≤ 2\.0 MB/)).toBeInTheDocument();
     expect(screen.getByText(/only src\/\*\*/)).toBeInTheDocument();
     expect(screen.getByText(/not \*\*\/vendor\/\*\*/)).toBeInTheDocument();
   });
@@ -249,7 +251,7 @@ describe('the sources a corpus reads', () => {
     render(<CorpusDetail {...props} />);
 
     expect(await screen.findByText('api-repo')).toBeInTheDocument();
-    expect(screen.getByText(/\.gitignore honoured/)).toBeInTheDocument();
+    expect(screen.getByText(/\.gitignore respected/)).toBeInTheDocument();
   });
 
   /**
@@ -278,7 +280,31 @@ describe('the sources a corpus reads', () => {
     expect(screen.getByText(/message, stat and diff/)).toHaveTextContent(/^main · message, stat and diff/);
 
     // One .gitignore line, for the workspace source, and none for the history one.
-    expect(screen.getAllByText(/\.gitignore honoured/)).toHaveLength(1);
+    expect(screen.getAllByText(/\.gitignore respected/)).toHaveLength(1);
+  });
+
+  /**
+   * Uploads are not walked. Their source stores int.MaxValue as its cap, and on the file
+   * settings' line it read "upload · .gitignore ignored · code and text ≤ 2.0 GB", when the
+   * server caps each upload as it arrives.
+   */
+  it('describes uploaded documents by what they are, not by the file settings', async () => {
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          source({ id: 's1', rootPath: 'api-repo', fileCount: 12 }),
+          source({ id: 's2', kind: 'upload', rootPath: null, useGitignore: false, maxFileBytes: 2_147_483_647, fileCount: 3 }),
+        ],
+      }),
+    );
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText('uploaded documents')).toBeInTheDocument();
+    expect(screen.getByText('attached on the Documents page')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove source uploaded documents' })).toBeInTheDocument();
+    expect(screen.queryByText(/2\.0 GB/)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/\.gitignore/)).toHaveLength(1);
   });
 
   /**

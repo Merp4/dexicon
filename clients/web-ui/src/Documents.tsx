@@ -104,7 +104,7 @@ export function DocumentsView({
           >
             {writable.map((c) => (
               <SelectItem key={c.id} value={c.name}>
-                {c.name} — {c.chunkSets.length === 1
+                {c.name} · {c.chunkSets.length === 1
                   ? `${c.chunkSets[0].chunkSize} tokens / ${c.chunkSets[0].chunkOverlap} overlap`
                   : `${c.chunkSets.length} chunk sets`}
               </SelectItem>
