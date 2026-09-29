@@ -135,6 +135,11 @@ corpus on globs. Inheritance is **live**: changing a corpus default moves every 
 has not overridden that field, which is the point, because ten folders under one parent
 used to carry ten copies of the same two globs.
 
+A source sets only what it is given. One added with no filters, or named when its corpus
+is created, sets none and follows the corpus for all four. The corpus summary returns the
+bottom layer as `configured`, with the separate cap for PDF, DOCX, PPTX, EPUB and HTML
+files, so a form can show what following a default gives before anything is saved.
+
 **Null and empty are different, and the difference is the whole of it.** An unset field
 inherits; an empty glob list is a decision, meaning "none, whatever the corpus says". A
 source under a corpus that excludes `**/*.pdf` needs the second to say it wants those PDFs

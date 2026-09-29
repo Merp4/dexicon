@@ -10,10 +10,9 @@ import {
   type ModelPullEvent,
 } from './api';
 import {
-  Badge, Button, CopyButton, Empty, ErrorBanner, Field, Input, Modal, Notice, Segmented,
+  Badge, Button, CheckField, CopyButton, Empty, ErrorBanner, Field, Input, Modal, Notice, Section, Segmented,
   Select, SelectItem, Spinner, formatBytes, localTime, relativeTime, stateTone,
 } from './ui';
-import { Checkbox } from './ui';
 import { ChevronRight, Trash2, TriangleAlert } from 'lucide-react';
 import { cn } from 'cn';
 import { count, unitFor } from './lib/units';
@@ -568,28 +567,26 @@ function ChunkSetModal({
         </Field>
       )}
 
-      <fieldset className="border border-border rounded-lg py-3 px-3.5">
-        <legend className="text-xs font-semibold py-0 px-1">Meaning</legend>
-
-        <Toggle
+      <Section title="Meaning">
+        <CheckField
           checked={headingContext}
           onChange={setHeadingContext}
           label="Heading context"
           hint="Embed each chunk under its heading trail, so its vector knows the section it came from. Stored text stays verbatim."
         />
-        <Toggle
+        <CheckField
           checked={unitAware}
           onChange={setUnitAware}
           label="Unit-aware boundaries"
           hint="Split on the document's own structure: page for PDF, chapter for EPUB, slide for PPTX."
         />
-        <Toggle
+        <CheckField
           checked={sentenceAware}
           onChange={setSentenceAware}
           label="Sentence-aware splitting"
           hint="When a split lands mid-paragraph, cut at a sentence rather than a word."
         />
-      </fieldset>
+      </Section>
 
       <div className="flex justify-between items-center mt-4">
         <span className="dim text-xs max-w-[380px]">
@@ -614,30 +611,6 @@ function ChunkSetModal({
   );
 }
 
-function Toggle({
-  checked,
-  onChange,
-  label,
-  hint,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-  label: string;
-  hint: string;
-}) {
-  const id = useId();
-  return (
-    <div className="mb-2.5 flex gap-2.5">
-      <Checkbox id={id} checked={checked} onCheckedChange={(v) => onChange(v === true)} className="mt-0.5" />
-      <div className="grid gap-0.5">
-        <label htmlFor={id} className="text-sm font-semibold leading-none">
-          {label}
-        </label>
-        <span className="text-xs text-muted-foreground">{hint}</span>
-      </div>
-    </div>
-  );
-}
 
 /**
  * Model management.

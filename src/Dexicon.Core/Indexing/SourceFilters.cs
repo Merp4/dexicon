@@ -39,9 +39,12 @@ public static class SourceFilters
     /// </summary>
     public enum Origin { Source, Corpus, Configured }
 
+    /// <summary>The last layer for <c>.gitignore</c>, which configuration does not set.</summary>
+    public const bool ConfiguredUseGitignore = true;
+
     public static Effective Resolve(Corpus corpus, Source source, IndexingOptions configured) =>
         new(
-            source.UseGitignore ?? corpus.DefaultUseGitignore ?? true,
+            source.UseGitignore ?? corpus.DefaultUseGitignore ?? ConfiguredUseGitignore,
             source.MaxFileBytes ?? corpus.DefaultMaxFileBytes ?? configured.MaxFileBytes,
             Globs(source.IncludeGlobs) ?? Globs(corpus.DefaultIncludeGlobs) ?? [],
             Globs(source.ExcludeGlobs) ?? Globs(corpus.DefaultExcludeGlobs) ?? []);

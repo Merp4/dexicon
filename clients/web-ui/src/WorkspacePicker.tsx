@@ -22,6 +22,7 @@ export function WorkspacePicker({
   onChange,
   emptyLabel,
   disabled,
+  reads = 'files',
 }: {
   /**
    * Selected path, relative to the workspace root. '' is the root itself, chosen; null is
@@ -33,6 +34,9 @@ export function WorkspacePicker({
   /** What having nothing chosen means in this form — it differs between creating and adding. */
   emptyLabel: string;
   disabled?: boolean;
+  /** What a source here will read, for the line saying what the choice means. A history
+   *  source reads the repository's commits, not everything beneath the folder. */
+  reads?: 'files' | 'history';
 }) {
   const [entries, setEntries] = useState<{ name: string; relativePath: string; childCount?: number | null }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -148,6 +152,15 @@ export function WorkspacePicker({
       <p className="border-t border-border px-2 py-1.5 text-xs">
         {value === null ? (
           <span className="opacity-70">{emptyLabel}</span>
+        ) : reads === 'history' ? (
+          value === '' ? (
+            <>Reading the commit history of the repository at the workspace root.</>
+          ) : (
+            <>
+              Reading the commit history of the repository at{' '}
+              <code className="mono rounded bg-muted px-1 py-0.5">{value}</code>.
+            </>
+          )
         ) : value === '' ? (
           <>Indexing the workspace root and everything beneath it.</>
         ) : (
