@@ -220,7 +220,9 @@ describe('the sources a corpus reads', () => {
     render(<CorpusDetail {...props} />);
 
     expect(await screen.findByText('api-repo')).toBeInTheDocument();
-    expect(screen.getByText(/\.gitignore honoured/)).toBeInTheDocument();
+    expect(screen.getByText(/\.gitignore respected/)).toBeInTheDocument();
+    // The limit is for code and text; documents have the server's own.
+    expect(screen.getByText(/code and text ≤ 2\.0 MB/)).toBeInTheDocument();
     expect(screen.getByText(/only src\/\*\*/)).toBeInTheDocument();
     expect(screen.getByText(/not \*\*\/vendor\/\*\*/)).toBeInTheDocument();
   });
@@ -249,7 +251,7 @@ describe('the sources a corpus reads', () => {
     render(<CorpusDetail {...props} />);
 
     expect(await screen.findByText('api-repo')).toBeInTheDocument();
-    expect(screen.getByText(/\.gitignore honoured/)).toBeInTheDocument();
+    expect(screen.getByText(/\.gitignore respected/)).toBeInTheDocument();
   });
 
   /**
@@ -278,7 +280,7 @@ describe('the sources a corpus reads', () => {
     expect(screen.getByText(/message, stat and diff/)).toHaveTextContent(/^main · message, stat and diff/);
 
     // One .gitignore line, for the workspace source, and none for the history one.
-    expect(screen.getAllByText(/\.gitignore honoured/)).toHaveLength(1);
+    expect(screen.getAllByText(/\.gitignore respected/)).toHaveLength(1);
   });
 
   /**

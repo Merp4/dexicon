@@ -150,8 +150,9 @@ export function WorkspacePicker({
       </div>
 
       <p className="border-t border-border px-2 py-1.5 text-xs">
+        {/* Not the empty label again: it is already the breadcrumb's first button. */}
         {value === null ? (
-          <span className="opacity-70">{emptyLabel}</span>
+          <span className="opacity-70">No folder chosen yet.</span>
         ) : reads === 'history' ? (
           value === '' ? (
             <>Reading the commit history of the repository at the workspace root.</>

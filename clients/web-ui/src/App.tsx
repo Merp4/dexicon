@@ -1250,9 +1250,19 @@ export function CorpusDetail({
           {corpus.sources.length === 0 ? (
             <span className="dim">none: add one, or upload documents</span>
           ) : (
-            <span className="grid gap-1">
+            // Columns from sm up, so the counts, the settings and the buttons line up down
+            // the list: with thirteen sources each row's buttons sat wherever its text
+            // ended. Below sm each row wraps on its own.
+            <span
+              className={cn(
+                'grid gap-x-3 gap-y-1.5 sm:items-baseline',
+                corpus.sources.length > 1
+                  ? 'sm:grid-cols-[max-content_max-content_minmax(0,1fr)_max-content]'
+                  : 'sm:grid-cols-[max-content_minmax(0,1fr)_max-content]',
+              )}
+            >
               {corpus.sources.map((s) => (
-                <span key={s.id} className="flex flex-wrap items-baseline gap-2">
+                <span key={s.id} className="flex flex-wrap items-baseline gap-2 sm:contents">
                   <span className="mono">{sourceName(s)}</span>
                   {/* What this source is actually doing. The filters were settable and
                       invisible, which is the worst of both.
@@ -1337,8 +1347,10 @@ export function CorpusDetail({
                     </span>
                   ) : (
                     <span className="dim text-xs">
-                      {s.useGitignore ? '.gitignore honoured' : '.gitignore ignored'}
-                      {' · '}≤ {formatBytes(s.maxFileBytes)}
+                      {s.useGitignore ? '.gitignore respected' : '.gitignore ignored'}
+                      {/* Code and text only: PDFs and the other documents have the server's
+                          own limit, so "≤ 64 MB" on a shelf of books said something false. */}
+                      {' · '}code and text ≤ {formatBytes(s.maxFileBytes)}
                       {s.includeGlobs?.length ? ` · only ${s.includeGlobs.join(', ')}` : ''}
                       {s.excludeGlobs?.length ? ` · not ${s.excludeGlobs.join(', ')}` : ''}
                       {/* Which of those the source would keep if the corpus default moved.
@@ -1350,25 +1362,28 @@ export function CorpusDetail({
                   {/* Adding a folder was one click; removing one meant deleting the whole
                       corpus and rebuilding it, losing its chunk sets, its history and every
                       other source with it. A path typed wrong is not worth that. */}
-                  {(s.kind === 'workspace' || s.kind === 'githistory') && (
+                  <span className="flex gap-0.5 self-center sm:justify-self-end">
+                    {(s.kind === 'workspace' || s.kind === 'githistory') && (
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label={`Edit source ${sourceName(s)}`}
+                        title="Edit source"
+                        onClick={() => setEditingSource(s)}
+                      >
+                        <SlidersHorizontal />
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="icon-xs"
-                      aria-label={`Edit source ${sourceName(s)}`}
-                      title="Edit source"
-                      onClick={() => setEditingSource(s)}
+                      aria-label={`Remove source ${sourceName(s)}`}
+                      title="Remove source"
+                      onClick={() => setRemovingSource(s)}
                     >
-                      <SlidersHorizontal />
+                      <Trash2 />
                     </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={`Remove source ${sourceName(s)}`}
-                    onClick={() => setRemovingSource(s)}
-                  >
-                    <Trash2 />
-                  </Button>
+                  </span>
                 </span>
               ))}
             </span>
@@ -1391,7 +1406,8 @@ export function CorpusDetail({
         <Row label="Searched as">
           <span className="mono">{corpus.name}</span>
           <span className="dim">
-            {' '}is the default set below. Name another with <span className="mono">corpus:set</span>.
+            {' '}searches the default chunk set below; <span className="mono">{corpus.name}:name</span> searches
+            another.
           </span>
         </Row>
         <Row label="Contents">

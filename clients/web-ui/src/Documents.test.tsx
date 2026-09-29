@@ -153,7 +153,7 @@ describe('the document library', () => {
     await user.click(await screen.findByLabelText(/upload into/i));
     const options = (await screen.findAllByRole('option')).map((o) => o.textContent);
 
-    expect(options).toEqual(['library — 768 tokens / 100 overlap']);
+    expect(options).toEqual(['library · 768 tokens / 100 overlap']);
   });
 
   it('says there is nowhere to put a file rather than offering an empty picker', async () => {
