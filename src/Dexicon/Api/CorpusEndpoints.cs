@@ -121,16 +121,7 @@ public static class CorpusEndpoints
                 catch (UnauthorizedAccessException ex)
                 { return Results.Problem(title: "Invalid workspace path", detail: ex.Message, statusCode: 400); }
 
-                corpus.Sources.Add(new Source
-                {
-                    Id = Ulid.NewUlid().ToString(),
-                    CorpusId = corpus.Id,
-                    Kind = SourceKind.Workspace,
-                    RootPath = body.WorkspacePath.Trim('/', '\\'),
-                    UseGitignore = true,
-                    MaxFileBytes = indexing.MaxFileBytes,
-                    CreatedUtc = DateTime.UtcNow,
-                });
+                corpus.Sources.Add(FirstSource(corpus.Id, body.WorkspacePath));
             }
 
             db.Corpora.Add(corpus);
@@ -700,6 +691,24 @@ public static class CorpusEndpoints
     }
 
     /// <summary>
+    /// The file source a corpus is created with, when the request names a folder.
+    ///
+    /// Its filters are null, as they are for a source added later with none sent: it
+    /// follows the corpus, and through it the configuration. It was created holding
+    /// <c>.gitignore</c> on and the configured cap as its own values, so a corpus default
+    /// for either never reached it, and a later change to the configured cap did not
+    /// either.
+    /// </summary>
+    internal static Source FirstSource(string corpusId, string workspacePath) => new()
+    {
+        Id = Ulid.NewUlid().ToString(),
+        CorpusId = corpusId,
+        Kind = SourceKind.Workspace,
+        RootPath = workspacePath.Trim('/', '\\'),
+        CreatedUtc = DateTime.UtcNow,
+    };
+
+    /// <summary>
     /// Why a history source cannot be added at this path, or null when it can.
     ///
     /// Two different answers. A folder with no repository at its root is the caller's to
@@ -899,6 +908,7 @@ public static class CorpusEndpoints
             headline?.PendingCount ?? 0,
             sources.Select(s => s.ToSummary(c, indexing, filesPerSource.GetValueOrDefault(s.Id))).ToList(),
             setSummaries,
-            c.DefaultsOf());
+            c.DefaultsOf(),
+            new ConfiguredFilters(SourceFilters.ConfiguredUseGitignore, indexing.MaxFileBytes, indexing.DocumentMaxBytes));
     }
 }

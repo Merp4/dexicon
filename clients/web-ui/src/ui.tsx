@@ -6,6 +6,7 @@ import { Check, CircleAlert, CircleCheck, Copy, Info, Loader2, TriangleAlert, X 
 import { Button as ShadButton } from '@/components/ui/button';
 import { Input as ShadInput } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Select as SelectRoot,
@@ -233,10 +234,13 @@ function useField(id?: string) {
 export function Field({
   label,
   hint,
+  aside,
   children,
 }: {
   label: string;
   hint?: ReactNode;
+  /** A control that governs this field, drawn at the end of the label's line. */
+  aside?: ReactNode;
   children: ReactNode;
 }) {
   const id = useId();
@@ -245,9 +249,12 @@ export function Field({
   return (
     <FieldContext.Provider value={{ id, hintId: hint ? hintId : undefined }}>
       <div className="mb-3.5 grid gap-1.5">
-        <Label htmlFor={id} className="text-xs font-semibold">
-          {label}
-        </Label>
+        <div className="flex items-center justify-between gap-3">
+          <Label htmlFor={id} className="text-xs font-semibold">
+            {label}
+          </Label>
+          {aside}
+        </div>
         {children}
         {hint && (
           <p id={hintId} className="text-xs text-muted-foreground">
@@ -304,7 +311,66 @@ export { SelectGroup, SelectItem, SelectLabel } from '@/components/ui/select';
 // Re-exported rather than imported straight from the library by call sites: this file is
 // the one place the app's vocabulary is defined, and a screen reaching past it is how two
 // import paths for the same control start.
-export { Checkbox } from '@/components/ui/checkbox';
+export { Checkbox };
+
+/**
+ * A checkbox, its label, and a line saying what it does.
+ *
+ * The label names the control and the line describes it. Wrapped in one `<label>`, the two
+ * were read out together as the checkbox's name, and three forms each drew their own copy
+ * of the layout with different spacing.
+ */
+export function CheckField({
+  checked,
+  onChange,
+  label,
+  hint,
+  disabled,
+  aside,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  label: string;
+  hint?: ReactNode;
+  disabled?: boolean;
+  /** A control that governs this one, drawn at the end of its line, as on a Field. */
+  aside?: ReactNode;
+}) {
+  const id = useId();
+  const hintId = `${id}-hint`;
+
+  return (
+    <div className="mb-3 flex gap-2.5">
+      <Checkbox
+        id={id}
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={(v) => onChange(v === true)}
+        aria-describedby={hint ? hintId : undefined}
+        className="mt-0.5"
+      />
+      <div className="grid flex-1 gap-0.5">
+        <div className="flex items-start justify-between gap-3">
+          <label htmlFor={id} className={cn('text-sm leading-none font-semibold', disabled && 'opacity-70')}>
+            {label}
+          </label>
+          {aside}
+        </div>
+        {hint && <span id={hintId} className="text-xs text-muted-foreground">{hint}</span>}
+      </div>
+    </div>
+  );
+}
+
+/** Related fields of a form under one heading. */
+export function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <fieldset className="mb-3.5 min-w-0 rounded-lg border border-border px-3.5 pt-2 pb-0.5">
+      <legend className="px-1 text-xs font-semibold">{title}</legend>
+      {children}
+    </fieldset>
+  );
+}
 
 // ── Badges ──────────────────────────────────────────────────────────────────
 

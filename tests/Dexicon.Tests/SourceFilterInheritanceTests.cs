@@ -65,6 +65,23 @@ public sealed class SourceFilterInheritanceTests
     }
 
     [Fact]
+    public void TheSourceACorpusIsCreatedWithFollowsTheCorpus()
+    {
+        // It was created holding .gitignore on and the configured cap as its own values,
+        // so the corpus default for either reached every source but this one.
+        var corpus = Corpus(useGitignore: false, maxFileBytes: 64 * 1024 * 1024);
+        var first = CorpusEndpoints.FirstSource(corpus.Id, "/books/manuals/");
+
+        first.RootPath.ShouldBe("books/manuals");
+        first.UseGitignore.ShouldBeNull();
+        first.MaxFileBytes.ShouldBeNull();
+
+        var e = SourceFilters.Resolve(corpus, first, Configured);
+        e.UseGitignore.ShouldBeFalse();
+        e.MaxFileBytes.ShouldBe(64 * 1024 * 1024);
+    }
+
+    [Fact]
     public void TheCorpusDefaultSitsBetweenTheSourceAndTheConfiguration()
     {
         var corpus = Corpus(useGitignore: false, maxFileBytes: 64 * 1024 * 1024,

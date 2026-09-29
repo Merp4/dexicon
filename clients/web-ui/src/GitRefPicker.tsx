@@ -94,8 +94,12 @@ export function GitRefPicker({
 
   return (
     <div className="mb-3.5 grid gap-2">
+      {/* Shown as well as announced: three bare options read as a mode of the dialog, not
+          as the choice of what to follow. */}
+      <span className="-mb-0.5 text-xs font-semibold">Follow</span>
       <Segmented
         label="Follow"
+        className="justify-self-start"
         value={mode}
         onChange={choose}
         options={[

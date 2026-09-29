@@ -1697,6 +1697,27 @@
           }
         }
       },
+      "ConfiguredFilters": {
+        "required": [
+          "useGitignore",
+          "maxFileBytes",
+          "documentMaxBytes"
+        ],
+        "type": "object",
+        "properties": {
+          "useGitignore": {
+            "type": "boolean"
+          },
+          "maxFileBytes": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "documentMaxBytes": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "ContextApiRequest": {
         "required": [
           "query"
@@ -1989,6 +2010,16 @@
               },
               {
                 "$ref": "#/components/schemas/CorpusDefaults"
+              }
+            ]
+          },
+          "configured": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ConfiguredFilters"
               }
             ]
           }

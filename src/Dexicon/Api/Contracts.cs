@@ -268,6 +268,10 @@ public sealed record CoverageReport(IReadOnlyList<CoverageGap> Gaps);
 /// </param>
 /// <param name="ChunkSets">Every way this corpus is cut. The default one is what search uses.</param>
 /// <param name="Defaults">Filters every source here inherits unless it sets its own.</param>
+/// <param name="Configured">
+/// What a source gets where neither it nor <paramref name="Defaults"/> sets a value, so a
+/// form can show what following the default gives before anything is saved.
+/// </param>
 public sealed record CorpusSummary(
     string Id,
     string Name,
@@ -283,7 +287,16 @@ public sealed record CorpusSummary(
     int PendingCount,
     IReadOnlyList<SourceSummary> Sources,
     IReadOnlyList<ChunkSetSummary> ChunkSets,
-    CorpusDefaults? Defaults = null);
+    CorpusDefaults? Defaults = null,
+    ConfiguredFilters? Configured = null);
+
+/// <summary>The deployment's own filter values, the last layer a source's filters resolve through.</summary>
+/// <param name="MaxFileBytes">The cap for code and text files.</param>
+/// <param name="DocumentMaxBytes">
+/// The cap for PDF, DOCX, PPTX, EPUB and HTML files. Configuration sets it; no source or
+/// corpus setting changes it.
+/// </param>
+public sealed record ConfiguredFilters(bool UseGitignore, int MaxFileBytes, long DocumentMaxBytes);
 
 /// <summary>
 /// One place a corpus takes content from, and the filters applied to it.

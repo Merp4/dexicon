@@ -346,7 +346,7 @@ describe('the sources a corpus reads', () => {
 
     expect(await screen.findByText('workspace root')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Remove source workspace root' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Edit filters for workspace root' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit source workspace root' })).toBeInTheDocument();
   });
 
   /**
@@ -479,9 +479,12 @@ describe('adding a source', () => {
     const { user, dialog } = await openAddSource();
 
     await user.click(within(dialog).getByRole('button', { name: '(choose a folder)' }));
-    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+    await user.click(within(dialog).getByRole('radio', { name: 'Commit history' }));
 
     expect(within(dialog).queryByText(/takes everything under it/)).not.toBeInTheDocument();
+    // Nor that it indexes everything beneath the folder, which is what a file source does.
+    expect(within(dialog).queryByText(/everything beneath it/)).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/Reading the commit history of the repository at the workspace root/)).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: /^Add source$/ })).toBeEnabled();
   });
 
@@ -504,7 +507,7 @@ describe('adding a source', () => {
     await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
     expect(within(dialog).getByText(/already indexes that folder/i)).toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+    await user.click(within(dialog).getByRole('radio', { name: 'Commit history' }));
 
     expect(within(dialog).queryByText(/already indexes that folder/i)).not.toBeInTheDocument();
   });
@@ -518,7 +521,7 @@ describe('adding a source', () => {
     await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
     expect(within(dialog).queryByText(/already indexes/i)).not.toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+    await user.click(within(dialog).getByRole('radio', { name: 'Commit history' }));
 
     expect(within(dialog).getByText(/already indexes that folder’s history/i)).toBeInTheDocument();
   });
@@ -535,13 +538,13 @@ describe('adding a source', () => {
 
     await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
 
-    expect(within(dialog).getByLabelText(/Largest file/)).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Size limit (MB)')).toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+    await user.click(within(dialog).getByRole('radio', { name: 'Commit history' }));
 
-    expect(within(dialog).queryByLabelText(/Largest file/)).not.toBeInTheDocument();
-    expect(within(dialog).queryByText(/Honour \.gitignore/)).not.toBeInTheDocument();
-    expect(within(dialog).getByText(/Include the diff/)).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('Size limit (MB)')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/Respect \.gitignore/)).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/^The diff$/)).toBeInTheDocument();
 
     await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
 
@@ -556,8 +559,8 @@ describe('adding a source', () => {
     const { user, dialog } = await openAddSource();
 
     await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
-    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
-    await user.click(within(dialog).getByRole('checkbox', { name: /Include the diff/ }));
+    await user.click(within(dialog).getByRole('radio', { name: 'Commit history' }));
+    await user.click(within(dialog).getByRole('checkbox', { name: /^The diff/ }));
     await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
 
     await waitFor(() => expect(addSource).toHaveBeenCalled());
@@ -574,7 +577,7 @@ describe('adding a source', () => {
     const { user, dialog } = await openAddSource();
 
     await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
-    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+    await user.click(within(dialog).getByRole('radio', { name: 'Commit history' }));
 
     await pickBranch(user, dialog, /^origin\/main · last commit/);
     await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
@@ -596,7 +599,7 @@ describe('adding a source', () => {
     const { user, dialog } = await openAddSource();
 
     await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
-    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+    await user.click(within(dialog).getByRole('radio', { name: 'Commit history' }));
     await typeRef(user, dialog, 'main..other');
     await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
 
@@ -605,35 +608,44 @@ describe('adding a source', () => {
     expect(props.onError).not.toHaveBeenCalled();
   });
 
-  it('sends the filters, as a list and in bytes', async () => {
-    // Globs are typed as a comma separated line and sent as an array; the cap is shown in
+  it('sends the filters it is given, as a list and in bytes', async () => {
+    // Globs are typed as a comma separated line and sent as an array; the limit is shown in
     // MB and sent in bytes. Both conversions are places to be quietly wrong.
     addSource.mockResolvedValue({});
     const { user, dialog } = await openAddSource();
 
     await user.click(await within(dialog).findByRole('button', { name: /notes/ }));
 
-    await user.type(within(dialog).getByLabelText(/Only these/), 'src/**, docs/**');
-    await user.type(within(dialog).getByLabelText(/Never these/), '**/vendor/**');
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Include: use the corpus default' }));
+    await user.type(within(dialog).getByLabelText('Include'), 'src/**, docs/**');
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Exclude: use the corpus default' }));
+    await user.type(within(dialog).getByLabelText('Exclude'), '**/vendor/**');
+    await user.click(within(dialog).getByRole('checkbox', { name: '.gitignore: use the server default' }));
+    await user.click(within(dialog).getByRole('checkbox', { name: /^Respect \.gitignore/ }));
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Size limit: use the server default' }));
+    const limit = within(dialog).getByLabelText('Size limit (MB)');
+    await user.clear(limit);
+    await user.type(limit, '20');
 
     await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
 
     await waitFor(() => expect(addSource).toHaveBeenCalled());
     expect(addSource).toHaveBeenCalledWith('docs', {
       workspacePath: 'notes',
-      useGitignore: true,
+      useGitignore: false,
       maxFileBytes: 20 * 1024 * 1024,
       includeGlobs: ['src/**', 'docs/**'],
       excludeGlobs: ['**/vendor/**'],
     });
   });
 
-  it('omits a glob nobody typed rather than sending one that matches nothing', async () => {
+  it('sends nothing for a filter left on its default, so the source follows the corpus', async () => {
     // Two failures guarded here. `''.split(',')` is `['']`, and a glob matching nothing
-    // would exclude everything. And an empty ARRAY is not nothing either: it means "no
-    // globs, whatever the corpus default says", so sending it for an untouched box would
-    // pin every new source against the default it was supposed to follow. Omitted is the
-    // only one of the three that means "follow the corpus".
+    // would exclude everything. And any value is an opinion: an empty ARRAY means "no
+    // globs, whatever the corpus says", and the .gitignore setting and size cap this
+    // dialog used to send for every source pinned each one against the corpus default, so
+    // a default for either reached no source added here. Omitted is the only thing that
+    // means "follow the corpus".
     addSource.mockResolvedValue({});
     const { user, dialog } = await openAddSource();
 
@@ -641,8 +653,40 @@ describe('adding a source', () => {
     await user.click(within(dialog).getByRole('button', { name: /^Add source$/ }));
 
     await waitFor(() => expect(addSource).toHaveBeenCalled());
-    expect(addSource.mock.calls[0][1].includeGlobs).toBeUndefined();
-    expect(addSource.mock.calls[0][1].excludeGlobs).toBeUndefined();
+    expect(addSource).toHaveBeenCalledWith('docs', { workspacePath: 'notes' });
+  });
+
+  it('shows what each default is and where it comes from', async () => {
+    // A default the reader cannot see is a value they are asked to accept blind.
+    getCorpus.mockResolvedValue(corpus({
+      defaults: { useGitignore: null, maxFileBytes: null, includeGlobs: null, excludeGlobs: ['**/*.pdf'] },
+      configured: { useGitignore: true, maxFileBytes: 262_144, documentMaxBytes: 512 * 1024 * 1024 },
+    }));
+    const { dialog } = await openAddSource();
+
+    expect(within(dialog).getByLabelText('Exclude')).toHaveValue('**/*.pdf');
+    expect(within(dialog).getByLabelText('Exclude')).toBeDisabled();
+    expect(within(dialog).getByRole('checkbox', { name: 'Exclude: use the corpus default' })).toBeChecked();
+
+    expect(within(dialog).getByLabelText('Size limit (MB)')).toHaveValue(0.25);
+    expect(within(dialog).getByRole('checkbox', { name: 'Size limit: use the server default' })).toBeChecked();
+    expect(within(dialog).getByText(/have their own limit, 512\.0 MB/)).toBeInTheDocument();
+
+    expect(within(dialog).getByRole('checkbox', { name: /^Respect \.gitignore/ })).toBeChecked();
+  });
+
+  /**
+   * What the source is comes first, and decides the rest. It was a checkbox after the
+   * folder, among the file settings it switched off.
+   */
+  it('asks what to index before anything else', async () => {
+    const { dialog } = await openAddSource();
+
+    const kind = within(dialog).getByRole('radiogroup', { name: 'What to index' });
+    expect(within(kind).getByRole('radio', { name: 'Files' })).toBeChecked();
+    // Before the folder picker in reading order.
+    const folder = within(dialog).getByRole('button', { name: '(choose a folder)' });
+    expect(kind.compareDocumentPosition(folder) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
 
@@ -1031,7 +1075,7 @@ describe('editing a source filter', () => {
     const user = userEvent.setup();
     getCorpus.mockResolvedValue(c);
     render(<CorpusDetail {...props} />);
-    await user.click(await screen.findByRole('button', { name: /Edit filters for books\/manuals\/AI/ }));
+    await user.click(await screen.findByRole('button', { name: /Edit source books\/manuals\/AI/ }));
     return { user, dialog: await screen.findByRole('dialog') };
   }
 
@@ -1070,29 +1114,45 @@ describe('editing a source filter', () => {
     expect(screen.queryByText(/from the corpus/)).not.toBeInTheDocument();
   });
 
-  it('shows what each inherited field would actually be', async () => {
-    // A checkbox saying only "use the corpus default" asks someone to accept a value they
+  it('shows what each followed field would actually be', async () => {
+    // A tick saying only "use the corpus default" asks someone to accept a value they
     // cannot see, which is the one thing the control is for.
     const { dialog } = await openEdit(owning());
 
-    expect(within(dialog).getByText(/corpus default \(\.gitignore ignored\)/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/corpus default \(\*\*\/\*\.pdf\)/)).toBeInTheDocument();
+    expect(within(dialog).getByRole('checkbox', { name: /^Respect \.gitignore/ })).not.toBeChecked();
+    expect(within(dialog).getByLabelText('Exclude')).toHaveValue('**/*.pdf');
+    expect(within(dialog).getByLabelText('Size limit (MB)')).toHaveValue(64);
+    for (const field of ['Include', 'Exclude', '.gitignore', 'Size limit']) {
+      expect(within(dialog).getByRole('checkbox', { name: `${field}: use the corpus default` })).toBeChecked();
+    }
   });
 
-  it('names each inherited field, since the line is all there is of it', async () => {
-    // Inherited, the field itself is hidden, and the lines read "Corpus default (nothing)"
-    // one under another with the names only in the checkboxes' aria-labels.
-    const { dialog } = await openEdit(owning());
+  /**
+   * The server's value where the corpus sets none. The dialog showed the source's own value
+   * as the default, so a source pinned at 64 MB offered "corpus default (64.0 MB)" when
+   * following it gave 256 KB.
+   */
+  it('offers the server’s value as the default where the corpus sets none', async () => {
+    const { user, dialog } = await openEdit(corpus({
+      configured: { useGitignore: true, maxFileBytes: 262_144, documentMaxBytes: 512 * 1024 * 1024 },
+      sources: [source({ rootPath: 'books/manuals/AI', maxFileBytes: 64 * 1024 * 1024, ownMaxFileBytes: 64 * 1024 * 1024 })],
+    }));
 
-    const lines = [...dialog.querySelectorAll('label > span')].map((s) => s.textContent);
-    expect(lines).toContain('Honour .gitignore: corpus default (.gitignore ignored)');
-    expect(lines).toContain('Never these: corpus default (**/*.pdf)');
+    const limit = within(dialog).getByLabelText('Size limit (MB)');
+    const followServer = within(dialog).getByRole('checkbox', { name: 'Size limit: use the server default' });
+    expect(limit).toHaveValue(64);
+    expect(followServer).not.toBeChecked();
+
+    await user.click(followServer);
+
+    expect(limit).toHaveValue(0.25);
+    expect(limit).toBeDisabled();
   });
 
   it('clears every field the source still inherits', async () => {
     const { user, dialog } = await openEdit(owning());
 
-    await user.click(within(dialog).getByRole('button', { name: /^Save filters$/ }));
+    await user.click(within(dialog).getByRole('button', { name: /^Save changes$/ }));
 
     await waitFor(() => expect(updateSource).toHaveBeenCalled());
     const body = updateSource.mock.calls[0][2];
@@ -1106,11 +1166,11 @@ describe('editing a source filter', () => {
   it('sends an override when a field is taken off the default', async () => {
     const { user, dialog } = await openEdit(owning());
 
-    await user.click(within(dialog).getByRole('checkbox', { name: /Never these: use the corpus default/ }));
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Exclude: use the corpus default' }));
     const globs = within(dialog).getByPlaceholderText('**/vendor/**, *.min.js');
     await user.clear(globs);
     await user.type(globs, '**/*.epub');
-    await user.click(within(dialog).getByRole('button', { name: /^Save filters$/ }));
+    await user.click(within(dialog).getByRole('button', { name: /^Save changes$/ }));
 
     await waitFor(() => expect(updateSource).toHaveBeenCalled());
     const body = updateSource.mock.calls[0][2];
@@ -1123,9 +1183,9 @@ describe('editing a source filter', () => {
     // empty array, which is an override rather than an absence.
     const { user, dialog } = await openEdit(owning());
 
-    await user.click(within(dialog).getByRole('checkbox', { name: /Never these: use the corpus default/ }));
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Exclude: use the corpus default' }));
     await user.clear(within(dialog).getByPlaceholderText('**/vendor/**, *.min.js'));
-    await user.click(within(dialog).getByRole('button', { name: /^Save filters$/ }));
+    await user.click(within(dialog).getByRole('button', { name: /^Save changes$/ }));
 
     await waitFor(() => expect(updateSource).toHaveBeenCalled());
     expect(updateSource.mock.calls[0][2].excludeGlobs).toEqual([]);
@@ -1134,14 +1194,13 @@ describe('editing a source filter', () => {
   it('refuses a cap of zero rather than indexing nothing', async () => {
     const { user, dialog } = await openEdit(owning());
 
-    await user.click(within(dialog).getByRole('checkbox', { name: /Largest file: use the corpus default/ }));
-    // Exact: the inherit checkbox's own label also contains "Largest file".
-    const cap = within(dialog).getByLabelText('Largest file (MB)');
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Size limit: use the corpus default' }));
+    const cap = within(dialog).getByLabelText('Size limit (MB)');
     await user.clear(cap);
     await user.type(cap, '0');
 
-    expect(await within(dialog).findByText(/A cap of zero indexes nothing/)).toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: /^Save filters$/ })).toBeDisabled();
+    expect(await within(dialog).findByText(/A limit of zero indexes nothing/)).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /^Save changes$/ })).toBeDisabled();
   });
 
   it('accepts a cap that is not a round number of megabytes', async () => {
@@ -1153,7 +1212,7 @@ describe('editing a source filter', () => {
     // A size cap is a free value. There is no grid for it to be on.
     const { dialog } = await openEdit(owning({ ownMaxFileBytes: 262_144, maxFileBytes: 262_144 }));
 
-    const cap = within(dialog).getByLabelText('Largest file (MB)') as HTMLInputElement;
+    const cap = within(dialog).getByLabelText('Size limit (MB)') as HTMLInputElement;
 
     expect(cap.value).toBe('0.25');
     expect(cap.validity.stepMismatch).toBe(false);
@@ -1182,7 +1241,7 @@ describe('editing a history source', () => {
     const user = userEvent.setup();
     getCorpus.mockResolvedValue(history());
     render(<CorpusDetail {...props} />);
-    await user.click(await screen.findByRole('button', { name: 'Edit history settings for api-repo' }));
+    await user.click(await screen.findByRole('button', { name: 'Edit source api-repo' }));
     return { user, dialog: await screen.findByRole('dialog') };
   }
 
@@ -1191,7 +1250,7 @@ describe('editing a history source', () => {
     const { user, dialog } = await openEditor();
 
     await pickBranch(user, dialog, /^origin\/main · last commit/);
-    await user.click(within(dialog).getByRole('button', { name: /Save history settings/ }));
+    await user.click(within(dialog).getByRole('button', { name: /^Save changes$/ }));
 
     await waitFor(() => expect(updateSource).toHaveBeenCalled());
     const [name, id, body] = updateSource.mock.calls[0];
@@ -1213,7 +1272,7 @@ describe('editing a history source', () => {
     const { user, dialog } = await openEditor();
 
     await typeRef(user, dialog, 'main..other');
-    await user.click(within(dialog).getByRole('button', { name: /Save history settings/ }));
+    await user.click(within(dialog).getByRole('button', { name: /^Save changes$/ }));
 
     expect(await within(dialog).findByText(/is not a usable ref/)).toBeInTheDocument();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
@@ -1230,7 +1289,7 @@ describe('editing a history source', () => {
     await pickBranch(user, dialog, /^origin\/main · last commit/);
     expect(within(dialog).getByText(/documents already indexed\s+are kept/)).toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole('checkbox', { name: /Include the diff/ }));
+    await user.click(within(dialog).getByRole('checkbox', { name: /^The diff/ }));
     expect(within(dialog).getByText(/Saving re-reads every commit/)).toBeInTheDocument();
   });
 
@@ -1253,10 +1312,10 @@ describe('editing a history source', () => {
       }),
     );
     render(<CorpusDetail {...props} />);
-    await user.click(await screen.findByRole('button', { name: 'Edit history settings for api-repo' }));
+    await user.click(await screen.findByRole('button', { name: 'Edit source api-repo' }));
     const dialog = await screen.findByRole('dialog');
 
-    const paths = within(dialog).getByLabelText('Only these paths');
+    const paths = within(dialog).getByLabelText('Paths');
     await user.clear(paths);
     await user.type(paths, 'docs/**, src/**');
     expect(within(dialog).getByText(/documents already indexed\s+are kept/)).toBeInTheDocument();
@@ -1278,7 +1337,7 @@ describe('editing a history source', () => {
     const limit = within(dialog).getByLabelText(/Newest commits only/);
     await user.type(limit, '500');
     await user.click(within(dialog).getByRole('checkbox', { name: /Keep commits once indexed/ }));
-    await user.click(within(dialog).getByRole('button', { name: /Save history settings/ }));
+    await user.click(within(dialog).getByRole('button', { name: /^Save changes$/ }));
 
     await waitFor(() => expect(updateSource).toHaveBeenCalled());
     expect(updateSource.mock.calls[0][2].git).toMatchObject({ maxCommits: 500, keepIndexed: true });
@@ -1294,7 +1353,7 @@ describe('editing a history source', () => {
     await user.clear(limit);
 
     expect(within(dialog).queryByRole('checkbox', { name: /Keep commits once indexed/ })).not.toBeInTheDocument();
-    await user.click(within(dialog).getByRole('button', { name: /Save history settings/ }));
+    await user.click(within(dialog).getByRole('button', { name: /^Save changes$/ }));
 
     await waitFor(() => expect(updateSource).toHaveBeenCalled());
     expect(updateSource.mock.calls[0][2].git).toMatchObject({ maxCommits: null, keepIndexed: false });
@@ -1314,7 +1373,7 @@ describe('editing a history source', () => {
       }),
     );
     render(<CorpusDetail {...props} />);
-    await user.click(await screen.findByRole('button', { name: 'Edit history settings for api-repo' }));
+    await user.click(await screen.findByRole('button', { name: 'Edit source api-repo' }));
     const dialog = await screen.findByRole('dialog');
 
     expect(within(dialog).queryByText(/leave the index on the refresh/)).not.toBeInTheDocument();
@@ -1325,9 +1384,9 @@ describe('editing a history source', () => {
   it('is not offered the file settings', async () => {
     const { dialog } = await openEditor();
 
-    expect(within(dialog).queryByLabelText(/Largest file/)).not.toBeInTheDocument();
-    expect(within(dialog).queryByText(/Honour \.gitignore/)).not.toBeInTheDocument();
-    expect(within(dialog).queryByText(/Never these/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('Size limit (MB)')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/Respect \.gitignore/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText(/Exclude/)).not.toBeInTheDocument();
   });
 });
 
@@ -1344,7 +1403,7 @@ describe('choosing what a history source follows', () => {
     await user.click(await screen.findByRole('button', { name: /add source/i }));
     const dialog = await screen.findByRole('dialog');
     await user.click(await within(dialog).findByRole('button', { name: /api-repo/ }));
-    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+    await user.click(within(dialog).getByRole('radio', { name: 'Commit history' }));
     return { user, dialog };
   }
 
@@ -1487,7 +1546,7 @@ describe('choosing what a history source follows', () => {
     render(<CorpusDetail {...props} />);
     await user.click(await screen.findByRole('button', { name: /add source/i }));
     const dialog = await screen.findByRole('dialog');
-    await user.click(within(dialog).getByRole('checkbox', { name: /Index its commit history/ }));
+    await user.click(within(dialog).getByRole('radio', { name: 'Commit history' }));
 
     expect(within(dialog).getByText('Choose a folder to list its branches.')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Ref')).toHaveValue('HEAD');
@@ -1525,13 +1584,13 @@ describe('choosing what a history source follows', () => {
     const user = userEvent.setup();
     getCorpus.mockResolvedValue(historyAt('origin/main'));
     render(<CorpusDetail {...props} />);
-    await user.click(await screen.findByRole('button', { name: 'Edit history settings for api-repo' }));
+    await user.click(await screen.findByRole('button', { name: 'Edit source api-repo' }));
     const dialog = await screen.findByRole('dialog');
 
     expect(await within(dialog).findByRole('radio', { name: 'A branch' })).toHaveAttribute('aria-checked', 'true');
     expect(within(dialog).getByRole('combobox', { name: 'Branch' })).toHaveTextContent(/origin\/main/);
 
-    await user.click(within(dialog).getByRole('button', { name: /Save history settings/ }));
+    await user.click(within(dialog).getByRole('button', { name: /^Save changes$/ }));
     await waitFor(() => expect(updateSource).toHaveBeenCalled());
     expect(updateSource.mock.calls[0][2].git.ref).toBe('origin/main');
     expect(repositoryRefs).toHaveBeenCalledWith('api-repo', 'origin/main');
@@ -1544,7 +1603,7 @@ describe('choosing what a history source follows', () => {
     const user = userEvent.setup();
     getCorpus.mockResolvedValue(historyAt('main'));
     render(<CorpusDetail {...props} />);
-    await user.click(await screen.findByRole('button', { name: 'Edit history settings for api-repo' }));
+    await user.click(await screen.findByRole('button', { name: 'Edit source api-repo' }));
     const dialog = await screen.findByRole('dialog');
 
     expect(await within(dialog).findByText(/is also a tag here/)).toHaveTextContent(
@@ -1558,7 +1617,7 @@ describe('choosing what a history source follows', () => {
     const user = userEvent.setup();
     getCorpus.mockResolvedValue(historyAt('main'));
     render(<CorpusDetail {...props} />);
-    await user.click(await screen.findByRole('button', { name: 'Edit history settings for api-repo' }));
+    await user.click(await screen.findByRole('button', { name: 'Edit source api-repo' }));
     const dialog = await screen.findByRole('dialog');
 
     expect(await within(dialog).findByRole('radio', { name: 'A branch' })).toHaveAttribute('aria-checked', 'true');
@@ -1571,7 +1630,7 @@ describe('choosing what a history source follows', () => {
     const user = userEvent.setup();
     getCorpus.mockResolvedValue(historyAt('v1.2.0'));
     render(<CorpusDetail {...props} />);
-    await user.click(await screen.findByRole('button', { name: 'Edit history settings for api-repo' }));
+    await user.click(await screen.findByRole('button', { name: 'Edit source api-repo' }));
     const dialog = await screen.findByRole('dialog');
 
     expect(await within(dialog).findByRole('radio', { name: 'Other ref' })).toHaveAttribute('aria-checked', 'true');
@@ -1588,7 +1647,7 @@ describe('choosing what a history source follows', () => {
     const user = userEvent.setup();
     getCorpus.mockResolvedValue(historyAt('release'));
     render(<CorpusDetail {...props} />);
-    await user.click(await screen.findByRole('button', { name: 'Edit history settings for api-repo' }));
+    await user.click(await screen.findByRole('button', { name: 'Edit source api-repo' }));
     const dialog = await screen.findByRole('dialog');
 
     expect(await within(dialog).findByText(/is also a tag here/)).toHaveTextContent(/^release is also a tag here/);
@@ -1628,7 +1687,7 @@ describe('the corpus default filters', () => {
   it('sends globs the sources will inherit', async () => {
     const { user, dialog } = await openDefaults(corpus());
 
-    await user.type(within(dialog).getByPlaceholderText(/Designer\.cs/), '**/*.test.ts');
+    await user.type(within(dialog).getByLabelText('Exclude'), '**/*.test.ts');
     await user.click(within(dialog).getByRole('button', { name: /^Save defaults$/ }));
 
     await waitFor(() => expect(updateCorpus).toHaveBeenCalled());
@@ -1649,6 +1708,30 @@ describe('the corpus default filters', () => {
       includeGlobs: null,
       excludeGlobs: null,
     });
+  });
+
+  it('shows the server’s values where the corpus sets none, and sets one when asked', async () => {
+    const { user, dialog } = await openDefaults(corpus({
+      configured: { useGitignore: true, maxFileBytes: 262_144, documentMaxBytes: 512 * 1024 * 1024 },
+    }));
+
+    const limit = within(dialog).getByLabelText('Size limit (MB)');
+    expect(limit).toHaveValue(0.25);
+    expect(limit).toBeDisabled();
+
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Size limit: use the server default' }));
+    await user.clear(limit);
+    await user.type(limit, '8');
+    await user.click(within(dialog).getByRole('button', { name: /^Save defaults$/ }));
+
+    await waitFor(() => expect(updateCorpus).toHaveBeenCalled());
+    expect(updateCorpus.mock.calls[0][1].defaults).toMatchObject({ maxFileBytes: 8 * 1024 * 1024, useGitignore: null });
+  });
+
+  it('says what a commit-history source takes from them', async () => {
+    const { dialog } = await openDefaults(corpus({ sources: [source({ kind: 'githistory', rootPath: 'api-repo' })] }));
+
+    expect(within(dialog).getByText(/Commit-history sources take only Include/)).toBeInTheDocument();
   });
 
   it('warns that a source setting its own filters keeps them', async () => {
