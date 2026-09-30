@@ -92,6 +92,15 @@ public sealed class CorpusConfiguration(
 
         // ScopeResolver.Split reads everything after the first colon as a chunk set, so a
         // corpus named with one could be listed and never searched by its name.
+        // Shown on a line of its own in every listing, logged, and typed as an argument, so
+        // a line break or an escape sequence in it breaks all three.
+        if (name.Any(char.IsControl))
+            return new ConfigRefusal(
+                "A corpus name cannot contain a control character",
+                "A line break, tab or other control character in a name breaks every listing and log line "
+                + "that shows it.",
+                400);
+
         if (name.Contains(':'))
             return new ConfigRefusal(
                 "A corpus name cannot contain ':'",

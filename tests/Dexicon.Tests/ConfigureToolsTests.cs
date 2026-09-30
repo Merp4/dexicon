@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using Dexicon.Api;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
@@ -208,6 +209,64 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_null_folder_or_kind_is_refused_rather_than_read_as_the_root_or_dereferenced()
+    {
+        // JSON can send null whatever the signature says. A null folder read as "" would add a
+        // source over the whole workspace, which nothing here can remove.
+        await using var db = _harness.NewContext();
+        var before = await db.Sources.CountAsync();
+
+        (await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, null!, create: true)))
+            .Message.ShouldContain("folder is required");
+        (await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, "notes", kind: null!)))
+            .Message.ShouldContain("files or history");
+
+        (await db.Sources.CountAsync()).ShouldBe(before);
+    }
+
+    [Fact]
+    public async Task A_corpus_name_with_a_line_break_stays_on_the_folder_s_line()
+    {
+        // New names cannot hold one; a corpus created before that rule can.
+        await using var db = _harness.NewContext();
+        await db.Corpora.ExecuteUpdateAsync(u => u.SetProperty(c => c.Name, "two\nlines"));
+
+        (await FoldersAsync(db, Configurer)).ShouldContain("  notes/  0 entries; indexed by two lines (files)\n");
+    }
+
+    [Fact]
+    public void A_setting_list_of_the_wrong_shape_is_refused_in_its_own_words()
+    {
+        // The corpus converter meets every string[] and says "corpus"; these lists are a type of
+        // their own so that a bad include is not reported as a bad corpus.
+        Should.Throw<McpException>(() => JsonSerializer.Deserialize<IReadOnlyList<string>>("7", McpJson.Options))
+            .Message.ShouldBe("include, exclude and reset take a string or a list of strings, not a number.");
+        Should.Throw<McpException>(() => JsonSerializer.Deserialize<IReadOnlyList<string>>("[1]", McpJson.Options))
+            .Message.ShouldContain("this list holds a number");
+        JsonSerializer.Deserialize<IReadOnlyList<string>>("\"**/*.md\"", McpJson.Options).ShouldBe(["**/*.md"]);
+        JsonSerializer.Deserialize<IReadOnlyList<string>>("[\"a\",\"b\"]", McpJson.Options).ShouldBe(["a", "b"]);
+    }
+
+    [Theory]
+    [InlineData(nameof(ConfigureTools.ConfigureCorpusAsync))]
+    [InlineData(nameof(ConfigureTools.ConfigureSourceAsync))]
+    public void The_lists_are_advertised_as_arrays_of_strings(string method)
+    {
+        // A custom converter can turn the advertised schema into {} and leave a caller guessing.
+        var tool = McpServerTool.Create(typeof(ConfigureTools).GetMethod(method)!,
+            new McpServerToolCreateOptions { SerializerOptions = McpJson.Options });
+        using var schema = JsonDocument.Parse(tool.ProtocolTool.InputSchema.GetRawText());
+        var properties = schema.RootElement.GetProperty("properties");
+
+        foreach (var name in new[] { "include", "exclude", "reset" })
+        {
+            var list = properties.GetProperty(name);
+            list.GetProperty("type").EnumerateArray().Select(t => t.GetString()).ShouldContain("array", name);
+            list.GetProperty("items").GetProperty("type").ToString().ShouldContain("string", Case.Sensitive, name);
+        }
+    }
+
+    [Fact]
     public async Task A_folder_differing_in_case_is_the_same_source_only_where_the_filesystem_says_so()
     {
         // On Windows and macOS "NOTES" is the folder notes, and adding it would be a second
@@ -403,7 +462,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
         // an escape sequence clears the screen of a terminal tailing the log.
         await using var db = _harness.NewContext();
 
-        await CorpusAsync(db, As("k\u001B[2J", Scopes.Configure), "two\nlines", create: true);
+        await CorpusAsync(db, As("k\nforged\u001B[2J", Scopes.Configure), "papers", create: true);
 
         var line = _logs.Lines.Single(l => l.Contains("created corpus"));
         line.ShouldNotContain("\n");

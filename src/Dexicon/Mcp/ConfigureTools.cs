@@ -103,11 +103,11 @@ public sealed class ConfigureTools
         [Description("Corpus name. A new one is what agents will pass to search_index: short, with no colon.")] string corpus,
         [Description("True to create the corpus. Without it, the corpus must exist.")] bool create = false,
         [Description("What the corpus holds, which list_corpora shows to agents deciding where to search.")] string? description = null,
-        [Description("Glob patterns every source indexes only, e.g. **/*.md. Replaces the current list.")] string[]? include = null,
-        [Description("Glob patterns every source leaves out, e.g. **/generated/**. Replaces the current list.")] string[]? exclude = null,
+        [Description("Glob patterns every source indexes only, e.g. **/*.md. Replaces the current list.")] IReadOnlyList<string>? include = null,
+        [Description("Glob patterns every source leaves out, e.g. **/generated/**. Replaces the current list.")] IReadOnlyList<string>? exclude = null,
         [Description("Whether sources respect .gitignore files.")] bool? gitignore = null,
         [Description("Largest code or text file indexed, in KB. PDFs and other documents have a limit of their own.")] int? maxFileKb = null,
-        [Description("Filters to return to the server's setting: include, exclude, gitignore, maxFileKb.")] string[]? reset = null,
+        [Description("Filters to return to the server's setting: include, exclude, gitignore, maxFileKb.")] IReadOnlyList<string>? reset = null,
         CancellationToken ct = default)
     {
         DexiconTools.Require(rc, Scopes.Configure);
@@ -203,18 +203,23 @@ public sealed class ConfigureTools
         [Description("Folder relative to the workspace root, as list_folders and index_status show it.")] string folder,
         [Description("files reads the files under the folder; history reads its git commits. A repository wanted both ways takes one source of each.")] string kind = "files",
         [Description("True to add the folder as a new source. Without it, the source must exist.")] bool create = false,
-        [Description("Glob patterns this source indexes only, e.g. **/*.cs. For history, the paths whose commits are kept. Replaces the list.")] string[]? include = null,
-        [Description("Glob patterns this source leaves out. Files only.")] string[]? exclude = null,
+        [Description("Glob patterns this source indexes only, e.g. **/*.cs. For history, the paths whose commits are kept. Replaces the list.")] IReadOnlyList<string>? include = null,
+        [Description("Glob patterns this source leaves out. Files only.")] IReadOnlyList<string>? exclude = null,
         [Description("Whether .gitignore files are respected. Files only.")] bool? gitignore = null,
         [Description("Largest code or text file indexed, in KB. Files only.")] int? maxFileKb = null,
         [Description("History only: what each commit's document holds and which commits are read. Settings left out keep their value.")] HistorySettings? history = null,
-        [Description("Settings to return to their default, by the names used here: include, exclude, gitignore, maxFileKb, or a history setting such as since or maxCommits.")] string[]? reset = null,
+        [Description("Settings to return to their default, by the names used here: include, exclude, gitignore, maxFileKb, or a history setting such as since or maxCommits.")] IReadOnlyList<string>? reset = null,
         CancellationToken ct = default)
     {
         DexiconTools.Require(rc, Scopes.Configure);
         var principal = rc.RequirePrincipal();
 
-        var isHistory = kind.Trim().ToLowerInvariant() switch
+        // Checked before anything else reads them. JSON can send null for either whatever the
+        // signature says, and a null folder canonicalises to the workspace root: a source over
+        // everything mounted, which nothing here can remove.
+        if (folder is null) throw new McpException("folder is required: a folder relative to the workspace root, or \"\" for the root itself.");
+
+        var isHistory = kind?.Trim().ToLowerInvariant() switch
         {
             "files" => false,
             "history" => true,
@@ -384,7 +389,7 @@ public sealed class ConfigureTools
             .ToDictionary(
                 g => g.Key,
                 g => string.Join(", ", g
-                    .Select(s => $"{names[s.CorpusId]} ({(s.Kind == SourceKind.GitHistory ? "history" : "files")})")
+                    .Select(s => $"{DexiconTools.OneLine(names[s.CorpusId])} ({(s.Kind == SourceKind.GitHistory ? "history" : "files")})")
                     .Order(StringComparer.Ordinal)),
                 WorkspaceDiscovery.PathComparer);
     }
@@ -424,7 +429,7 @@ public sealed class ConfigureTools
     }
 
     /// <summary>The names in <paramref name="reset"/>, each one checked against what it may name.</summary>
-    private static HashSet<string> Resets(string[]? reset, IEnumerable<string> allowed)
+    private static HashSet<string> Resets(IReadOnlyList<string>? reset, IEnumerable<string> allowed)
     {
         var valid = allowed.ToList();
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

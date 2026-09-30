@@ -135,6 +135,21 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
         (await db.Corpora.CountAsync()).ShouldBe(1);
     }
 
+    [Theory]
+    [InlineData("two\nlines")]
+    [InlineData("tab\tbed")]
+    [InlineData("esc\u001B[2J")]
+    public async Task A_name_with_a_control_character_is_refused(string name)
+    {
+        // Every listing puts a name on a line of its own, and every change is logged with it.
+        await using var db = _harness.NewContext();
+
+        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest(name), default);
+
+        created.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
+        (await db.Corpora.CountAsync()).ShouldBe(1);
+    }
+
     [Fact]
     public async Task A_name_that_is_another_corpus_s_id_is_taken()
     {
