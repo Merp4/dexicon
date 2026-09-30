@@ -138,4 +138,108 @@ public class CorpusListingTests
         rendered.ShouldContain("8 commits failed");
         rendered.ShouldNotContain("file");
     }
+
+    /// <summary>
+    /// The failure line sends an agent to a tool it can call. It ended "see the UI for why",
+    /// which an agent cannot do.
+    /// </summary>
+    [Fact]
+    public void Failed_files_point_to_where_an_agent_can_read_why()
+    {
+        var text = DexiconTools.RenderCorpus(Corpus(failed: 6));
+
+        text.ShouldContain("index_status(\"books\")");
+        text.ShouldNotContain("see the UI");
+    }
+}
+
+/// <summary>
+/// `index_status` for one corpus: what each source reads, and the files it left out and why.
+/// It stopped at counts, so an agent asked why a file is not found could only send the user
+/// to the UI.
+/// </summary>
+public class CorpusDiagnosisTests
+{
+    private static SourceSummary Files(string root, int files = 12, bool gitignore = true, int cap = 262_144,
+        string[]? include = null, string[]? exclude = null, bool ownExclude = true) =>
+        new("f-" + root, "workspace", root, gitignore, cap, include ?? [], exclude ?? [], files,
+            OwnUseGitignore: gitignore, OwnMaxFileBytes: cap,
+            OwnExcludeGlobs: ownExclude ? exclude : null);
+
+    [Fact]
+    public void A_file_source_says_how_it_is_filtered_and_which_filters_are_the_corpus_s()
+    {
+        var text = DexiconTools.RenderSources(
+            [Files("docs", gitignore: false, cap: 2 * 1024 * 1024, include: ["**/*.md"], exclude: ["**/draft/**"], ownExclude: false)],
+            new CorpusDefaults(null, null, null, ["**/draft/**"]));
+
+        text.ShouldContain("files under docs: 12 files found; .gitignore ignored; code and text up to 2 MB; only **/*.md; not **/draft/**");
+        text.ShouldContain("(from the corpus defaults: not)");
+    }
+
+    [Fact]
+    public void One_file_is_one_file()
+    {
+        // Found live, on a source holding one book: "1 files".
+        DexiconTools.RenderSources([Files("books/manuals", files: 1)], null).ShouldContain("files under books/manuals: 1 file found;");
+    }
+
+    [Fact]
+    public void A_source_that_sets_its_own_filters_names_no_corpus_default()
+    {
+        var text = DexiconTools.RenderSources([Files("docs", exclude: ["x"])], new CorpusDefaults(null, null, null, ["y"]));
+
+        text.ShouldNotContain("from the corpus defaults");
+        text.ShouldContain("files under docs: 12 files found; .gitignore respected; code and text up to 256 KB; not x");
+    }
+
+    [Fact]
+    public void A_history_source_says_what_it_follows_how_current_it_is_and_what_each_commit_holds()
+    {
+        var history = new SourceSummary("h", "githistory", "", true, 262_144, ["src/**"], [], 256,
+            Git: new Dexicon.Core.Indexing.GitHistoryOptions { Ref = "refs/heads/main", IncludeDiff = true, MaxCommits = 500, KeepIndexed = true },
+            NewestCommit: new CommitSummary("24664acfa47e5ff3199457a2f8c43ed6219a033f", new DateTime(2026, 9, 26, 10, 0, 0, DateTimeKind.Utc)),
+            Tracking: new Dexicon.Core.Indexing.GitTracking("refs/heads/main", "refs/heads/main",
+                new Dexicon.Core.Indexing.GitUpstream("refs/remotes/origin/main", "origin/main", 0, 52, false),
+                null, DateTime.UtcNow));
+
+        var text = DexiconTools.RenderSources([history], null);
+
+        text.ShouldContain("commit history of the workspace root: 256 commits, follows refs/heads/main (52 behind origin/main as of the last fetch)");
+        text.ShouldContain("holds message, stat, diff");
+        text.ShouldContain("newest 500, kept once indexed");
+        text.ShouldContain("only paths src/**");
+        text.ShouldContain("newest 24664ac, 2026-09-26");
+        // The file settings mean nothing to a commit, and saying them would claim it obeys them.
+        text.ShouldNotContain(".gitignore");
+    }
+
+    [Fact]
+    public void Uploaded_documents_are_not_described_as_a_walk()
+    {
+        var upload = new SourceSummary("u", "upload", null, false, int.MaxValue, [], [], 3);
+
+        var text = DexiconTools.RenderSources([upload], null);
+
+        text.ShouldContain("uploaded documents: 3");
+        text.ShouldNotContain("GB");
+    }
+
+    [Fact]
+    public void Problem_files_are_listed_with_their_reason_on_one_line_and_the_rest_counted()
+    {
+        var reason = "Extraction failed:\n" + new string('x', 400);
+        var text = DexiconTools.RenderProblemFiles(
+        [
+            new DexiconTools.ProblemFiles("failed", 2, [("books/a.pdf", reason), ("books/b.pdf", null)]),
+            new DexiconTools.ProblemFiles("skipped", 37, [("books/c.bin", "binary content")]),
+        ]);
+
+        text.ShouldContain("  failed: 2\n");
+        text.ShouldContain("    books/a.pdf — Extraction failed: xxx");
+        text.ShouldContain("...\n");
+        text.Split('\n').ShouldAllBe(line => line.Length <= 200, "a reason is cut to one short line");
+        text.ShouldContain("    books/b.pdf\n");
+        text.ShouldContain("  skipped: 37\n    books/c.bin — binary content\n    ... and 36 more\n");
+    }
 }

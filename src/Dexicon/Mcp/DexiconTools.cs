@@ -214,7 +214,7 @@ public sealed class DexiconTools
 
         if (s.LastIndexedUtc is { } indexed) sb.Append($"\n    last indexed: {indexed:u}");
         if (s.FailedCount > 0)
-            sb.Append($"\n    {s.FailedCount:N0} {UnitFor(s.Sources, s.FailedCount)} failed; see the UI for why");
+            sb.Append($"\n    {s.FailedCount:N0} {UnitFor(s.Sources, s.FailedCount)} failed; index_status(\"{s.Name}\") lists them with the reason");
         sb.Append('\n');
         return sb.ToString();
     }
@@ -423,11 +423,152 @@ public sealed class DexiconTools
                     .Select(s => new SourceCoverage.SourceRoot(s.RootPath, s.MaxFileBytes)),
                 opts.Value.Indexing.DocumentMaxBytes)));
 
+            // The detail for one corpus asked about by name: what each source reads, and
+            // which files it left out and why. It stopped at counts, so "why is this file
+            // not found" ended at "see the UI". Not for the unnamed listing, where it would
+            // be every source and file of every corpus in one tool result.
+            if (targets.Count == 1 && !string.IsNullOrWhiteSpace(corpus))
+            {
+                sb.Append(RenderSources(summary.Sources, summary.Defaults));
+                sb.Append(RenderProblemFiles(await ProblemFilesAsync(db, summary, ct)));
+            }
+
+            sb.Append('\n');
+        }
+
+        if (string.IsNullOrWhiteSpace(corpus))
+            sb.Append("Name a corpus for its sources and filters, and the files it skipped or failed with the reason for each.\n");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// What each source reads and how it is filtered, so an agent can say why a file is or
+    /// is not in the index, and whether a filter belongs to the source or the corpus.
+    /// </summary>
+    internal static string RenderSources(IReadOnlyList<SourceSummary> sources, CorpusDefaults? defaults)
+    {
+        if (sources.Count == 0) return "  sources: none\n";
+
+        var sb = new StringBuilder("  sources:\n");
+        foreach (var s in sources)
+        {
+            var where = s.RootPath switch { null => "", "" => "the workspace root", var p => p };
+
+            if (string.Equals(s.Kind, "githistory", StringComparison.OrdinalIgnoreCase))
+            {
+                var git = s.Git ?? new GitHistoryOptions();
+                sb.Append($"    commit history of {where}: {s.FileCount:N0} {(s.FileCount == 1 ? "commit" : "commits")}, follows {git.Ref}");
+                if (s.Tracking?.Upstream is { Behind: > 0 } up)
+                    sb.Append($" ({up.Behind} behind {up.ShortName} as of the last fetch)");
+                var holds = new[] { git.IncludeMessage ? "message" : null, git.IncludeStat ? "stat" : null, git.IncludeDiff ? "diff" : null }
+                    .Where(p => p is not null).ToList();
+                sb.Append($"; holds {(holds.Count == 0 ? "sha, author and date only" : string.Join(", ", holds))}");
+                if (git.IncludeMerges) sb.Append("; merges included");
+                if (git.MaxCommits is { } max) sb.Append($"; newest {max:N0}{(git.KeepIndexed ? ", kept once indexed" : "")}");
+                if (git.Since is { } since) sb.Append($"; since {since:yyyy-MM-dd}");
+                if (s.IncludeGlobs.Count > 0) sb.Append($"; only paths {string.Join(", ", s.IncludeGlobs)}");
+                if (s.NewestCommit is { } newest) sb.Append($"; newest {newest.Sha[..7]}, {newest.AuthoredUtc:yyyy-MM-dd}");
+                sb.Append('\n');
+                continue;
+            }
+
+            if (string.Equals(s.Kind, "upload", StringComparison.OrdinalIgnoreCase))
+            {
+                sb.Append($"    uploaded documents: {s.FileCount:N0}, attached in the UI\n");
+                continue;
+            }
+
+            // "found", not "indexed": the source counts every file it holds a row for, failed
+            // and empty ones included, where the corpus line above counts only the indexed.
+            sb.Append($"    files under {where}: {s.FileCount:N0} {(s.FileCount == 1 ? "file" : "files")} found; ");
+            sb.Append($".gitignore {(s.UseGitignore ? "respected" : "ignored")}");
+            sb.Append($"; code and text up to {Bytes(s.MaxFileBytes)}");
+            if (s.IncludeGlobs.Count > 0) sb.Append($"; only {string.Join(", ", s.IncludeGlobs)}");
+            if (s.ExcludeGlobs.Count > 0) sb.Append($"; not {string.Join(", ", s.ExcludeGlobs)}");
+
+            // Which of those the corpus sets rather than the source, so a change is made in
+            // the place that owns the value.
+            var fromCorpus = new[]
+            {
+                defaults?.UseGitignore is not null && s.OwnUseGitignore is null ? ".gitignore" : null,
+                defaults?.MaxFileBytes is not null && s.OwnMaxFileBytes is null ? "size" : null,
+                defaults?.IncludeGlobs is not null && s.OwnIncludeGlobs is null ? "only" : null,
+                defaults?.ExcludeGlobs is not null && s.OwnExcludeGlobs is null ? "not" : null,
+            }.Where(f => f is not null).ToList();
+            if (fromCorpus.Count > 0) sb.Append($" (from the corpus defaults: {string.Join(", ", fromCorpus)})");
             sb.Append('\n');
         }
 
         return sb.ToString();
     }
+
+    /// <summary>Files of one status in the default chunk set: how many, and the first few by path with their reason.</summary>
+    internal sealed record ProblemFiles(string Status, int Total, IReadOnlyList<(string Path, string? Reason)> Sample);
+
+    private const int ProblemSample = 10;
+
+    private static async Task<IReadOnlyList<ProblemFiles>> ProblemFilesAsync(
+        CatalogDbContext db, CorpusSummary summary, CancellationToken ct)
+    {
+        var set = summary.ChunkSets.FirstOrDefault(s => s.IsDefault);
+        if (set is null) return [];
+
+        var sourceIds = summary.Sources.Select(s => s.Id).ToList();
+        var roots = summary.Sources.ToDictionary(s => s.Id, s => s.RootPath);
+        var groups = new List<ProblemFiles>();
+
+        foreach (var status in new[] { FileStatus.Failed, FileStatus.Skipped, FileStatus.Empty })
+        {
+            var q = CorpusEndpoints.FilesOf(db, sourceIds, set.Id, status.ToString(), null);
+            var total = await q.CountAsync(ct);
+            if (total == 0) continue;
+
+            var rows = await q.OrderBy(x => x.File.RelativePath).ThenBy(x => x.File.Id).Take(ProblemSample)
+                .Select(x => new { x.File.SourceId, x.File.RelativePath, x.State!.StatusDetail })
+                .ToListAsync(ct);
+
+            // A path is relative to its source, and a corpus with several sources can hold the
+            // same one twice, so each is shown under its source's root.
+            groups.Add(new ProblemFiles(status.ToString().ToLowerInvariant(), total,
+                rows.Select(r => (
+                    roots.GetValueOrDefault(r.SourceId) is { Length: > 0 } root ? $"{root}/{r.RelativePath}" : r.RelativePath,
+                    r.StatusDetail)).ToList()));
+        }
+
+        return groups;
+    }
+
+    internal static string RenderProblemFiles(IReadOnlyList<ProblemFiles> groups)
+    {
+        var sb = new StringBuilder();
+        foreach (var g in groups)
+        {
+            sb.Append($"  {g.Status}: {g.Total:N0}\n");
+            foreach (var (path, reason) in g.Sample)
+            {
+                sb.Append($"    {path}");
+                if (reason is { Length: > 0 })
+                {
+                    // One line each: a reason is often an exception message, and a stack of
+                    // them would push the rest of the report out of the result.
+                    var line = reason.ReplaceLineEndings(" ").Trim();
+                    sb.Append($" — {(line.Length > 160 ? line[..157] + "..." : line)}");
+                }
+                sb.Append('\n');
+            }
+            if (g.Total > g.Sample.Count) sb.Append($"    ... and {g.Total - g.Sample.Count:N0} more\n");
+        }
+        return sb.ToString();
+    }
+
+    private static string Bytes(long b) => b switch
+    {
+        >= 1L << 30 => $"{b / (double)(1L << 30):0.#} GB",
+        >= 1L << 20 => $"{b / (double)(1L << 20):0.#} MB",
+        >= 1L << 10 => $"{b / (double)(1L << 10):0.#} KB",
+        _ => $"{b} bytes",
+    };
 
     /// <summary>
     /// What a corpus's count is counting.

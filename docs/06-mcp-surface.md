@@ -216,6 +216,25 @@ the size caps and binary sniffing. A reported file is one that would have been i
 a source covered it, so a file git excludes locally is not reported as missing. Five files
 are listed per directory and the rest counted.
 
+With a corpus named, it adds what an agent needs to say why a file is or is not indexed,
+and what to change:
+
+```
+  sources:
+    files under docs: 16 files found; .gitignore respected; code and text up to 256 KB; not **/*.tmp (from the corpus defaults: not)
+    commit history of the workspace root: 256 commits, follows refs/heads/main (52 behind origin/main as of the last fetch); holds message, stat; newest 24664ac, 2026-09-26
+  failed: 8
+    papers/broken.pdf — has no PDF trailer (startxref and %%EOF) in its last 4,096 bytes...
+    ... and 7 more
+  skipped: 37
+```
+
+Each source's filters are its effective values, with the ones it takes from the corpus
+named, so a change is made at the level that owns it. Failed, skipped and empty files are
+listed from the default chunk set, ten per status with the reason recorded for each, and
+the rest counted. Without a corpus named it lists every corpus's counts alone, since the
+detail for all of them would be the longest tool result an agent sees.
+
 ## Resources
 
 Corpora are exposed as MCP resources so clients with a resource picker can browse them:
