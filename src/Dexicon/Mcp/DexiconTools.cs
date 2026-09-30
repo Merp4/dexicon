@@ -178,6 +178,16 @@ public sealed class DexiconTools
     /// agent-facing surface of the product and it should be checkable without standing up
     /// an MCP server.
     /// </summary>
+    /// <summary>
+    /// A string as the literal an agent would type: quotes and backslashes escaped, and
+    /// nothing else. The default encoder writes a quote as ", which is valid and not
+    /// what anyone copies.
+    /// </summary>
+    private static readonly System.Text.Json.JsonSerializerOptions Literal = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
     internal static string RenderCorpus(CorpusSummary s)
     {
         var sb = new StringBuilder();
@@ -214,7 +224,10 @@ public sealed class DexiconTools
 
         if (s.LastIndexedUtc is { } indexed) sb.Append($"\n    last indexed: {indexed:u}");
         if (s.FailedCount > 0)
-            sb.Append($"\n    {s.FailedCount:N0} {UnitFor(s.Sources, s.FailedCount)} failed; index_status(\"{s.Name}\") lists them with the reason");
+            // The name as a JSON string, so the call can be copied as it stands whatever the
+            // name holds: only a blank one is refused, and a quote in it broke the call.
+            sb.Append($"\n    {s.FailedCount:N0} {UnitFor(s.Sources, s.FailedCount)} failed; " +
+                      $"index_status({System.Text.Json.JsonSerializer.Serialize(s.Name, Literal)}) lists them with the reason");
         sb.Append('\n');
         return sb.ToString();
     }
@@ -459,8 +472,8 @@ public sealed class DexiconTools
             {
                 var git = s.Git ?? new GitHistoryOptions();
                 sb.Append($"    commit history of {where}: {s.FileCount:N0} {(s.FileCount == 1 ? "commit" : "commits")}, follows {git.Ref}");
-                if (s.Tracking?.Upstream is { Behind: > 0 } up)
-                    sb.Append($" ({up.Behind} behind {up.ShortName} as of the last fetch)");
+                if (s.Tracking is { } tracking && Distance(tracking) is { } distance)
+                    sb.Append($" ({distance})");
                 var holds = new[] { git.IncludeMessage ? "message" : null, git.IncludeStat ? "stat" : null, git.IncludeDiff ? "diff" : null }
                     .Where(p => p is not null).ToList();
                 sb.Append($"; holds {(holds.Count == 0 ? "sha, author and date only" : string.Join(", ", holds))}");
@@ -501,6 +514,31 @@ public sealed class DexiconTools
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// How far the followed branch was from its upstream at the last pass, or null where
+    /// nothing was observed. Up to date is said, so it reads differently from no tracking at
+    /// all, and the fetch is dated only when its time is known.
+    /// </summary>
+    internal static string? Distance(GitTracking tracking)
+    {
+        if (tracking.Upstream is not { } up) return null;
+
+        string where;
+        if (up.Gone) where = $"its upstream {up.ShortName} is gone";
+        else if (up.Behind is null && up.Ahead is null) return null;
+        else where = (up.Behind ?? 0, up.Ahead ?? 0) switch
+        {
+            (0, 0) => $"up to date with {up.ShortName}",
+            (var behind, 0) => $"{behind} behind {up.ShortName}",
+            (0, var ahead) => $"{ahead} ahead of {up.ShortName}",
+            var (behind, ahead) => $"{behind} behind and {ahead} ahead of {up.ShortName}",
+        };
+
+        return tracking.LastFetchUtc is { } fetched
+            ? $"{where} as of the fetch at {fetched:yyyy-MM-dd HH:mm} UTC"
+            : where;
     }
 
     /// <summary>Files of one status in the default chunk set: how many, and the first few by path with their reason.</summary>

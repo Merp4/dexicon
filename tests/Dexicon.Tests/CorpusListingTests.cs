@@ -151,6 +151,13 @@ public class CorpusListingTests
         text.ShouldContain("index_status(\"books\")");
         text.ShouldNotContain("see the UI");
     }
+
+    [Fact]
+    public void The_suggested_call_survives_a_name_with_a_quote_in_it()
+    {
+        // Only a blank name is refused, and `a"b` rendered as index_status("a"b").
+        DexiconTools.RenderCorpus(Corpus(name: "a\"b", failed: 1)).ShouldContain("index_status(\"a\\\"b\")");
+    }
 }
 
 /// <summary>
@@ -205,13 +212,43 @@ public class CorpusDiagnosisTests
 
         var text = DexiconTools.RenderSources([history], null);
 
-        text.ShouldContain("commit history of the workspace root: 256 commits, follows refs/heads/main (52 behind origin/main as of the last fetch)");
+        // No fetch time was recorded, so none is claimed.
+        text.ShouldContain("commit history of the workspace root: 256 commits, follows refs/heads/main (52 behind origin/main);");
         text.ShouldContain("holds message, stat, diff");
         text.ShouldContain("newest 500, kept once indexed");
         text.ShouldContain("only paths src/**");
         text.ShouldContain("newest 24664ac, 2026-09-26");
         // The file settings mean nothing to a commit, and saying them would claim it obeys them.
         text.ShouldNotContain(".gitignore");
+    }
+
+    /// <summary>
+    /// Up to date is said, so it reads differently from a branch with no tracking recorded,
+    /// and the fetch is dated only when its time is known.
+    /// </summary>
+    [Theory]
+    [InlineData(0, 0, false, null, "up to date with origin/main")]
+    [InlineData(0, 3, false, null, "3 ahead of origin/main")]
+    [InlineData(52, 3, false, null, "52 behind and 3 ahead of origin/main")]
+    [InlineData(null, null, true, null, "its upstream origin/main is gone")]
+    [InlineData(52, 0, false, "2026-09-27T08:15:00Z", "52 behind origin/main as of the fetch at 2026-09-27 08:15 UTC")]
+    public void The_distance_from_upstream_says_what_was_observed(int? behind, int? ahead, bool gone, string? fetched, string expected)
+    {
+        var tracking = new Dexicon.Core.Indexing.GitTracking("refs/heads/main", "refs/heads/main",
+            new Dexicon.Core.Indexing.GitUpstream("refs/remotes/origin/main", "origin/main", ahead, behind, gone),
+            fetched is null ? null : DateTime.Parse(fetched, null, System.Globalization.DateTimeStyles.AdjustToUniversal),
+            DateTime.UtcNow);
+
+        DexiconTools.Distance(tracking).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void Nothing_is_said_where_nothing_was_observed()
+    {
+        DexiconTools.Distance(new Dexicon.Core.Indexing.GitTracking("HEAD", null, null, null, DateTime.UtcNow)).ShouldBeNull();
+        DexiconTools.Distance(new Dexicon.Core.Indexing.GitTracking("refs/heads/main", "refs/heads/main",
+            new Dexicon.Core.Indexing.GitUpstream("refs/remotes/origin/main", "origin/main", null, null, false),
+            null, DateTime.UtcNow)).ShouldBeNull();
     }
 
     [Fact]
