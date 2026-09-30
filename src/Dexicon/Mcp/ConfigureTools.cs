@@ -380,13 +380,17 @@ public sealed class ConfigureTools
         catch (UnauthorizedAccessException) { return false; }
     }
 
-    private static string Describe(Source s) =>
-        s.Kind switch
+    /// <summary>A source in the words the tools' replies use for it, the root named as such.</summary>
+    private static string Describe(Source s)
+    {
+        var where = Folder(s.RootPath) is { Length: > 0 } f ? DexiconTools.OneLine(f) : "the workspace root";
+        return s.Kind switch
         {
-            SourceKind.GitHistory => $"history of {Folder(s.RootPath)}",
+            SourceKind.GitHistory => $"commit history of {where}",
             SourceKind.Upload => "uploaded documents",
-            _ => $"files under {(Folder(s.RootPath) is { Length: > 0 } f ? f : "the workspace root")}",
+            _ => $"files under {where}",
         };
+    }
 
     /// <summary>The names in <paramref name="reset"/>, each one checked against what it may name.</summary>
     private static HashSet<string> Resets(string[]? reset, IEnumerable<string> allowed)

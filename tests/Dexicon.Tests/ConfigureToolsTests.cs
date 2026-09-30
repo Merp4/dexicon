@@ -241,10 +241,17 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     public async Task Changing_a_source_that_is_not_there_names_the_ones_that_are()
     {
         await using var db = _harness.NewContext();
+        db.Sources.Add(new Source
+        {
+            Id = "history-root", CorpusId = IndexingHarness.CorpusId, Kind = SourceKind.GitHistory,
+            RootPath = "", CreatedUtc = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
 
         var miss = await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, "notes", kind: "history"));
         miss.Message.ShouldContain("no source for the commit history of notes");
         miss.Message.ShouldContain("files under notes");
+        miss.Message.ShouldContain("commit history of the workspace root");
         miss.Message.ShouldContain("create: true");
 
         (await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, "notes", create: true)))
