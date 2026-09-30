@@ -157,7 +157,9 @@ settings. `configure_corpus(corpus, create: true, description: ...)` makes a cor
 without `create` changes its description or the filters its sources inherit. Settings you
 leave out keep their value; `reset` returns one to its default. A new or widened source
 starts indexing at once, which for a large tree takes a long time, so tell the user what you
-added. These tools cannot remove anything. Prefer a `.dexiconignore` for what the
+added. These tools cannot remove a corpus or a source, though a narrower filter drops
+the files it stops selecting from the index on the refresh, and widening it reads them back.
+`gitignore` can be set to true but not turned off. Prefer a `.dexiconignore` for what the
 repository should never have indexed, since it travels with the tree, and a source's
 filters for what only this corpus leaves out.
 

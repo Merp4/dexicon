@@ -1809,7 +1809,9 @@ more MCP tools: `list_folders`, `configure_corpus` and `configure_source`
 ([06](06-mcp-surface.md#configuration-tools)). With them an agent lists the mounted folders,
 creates a corpus, changes a corpus's description and the filters its sources inherit, adds a
 folder as a files or history source, and changes a source's filters and history settings.
-It removes and deletes nothing: no corpus, source, chunk set, document or key. Chunk sets,
+It removes no corpus, source, chunk set, document or key. A narrower filter or limit does
+drop the files or commits it stops selecting from the index when the refresh runs, as it does
+in the UI, and widening it again reads them back; the tools' replies say so. Chunk sets,
 embedding models, keys and the password stay the admin's. A key's scopes can be changed on
 the Access page, through `PUT /api/tokens/{id}/scopes`, without issuing another key.
 
@@ -1828,6 +1830,16 @@ key could not reach what it made; an unmapped key already reaches every corpus. 
 same reason the key adopted from `DEXICON__BOOTSTRAP__TOKEN` holds `search` and `ingest`
 only: `configure` is granted on the Access page, never by a value in `.env`.
 
+**`.gitignore` stays on.** A key cannot turn it off over MCP, for a corpus or a source. It is
+what keeps a file such as Dexicon's own `.env` out of the index where the workspace root is
+the checkout that holds it, as it is here: with it off, `configure` could index the file and
+read the admin password and the bootstrap token back by search, which is the route D-28 closed
+for keys. `.env` is not in the walker's built-in exclude list, so this rests on `.gitignore`
+listing it. A secret that no `.gitignore` names is within reach of a `configure` key like any
+other file in the workspace, and keeping such files out of a mounted tree is the operator's.
+A description an agent sets is one line of at most 500 characters, since every other agent
+that lists corpora reads it.
+
 **Creating is asked for.** A corpus or source added by mistake stays until someone removes it
 in the UI. So `create: true` is required to create either, rather than a name that matched
 nothing being taken as a request, and `configure_source` refuses a folder that does not
@@ -1841,7 +1853,9 @@ the cost of the grant; one holding `configure` alone is listed the three, since 
 that reads the index needs `search`. Each tool checks its scope when called as well.
 
 **Rejected.** Admin over MCP, for [D-11](#d-11-five-mcp-tools)'s reason: deleting and
-key management stay where a person is present. Removal over MCP: a source removed by
+key management stay where a person is present. A built-in never-index list of secret-bearing
+file names in the walker, which would protect every source and not only those agents change,
+but alters what existing installs index; left to a decision of its own. Removal over MCP: a source removed by
 mistake takes its vectors with it, and rebuilding a large corpus takes hours; a removal an
 agent proposes and a person approves in the UI is planned separately. Inferring creation
 from an unknown name. Hiding from `list_folders` the folders the key's corpora do not read:

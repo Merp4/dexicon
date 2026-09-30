@@ -14,7 +14,7 @@ public sealed class ApiToken
     public required string Name { get; set; }
     public required byte[] TokenHash { get; set; }
     public required byte[] TokenSalt { get; set; }
-    public required string Scopes { get; set; }          // csv: search, ingest
+    public required string Scopes { get; set; }          // csv: search, ingest, configure
     public DateTime CreatedUtc { get; set; }
     public DateTime? LastUsedUtc { get; set; }
     public DateTime? ExpiresUtc { get; set; }

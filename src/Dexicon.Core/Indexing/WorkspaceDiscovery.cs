@@ -110,7 +110,13 @@ public static class WorkspaceDiscovery
     {
         var root = Path.GetFullPath(workspaceRoot);
         var full = Path.GetFullPath(Path.Combine(root, relative ?? string.Empty));
-        var canonical = Path.GetRelativePath(root, full).Replace('\\', '/').Trim('/');
+        // A backslash separates only where the OS says so. On Linux it is part of a name and
+        // GetFullPath leaves it, so "x\\..\\notes" is one odd name, not the folder notes; turned into
+        // a slash here it would pass for x/../notes, miss the duplicate check, and be collapsed
+        // to notes by the next call.
+        var relativePath = Path.GetRelativePath(root, full);
+        if (Path.DirectorySeparatorChar != '/') relativePath = relativePath.Replace(Path.DirectorySeparatorChar, '/');
+        var canonical = relativePath.Trim('/');
         return canonical == "." ? string.Empty : canonical;
     }
 

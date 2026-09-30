@@ -90,11 +90,9 @@ public sealed class CorpusConfiguration(
         // so that a taken name does not wait on the model probe, and again at the insert.
         var name = body.Name.Trim();
 
-        // ScopeResolver.Split reads everything after the first colon as a chunk set, so a
-        // corpus named with one could be listed and never searched by its name.
         // Shown on a line of its own in every listing, logged, and typed as an argument, so
-        // a line break or an escape sequence in it breaks all three.
-        // U+2028 and U+2029 break a line too, and char.IsControl does not count them.
+        // a line break or an escape sequence in it breaks all three. U+2028 and U+2029 break
+        // a line too, and char.IsControl does not count them.
         if (name.Any(c => char.IsControl(c) || c is '\u2028' or '\u2029'))
             return new ConfigRefusal(
                 "A corpus name cannot contain a control character",
@@ -102,6 +100,8 @@ public sealed class CorpusConfiguration(
                 + "that shows it.",
                 400);
 
+        // ScopeResolver.Split reads everything after the first colon as a chunk set, so a
+        // corpus named with one could be listed and never searched by its name.
         if (name.Contains(':'))
             return new ConfigRefusal(
                 "A corpus name cannot contain ':'",

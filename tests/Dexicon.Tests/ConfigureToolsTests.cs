@@ -209,6 +209,98 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
+    public void A_backslash_is_a_separator_only_where_the_operating_system_says_so()
+    {
+        // On Linux "x\\..\\notes" is one odd name. Read as x/../notes it skipped the duplicate check,
+        // passed the existence check once collapsed, and was stored as notes: a second source
+        // over the same folder that MCP cannot remove. CI runs the Linux branch.
+        var canonical = WorkspaceDiscovery.Canonical(Workspace, "x\\..\\notes");
+
+        canonical.ShouldBe(OperatingSystem.IsWindows() ? "notes" : "x\\..\\notes");
+        WorkspaceDiscovery.Canonical(Workspace, canonical).ShouldBe(canonical, "canonicalising twice changes nothing");
+    }
+
+    [Fact]
+    public async Task Gitignore_cannot_be_turned_off_over_MCP()
+    {
+        // .gitignore keeps Dexicon's own .env out of the index when the workspace root is the
+        // checkout that holds it. A key holding configure could otherwise index it and read the
+        // admin password and the bootstrap token back by search.
+        await using var db = _harness.NewContext();
+        var before = await db.Sources.CountAsync();
+
+        (await Should.ThrowAsync<McpException>(() => CorpusAsync(db, Configurer, "notes", gitignore: false)))
+            .Message.ShouldContain("cannot be turned off over MCP");
+        (await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, "notes", gitignore: false)))
+            .Message.ShouldContain("cannot be turned off over MCP");
+
+        (await db.Corpora.SingleAsync()).DefaultUseGitignore.ShouldBeNull("nothing was stored");
+        (await db.Jobs.AnyAsync()).ShouldBeFalse();
+        (await db.Sources.CountAsync()).ShouldBe(before);
+        (await SourceAsync(db, Configurer, "notes", gitignore: true)).ShouldStartWith("Changed the source");
+    }
+
+    [Theory]
+    [InlineData("two\nlines")]
+    [InlineData("line\u2028separator")]
+    [InlineData("esc\u001B[2J")]
+    public async Task A_description_is_one_short_line(string description)
+    {
+        // One agent writes it and every other agent that lists corpora reads it, so a block of
+        // instructions or a forged listing line is the thing to keep out.
+        await using var db = _harness.NewContext();
+
+        (await Should.ThrowAsync<McpException>(() => CorpusAsync(db, Configurer, "notes", description: description)))
+            .Message.ShouldContain("one line");
+        (await Should.ThrowAsync<McpException>(() => CorpusAsync(db, Configurer, "papers", create: true, description: new string('x', 501))))
+            .Message.ShouldContain("at most 500");
+
+        (await db.Corpora.CountAsync()).ShouldBe(1);
+        (await CorpusAsync(db, Configurer, "notes", description: new string('x', 500))).ShouldContain("description");
+    }
+
+    [Fact]
+    public async Task A_link_s_target_is_not_returned_to_the_key()
+    {
+        // The resolver's message says where a link leads: host text, for a key that holds
+        // configure and nothing else.
+        await using var db = _harness.NewContext();
+        var outside = Path.Combine(_harness.DataPath, "outside-secret-place");
+        Directory.CreateDirectory(outside);
+        Directory.CreateSymbolicLink(Path.Combine(Workspace, "away"), outside);
+
+        var refused = await Should.ThrowAsync<McpException>(() => FoldersAsync(db, Configurer, "away/inner"));
+
+        refused.Message.ShouldContain("passes through a link");
+        refused.Message.ShouldNotContain("outside-secret-place");
+    }
+
+    [Fact]
+    public async Task A_key_without_search_is_not_sent_to_index_status()
+    {
+        // index_status needs search, and a configure-only key is not shown it.
+        await using var db = _harness.NewContext();
+        var configureOnly = As("k3", Scopes.Configure);
+
+        var reply = await CorpusAsync(db, configureOnly, "notes", exclude: ["**/*.tmp"]);
+
+        reply.ShouldContain("A refresh is queued.");
+        reply.ShouldNotContain("index_status");
+        (await CorpusAsync(db, Configurer, "notes", exclude: ["**/*.bak"])).ShouldContain("index_status");
+    }
+
+    [Fact]
+    public async Task A_change_says_what_a_narrower_setting_does_to_what_is_indexed()
+    {
+        // Nothing here removes a corpus or a source, but a filter that stops selecting a file
+        // drops it from the index on the refresh, as it does in the UI.
+        await using var db = _harness.NewContext();
+
+        (await SourceAsync(db, Configurer, "notes", exclude: ["**/*.tmp"])).ShouldContain("leave the index when the refresh runs");
+        (await CorpusAsync(db, Configurer, "notes", exclude: ["**/*.bak"])).ShouldContain("leave the index when the refresh runs");
+    }
+
+    [Fact]
     public async Task A_null_folder_or_kind_is_refused_rather_than_read_as_the_root_or_dereferenced()
     {
         // JSON can send null whatever the signature says. A null folder read as "" would add a

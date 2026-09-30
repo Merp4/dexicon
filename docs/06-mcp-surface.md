@@ -245,8 +245,9 @@ of them would be the longest tool result an agent sees.
 
 Three more tools, listed only to a key holding `configure`
 ([D-36](decisions.md#d-36-a-configure-scope-agents-set-up-what-is-indexed)). They create
-and change; nothing over MCP removes or deletes, so a corpus or source added by mistake is
-removed in the UI. Every change goes through the same checks as the UI's, and is logged
+and change; nothing over MCP removes a corpus or a source, so one added by mistake is
+removed in the UI. A narrower filter or limit still drops the files or commits it stops
+selecting from the index when the refresh runs, as in the UI, and the reply says so. Every change goes through the same checks as the UI's, and is logged
 with the key's name: `Key claude-code added the source for the files under repos/app in
 corpus app; job 01K…`.
 
@@ -268,6 +269,9 @@ create one. The filters are the defaults every source inherits; each one sent re
 that value and the others keep theirs, and `reset` names the ones to return to the
 server's setting. A change to them queues a refresh when the corpus has sources. A key
 mapped to some corpora has a corpus it creates added to its mapping, so it can reach it.
+`gitignore` takes `true` only: `.gitignore` is what keeps a file such as Dexicon's own `.env`
+out of the index, so turning it off is the UI's. A `description` is one line of at most 500
+characters.
 
 `configure_source(corpus, folder, kind?, create?, include?, exclude?, gitignore?,
 maxFileKb?, history?, reset?)`: adds a folder when `create` is true, and otherwise changes

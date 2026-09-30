@@ -341,6 +341,35 @@ public sealed class AdminPasswordTests : IAsyncLifetime
             .Has(Scopes.Configure).ShouldBeFalse("the late write is under the old generation");
     }
 
+    [Fact]
+    public async Task ARequestBeginningInALaterGenerationDoesNotReadAnEarlierGenerationsEntry()
+    {
+        // The generation is part of the cache key, read when the request begins. Only the
+        // generation moves here, as an eviction moves it, with the stored scopes changed and
+        // nothing cleared: a middleware that ignored the generation would serve the old entry.
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        var evictor = new SettableGeneration { Generation = 5 };
+        var (row, issued) = await _tokens.CreateAsync("agent", [Scopes.Search, Scopes.Configure], null);
+
+        (await AuthenticateAsync(cache, evictor, issued.Presented)).ShouldNotBeNull()
+            .Has(Scopes.Configure).ShouldBeTrue();
+
+        await _tokens.SetScopesAsync(row.Id, [Scopes.Search]);
+        evictor.Generation = 6;
+
+        (await AuthenticateAsync(cache, evictor, issued.Presented)).ShouldNotBeNull()
+            .Has(Scopes.Configure).ShouldBeFalse("generation 6 does not read generation 5's entry");
+        cache.Count.ShouldBe(2, "one entry per generation, until the clear frees the old one");
+    }
+
+    /// <summary>A generation a test moves by hand.</summary>
+    private sealed class SettableGeneration : IMemoryCacheEvictor
+    {
+        public long Generation { get; set; }
+
+        public void EvictPrincipals() { }
+    }
+
     /// <summary>The principal one request authenticates as, through the real middleware and cache.</summary>
     private async Task<Principal?> AuthenticateAsync(IMemoryCache cache, IMemoryCacheEvictor evictor, string presented)
     {

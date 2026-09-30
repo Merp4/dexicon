@@ -28,6 +28,19 @@ namespace Dexicon.Mcp;
 [McpServerToolType]
 public sealed class ConfigureTools
 {
+    /// <summary>
+    /// Why an agent cannot turn <c>.gitignore</c> off. It is what keeps a file such as Dexicon's own
+    /// <c>.env</c> out of the index when the workspace root is the checkout that holds it: with it
+    /// off, the admin password and the bootstrap token would be one search away from a key that
+    /// holds <c>configure</c>. Turning it off is the UI's, where the password is already held.
+    /// </summary>
+    private const string GitignoreStaysOn =
+        "gitignore cannot be turned off over MCP: .gitignore is what keeps files such as Dexicon's own .env "
+        + "out of the index. Pass true, or ask whoever runs Dexicon to change it in the UI.";
+
+    /// <summary>What a description may be: it is shown to every agent that lists corpora.</summary>
+    private const int DescriptionMax = 500;
+
     /// <summary>The tools a key without <see cref="Scopes.Configure"/> is not shown.</summary>
     internal static readonly string[] Names = ["list_folders", "configure_corpus", "configure_source"];
 
@@ -105,13 +118,15 @@ public sealed class ConfigureTools
         [Description("What the corpus holds, which list_corpora shows to agents deciding where to search.")] string? description = null,
         [Description("Glob patterns every source indexes only, e.g. **/*.md. Replaces the current list.")] IReadOnlyList<string>? include = null,
         [Description("Glob patterns every source leaves out, e.g. **/generated/**. Replaces the current list.")] IReadOnlyList<string>? exclude = null,
-        [Description("Whether sources respect .gitignore files.")] bool? gitignore = null,
+        [Description("Pass true to have sources respect .gitignore files. It cannot be turned off over MCP.")] bool? gitignore = null,
         [Description("Largest code or text file indexed, in KB. PDFs and other documents have a limit of their own.")] int? maxFileKb = null,
         [Description("Filters to return to the server's setting: include, exclude, gitignore, maxFileKb.")] IReadOnlyList<string>? reset = null,
         CancellationToken ct = default)
     {
         DexiconTools.Require(rc, Scopes.Configure);
         var principal = rc.RequirePrincipal();
+        if (gitignore == false) throw new McpException(GitignoreStaysOn);
+        if (description is not null) CheckDescription(description);
         var resets = Resets(reset, FilterNames.Keys);
         Clashes(resets, ("include", include), ("exclude", exclude), ("gitignore", gitignore), ("maxFileKb", maxFileKb));
         var maxBytes = Kilobytes("maxFileKb", maxFileKb);
@@ -187,7 +202,9 @@ public sealed class ConfigureTools
             return $"Nothing changed in corpus '{target.Name}': the values sent are the ones it has.";
 
         return $"Changed {string.Join(" and ", changed)} of corpus '{target.Name}'." +
-               (queued ? $" A refresh is queued; index_status(corpus: \"{target.Name}\") reports it." : "");
+               (queued
+                   ? $" A refresh is queued.{StatusHint(principal, target.Name)} {Narrowing}"
+                   : "");
     }
 
     [McpServerTool(Name = "configure_source")]
@@ -205,7 +222,7 @@ public sealed class ConfigureTools
         [Description("True to add the folder as a new source. Without it, the source must exist.")] bool create = false,
         [Description("Glob patterns this source indexes only, e.g. **/*.cs. For history, the paths whose commits are kept. Replaces the list.")] IReadOnlyList<string>? include = null,
         [Description("Glob patterns this source leaves out. Files only.")] IReadOnlyList<string>? exclude = null,
-        [Description("Whether .gitignore files are respected. Files only.")] bool? gitignore = null,
+        [Description("Pass true to respect .gitignore files. It cannot be turned off over MCP. Files only.")] bool? gitignore = null,
         [Description("Largest code or text file indexed, in KB. Files only.")] int? maxFileKb = null,
         [Description("History only: what each commit's document holds and which commits are read. Settings left out keep their value.")] HistorySettings? history = null,
         [Description("Settings to return to their default, by the names used here: include, exclude, gitignore, maxFileKb, or a history setting such as since or maxCommits.")] IReadOnlyList<string>? reset = null,
@@ -218,6 +235,7 @@ public sealed class ConfigureTools
         // signature says, and a null folder canonicalises to the workspace root: a source over
         // everything mounted, which nothing here can remove.
         if (folder is null) throw new McpException("folder is required: a folder relative to the workspace root, or \"\" for the root itself.");
+        if (gitignore == false) throw new McpException(GitignoreStaysOn);
 
         var isHistory = kind?.Trim().ToLowerInvariant() switch
         {
@@ -343,7 +361,8 @@ public sealed class ConfigureTools
                                 + $"so no refresh was queued.\n  {line}\n",
             _ => $"{(action == "added" ? $"Added a source for the {what} to" : $"Changed the source for the {what} in")} corpus '{target.Name}', "
                  + $"and queued a refresh as job {jobId}. As of now:\n  {line}\n"
-                 + $"index_status(corpus: \"{target.Name}\") reports the refresh, and what it read once it has run.\n",
+                 + (StatusHint(principal, target.Name) is { Length: > 0 } hint ? hint.TrimStart() + "\n" : "")
+                 + (action == "added" ? "" : Narrowing + "\n"),
         };
     }
 
@@ -353,9 +372,16 @@ public sealed class ConfigureTools
     /// </summary>
     private static string ExistingFolder(string workspaceRoot, string? path)
     {
+        // The resolver's own message names where a link leads, which is host text: an absolute
+        // path on the machine, or a container path outside the workspace. Not for an agent.
         string full;
         try { full = WorkspaceDiscovery.Resolve(workspaceRoot, path); }
-        catch (UnauthorizedAccessException ex) { throw new McpException(ex.Message); }
+        catch (UnauthorizedAccessException)
+        {
+            throw new McpException(
+                $"'{path}' is outside the workspace, or passes through a link, and links are not followed. "
+                + "list_folders shows what is mounted.");
+        }
 
         return Directory.Exists(full)
             ? full
@@ -394,6 +420,33 @@ public sealed class ConfigureTools
                 WorkspaceDiscovery.PathComparer);
     }
 
+    /// <summary>What a narrower filter or limit does, said where one has just been changed.</summary>
+    private const string Narrowing =
+        "Indexed files or commits that the new settings leave out leave the index when the refresh runs; "
+        + "widening them again reads them back.";
+
+    /// <summary>
+    /// Where to see a refresh, for a key that can: index_status needs search, and a key holding
+    /// configure alone is not shown it, so sending it there would be a dead end.
+    /// </summary>
+    private static string StatusHint(Principal principal, string corpus) =>
+        principal.Has(Scopes.Search)
+            ? $" index_status(corpus: \"{corpus}\") reports it, and what it read once it has run."
+            : "";
+
+    /// <summary>
+    /// A description is listed to every agent that asks which corpus to search, so one agent
+    /// writes what another reads. One line of a few hundred characters keeps it a description
+    /// and not a block of instructions or a forged listing.
+    /// </summary>
+    private static void CheckDescription(string description)
+    {
+        if (description.Length > DescriptionMax)
+            throw new McpException($"description is at most {DescriptionMax} characters; this one is {description.Length}.");
+        if (description.Any(c => char.IsControl(c) || c is '\u2028' or '\u2029'))
+            throw new McpException("description is one line: it has a line break or another control character.");
+    }
+
     /// <summary>A path as the catalogue and the listing both compare it: forward slashes, no outer ones.</summary>
     private static string Folder(string? path)
     {
@@ -403,14 +456,17 @@ public sealed class ConfigureTools
 
     /// <summary>
     /// A repository's root, which holds <c>.git</c>: a directory, or a file in a linked
-    /// worktree. Found by listing the folder, which reads the entry without following it, so
-    /// a <c>.git</c> that is a link does not count and is not looked through.
+    /// worktree. One stat of the entry and not a listing of the folder, which costs its
+    /// entries on Unix, for each of up to hundreds of folders. A <c>.git</c> that is a link
+    /// does not count: <c>LinkTarget</c> reads the entry itself and follows nothing.
     /// </summary>
     private static bool IsRepository(string folder)
     {
         try
         {
-            return new DirectoryInfo(folder).EnumerateFileSystemInfos(".git").FirstOrDefault() is { LinkTarget: null };
+            var git = Path.Combine(folder, ".git");
+            FileSystemInfo entry = Directory.Exists(git) ? new DirectoryInfo(git) : new FileInfo(git);
+            return entry.Exists && entry.LinkTarget is null;
         }
         catch (IOException) { return false; }
         catch (UnauthorizedAccessException) { return false; }
