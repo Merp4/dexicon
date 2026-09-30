@@ -97,6 +97,24 @@ public static class WorkspaceDiscovery
     }
 
     /// <summary>
+    /// A workspace path in the one spelling a source's root is stored and compared in:
+    /// relative to the root, forward slashes, <c>.</c> and <c>..</c> collapsed as
+    /// <see cref="Resolve"/> collapses them, and empty for the root itself. Stored as
+    /// written, <c>docs/.</c> and <c>x/../docs</c> would each read as a second source over
+    /// the same folder.
+    ///
+    /// Lexical and checks nothing, so a caller about to store the result resolves the path
+    /// first; one outside the workspace comes back starting <c>..</c>.
+    /// </summary>
+    public static string Canonical(string workspaceRoot, string? relative)
+    {
+        var root = Path.GetFullPath(workspaceRoot);
+        var full = Path.GetFullPath(Path.Combine(root, relative ?? string.Empty));
+        var canonical = Path.GetRelativePath(root, full).Replace('\\', '/').Trim('/');
+        return canonical == "." ? string.Empty : canonical;
+    }
+
+    /// <summary>
     /// Whether a directory is there and can be listed, told apart by what listing it
     /// throws. <c>Directory.Exists</c> cannot: it answers false for both, and "there and
     /// unreadable" is the case that must not be treated as safe.

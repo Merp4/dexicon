@@ -165,7 +165,8 @@ public sealed class CorpusConfiguration(
             catch (UnauthorizedAccessException ex)
             { return new ConfigRefusal("Invalid workspace path", ex.Message, 400); }
 
-            corpus.Sources.Add(CorpusEndpoints.FirstSource(corpus.Id, body.WorkspacePath));
+            corpus.Sources.Add(CorpusEndpoints.FirstSource(corpus.Id,
+                WorkspaceDiscovery.Canonical(Indexing.WorkspaceRoot, body.WorkspacePath)));
         }
 
         await Naming.WaitAsync(ct);
@@ -304,7 +305,8 @@ public sealed class CorpusConfiguration(
             CorpusId = corpus.Id,
             Kind = body.GitHistory ? SourceKind.GitHistory : SourceKind.Workspace,
             GitOptions = body.GitHistory ? (body.Git ?? new GitHistoryOptions()).ToJson() : null,
-            RootPath = body.WorkspacePath.Trim('/', '\\'),
+            // Resolved above, so the canonical spelling is inside the workspace.
+            RootPath = WorkspaceDiscovery.Canonical(Indexing.WorkspaceRoot, body.WorkspacePath),
             // Null, not a default. An omitted field means this source has no opinion
             // and follows the corpus, which is the point of the corpus having one.
             UseGitignore = body.UseGitignore,

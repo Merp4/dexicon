@@ -553,10 +553,15 @@ public static class SystemEndpoints
             // agent keeps its old ones until the cache entry expires.
             evictor.EvictPrincipals();
 
+            // The requested scopes by their canonical names, which were checked above to be
+            // issuable, rather than as sent: " search\n" passes that check once trimmed, and
+            // written as sent it would start a line of its own in the log.
+            var requested = body.Scopes.Select(s => Scopes.Issuable.First(
+                i => string.Equals(i, s.Trim(), StringComparison.OrdinalIgnoreCase)));
             var token = await db.Tokens.AsNoTracking().Include(x => x.Corpora).FirstAsync(x => x.Id == id, ct);
             logs.CreateLogger("Dexicon.Keys").LogInformation(
                 "Key {Key} scopes set to {Scopes} (requested {Requested})",
-                token.Name, token.Scopes, string.Join(",", body.Scopes));
+                token.Name, token.Scopes, string.Join(",", requested));
             return Results.Ok(token.ToSummary());
         }).Produces<TokenSummary>();
     }
@@ -564,12 +569,15 @@ public static class SystemEndpoints
     /// <summary>
     /// A problem result naming each requested scope a key may not hold, or null when all
     /// of them may be. Administration is absent from <see cref="Scopes.Issuable"/>, so a
-    /// request for it is refused here with the reason.
+    /// request for it is refused here with the reason. A null element binds from JSON like
+    /// any other and is not a scope, so it is refused too rather than dereferenced.
     /// </summary>
-    private static IResult? UnissuableScopes(IReadOnlyList<string> requested)
+    internal static IResult? UnissuableScopes(IReadOnlyList<string?> requested)
     {
         var unknown = requested
-            .Where(s => !Scopes.Issuable.Contains(s.Trim(), StringComparer.OrdinalIgnoreCase)).ToList();
+            .Where(s => s is null || !Scopes.Issuable.Contains(s.Trim(), StringComparer.OrdinalIgnoreCase))
+            .Select(s => s ?? "null")
+            .ToList();
         return unknown.Count == 0
             ? null
             : Results.Problem(

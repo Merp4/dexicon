@@ -58,7 +58,7 @@ public sealed class ConfigureTools
         var root = opts.Value.Indexing.WorkspaceRoot;
         var full = ExistingFolder(root, path);
 
-        var indexed = await IndexedFoldersAsync(scopes, db, rc.RequirePrincipal(), ct);
+        var indexed = await IndexedFoldersAsync(scopes, db, rc.RequirePrincipal(), root, ct);
         var here = Folder(Path.GetRelativePath(Path.GetFullPath(root), full));
 
         var sb = new StringBuilder($"Folders in {(here.Length == 0 ? "the workspace root" : here)}");
@@ -229,12 +229,16 @@ public sealed class ConfigureTools
         var maxBytes = Kilobytes("maxFileKb", maxFileKb);
 
         var target = await WritableAsync(scopes, principal, corpus, "", ct);
-        var root = Folder(folder);
+        var workspace = opts.Value.Indexing.WorkspaceRoot;
+        var root = WorkspaceDiscovery.Canonical(workspace, folder);
+        if (root.StartsWith("..", StringComparison.Ordinal))
+            throw new McpException($"'{folder}' is outside the workspace. list_folders shows what is mounted.");
         var wanted = isHistory ? SourceKind.GitHistory : SourceKind.Workspace;
         var what = $"{(isHistory ? "commit history of" : "files under")} {(root.Length == 0 ? "the workspace root" : root)}";
 
         var sources = await db.Sources.AsNoTracking().Where(s => s.CorpusId == target.Id).ToListAsync(ct);
-        var existing = sources.Find(s => s.Kind == wanted && Folder(s.RootPath) == root);
+        // Both sides canonical, so docs/. and x/../docs find the source on docs.
+        var existing = sources.Find(s => s.Kind == wanted && WorkspaceDiscovery.Canonical(workspace, s.RootPath) == root);
 
         string action;
         string? jobId;
@@ -248,7 +252,7 @@ public sealed class ConfigureTools
 
             // A source added by mistake cannot be removed from here, so a typed path has to
             // name a folder that is there. The API allows an absent one, for a mount that is away.
-            ExistingFolder(opts.Value.Indexing.WorkspaceRoot, root);
+            ExistingFolder(workspace, root);
 
             var added = await config.AddSourceAsync(target, new AddSourceRequest(
                 root, gitignore, maxBytes, include, exclude,
@@ -331,7 +335,7 @@ public sealed class ConfigureTools
     /// key cannot reach are left out, so their names are not disclosed.
     /// </summary>
     private static async Task<Dictionary<string, string>> IndexedFoldersAsync(
-        ScopeResolver scopes, CatalogDbContext db, Principal principal, CancellationToken ct)
+        ScopeResolver scopes, CatalogDbContext db, Principal principal, string workspaceRoot, CancellationToken ct)
     {
         var names = (await scopes.VisibleAsync(principal, ct)).ToDictionary(c => c.Id, c => c.Name, StringComparer.Ordinal);
         var ids = names.Keys.ToList();
@@ -342,7 +346,7 @@ public sealed class ConfigureTools
             .ToListAsync(ct);
 
         return sources
-            .GroupBy(s => Folder(s.RootPath), StringComparer.Ordinal)
+            .GroupBy(s => WorkspaceDiscovery.Canonical(workspaceRoot, s.RootPath), StringComparer.Ordinal)
             .ToDictionary(
                 g => g.Key,
                 g => string.Join(", ", g

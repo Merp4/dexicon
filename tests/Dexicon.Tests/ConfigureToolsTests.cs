@@ -5,6 +5,7 @@ using Dexicon.Core.Catalog;
 using Dexicon.Core.Indexing;
 using Dexicon.Infrastructure;
 using Dexicon.Mcp;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
@@ -147,6 +148,66 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
             "  files under papers: 0 files found; .gitignore respected; .dexiconignore respected; "
             + "code and text up to 512 KB; not **/draft/**\n");
         (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh)).ShouldBe(1);
+    }
+
+    [Theory]
+    [InlineData("notes/.")]
+    [InlineData("docs/../notes")]
+    [InlineData("notes/")]
+    public async Task Another_spelling_of_a_folder_finds_its_source_rather_than_adding_a_second(string spelling)
+    {
+        // A duplicate added here could not be removed from here, and would index and embed
+        // the same files twice.
+        await using var db = _harness.NewContext();
+        var before = await db.Sources.CountAsync();
+
+        (await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, spelling, create: true)))
+            .Message.ShouldContain("already has a source for the files under notes");
+        (await SourceAsync(db, Configurer, spelling, exclude: ["**/*.tmp"])).ShouldStartWith("Changed the source for the files under notes");
+        (await db.Sources.CountAsync()).ShouldBe(before);
+    }
+
+    [Fact]
+    public async Task A_folder_outside_the_workspace_is_refused()
+    {
+        await using var db = _harness.NewContext();
+
+        (await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, "../elsewhere", create: true)))
+            .Message.ShouldContain("outside the workspace");
+    }
+
+    [Theory]
+    [InlineData("docs", "docs")]
+    [InlineData("docs/", "docs")]
+    [InlineData("docs/.", "docs")]
+    [InlineData("x/../docs", "docs")]
+    [InlineData("books/./manuals/", "books/manuals")]
+    [InlineData("", "")]
+    [InlineData(".", "")]
+    [InlineData("../x", "../x")]
+    public void A_source_root_has_one_spelling(string written, string canonical) =>
+        WorkspaceDiscovery.Canonical(Workspace, written).ShouldBe(canonical);
+
+    [Fact]
+    public async Task A_source_added_through_the_api_is_stored_in_that_spelling()
+    {
+        await using var db = _harness.NewContext();
+        Directory.CreateDirectory(Path.Combine(Workspace, "extra"));
+        var corpus = await db.Corpora.SingleAsync();
+
+        (await _harness.NewConfiguration(db).AddSourceAsync(corpus, new AddSourceRequest("extra/./"), default))
+            .Refusal.ShouldBeNull();
+
+        (await db.Sources.CountAsync(s => s.RootPath == "extra")).ShouldBe(1);
+    }
+
+    [Fact]
+    public void A_null_or_unknown_scope_is_refused_and_a_padded_one_is_not()
+    {
+        // A null element binds from JSON, and was dereferenced: a 500 where a 400 was meant.
+        ((IStatusCodeHttpResult)SystemEndpoints.UnissuableScopes([null]).ShouldNotBeNull()).StatusCode.ShouldBe(400);
+        ((IStatusCodeHttpResult)SystemEndpoints.UnissuableScopes(["admin"]).ShouldNotBeNull()).StatusCode.ShouldBe(400);
+        SystemEndpoints.UnissuableScopes([" Search ", "configure"]).ShouldBeNull();
     }
 
     [Fact]
