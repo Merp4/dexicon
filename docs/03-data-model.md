@@ -67,7 +67,7 @@ CREATE TABLE tokens (
   name          TEXT NOT NULL,
   token_hash    BLOB NOT NULL,              -- see 10-security-secrets.md
   token_salt    BLOB NOT NULL,
-  scopes        TEXT NOT NULL,              -- csv: search, ingest. Never admin.
+  scopes        TEXT NOT NULL,              -- csv: search, ingest, configure. Never admin.
   created_utc   TEXT NOT NULL,
   last_used_utc TEXT,
   expires_utc   TEXT,

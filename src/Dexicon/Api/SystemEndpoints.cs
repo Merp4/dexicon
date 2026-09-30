@@ -352,6 +352,10 @@ public static class SystemEndpoints
     /// the workspace, as the folder picker and <c>list_folders</c> both show them. Hidden
     /// folders are left out except <c>.github</c>. A child count stops at 500, so a folder
     /// showing 500 holds at least that many.
+    ///
+    /// A link is left out and not looked inside. It can lead out of the workspace, so
+    /// counting its entries, or a caller probing it for <c>.git</c>, reads wherever it
+    /// points; and it cannot be added as a source, since links are not followed (D-35).
     /// </summary>
     internal static List<WorkspaceEntry> FoldersIn(string workspaceRoot, string full)
     {
@@ -362,6 +366,7 @@ public static class SystemEndpoints
         {
             var name = Path.GetFileName(dir);
             if (name.StartsWith('.') && name is not ".github") continue;
+            if (new DirectoryInfo(dir).LinkTarget is not null) continue;
             int? children = null;
             try { children = Directory.EnumerateFileSystemEntries(dir).Take(500).Count(); } catch { /* unreadable */ }
             entries.Add(new WorkspaceEntry(name, Path.GetRelativePath(root, dir).Replace('\\', '/'), true, children));

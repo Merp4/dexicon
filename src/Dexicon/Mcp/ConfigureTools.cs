@@ -365,11 +365,19 @@ public sealed class ConfigureTools
         return p == "." ? "" : p;
     }
 
-    /// <summary>A repository's root, which holds <c>.git</c>: a directory, or a file in a linked worktree.</summary>
+    /// <summary>
+    /// A repository's root, which holds <c>.git</c>: a directory, or a file in a linked
+    /// worktree. Found by listing the folder, which reads the entry without following it, so
+    /// a <c>.git</c> that is a link does not count and is not looked through.
+    /// </summary>
     private static bool IsRepository(string folder)
     {
-        var git = Path.Combine(folder, ".git");
-        return Directory.Exists(git) || File.Exists(git);
+        try
+        {
+            return new DirectoryInfo(folder).EnumerateFileSystemInfos(".git").FirstOrDefault() is { LinkTarget: null };
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
     }
 
     private static string Describe(Source s) =>

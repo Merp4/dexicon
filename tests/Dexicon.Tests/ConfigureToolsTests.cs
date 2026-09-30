@@ -325,6 +325,25 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_link_is_neither_listed_nor_looked_through()
+    {
+        // A link can lead out of the workspace. Counting its entries, or finding a .git behind
+        // it, reads wherever it points, and it could not be added as a source anyway (D-35).
+        await using var db = _harness.NewContext();
+        var outside = Path.Combine(_harness.DataPath, "outside");
+        Directory.CreateDirectory(Path.Combine(outside, ".git"));
+        Directory.CreateSymbolicLink(Path.Combine(Workspace, "away"), outside);
+        Directory.CreateDirectory(Path.Combine(Workspace, "repo"));
+        Directory.CreateSymbolicLink(Path.Combine(Workspace, "repo", ".git"), Path.Combine(outside, ".git"));
+
+        var listed = await FoldersAsync(db, Configurer);
+
+        listed.ShouldNotContain("away");
+        listed.ShouldContain("  repo/  1 entry\n", Case.Sensitive, "a .git that is a link does not make a repository");
+        SystemEndpoints.FoldersIn(Workspace, Workspace).Select(f => f.Name).ShouldNotContain("away");
+    }
+
+    [Fact]
     public async Task Folders_show_repositories_and_what_reads_them_but_only_from_corpora_the_key_reaches()
     {
         await using var db = _harness.NewContext();
