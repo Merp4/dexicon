@@ -563,7 +563,8 @@ public static class SystemEndpoints
             // request's own text could carry a line break into the log (" search\n" passes the
             // check once trimmed).
             var token = await db.Tokens.AsNoTracking().Include(x => x.Corpora).FirstAsync(x => x.Id == id, ct);
-            logs.CreateLogger("Dexicon.Keys").LogInformation("Key {Key} scopes set to {Scopes}", token.Name, token.Scopes);
+            logs.CreateLogger("Dexicon.Keys").LogInformation(
+                "Key {Key} scopes set to {Scopes}", DexiconAuthMiddleware.OneLine(token.Name), token.Scopes);
             return Results.Ok(token.ToSummary());
         }).Produces<TokenSummary>();
     }

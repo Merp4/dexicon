@@ -377,6 +377,20 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_name_in_a_change_s_log_line_can_neither_break_it_nor_reach_a_terminal()
+    {
+        // A key's name and a corpus's are typed text. Raw, a line break forges a log line and
+        // an escape sequence clears the screen of a terminal tailing the log.
+        await using var db = _harness.NewContext();
+
+        await CorpusAsync(db, As("k\u001B[2J", Scopes.Configure), "two\nlines", create: true);
+
+        var line = _logs.Lines.Single(l => l.Contains("created corpus"));
+        line.ShouldNotContain("\n");
+        line.ShouldNotContain("\u001B");
+    }
+
+    [Fact]
     public async Task Folders_show_repositories_and_what_reads_them_but_only_from_corpora_the_key_reaches()
     {
         await using var db = _harness.NewContext();

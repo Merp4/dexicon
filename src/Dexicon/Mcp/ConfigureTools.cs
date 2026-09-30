@@ -170,10 +170,12 @@ public sealed class ConfigureTools
             }
         }
 
+        // Names through the log barrier: a key's name and a corpus's are typed text and can
+        // hold a line break or a terminal escape (DexiconAuthMiddleware.OneLine).
         logs.CreateLogger("Dexicon.Configure").LogInformation(
             "Key {Key} {Action} corpus {Corpus}; set: {Changed}",
-            principal.Name, create ? "created" : changed.Count > 0 ? "changed" : "left unchanged", target.Name,
-            changed.Count == 0 ? "none" : string.Join(", ", changed));
+            DexiconAuthMiddleware.OneLine(principal.Name), create ? "created" : changed.Count > 0 ? "changed" : "left unchanged",
+            DexiconAuthMiddleware.OneLine(target.Name), changed.Count == 0 ? "none" : string.Join(", ", changed));
 
         var filtersSet = changed.Contains("the filters its sources inherit");
         if (create)
@@ -312,7 +314,8 @@ public sealed class ConfigureTools
 
         logs.CreateLogger("Dexicon.Configure").LogInformation(
             "Key {Key} {Action} the source for the {Source} in corpus {Corpus}; job {Job}",
-            principal.Name, action, what, target.Name, jobId ?? "none");
+            DexiconAuthMiddleware.OneLine(principal.Name), action, DexiconAuthMiddleware.OneLine(what),
+            DexiconAuthMiddleware.OneLine(target.Name), jobId ?? "none");
 
         // As index_status shows it, so the effective values, and which come from the corpus,
         // are confirmed in the words the agent will read them in later.
