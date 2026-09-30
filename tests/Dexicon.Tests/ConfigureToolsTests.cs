@@ -462,11 +462,12 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
         // an escape sequence clears the screen of a terminal tailing the log.
         await using var db = _harness.NewContext();
 
-        await CorpusAsync(db, As("k\nforged\u001B[2J", Scopes.Configure), "papers", create: true);
+        await CorpusAsync(db, As("k\nforged\u2028too\u001B[2J", Scopes.Configure), "papers", create: true);
 
         var line = _logs.Lines.Single(l => l.Contains("created corpus"));
         line.ShouldNotContain("\n");
         line.ShouldNotContain("\u001B");
+        line.ShouldNotContain("\u2028");
     }
 
     [Fact]

@@ -94,7 +94,8 @@ public sealed class CorpusConfiguration(
         // corpus named with one could be listed and never searched by its name.
         // Shown on a line of its own in every listing, logged, and typed as an argument, so
         // a line break or an escape sequence in it breaks all three.
-        if (name.Any(char.IsControl))
+        // U+2028 and U+2029 break a line too, and char.IsControl does not count them.
+        if (name.Any(c => char.IsControl(c) || c is '\u2028' or '\u2029'))
             return new ConfigRefusal(
                 "A corpus name cannot contain a control character",
                 "A line break, tab or other control character in a name breaks every listing and log line "

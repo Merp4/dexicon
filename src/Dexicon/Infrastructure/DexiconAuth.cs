@@ -227,8 +227,12 @@ public sealed class DexiconAuthMiddleware(
     /// </summary>
     internal static string OneLine(string value)
     {
+        // U+2028 and U+2029 end a line for many readers and are not control characters,
+        // so the loop below would pass them.
         var held = value.Replace("\r", ReplacementText, StringComparison.Ordinal)
-                        .Replace("\n", ReplacementText, StringComparison.Ordinal);
+                        .Replace("\n", ReplacementText, StringComparison.Ordinal)
+                        .Replace("\u2028", ReplacementText, StringComparison.Ordinal)
+                        .Replace("\u2029", ReplacementText, StringComparison.Ordinal);
 
         var at = 0;
         while (at < held.Length && !char.IsControl(held[at])) at++;

@@ -139,6 +139,8 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     [InlineData("two\nlines")]
     [InlineData("tab\tbed")]
     [InlineData("esc\u001B[2J")]
+    [InlineData("line\u2028separator")]
+    [InlineData("paragraph\u2029separator")]
     public async Task A_name_with_a_control_character_is_refused(string name)
     {
         // Every listing puts a name on a line of its own, and every change is logged with it.
