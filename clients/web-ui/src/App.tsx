@@ -996,7 +996,7 @@ function CreateCorpusModal({ onClose, onCreated }: { onClose: () => void; onCrea
     <Modal title="New corpus" onClose={onClose}>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <form onSubmit={submit}>
-        <Field label="Name" hint="Agents pass this to search_index, so keep it short and memorable.">
+        <Field label="Name" hint="Agents pass this to search_index, so keep it short and memorable. No colons.">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="api-repo" autoFocus />
         </Field>
         <Field

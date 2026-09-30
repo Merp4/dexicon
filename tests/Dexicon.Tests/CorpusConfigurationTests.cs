@@ -135,6 +135,21 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
         (await db.Corpora.CountAsync()).ShouldBe(1);
     }
 
+    [Fact]
+    public async Task A_name_that_is_another_corpus_s_id_is_taken()
+    {
+        // The resolver matches a name or an id, so this name would reach either corpus.
+        await using var db = _harness.NewContext();
+        var id = (await db.Corpora.SingleAsync()).Id;
+
+        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest(id), default);
+
+        var refusal = created.Refusal.ShouldNotBeNull();
+        refusal.Status.ShouldBe(409);
+        refusal.Detail.ShouldContain("'notes'");
+        (await db.Corpora.CountAsync()).ShouldBe(1);
+    }
+
     /// <summary>
     /// A refused change leaves the corpus as it was. The corpus is tracked, so a field set
     /// before the refusal would be saved by the next change on the same context.

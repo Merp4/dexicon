@@ -55,18 +55,29 @@ public sealed class CorpusConfiguration(
     /// ASCII only. Neither refuses "å" beside "Å", and one name would then resolve to either
     /// corpus. The comparison is therefore made here, over the names read whole, since there
     /// are tens of them.
+    ///
+    /// An id is an address too: the resolver matches a name or an id, the id exactly, so a
+    /// corpus named with another's id would resolve to either of the two.
     /// </summary>
     private async Task<ConfigRefusal?> TakenAsync(string name, CancellationToken ct)
     {
-        var names = await db.Corpora.Select(c => c.Name).ToListAsync(ct);
-        var existing = names.Find(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase));
-        return existing is null
-            ? null
-            : new ConfigRefusal(
+        var corpora = await db.Corpora.Select(c => new { c.Id, c.Name }).ToListAsync(ct);
+
+        if (corpora.Find(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)) is { } named)
+            return new ConfigRefusal(
                 "Corpus already exists",
-                $"A corpus named '{existing}' already exists. Names are unique, ignoring case, " +
+                $"A corpus named '{named.Name}' already exists. Names are unique, ignoring case, " +
                 "because the name is what an agent passes to search_index.",
                 409);
+
+        if (corpora.Find(c => string.Equals(c.Id, name, StringComparison.Ordinal)) is { } identified)
+            return new ConfigRefusal(
+                "Name is another corpus's id",
+                $"'{name}' is the id of corpus '{identified.Name}', and a corpus is addressed by its " +
+                "name or its id, so the name would reach either of them.",
+                409);
+
+        return null;
     }
 
     public async Task<ConfigOutcome<Corpus>> CreateCorpusAsync(CreateCorpusRequest body, CancellationToken ct)
