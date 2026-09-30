@@ -466,7 +466,7 @@ public sealed class DexiconTools
         var sb = new StringBuilder("  sources:\n");
         foreach (var s in sources)
         {
-            var where = s.RootPath switch { null => "", "" => "the workspace root", var p => p };
+            var where = s.RootPath switch { null => "", "" => "the workspace root", var p => OneLine(p) };
 
             if (string.Equals(s.Kind, "githistory", StringComparison.OrdinalIgnoreCase))
             {
@@ -597,7 +597,7 @@ public sealed class DexiconTools
             sb.Append($"  {g.Status}: {g.Total:N0}\n");
             foreach (var (path, reason) in g.Sample)
             {
-                sb.Append($"    {path}");
+                sb.Append($"    {OneLine(path)}");
                 if (reason is { Length: > 0 })
                 {
                     // One line each: a reason is often an exception message, and a stack of
@@ -619,6 +619,13 @@ public sealed class DexiconTools
         >= 1L << 10 => $"{b / (double)(1L << 10):0.#} KB",
         _ => $"{b} bytes",
     };
+
+    /// <summary>
+    /// A path as one line. A file name on Linux can hold a line break, and printed as it
+    /// is, one would end its entry early and could begin a line that reads as another
+    /// status or reason.
+    /// </summary>
+    internal static string OneLine(string path) => path.ReplaceLineEndings(" ");
 
     /// <summary>
     /// What a corpus's count is counting.
@@ -658,13 +665,13 @@ public sealed class DexiconTools
         {
             var where = gap.DirectoryRelativePath.Length == 0
                 ? "the workspace root"
-                : gap.DirectoryRelativePath;
+                : OneLine(gap.DirectoryRelativePath);
 
             sb.Append($"  NOT INDEXED: {gap.Files.Count:N0} file(s) in {where} are covered by no source, ");
             sb.Append("though its subfolders are. Searching will never return them.\n");
 
             foreach (var file in gap.Files.Take(5))
-                sb.Append($"    {file}\n");
+                sb.Append($"    {OneLine(file)}\n");
             if (gap.Files.Count > 5)
                 sb.Append($"    ... and {gap.Files.Count - 5:N0} more\n");
 

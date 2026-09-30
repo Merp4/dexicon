@@ -1,5 +1,6 @@
 using Dexicon.Api;
 using Dexicon.Core.Catalog;
+using Dexicon.Core.Indexing;
 using Dexicon.Mcp;
 
 namespace Dexicon.Tests;
@@ -299,5 +300,23 @@ public class CorpusDiagnosisTests
         text.Split('\n').ShouldAllBe(line => line.Length <= 200, "a reason is cut to one short line");
         text.ShouldContain("    books/b.pdf\n");
         text.ShouldContain("  skipped: 37\n    books/c.bin — binary content\n    ... and 36 more\n");
+    }
+
+    /// <summary>
+    /// A file name can hold a line break on Linux. Printed as it is, it ended its entry early
+    /// and began a line that could read as a status of its own.
+    /// </summary>
+    [Fact]
+    public void A_path_holding_a_line_break_stays_on_its_own_line()
+    {
+        var problems = DexiconTools.RenderProblemFiles(
+            [new DexiconTools.ProblemFiles("failed", 1, [("notes/a\n  skipped: 0\r\nb.md", "unreadable")])]);
+        var sources = DexiconTools.RenderSources([Files("notes/x\ny")], null);
+        var gaps = DexiconTools.RenderCoverage([new SourceCoverage.Gap("notes\ny", ["c\nd.md"])]);
+
+        problems.ShouldBe("  failed: 1\n    notes/a   skipped: 0 b.md — unreadable\n");
+        sources.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length.ShouldBe(2, "the heading and one source");
+        gaps.ShouldContain("in notes y are covered");
+        gaps.ShouldContain("    c d.md\n");
     }
 }

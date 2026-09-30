@@ -223,10 +223,11 @@ and what to change:
   sources:
     files under docs: 16 files found; .gitignore respected; .dexiconignore respected; code and text up to 256 KB; not **/*.tmp (from the corpus defaults: not)
     commit history of the workspace root: 256 commits, follows refs/heads/main (52 behind origin/main as of the fetch at 2026-09-27 08:15 UTC); holds message, stat; newest 24664ac, 2026-09-26
-  failed: 8
-    papers/broken.pdf — has no PDF trailer (startxref and %%EOF) in its last 4,096 bytes...
-    ... and 7 more
-  skipped: 37
+  failed: 1
+    docs/papers/broken.pdf — 'broken.pdf' has no PDF trailer (startxref and %%EOF) in its last 4,096 bytes, so it is truncated rather than merely unusual. Its 1,048,576 bytes were not re...
+  skipped: 2
+    docs/assets/diagram.png — binary content (NUL byte in the first 8 KB)
+    docs/data/export.json — over the 262,144 byte size cap (1,048,576 bytes)
 ```
 
 Each source's filters are its effective values, with the ones it takes from the corpus
