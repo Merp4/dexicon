@@ -216,21 +216,28 @@ public sealed class ScopeResolver(CatalogDbContext db)
     /// behind that cache's 60-second TTL, and an operator who ticks a corpus and watches an
     /// agent keep missing it for a minute concludes the feature is broken.
     /// </summary>
-    public async Task<List<Corpus>> VisibleAsync(Principal principal, CancellationToken ct = default)
+    public async Task<List<Corpus>> VisibleAsync(Principal principal, CancellationToken ct = default) =>
+        await (await VisibleQueryAsync(principal, ct)).Include(c => c.ChunkSets)
+            .OrderBy(c => c.Name).ToListAsync(ct);
+
+    /// <summary>
+    /// The ids of the corpora <see cref="VisibleAsync"/> returns, by the same rule, for a
+    /// caller that asks again and again: the progress stream re-reads it while it is open.
+    /// </summary>
+    public async Task<HashSet<string>> VisibleIdsAsync(Principal principal, CancellationToken ct = default) =>
+        (await (await VisibleQueryAsync(principal, ct)).AsNoTracking().Select(c => c.Id).ToListAsync(ct))
+            .ToHashSet(StringComparer.Ordinal);
+
+    private async Task<IQueryable<Corpus>> VisibleQueryAsync(Principal principal, CancellationToken ct)
     {
-        if (principal.Has(Scopes.Admin))
-            return await db.Corpora.Include(c => c.ChunkSets)
-                .OrderBy(c => c.Name).ToListAsync(ct);
+        if (principal.Has(Scopes.Admin)) return db.Corpora;
 
         var mapped = await db.TokenCorpora
             .Where(tc => tc.TokenId == principal.TokenId)
             .Select(tc => tc.CorpusId)
             .ToListAsync(ct);
 
-        var q = db.Corpora.Include(c => c.ChunkSets).AsQueryable();
-        if (mapped.Count > 0) q = q.Where(c => mapped.Contains(c.Id));
-
-        return await q.OrderBy(c => c.Name).ToListAsync(ct);
+        return mapped.Count > 0 ? db.Corpora.Where(c => mapped.Contains(c.Id)) : db.Corpora;
     }
 
     /// <summary>
