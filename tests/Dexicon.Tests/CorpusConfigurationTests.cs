@@ -19,7 +19,8 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         _harness = await IndexingHarness.StartAsync("notes", "docs");
-        await _harness.SeedCorpusAsync(SourceKind.Workspace);
+        // Two sets, so a removal that cleaned only the default one would be seen.
+        await _harness.SeedCorpusAsync(SourceKind.Workspace, sets: 2);
     }
 
     public async Task DisposeAsync() => await _harness.DisposeAsync();
@@ -82,33 +83,79 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
         (await db.Jobs.AnyAsync()).ShouldBeFalse();
     }
 
-    [Fact]
-    public async Task A_name_already_taken_is_refused_as_a_conflict()
+    /// <summary>
+    /// A name is judged as it is stored and resolved: trimmed, and without regard to case.
+    /// Judged as sent, " notes " passed and then failed the unique index, a 500 where a 409
+    /// was promised.
+    /// </summary>
+    [Theory]
+    [InlineData("notes")]
+    [InlineData(" notes ")]
+    [InlineData("NOTES")]
+    public async Task A_name_already_taken_is_refused_as_a_conflict(string name)
     {
         await using var db = _harness.NewContext();
 
-        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("notes"), default);
+        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest(name), default);
 
         created.Refusal.ShouldNotBeNull().Status.ShouldBe(409);
         (await db.Corpora.CountAsync()).ShouldBe(1);
     }
 
+    /// <summary>
+    /// A refused change leaves the corpus as it was. The corpus is tracked, so a field set
+    /// before the refusal would be saved by the next change on the same context.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_corpus_change_leaves_nothing_behind_for_the_next_save()
+    {
+        await using var db = _harness.NewContext();
+        var config = _harness.NewConfiguration(db);
+        var corpus = await CorpusAsync(db);
+
+        var refused = await config.UpdateCorpusAsync(corpus,
+            new UpdateCorpusRequest(Description: "rejected", Defaults: new CorpusDefaults(null, 0, null, null)), default);
+        refused.Refusal.ShouldNotBeNull();
+        corpus.Description.ShouldBeNull();
+
+        // The next change through the same context, which is what would have saved it.
+        (await config.UpdateSourceAsync(corpus, IndexingHarness.SourceIdFor(0),
+            new UpdateSourceRequest(UseGitignore: false), default)).Refusal.ShouldBeNull();
+
+        await using var fresh = _harness.NewContext();
+        (await CorpusAsync(fresh)).Description.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// Removal is scoped to the source and reaches every set. The two sources hold the same
+    /// file name, which is the case a delete by path alone would get wrong, and the corpus has
+    /// two sets, which is the case a delete in the default set alone would get wrong.
+    /// </summary>
     [Fact]
     public async Task A_removed_source_leaves_the_index_in_every_set_and_the_other_source_stays()
     {
-        await _harness.WriteFileAsync("a.md", IndexingHarness.Prose("alpha"), source: 0);
-        await _harness.WriteFileAsync("b.md", IndexingHarness.Prose("beta"), source: 1);
+        await _harness.WriteFileAsync("same.md", IndexingHarness.Prose("alpha"), source: 0);
+        await _harness.WriteFileAsync("same.md", IndexingHarness.Prose("beta"), source: 1);
         await _harness.RunIndexAsync(JobKind.Full);
-        _harness.Vectors.CountFor("a.md").ShouldBeGreaterThan(0, "the premise: both sources were indexed");
+
+        string removedSource = IndexingHarness.SourceIdFor(0), keptSource = IndexingHarness.SourceIdFor(1);
+        foreach (var set in new[] { "set-1", "set-2" })
+        {
+            _harness.Vectors.CountFor("same.md", set, removedSource).ShouldBeGreaterThan(0, $"the premise: {set} holds the removed source");
+            _harness.Vectors.CountFor("same.md", set, keptSource).ShouldBeGreaterThan(0, $"the premise: {set} holds the kept source");
+        }
 
         await using var db = _harness.NewContext();
-        var removed = await _harness.NewConfiguration(db).RemoveSourceAsync(await CorpusAsync(db),
-            IndexingHarness.SourceIdFor(0), default);
+        var removed = await _harness.NewConfiguration(db).RemoveSourceAsync(await CorpusAsync(db), removedSource, default);
 
         removed.Refusal.ShouldBeNull();
-        _harness.Vectors.CountFor("a.md").ShouldBe(0);
-        _harness.Vectors.CountFor("b.md").ShouldBeGreaterThan(0);
-        (await db.Files.AnyAsync(f => f.SourceId == IndexingHarness.SourceIdFor(0))).ShouldBeFalse();
+        foreach (var set in new[] { "set-1", "set-2" })
+        {
+            _harness.Vectors.CountFor("same.md", set, removedSource).ShouldBe(0, $"gone from {set}");
+            _harness.Vectors.CountFor("same.md", set, keptSource).ShouldBeGreaterThan(0, $"the other source's file stays in {set}");
+        }
+        (await db.Files.AnyAsync(f => f.SourceId == removedSource)).ShouldBeFalse();
+        (await db.Files.AnyAsync(f => f.SourceId == keptSource)).ShouldBeTrue();
     }
 
     [Fact]

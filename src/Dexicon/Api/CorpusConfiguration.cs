@@ -45,10 +45,15 @@ public sealed class CorpusConfiguration(
         if (string.IsNullOrWhiteSpace(body.Name))
             return new ConfigRefusal("Name is required", "A corpus needs a name.", 400);
 
-        if (await db.Corpora.AnyAsync(c => c.Name == body.Name, ct))
+        // Compared as it will be stored, trimmed, and without regard to case, because that is
+        // how a name is resolved. Compared as sent, " notes " passed the check and failed the
+        // unique index, which is a 500 where a 409 was promised, and "Notes" beside "notes"
+        // would be two corpora that one name reaches either of.
+        var name = body.Name.Trim();
+        if (await db.Corpora.AnyAsync(c => EF.Functions.Collate(c.Name, "NOCASE") == name, ct))
             return new ConfigRefusal(
                 "Corpus already exists",
-                $"A corpus named '{body.Name}' already exists. Names are unique " +
+                $"A corpus named '{name}' already exists. Names are unique " +
                 "because the name is what an agent passes to search_index.",
                 409);
 
@@ -84,7 +89,7 @@ public sealed class CorpusConfiguration(
         var corpus = new Corpus
         {
             Id = Ulid.NewUlid().ToString(),
-            Name = body.Name.Trim(),
+            Name = name,
             Description = body.Description,
             State = CorpusState.Ready,
             CreatedUtc = DateTime.UtcNow,
@@ -143,6 +148,12 @@ public sealed class CorpusConfiguration(
     /// <summary>Changes a corpus's description and default filters. The value says whether the filters moved.</summary>
     public async Task<ConfigOutcome<bool>> UpdateCorpusAsync(Corpus corpus, UpdateCorpusRequest body, CancellationToken ct)
     {
+        // Judged before anything is assigned: the corpus is tracked, so a field set ahead
+        // of a refusal would be saved by the next change made through the same context.
+        if (body.Defaults is { MaxFileBytes: <= 0 })
+            return new ConfigRefusal("Invalid size cap",
+                "maxFileBytes must be greater than zero, or null to follow the server's setting.", 400);
+
         // Chunk settings are NOT here any more. They belong to a chunk set, because a
         // corpus can carry several and "the corpus's chunk size" stopped meaning
         // anything the moment that became true. See /api/corpora/{id}/chunk-sets.
@@ -155,10 +166,6 @@ public sealed class CorpusConfiguration(
         var filtersChanged = false;
         if (body.Defaults is { } d)
         {
-            if (d.MaxFileBytes is <= 0)
-                return new ConfigRefusal("Invalid size cap",
-                    "maxFileBytes must be greater than zero, or null to follow the server's setting.", 400);
-
             filtersChanged =
                 corpus.DefaultUseGitignore != d.UseGitignore ||
                 corpus.DefaultMaxFileBytes != d.MaxFileBytes ||
