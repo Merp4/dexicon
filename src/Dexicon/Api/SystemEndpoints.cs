@@ -217,10 +217,16 @@ public static class SystemEndpoints
     /// What the caller can see is read again while the stream is open. It was read once, when
     /// the page connected, so a corpus created after that sent the page nothing: its first
     /// index showed no progress, and its page never re-read the counts when the run ended.
-    /// A narrowed key mapping, likewise, kept reaching the page until it reconnected. So the
-    /// set is re-read on every heartbeat, and on a report for a corpus not in it, at most
-    /// once per <paramref name="recheck"/>, because a corpus the caller cannot see reports
-    /// as often as one they can.
+    /// A narrowed key mapping, likewise, kept reaching the page until it reconnected. So:
+    /// <list type="bullet">
+    /// <item>The set is re-read on every heartbeat.</item>
+    /// <item>The first report for a corpus outside it is looked up at once, and further reports
+    /// for it at most once per <paramref name="recheck"/>, because a corpus the caller cannot
+    /// see reports as often as one they can.</item>
+    /// <item>The newest report of each such corpus is kept, and written when a later read finds
+    /// it visible. A run can end inside the recheck window, and its last report is the one the
+    /// page acts on.</item>
+    /// </list>
     /// </summary>
     internal static async Task StreamProgressAsync(
         HttpResponse response, System.Threading.Channels.ChannelReader<IndexProgress> reader,
@@ -228,24 +234,51 @@ public static class SystemEndpoints
         CancellationToken ct)
     {
         var visibleIds = await visible(ct);
-        var readAt = DateTime.UtcNow;
+
+        // Per corpus outside the set: when a read last found it there, and its newest report
+        // since. One entry per corpus that has reported, so bounded by the catalogue.
+        var lookedUp = new Dictionary<string, DateTime>(StringComparer.Ordinal);
+        var held = new Dictionary<string, IndexProgress>(StringComparer.Ordinal);
+
+        async Task ReadVisibleAsync()
+        {
+            visibleIds = await visible(ct);
+            var now = DateTime.UtcNow;
+            foreach (var (corpusId, report) in held.ToList())
+            {
+                if (!visibleIds.Contains(corpusId))
+                {
+                    lookedUp[corpusId] = now;
+                    continue;
+                }
+
+                held.Remove(corpusId);
+                lookedUp.Remove(corpusId);
+                await WriteProgressAsync(response, report, ct);
+            }
+        }
+
         var heartbeat = Task.Delay(interval, ct);
         Task<IndexProgress>? next = null;
 
         while (!ct.IsCancellationRequested)
         {
             next ??= reader.ReadAsync(ct).AsTask();
-            var winner = await Task.WhenAny(next, heartbeat);
 
-            if (winner == heartbeat)
+            // A due heartbeat before the next report. With a backlog the read is always
+            // complete, and WhenAny returns the first completed task in its list, so the
+            // heartbeat, and the re-read that stops a revoked corpus, could wait out the
+            // whole backlog.
+            if (!heartbeat.IsCompleted) await Task.WhenAny(next, heartbeat);
+
+            if (heartbeat.IsCompleted)
             {
                 // Throws when it was the disconnect that ended the delay, rather than
                 // writing a ping and querying the catalogue for a caller who has gone.
                 await heartbeat;
                 await response.WriteAsync(": ping\n\n", ct);
                 await response.Body.FlushAsync(ct);
-                visibleIds = await visible(ct);
-                readAt = DateTime.UtcNow;
+                await ReadVisibleAsync();
                 heartbeat = Task.Delay(interval, ct);
                 continue;
             }
@@ -253,20 +286,27 @@ public static class SystemEndpoints
             var progress = await next;
             next = null;
 
-            if (!visibleIds.Contains(progress.CorpusId) && DateTime.UtcNow - readAt >= recheck)
-            {
-                visibleIds = await visible(ct);
-                readAt = DateTime.UtcNow;
-            }
-
             // Scoped to what this caller can reach: a corpus their key is not
             // mapped to is not their business, and its id is not either.
-            if (!visibleIds.Contains(progress.CorpusId)) continue;
+            if (!visibleIds.Contains(progress.CorpusId))
+            {
+                held[progress.CorpusId] = progress;
+                if (lookedUp.TryGetValue(progress.CorpusId, out var at) && DateTime.UtcNow - at < recheck) continue;
 
-            var json = JsonSerializer.Serialize(progress, JsonOptions.Web);
-            await response.WriteAsync($"event: progress\ndata: {json}\n\n", ct);
-            await response.Body.FlushAsync(ct);
+                // Writes the report just held if the corpus is visible now.
+                await ReadVisibleAsync();
+                continue;
+            }
+
+            await WriteProgressAsync(response, progress, ct);
         }
+    }
+
+    private static async Task WriteProgressAsync(HttpResponse response, IndexProgress progress, CancellationToken ct)
+    {
+        var json = JsonSerializer.Serialize(progress, JsonOptions.Web);
+        await response.WriteAsync($"event: progress\ndata: {json}\n\n", ct);
+        await response.Body.FlushAsync(ct);
     }
 
     public static void MapWorkspaceEndpoints(this IEndpointRouteBuilder app)
