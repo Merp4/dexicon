@@ -1,9 +1,11 @@
+using Dexicon.Api;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
 using Dexicon.Core.Search;
 using Dexicon.Core.Vectors;
 using Dexicon.Infrastructure;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
@@ -296,6 +298,38 @@ public sealed class AdminPasswordTests : IAsyncLifetime
         (await _tokens.SetScopesAsync("no-such-key", [Scopes.Configure])).ShouldBeFalse();
         _db.ChangeTracker.Clear();
         (await _db.Tokens.AsNoTracking().SingleAsync(t => t.Id == row.Id)).Scopes.ShouldBe("search");
+    }
+
+    [Fact]
+    public async Task AScopeRemovedIsRefusedOnTheNextRequestThoughThePrincipalWasCached()
+    {
+        // The principal is cached for a minute to spare a PBKDF2 per call, and the scopes
+        // travel on it. Without the eviction a removed configure or ingest scope stayed usable
+        // until the entry expired; a test calling VerifyAsync directly never sees the cache.
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        var sessions = new AdminSessions(TimeProvider.System);
+        var (row, issued) = await _tokens.CreateAsync("agent", [Scopes.Search, Scopes.Configure], null);
+
+        async Task<Principal?> NextRequestAsync()
+        {
+            var request = new RequestContext();
+            var middleware = new DexiconAuthMiddleware(_ => Task.CompletedTask, cache,
+                NullLogger<DexiconAuthMiddleware>.Instance);
+            var ctx = new DefaultHttpContext();
+            ctx.Request.Path = "/mcp";
+            ctx.Request.Headers.Authorization = $"Bearer {issued.Presented}";
+            await middleware.InvokeAsync(ctx, _tokens, sessions, request);
+            return request.Principal;
+        }
+
+        (await NextRequestAsync()).ShouldNotBeNull().Has(Scopes.Configure).ShouldBeTrue("and it is now cached");
+
+        var result = await SystemEndpoints.SetScopesAsync(row.Id, new UpdateTokenScopesRequest([Scopes.Search]),
+            _tokens, _db, new MemoryCacheEvictor(cache), NullLogger.Instance, default);
+
+        ((IStatusCodeHttpResult)result).StatusCode.ShouldBe(StatusCodes.Status200OK);
+        (await NextRequestAsync()).ShouldNotBeNull().Has(Scopes.Configure)
+            .ShouldBeFalse("the next request is judged on the stored scopes, not the cached ones");
     }
 
     [Fact]

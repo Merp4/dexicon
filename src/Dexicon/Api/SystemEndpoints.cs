@@ -544,29 +544,38 @@ public static class SystemEndpoints
             CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-
-            if (body.Scopes is not { Count: > 0 })
-                return Results.Problem(
-                    title: "No scope",
-                    detail: "A key needs at least one scope. To stop a key working, revoke it.",
-                    statusCode: 400);
-            if (UnissuableScopes(body.Scopes) is { } unissuable) return unissuable;
-
-            if (!await tokens.SetScopesAsync(id, body.Scopes, ct)) return Results.NotFound();
-
-            // Scopes travel on the cached principal, unlike the mapping, so without this the
-            // agent keeps its old ones until the cache entry expires.
-            evictor.EvictPrincipals();
-
-            // What was stored, and not the request as well: every requested scope was checked
-            // above to be issuable, so the two differ only in spelling and repetition, and the
-            // request's own text could carry a line break into the log (" search\n" passes the
-            // check once trimmed).
-            var token = await db.Tokens.AsNoTracking().Include(x => x.Corpora).FirstAsync(x => x.Id == id, ct);
-            logs.CreateLogger("Dexicon.Keys").LogInformation(
-                "Key {Key} scopes set to {Scopes}", DexiconAuthMiddleware.OneLine(token.Name), token.Scopes);
-            return Results.Ok(token.ToSummary());
+            return await SetScopesAsync(id, body, tokens, db, evictor, logs.CreateLogger("Dexicon.Keys"), ct);
         }).Produces<TokenSummary>();
+    }
+
+    /// <summary>
+    /// Replace a key's scopes, once the caller is known to be the admin. A method of its own
+    /// so a test can put the principal cache on either side of it, since the eviction is what
+    /// makes a removed scope stop working on the agent's next call.
+    /// </summary>
+    internal static async Task<IResult> SetScopesAsync(string id, UpdateTokenScopesRequest body,
+        TokenService tokens, CatalogDbContext db, IMemoryCacheEvictor evictor, ILogger log, CancellationToken ct)
+    {
+        if (body.Scopes is not { Count: > 0 })
+            return Results.Problem(
+                title: "No scope",
+                detail: "A key needs at least one scope. To stop a key working, revoke it.",
+                statusCode: 400);
+        if (UnissuableScopes(body.Scopes) is { } unissuable) return unissuable;
+
+        if (!await tokens.SetScopesAsync(id, body.Scopes, ct)) return Results.NotFound();
+
+        // Scopes travel on the cached principal, unlike the mapping, so without this the
+        // agent keeps its old ones until the cache entry expires.
+        evictor.EvictPrincipals();
+
+        // What was stored, and not the request as well: every requested scope was checked
+        // above to be issuable, so the two differ only in spelling and repetition, and the
+        // request's own text could carry a line break into the log (" search\n" passes the
+        // check once trimmed).
+        var token = await db.Tokens.AsNoTracking().Include(x => x.Corpora).FirstAsync(x => x.Id == id, ct);
+        log.LogInformation("Key {Key} scopes set to {Scopes}", DexiconAuthMiddleware.OneLine(token.Name), token.Scopes);
+        return Results.Ok(token.ToSummary());
     }
 
     /// <summary>
