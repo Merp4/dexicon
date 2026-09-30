@@ -92,17 +92,18 @@ public sealed class DexiconAuthMiddleware(
             // PBKDF2 at 600k iterations on every MCP call would dominate the cost of a
             // search, so verified principals are cached briefly. Revocation punches
             // through by evicting the entry rather than waiting for the TTL.
-            var cacheKey = PrincipalCacheKey(presented);
+            //
+            // Filed under the generation this request began in. A revocation or a scope
+            // change can land while this reads the row and hashes, and the principal it read
+            // would then be written after the eviction cleared the cache. Under the old
+            // generation it is never read again: every request that begins after the eviction
+            // looks under the new one. A check before the write instead left the same gap
+            // between the check and the write.
+            var cacheKey = PrincipalCacheKey(presented, evictor.Generation);
             if (!cache.TryGetValue(cacheKey, out principal) || principal is null)
             {
-                // A revocation or a scope change can land while this reads the row and hashes,
-                // and its eviction would then be undone by the insert below, keeping what was
-                // removed for the whole TTL. Such a principal serves this request, which began
-                // first, and is not cached.
-                var generation = evictor.Generation;
                 principal = await tokens.VerifyAsync(presented, ctx.RequestAborted);
-                if (principal is not null && evictor.Generation == generation)
-                    cache.Set(cacheKey, principal, PrincipalTtl);
+                if (principal is not null) cache.Set(cacheKey, principal, PrincipalTtl);
             }
         }
 
@@ -165,6 +166,10 @@ public sealed class DexiconAuthMiddleware(
     /// </summary>
     internal static string PrincipalCacheKey(string presented) =>
         "principal::" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(presented)));
+
+    /// <summary>The key for a principal verified in <paramref name="generation"/> of the cache.</summary>
+    internal static string PrincipalCacheKey(string presented, long generation) =>
+        $"{PrincipalCacheKey(presented)}::{generation}";
 
     /// <summary>
     /// A short one-way mark for a credential that was rejected, so repeats can be

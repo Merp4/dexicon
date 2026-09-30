@@ -323,20 +323,22 @@ public sealed class AdminPasswordTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AVerificationOverlappingAnEvictionServesItsRequestButIsNotCached()
+    public async Task APrincipalWrittenAfterAnEvictionIsNeverReadByALaterRequest()
     {
-        // A request that read the key's row before a revocation or a scope change, and finished
-        // hashing after the eviction, put the old principal back for the whole TTL. The fake
-        // evictor's generation moves between the middleware's read before verifying and its
-        // read after, which is what an eviction in that window does.
+        // The race itself: a request that read the key's row before a scope change, and
+        // finished hashing after the eviction, writes the old principal into the cleared
+        // cache. Filed under the generation it began in, no later request reads it.
         using var cache = new MemoryCache(new MemoryCacheOptions());
-        var (_, issued) = await _tokens.CreateAsync("agent", [Scopes.Search], null);
+        var evictor = new MemoryCacheEvictor(cache);
+        var (row, issued) = await _tokens.CreateAsync("agent", [Scopes.Search], null);
+        var began = evictor.Generation;
 
-        (await AuthenticateAsync(cache, new EvictsDuringEachVerification(), issued.Presented)).ShouldNotBeNull();
-        cache.Count.ShouldBe(0);
+        evictor.EvictPrincipals();
+        cache.Set(DexiconAuthMiddleware.PrincipalCacheKey(issued.Presented, began),
+            new Principal(row.Id, row.Name, new HashSet<string>(StringComparer.Ordinal) { Scopes.Search, Scopes.Configure }));
 
-        (await AuthenticateAsync(cache, new MemoryCacheEvictor(cache), issued.Presented)).ShouldNotBeNull();
-        cache.Count.ShouldBe(1, "with no eviction in between, the principal is cached");
+        (await AuthenticateAsync(cache, evictor, issued.Presented)).ShouldNotBeNull()
+            .Has(Scopes.Configure).ShouldBeFalse("the late write is under the old generation");
     }
 
     /// <summary>The principal one request authenticates as, through the real middleware and cache.</summary>
@@ -350,16 +352,6 @@ public sealed class AdminPasswordTests : IAsyncLifetime
         ctx.Request.Headers.Authorization = $"Bearer {presented}";
         await middleware.InvokeAsync(ctx, _tokens, new AdminSessions(TimeProvider.System), request);
         return request.Principal;
-    }
-
-    /// <summary>A generation that moves on every read, as it would with an eviction between two.</summary>
-    private sealed class EvictsDuringEachVerification : IMemoryCacheEvictor
-    {
-        private long _reads;
-
-        public void EvictPrincipals() { }
-
-        public long Generation => Interlocked.Increment(ref _reads);
     }
 
     [Fact]

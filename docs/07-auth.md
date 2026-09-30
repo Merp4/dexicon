@@ -66,9 +66,10 @@ belongs to the key.
   `PUT /api/tokens/{id}/scopes`, under the same rules. The change evicts cached principals,
   so a scope removed is refused from the agent's next call.
 - Optional expiry. Optional revocation, effective immediately: the principal cache holds
-  entries for 60 s and revocation evicts rather than waiting. A request already verifying
-  the key when it is revoked, or its scopes changed, is served on what it read and not
-  cached, so the eviction is not undone.
+  entries for 60 s and revocation evicts rather than waiting. Each entry is filed under the
+  cache's generation, which every eviction moves, so a request already verifying the key
+  when it is revoked, or its scopes changed, is served on what it read and whatever it
+  caches is never read by a later request.
 
 ### What a key reaches
 

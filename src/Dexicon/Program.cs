@@ -321,8 +321,8 @@ internal sealed class MemoryCacheEvictor(IMemoryCache cache) : IMemoryCacheEvict
 
     public void EvictPrincipals()
     {
-        // Before the clear, so a verification that finishes between the two finds the
-        // generation moved and does not put back what it read.
+        // Before the clear. From here every request looks under the new generation, so the
+        // clear only frees memory: an entry written late under the old one is never read.
         Interlocked.Increment(ref _generation);
 
         // MemoryCache has no prefix-scan, and the principal TTL is 60s, so the blunt

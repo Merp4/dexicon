@@ -1139,9 +1139,10 @@ public interface IMemoryCacheEvictor
     void EvictPrincipals();
 
     /// <summary>
-    /// Moves on every <see cref="EvictPrincipals"/>. A verification that started before an
-    /// eviction may have read the key's row before the change that caused it, so a caller
-    /// caches what it verified only if this has not moved since it began.
+    /// Moves on every <see cref="EvictPrincipals"/>, and is part of each principal's cache key.
+    /// A verification that began before an eviction may have read the key's row before the
+    /// change that caused it; filed under the generation it began in, what it caches is never
+    /// read by a request that begins after.
     /// </summary>
     long Generation { get; }
 }
