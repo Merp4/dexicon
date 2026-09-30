@@ -2039,14 +2039,15 @@ describe('when a run finishes', () => {
 
   /**
    * A refresh over an unchanged tree. "Succeeded · 37/37 documents · 0 chunks" read as 37
-   * documents done, when every one was unchanged; the jobs list calls it a run that found
-   * nothing to do.
+   * documents done. Not "nothing changed" either: the counters cannot say that, since a
+   * newly excluded file counts as skipped after its vectors go, and a vanished one is not
+   * counted at all. They can say nothing was re-indexed.
    */
-  it('says a run that read nothing again changed nothing, rather than counting it as done', async () => {
+  it('says a run that re-indexed nothing did not, rather than counting it as done', async () => {
     render(<CorpusDetail {...props} live={lastRun({ filesDone: 0, filesSkipped: 12, chunksWritten: 0 })} />);
 
     expect(await screen.findByRole('progressbar')).toHaveAttribute(
-      'aria-valuetext', 'Succeeded · nothing changed in 12 files');
+      'aria-valuetext', 'Succeeded · no files re-indexed, 12 checked');
   });
 
   it('still counts a run that did something, and one that failed without reading anything', async () => {

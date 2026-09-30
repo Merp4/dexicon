@@ -895,14 +895,15 @@ function ProgressBar({ job, sources }: {
   const processed = job.filesDone + job.filesSkipped + job.filesFailed;
   const pct = job.filesTotal > 0 ? Math.min(100, (processed / job.filesTotal) * 100) : 0;
   const unit = unitFor(sources, job.filesTotal);
-  // A finished run that read nothing again. "37/37 documents · 0 chunks" reads as 37
-  // documents done, when every one was unchanged; the jobs list calls the same run one that
-  // found nothing to do.
+  // A finished run that re-indexed nothing. "37/37 documents · 0 chunks" read as 37
+  // documents done. It says what the counters prove and no more: no file was indexed, not
+  // that the index is unchanged, since a file newly excluded is counted as skipped after its
+  // vectors are deleted, and one that vanished is removed without counting at all.
   // Succeeded only: a run that failed outright can have read nothing and failed no file.
-  const quiet = String(job.phase).toLowerCase() === 'succeeded'
+  const noneIndexed = String(job.phase).toLowerCase() === 'succeeded'
     && job.filesDone === 0 && job.filesFailed === 0 && job.chunksWritten === 0;
-  const caption = quiet
-    ? `${job.phase} · nothing changed in ${job.filesTotal.toLocaleString()} ${unit}`
+  const caption = noneIndexed
+    ? `${job.phase} · no ${unit} re-indexed, ${job.filesTotal.toLocaleString()} checked`
     : `${job.phase} · ${processed.toLocaleString()}/${job.filesTotal.toLocaleString()}` +
       ` ${unit} · ${count(job.chunksWritten, 'chunk')}`;
 
