@@ -136,6 +136,19 @@ internal sealed class IndexingHarness : IAsyncDisposable
         new(_services.GetRequiredService<DbContextOptions<CatalogDbContext>>());
 
     /// <summary>
+    /// Corpus and source configuration on the harness's catalogue, vector store and
+    /// workspace. Its queue is a real one on a scheduler nothing drains, so a queued job is
+    /// a row a test can read.
+    /// </summary>
+    public Dexicon.Api.CorpusConfiguration NewConfiguration(CatalogDbContext db)
+    {
+        var options = _services.GetRequiredService<IOptions<DexiconOptions>>();
+        var scheduler = new WorkScheduler(options);
+        return new Dexicon.Api.CorpusConfiguration(db, Vectors, Embedder, options,
+            new IndexJobQueue(db, scheduler, NullLogger<IndexJobQueue>.Instance), new SweepQueue(scheduler));
+    }
+
+    /// <summary>
     /// A document service on the harness's own storage, so blobs land where the indexer
     /// will look for them. Building one from fresh options puts them somewhere else and
     /// the pass then reports every attachment as having no stored text.
