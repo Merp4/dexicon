@@ -273,7 +273,9 @@ mapped to some corpora has a corpus it creates added to its mapping, so it can r
 maxFileKb?, history?, reset?)`: adds a folder when `create` is true, and otherwise changes
 the source of that `kind` (`files`, the default, or `history`) on that folder. The folder
 must exist to be added. It is matched and stored with `.` and `..` collapsed, so `docs/.`
-names the source on `docs` rather than adding a second one. `exclude`, `gitignore` and `maxFileKb` apply to a files source; a
+names the source on `docs` rather than adding a second one. A corpus can hold two sources of
+one kind on a folder, added in the UI; a folder cannot say which is meant, so a change to
+either is refused and made in the UI. `exclude`, `gitignore` and `maxFileKb` apply to a files source; a
 history source takes `include`, as the paths whose commits are kept, and `history`: an
 object of `follow` (the ref), `message`, `stat`, `diff`, `maxDiffKb`, `merges`,
 `maxCommits`, `keepIndexed` and `since`. Settings left out keep their value; `reset`

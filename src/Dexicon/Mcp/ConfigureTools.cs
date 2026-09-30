@@ -289,12 +289,21 @@ public sealed class ConfigureTools
         else
         {
             var sources = await db.Sources.AsNoTracking().Where(s => s.CorpusId == target.Id).ToListAsync(ct);
-            var existing = sources.Find(Same);
-            if (existing is null)
+            var matches = sources.FindAll(Same);
+            if (matches.Count == 0)
                 throw new McpException(
                     $"Corpus '{target.Name}' has no source for the {what}. Its sources: "
                     + (sources.Count == 0 ? "none" : string.Join("; ", sources.Select(Describe)))
                     + ". Pass create: true to add it.");
+
+            // The UI allows more than one, such as two history sources following different
+            // branches, and a folder and kind cannot say which is meant. Changing either one
+            // would be a guess, so the change is left to the UI, which shows them apart.
+            if (matches.Count > 1)
+                throw new McpException(
+                    $"Corpus '{target.Name}' has {matches.Count} sources for the {what}, and a folder "
+                    + "cannot say which to change. Change them in the Dexicon UI, which lists each one.");
+            var existing = matches[0];
 
             var historyResets = resets.Where(r => HistoryNames.Contains(r, StringComparer.OrdinalIgnoreCase)).ToList();
             var git = isHistory && (history is not null || historyResets.Count > 0)

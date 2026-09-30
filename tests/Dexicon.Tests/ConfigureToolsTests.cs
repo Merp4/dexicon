@@ -285,6 +285,26 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Two_sources_on_one_folder_are_not_changed_by_guessing_which()
+    {
+        // The UI allows it, as for two history sources following different branches.
+        await using var db = _harness.NewContext();
+        db.Sources.Add(new Source
+        {
+            Id = "docs-again", CorpusId = IndexingHarness.CorpusId, Kind = SourceKind.Workspace,
+            RootPath = "docs", CreatedUtc = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+
+        (await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, "docs", exclude: ["**/*.tmp"])))
+            .Message.ShouldContain("has 2 sources for the files under docs");
+
+        (await db.Sources.AsNoTracking().CountAsync(s => s.RootPath == "docs" && s.ExcludeGlobs != null))
+            .ShouldBe(0, "neither source was changed");
+        (await db.Jobs.AnyAsync()).ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task A_change_that_moves_nothing_queues_nothing()
     {
         await using var db = _harness.NewContext();
