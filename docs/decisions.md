@@ -252,6 +252,10 @@ the UI, where a human is present).
 **Amended by** [D-28](#d-28-an-admin-password-and-scoped-api-keys): five tools, four of
 which every key sees. `index_refresh` is listed only for a key granted `ingest`.
 
+**Amended by** [D-36](#d-36-a-configure-scope-agents-set-up-what-is-indexed) (2026-09-30):
+three configuration tools, listed only for a key granted `configure`. A key without it is
+still listed at most these five.
+
 ---
 
 ### D-12 Stateless streamable HTTP, MCP 2026-07-28
@@ -964,6 +968,10 @@ and its storage stand, the tenant binding and `X-Dexicon-Tenant` do not. **Amend
 [D-04](#d-04-corpus-as-the-qdrant-tenant-key): `corpus_id` remains the `is_tenant` key, and
 the `tenant_id` payload field goes. **Amends** [D-11](#d-11-five-mcp-tools): five tools, four
 of which every key sees.
+
+**Amended by** [D-36](#d-36-a-configure-scope-agents-set-up-what-is-indexed) (2026-09-30): a
+key can also carry `configure`, and its scopes can be changed after issue. `admin` stays the
+password's alone.
 
 ---
 
@@ -1789,6 +1797,55 @@ same links while keeping directory following and everything that needs.
 
 **Revisit if.** A workspace needs content that is reachable only through a link and cannot
 be added as a source of its own.
+
+---
+
+### D-36 A configure scope: agents set up what is indexed
+
+**Status.** Accepted and implemented, 2026-09-30.
+
+**Decision.** A key can hold a third scope, `configure`. A key holding it is listed three
+more MCP tools: `list_folders`, `configure_corpus` and `configure_source`
+([06](06-mcp-surface.md#configuration-tools)). With them an agent lists the mounted folders,
+creates a corpus, changes a corpus's description and the filters its sources inherit, adds a
+folder as a files or history source, and changes a source's filters and history settings.
+It removes and deletes nothing: no corpus, source, chunk set, document or key. Chunk sets,
+embedding models, keys and the password stay the admin's. A key's scopes can be changed on
+the Access page, through `PUT /api/tokens/{id}/scopes`, without issuing another key.
+
+**Why.** Setting up a corpus took a person at the UI, while the agent that would search it
+could only describe the change. An agent working in a repository knows which folders hold
+what and which are build output, and `index_status` now shows it why a file is missing
+([06](06-mcp-surface.md#index_status)); with this it can act on that. Every change goes
+through `CorpusConfiguration`, the service the UI's endpoints call, so an agent cannot set
+what the UI would refuse, and each is logged with the key's name.
+
+**What it reaches.** The corpus mapping does not limit `configure`. A key mapped to one
+corpus can add any mounted folder to it, or create another corpus over that folder, and then
+search it: `configure` reaches the whole workspace. The Access page says so when the scope is
+ticked. A corpus the key creates is added to its mapping when it has one, since otherwise the
+key could not reach what it made; an unmapped key already reaches every corpus.
+
+**Creating is asked for.** A corpus or source added by mistake stays until someone removes it
+in the UI. So `create: true` is required to create either, rather than a name that matched
+nothing being taken as a request, and `configure_source` refuses a folder that does not
+exist, which the API accepts for a mount that is away.
+
+**Tool count.** [D-11](#d-11-five-mcp-tools) holds for a key without the scope: the
+`tools/list` filter [D-28](#d-28-an-admin-password-and-scoped-api-keys) added for `ingest`
+also hides the three configuration tools, so such a key is listed at most five. A key
+holding `configure` is listed eight, which is the cost of the grant. Each tool checks its
+scope when called as well.
+
+**Rejected.** Admin over MCP, for [D-11](#d-11-five-mcp-tools)'s reason: deleting and
+key management stay where a person is present. Removal over MCP: a source removed by
+mistake takes its vectors with it, and rebuilding a large corpus takes hours; a removal an
+agent proposes and a person approves in the UI is planned separately. Inferring creation
+from an unknown name. Hiding from `list_folders` the folders the key's corpora do not read:
+it would not limit what `configure` can add, only make it harder to see.
+
+**Revisit if.** Agents need to remove what they set up, or a deployment needs `configure`
+confined to part of the workspace, which would take a per-key folder list.
 
 ---
 

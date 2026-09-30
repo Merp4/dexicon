@@ -331,21 +331,10 @@ public static class SystemEndpoints
                     statusCode: 404);
 
             var root = Path.GetFullPath(opts.Value.Indexing.WorkspaceRoot);
-            var entries = new List<WorkspaceEntry>();
-
-            foreach (var dir in Directory.EnumerateDirectories(full).Order(StringComparer.Ordinal))
-            {
-                var name = Path.GetFileName(dir);
-                if (name.StartsWith('.') && name is not ".github") continue;
-                int? children = null;
-                try { children = Directory.EnumerateFileSystemEntries(dir).Take(500).Count(); } catch { /* unreadable */ }
-                entries.Add(new WorkspaceEntry(name, Path.GetRelativePath(root, dir).Replace('\\', '/'), true, children));
-            }
-
             return Results.Ok(new WorkspaceListing(
                 opts.Value.Indexing.WorkspaceRoot,
                 Path.GetRelativePath(root, full).Replace('\\', '/'),
-                entries));
+                FoldersIn(opts.Value.Indexing.WorkspaceRoot, full)));
         }).Produces<WorkspaceListing>().WithTags("Workspaces");
 
         // What a folder's repository could be followed at, so a history source is pointed
@@ -356,6 +345,29 @@ public static class SystemEndpoints
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             return await RepositoryRefsAsync(opts.Value.Indexing.WorkspaceRoot, path, ct, @ref);
         }).Produces<GitRefsResponse>().WithTags("Workspaces");
+    }
+
+    /// <summary>
+    /// The folders directly in <paramref name="full"/>, an already-resolved directory under
+    /// the workspace, as the folder picker and <c>list_folders</c> both show them. Hidden
+    /// folders are left out except <c>.github</c>. A child count stops at 500, so a folder
+    /// showing 500 holds at least that many.
+    /// </summary>
+    internal static List<WorkspaceEntry> FoldersIn(string workspaceRoot, string full)
+    {
+        var root = Path.GetFullPath(workspaceRoot);
+        var entries = new List<WorkspaceEntry>();
+
+        foreach (var dir in Directory.EnumerateDirectories(full).Order(StringComparer.Ordinal))
+        {
+            var name = Path.GetFileName(dir);
+            if (name.StartsWith('.') && name is not ".github") continue;
+            int? children = null;
+            try { children = Directory.EnumerateFileSystemEntries(dir).Take(500).Count(); } catch { /* unreadable */ }
+            entries.Add(new WorkspaceEntry(name, Path.GetRelativePath(root, dir).Replace('\\', '/'), true, children));
+        }
+
+        return entries;
     }
 
     /// <summary>
@@ -471,15 +483,7 @@ public static class SystemEndpoints
                 return Results.Problem(title: "Name is required", statusCode: 400);
 
             var requested = body.Scopes is { Count: > 0 } ? body.Scopes : [Scopes.Search];
-            var unknown = requested
-                .Where(s => !Scopes.Issuable.Contains(s, StringComparer.OrdinalIgnoreCase)).ToList();
-            if (unknown.Count > 0)
-                return Results.Problem(
-                    title: "Unknown scope",
-                    detail: $"{string.Join(", ", unknown)}. A key may hold " +
-                            $"{string.Join(" or ", Scopes.Issuable)}. Administration is the password's, " +
-                            "so that no credential in an agent's configuration can delete a corpus.",
-                    statusCode: 400);
+            if (UnissuableScopes(requested) is { } unissuable) return unissuable;
 
             var expires = body.ExpiresInDays is { } d and > 0 ? DateTime.UtcNow.AddDays(d) : (DateTime?)null;
             var (row, issued) = await tokens.CreateAsync(body.Name.Trim(), requested, expires, ct);
@@ -527,6 +531,53 @@ public static class SystemEndpoints
             await db.Entry(token).Collection(x => x.Corpora).LoadAsync(ct);
             return Results.Ok(token.ToSummary());
         }).Produces<TokenSummary>();
+
+        // Replaced outright, as the mapping is, so that granting configure to an agent that
+        // already works does not mean issuing a key and editing its configuration.
+        t.MapPut("/{id}/scopes", async (string id, UpdateTokenScopesRequest body, RequestContext rc,
+            TokenService tokens, CatalogDbContext db, IMemoryCacheEvictor evictor, ILoggerFactory logs,
+            CancellationToken ct) =>
+        {
+            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+
+            if (body.Scopes is not { Count: > 0 })
+                return Results.Problem(
+                    title: "No scope",
+                    detail: "A key needs at least one scope. To stop a key working, revoke it.",
+                    statusCode: 400);
+            if (UnissuableScopes(body.Scopes) is { } unissuable) return unissuable;
+
+            if (!await tokens.SetScopesAsync(id, body.Scopes, ct)) return Results.NotFound();
+
+            // Scopes travel on the cached principal, unlike the mapping, so without this the
+            // agent keeps its old ones until the cache entry expires.
+            evictor.EvictPrincipals();
+
+            var token = await db.Tokens.AsNoTracking().Include(x => x.Corpora).FirstAsync(x => x.Id == id, ct);
+            logs.CreateLogger("Dexicon.Keys").LogInformation(
+                "Key {Key} scopes set to {Scopes} (requested {Requested})",
+                token.Name, token.Scopes, string.Join(",", body.Scopes));
+            return Results.Ok(token.ToSummary());
+        }).Produces<TokenSummary>();
+    }
+
+    /// <summary>
+    /// A problem result naming each requested scope a key may not hold, or null when all
+    /// of them may be. Administration is absent from <see cref="Scopes.Issuable"/>, so a
+    /// request for it is refused here with the reason.
+    /// </summary>
+    private static IResult? UnissuableScopes(IReadOnlyList<string> requested)
+    {
+        var unknown = requested
+            .Where(s => !Scopes.Issuable.Contains(s.Trim(), StringComparer.OrdinalIgnoreCase)).ToList();
+        return unknown.Count == 0
+            ? null
+            : Results.Problem(
+                title: "Unknown scope",
+                detail: $"{string.Join(", ", unknown)}. A key may hold " +
+                        $"{string.Join(" or ", Scopes.Issuable)}. Administration is the password's, " +
+                        "so that no credential in an agent's configuration can delete a corpus.",
+                statusCode: 400);
     }
 
     /// <summary>

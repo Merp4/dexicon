@@ -267,6 +267,34 @@ public sealed class AdminPasswordTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AKeysScopesChangeInPlaceUnderTheSameRulesAsIssue()
+    {
+        // Granting configure to a working agent without issuing it another key. The stored
+        // column is read, because a principal strips admin on its own and would hide it.
+        var (row, issued) = await _tokens.CreateAsync("agent", [Scopes.Search], null);
+
+        (await _tokens.SetScopesAsync(row.Id, [" Configure ", Scopes.Search, Scopes.Admin, Scopes.Search]))
+            .ShouldBeTrue();
+
+        _db.ChangeTracker.Clear();
+        (await _db.Tokens.AsNoTracking().SingleAsync(t => t.Id == row.Id)).Scopes.ShouldBe("configure,search");
+        var principal = (await _tokens.VerifyAsync(issued.Presented)).ShouldNotBeNull();
+        principal.Has(Scopes.Configure).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ARevokedOrUnknownKeysScopesAreNotChanged()
+    {
+        var (row, _) = await _tokens.CreateAsync("agent", [Scopes.Search], null);
+        await _tokens.RevokeAsync(row.Id);
+
+        (await _tokens.SetScopesAsync(row.Id, [Scopes.Configure])).ShouldBeFalse();
+        (await _tokens.SetScopesAsync("no-such-key", [Scopes.Configure])).ShouldBeFalse();
+        _db.ChangeTracker.Clear();
+        (await _db.Tokens.AsNoTracking().SingleAsync(t => t.Id == row.Id)).Scopes.ShouldBe("search");
+    }
+
+    [Fact]
     public void TheThrottleGrowsThenCapsAndResetsOnSuccess()
     {
         var throttle = new LoginThrottle(TimeProvider.System);

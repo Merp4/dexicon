@@ -150,6 +150,25 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
         (await db.Corpora.CountAsync()).ShouldBe(1);
     }
 
+    [Fact]
+    public async Task Defaults_changed_on_a_corpus_with_no_sources_queue_nothing()
+    {
+        // An agent creating a corpus sets its filters before adding a folder; a refresh then
+        // would be a job that reads nothing.
+        await using var db = _harness.NewContext();
+        var config = _harness.NewConfiguration(db);
+        var defaults = new UpdateCorpusRequest(Defaults: new CorpusDefaults(false, null, null, ["**/bin/**"]));
+        var empty = (await config.CreateCorpusAsync(new CreateCorpusRequest("empty"), default)).Value!;
+
+        (await config.UpdateCorpusAsync(empty, defaults, default)).Value.ShouldBeTrue("the defaults moved");
+        (await db.Jobs.AnyAsync(j => j.CorpusId == empty.Id)).ShouldBeFalse("there is nothing to re-read");
+
+        var withSources = await CorpusAsync(db);
+        (await config.UpdateCorpusAsync(withSources, defaults, default)).Value.ShouldBeTrue();
+        (await db.Jobs.AnyAsync(j => j.CorpusId == withSources.Id && j.Kind == JobKind.Refresh))
+            .ShouldBeTrue("a corpus with sources is still refreshed");
+    }
+
     /// <summary>
     /// A refused change leaves the corpus as it was. The corpus is tracked, so a field set
     /// before the refusal would be saved by the next change on the same context.

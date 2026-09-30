@@ -9,16 +9,24 @@ public static class Scopes
 {
     public const string Search = "search";
     public const string Ingest = "ingest";
+
+    /// <summary>
+    /// Create corpora, and add and change their sources and filters, over MCP. Not remove
+    /// or delete anything, and not keys, the password or models, which stay the admin's.
+    /// See docs/decisions.md D-36.
+    /// </summary>
+    public const string Configure = "configure";
+
     public const string Admin = "admin";
 
-    public static readonly string[] All = [Search, Ingest, Admin];
+    public static readonly string[] All = [Search, Ingest, Configure, Admin];
 
     /// <summary>
     /// What a key may be issued with. <see cref="Admin"/> is absent deliberately: it comes
     /// from the password alone, so no credential sitting in an agent's configuration can
-    /// delete a corpus or mint another key. See docs/decisions.md D-28.
+    /// delete a corpus or mint another key. See docs/decisions.md D-28 and D-36.
     /// </summary>
-    public static readonly string[] Issuable = [Search, Ingest];
+    public static readonly string[] Issuable = [Search, Ingest, Configure];
 }
 
 /// <summary>An authenticated caller. Carries no secret.</summary>
@@ -175,6 +183,20 @@ public sealed class TokenService(CatalogDbContext db, TimeProvider clock)
     {
         var n = await db.Tokens.Where(t => t.Id == tokenId && t.RevokedUtc == null)
             .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedUtc, clock.GetUtcNow().UtcDateTime), ct);
+        return n > 0;
+    }
+
+    /// <summary>
+    /// Replace a key's scopes, normalised as at issue, so an agent can be given or denied
+    /// <c>ingest</c> or <c>configure</c> without being issued a new key and reconfigured.
+    /// Returns false for a key that does not exist or is revoked. The caller evicts cached
+    /// principals, since the scopes travel with one for up to its TTL.
+    /// </summary>
+    public async Task<bool> SetScopesAsync(string tokenId, IEnumerable<string> scopes, CancellationToken ct = default)
+    {
+        var normalised = KeyScopes(scopes);
+        var n = await db.Tokens.Where(t => t.Id == tokenId && t.RevokedUtc == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.Scopes, normalised), ct);
         return n > 0;
     }
 

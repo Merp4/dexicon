@@ -41,6 +41,7 @@ import {
   postApiSession,
   deleteApiSession,
   putApiTokensByIdCorpora,
+  putApiTokensByIdScopes,
   getApiEmbeddingModels,
   getApiEmbeddingProviders,
   getApiJobs,
@@ -70,6 +71,7 @@ import type {
   CreateTokenRequest,
   SignInRequest,
   UpdateTokenCorporaRequest,
+  UpdateTokenScopesRequest,
   JobSummary,
   ProbeModelRequest,
   SaveModelProfileRequest,
@@ -441,6 +443,17 @@ export const api = {
     call(() => putApiTokensByIdCorpora({
       path: { id },
       body: { corpusIds } satisfies UpdateTokenCorporaRequest,
+    })),
+
+  /**
+   * Replace a key's scopes. The server drops its cached principals, so a scope removed is
+   * refused from the agent's next call; a tool a scope adds is listed when its client next
+   * reconnects, since the MCP transport cannot tell it the list changed.
+   */
+  setTokenScopes: (id: string, scopes: string[]) =>
+    call(() => putApiTokensByIdScopes({
+      path: { id },
+      body: { scopes } satisfies UpdateTokenScopesRequest,
     })),
 };
 

@@ -135,6 +135,9 @@ internal sealed class IndexingHarness : IAsyncDisposable
     public CatalogDbContext NewContext() =>
         new(_services.GetRequiredService<DbContextOptions<CatalogDbContext>>());
 
+    /// <summary>The options the harness was built with, for a test that calls a tool directly.</summary>
+    public IOptions<DexiconOptions> Settings => _services.GetRequiredService<IOptions<DexiconOptions>>();
+
     /// <summary>
     /// Corpus and source configuration on the harness's catalogue, vector store and
     /// workspace. Its queue is a real one on a scheduler nothing drains, so a queued job is

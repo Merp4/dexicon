@@ -2358,6 +2358,7 @@ export function AccessView({ onError }: { onError: (e: unknown) => void }) {
   const [corpora, setCorpora] = useState<Corpus[]>([]);
   const [creating, setCreating] = useState(false);
   const [mapping, setMapping] = useState<TokenSummary | null>(null);
+  const [scoping, setScoping] = useState<TokenSummary | null>(null);
   const [revoking, setRevoking] = useState<TokenSummary | null>(null);
   const [issued, setIssued] = useState<Awaited<ReturnType<typeof api.createToken>> | null>(null);
 
@@ -2396,8 +2397,6 @@ export function AccessView({ onError }: { onError: (e: unknown) => void }) {
                 className={cn('flex flex-wrap items-center gap-2.5 px-3 py-2.5', i && 'border-t border-border')}
               >
                 <strong className="text-sm">{t.name}</strong>
-                {/* The API sends the stored form, "search,ingest". */}
-                {t.scopes.split(',').map((s) => s.trim()).filter(Boolean).map((s) => <Badge key={s}>{s}</Badge>)}
                 {t.revokedUtc && <Badge tone="danger">revoked</Badge>}
                 {t.expiresUtc && new Date(t.expiresUtc) < new Date() && <Badge tone="warn">expired</Badge>}
                 <span className="flex-1" />
@@ -2408,6 +2407,14 @@ export function AccessView({ onError }: { onError: (e: unknown) => void }) {
                   </Button>
                 )}
 
+                <div className="basis-[100%] flex flex-wrap items-center gap-1.5 text-xs">
+                  <span className="dim">Scopes</span>
+                  {scopesOf(t).map((s) => <Badge key={s}>{s}</Badge>)}
+                  {!t.revokedUtc && (
+                    <Button aria-label={`Change the scopes of ${t.name}`} onClick={() => setScoping(t)}>Change</Button>
+                  )}
+                </div>
+
                 {/* Its own row, because it is the thing that changes most often. No rows
                     means every corpus, which is not the same as none: a key that should
                     reach nothing is revoked. */}
@@ -2417,7 +2424,7 @@ export function AccessView({ onError }: { onError: (e: unknown) => void }) {
                     ? <Badge>every corpus</Badge>
                     : t.corpusIds.map((id) => <Badge key={id}>{nameOf(id)}</Badge>)}
                   {!t.revokedUtc && (
-                    <Button onClick={() => setMapping(t)}>Change</Button>
+                    <Button aria-label={`Change what ${t.name} reaches`} onClick={() => setMapping(t)}>Change</Button>
                   )}
                 </div>
               </div>
@@ -2426,8 +2433,9 @@ export function AccessView({ onError }: { onError: (e: unknown) => void }) {
         )}
         <p className="dim text-xs mt-2">
           Secrets are shown once, at creation, and are stored only as a PBKDF2 hash. There is no way to
-          recover one. Changing what a key reaches takes effect on that agent's next call; granting
-          ingest is listed to it when its client next reconnects.
+          recover one. Changing what a key reaches takes effect on that agent's next call. A scope
+          removed is refused from its next call; the tools a scope adds are listed to it when its
+          client next reconnects.
         </p>
       </section>
 
@@ -2436,6 +2444,14 @@ export function AccessView({ onError }: { onError: (e: unknown) => void }) {
           token={revoking}
           onClose={() => setRevoking(null)}
           onRevoked={async () => { setRevoking(null); await load(); }}
+        />
+      )}
+
+      {scoping && (
+        <ScopesModal
+          token={scoping}
+          onClose={() => setScoping(null)}
+          onSaved={async () => { setScoping(null); await load(); }}
         />
       )}
 
@@ -2477,6 +2493,92 @@ export function AccessView({ onError }: { onError: (e: unknown) => void }) {
         </Modal>
       )}
     </div>
+  );
+}
+
+/** A key's scopes, from the stored form the API sends: "search,ingest". */
+function scopesOf(t: TokenSummary): string[] {
+  return t.scopes.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+/** The scopes a key can hold, and what each lets its agent do. */
+const KEY_SCOPES: { id: string; does: string }[] = [
+  { id: 'search', does: 'search and read the corpora the key reaches' },
+  { id: 'ingest', does: 'queue a reindex, with index_refresh' },
+  {
+    id: 'configure',
+    does: 'create corpora and add or change their folders and filters, with list_folders, '
+      + 'configure_corpus and configure_source. It cannot remove anything',
+  },
+];
+
+function ScopeField({ value, onChange }: { value: string[]; onChange: (scopes: string[]) => void }) {
+  const toggle = (s: string) => onChange(value.includes(s) ? value.filter((x) => x !== s) : [...value, s]);
+
+  return (
+    <Field label="Scopes" hint="Administration is the password's, so a key cannot hold it.">
+      <div className="flex gap-1.5 flex-wrap">
+        {KEY_SCOPES.map(({ id }) => (
+          <Chip key={id} type="button" active={value.includes(id)} onClick={() => toggle(id)}>
+            {value.includes(id) && <Check />}
+            {id}
+          </Chip>
+        ))}
+      </div>
+      <ul className="text-xs text-muted-foreground m-0 pl-4">
+        {KEY_SCOPES.map(({ id, does }) => <li key={id}><strong>{id}</strong>: {does}.</li>)}
+      </ul>
+      {/* What the corpus mapping cannot limit: a folder no corpus reads becomes readable
+          once the agent adds it to one it reaches. */}
+      {value.includes('configure') && (
+        <Notice tone="warn">
+          With configure, the agent can add any mounted folder to a corpus it reaches, or to one it
+          creates, and then search it. It reaches the whole workspace, whatever corpora it is limited to.
+        </Notice>
+      )}
+    </Field>
+  );
+}
+
+/**
+ * What a key may do, replaced outright as the mapping is. The server drops its cached
+ * principals, so a scope removed is refused from the agent's next call.
+ */
+function ScopesModal({ token, onClose, onSaved }: {
+  token: TokenSummary;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [error, setError] = useState<unknown>(null);
+  const [scopes, setScopes] = useState<string[]>(() => scopesOf(token));
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <Modal title={`What ${token.name} can do`} onClose={onClose}>
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          setError(null);
+          try { await api.setTokenScopes(token.id, scopes); await onSaved(); }
+          catch (err) { setError(err); setBusy(false); }
+        }}
+      >
+        <ScopeField value={scopes} onChange={setScopes} />
+        <p className="dim text-xs mt-3 mb-0">
+          {scopes.length === 0
+            ? 'A key needs at least one scope. To stop a key working, revoke it.'
+            : 'A scope removed is refused from the agent\'s next call. The tools a scope adds are listed when its client next reconnects.'}
+        </p>
+        <div className="flex gap-2 justify-end mt-4">
+          <Button type="button" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" type="submit" disabled={scopes.length === 0 || busy}>
+            {busy ? <Spinner /> : null} Save
+          </Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -2556,8 +2658,6 @@ function CreateTokenModal({ onClose, onCreated, corpora }: {
   const [picked, setPicked] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
-  const toggle = (s: string) => setScopes((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
-
   return (
     <Modal title="New key" onClose={onClose}>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
@@ -2573,19 +2673,7 @@ function CreateTokenModal({ onClose, onCreated, corpora }: {
         <Field label="Name" hint="Which agent this is for. It appears in the audit log.">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="claude-code" autoFocus />
         </Field>
-        <Field
-          label="Scopes"
-          hint="search reads; ingest lets the agent trigger a reindex, and is what puts index_refresh on its MCP tool list. Administration is the password's, so a key cannot hold it."
-        >
-          <div className="flex gap-1.5 flex-wrap">
-            {['search', 'ingest'].map((s) => (
-              <Chip key={s} type="button" active={scopes.includes(s)} onClick={() => toggle(s)}>
-                {scopes.includes(s) && <Check />}
-                {s}
-              </Chip>
-            ))}
-          </div>
-        </Field>
+        <ScopeField value={scopes} onChange={setScopes} />
         <Field
           label="Corpora"
           hint="What this agent can search. Tick none for every corpus. Changeable afterwards without reissuing the key."

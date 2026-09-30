@@ -234,7 +234,10 @@ public sealed class CorpusConfiguration(
 
         await db.SaveChangesAsync(ct);
 
-        if (filtersChanged) await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
+        // Not for a corpus with no sources, which has nothing to re-read: defaults set just
+        // after creation, before a folder is added, would otherwise leave an empty job.
+        if (filtersChanged && await db.Sources.AnyAsync(s => s.CorpusId == corpus.Id, ct))
+            await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
 
         return filtersChanged;
     }

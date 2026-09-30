@@ -58,7 +58,13 @@ belongs to the key.
 - Stored with the same PBKDF2 parameters as the password. Presented once, at creation, with
   a copy button. There is no "show key" anywhere, because there is nothing to show.
 - Scopes: `search` reads and queries; `ingest` additionally permits a reindex of the corpora
-  the key is mapped to. **`admin` is not issuable to a key** and is stripped if requested.
+  the key is mapped to; `configure` permits creating corpora and adding or changing their
+  sources and filters over MCP, and nothing that removes or deletes
+  ([D-36](decisions.md#d-36-a-configure-scope-agents-set-up-what-is-indexed)). **`admin` is
+  not issuable to a key** and is stripped if requested.
+- Scopes can be changed after issue, on the Access page or with
+  `PUT /api/tokens/{id}/scopes`, under the same rules. The change evicts cached principals,
+  so a scope removed is refused from the agent's next call.
 - Optional expiry. Optional revocation, effective immediately: the principal cache holds
   entries for 60 s and revocation evicts rather than waiting.
 
@@ -74,6 +80,11 @@ Rows in `token_corpora`, edited in the UI under **Access**.
 Empty means everything rather than nothing, which is what keeps a single-user install from
 having to configure anything. A key that should reach nothing is **revoked**, not emptied.
 
+The mapping does not limit `configure`. A key holding it can add any mounted folder to a
+corpus it reaches, or create a corpus over that folder, and then search it, so it reaches the
+whole workspace; the Access page says so when the scope is ticked. A corpus the key creates
+is added to its mapping when it has one, so that it can reach what it made.
+
 The mapping is read from the catalogue on every request and is deliberately not carried on
 the cached principal: that cache has a 60-second TTL, and an operator who ticks a corpus and
 watches an agent keep missing it for a minute concludes the feature is broken. Ticking a
@@ -82,15 +93,16 @@ configuration. That asymmetry has one exception, below.
 
 ### The MCP tool list is not live
 
-A key without `ingest` is not shown `index_refresh` at all, rather than being refused when
-it calls it: an agent that can see a tool will call it, spend a turn on the error, and
-sometimes retry. `McpRequestFilters.ListToolsFilters` removes it from `tools/list`, which
-carries the bearer like every other request.
+A key without `ingest` is not shown `index_refresh` at all, and one without `configure` is
+not shown `list_folders`, `configure_corpus` or `configure_source`, rather than being refused
+when it calls one: an agent that can see a tool will call it, spend a turn on the error, and
+sometimes retry. `McpRequestFilters.ListToolsFilters` removes them from `tools/list`, which
+carries the bearer like every other request. Each tool checks its scope when called as well.
 
 But the transport is stateless ([D-12](decisions.md#d-12-stateless-streamable-http-mcp-2026-07-28)),
 so there is no `notifications/tools/list_changed` to send, and a client lists on connect and
-caches. **Granting `ingest` reaches an agent when its client reconnects; mapping a corpus
-reaches it on the next call.** The UI says so next to the tick.
+caches. **Granting a scope reaches an agent's tool list when its client reconnects; mapping
+a corpus reaches it on the next call.** The UI says so next to the tick.
 
 ### Browser auth
 
@@ -129,8 +141,9 @@ The last rule is the one that matters, so it is defended three times over:
   detectable.
 
 Writes are governed by the scope guard at the endpoint and the same resolution: `ingest`
-decides whether a caller may reindex at all, and `ResolveWritableAsync` decides which corpus
-they meant, within what they can reach. Neither substitutes for the other.
+decides whether a caller may reindex at all, `configure` whether it may change a corpus or
+its sources, and `ResolveWritableAsync` decides which corpus they meant, within what they
+can reach. Neither substitutes for the other.
 
 ### The tests that prove it
 

@@ -683,7 +683,7 @@ public sealed class DexiconTools
         return sb.ToString();
     }
 
-    private static void Require(RequestContext rc, string scope)
+    internal static void Require(RequestContext rc, string scope)
     {
         var principal = rc.Principal
             ?? throw new McpException("Not authenticated. Add an Authorization: Bearer dex_… header to the MCP server configuration.");
@@ -691,6 +691,6 @@ public sealed class DexiconTools
         if (!principal.Has(scope))
             throw new McpException(
                 $"This key has scopes [{string.Join(", ", principal.Scopes)}] and needs '{scope}'. " +
-                "Issue a token with that scope in the Dexicon UI.");
+                "Whoever runs Dexicon can grant it on the Access page.");
     }
 }

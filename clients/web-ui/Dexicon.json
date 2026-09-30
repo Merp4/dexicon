@@ -1181,6 +1181,45 @@
         }
       }
     },
+    "/api/tokens/{id}/scopes": {
+      "put": {
+        "tags": [
+          "Tokens"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTokenScopesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/search": {
       "post": {
         "tags": [
@@ -4034,6 +4073,20 @@
         "type": "object",
         "properties": {
           "corpusIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "UpdateTokenScopesRequest": {
+        "required": [
+          "scopes"
+        ],
+        "type": "object",
+        "properties": {
+          "scopes": {
             "type": "array",
             "items": {
               "type": "string"
