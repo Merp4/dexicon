@@ -50,9 +50,11 @@ public sealed class CorpusConfiguration(
 
     /// <summary>
     /// A conflict when a corpus already holds this name, compared as
-    /// <see cref="Dexicon.Core.Auth.ScopeResolver"/> resolves one: ordinal, ignoring case. SQLite's NOCASE
-    /// folds ASCII only, so "Å" beside "å" passed it, and one name then reached either
-    /// corpus. The names are read whole because there are tens of them.
+    /// <see cref="Dexicon.Core.Auth.ScopeResolver"/> resolves one: ordinal, ignoring case. The column
+    /// has no collation, so its unique index compares exactly, and SQLite's NOCASE folds
+    /// ASCII only. Neither refuses "å" beside "Å", and one name would then resolve to either
+    /// corpus. The comparison is therefore made here, over the names read whole, since there
+    /// are tens of them.
     /// </summary>
     private async Task<ConfigRefusal?> TakenAsync(string name, CancellationToken ct)
     {

@@ -103,9 +103,9 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// Case is ignored beyond ASCII, as the resolver ignores it. SQLite's NOCASE folds ASCII
-    /// only, so a second corpus whose name differed in the case of "Å" was created, and the
-    /// name then reached either of them.
+    /// Case is ignored beyond ASCII, as the resolver ignores it. The name column has no
+    /// collation, so the database alone accepts "ångström" beside "Ångström", and a SQL
+    /// comparison under NOCASE would too, since it folds ASCII only.
     /// </summary>
     [Fact]
     public async Task A_name_differing_only_in_the_case_of_a_non_ascii_letter_is_taken()
