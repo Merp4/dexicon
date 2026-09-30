@@ -40,146 +40,25 @@ public static class CorpusEndpoints
         }).Produces<CorpusSummary>().WithGroupName(OpenApiDocuments.Integration);
 
         g.MapPost("/", async (CreateCorpusRequest body, RequestContext rc, CatalogDbContext db,
-            IVectorStore vectors, IEmbeddingService embedder, IOptions<DexiconOptions> opts,
-            CorpusIndexer indexer, IndexJobQueue queue, SweepQueue sweeps, CancellationToken ct) =>
+            CorpusConfiguration config, IOptions<DexiconOptions> opts, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var principal = rc.RequirePrincipal();
 
-            if (string.IsNullOrWhiteSpace(body.Name))
-                return Results.Problem(title: "Name is required", statusCode: 400);
+            var created = await config.CreateCorpusAsync(body, ct);
+            if (created.Refusal is { } refused) return refused.ToResult();
 
-            if (await db.Corpora.AnyAsync(c => c.Name == body.Name, ct))
-                return Results.Problem(
-                    title: "Corpus already exists",
-                    detail: $"A corpus named '{body.Name}' already exists. Names are unique " +
-                            "because the name is what an agent passes to search_index.",
-                    statusCode: 409);
-
-            var model = string.IsNullOrWhiteSpace(body.EmbeddingModel)
-                ? opts.Value.Embedding.Model
-                : body.EmbeddingModel.Trim();
-
-            var provider = string.IsNullOrWhiteSpace(body.EmbeddingProvider)
-                ? opts.Value.Embedding.Provider
-                : body.EmbeddingProvider.Trim();
-
-            var target = new EmbeddingTarget(provider, model);
-
-            int dims;
-            try
-            {
-                dims = await embedder.ProbeDimensionsAsync(target, ct);
-            }
-            catch (UnknownEmbeddingProviderException ex)
-            {
-                return Results.Problem(title: "Unknown embedding provider", detail: ex.Message, statusCode: 400);
-            }
-            catch (EmbeddingUnavailableException ex)
-            {
-                // Refuse rather than guess. A corpus created with the wrong dimension
-                // count is unusable and the failure surfaces much later, as bad results.
-                return Results.Problem(
-                    title: "Embedding model unavailable",
-                    detail: $"Could not probe '{target}': {ex.Message}. The corpus was not created.",
-                    statusCode: 503);
-            }
-
-            var indexing = opts.Value.Indexing;
-            var corpus = new Corpus
-            {
-                Id = Ulid.NewUlid().ToString(),
-                Name = body.Name.Trim(),
-                Description = body.Description,
-                State = CorpusState.Ready,
-                CreatedUtc = DateTime.UtcNow,
-            };
-
-            // Every corpus is born with one set. Nothing else has to special-case the
-            // "no sets yet" state, and the settings a caller passed at creation have a
-            // home that is honest about what they configure.
-            corpus.ChunkSets.Add(new ChunkSet
-            {
-                Id = Ulid.NewUlid().ToString(),
-                CorpusId = corpus.Id,
-                Name = "default",
-                EmbeddingProvider = provider,
-                EmbeddingModel = model,
-                EmbeddingDimensions = dims,
-                CollectionName = vectors.CollectionNameFor(target, dims),
-                ChunkSize = body.ChunkSize ?? indexing.ChunkSize,
-                ChunkOverlap = body.ChunkOverlap ?? indexing.ChunkOverlap,
-                BoundaryMode = body.BoundaryMode ?? indexing.BoundaryMode,
-                IsDefault = true,
-                State = CorpusState.Ready,
-                CreatedUtc = DateTime.UtcNow,
-            });
-
-            if (!string.IsNullOrWhiteSpace(body.WorkspacePath))
-            {
-                try { indexer.ResolveWorkspacePath(body.WorkspacePath); }
-                catch (UnauthorizedAccessException ex)
-                { return Results.Problem(title: "Invalid workspace path", detail: ex.Message, statusCode: 400); }
-
-                corpus.Sources.Add(FirstSource(corpus.Id, body.WorkspacePath));
-            }
-
-            db.Corpora.Add(corpus);
-            await db.SaveChangesAsync(ct);
-            await vectors.EnsureCollectionAsync(corpus.ChunkSets[0].CollectionName, dims, ct);
-
-            // Naming a folder is asking for it to be indexed. Without this the corpus is
-            // created EMPTY and reports itself ready, and the only sign is a file count of
-            // zero that reads like "this folder had nothing in it": the first thing a new
-            // user does appears to do nothing until someone thinks to press Refresh.
-            if (corpus.Sources.Count > 0)
-            {
-                await queue.EnqueueAsync(corpus.Id, JobKind.Full, ct: ct);
-
-                // And a sweep, which is the case D-32 was written for: a corpus created
-                // while another is indexing would otherwise report nothing at all until
-                // the job above reached the front of the queue.
-                sweeps.Enqueue(corpus.Id);
-            }
-
+            var corpus = created.Value!;
             return Results.Created($"/api/corpora/{corpus.Id}", await Summarise(db, corpus, opts.Value.Indexing, ct));
         }).Produces<CorpusSummary>();
 
         g.MapPatch("/{nameOrId}", async (string nameOrId, UpdateCorpusRequest body, RequestContext rc,
-            ScopeResolver scopes, CatalogDbContext db, IOptions<DexiconOptions> opts,
-            IndexJobQueue queue, CancellationToken ct) =>
+            ScopeResolver scopes, CatalogDbContext db, CorpusConfiguration config, IOptions<DexiconOptions> opts,
+            CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var principal = rc.RequirePrincipal();
-            var corpus = await scopes.ResolveWritableAsync(principal, nameOrId, ct);
+            var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
 
-            // Chunk settings are NOT here any more. They belong to a chunk set, because a
-            // corpus can carry several and "the corpus's chunk size" stopped meaning
-            // anything the moment that became true. See /api/corpora/{id}/chunk-sets.
-            if (body.Description is not null) corpus.Description = body.Description;
-
-            // Changing what sources inherit changes which files are in the index, so it
-            // queues a refresh the way adding a source does. Narrowing a glob removes the
-            // files it now excludes through the walk's own reconcile: they are simply not
-            // seen, which is the path a deleted file already takes.
-            var filtersChanged = false;
-            if (body.Defaults is { } d)
-            {
-                filtersChanged =
-                    corpus.DefaultUseGitignore != d.UseGitignore ||
-                    corpus.DefaultMaxFileBytes != d.MaxFileBytes ||
-                    corpus.DefaultIncludeGlobs != SourceFilters.Store(d.IncludeGlobs) ||
-                    corpus.DefaultExcludeGlobs != SourceFilters.Store(d.ExcludeGlobs);
-
-                corpus.DefaultUseGitignore = d.UseGitignore;
-                corpus.DefaultMaxFileBytes = d.MaxFileBytes;
-                corpus.DefaultIncludeGlobs = SourceFilters.Store(d.IncludeGlobs);
-                corpus.DefaultExcludeGlobs = SourceFilters.Store(d.ExcludeGlobs);
-            }
-
-            await db.SaveChangesAsync(ct);
-
-            if (filtersChanged) await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
+            if ((await config.UpdateCorpusAsync(corpus, body, ct)).Refusal is { } refused) return refused.ToResult();
 
             return Results.Ok(new CorpusUpdated(await Summarise(db, corpus, opts.Value.Indexing, ct)));
         }).Produces<CorpusUpdated>();
@@ -204,136 +83,26 @@ public static class CorpusEndpoints
         });
 
         g.MapPost("/{nameOrId}/sources", async (string nameOrId, AddSourceRequest body, RequestContext rc,
-            ScopeResolver scopes, CatalogDbContext db, IOptions<DexiconOptions> opts,
-            IndexJobQueue queue, SweepQueue sweeps, CancellationToken ct) =>
+            ScopeResolver scopes, CorpusConfiguration config, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
 
-            // The shape of the request first, because judging it costs nothing and the
-            // check below it starts a git process. A request carrying both a bad path
-            // and a setting that cannot apply was answered with the path, so the caller
-            // fixed that, resent, and only then learnt about the setting.
-            if (body.Git is not null && !body.GitHistory)
-                return Results.Problem(
-                    title: "Not a git-history source",
-                    detail: "History settings were sent for a source that indexes files. Set "
-                          + "gitHistory: true to index the repository's commits, or leave them out.",
-                    statusCode: 400);
-
-            if (FileOnlySettingsFor(
-                    body.GitHistory ? SourceKind.GitHistory : SourceKind.Workspace,
-                    body.UseGitignore, body.MaxFileBytes, body.ExcludeGlobs) is { } unusable)
-                return Results.Problem(
-                    title: "Not a file source",
-                    detail: $"{unusable} apply to a folder being walked, and a history source is "
-                          + "walked by git log. Include globs work there, as pathspecs.",
-                    statusCode: 400);
-
-            if (body.GitHistory && UnusableHistorySettings(body.Git) is { } refused) return refused;
-
-            // The boundary, for every kind of source. Existence is deliberately not
-            // required here: a workspace source may be added while its mount is away,
-            // and a pass reports that as unavailable rather than losing the source.
-            //
-            // A history source is the exception, refused at the door rather than
-            // recorded and discovered on the first pass. A source that can never produce
-            // anything is worse than a 400: it sits in the list looking configured, and
-            // the reason only ever appears in a job.
-            //
-            // Both inside the one catch, because both resolve the same path by the same
-            // rule and either can refuse it — RepositoryIn walks the real directories
-            // and so also refuses a link that leaves the root, which the string check
-            // cannot see.
-            try
-            {
-                var root = opts.Value.Indexing.WorkspaceRoot;
-                WorkspaceDiscovery.Resolve(root, body.WorkspacePath);
-
-                if (body.GitHistory
-                    && await NotAHistoryRootAsync(root, body.WorkspacePath, GitHistory.IsRepositoryAsync, ct)
-                        is { } notARepository)
-                    return notARepository;
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                return Results.Problem(title: "Invalid workspace path", detail: ex.Message, statusCode: 400);
-            }
-
-            var source = new Source
-            {
-                Id = Ulid.NewUlid().ToString(),
-                CorpusId = corpus.Id,
-                Kind = body.GitHistory ? SourceKind.GitHistory : SourceKind.Workspace,
-                GitOptions = body.GitHistory ? (body.Git ?? new GitHistoryOptions()).ToJson() : null,
-                RootPath = body.WorkspacePath.Trim('/', '\\'),
-                // Null, not a default. An omitted field means this source has no opinion
-                // and follows the corpus, which is the point of the corpus having one.
-                UseGitignore = body.UseGitignore,
-                MaxFileBytes = body.MaxFileBytes,
-                IncludeGlobs = SourceFilters.Store(body.IncludeGlobs),
-                ExcludeGlobs = SourceFilters.Store(body.ExcludeGlobs),
-                CreatedUtc = DateTime.UtcNow,
-            };
-
-            db.Sources.Add(source);
-            await db.SaveChangesAsync(ct);
-
-            // Same reason as creation: adding a folder is asking for it to be read. A
-            // Refresh rather than a Full, because the corpus's other sources are already
-            // indexed and re-embedding them costs real money on a hosted provider.
-            var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
-
-            // And a sweep, on its own lane. The job above answers "what is in this folder"
-            // as well, but only once it reaches the front of a queue that may be hours
-            // deep; the sweep answers it in seconds. Adding a folder and being told the
-            // corpus holds nothing is the case D-32 exists for.
-            sweeps.Enqueue(corpus.Id);
-
-            return Results.Ok(new SourceAdded(
-                source.ToSummary(corpus, opts.Value.Indexing), job.ToSummary()));
+            var added = await config.AddSourceAsync(corpus, body, ct);
+            return added.Refusal is { } refused ? refused.ToResult() : Results.Ok(added.Value);
         }).Produces<SourceAdded>();
 
         // Adding a folder was one call; removing one was deleting the whole corpus and
         // building it again, losing its chunk sets, its history and every other source
         // with it. A path typed wrong is not a reason to lose all of that.
         g.MapDelete("/{nameOrId}/sources/{sourceId}", async (string nameOrId, string sourceId,
-            RequestContext rc, ScopeResolver scopes, CatalogDbContext db, IVectorStore vectors,
-            CancellationToken ct) =>
+            RequestContext rc, ScopeResolver scopes, CorpusConfiguration config, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
 
-            var source = await db.Sources
-                .FirstOrDefaultAsync(s => s.Id == sourceId && s.CorpusId == corpus.Id, ct);
-
-            if (source is null)
-                return Results.Problem(
-                    title: "No such source",
-                    detail: $"Corpus '{corpus.Name}' has no source '{sourceId}'.",
-                    statusCode: 404);
-
-            var paths = await db.Files.Where(f => f.SourceId == source.Id)
-                .Select(f => f.RelativePath).ToListAsync(ct);
-
-            // Vectors first, for the same reason RemoveAttachmentAsync does it: if the
-            // catalogue row went first and this threw, the corpus would keep returning
-            // hits for files it no longer lists.
-            //
-            // Once per set, because a removed folder has to leave every chunking of the
-            // corpus rather than only the default, and scoped to this source, because a file_path is
-            // relative to a source root and another source may hold the same name.
-            var sets = await db.ChunkSets.Where(s => s.CorpusId == corpus.Id).ToListAsync(ct);
-            foreach (var set in sets)
-                foreach (var path in paths)
-                    await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, source.Id, path, ct);
-
-            // The file rows and their per-set chunk states go with it: both cascade from
-            // Source, so removing it is the whole of the catalogue side.
-            db.Sources.Remove(source);
-            await db.SaveChangesAsync(ct);
-
-            return Results.NoContent();
+            var removed = await config.RemoveSourceAsync(corpus, sourceId, ct);
+            return removed.Refusal is { } refused ? refused.ToResult() : Results.NoContent();
         });
 
         // Filters were write-once: set when the folder was added and then unreachable, so
@@ -341,69 +110,14 @@ public static class CorpusEndpoints
         // set, and re-embedding the folder from scratch. Nobody iterates on a glob at that
         // price.
         g.MapPatch("/{nameOrId}/sources/{sourceId}", async (string nameOrId, string sourceId,
-            UpdateSourceRequest body, RequestContext rc, ScopeResolver scopes, CatalogDbContext db,
-            IOptions<DexiconOptions> opts, IndexJobQueue queue, CancellationToken ct) =>
+            UpdateSourceRequest body, RequestContext rc, ScopeResolver scopes, CorpusConfiguration config,
+            CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
 
-            var source = await db.Sources
-                .FirstOrDefaultAsync(s => s.Id == sourceId && s.CorpusId == corpus.Id, ct);
-
-            if (source is null)
-                return Results.Problem(
-                    title: "No such source",
-                    detail: $"Corpus '{corpus.Name}' has no source '{sourceId}'.",
-                    statusCode: 404);
-
-            if (source.Kind == SourceKind.Upload)
-                return Results.Problem(
-                    title: "Not a walked source",
-                    detail: "Filters apply to a folder being walked. An upload source has no tree to filter.",
-                    statusCode: 400);
-
-            if (body.Git is not null && source.Kind != SourceKind.GitHistory)
-                return Results.Problem(
-                    title: "Not a git-history source",
-                    detail: $"Source '{sourceId}' indexes files, not commits, so it has no history "
-                          + "settings. Add a second source over the same folder with gitHistory: true.",
-                    statusCode: 400);
-
-            if (body.MaxFileBytes is { } m && m <= 0)
-                return Results.Problem(
-                    title: "Invalid size cap",
-                    detail: "maxFileBytes must be greater than zero. Name it in `clear` to inherit the corpus default.",
-                    statusCode: 400);
-
-            if (UnknownClearName(body.Clear) is { } unknown)
-                return Results.Problem(
-                    title: "Unknown filter",
-                    detail: $"'{unknown}' is not a filter that can be cleared. "
-                          + $"Name one of: {string.Join(", ", ClearableFilters)}.",
-                    statusCode: 400);
-
-            if (FileOnlySettingsFor(source.Kind, body.UseGitignore, body.MaxFileBytes, body.ExcludeGlobs)
-                is { } inapplicable)
-                return Results.Problem(
-                    title: "Not a file source",
-                    detail: $"Source '{sourceId}' indexes commits, so {inapplicable} would be stored "
-                          + "and never read. Include globs work there, as pathspecs.",
-                    statusCode: 400);
-
-            if (UnusableHistorySettings(body.Git) is { } refused) return refused;
-
-            var changed = ApplyFilters(source, body);
-
-            if (body.Git is { } git && ApplyHistorySettings(source, git)) changed = true;
-
-            await db.SaveChangesAsync(ct);
-
-            // Only when something moved. A form submitted unchanged should not re-walk a
-            // library, and a refresh on every save is how that happens.
-            var job = changed ? await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct) : null;
-
-            return Results.Ok(new SourceUpdated(
-                source.ToSummary(corpus, opts.Value.Indexing), job?.ToSummary()));
+            var updated = await config.UpdateSourceAsync(corpus, sourceId, body, ct);
+            return updated.Refusal is { } refused ? refused.ToResult() : Results.Ok(updated.Value);
         }).Produces<SourceUpdated>();
 
         // Its own endpoint rather than a field on the summary: answering it reads the
@@ -718,7 +432,7 @@ public static class CorpusEndpoints
     /// with git's reason. <paramref name="isRepository"/> is the probe, passed in so a test
     /// can make it fail the way a deployment's git does.
     /// </summary>
-    internal static async Task<IResult?> NotAHistoryRootAsync(
+    internal static async Task<ConfigRefusal?> NotAHistoryRootAsync(
         string workspaceRoot, string workspacePath,
         Func<GitRepository, CancellationToken, Task<bool>> isRepository, CancellationToken ct)
     {
@@ -730,14 +444,14 @@ public static class CorpusEndpoints
         }
         catch (GitHistoryException ex)
         {
-            return Results.Problem(title: "git could not be asked", detail: ex.Message, statusCode: 503);
+            return new ConfigRefusal("git could not be asked", ex.Message, 503);
         }
 
-        return Results.Problem(
-            title: "Not a git repository",
-            detail: $"'{workspacePath}' has no git repository in it, so there is no "
-                  + "history to index. Point this at the folder holding .git.",
-            statusCode: 400);
+        return new ConfigRefusal(
+            "Not a git repository",
+            $"'{workspacePath}' has no git repository in it, so there is no "
+            + "history to index. Point this at the folder holding .git.",
+            400);
     }
 
     /// <summary>
@@ -749,9 +463,9 @@ public static class CorpusEndpoints
     /// makes, and none of them runs git, so a request is still judged before any process
     /// starts. Null settings are the defaults, which are usable.
     /// </summary>
-    internal static IResult? UnusableHistorySettings(GitHistoryOptions? git) =>
+    internal static ConfigRefusal? UnusableHistorySettings(GitHistoryOptions? git) =>
         git is not null && GitHistory.Problem(git) is { } problem
-            ? Results.Problem(title: "Unusable history settings", detail: problem, statusCode: 400)
+            ? new ConfigRefusal("Unusable history settings", problem, 400)
             : null;
 
     /// <summary>

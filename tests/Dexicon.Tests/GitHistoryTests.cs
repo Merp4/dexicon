@@ -596,17 +596,16 @@ public sealed class GitHistoryTests : IDisposable
         {
             var notOne = await Dexicon.Api.CorpusEndpoints.NotAHistoryRootAsync(
                 Path.GetDirectoryName(plain)!, Path.GetFileName(plain), GitHistory.IsRepositoryAsync, default);
-            notOne.ShouldBeOfType<Microsoft.AspNetCore.Http.HttpResults.ProblemHttpResult>()
-                .StatusCode.ShouldBe(400);
+            notOne.ShouldNotBeNull().Status.ShouldBe(400);
         }
         finally { Directory.Delete(plain, recursive: true); }
 
         var unasked = await Dexicon.Api.CorpusEndpoints.NotAHistoryRootAsync(root, name,
             (_, _) => throw new GitHistoryException("git could not be started. A git-history source needs the git binary on PATH."),
             default);
-        var problem = unasked.ShouldBeOfType<Microsoft.AspNetCore.Http.HttpResults.ProblemHttpResult>();
-        problem.StatusCode.ShouldBe(503);
-        problem.ProblemDetails.Detail.ShouldNotBeNull().ShouldContain("could not be started");
+        var problem = unasked.ShouldNotBeNull();
+        problem.Status.ShouldBe(503);
+        problem.Detail.ShouldContain("could not be started");
     }
 
     /// <summary>

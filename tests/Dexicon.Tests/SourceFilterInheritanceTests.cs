@@ -293,10 +293,9 @@ public sealed class SourceFilterUpdateTests
 
     private static string Refusal(GitHistoryOptions git)
     {
-        var problem = CorpusEndpoints.UnusableHistorySettings(git)
-            .ShouldBeOfType<Microsoft.AspNetCore.Http.HttpResults.ProblemHttpResult>();
-        problem.StatusCode.ShouldBe(400);
-        return problem.ProblemDetails.Detail.ShouldNotBeNull();
+        var problem = CorpusEndpoints.UnusableHistorySettings(git).ShouldNotBeNull();
+        problem.Status.ShouldBe(400);
+        return problem.Detail;
     }
 
     /// <summary>
