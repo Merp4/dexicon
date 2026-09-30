@@ -1834,8 +1834,8 @@ exist, which the API accepts for a mount that is away.
 **Tool count.** [D-11](#d-11-five-mcp-tools) holds for a key without the scope: the
 `tools/list` filter [D-28](#d-28-an-admin-password-and-scoped-api-keys) added for `ingest`
 also hides the three configuration tools, so such a key is listed at most five. A key
-holding `configure` is listed eight, which is the cost of the grant. Each tool checks its
-scope when called as well.
+holding `configure` is listed seven, or eight with `ingest` as well, which is the cost of
+the grant. Each tool checks its scope when called as well.
 
 **Rejected.** Admin over MCP, for [D-11](#d-11-five-mcp-tools)'s reason: deleting and
 key management stay where a person is present. Removal over MCP: a source removed by

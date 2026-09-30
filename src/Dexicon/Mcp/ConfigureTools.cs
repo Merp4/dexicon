@@ -231,14 +231,17 @@ public sealed class ConfigureTools
         var target = await WritableAsync(scopes, principal, corpus, "", ct);
         var workspace = opts.Value.Indexing.WorkspaceRoot;
         var root = WorkspaceDiscovery.Canonical(workspace, folder);
-        if (root.StartsWith("..", StringComparison.Ordinal))
+        // A segment of "..", not any name starting with two dots: "..data" is a folder.
+        if (root == ".." || root.StartsWith("../", StringComparison.Ordinal))
             throw new McpException($"'{folder}' is outside the workspace. list_folders shows what is mounted.");
         var wanted = isHistory ? SourceKind.GitHistory : SourceKind.Workspace;
         var what = $"{(isHistory ? "commit history of" : "files under")} {(root.Length == 0 ? "the workspace root" : root)}";
 
         var sources = await db.Sources.AsNoTracking().Where(s => s.CorpusId == target.Id).ToListAsync(ct);
-        // Both sides canonical, so docs/. and x/../docs find the source on docs.
-        var existing = sources.Find(s => s.Kind == wanted && WorkspaceDiscovery.Canonical(workspace, s.RootPath) == root);
+        // Both sides canonical, so docs/. and x/../docs find the source on docs, and compared
+        // as the filesystem compares them, so Docs does too where case is not significant.
+        var existing = sources.Find(s => s.Kind == wanted
+            && WorkspaceDiscovery.PathComparer.Equals(WorkspaceDiscovery.Canonical(workspace, s.RootPath), root));
 
         string action;
         string? jobId;
@@ -346,13 +349,13 @@ public sealed class ConfigureTools
             .ToListAsync(ct);
 
         return sources
-            .GroupBy(s => WorkspaceDiscovery.Canonical(workspaceRoot, s.RootPath), StringComparer.Ordinal)
+            .GroupBy(s => WorkspaceDiscovery.Canonical(workspaceRoot, s.RootPath), WorkspaceDiscovery.PathComparer)
             .ToDictionary(
                 g => g.Key,
                 g => string.Join(", ", g
                     .Select(s => $"{names[s.CorpusId]} ({(s.Kind == SourceKind.GitHistory ? "history" : "files")})")
                     .Order(StringComparer.Ordinal)),
-                StringComparer.Ordinal);
+                WorkspaceDiscovery.PathComparer);
     }
 
     /// <summary>A path as the catalogue and the listing both compare it: forward slashes, no outer ones.</summary>

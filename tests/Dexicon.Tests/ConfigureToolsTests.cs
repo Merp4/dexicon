@@ -168,12 +168,39 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_folder_outside_the_workspace_is_refused()
+    public async Task A_folder_outside_the_workspace_is_refused_and_one_named_with_two_dots_is_not()
     {
         await using var db = _harness.NewContext();
 
         (await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, "../elsewhere", create: true)))
             .Message.ShouldContain("outside the workspace");
+        (await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, "..", create: true)))
+            .Message.ShouldContain("outside the workspace");
+
+        Directory.CreateDirectory(Path.Combine(Workspace, "..data"));
+        (await SourceAsync(db, Configurer, "..data", create: true)).ShouldStartWith("Added a source for the files under ..data");
+    }
+
+    [Fact]
+    public async Task A_folder_differing_in_case_is_the_same_source_only_where_the_filesystem_says_so()
+    {
+        // On Windows and macOS "NOTES" is the folder notes, and adding it would be a second
+        // source over the same files. On Linux it is another folder, which is not there.
+        await using var db = _harness.NewContext();
+        var before = await db.Sources.CountAsync();
+
+        var refusal = await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, "NOTES", create: true));
+
+        refusal.Message.ShouldContain(OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? "already has a source"
+            : "There is no folder 'NOTES'");
+        (await db.Sources.CountAsync()).ShouldBe(before);
+
+        // And list_folders reads a source stored as NOTES as reading the folder notes, there.
+        await db.Sources.Where(s => s.RootPath == "notes").ExecuteUpdateAsync(u => u.SetProperty(s => s.RootPath, "NOTES"));
+        var listed = await FoldersAsync(db, Configurer);
+        (listed.Contains("  notes/  0 entries; indexed by notes (files)\n"))
+            .ShouldBe(OperatingSystem.IsWindows() || OperatingSystem.IsMacOS());
     }
 
     [Theory]

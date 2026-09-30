@@ -553,15 +553,12 @@ public static class SystemEndpoints
             // agent keeps its old ones until the cache entry expires.
             evictor.EvictPrincipals();
 
-            // The requested scopes by their canonical names, which were checked above to be
-            // issuable, rather than as sent: " search\n" passes that check once trimmed, and
-            // written as sent it would start a line of its own in the log.
-            var requested = body.Scopes.Select(s => Scopes.Issuable.First(
-                i => string.Equals(i, s.Trim(), StringComparison.OrdinalIgnoreCase)));
+            // What was stored, and not the request as well: every requested scope was checked
+            // above to be issuable, so the two differ only in spelling and repetition, and the
+            // request's own text could carry a line break into the log (" search\n" passes the
+            // check once trimmed).
             var token = await db.Tokens.AsNoTracking().Include(x => x.Corpora).FirstAsync(x => x.Id == id, ct);
-            logs.CreateLogger("Dexicon.Keys").LogInformation(
-                "Key {Key} scopes set to {Scopes} (requested {Requested})",
-                token.Name, token.Scopes, string.Join(",", requested));
+            logs.CreateLogger("Dexicon.Keys").LogInformation("Key {Key} scopes set to {Scopes}", token.Name, token.Scopes);
             return Results.Ok(token.ToSummary());
         }).Produces<TokenSummary>();
     }

@@ -115,6 +115,16 @@ public static class WorkspaceDiscovery
     }
 
     /// <summary>
+    /// Compares workspace paths as the filesystem does, ignoring case only on Windows and
+    /// macOS (<see cref="CorpusIndexer.PathComparison"/>). On those, a source stored as
+    /// <c>Docs</c> is the folder listed as <c>docs</c>.
+    /// </summary>
+    public static StringComparer PathComparer =>
+        CorpusIndexer.PathComparison == StringComparison.Ordinal
+            ? StringComparer.Ordinal
+            : StringComparer.OrdinalIgnoreCase;
+
+    /// <summary>
     /// Whether a directory is there and can be listed, told apart by what listing it
     /// throws. <c>Directory.Exists</c> cannot: it answers false for both, and "there and
     /// unreadable" is the case that must not be treated as safe.
