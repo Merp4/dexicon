@@ -103,6 +103,26 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// Case is ignored beyond ASCII, as the resolver ignores it. SQLite's NOCASE folds ASCII
+    /// only, so a second corpus whose name differed in the case of "Å" was created, and the
+    /// name then reached either of them.
+    /// </summary>
+    [Fact]
+    public async Task A_name_differing_only_in_the_case_of_a_non_ascii_letter_is_taken()
+    {
+        await using var db = _harness.NewContext();
+        var config = _harness.NewConfiguration(db);
+
+        (await config.CreateCorpusAsync(new CreateCorpusRequest("Ångström"), default)).Refusal.ShouldBeNull();
+        var second = await config.CreateCorpusAsync(new CreateCorpusRequest("ångström"), default);
+
+        var refusal = second.Refusal.ShouldNotBeNull();
+        refusal.Status.ShouldBe(409);
+        refusal.Detail.ShouldContain("'Ångström'", Case.Sensitive, "the refusal names the corpus that holds it");
+        (await db.Corpora.CountAsync(c => c.Name != "notes")).ShouldBe(1);
+    }
+
+    /// <summary>
     /// A refused change leaves the corpus as it was. The corpus is tracked, so a field set
     /// before the refusal would be saved by the next change on the same context.
     /// </summary>

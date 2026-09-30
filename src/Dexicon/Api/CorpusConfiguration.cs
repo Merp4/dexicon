@@ -40,22 +40,43 @@ public sealed class CorpusConfiguration(
 {
     private IndexingOptions Indexing => opts.Value.Indexing;
 
+    /// <summary>
+    /// Held from the last name check to the insert, which makes the two one step. The unique
+    /// index compares names exactly, so "Notes" and "notes" created at the same moment would
+    /// both pass it. Dexicon is one process owning its catalogue (D-01), and this is blind to
+    /// a second process writing the same file.
+    /// </summary>
+    private static readonly SemaphoreSlim Naming = new(1, 1);
+
+    /// <summary>
+    /// A conflict when a corpus already holds this name, compared as
+    /// <see cref="Dexicon.Core.Auth.ScopeResolver"/> resolves one: ordinal, ignoring case. SQLite's NOCASE
+    /// folds ASCII only, so "Å" beside "å" passed it, and one name then reached either
+    /// corpus. The names are read whole because there are tens of them.
+    /// </summary>
+    private async Task<ConfigRefusal?> TakenAsync(string name, CancellationToken ct)
+    {
+        var names = await db.Corpora.Select(c => c.Name).ToListAsync(ct);
+        var existing = names.Find(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase));
+        return existing is null
+            ? null
+            : new ConfigRefusal(
+                "Corpus already exists",
+                $"A corpus named '{existing}' already exists. Names are unique, ignoring case, " +
+                "because the name is what an agent passes to search_index.",
+                409);
+    }
+
     public async Task<ConfigOutcome<Corpus>> CreateCorpusAsync(CreateCorpusRequest body, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(body.Name))
             return new ConfigRefusal("Name is required", "A corpus needs a name.", 400);
 
-        // Compared as it will be stored, trimmed, and without regard to case, because that is
-        // how a name is resolved. Compared as sent, " notes " passed the check and failed the
-        // unique index, which is a 500 where a 409 was promised, and "Notes" beside "notes"
-        // would be two corpora that one name reaches either of.
+        // Compared as it will be stored, trimmed. Compared as sent, " notes " passed the check
+        // and failed the unique index, which is a 500 where a 409 was promised. Checked here
+        // so that a taken name does not wait on the model probe, and again at the insert.
         var name = body.Name.Trim();
-        if (await db.Corpora.AnyAsync(c => EF.Functions.Collate(c.Name, "NOCASE") == name, ct))
-            return new ConfigRefusal(
-                "Corpus already exists",
-                $"A corpus named '{name}' already exists. Names are unique " +
-                "because the name is what an agent passes to search_index.",
-                409);
+        if (await TakenAsync(name, ct) is { } early) return early;
 
         var model = string.IsNullOrWhiteSpace(body.EmbeddingModel)
             ? opts.Value.Embedding.Model
@@ -124,8 +145,18 @@ public sealed class CorpusConfiguration(
             corpus.Sources.Add(CorpusEndpoints.FirstSource(corpus.Id, body.WorkspacePath));
         }
 
-        db.Corpora.Add(corpus);
-        await db.SaveChangesAsync(ct);
+        await Naming.WaitAsync(ct);
+        try
+        {
+            if (await TakenAsync(name, ct) is { } taken) return taken;
+            db.Corpora.Add(corpus);
+            await db.SaveChangesAsync(ct);
+        }
+        finally
+        {
+            Naming.Release();
+        }
+
         await vectors.EnsureCollectionAsync(corpus.ChunkSets[0].CollectionName, dims, ct);
 
         // Naming a folder is asking for it to be indexed. Without this the corpus is
