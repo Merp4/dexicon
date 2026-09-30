@@ -2034,6 +2034,33 @@ describe('when a run finishes', () => {
     },
   } as unknown as typeof props.live;
 
+  const lastRun = (over: Record<string, unknown>) =>
+    ({ c1: { ...(finished as unknown as Record<string, object>).c1, ...over } }) as unknown as typeof props.live;
+
+  /**
+   * A refresh over an unchanged tree. "Succeeded · 37/37 documents · 0 chunks" read as 37
+   * documents done, when every one was unchanged; the jobs list calls it a run that found
+   * nothing to do.
+   */
+  it('says a run that read nothing again changed nothing, rather than counting it as done', async () => {
+    render(<CorpusDetail {...props} live={lastRun({ filesDone: 0, filesSkipped: 12, chunksWritten: 0 })} />);
+
+    expect(await screen.findByRole('progressbar')).toHaveAttribute(
+      'aria-valuetext', 'Succeeded · nothing changed in 12 files');
+  });
+
+  it('still counts a run that did something, and one that failed without reading anything', async () => {
+    const { unmount } = render(<CorpusDetail {...props} live={finished} />);
+    expect(await screen.findByRole('progressbar')).toHaveAttribute(
+      'aria-valuetext', 'Succeeded · 12/12 files · 114 chunks');
+    unmount();
+
+    // Failed outright is not "nothing changed": nothing was read because the run broke.
+    render(<CorpusDetail {...props} live={lastRun({ phase: 'Failed', filesDone: 0, chunksWritten: 0 })} />);
+    expect(await screen.findByRole('progressbar')).toHaveAttribute(
+      'aria-valuetext', 'Failed · 0/12 files · 0 chunks');
+  });
+
   it('re-reads the corpus, because the counts on screen are from before the run', async () => {
     render(<CorpusDetail {...props} live={finished} />);
 
