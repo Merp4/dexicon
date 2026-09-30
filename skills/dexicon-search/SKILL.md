@@ -1,7 +1,7 @@
 ---
-# dexicon-skill-version: 2
+# dexicon-skill-version: 3
 name: dexicon-search
-description: Search indexed code and documents by meaning using the Dexicon MCP server. Use when looking for where something is implemented, how a concept is handled, or what a document says about a topic — anything where you know the idea but not the term. Also covers reading an indexed file back and diagnosing an empty result.
+description: Search indexed code and documents by meaning using the Dexicon MCP server. Use when looking for where something is implemented, how a concept is handled, or what a document says about a topic — anything where you know the idea but not the term. Also covers reading an indexed file back, diagnosing an empty result, and keeping files out of the index.
 ---
 
 # Dexicon
@@ -116,7 +116,7 @@ interesting parts.
 ## When search comes back empty
 
 Do not conclude the content is absent. `index_status(corpus?)` gives the honest answer, and
-there are four common ones:
+there are five common ones:
 
 - **Still indexing.** A large corpus takes a while; counts climb as it goes.
 - **Never indexed.** The corpus exists, the files were never walked.
@@ -125,11 +125,33 @@ there are four common ones:
 - **Degraded.** A result beginning `! DEGRADED:` means embeddings were unavailable and you
   got **keyword-only** results. They are real, but they are not semantic — do not report
   "nothing found" from a degraded search without saying it was degraded.
+- **Left out.** A filter excluded the file, it was over the size limit, it failed to
+  extract or held no text (a scanned PDF), or no source covers its folder. `index_status`
+  with a corpus **named** lists each source with its filters, and the files skipped, failed
+  or found empty with the reason for each. A file a filter or an ignore file excludes is
+  not listed; the source's filters account for it.
 
 If you know files changed on disk and the index is behind, `index_refresh(corpus)` queues a
 reindex and returns immediately; it does not block, and results will not improve in this
 turn. `full: true` re-embeds everything and is slow — only for a corpus you believe is
 corrupt.
+
+## Changing what is indexed
+
+When results are cluttered by files that should not be there (build output, generated code,
+vendored dependencies) and the corpus indexes a tree you can edit, add gitignore-style
+patterns to a `.dexiconignore` file in that tree: at its root, or in any folder below it.
+Dexicon honours it for every file source, whether or not the source respects `.gitignore`,
+and the next pass drops what it matches. `index_refresh(corpus)` starts that pass now, if
+your key lists the tool; otherwise the next scheduled refresh does. It takes the same rules
+as `.gitignore`, including `!` to re-include, and is read after it, so a `!` line can bring
+back a file `.gitignore` excludes. It cannot bring back one that a source's exclude filter,
+include filter or size limit leaves out: those apply after it.
+
+Anything else (a new corpus or source, a source's include or exclude filters, its size
+limit, a corpus description, a chunk set) is set in the Dexicon UI by whoever runs it. Say
+exactly what to change there: which corpus, which source, which field, and the value, with
+the current one from `index_status`.
 
 ## Reporting what you find
 

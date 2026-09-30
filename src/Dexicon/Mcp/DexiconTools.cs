@@ -165,6 +165,16 @@ public sealed class DexiconTools
     }
 
     /// <summary>
+    /// A string as the literal an agent would type: quotes and backslashes escaped, and
+    /// nothing else. The default encoder writes a quote as a six-character Unicode escape,
+    /// which is valid JSON and not what anyone copies.
+    /// </summary>
+    private static readonly System.Text.Json.JsonSerializerOptions Literal = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    /// <summary>
     /// One corpus, as an agent reads it.
     ///
     /// Ordering is the whole of this method. An agent calls list_corpora to answer one
@@ -214,7 +224,10 @@ public sealed class DexiconTools
 
         if (s.LastIndexedUtc is { } indexed) sb.Append($"\n    last indexed: {indexed:u}");
         if (s.FailedCount > 0)
-            sb.Append($"\n    {s.FailedCount:N0} {UnitFor(s.Sources, s.FailedCount)} failed; see the UI for why");
+            // The name as a JSON string, so the call can be copied as it stands whatever the
+            // name holds: only a blank one is refused, and a quote in it broke the call.
+            sb.Append($"\n    {s.FailedCount:N0} {UnitFor(s.Sources, s.FailedCount)} failed; " +
+                      $"index_status({System.Text.Json.JsonSerializer.Serialize(s.Name, Literal)}) lists them with the reason");
         sb.Append('\n');
         return sb.ToString();
     }
@@ -423,11 +436,198 @@ public sealed class DexiconTools
                     .Select(s => new SourceCoverage.SourceRoot(s.RootPath, s.MaxFileBytes)),
                 opts.Value.Indexing.DocumentMaxBytes)));
 
+            // The detail for one corpus asked about by name: what each source reads, and
+            // which files it left out and why. It stopped at counts, so "why is this file
+            // not found" ended at "see the UI". Not for the unnamed listing, where it would
+            // be every source and file of every corpus in one tool result.
+            if (targets.Count == 1 && !string.IsNullOrWhiteSpace(corpus))
+            {
+                sb.Append(RenderSources(summary.Sources, summary.Defaults));
+                sb.Append(RenderProblemFiles(await ProblemFilesAsync(db, summary, ct)));
+            }
+
+            sb.Append('\n');
+        }
+
+        if (string.IsNullOrWhiteSpace(corpus))
+            sb.Append("Name a corpus for its sources and filters, and the files it skipped, failed or found empty with the reason for each.\n");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// What each source reads and how it is filtered, so an agent can say why a file is or
+    /// is not in the index, and whether a filter belongs to the source or the corpus.
+    /// </summary>
+    internal static string RenderSources(IReadOnlyList<SourceSummary> sources, CorpusDefaults? defaults)
+    {
+        if (sources.Count == 0) return "  sources: none\n";
+
+        var sb = new StringBuilder("  sources:\n");
+        foreach (var s in sources)
+        {
+            var where = s.RootPath switch { null => "", "" => "the workspace root", var p => OneLine(p) };
+
+            if (string.Equals(s.Kind, "githistory", StringComparison.OrdinalIgnoreCase))
+            {
+                var git = s.Git ?? new GitHistoryOptions();
+                sb.Append($"    commit history of {where}: {s.FileCount:N0} {(s.FileCount == 1 ? "commit" : "commits")}, follows {git.Ref}");
+                if (s.Tracking is { } tracking && Distance(tracking) is { } distance)
+                    sb.Append($" ({distance})");
+                var holds = new[] { git.IncludeMessage ? "message" : null, git.IncludeStat ? "stat" : null, git.IncludeDiff ? "diff" : null }
+                    .Where(p => p is not null).ToList();
+                sb.Append($"; holds {(holds.Count == 0 ? "sha, author and date only" : string.Join(", ", holds))}");
+                if (git.IncludeMerges) sb.Append("; merges included");
+                if (git.MaxCommits is { } max) sb.Append($"; newest {max:N0}{(git.KeepIndexed ? ", kept once indexed" : "")}");
+                if (git.Since is { } since) sb.Append($"; since {since:yyyy-MM-dd}");
+                if (s.IncludeGlobs.Count > 0)
+                {
+                    sb.Append($"; only paths {Globs(s.IncludeGlobs)}");
+                    // The paths are the include globs, which a history source can take from
+                    // the corpus like a file source does.
+                    if (defaults?.IncludeGlobs is not null && s.OwnIncludeGlobs is null) sb.Append(" (from the corpus defaults)");
+                }
+                if (s.NewestCommit is { } newest) sb.Append($"; newest {newest.Sha[..7]}, {newest.AuthoredUtc:yyyy-MM-dd}");
+                sb.Append('\n');
+                continue;
+            }
+
+            if (string.Equals(s.Kind, "upload", StringComparison.OrdinalIgnoreCase))
+            {
+                sb.Append($"    uploaded documents: {s.FileCount:N0}, attached in the UI\n");
+                continue;
+            }
+
+            // "found", not "indexed": the source counts every file it holds a row for, failed
+            // and empty ones included, where the corpus line above counts only the indexed.
+            sb.Append($"    files under {where}: {s.FileCount:N0} {(s.FileCount == 1 ? "file" : "files")} found; ");
+            sb.Append($".gitignore {(s.UseGitignore ? "respected" : "ignored")}");
+
+            // Always, whatever the .gitignore setting. A file an ignore file or a filter
+            // excludes is dropped in the walk without a row, so it never appears among the
+            // problem files below, and this line is the only sign that one may have.
+            sb.Append("; .dexiconignore respected");
+            sb.Append($"; code and text up to {Bytes(s.MaxFileBytes)}");
+            if (s.IncludeGlobs.Count > 0) sb.Append($"; only {Globs(s.IncludeGlobs)}");
+            if (s.ExcludeGlobs.Count > 0) sb.Append($"; not {Globs(s.ExcludeGlobs)}");
+
+            // Which of those the corpus sets rather than the source, so a change is made in
+            // the place that owns the value. A glob list is named only when it is shown: a
+            // corpus that sets an empty one has nothing on the line to attribute.
+            var fromCorpus = new[]
+            {
+                defaults?.UseGitignore is not null && s.OwnUseGitignore is null ? ".gitignore" : null,
+                defaults?.MaxFileBytes is not null && s.OwnMaxFileBytes is null ? "size" : null,
+                defaults?.IncludeGlobs is { Count: > 0 } && s.OwnIncludeGlobs is null ? "only" : null,
+                defaults?.ExcludeGlobs is { Count: > 0 } && s.OwnExcludeGlobs is null ? "not" : null,
+            }.Where(f => f is not null).ToList();
+            if (fromCorpus.Count > 0) sb.Append($" (from the corpus defaults: {string.Join(", ", fromCorpus)})");
             sb.Append('\n');
         }
 
         return sb.ToString();
     }
+
+    /// <summary>
+    /// How far the followed branch was from its upstream at the last pass, or null where
+    /// nothing was observed. Up to date is said, so it reads differently from no tracking at
+    /// all, and the fetch is dated only when its time is known.
+    /// </summary>
+    internal static string? Distance(GitTracking tracking)
+    {
+        if (tracking.Upstream is not { } up) return null;
+
+        string where;
+        if (up.Gone) where = $"its upstream {up.ShortName} is gone";
+        else if (up.Behind is null && up.Ahead is null) return null;
+        else where = (up.Behind ?? 0, up.Ahead ?? 0) switch
+        {
+            (0, 0) => $"up to date with {up.ShortName}",
+            (var behind, 0) => $"{behind} behind {up.ShortName}",
+            (0, var ahead) => $"{ahead} ahead of {up.ShortName}",
+            var (behind, ahead) => $"{behind} behind and {ahead} ahead of {up.ShortName}",
+        };
+
+        return tracking.LastFetchUtc is { } fetched
+            ? $"{where} as of the fetch at {fetched:yyyy-MM-dd HH:mm} UTC"
+            : where;
+    }
+
+    /// <summary>Files of one status in the default chunk set: how many, and the first few by path with their reason.</summary>
+    internal sealed record ProblemFiles(string Status, int Total, IReadOnlyList<(string Path, string? Reason)> Sample);
+
+    private const int ProblemSample = 10;
+
+    private static async Task<IReadOnlyList<ProblemFiles>> ProblemFilesAsync(
+        CatalogDbContext db, CorpusSummary summary, CancellationToken ct)
+    {
+        var set = summary.ChunkSets.FirstOrDefault(s => s.IsDefault);
+        if (set is null) return [];
+
+        var sourceIds = summary.Sources.Select(s => s.Id).ToList();
+        var roots = summary.Sources.ToDictionary(s => s.Id, s => s.RootPath);
+        var groups = new List<ProblemFiles>();
+
+        foreach (var status in new[] { FileStatus.Failed, FileStatus.Skipped, FileStatus.Empty })
+        {
+            var q = CorpusEndpoints.FilesOf(db, sourceIds, set.Id, status.ToString(), null);
+            var total = await q.CountAsync(ct);
+            if (total == 0) continue;
+
+            var rows = await q.OrderBy(x => x.File.RelativePath).ThenBy(x => x.File.Id).Take(ProblemSample)
+                .Select(x => new { x.File.SourceId, x.File.RelativePath, x.State!.StatusDetail })
+                .ToListAsync(ct);
+
+            // A path is relative to its source, and a corpus with several sources can hold the
+            // same one twice, so each is shown under its source's root.
+            groups.Add(new ProblemFiles(status.ToString().ToLowerInvariant(), total,
+                rows.Select(r => (
+                    roots.GetValueOrDefault(r.SourceId) is { Length: > 0 } root ? $"{root}/{r.RelativePath}" : r.RelativePath,
+                    r.StatusDetail)).ToList()));
+        }
+
+        return groups;
+    }
+
+    internal static string RenderProblemFiles(IReadOnlyList<ProblemFiles> groups)
+    {
+        var sb = new StringBuilder();
+        foreach (var g in groups)
+        {
+            sb.Append($"  {g.Status}: {g.Total:N0}\n");
+            foreach (var (path, reason) in g.Sample)
+            {
+                sb.Append($"    {OneLine(path)}");
+                if (reason is { Length: > 0 })
+                {
+                    // One line each: a reason is often an exception message, and a stack of
+                    // them would push the rest of the report out of the result.
+                    var line = reason.ReplaceLineEndings(" ").Trim();
+                    sb.Append($" — {(line.Length > 160 ? line[..157] + "..." : line)}");
+                }
+                sb.Append('\n');
+            }
+            if (g.Total > g.Sample.Count) sb.Append($"    ... and {g.Total - g.Sample.Count:N0} more\n");
+        }
+        return sb.ToString();
+    }
+
+    private static string Bytes(long b) => b switch
+    {
+        >= 1L << 30 => $"{b / (double)(1L << 30):0.#} GB",
+        >= 1L << 20 => $"{b / (double)(1L << 20):0.#} MB",
+        >= 1L << 10 => $"{b / (double)(1L << 10):0.#} KB",
+        _ => $"{b} bytes",
+    };
+
+    /// <summary>
+    /// A path as one line. A file name on Linux can hold a line break, and printed as it
+    /// is, one would end its entry early and could begin a line that reads as another
+    /// status or reason. A glob is stored as it was typed, so it can hold one too.
+    /// </summary>
+    internal static string OneLine(string path) => path.ReplaceLineEndings(" ");
+
+    private static string Globs(IReadOnlyList<string> globs) => string.Join(", ", globs.Select(OneLine));
 
     /// <summary>
     /// What a corpus's count is counting.
@@ -467,13 +667,13 @@ public sealed class DexiconTools
         {
             var where = gap.DirectoryRelativePath.Length == 0
                 ? "the workspace root"
-                : gap.DirectoryRelativePath;
+                : OneLine(gap.DirectoryRelativePath);
 
             sb.Append($"  NOT INDEXED: {gap.Files.Count:N0} file(s) in {where} are covered by no source, ");
             sb.Append("though its subfolders are. Searching will never return them.\n");
 
             foreach (var file in gap.Files.Take(5))
-                sb.Append($"    {file}\n");
+                sb.Append($"    {OneLine(file)}\n");
             if (gap.Files.Count > 5)
                 sb.Append($"    ... and {gap.Files.Count - 5:N0} more\n");
 

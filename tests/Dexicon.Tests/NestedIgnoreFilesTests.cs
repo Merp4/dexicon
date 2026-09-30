@@ -144,6 +144,20 @@ public sealed class NestedIgnoreFilesTests : IDisposable
     }
 
     [Fact]
+    public void ADexiconignoreCanBringBackWhatGitignoreExcludesButNotWhatASourceExcludes()
+    {
+        // What the search skill tells an agent. `.dexiconignore` is read after `.gitignore`
+        // in the same ordered set, so its `!` wins over it; a source's globs go on after both.
+        Write(".gitignore", "*.log\n");
+        Write(".dexiconignore", "!keep.log\n!generated.ts\n");
+        Write("keep.log");
+        Write("other.log");
+        Write("generated.ts");
+
+        Walk(exclude: ["generated.ts"]).ShouldBe([".dexiconignore", ".gitignore", "keep.log"]);
+    }
+
+    [Fact]
     public void ASourceThatDoesNotHonourGitignoreDoesNotReadTheNestedOnesEither()
     {
         // One setting, and it says whether git decides what is indexed. Reading the nested
