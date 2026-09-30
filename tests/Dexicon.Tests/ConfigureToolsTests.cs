@@ -80,6 +80,32 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
         ToolVisibility.HiddenFrom(As("k", Scopes.Search, Scopes.Configure).Principal!)
             .ShouldBe(new[] { "index_refresh" });
         ToolVisibility.HiddenFrom(As("k", Scopes.Search, Scopes.Ingest, Scopes.Configure).Principal!).ShouldBeEmpty();
+
+        // A key may hold configure alone, and each search tool would refuse it.
+        ToolVisibility.HiddenFrom(As("k", Scopes.Configure).Principal!).ShouldBe(
+            new[] { "search_index", "list_corpora", "get_context", "index_status", "index_refresh" }, ignoreOrder: true);
+    }
+
+    [Fact]
+    public async Task Two_calls_adding_one_folder_at_once_leave_one_source()
+    {
+        // Both could read the corpus's sources before either wrote, and a duplicate cannot be
+        // removed from here. Each call has its own catalogue context, as two requests do.
+        Directory.CreateDirectory(Path.Combine(Workspace, "papers"));
+
+        async Task<string> Add()
+        {
+            await using var db = _harness.NewContext();
+            try { return await SourceAsync(db, Configurer, "papers", create: true); }
+            catch (McpException ex) { return ex.Message; }
+        }
+
+        var replies = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => Task.Run(Add)));
+
+        await using var check = _harness.NewContext();
+        (await check.Sources.CountAsync(s => s.RootPath == "papers")).ShouldBe(1);
+        replies.Count(r => r.StartsWith("Added a source", StringComparison.Ordinal)).ShouldBe(1);
+        replies.Count(r => r.Contains("already has a source")).ShouldBe(3);
     }
 
     [Fact]

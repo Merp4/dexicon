@@ -40,6 +40,15 @@ public sealed class ConfigureTools
         ["maxFileKb"] = "maxFileBytes",
     };
 
+    /// <summary>
+    /// Held from the duplicate check to the insert when a source is added, so two calls adding
+    /// the same folder at once cannot both find it free and leave a duplicate that nothing
+    /// here can remove. Dexicon is one process owning its catalogue (D-01). It does not cover
+    /// the UI, which adds a second source on a folder after warning, since two history sources
+    /// following different branches of one repository are a real case.
+    /// </summary>
+    private static readonly SemaphoreSlim Adding = new(1, 1);
+
     /// <summary>What <c>reset</c> takes for a history setting, each returning to its default.</summary>
     private static readonly string[] HistoryNames =
         ["follow", "message", "stat", "diff", "maxDiffKb", "merges", "maxCommits", "keepIndexed", "since"];
@@ -237,19 +246,16 @@ public sealed class ConfigureTools
         var wanted = isHistory ? SourceKind.GitHistory : SourceKind.Workspace;
         var what = $"{(isHistory ? "commit history of" : "files under")} {(root.Length == 0 ? "the workspace root" : DexiconTools.OneLine(root))}";
 
-        var sources = await db.Sources.AsNoTracking().Where(s => s.CorpusId == target.Id).ToListAsync(ct);
         // Both sides canonical, so docs/. and x/../docs find the source on docs, and compared
         // as the filesystem compares them, so Docs does too where case is not significant.
-        var existing = sources.Find(s => s.Kind == wanted
-            && WorkspaceDiscovery.PathComparer.Equals(WorkspaceDiscovery.Canonical(workspace, s.RootPath), root));
+        bool Same(Source s) => s.Kind == wanted
+            && WorkspaceDiscovery.PathComparer.Equals(WorkspaceDiscovery.Canonical(workspace, s.RootPath), root);
 
         string action;
         string? jobId;
         string sourceId;
         if (create)
         {
-            if (existing is not null)
-                throw new McpException($"Corpus '{target.Name}' already has a source for the {what}. Leave out create to change it.");
             if (resets.Count > 0)
                 throw new McpException("reset applies to a source that exists. Leave it out when adding one.");
 
@@ -257,18 +263,31 @@ public sealed class ConfigureTools
             // name a folder that is there. The API allows an absent one, for a mount that is away.
             ExistingFolder(workspace, root);
 
-            var added = await config.AddSourceAsync(target, new AddSourceRequest(
-                root, gitignore, maxBytes, include, exclude,
-                GitHistory: isHistory,
-                Git: isHistory && history is not null ? Merge(new GitHistoryOptions(), history, []) : null), ct);
-            if (added.Refusal is { } refused) throw new McpException(refused.Detail);
+            await Adding.WaitAsync(ct);
+            try
+            {
+                if ((await db.Sources.AsNoTracking().Where(s => s.CorpusId == target.Id).ToListAsync(ct)).Exists(Same))
+                    throw new McpException($"Corpus '{target.Name}' already has a source for the {what}. Leave out create to change it.");
 
-            action = "added";
-            jobId = added.Value!.IndexJob.Id;
-            sourceId = added.Value.Source.Id;
+                var added = await config.AddSourceAsync(target, new AddSourceRequest(
+                    root, gitignore, maxBytes, include, exclude,
+                    GitHistory: isHistory,
+                    Git: isHistory && history is not null ? Merge(new GitHistoryOptions(), history, []) : null), ct);
+                if (added.Refusal is { } refused) throw new McpException(refused.Detail);
+
+                action = "added";
+                jobId = added.Value!.IndexJob.Id;
+                sourceId = added.Value.Source.Id;
+            }
+            finally
+            {
+                Adding.Release();
+            }
         }
         else
         {
+            var sources = await db.Sources.AsNoTracking().Where(s => s.CorpusId == target.Id).ToListAsync(ct);
+            var existing = sources.Find(Same);
             if (existing is null)
                 throw new McpException(
                     $"Corpus '{target.Name}' has no source for the {what}. Its sources: "

@@ -65,8 +65,8 @@ Corpus 'books' has no chunk set named 'nope'. Its sets: default, fine.
 Five tools, and three more for a key holding `configure`. The count is a design
 constraint: every tool definition is context an agent pays for on every turn, and a
 surface of thirty tools measurably degrades smaller models. So a key is listed only the
-tools its scopes let it call: `index_refresh` needs `ingest`, and the
-[configuration tools](#configuration-tools) need `configure`.
+tools its scopes let it call: the four that read the index need `search`, `index_refresh`
+needs `ingest`, and the [configuration tools](#configuration-tools) need `configure`.
 
 ### `search_index`
 

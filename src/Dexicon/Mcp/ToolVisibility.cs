@@ -10,9 +10,13 @@ namespace Dexicon.Mcp;
 /// </summary>
 internal static class ToolVisibility
 {
+    /// <summary>The tools that read the index, each requiring <see cref="Scopes.Search"/>.</summary>
+    internal static readonly string[] SearchTools = ["search_index", "list_corpora", "get_context", "index_status"];
+
     internal static IReadOnlySet<string> HiddenFrom(Principal principal)
     {
         var hidden = new HashSet<string>(StringComparer.Ordinal);
+        if (!principal.Has(Scopes.Search)) hidden.UnionWith(SearchTools);
         if (!principal.Has(Scopes.Ingest)) hidden.Add("index_refresh");
         if (!principal.Has(Scopes.Configure)) hidden.UnionWith(ConfigureTools.Names);
         return hidden;
