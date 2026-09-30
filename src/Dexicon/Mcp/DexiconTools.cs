@@ -165,6 +165,16 @@ public sealed class DexiconTools
     }
 
     /// <summary>
+    /// A string as the literal an agent would type: quotes and backslashes escaped, and
+    /// nothing else. The default encoder writes a quote as a six-character Unicode escape,
+    /// which is valid JSON and not what anyone copies.
+    /// </summary>
+    private static readonly System.Text.Json.JsonSerializerOptions Literal = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    /// <summary>
     /// One corpus, as an agent reads it.
     ///
     /// Ordering is the whole of this method. An agent calls list_corpora to answer one
@@ -178,16 +188,6 @@ public sealed class DexiconTools
     /// agent-facing surface of the product and it should be checkable without standing up
     /// an MCP server.
     /// </summary>
-    /// <summary>
-    /// A string as the literal an agent would type: quotes and backslashes escaped, and
-    /// nothing else. The default encoder writes a quote as ", which is valid and not
-    /// what anyone copies.
-    /// </summary>
-    private static readonly System.Text.Json.JsonSerializerOptions Literal = new()
-    {
-        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-    };
-
     internal static string RenderCorpus(CorpusSummary s)
     {
         var sb = new StringBuilder();
@@ -480,7 +480,13 @@ public sealed class DexiconTools
                 if (git.IncludeMerges) sb.Append("; merges included");
                 if (git.MaxCommits is { } max) sb.Append($"; newest {max:N0}{(git.KeepIndexed ? ", kept once indexed" : "")}");
                 if (git.Since is { } since) sb.Append($"; since {since:yyyy-MM-dd}");
-                if (s.IncludeGlobs.Count > 0) sb.Append($"; only paths {string.Join(", ", s.IncludeGlobs)}");
+                if (s.IncludeGlobs.Count > 0)
+                {
+                    sb.Append($"; only paths {string.Join(", ", s.IncludeGlobs)}");
+                    // The paths are the include globs, which a history source can take from
+                    // the corpus like a file source does.
+                    if (defaults?.IncludeGlobs is not null && s.OwnIncludeGlobs is null) sb.Append(" (from the corpus defaults)");
+                }
                 if (s.NewestCommit is { } newest) sb.Append($"; newest {newest.Sha[..7]}, {newest.AuthoredUtc:yyyy-MM-dd}");
                 sb.Append('\n');
                 continue;
@@ -501,13 +507,14 @@ public sealed class DexiconTools
             if (s.ExcludeGlobs.Count > 0) sb.Append($"; not {string.Join(", ", s.ExcludeGlobs)}");
 
             // Which of those the corpus sets rather than the source, so a change is made in
-            // the place that owns the value.
+            // the place that owns the value. A glob list is named only when it is shown: a
+            // corpus that sets an empty one has nothing on the line to attribute.
             var fromCorpus = new[]
             {
                 defaults?.UseGitignore is not null && s.OwnUseGitignore is null ? ".gitignore" : null,
                 defaults?.MaxFileBytes is not null && s.OwnMaxFileBytes is null ? "size" : null,
-                defaults?.IncludeGlobs is not null && s.OwnIncludeGlobs is null ? "only" : null,
-                defaults?.ExcludeGlobs is not null && s.OwnExcludeGlobs is null ? "not" : null,
+                defaults?.IncludeGlobs is { Count: > 0 } && s.OwnIncludeGlobs is null ? "only" : null,
+                defaults?.ExcludeGlobs is { Count: > 0 } && s.OwnExcludeGlobs is null ? "not" : null,
             }.Where(f => f is not null).ToList();
             if (fromCorpus.Count > 0) sb.Append($" (from the corpus defaults: {string.Join(", ", fromCorpus)})");
             sb.Append('\n');

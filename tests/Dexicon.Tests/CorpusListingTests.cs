@@ -185,6 +185,27 @@ public class CorpusDiagnosisTests
     }
 
     [Fact]
+    public void An_empty_list_from_the_corpus_is_not_credited_for_a_filter_that_is_not_shown()
+    {
+        var source = new SourceSummary("f", "workspace", "docs", true, 262_144, [], [], 3);
+
+        DexiconTools.RenderSources([source], new CorpusDefaults(null, null, [], []))
+            .ShouldNotContain("from the corpus defaults");
+    }
+
+    [Fact]
+    public void A_history_source_s_paths_from_the_corpus_are_named_as_the_corpus_s()
+    {
+        var history = new SourceSummary("h", "githistory", "repo", true, 262_144, ["src/**"], [], 10,
+            Git: new Dexicon.Core.Indexing.GitHistoryOptions());
+
+        DexiconTools.RenderSources([history], new CorpusDefaults(null, null, ["src/**"], null))
+            .ShouldContain("only paths src/** (from the corpus defaults)");
+        DexiconTools.RenderSources([history with { OwnIncludeGlobs = ["src/**"] }], new CorpusDefaults(null, null, ["src/**"], null))
+            .ShouldNotContain("from the corpus defaults");
+    }
+
+    [Fact]
     public void One_file_is_one_file()
     {
         // Found live, on a source holding one book: "1 files".
