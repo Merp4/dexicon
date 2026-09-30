@@ -55,6 +55,40 @@ public sealed class ProgressStreamTests
     private static IndexProgress Report(string jobId, string corpusId = "c1") =>
         new(jobId, corpusId, "extract", 16, 0, 16, 0, 0, null, null);
 
+    /// <summary>What the caller can see, the same on every read.</summary>
+    private static Func<CancellationToken, Task<HashSet<string>>> Fixed(params string[] ids) =>
+        _ => Task.FromResult(ids.ToHashSet(StringComparer.Ordinal));
+
+    /// <summary>
+    /// What the caller can see as it stands at each read, counting the reads. Changed from
+    /// the test while the stream runs, the way a corpus is created or a key's mapping edited.
+    /// </summary>
+    private sealed class Visibility(params string[] ids)
+    {
+        private readonly Lock _gate = new();
+        private HashSet<string> _ids = ids.ToHashSet(StringComparer.Ordinal);
+        private int _reads;
+
+        public int Reads { get { lock (_gate) return _reads; } }
+
+        public void Set(params string[] ids)
+        {
+            lock (_gate) _ids = ids.ToHashSet(StringComparer.Ordinal);
+        }
+
+        public Task<HashSet<string>> ReadAsync(CancellationToken _)
+        {
+            lock (_gate)
+            {
+                _reads++;
+                return Task.FromResult(new HashSet<string>(_ids, StringComparer.Ordinal));
+            }
+        }
+    }
+
+    private static readonly TimeSpan Recheck = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan NoHeartbeat = TimeSpan.FromHours(1);
+
     /// <summary>
     /// How long a report may take to reach the page before the test calls it lost. These
     /// tests assert that it arrives, not how fast, and WaitFor returns the moment it does,
@@ -100,8 +134,7 @@ public sealed class ProgressStreamTests
         using var cts = new CancellationTokenSource();
 
         var streaming = SystemEndpoints.StreamProgressAsync(
-            response, reader, new HashSet<string>(StringComparer.Ordinal) { "c1" },
-            TimeSpan.FromMilliseconds(20), cts.Token);
+            response, reader, Fixed("c1"), TimeSpan.FromMilliseconds(20), Recheck, cts.Token);
 
         (await WaitFor(() => Count(body.Text, ": ping") >= 5, Arrival))
             .ShouldBeTrue("the premise: the stream sat idle through several pings");
@@ -131,8 +164,7 @@ public sealed class ProgressStreamTests
         using var cts = new CancellationTokenSource();
 
         var streaming = SystemEndpoints.StreamProgressAsync(
-            response, reader, new HashSet<string>(StringComparer.Ordinal) { "c1" },
-            TimeSpan.FromMilliseconds(20), cts.Token);
+            response, reader, Fixed("c1"), TimeSpan.FromMilliseconds(20), Recheck, cts.Token);
 
         broadcaster.Publish(Report("hidden", corpusId: "c2"));
         broadcaster.Publish(Report("shown"));
@@ -144,5 +176,103 @@ public sealed class ProgressStreamTests
 
         shown.ShouldBeTrue();
         body.Text.ShouldNotContain("hidden");
+    }
+
+    /// <summary>
+    /// A corpus created after the page connected. The set was read once, at connection, so
+    /// its first index sent the page nothing and the page never re-read its counts.
+    /// </summary>
+    [Fact]
+    public async Task ACorpusThatBecomesVisibleAfterTheStreamOpensIsWritten()
+    {
+        var broadcaster = new IndexProgressBroadcaster();
+        using var subscription = broadcaster.Subscribe(out var reader);
+        var body = new RecordingStream();
+        var response = new DefaultHttpContext().Response;
+        response.Body = body;
+        using var cts = new CancellationTokenSource();
+        var visibility = new Visibility("c1");
+
+        var streaming = SystemEndpoints.StreamProgressAsync(
+            response, reader, visibility.ReadAsync, NoHeartbeat, TimeSpan.Zero, cts.Token);
+
+        (await WaitFor(() => visibility.Reads >= 1, Arrival)).ShouldBeTrue("the stream read what the caller can see");
+        visibility.Set("c1", "c2");
+        broadcaster.Publish(Report("new-corpus", corpusId: "c2"));
+
+        var arrived = await WaitFor(() => body.Text.Contains("\"jobId\":\"new-corpus\"", StringComparison.Ordinal), Arrival);
+
+        await cts.CancelAsync();
+        try { await streaming; } catch (OperationCanceledException) { }
+
+        arrived.ShouldBeTrue($"the new corpus's report reaches the page; the stream wrote:\n{body.Text}");
+    }
+
+    /// <summary>
+    /// A key's mapping narrowed while its page is open. Read once, the corpus it lost kept
+    /// reaching the page until it reconnected; a heartbeat re-reads it.
+    /// </summary>
+    [Fact]
+    public async Task ACorpusThatStopsBeingVisibleIsNotWrittenAfterAHeartbeat()
+    {
+        var broadcaster = new IndexProgressBroadcaster();
+        using var subscription = broadcaster.Subscribe(out var reader);
+        var body = new RecordingStream();
+        var response = new DefaultHttpContext().Response;
+        response.Body = body;
+        using var cts = new CancellationTokenSource();
+        var visibility = new Visibility("c1", "c2");
+
+        var streaming = SystemEndpoints.StreamProgressAsync(
+            response, reader, visibility.ReadAsync, TimeSpan.FromMilliseconds(20), TimeSpan.FromHours(1), cts.Token);
+
+        (await WaitFor(() => visibility.Reads >= 1, Arrival)).ShouldBeTrue("the stream read what the caller can see");
+        visibility.Set("c1");
+        var pings = Count(body.Text, ": ping");
+        (await WaitFor(() => Count(body.Text, ": ping") >= pings + 2, Arrival))
+            .ShouldBeTrue("a heartbeat passed after the mapping changed");
+
+        broadcaster.Publish(Report("revoked", corpusId: "c2"));
+        broadcaster.Publish(Report("kept"));
+
+        var kept = await WaitFor(() => body.Text.Contains("\"jobId\":\"kept\"", StringComparison.Ordinal), Arrival);
+
+        await cts.CancelAsync();
+        try { await streaming; } catch (OperationCanceledException) { }
+
+        kept.ShouldBeTrue("the corpus still visible is written, so the stream was reading");
+        body.Text.ShouldNotContain("revoked");
+    }
+
+    /// <summary>
+    /// A corpus the caller cannot see reports as often as one they can. Re-reading on each
+    /// of its reports would be a catalogue query per file indexed.
+    /// </summary>
+    [Fact]
+    public async Task ReportsForAnUnseenCorpusDoNotEachReadTheCatalogue()
+    {
+        var broadcaster = new IndexProgressBroadcaster();
+        using var subscription = broadcaster.Subscribe(out var reader);
+        var body = new RecordingStream();
+        var response = new DefaultHttpContext().Response;
+        response.Body = body;
+        using var cts = new CancellationTokenSource();
+        var visibility = new Visibility("c1");
+
+        var streaming = SystemEndpoints.StreamProgressAsync(
+            response, reader, visibility.ReadAsync, NoHeartbeat, TimeSpan.FromHours(1), cts.Token);
+
+        (await WaitFor(() => visibility.Reads >= 1, Arrival)).ShouldBeTrue("the stream read what the caller can see");
+        for (var i = 0; i < 40; i++) broadcaster.Publish(Report($"hidden-{i}", corpusId: "c9"));
+        broadcaster.Publish(Report("last"));
+
+        var done = await WaitFor(() => body.Text.Contains("\"jobId\":\"last\"", StringComparison.Ordinal), Arrival);
+
+        await cts.CancelAsync();
+        try { await streaming; } catch (OperationCanceledException) { }
+
+        done.ShouldBeTrue("the stream got past the hidden reports");
+        visibility.Reads.ShouldBe(1, "only the read at connection, since the recheck window had not passed");
+        body.Text.ShouldNotContain("hidden-");
     }
 }

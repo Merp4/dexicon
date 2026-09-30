@@ -183,8 +183,7 @@ public static class SystemEndpoints
                 return;
             }
 
-            var visible = await scopes.VisibleAsync(rc.RequirePrincipal(), ct);
-            var visibleIds = visible.Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
+            var principal = rc.RequirePrincipal();
 
             ctx.Response.Headers.ContentType = "text/event-stream";
             ctx.Response.Headers.CacheControl = "no-cache";
@@ -196,7 +195,9 @@ public static class SystemEndpoints
 
             try
             {
-                await StreamProgressAsync(ctx.Response, reader, visibleIds, TimeSpan.FromSeconds(20), ct);
+                await StreamProgressAsync(ctx.Response, reader,
+                    async token => await scopes.VisibleIdsAsync(principal, token),
+                    TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(2), ct);
             }
             catch (OperationCanceledException) { /* client went away — normal */ }
         }).WithTags("Events");
@@ -212,11 +213,22 @@ public static class SystemEndpoints
     /// minutes had about sixty abandoned reads ahead of the live one, and the next sixty
     /// reports went to reads nothing awaited. The connection stayed open and kept pinging,
     /// so the client never had a reason to reconnect, and live progress on that page stopped.
+    ///
+    /// What the caller can see is read again while the stream is open. It was read once, when
+    /// the page connected, so a corpus created after that sent the page nothing: its first
+    /// index showed no progress, and its page never re-read the counts when the run ended.
+    /// A narrowed key mapping, likewise, kept reaching the page until it reconnected. So the
+    /// set is re-read on every heartbeat, and on a report for a corpus not in it, at most
+    /// once per <paramref name="recheck"/>, because a corpus the caller cannot see reports
+    /// as often as one they can.
     /// </summary>
     internal static async Task StreamProgressAsync(
         HttpResponse response, System.Threading.Channels.ChannelReader<IndexProgress> reader,
-        IReadOnlySet<string> visibleIds, TimeSpan interval, CancellationToken ct)
+        Func<CancellationToken, Task<HashSet<string>>> visible, TimeSpan interval, TimeSpan recheck,
+        CancellationToken ct)
     {
+        var visibleIds = await visible(ct);
+        var readAt = DateTime.UtcNow;
         var heartbeat = Task.Delay(interval, ct);
         Task<IndexProgress>? next = null;
 
@@ -227,14 +239,26 @@ public static class SystemEndpoints
 
             if (winner == heartbeat)
             {
+                // Throws when it was the disconnect that ended the delay, rather than
+                // writing a ping and querying the catalogue for a caller who has gone.
+                await heartbeat;
                 await response.WriteAsync(": ping\n\n", ct);
                 await response.Body.FlushAsync(ct);
+                visibleIds = await visible(ct);
+                readAt = DateTime.UtcNow;
                 heartbeat = Task.Delay(interval, ct);
                 continue;
             }
 
             var progress = await next;
             next = null;
+
+            if (!visibleIds.Contains(progress.CorpusId) && DateTime.UtcNow - readAt >= recheck)
+            {
+                visibleIds = await visible(ct);
+                readAt = DateTime.UtcNow;
+            }
+
             // Scoped to what this caller can reach: a corpus their key is not
             // mapped to is not their business, and its id is not either.
             if (!visibleIds.Contains(progress.CorpusId)) continue;
