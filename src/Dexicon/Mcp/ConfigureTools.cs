@@ -61,7 +61,7 @@ public sealed class ConfigureTools
         var indexed = await IndexedFoldersAsync(scopes, db, rc.RequirePrincipal(), root, ct);
         var here = Folder(Path.GetRelativePath(Path.GetFullPath(root), full));
 
-        var sb = new StringBuilder($"Folders in {(here.Length == 0 ? "the workspace root" : here)}");
+        var sb = new StringBuilder($"Folders in {(here.Length == 0 ? "the workspace root" : DexiconTools.OneLine(here))}");
         var hereNotes = new List<string>();
         if (IsRepository(full)) hereNotes.Add("git repository");
         if (indexed.TryGetValue(here, out var hereBy)) hereNotes.Add($"indexed by {hereBy}");
@@ -235,7 +235,7 @@ public sealed class ConfigureTools
         if (root == ".." || root.StartsWith("../", StringComparison.Ordinal))
             throw new McpException($"'{folder}' is outside the workspace. list_folders shows what is mounted.");
         var wanted = isHistory ? SourceKind.GitHistory : SourceKind.Workspace;
-        var what = $"{(isHistory ? "commit history of" : "files under")} {(root.Length == 0 ? "the workspace root" : root)}";
+        var what = $"{(isHistory ? "commit history of" : "files under")} {(root.Length == 0 ? "the workspace root" : DexiconTools.OneLine(root))}";
 
         var sources = await db.Sources.AsNoTracking().Where(s => s.CorpusId == target.Id).ToListAsync(ct);
         // Both sides canonical, so docs/. and x/../docs find the source on docs, and compared

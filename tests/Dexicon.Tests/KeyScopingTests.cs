@@ -1,10 +1,14 @@
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
+using Dexicon.Core.Configuration;
 using Dexicon.Core.Search;
 using Dexicon.Core.Vectors;
+using Dexicon.Infrastructure;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Dexicon.Tests;
 
@@ -292,6 +296,23 @@ public sealed class AdminPasswordTests : IAsyncLifetime
         (await _tokens.SetScopesAsync("no-such-key", [Scopes.Configure])).ShouldBeFalse();
         _db.ChangeTracker.Clear();
         (await _db.Tokens.AsNoTracking().SingleAsync(t => t.Id == row.Id)).Scopes.ShouldBe("search");
+    }
+
+    [Fact]
+    public async Task ABootstrapKeyIsAdoptedWithSearchAndIngestOnly()
+    {
+        // It was adopted with every issuable scope, which gained configure: a value in .env
+        // reaching every mounted folder, where docs/12 promises search and ingest (D-36).
+        using var services = new ServiceCollection().AddSingleton(_tokens).BuildServiceProvider();
+        var options = new DexiconOptions
+        {
+            Bootstrap = new BootstrapOptions { Token = "dex_01JBXQZ9K7MNPRSTVWXYZ01234_a-secret-nobody-should-read" },
+        };
+
+        await Bootstrapper.EnsureBootstrapTokenAsync(services, _db, NullLogger.Instance, options);
+
+        _db.ChangeTracker.Clear();
+        (await _db.Tokens.AsNoTracking().SingleAsync()).Scopes.ShouldBe("search,ingest");
     }
 
     [Fact]

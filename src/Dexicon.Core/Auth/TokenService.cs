@@ -27,6 +27,13 @@ public static class Scopes
     /// delete a corpus or mint another key. See docs/decisions.md D-28 and D-36.
     /// </summary>
     public static readonly string[] Issuable = [Search, Ingest, Configure];
+
+    /// <summary>
+    /// What a key adopted from <c>DEXICON__BOOTSTRAP__TOKEN</c> holds, as docs/12 says. Not
+    /// <see cref="Issuable"/>: <see cref="Configure"/> reaches every mounted folder (D-36), so
+    /// it is granted on the Access page and never by a value sitting in <c>.env</c>.
+    /// </summary>
+    public static readonly string[] Bootstrap = [Search, Ingest];
 }
 
 /// <summary>An authenticated caller. Carries no secret.</summary>

@@ -1824,7 +1824,9 @@ what the UI would refuse, and each is logged with the key's name.
 corpus can add any mounted folder to it, or create another corpus over that folder, and then
 search it: `configure` reaches the whole workspace. The Access page says so when the scope is
 ticked. A corpus the key creates is added to its mapping when it has one, since otherwise the
-key could not reach what it made; an unmapped key already reaches every corpus.
+key could not reach what it made; an unmapped key already reaches every corpus. For the
+same reason the key adopted from `DEXICON__BOOTSTRAP__TOKEN` holds `search` and `ingest`
+only: `configure` is granted on the Access page, never by a value in `.env`.
 
 **Creating is asked for.** A corpus or source added by mistake stays until someone removes it
 in the UI. So `create: true` is required to create either, rather than a name that matched
