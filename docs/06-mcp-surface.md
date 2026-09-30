@@ -221,7 +221,7 @@ and what to change:
 
 ```
   sources:
-    files under docs: 16 files found; .gitignore respected; code and text up to 256 KB; not **/*.tmp (from the corpus defaults: not)
+    files under docs: 16 files found; .gitignore respected; .dexiconignore respected; code and text up to 256 KB; not **/*.tmp (from the corpus defaults: not)
     commit history of the workspace root: 256 commits, follows refs/heads/main (52 behind origin/main as of the fetch at 2026-09-27 08:15 UTC); holds message, stat; newest 24664ac, 2026-09-26
   failed: 8
     papers/broken.pdf — has no PDF trailer (startxref and %%EOF) in its last 4,096 bytes...
@@ -230,9 +230,11 @@ and what to change:
 ```
 
 Each source's filters are its effective values, with the ones it takes from the corpus
-named, so a change is made at the level that owns it. Failed, skipped and empty files are
-listed from the default chunk set, ten per status with the reason recorded for each, and
-the rest counted. Without a corpus named it lists every corpus's counts alone, since the
+named, so a change is made at the level that owns it. `.dexiconignore` is always
+respected, whatever the `.gitignore` setting. Failed, skipped and empty files are listed
+from the default chunk set, ten per status with the reason recorded for each, and the rest
+counted. A file that a filter, a `.gitignore` or a `.dexiconignore` excludes is dropped in
+the walk without a row, so it is never among them; the source line is what accounts for it. Without a corpus named it lists every corpus's counts alone, since the
 detail for all of them would be the longest tool result an agent sees.
 
 ## Resources

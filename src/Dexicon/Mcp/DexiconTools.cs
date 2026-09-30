@@ -502,6 +502,11 @@ public sealed class DexiconTools
             // and empty ones included, where the corpus line above counts only the indexed.
             sb.Append($"    files under {where}: {s.FileCount:N0} {(s.FileCount == 1 ? "file" : "files")} found; ");
             sb.Append($".gitignore {(s.UseGitignore ? "respected" : "ignored")}");
+
+            // Always, whatever the .gitignore setting. A file an ignore file or a filter
+            // excludes is dropped in the walk without a row, so it never appears among the
+            // problem files below, and this line is the only sign that one may have.
+            sb.Append("; .dexiconignore respected");
             sb.Append($"; code and text up to {Bytes(s.MaxFileBytes)}");
             if (s.IncludeGlobs.Count > 0) sb.Append($"; only {string.Join(", ", s.IncludeGlobs)}");
             if (s.ExcludeGlobs.Count > 0) sb.Append($"; not {string.Join(", ", s.ExcludeGlobs)}");

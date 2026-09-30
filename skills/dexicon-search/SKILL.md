@@ -127,7 +127,8 @@ there are five common ones:
   "nothing found" from a degraded search without saying it was degraded.
 - **Left out.** A filter excluded the file, it was over the size limit, it failed to
   extract, or no source covers its folder. `index_status` with a corpus **named** lists each
-  source with its filters, and the files skipped or failed with the reason for each.
+  source with its filters, and the files skipped or failed with the reason for each. A file
+  a filter or an ignore file excludes is not listed; the source's filters account for it.
 
 If you know files changed on disk and the index is behind, `index_refresh(corpus)` queues a
 reindex and returns immediately; it does not block, and results will not improve in this
@@ -141,8 +142,10 @@ vendored dependencies) and the corpus indexes a tree you can edit, add gitignore
 patterns to a `.dexiconignore` file in that tree: at its root, or in any folder below it.
 Dexicon honours it for every file source, whether or not the source respects `.gitignore`,
 and the next pass drops what it matches. `index_refresh(corpus)` starts that pass now, if
-your key lists the tool; otherwise the next scheduled refresh does. A `.dexiconignore` only
-excludes: it cannot bring back a file a source's own filter or size limit leaves out.
+your key lists the tool; otherwise the next scheduled refresh does. It takes the same rules
+as `.gitignore`, including `!` to re-include, and is read after it, so a `!` line can bring
+back a file `.gitignore` excludes. It cannot bring back one that a source's exclude filter,
+include filter or size limit leaves out: those apply after it.
 
 Anything else (a new corpus or source, a source's include or exclude filters, its size
 limit, a corpus description, a chunk set) is set in the Dexicon UI by whoever runs it. Say

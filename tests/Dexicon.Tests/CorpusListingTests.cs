@@ -180,7 +180,7 @@ public class CorpusDiagnosisTests
             [Files("docs", gitignore: false, cap: 2 * 1024 * 1024, include: ["**/*.md"], exclude: ["**/draft/**"], ownExclude: false)],
             new CorpusDefaults(null, null, null, ["**/draft/**"]));
 
-        text.ShouldContain("files under docs: 12 files found; .gitignore ignored; code and text up to 2 MB; only **/*.md; not **/draft/**");
+        text.ShouldContain("files under docs: 12 files found; .gitignore ignored; .dexiconignore respected; code and text up to 2 MB; only **/*.md; not **/draft/**");
         text.ShouldContain("(from the corpus defaults: not)");
     }
 
@@ -218,7 +218,7 @@ public class CorpusDiagnosisTests
         var text = DexiconTools.RenderSources([Files("docs", exclude: ["x"])], new CorpusDefaults(null, null, null, ["y"]));
 
         text.ShouldNotContain("from the corpus defaults");
-        text.ShouldContain("files under docs: 12 files found; .gitignore respected; code and text up to 256 KB; not x");
+        text.ShouldContain("files under docs: 12 files found; .gitignore respected; .dexiconignore respected; code and text up to 256 KB; not x");
     }
 
     [Fact]
