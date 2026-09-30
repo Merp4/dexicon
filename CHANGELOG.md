@@ -16,6 +16,63 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## 0.6.4 — 2026-09-30
+
+### ⚠️ Upgrading
+
+- No migrations, and nothing re-chunks or re-embeds.
+- A source added from now on, including one named when its corpus is created, follows the
+  corpus's `.gitignore` setting and size cap until it sets its own. Sources that already
+  exist keep the values they hold: the UI and corpus creation stored both on every source,
+  so a corpus default for either reached none of them. To have one follow the corpus, open
+  **Edit source** and tick **Corpus default** or **Server default** beside the field.
+- `CorpusSummary` gains `configured`: the server's `.gitignore` setting, its size cap, and
+  the separate cap for PDF, DOCX, PPTX, EPUB and HTML files. Additive.
+
+### Changed
+
+- **Adding a source asks what to index first.** **Files** or **Commit history** opens the
+  dialog, and each shows only its own settings: *Which files* (Include, Exclude,
+  .gitignore, Size limit), or *Which commits* and *Each commit's document holds*. It was a
+  checkbox after the folder picker that switched half the form's fields out. The add, edit
+  and default-filter dialogs share one set of fields. Each filter has a **Corpus default**
+  or **Server default** tick naming where its default comes from, and while ticked the
+  field shows that value. The size limit says it is for code and text files, and gives the
+  separate document limit.
+
+- **A corpus's sources line up in columns**: name, count, settings and buttons, from the
+  `sm` breakpoint up. With thirteen sources, each row's buttons sat wherever its text
+  ended. A file source's row reads `.gitignore respected · code and text ≤ 64.0 MB`; the
+  bare `≤ 64.0 MB` said nothing true about the PDFs on a shelf of books.
+
+- **A run that re-indexed nothing says so.** A refresh over an unchanged tree read
+  `Succeeded · 37/37 documents · 0 chunks` on the corpus page; it now reads `Succeeded ·
+  no documents re-indexed, 37 checked`.
+
+- **Dependencies:** vite 8.3.1, jsdom 30.1.1, lucide-react 1.48.0, cn 0.4.0,
+  Microsoft.Extensions.AI.Abstractions and .OpenAI 10.10.1, coverlet.collector 10.1.0.
+
+### Fixed
+
+- **A corpus created after the page loaded gets live progress.** `/api/events` read which
+  corpora the caller can see once per connection, so a new corpus's first index showed
+  nothing, and its page never re-read the counts when a run ended: a chunk set that had
+  built 102 chunks stayed at "indexing · 0 chunks", and **Promote** offered it as holding
+  0. What the caller can see is now read again on every heartbeat and on the first report
+  for a corpus outside it, and the newest report of such a corpus is written once it
+  becomes visible. A key whose mapping is narrowed stops receiving the corpus it lost
+  within a heartbeat, where it used to keep receiving it until it reconnected.
+
+- **The edit dialog's default for a size cap was the source's own value.** A source
+  pinned at 64 MB offered "corpus default (64.0 MB)", where following the default gave the
+  configured 256 KB.
+
+- **A long source path wraps** instead of widening the corpus page past the window, and an
+  uploaded-documents source is named as one rather than described with the file settings
+  (`code and text ≤ 2.0 GB`, from its stored cap).
+
+---
+
 ## 0.6.3 — 2026-09-26
 
 ### ⚠️ Upgrading
