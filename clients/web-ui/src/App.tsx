@@ -19,7 +19,7 @@ import {
   type TokenSummary,
 } from './api';
 import {
-  Badge, Button, CardButton, Chip, CopyButton, Empty, ErrorBanner, Field, Input, Modal,
+  Badge, Button, CardButton, Checkbox, Chip, CopyButton, Empty, ErrorBanner, Field, Input, Modal,
   Notice, Segmented, Select, SelectItem, Spinner, formatBytes, localTime, relativeTime, stateTone,
 } from './ui';
 import {
@@ -894,9 +894,18 @@ function ProgressBar({ job, sources }: {
 }) {
   const processed = job.filesDone + job.filesSkipped + job.filesFailed;
   const pct = job.filesTotal > 0 ? Math.min(100, (processed / job.filesTotal) * 100) : 0;
-  const caption =
-    `${job.phase} · ${processed.toLocaleString()}/${job.filesTotal.toLocaleString()}` +
-    ` ${unitFor(sources, job.filesTotal)} · ${count(job.chunksWritten, 'chunk')}`;
+  const unit = unitFor(sources, job.filesTotal);
+  // A finished run that re-indexed nothing. "37/37 documents · 0 chunks" read as 37
+  // documents done. It says what the counters prove and no more: no file was indexed, not
+  // that the index is unchanged, since a file newly excluded is counted as skipped after its
+  // vectors are deleted, and one that vanished is removed without counting at all.
+  // Succeeded only: a run that failed outright can have read nothing and failed no file.
+  const noneIndexed = String(job.phase).toLowerCase() === 'succeeded'
+    && job.filesDone === 0 && job.filesFailed === 0 && job.chunksWritten === 0;
+  const caption = noneIndexed
+    ? `${job.phase} · no ${unit} re-indexed, ${job.filesTotal.toLocaleString()} checked`
+    : `${job.phase} · ${processed.toLocaleString()}/${job.filesTotal.toLocaleString()}` +
+      ` ${unit} · ${count(job.chunksWritten, 'chunk')}`;
 
   return (
     <div className="mt-2.5">
@@ -2231,11 +2240,12 @@ export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: 
   const heading = (
     <div className="flex justify-between items-center gap-3">
       <h1 className="m-0 text-lg">Jobs</h1>
+      {/* The shared checkbox, as on every other screen. This was the one native one, drawn
+          by the browser in its own colours beside a themed page. */}
       <label className="dim flex items-center gap-1.5 text-xs">
-        <input
-          type="checkbox"
+        <Checkbox
           checked={routine}
-          onChange={(e) => setRoutine(e.target.checked)}
+          onCheckedChange={(v) => setRoutine(v === true)}
           aria-label="Show scheduled refreshes that found nothing to do"
         />
         Show routine refreshes
