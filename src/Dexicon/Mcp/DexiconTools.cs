@@ -450,7 +450,7 @@ public sealed class DexiconTools
         }
 
         if (string.IsNullOrWhiteSpace(corpus))
-            sb.Append("Name a corpus for its sources and filters, and the files it skipped or failed with the reason for each.\n");
+            sb.Append("Name a corpus for its sources and filters, and the files it skipped, failed or found empty with the reason for each.\n");
 
         return sb.ToString();
     }
@@ -482,7 +482,7 @@ public sealed class DexiconTools
                 if (git.Since is { } since) sb.Append($"; since {since:yyyy-MM-dd}");
                 if (s.IncludeGlobs.Count > 0)
                 {
-                    sb.Append($"; only paths {string.Join(", ", s.IncludeGlobs)}");
+                    sb.Append($"; only paths {Globs(s.IncludeGlobs)}");
                     // The paths are the include globs, which a history source can take from
                     // the corpus like a file source does.
                     if (defaults?.IncludeGlobs is not null && s.OwnIncludeGlobs is null) sb.Append(" (from the corpus defaults)");
@@ -508,8 +508,8 @@ public sealed class DexiconTools
             // problem files below, and this line is the only sign that one may have.
             sb.Append("; .dexiconignore respected");
             sb.Append($"; code and text up to {Bytes(s.MaxFileBytes)}");
-            if (s.IncludeGlobs.Count > 0) sb.Append($"; only {string.Join(", ", s.IncludeGlobs)}");
-            if (s.ExcludeGlobs.Count > 0) sb.Append($"; not {string.Join(", ", s.ExcludeGlobs)}");
+            if (s.IncludeGlobs.Count > 0) sb.Append($"; only {Globs(s.IncludeGlobs)}");
+            if (s.ExcludeGlobs.Count > 0) sb.Append($"; not {Globs(s.ExcludeGlobs)}");
 
             // Which of those the corpus sets rather than the source, so a change is made in
             // the place that owns the value. A glob list is named only when it is shown: a
@@ -623,9 +623,11 @@ public sealed class DexiconTools
     /// <summary>
     /// A path as one line. A file name on Linux can hold a line break, and printed as it
     /// is, one would end its entry early and could begin a line that reads as another
-    /// status or reason.
+    /// status or reason. A glob is stored as it was typed, so it can hold one too.
     /// </summary>
     internal static string OneLine(string path) => path.ReplaceLineEndings(" ");
+
+    private static string Globs(IReadOnlyList<string> globs) => string.Join(", ", globs.Select(OneLine));
 
     /// <summary>
     /// What a corpus's count is counting.

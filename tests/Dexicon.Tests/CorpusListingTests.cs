@@ -311,11 +311,13 @@ public class CorpusDiagnosisTests
     {
         var problems = DexiconTools.RenderProblemFiles(
             [new DexiconTools.ProblemFiles("failed", 1, [("notes/a\n  skipped: 0\r\nb.md", "unreadable")])]);
-        var sources = DexiconTools.RenderSources([Files("notes/x\ny")], null);
+        var sources = DexiconTools.RenderSources(
+            [Files("notes/x\ny", include: ["**/*.md\n  failed: 9"], exclude: ["a\r\nb"])], null);
         var gaps = DexiconTools.RenderCoverage([new SourceCoverage.Gap("notes\ny", ["c\nd.md"])]);
 
         problems.ShouldBe("  failed: 1\n    notes/a   skipped: 0 b.md — unreadable\n");
         sources.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length.ShouldBe(2, "the heading and one source");
+        sources.ShouldContain("; only **/*.md   failed: 9; not a b");
         gaps.ShouldContain("in notes y are covered");
         gaps.ShouldContain("    c d.md\n");
     }

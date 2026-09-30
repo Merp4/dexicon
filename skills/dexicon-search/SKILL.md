@@ -126,9 +126,10 @@ there are five common ones:
   got **keyword-only** results. They are real, but they are not semantic — do not report
   "nothing found" from a degraded search without saying it was degraded.
 - **Left out.** A filter excluded the file, it was over the size limit, it failed to
-  extract, or no source covers its folder. `index_status` with a corpus **named** lists each
-  source with its filters, and the files skipped or failed with the reason for each. A file
-  a filter or an ignore file excludes is not listed; the source's filters account for it.
+  extract or held no text (a scanned PDF), or no source covers its folder. `index_status`
+  with a corpus **named** lists each source with its filters, and the files skipped, failed
+  or found empty with the reason for each. A file a filter or an ignore file excludes is
+  not listed; the source's filters account for it.
 
 If you know files changed on disk and the index is behind, `index_refresh(corpus)` queues a
 reindex and returns immediately; it does not block, and results will not improve in this
