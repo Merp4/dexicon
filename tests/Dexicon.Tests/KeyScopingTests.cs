@@ -307,29 +307,59 @@ public sealed class AdminPasswordTests : IAsyncLifetime
         // travel on it. Without the eviction a removed configure or ingest scope stayed usable
         // until the entry expired; a test calling VerifyAsync directly never sees the cache.
         using var cache = new MemoryCache(new MemoryCacheOptions());
-        var sessions = new AdminSessions(TimeProvider.System);
+        var evictor = new MemoryCacheEvictor(cache);
         var (row, issued) = await _tokens.CreateAsync("agent", [Scopes.Search, Scopes.Configure], null);
 
-        async Task<Principal?> NextRequestAsync()
-        {
-            var request = new RequestContext();
-            var middleware = new DexiconAuthMiddleware(_ => Task.CompletedTask, cache,
-                NullLogger<DexiconAuthMiddleware>.Instance);
-            var ctx = new DefaultHttpContext();
-            ctx.Request.Path = "/mcp";
-            ctx.Request.Headers.Authorization = $"Bearer {issued.Presented}";
-            await middleware.InvokeAsync(ctx, _tokens, sessions, request);
-            return request.Principal;
-        }
-
-        (await NextRequestAsync()).ShouldNotBeNull().Has(Scopes.Configure).ShouldBeTrue("and it is now cached");
+        (await AuthenticateAsync(cache, evictor, issued.Presented)).ShouldNotBeNull()
+            .Has(Scopes.Configure).ShouldBeTrue();
+        cache.Count.ShouldBe(1, "the principal is cached");
 
         var result = await SystemEndpoints.SetScopesAsync(row.Id, new UpdateTokenScopesRequest([Scopes.Search]),
-            _tokens, _db, new MemoryCacheEvictor(cache), NullLogger.Instance, default);
+            _tokens, _db, evictor, NullLogger.Instance, default);
 
         ((IStatusCodeHttpResult)result).StatusCode.ShouldBe(StatusCodes.Status200OK);
-        (await NextRequestAsync()).ShouldNotBeNull().Has(Scopes.Configure)
+        (await AuthenticateAsync(cache, evictor, issued.Presented)).ShouldNotBeNull().Has(Scopes.Configure)
             .ShouldBeFalse("the next request is judged on the stored scopes, not the cached ones");
+    }
+
+    [Fact]
+    public async Task AVerificationOverlappingAnEvictionServesItsRequestButIsNotCached()
+    {
+        // A request that read the key's row before a revocation or a scope change, and finished
+        // hashing after the eviction, put the old principal back for the whole TTL. The fake
+        // evictor's generation moves between the middleware's read before verifying and its
+        // read after, which is what an eviction in that window does.
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        var (_, issued) = await _tokens.CreateAsync("agent", [Scopes.Search], null);
+
+        (await AuthenticateAsync(cache, new EvictsDuringEachVerification(), issued.Presented)).ShouldNotBeNull();
+        cache.Count.ShouldBe(0);
+
+        (await AuthenticateAsync(cache, new MemoryCacheEvictor(cache), issued.Presented)).ShouldNotBeNull();
+        cache.Count.ShouldBe(1, "with no eviction in between, the principal is cached");
+    }
+
+    /// <summary>The principal one request authenticates as, through the real middleware and cache.</summary>
+    private async Task<Principal?> AuthenticateAsync(IMemoryCache cache, IMemoryCacheEvictor evictor, string presented)
+    {
+        var request = new RequestContext();
+        var middleware = new DexiconAuthMiddleware(_ => Task.CompletedTask, cache, evictor,
+            NullLogger<DexiconAuthMiddleware>.Instance);
+        var ctx = new DefaultHttpContext();
+        ctx.Request.Path = "/mcp";
+        ctx.Request.Headers.Authorization = $"Bearer {presented}";
+        await middleware.InvokeAsync(ctx, _tokens, new AdminSessions(TimeProvider.System), request);
+        return request.Principal;
+    }
+
+    /// <summary>A generation that moves on every read, as it would with an eviction between two.</summary>
+    private sealed class EvictsDuringEachVerification : IMemoryCacheEvictor
+    {
+        private long _reads;
+
+        public void EvictPrincipals() { }
+
+        public long Generation => Interlocked.Increment(ref _reads);
     }
 
     [Fact]

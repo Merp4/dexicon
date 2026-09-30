@@ -1137,6 +1137,13 @@ public static class SystemEndpoints
 public interface IMemoryCacheEvictor
 {
     void EvictPrincipals();
+
+    /// <summary>
+    /// Moves on every <see cref="EvictPrincipals"/>. A verification that started before an
+    /// eviction may have read the key's row before the change that caused it, so a caller
+    /// caches what it verified only if this has not moved since it began.
+    /// </summary>
+    long Generation { get; }
 }
 
 public static class ModelNames

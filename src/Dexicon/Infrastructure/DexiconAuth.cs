@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Dexicon.Api;
 using Dexicon.Core.Auth;
 using Microsoft.Extensions.Caching.Memory;
 
@@ -25,7 +26,8 @@ public sealed class RequestContext
 /// <see cref="Dexicon.Core.Auth.ScopeResolver"/>, so that a change in the UI is not held
 /// behind this cache's TTL. See docs/decisions.md D-28.
 /// </summary>
-public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cache, ILogger<DexiconAuthMiddleware> log)
+public sealed class DexiconAuthMiddleware(
+    RequestDelegate next, IMemoryCache cache, IMemoryCacheEvictor evictor, ILogger<DexiconAuthMiddleware> log)
 {
     private static readonly TimeSpan PrincipalTtl = TimeSpan.FromSeconds(60);
 
@@ -93,8 +95,14 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
             var cacheKey = PrincipalCacheKey(presented);
             if (!cache.TryGetValue(cacheKey, out principal) || principal is null)
             {
+                // A revocation or a scope change can land while this reads the row and hashes,
+                // and its eviction would then be undone by the insert below, keeping what was
+                // removed for the whole TTL. Such a principal serves this request, which began
+                // first, and is not cached.
+                var generation = evictor.Generation;
                 principal = await tokens.VerifyAsync(presented, ctx.RequestAborted);
-                if (principal is not null) cache.Set(cacheKey, principal, PrincipalTtl);
+                if (principal is not null && evictor.Generation == generation)
+                    cache.Set(cacheKey, principal, PrincipalTtl);
             }
         }
 

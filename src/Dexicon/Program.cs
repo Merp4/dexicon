@@ -315,8 +315,16 @@ finally
 /// <summary>Evicts cached principals so a revoked token stops working immediately.</summary>
 internal sealed class MemoryCacheEvictor(IMemoryCache cache) : IMemoryCacheEvictor
 {
+    private long _generation;
+
+    public long Generation => Interlocked.Read(ref _generation);
+
     public void EvictPrincipals()
     {
+        // Before the clear, so a verification that finishes between the two finds the
+        // generation moved and does not put back what it read.
+        Interlocked.Increment(ref _generation);
+
         // MemoryCache has no prefix-scan, and the principal TTL is 60s, so the blunt
         // instrument is the correct one: revocation is rare and correctness beats a few
         // re-verifications.
