@@ -78,6 +78,16 @@ public sealed class CorpusConfiguration(
         // and failed the unique index, which is a 500 where a 409 was promised. Checked here
         // so that a taken name does not wait on the model probe, and again at the insert.
         var name = body.Name.Trim();
+
+        // ScopeResolver.Split reads everything after the first colon as a chunk set, so a
+        // corpus named with one could be listed and never searched by its name.
+        if (name.Contains(':'))
+            return new ConfigRefusal(
+                "A corpus name cannot contain ':'",
+                "Colon separates corpus from chunk set in `corpus:set`, so a corpus named with one "
+                + "could not be addressed by its name.",
+                400);
+
         if (await TakenAsync(name, ct) is { } early) return early;
 
         var model = string.IsNullOrWhiteSpace(body.EmbeddingModel)

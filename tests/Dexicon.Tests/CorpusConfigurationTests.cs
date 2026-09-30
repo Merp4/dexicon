@@ -122,6 +122,19 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
         (await db.Corpora.CountAsync(c => c.Name != "notes")).ShouldBe(1);
     }
 
+    [Fact]
+    public async Task A_name_with_a_colon_is_refused_because_it_could_not_be_addressed()
+    {
+        // "notes:x" resolves as the corpus "notes" and its chunk set "x", so a corpus with
+        // that name would be listed and never reached.
+        await using var db = _harness.NewContext();
+
+        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("team:notes"), default);
+
+        created.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
+        (await db.Corpora.CountAsync()).ShouldBe(1);
+    }
+
     /// <summary>
     /// A refused change leaves the corpus as it was. The corpus is tracked, so a field set
     /// before the refusal would be saved by the next change on the same context.
