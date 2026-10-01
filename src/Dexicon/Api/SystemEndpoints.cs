@@ -573,7 +573,9 @@ public static class SystemEndpoints
         // above to be issuable, so the two differ only in spelling and repetition, and the
         // request's own text could carry a line break into the log (" search\n" passes the
         // check once trimmed).
-        var token = await db.Tokens.AsNoTracking().Include(x => x.Corpora).FirstAsync(x => x.Id == id, ct);
+        // Not the caller's token: the scopes are saved and the cache evicted, and a cancel here
+        // would skip the line below for a change that has happened.
+        var token = await db.Tokens.AsNoTracking().Include(x => x.Corpora).FirstAsync(x => x.Id == id, CancellationToken.None);
         log.LogInformation("Key {Key} scopes set to {Scopes}", DexiconAuthMiddleware.OneLine(token.Name), token.Scopes);
         return Results.Ok(token.ToSummary());
     }

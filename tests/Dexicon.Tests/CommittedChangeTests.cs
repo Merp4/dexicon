@@ -238,6 +238,70 @@ public sealed class CommittedChangeTests
         logs.Lines.ShouldContain(l => l.Contains("agent-seven") && l.Contains("changed corpus notes"));
     }
 
+    [Fact]
+    public async Task A_source_that_is_saved_is_reported_added_when_the_caller_is_cancelled_afterwards()
+    {
+        // The summary in the reply was read on the caller's token, so a cancel after the save
+        // reported an add nothing can undo as failed, and a retry was refused as a duplicate.
+        var watcher = new CancelAfterWriteTo("sources");
+        await using var harness = await IndexingHarness.StartAsync(watcher, "notes", "docs");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        Directory.CreateDirectory(Path.Combine(harness.DataPath, "workspace", "extra"));
+        using var cts = new CancellationTokenSource();
+        watcher.Cts = cts;
+        await using var db = harness.NewContext();
+        watcher.Armed = true;
+
+        var reply = await ConfigureTools.ConfigureSourceAsync(
+            Configure("k6", "agent-six"), new ScopeResolver(db), db, harness.NewConfiguration(db), harness.Settings,
+            new RecordingLoggerFactory(), "notes", "extra", create: true, ct: cts.Token);
+
+        watcher.Fired.ShouldBeTrue("the window has to have been opened");
+        reply.ShouldStartWith("Added a source for the files under extra");
+    }
+
+    [Fact]
+    public async Task A_scope_change_that_is_saved_is_logged_when_the_caller_is_cancelled_afterwards()
+    {
+        var watcher = new CancelAfterWriteTo("tokens");
+        await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        await using var db = harness.NewContext();
+        var tokens = new TokenService(db, TimeProvider.System);
+        var (key, _) = await tokens.CreateAsync("agent", [Scopes.Search, Scopes.Configure], null);
+        using var cts = new CancellationTokenSource();
+        watcher.Cts = cts;
+        using var cache = new Microsoft.Extensions.Caching.Memory.MemoryCache(
+            new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions());
+        var logs = new RecordingLoggerFactory();
+        watcher.Armed = true;
+
+        var result = await SystemEndpoints.SetScopesAsync(key.Id, new UpdateTokenScopesRequest([Scopes.Search]),
+            tokens, db, new MemoryCacheEvictor(cache), logs.CreateLogger("test"), cts.Token);
+
+        watcher.Fired.ShouldBeTrue("the window has to have been opened");
+        ((Microsoft.AspNetCore.Http.IStatusCodeHttpResult)result).StatusCode.ShouldBe(200);
+        logs.Lines.ShouldContain(l => l.Contains("scopes set to") && l.Contains("agent"));
+    }
+
+    [Fact]
+    public async Task A_scope_error_names_a_key_and_corpora_on_one_line()
+    {
+        // The resolver's message lists the key and every corpus it reaches, typed text that an
+        // older catalogue's can hold a line break in.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        await using var db = harness.NewContext();
+        await db.Corpora.ExecuteUpdateAsync(u => u.SetProperty(c => c.Name, "two\nlines"));
+
+        var thrown = await Should.ThrowAsync<McpException>(() => ConfigureTools.ConfigureCorpusAsync(
+            Configure("k5", "agent\nforged"), new ScopeResolver(db), db, harness.NewConfiguration(db),
+            new RecordingLoggerFactory(), "missing", description: "x"));
+
+        thrown.Message.ShouldContain("two lines");
+        thrown.Message.ShouldNotContain("\n");
+    }
+
     private sealed class SameDefaults : IEqualityComparer<CorpusDefaults>
     {
         public bool Equals(CorpusDefaults? a, CorpusDefaults? b) =>

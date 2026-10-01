@@ -397,7 +397,10 @@ public sealed class ConfigureTools
 
         // As index_status shows it, so the effective values, and which come from the corpus,
         // are confirmed in the words the agent will read them in later.
-        var summary = await CorpusEndpoints.Summarise(db, target, opts.Value.Indexing, ct);
+        //
+        // Not the caller's token: the source is saved and its job queued by now, and a cancel here
+        // would report an irreversible add as failed and refuse its retry as a duplicate.
+        var summary = await CorpusEndpoints.Summarise(db, target, opts.Value.Indexing, CancellationToken.None);
         var shown = summary.Sources.Where(s => s.Id == sourceId).ToList();
         var line = shown.Count == 0 ? "" : DexiconTools.RenderSources(shown, summary.Defaults).Split('\n')[1].Trim();
 
@@ -438,7 +441,12 @@ public sealed class ConfigureTools
         ScopeResolver scopes, Principal principal, string corpus, string hint, CancellationToken ct)
     {
         try { return await scopes.ResolveWritableAsync(principal, corpus, ct); }
-        catch (ScopeResolutionException ex) { throw new McpException($"{ex.Message} {hint}".TrimEnd()); }
+        catch (ScopeResolutionException ex)
+        {
+            // The message names the key and every corpus it reaches, typed text that an older
+            // catalogue's can hold a line break in.
+            throw new McpException(DexiconTools.OneLine($"{ex.Message} {hint}".TrimEnd()));
+        }
     }
 
     /// <summary>

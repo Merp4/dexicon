@@ -861,6 +861,13 @@ leaves `ingest` meaning one thing: this key may reindex the corpora it is mapped
 `POST /api/corpora/{id}/reindex` or the MCP tool `index_refresh`. It is off unless ticked. No
 long-lived administrative credential then sits in an agent's configuration. This closes Q4.
 
+**Not as implemented (found 2026-10-01).** The three document endpoints (`POST
+/api/corpora/{id}/documents`, `.../documents/attach` and `DELETE .../documents/{fileId}`) still
+require `ingest`, not `admin`. A key holding `ingest` can therefore upload, attach and detach
+documents, and detaching removes one from a corpus. The Access page says so. Moving them to
+`admin` is what this decision describes and would break a key that uploads today; it is not done
+here, and waits on the maintainer.
+
 **The password itself.** Seeded from `DEXICON__ADMIN__PASSWORD`, or generated and logged
 once on first run where that is blank, which is what `DEXICON__BOOTSTRAP__TOKEN` already does.
 It is stored hashed in the catalogue rather than read from the environment on each request, so

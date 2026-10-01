@@ -2504,7 +2504,11 @@ function scopesOf(t: TokenSummary): string[] {
 /** The scopes a key can hold, and what each lets its agent do. */
 const KEY_SCOPES: { id: string; does: string }[] = [
   { id: 'search', does: 'search and read the corpora the key reaches' },
-  { id: 'ingest', does: 'queue a reindex, with index_refresh' },
+  {
+    id: 'ingest',
+    does: 'queue a reindex, with index_refresh, and add, attach or detach documents over the API. '
+      + 'Detaching removes a document from a corpus',
+  },
   {
     id: 'configure',
     does: 'create corpora and add or change their folders and filters, with list_folders, '
