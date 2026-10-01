@@ -45,8 +45,13 @@ public sealed class CorpusConfiguration(
     /// index compares names exactly, so "Notes" and "notes" created at the same moment would
     /// both pass it. Dexicon is one process owning its catalogue (D-01), and this is blind to
     /// a second process writing the same file.
+    ///
+    /// Also held while a key's mapping is replaced. A creation reads whether its key has a
+    /// mapping and adds the new corpus to it, and the admin could clear that mapping, which
+    /// means every corpus, between the two: the key would be left reaching only the corpus it
+    /// just made.
     /// </summary>
-    private static readonly SemaphoreSlim Naming = new(1, 1);
+    internal static readonly SemaphoreSlim Naming = new(1, 1);
 
     /// <summary>
     /// A conflict when a corpus already holds this name, compared as

@@ -608,27 +608,40 @@ public static class SystemEndpoints
     /// key mapped to fewer corpora than the operator ticked, and an empty mapping means
     /// every corpus, so the failure mode of dropping the last one is the opposite of what
     /// was asked for.
+    ///
+    /// Under the lock a corpus's creation takes, so that a key creating a corpus and the admin
+    /// replacing its mapping cannot interleave: the creation reads whether there is a mapping
+    /// and adds to it, and a replacement between the two left the key reaching only the new
+    /// corpus.
     /// </summary>
-    private static async Task<IResult?> MapCorporaAsync(
+    internal static async Task<IResult?> MapCorporaAsync(
         CatalogDbContext db, string tokenId, IReadOnlyList<string> corpusIds, CancellationToken ct)
     {
-        var wanted = corpusIds.Distinct(StringComparer.Ordinal).ToList();
+        await CorpusConfiguration.Naming.WaitAsync(ct);
+        try
+        {
+            var wanted = corpusIds.Distinct(StringComparer.Ordinal).ToList();
 
-        var known = await db.Corpora.Where(c => wanted.Contains(c.Id)).Select(c => c.Id).ToListAsync(ct);
-        var unknown = wanted.Except(known, StringComparer.Ordinal).ToList();
-        if (unknown.Count > 0)
-            return Results.Problem(
-                title: "Unknown corpus",
-                detail: $"No corpus with id {string.Join(", ", unknown)}. The mapping was not changed.",
-                statusCode: 400);
+            var known = await db.Corpora.Where(c => wanted.Contains(c.Id)).Select(c => c.Id).ToListAsync(ct);
+            var unknown = wanted.Except(known, StringComparer.Ordinal).ToList();
+            if (unknown.Count > 0)
+                return Results.Problem(
+                    title: "Unknown corpus",
+                    detail: $"No corpus with id {string.Join(", ", unknown)}. The mapping was not changed.",
+                    statusCode: 400);
 
-        var existing = await db.TokenCorpora.Where(tc => tc.TokenId == tokenId).ToListAsync(ct);
-        db.TokenCorpora.RemoveRange(existing);
-        foreach (var corpusId in wanted)
-            db.TokenCorpora.Add(new TokenCorpus { TokenId = tokenId, CorpusId = corpusId });
+            var existing = await db.TokenCorpora.Where(tc => tc.TokenId == tokenId).ToListAsync(ct);
+            db.TokenCorpora.RemoveRange(existing);
+            foreach (var corpusId in wanted)
+                db.TokenCorpora.Add(new TokenCorpus { TokenId = tokenId, CorpusId = corpusId });
 
-        await db.SaveChangesAsync(ct);
-        return null;
+            await db.SaveChangesAsync(ct);
+            return null;
+        }
+        finally
+        {
+            CorpusConfiguration.Naming.Release();
+        }
     }
 
     public static void MapHealthEndpoints(this IEndpointRouteBuilder app)

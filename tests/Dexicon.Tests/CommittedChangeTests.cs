@@ -249,6 +249,38 @@ public sealed class CommittedChangeTests
     }
 
     [Fact]
+    public async Task A_key_s_mapping_is_not_replaced_while_a_corpus_is_being_created()
+    {
+        // A creation reads whether its key has a mapping and adds the new corpus to it. The
+        // admin clearing the mapping between the two (empty means every corpus) left the key
+        // reaching only the corpus it had just made. Both take the one lock, so while a creation
+        // holds it the replacement waits, and goes ahead when it is released.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        await using var db = harness.NewContext();
+        var (key, _) = await new TokenService(db, TimeProvider.System).CreateAsync("mapped", [Scopes.Configure], null);
+        db.TokenCorpora.Add(new TokenCorpus { TokenId = key.Id, CorpusId = IndexingHarness.CorpusId });
+        await db.SaveChangesAsync();
+        await using var admin = harness.NewContext();
+
+        Task<Microsoft.AspNetCore.Http.IResult?> replacement;
+        await CorpusConfiguration.Naming.WaitAsync();
+        try
+        {
+            replacement = SystemEndpoints.MapCorporaAsync(admin, key.Id, [], default);
+            await Task.Delay(300);
+            replacement.IsCompleted.ShouldBeFalse("the replacement waits for the creation to finish");
+        }
+        finally
+        {
+            CorpusConfiguration.Naming.Release();
+        }
+
+        (await replacement.WaitAsync(TimeSpan.FromSeconds(10))).ShouldBeNull();
+        (await db.TokenCorpora.CountAsync(tc => tc.TokenId == key.Id)).ShouldBe(0, "cleared, which means every corpus");
+    }
+
+    [Fact]
     public async Task A_corpus_made_for_a_mapped_key_joins_its_mapping_and_one_made_for_an_unmapped_key_does_not()
     {
         await using var harness = await IndexingHarness.StartAsync("notes");

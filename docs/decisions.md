@@ -1840,6 +1840,15 @@ read the admin password and the bootstrap token back by search, which is the rou
 for keys. `.env` is not in the walker's built-in exclude list, so this rests on `.gitignore`
 listing it. A secret that no `.gitignore` names is within reach of a `configure` key like any
 other file in the workspace, and keeping such files out of a mounted tree is the operator's.
+What the guard covers is narrower than "secrets". `.gitignore` is read from a source's root
+down, so a source rooted below a repository does not get the repository's own rules, and a
+`configure` key can index a gitignored folder by rooting a source on it, as anyone with the UI can.
+The guard holds for Dexicon's own `.env` because that file sits at the workspace root, where a
+source over the root applies the root's `.gitignore` and no source rooted deeper can contain it.
+Applying ancestors' ignore files to a nested root would be a second copy of the walker's rule
+engine for one tool, and the answer to "keep secrets out of the index" generally is the built-in
+never-index list under Rejected.
+
 A description an agent sets is one line of at most 500 characters, since every other agent
 that lists corpora reads it.
 
