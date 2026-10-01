@@ -15,7 +15,7 @@ catalogue is authoritative and Qdrant is a derived view that can be rebuilt from
 
 | Concept | Definition |
 |---|---|
-| **Key** | An agent's credential. Carries `search` and optionally `ingest`, never `admin`, and maps to the corpora it may reach. |
+| **Key** | An agent's credential. Carries one or more of `search`, `ingest` and `configure`, never `admin`, and maps to the corpora it may reach. |
 | **Corpus** | A named, searchable body of content. The unit of reindexing and of search scope. It has no owner: which keys reach it is a property of those keys. |
 | **Chunk set** | One way of cutting and embedding a corpus: a model, a vector space, a chunking strategy. A corpus carries one or more, over the same documents. Addressed as `corpus:set`. |
 | **Source** | Where a corpus gets its content: a `workspace` mount path, or `upload` (files pushed through the UI/API). A corpus has one or more. |
@@ -67,7 +67,7 @@ CREATE TABLE tokens (
   name          TEXT NOT NULL,
   token_hash    BLOB NOT NULL,              -- see 10-security-secrets.md
   token_salt    BLOB NOT NULL,
-  scopes        TEXT NOT NULL,              -- csv: search, ingest. Never admin.
+  scopes        TEXT NOT NULL,              -- csv: search, ingest, configure. Never admin.
   created_utc   TEXT NOT NULL,
   last_used_utc TEXT,
   expires_utc   TEXT,

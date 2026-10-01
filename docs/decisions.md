@@ -252,6 +252,10 @@ the UI, where a human is present).
 **Amended by** [D-28](#d-28-an-admin-password-and-scoped-api-keys): five tools, four of
 which every key sees. `index_refresh` is listed only for a key granted `ingest`.
 
+**Amended by** [D-36](#d-36-a-configure-scope-agents-set-up-what-is-indexed) (2026-09-30):
+three configuration tools, listed only for a key granted `configure`. A key without it is
+still listed at most these five.
+
 ---
 
 ### D-12 Stateless streamable HTTP, MCP 2026-07-28
@@ -857,6 +861,17 @@ leaves `ingest` meaning one thing: this key may reindex the corpora it is mapped
 `POST /api/corpora/{id}/reindex` or the MCP tool `index_refresh`. It is off unless ticked. No
 long-lived administrative credential then sits in an agent's configuration. This closes Q4.
 
+**Revised 2026-10-01: `ingest` keeps the document endpoints.** The three document endpoints
+(`POST /api/corpora/{id}/documents`, `.../documents/attach` and `DELETE .../documents/{fileId}`)
+require `ingest`, and are to stay there. Keeping ingestion an admin concern was a short-term
+stance while other functionality came first; automation from an agent for setup and ingestion is
+wanted, as long as it can be configured and controlled. So a key holding `ingest` may upload,
+attach and detach documents, as well as queue a reindex, and the Access page says so. The
+controls are what a key already has: its scopes, which corpora it reaches, the audit line, and
+what [D-36](#d-36-a-configure-scope-agents-set-up-what-is-indexed) withholds. Detaching removes a
+document from a corpus with no human step, which a proposal-and-approval flow would put back
+where it is wanted.
+
 **The password itself.** Seeded from `DEXICON__ADMIN__PASSWORD`, or generated and logged
 once on first run where that is blank, which is what `DEXICON__BOOTSTRAP__TOKEN` already does.
 It is stored hashed in the catalogue rather than read from the environment on each request, so
@@ -964,6 +979,10 @@ and its storage stand, the tenant binding and `X-Dexicon-Tenant` do not. **Amend
 [D-04](#d-04-corpus-as-the-qdrant-tenant-key): `corpus_id` remains the `is_tenant` key, and
 the `tenant_id` payload field goes. **Amends** [D-11](#d-11-five-mcp-tools): five tools, four
 of which every key sees.
+
+**Amended by** [D-36](#d-36-a-configure-scope-agents-set-up-what-is-indexed) (2026-09-30): a
+key can also carry `configure`, and its scopes can be changed after issue. `admin` stays the
+password's alone.
 
 ---
 
@@ -1789,6 +1808,84 @@ same links while keeping directory following and everything that needs.
 
 **Revisit if.** A workspace needs content that is reachable only through a link and cannot
 be added as a source of its own.
+
+---
+
+### D-36 A configure scope: agents set up what is indexed
+
+**Status.** Accepted and implemented, 2026-09-30.
+
+**Decision.** A key can hold a third scope, `configure`. A key holding it is listed three
+more MCP tools: `list_folders`, `configure_corpus` and `configure_source`
+([06](06-mcp-surface.md#configuration-tools)). With them an agent lists the mounted folders,
+creates a corpus, changes a corpus's description and the filters its sources inherit, adds a
+folder as a files or history source, and changes a source's filters and history settings.
+It removes no corpus, source, chunk set, document or key. A narrower filter or limit does
+drop the files or commits it stops selecting from the index when the refresh runs, as it does
+in the UI, and widening it again reads them back; the tools' replies say so. Chunk sets,
+embedding models, keys and the password stay the admin's. A key's scopes can be changed on
+the Access page, through `PUT /api/tokens/{id}/scopes`, without issuing another key.
+
+**Why.** Setting up a corpus took a person at the UI, while the agent that would search it
+could only describe the change. An agent working in a repository knows which folders hold
+what and which are build output, and `index_status` now shows it why a file is missing
+([06](06-mcp-surface.md#index_status)); with this it can act on that. Every change goes
+through `CorpusConfiguration`, the service the UI's endpoints call, so an agent cannot set
+what the UI would refuse, and each is logged with the key's name.
+
+**What it reaches.** The corpus mapping does not limit `configure`. A key mapped to one
+corpus can add any mounted folder to it, or create another corpus over that folder, and then
+search it: `configure` reaches the whole workspace. The Access page says so when the scope is
+ticked. A corpus the key creates is added to its mapping when it has one, since otherwise the
+key could not reach what it made; an unmapped key already reaches every corpus. For the
+same reason the key adopted from `DEXICON__BOOTSTRAP__TOKEN` holds `search` and `ingest`
+only: `configure` is granted on the Access page, never by a value in `.env`.
+
+**`.gitignore` stays on.** A key cannot turn it off over MCP, for a corpus or a source, and cannot
+add a source that follows a corpus whose default the UI turned off, or reset one to follow it:
+inheriting it off is turning it off by another route. Passing `gitignore: true` pins it on for
+that one source. It is
+what keeps a file such as Dexicon's own `.env` out of the index where the workspace root is
+the checkout that holds it, as it is here: with it off, `configure` could index the file and
+read the admin password and the bootstrap token back by search, which is the route D-28 closed
+for keys. `.env` is not in the walker's built-in exclude list, so this rests on `.gitignore`
+listing it. A secret that no `.gitignore` names is within reach of a `configure` key like any
+other file in the workspace, and keeping such files out of a mounted tree is the operator's.
+What the guard covers is narrower than "secrets". `.gitignore` is read from a source's root
+down, so a source rooted below a repository does not get the repository's own rules, and a
+`configure` key can index a gitignored folder by rooting a source on it, as anyone with the UI can.
+The guard holds for Dexicon's own `.env` because that file sits at the workspace root, where a
+source over the root applies the root's `.gitignore` and no source rooted deeper can contain it.
+Applying ancestors' ignore files to a nested root would be a second copy of the walker's rule
+engine for one tool, and the answer to "keep secrets out of the index" generally is the built-in
+never-index list under Rejected.
+
+A description an agent sets is one line of at most 500 characters, since every other agent
+that lists corpora reads it.
+
+**Creating is asked for.** A corpus or source added by mistake stays until someone removes it
+in the UI. So `create: true` is required to create either, rather than a name that matched
+nothing being taken as a request, and `configure_source` refuses a folder that does not
+exist, which the API accepts for a mount that is away.
+
+**Tool count.** [D-11](#d-11-five-mcp-tools) holds for a key without the scope: the
+`tools/list` filter [D-28](#d-28-an-admin-password-and-scoped-api-keys) added for `ingest`
+also hides the three configuration tools, so such a key is listed at most five. A key
+holding `search` and `configure` is listed seven, or eight with `ingest` as well, which is
+the cost of the grant; one holding `configure` alone is listed the three, since each tool
+that reads the index needs `search`. Each tool checks its scope when called as well.
+
+**Rejected.** Admin over MCP, for [D-11](#d-11-five-mcp-tools)'s reason: deleting and
+key management stay where a person is present. A built-in never-index list of secret-bearing
+file names in the walker, which would protect every source and not only those agents change,
+but alters what existing installs index; left to a decision of its own. Removal over MCP: a source removed by
+mistake takes its vectors with it, and rebuilding a large corpus takes hours; a removal an
+agent proposes and a person approves in the UI is planned separately. Inferring creation
+from an unknown name. Hiding from `list_folders` the folders the key's corpora do not read:
+it would not limit what `configure` can add, only make it harder to see.
+
+**Revisit if.** Agents need to remove what they set up, or a deployment needs `configure`
+confined to part of the workspace, which would take a per-key folder list.
 
 ---
 

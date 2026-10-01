@@ -150,7 +150,7 @@
       "query": "what tools does an agent get",
       "file": "06-mcp-surface.md",
       "why": "The tool list.",
-      "answer": "Five tools. The count is a design constraint"
+      "answer": "Five tools, and three more for a key holding"
     },
     {
       "query": "how do I address a particular chunk set from a search",

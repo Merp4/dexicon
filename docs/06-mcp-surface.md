@@ -62,9 +62,11 @@ Corpus 'books' has no chunk set named 'nope'. Its sets: default, fine.
 
 ## Tools
 
-Five tools. The count is a design constraint: every tool definition is context an agent
-pays for on every turn, and a surface of thirty tools measurably degrades smaller
-models.
+Five tools, and three more for a key holding `configure`. The count is a design
+constraint: every tool definition is context an agent pays for on every turn, and a
+surface of thirty tools measurably degrades smaller models. So a key is listed only the
+tools its scopes let it call: the four that read the index need `search`, `index_refresh`
+needs `ingest`, and the [configuration tools](#configuration-tools) need `configure`.
 
 ### `search_index`
 
@@ -235,8 +237,64 @@ named, so a change is made at the level that owns it. `.dexiconignore` is always
 respected, whatever the `.gitignore` setting. Failed, skipped and empty files are listed
 from the default chunk set, ten per status with the reason recorded for each, and the rest
 counted. A file that a filter, a `.gitignore` or a `.dexiconignore` excludes is dropped in
-the walk without a row, so it is never among them; the source line is what accounts for it. Without a corpus named it lists every corpus's counts alone, since the
-detail for all of them would be the longest tool result an agent sees.
+the walk without a row, so it is never among them; the source line is what accounts for
+it. Without a corpus named it lists every corpus's counts alone, since the detail for all
+of them would be the longest tool result an agent sees.
+
+### Configuration tools
+
+Three more tools, listed only to a key holding `configure`
+([D-36](decisions.md#d-36-a-configure-scope-agents-set-up-what-is-indexed)). They create
+and change; nothing over MCP removes a corpus or a source, so one added by mistake is
+removed in the UI. A narrower filter or limit still drops the files or commits it stops
+selecting from the index when the refresh runs, as in the UI, and the reply says so. Every change goes through the same checks as the UI's, and is logged
+with the key's name: `Key claude-code added the source for the files under repos/app in
+corpus app; job 01K…`.
+
+`list_folders(path?)`: the folders mounted under a path, with how many entries each holds
+(counted to 500), whether it is a git repository, and which of the key's corpora already
+read it. The heading marks the listed folder the same way. Corpora the key cannot reach are
+not named.
+
+```
+Folders in repos:
+  repos/app/  42 entries; git repository; indexed by app (files), apphistory (history)
+  repos/tools/  500+ entries; git repository
+```
+
+`configure_corpus(corpus, create?, description?, include?, exclude?, gitignore?,
+maxFileKb?, reset?)`: creates a corpus when `create` is true, and otherwise changes an
+existing one. A name that matches no corpus is refused rather than taken as a request to
+create one. The filters are the defaults every source inherits; each one sent replaces
+that value and the others keep theirs, and `reset` names the ones to return to the
+server's setting. A change to them queues a refresh when the corpus has sources. A key
+mapped to some corpora has a corpus it creates added to its mapping, so it can reach it.
+`gitignore` takes `true` only: `.gitignore` is what keeps a file such as Dexicon's own `.env`
+out of the index, so turning it off is the UI's. A source cannot be added to a corpus whose
+default the UI turned off without passing `gitignore: true`, nor reset to follow that default. A `description` is one line of at most 500
+characters.
+
+`configure_source(corpus, folder, kind?, create?, include?, exclude?, gitignore?,
+maxFileKb?, history?, reset?)`: adds a folder when `create` is true, and otherwise changes
+the source of that `kind` (`files`, the default, or `history`) on that folder. The folder
+must exist to be added. It is matched and stored with `.` and `..` collapsed, so `docs/.`
+names the source on `docs` rather than adding a second one. A corpus can hold two sources of
+one kind on a folder, added in the UI; a folder cannot say which is meant, so a change to
+either is refused and made in the UI. `exclude`, `gitignore` and `maxFileKb` apply to a files source; a
+history source takes `include`, as the paths whose commits are kept, and `history`: an
+object of `follow` (the ref), `message`, `stat`, `diff`, `maxDiffKb`, `merges`,
+`maxCommits`, `keepIndexed` and `since`. Settings left out keep their value; `reset`
+returns one to its default. The reply shows the source as `index_status` does:
+
+```
+Added a source for the files under repos/app to corpus app, and queued a refresh as job 01K…. As of now:
+  files under repos/app: 0 files found; .gitignore respected; .dexiconignore respected; code and text up to 256 KB; not **/generated/**
+index_status(corpus: "app") reports the refresh, and what it read once it has run.
+```
+
+A change that leaves every value as it was queues nothing and says so. A setting both sent
+and named in `reset`, a file setting on a history source, and a `since` that is not a
+`yyyy-MM-dd` date are refused before anything changes.
 
 ## Resources
 

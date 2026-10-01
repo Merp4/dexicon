@@ -97,6 +97,45 @@ public static class WorkspaceDiscovery
     }
 
     /// <summary>
+    /// A workspace path in the one spelling a source's root is stored and compared in:
+    /// relative to the root, forward slashes, <c>.</c> and <c>..</c> collapsed as
+    /// <see cref="Resolve"/> collapses them, and empty for the root itself. Stored as
+    /// written, <c>docs/.</c> and <c>x/../docs</c> would each read as a second source over
+    /// the same folder.
+    ///
+    /// Lexical and checks nothing, so a caller about to store the result resolves the path
+    /// first; one outside the workspace comes back starting <c>..</c>.
+    /// </summary>
+    public static string Canonical(string workspaceRoot, string? relative)
+    {
+        var root = Path.GetFullPath(workspaceRoot);
+        var full = Path.GetFullPath(Path.Combine(root, relative ?? string.Empty));
+        var canonical = Forward(Path.GetRelativePath(root, full)).Trim('/');
+        return canonical == "." ? string.Empty : canonical;
+    }
+
+    /// <summary>
+    /// A path with the OS's own separator written as a slash, which is how every workspace path is
+    /// stored, listed and compared. Only that separator: on Linux a backslash is part of a name and
+    /// <c>GetFullPath</c> leaves it, so <c>x\..\notes</c> is one odd name and not the folder
+    /// notes. Turned into a slash it would pass for <c>x/../notes</c>, miss the duplicate check,
+    /// and be collapsed to <c>notes</c> by the next call; and a folder genuinely named
+    /// <c>a\b</c> would be listed as <c>a/b</c>, a different folder.
+    /// </summary>
+    public static string Forward(string path) =>
+        Path.DirectorySeparatorChar == '/' ? path : path.Replace(Path.DirectorySeparatorChar, '/');
+
+    /// <summary>
+    /// Compares workspace paths as the filesystem does, ignoring case only on Windows and
+    /// macOS (<see cref="CorpusIndexer.PathComparison"/>). On those, a source stored as
+    /// <c>Docs</c> is the folder listed as <c>docs</c>.
+    /// </summary>
+    public static StringComparer PathComparer =>
+        CorpusIndexer.PathComparison == StringComparison.Ordinal
+            ? StringComparer.Ordinal
+            : StringComparer.OrdinalIgnoreCase;
+
+    /// <summary>
     /// Whether a directory is there and can be listed, told apart by what listing it
     /// throws. <c>Directory.Exists</c> cannot: it answers false for both, and "there and
     /// unreadable" is the case that must not be treated as safe.

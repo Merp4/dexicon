@@ -627,6 +627,14 @@ public sealed class DexiconTools
     /// </summary>
     internal static string OneLine(string path) => path.ReplaceLineEndings(" ");
 
+    /// <summary>
+    /// A name as a JSON string, for a call an agent will be told to make: <c>"a\"b"</c> and not
+    /// <c>"a"b"</c>. A name may hold a quote or a backslash, and an older catalogue's may hold a
+    /// line break, which goes through <see cref="OneLine"/> first.
+    /// </summary>
+    internal static string Quoted(string value) =>
+        System.Text.Json.JsonSerializer.Serialize(OneLine(value), Literal);
+
     private static string Globs(IReadOnlyList<string> globs) => string.Join(", ", globs.Select(OneLine));
 
     /// <summary>
@@ -683,7 +691,7 @@ public sealed class DexiconTools
         return sb.ToString();
     }
 
-    private static void Require(RequestContext rc, string scope)
+    internal static void Require(RequestContext rc, string scope)
     {
         var principal = rc.Principal
             ?? throw new McpException("Not authenticated. Add an Authorization: Bearer dex_… header to the MCP server configuration.");
@@ -691,6 +699,6 @@ public sealed class DexiconTools
         if (!principal.Has(scope))
             throw new McpException(
                 $"This key has scopes [{string.Join(", ", principal.Scopes)}] and needs '{scope}'. " +
-                "Issue a token with that scope in the Dexicon UI.");
+                "Whoever runs Dexicon can grant it on the Access page.");
     }
 }

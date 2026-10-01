@@ -331,21 +331,10 @@ public static class SystemEndpoints
                     statusCode: 404);
 
             var root = Path.GetFullPath(opts.Value.Indexing.WorkspaceRoot);
-            var entries = new List<WorkspaceEntry>();
-
-            foreach (var dir in Directory.EnumerateDirectories(full).Order(StringComparer.Ordinal))
-            {
-                var name = Path.GetFileName(dir);
-                if (name.StartsWith('.') && name is not ".github") continue;
-                int? children = null;
-                try { children = Directory.EnumerateFileSystemEntries(dir).Take(500).Count(); } catch { /* unreadable */ }
-                entries.Add(new WorkspaceEntry(name, Path.GetRelativePath(root, dir).Replace('\\', '/'), true, children));
-            }
-
             return Results.Ok(new WorkspaceListing(
                 opts.Value.Indexing.WorkspaceRoot,
-                Path.GetRelativePath(root, full).Replace('\\', '/'),
-                entries));
+                WorkspaceDiscovery.Forward(Path.GetRelativePath(root, full)),
+                FoldersIn(opts.Value.Indexing.WorkspaceRoot, full)));
         }).Produces<WorkspaceListing>().WithTags("Workspaces");
 
         // What a folder's repository could be followed at, so a history source is pointed
@@ -356,6 +345,34 @@ public static class SystemEndpoints
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             return await RepositoryRefsAsync(opts.Value.Indexing.WorkspaceRoot, path, ct, @ref);
         }).Produces<GitRefsResponse>().WithTags("Workspaces");
+    }
+
+    /// <summary>
+    /// The folders directly in <paramref name="full"/>, an already-resolved directory under
+    /// the workspace, as the folder picker and <c>list_folders</c> both show them. Hidden
+    /// folders are left out except <c>.github</c>. A child count stops at 500, so a folder
+    /// showing 500 holds at least that many.
+    ///
+    /// A link is left out and not looked inside. It can lead out of the workspace, so
+    /// counting its entries, or a caller probing it for <c>.git</c>, reads wherever it
+    /// points; and it cannot be added as a source, since links are not followed (D-35).
+    /// </summary>
+    internal static List<WorkspaceEntry> FoldersIn(string workspaceRoot, string full)
+    {
+        var root = Path.GetFullPath(workspaceRoot);
+        var entries = new List<WorkspaceEntry>();
+
+        foreach (var dir in Directory.EnumerateDirectories(full).Order(StringComparer.Ordinal))
+        {
+            var name = Path.GetFileName(dir);
+            if (name.StartsWith('.') && name is not ".github") continue;
+            if (new DirectoryInfo(dir).LinkTarget is not null) continue;
+            int? children = null;
+            try { children = Directory.EnumerateFileSystemEntries(dir).Take(500).Count(); } catch { /* unreadable */ }
+            entries.Add(new WorkspaceEntry(name, WorkspaceDiscovery.Forward(Path.GetRelativePath(root, dir)), true, children));
+        }
+
+        return entries;
     }
 
     /// <summary>
@@ -395,7 +412,7 @@ public static class SystemEndpoints
                         "Dexicon can only index paths bind-mounted into the container. See WORKSPACE_ROOT.",
                 statusCode: 404);
 
-        var relative = Path.GetRelativePath(Path.GetFullPath(workspaceRoot), repo.FullPath).Replace('\\', '/');
+        var relative = WorkspaceDiscovery.Forward(Path.GetRelativePath(Path.GetFullPath(workspaceRoot), repo.FullPath));
         if (relative == ".") relative = string.Empty;
 
         try
@@ -471,15 +488,7 @@ public static class SystemEndpoints
                 return Results.Problem(title: "Name is required", statusCode: 400);
 
             var requested = body.Scopes is { Count: > 0 } ? body.Scopes : [Scopes.Search];
-            var unknown = requested
-                .Where(s => !Scopes.Issuable.Contains(s, StringComparer.OrdinalIgnoreCase)).ToList();
-            if (unknown.Count > 0)
-                return Results.Problem(
-                    title: "Unknown scope",
-                    detail: $"{string.Join(", ", unknown)}. A key may hold " +
-                            $"{string.Join(" or ", Scopes.Issuable)}. Administration is the password's, " +
-                            "so that no credential in an agent's configuration can delete a corpus.",
-                    statusCode: 400);
+            if (UnissuableScopes(requested) is { } unissuable) return unissuable;
 
             var expires = body.ExpiresInDays is { } d and > 0 ? DateTime.UtcNow.AddDays(d) : (DateTime?)null;
             var (row, issued) = await tokens.CreateAsync(body.Name.Trim(), requested, expires, ct);
@@ -527,6 +536,70 @@ public static class SystemEndpoints
             await db.Entry(token).Collection(x => x.Corpora).LoadAsync(ct);
             return Results.Ok(token.ToSummary());
         }).Produces<TokenSummary>();
+
+        // Replaced outright, as the mapping is, so that granting configure to an agent that
+        // already works does not mean issuing a key and editing its configuration.
+        t.MapPut("/{id}/scopes", async (string id, UpdateTokenScopesRequest body, RequestContext rc,
+            TokenService tokens, CatalogDbContext db, IMemoryCacheEvictor evictor, ILoggerFactory logs,
+            CancellationToken ct) =>
+        {
+            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+            return await SetScopesAsync(id, body, tokens, db, evictor, logs.CreateLogger("Dexicon.Keys"), ct);
+        }).Produces<TokenSummary>();
+    }
+
+    /// <summary>
+    /// Replace a key's scopes, once the caller is known to be the admin. A method of its own
+    /// so a test can put the principal cache on either side of it, since the eviction is what
+    /// makes a removed scope stop working on the agent's next call.
+    /// </summary>
+    internal static async Task<IResult> SetScopesAsync(string id, UpdateTokenScopesRequest body,
+        TokenService tokens, CatalogDbContext db, IMemoryCacheEvictor evictor, ILogger log, CancellationToken ct)
+    {
+        if (body.Scopes is not { Count: > 0 })
+            return Results.Problem(
+                title: "No scope",
+                detail: "A key needs at least one scope. To stop a key working, revoke it.",
+                statusCode: 400);
+        if (UnissuableScopes(body.Scopes) is { } unissuable) return unissuable;
+
+        if (!await tokens.SetScopesAsync(id, body.Scopes, ct)) return Results.NotFound();
+
+        // Scopes travel on the cached principal, unlike the mapping, so without this the
+        // agent keeps its old ones until the cache entry expires.
+        evictor.EvictPrincipals();
+
+        // What was stored, and not the request as well: every requested scope was checked
+        // above to be issuable, so the two differ only in spelling and repetition, and the
+        // request's own text could carry a line break into the log (" search\n" passes the
+        // check once trimmed).
+        // Not the caller's token: the scopes are saved and the cache evicted, and a cancel here
+        // would skip the line below for a change that has happened.
+        var token = await db.Tokens.AsNoTracking().Include(x => x.Corpora).FirstAsync(x => x.Id == id, CancellationToken.None);
+        log.LogInformation("Key {Key} scopes set to {Scopes}", DexiconAuthMiddleware.OneLine(token.Name), token.Scopes);
+        return Results.Ok(token.ToSummary());
+    }
+
+    /// <summary>
+    /// A problem result naming each requested scope a key may not hold, or null when all
+    /// of them may be. Administration is absent from <see cref="Scopes.Issuable"/>, so a
+    /// request for it is refused here with the reason. A null element binds from JSON like
+    /// any other and is not a scope, so it is refused too rather than dereferenced.
+    /// </summary>
+    internal static IResult? UnissuableScopes(IReadOnlyList<string?> requested)
+    {
+        var unknown = requested
+            .Where(s => s is null || !Scopes.Issuable.Contains(s.Trim(), StringComparer.OrdinalIgnoreCase))
+            .Select(s => s ?? "null")
+            .ToList();
+        return unknown.Count == 0
+            ? null
+            : Results.Problem(
+                title: "Unknown scope",
+                detail: $"{string.Join(", ", unknown)}. A key may hold " +
+                        $"{string.Join(" or ", Scopes.Issuable)}. Administration is the password's, " +
+                        "so that no credential in an agent's configuration can delete a corpus.",
+                statusCode: 400);
     }
 
     /// <summary>
@@ -537,27 +610,40 @@ public static class SystemEndpoints
     /// key mapped to fewer corpora than the operator ticked, and an empty mapping means
     /// every corpus, so the failure mode of dropping the last one is the opposite of what
     /// was asked for.
+    ///
+    /// Under the lock a corpus's creation takes, so that a key creating a corpus and the admin
+    /// replacing its mapping cannot interleave: the creation reads whether there is a mapping
+    /// and adds to it, and a replacement between the two left the key reaching only the new
+    /// corpus.
     /// </summary>
-    private static async Task<IResult?> MapCorporaAsync(
+    internal static async Task<IResult?> MapCorporaAsync(
         CatalogDbContext db, string tokenId, IReadOnlyList<string> corpusIds, CancellationToken ct)
     {
-        var wanted = corpusIds.Distinct(StringComparer.Ordinal).ToList();
+        await CorpusConfiguration.Naming.WaitAsync(ct);
+        try
+        {
+            var wanted = corpusIds.Distinct(StringComparer.Ordinal).ToList();
 
-        var known = await db.Corpora.Where(c => wanted.Contains(c.Id)).Select(c => c.Id).ToListAsync(ct);
-        var unknown = wanted.Except(known, StringComparer.Ordinal).ToList();
-        if (unknown.Count > 0)
-            return Results.Problem(
-                title: "Unknown corpus",
-                detail: $"No corpus with id {string.Join(", ", unknown)}. The mapping was not changed.",
-                statusCode: 400);
+            var known = await db.Corpora.Where(c => wanted.Contains(c.Id)).Select(c => c.Id).ToListAsync(ct);
+            var unknown = wanted.Except(known, StringComparer.Ordinal).ToList();
+            if (unknown.Count > 0)
+                return Results.Problem(
+                    title: "Unknown corpus",
+                    detail: $"No corpus with id {string.Join(", ", unknown)}. The mapping was not changed.",
+                    statusCode: 400);
 
-        var existing = await db.TokenCorpora.Where(tc => tc.TokenId == tokenId).ToListAsync(ct);
-        db.TokenCorpora.RemoveRange(existing);
-        foreach (var corpusId in wanted)
-            db.TokenCorpora.Add(new TokenCorpus { TokenId = tokenId, CorpusId = corpusId });
+            var existing = await db.TokenCorpora.Where(tc => tc.TokenId == tokenId).ToListAsync(ct);
+            db.TokenCorpora.RemoveRange(existing);
+            foreach (var corpusId in wanted)
+                db.TokenCorpora.Add(new TokenCorpus { TokenId = tokenId, CorpusId = corpusId });
 
-        await db.SaveChangesAsync(ct);
-        return null;
+            await db.SaveChangesAsync(ct);
+            return null;
+        }
+        finally
+        {
+            CorpusConfiguration.Naming.Release();
+        }
     }
 
     public static void MapHealthEndpoints(this IEndpointRouteBuilder app)
@@ -1066,6 +1152,14 @@ public static class SystemEndpoints
 public interface IMemoryCacheEvictor
 {
     void EvictPrincipals();
+
+    /// <summary>
+    /// Moves on every <see cref="EvictPrincipals"/>, and is part of each principal's cache key.
+    /// A verification that began before an eviction may have read the key's row before the
+    /// change that caused it; filed under the generation it began in, what it caches is never
+    /// read by a request that begins after.
+    /// </summary>
+    long Generation { get; }
 }
 
 public static class ModelNames

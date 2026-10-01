@@ -17,6 +17,7 @@ internal static class McpJson
         // The SDK's own defaults, so nothing else about binding changes.
         var options = new JsonSerializerOptions(ModelContextProtocol.McpJsonUtilities.DefaultOptions);
         options.Converters.Add(new CorpusNamesConverter());
+        options.Converters.Add(new SettingListConverter());
         return options;
     }
 }
@@ -25,7 +26,9 @@ internal static class McpJson
 /// Reads <c>search_index</c>'s <c>corpus</c> argument from either a single name or a list
 /// of them.
 ///
-/// It is the only array on the MCP surface: every other filter — <c>source</c>,
+/// It is the only <c>string[]</c> on the MCP surface, which is what lets its messages name
+/// the argument; the configuration tools' lists are another type with a converter of their
+/// own (<see cref="SettingListConverter"/>). Every other filter — <c>source</c>,
 /// <c>language</c>, <c>symbol</c>, <c>pathPrefix</c> — is a scalar, and scoping to one
 /// corpus is the common call. A client that sends <c>"corpus": "docs"</c> was refused
 /// during argument binding, before the tool body ran, and the refusal reached the caller
@@ -97,7 +100,7 @@ internal sealed class CorpusNamesConverter : JsonConverter<string[]>
         writer.WriteEndArray();
     }
 
-    static string Describe(JsonTokenType token) => token switch
+    internal static string Describe(JsonTokenType token) => token switch
     {
         JsonTokenType.Number => "a number",
         JsonTokenType.True or JsonTokenType.False => "a boolean",
@@ -106,4 +109,54 @@ internal sealed class CorpusNamesConverter : JsonConverter<string[]>
         JsonTokenType.Null => "null",
         _ => token.ToString().ToLowerInvariant(),
     };
+}
+
+/// <summary>
+/// Reads the configuration tools' <c>include</c>, <c>exclude</c> and <c>reset</c> from a single
+/// string or a list, as <see cref="CorpusNamesConverter"/> reads <c>corpus</c>, with messages
+/// that name these arguments rather than that one. A type of their own,
+/// <c>IReadOnlyList&lt;string&gt;</c>, is what keeps the two converters apart: one registered for
+/// <c>string[]</c> meets every string array, and its wording would be wrong for the others.
+/// </summary>
+internal sealed class SettingListConverter : JsonConverter<IReadOnlyList<string>>
+{
+    public override IReadOnlyList<string>? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        switch (reader.TokenType)
+        {
+            case JsonTokenType.Null:
+                return null;
+
+            case JsonTokenType.String:
+                return [reader.GetString()!];
+
+            case JsonTokenType.StartArray:
+                var values = new List<string>();
+                while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+                {
+                    if (reader.TokenType != JsonTokenType.String)
+                        throw new McpException(
+                            "include, exclude and reset take a string or a list of strings; this list holds "
+                            + $"{CorpusNamesConverter.Describe(reader.TokenType)}.");
+                    values.Add(reader.GetString()!);
+                }
+
+                return values;
+
+            default:
+                throw new McpException(
+                    "include, exclude and reset take a string or a list of strings, not "
+                    + $"{CorpusNamesConverter.Describe(reader.TokenType)}.");
+        }
+    }
+
+    public override void Write(Utf8JsonWriter writer, IReadOnlyList<string> value, JsonSerializerOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        ArgumentNullException.ThrowIfNull(value);
+
+        writer.WriteStartArray();
+        foreach (var item in value) writer.WriteStringValue(item);
+        writer.WriteEndArray();
+    }
 }

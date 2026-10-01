@@ -40,13 +40,21 @@ public sealed class CorpusConfiguration(
 {
     private IndexingOptions Indexing => opts.Value.Indexing;
 
+    /// <summary>The length the model declares for a corpus name.</summary>
+    internal const int NameMax = 200;
+
     /// <summary>
     /// Held from the last name check to the insert, which makes the two one step. The unique
     /// index compares names exactly, so "Notes" and "notes" created at the same moment would
     /// both pass it. Dexicon is one process owning its catalogue (D-01), and this is blind to
     /// a second process writing the same file.
+    ///
+    /// Also held while a key's mapping is replaced. A creation reads whether its key has a
+    /// mapping and adds the new corpus to it, and the admin could clear that mapping, which
+    /// means every corpus, between the two: the key would be left reaching only the corpus it
+    /// just made.
     /// </summary>
-    private static readonly SemaphoreSlim Naming = new(1, 1);
+    internal static readonly SemaphoreSlim Naming = new(1, 1);
 
     /// <summary>
     /// A conflict when a corpus already holds this name, compared as
@@ -80,8 +88,31 @@ public sealed class CorpusConfiguration(
         return null;
     }
 
-    public async Task<ConfigOutcome<Corpus>> CreateCorpusAsync(CreateCorpusRequest body, CancellationToken ct)
+    /// <param name="grantToKeyId">
+    /// A key that is to reach the corpus it is creating. When it is mapped to corpora, the new
+    /// one joins its mapping in the same save as the corpus, so a failure between the two
+    /// cannot leave a corpus its creator cannot reach, and one it cannot create again by name.
+    /// A key with no mapping already reaches every corpus.
+    /// </param>
+    /// <param name="committed">
+    /// Called once the corpus is saved and before the work that can still fail after it, so a
+    /// caller can record the creation where it became true. Without it a failure in the
+    /// collection setup below is an exception with the corpus already there and nothing said.
+    /// </param>
+    /// <param name="defaults">
+    /// The filters its sources are to inherit, saved with the corpus. A second call after
+    /// creation had a window of its own, in which the corpus existed without them and a retry
+    /// of the creation was refused as taken.
+    /// </param>
+    public async Task<ConfigOutcome<Corpus>> CreateCorpusAsync(
+        CreateCorpusRequest body, CancellationToken ct, string? grantToKeyId = null, Action<Corpus>? committed = null,
+        CorpusDefaults? defaults = null)
     {
+        // Judged before anything is built, as UpdateCorpusAsync judges its own.
+        if (defaults is { MaxFileBytes: <= 0 })
+            return new ConfigRefusal("Invalid size cap",
+                "maxFileBytes must be greater than zero, or null to follow the server's setting.", 400);
+
         if (string.IsNullOrWhiteSpace(body.Name))
             return new ConfigRefusal("Name is required", "A corpus needs a name.", 400);
 
@@ -89,6 +120,25 @@ public sealed class CorpusConfiguration(
         // and failed the unique index, which is a 500 where a 409 was promised. Checked here
         // so that a taken name does not wait on the model probe, and again at the insert.
         var name = body.Name.Trim();
+
+        // The model declares 200 and SQLite stores the column as unbounded TEXT, so nothing else
+        // enforces it. A name is repeated in every listing and log line, and a description,
+        // which an agent can also set, is capped at 500 for the same reason.
+        if (name.Length > NameMax)
+            return new ConfigRefusal(
+                "A corpus name is too long",
+                $"A corpus name is at most {NameMax} characters; this one is {name.Length}.",
+                400);
+
+        // Shown on a line of its own in every listing, logged, and typed as an argument, so
+        // a line break or an escape sequence in it breaks all three. U+2028 and U+2029 break
+        // a line too, and char.IsControl does not count them.
+        if (name.Any(c => char.IsControl(c) || c is '\u2028' or '\u2029'))
+            return new ConfigRefusal(
+                "A corpus name cannot contain a control character",
+                "A line break, tab or other control character in a name breaks every listing and log line "
+                + "that shows it.",
+                400);
 
         // ScopeResolver.Split reads everything after the first colon as a chunk set, so a
         // corpus named with one could be listed and never searched by its name.
@@ -139,6 +189,14 @@ public sealed class CorpusConfiguration(
             CreatedUtc = DateTime.UtcNow,
         };
 
+        if (defaults is { } inherited)
+        {
+            corpus.DefaultUseGitignore = inherited.UseGitignore;
+            corpus.DefaultMaxFileBytes = inherited.MaxFileBytes;
+            corpus.DefaultIncludeGlobs = SourceFilters.Store(inherited.IncludeGlobs);
+            corpus.DefaultExcludeGlobs = SourceFilters.Store(inherited.ExcludeGlobs);
+        }
+
         // Every corpus is born with one set. Nothing else has to special-case the
         // "no sets yet" state, and the settings a caller passed at creation have a
         // home that is honest about what they configure.
@@ -165,7 +223,8 @@ public sealed class CorpusConfiguration(
             catch (UnauthorizedAccessException ex)
             { return new ConfigRefusal("Invalid workspace path", ex.Message, 400); }
 
-            corpus.Sources.Add(CorpusEndpoints.FirstSource(corpus.Id, body.WorkspacePath));
+            corpus.Sources.Add(CorpusEndpoints.FirstSource(corpus.Id,
+                WorkspaceDiscovery.Canonical(Indexing.WorkspaceRoot, body.WorkspacePath)));
         }
 
         await Naming.WaitAsync(ct);
@@ -173,12 +232,16 @@ public sealed class CorpusConfiguration(
         {
             if (await TakenAsync(name, ct) is { } taken) return taken;
             db.Corpora.Add(corpus);
+            if (grantToKeyId is not null && await db.TokenCorpora.AnyAsync(tc => tc.TokenId == grantToKeyId, ct))
+                db.TokenCorpora.Add(new TokenCorpus { TokenId = grantToKeyId, CorpusId = corpus.Id });
             await db.SaveChangesAsync(ct);
         }
         finally
         {
             Naming.Release();
         }
+
+        committed?.Invoke(corpus);
 
         await vectors.EnsureCollectionAsync(corpus.ChunkSets[0].CollectionName, dims, ct);
 
@@ -234,12 +297,24 @@ public sealed class CorpusConfiguration(
 
         await db.SaveChangesAsync(ct);
 
-        if (filtersChanged) await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
+        // Not for a corpus with no sources, which has nothing to re-read: defaults set just
+        // after creation, before a folder is added, would otherwise leave an empty job.
+        //
+        // Not cancellable: the change is committed, and the job is what makes it take effect.
+        // A cancel between the two left filters changed with no refresh, and sending the same
+        // values again reads as no change, so nothing queued one.
+        if (filtersChanged && await db.Sources.AnyAsync(s => s.CorpusId == corpus.Id, CancellationToken.None))
+            await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: CancellationToken.None);
 
         return filtersChanged;
     }
 
-    public async Task<ConfigOutcome<SourceAdded>> AddSourceAsync(Corpus corpus, AddSourceRequest body, CancellationToken ct)
+    /// <param name="committed">
+    /// Called once the source is saved and before its refresh is queued, so a caller can record
+    /// the change where it became true. A failure queuing the job leaves the source in place.
+    /// </param>
+    public async Task<ConfigOutcome<SourceAdded>> AddSourceAsync(
+        Corpus corpus, AddSourceRequest body, CancellationToken ct, Action<Source>? committed = null)
     {
         // The shape of the request first, because judging it costs nothing and the
         // check below it starts a git process. A request carrying both a bad path
@@ -301,7 +376,8 @@ public sealed class CorpusConfiguration(
             CorpusId = corpus.Id,
             Kind = body.GitHistory ? SourceKind.GitHistory : SourceKind.Workspace,
             GitOptions = body.GitHistory ? (body.Git ?? new GitHistoryOptions()).ToJson() : null,
-            RootPath = body.WorkspacePath.Trim('/', '\\'),
+            // Resolved above, so the canonical spelling is inside the workspace.
+            RootPath = WorkspaceDiscovery.Canonical(Indexing.WorkspaceRoot, body.WorkspacePath),
             // Null, not a default. An omitted field means this source has no opinion
             // and follows the corpus, which is the point of the corpus having one.
             UseGitignore = body.UseGitignore,
@@ -313,11 +389,15 @@ public sealed class CorpusConfiguration(
 
         db.Sources.Add(source);
         await db.SaveChangesAsync(ct);
+        committed?.Invoke(source);
 
         // Same reason as creation: adding a folder is asking for it to be read. A
         // Refresh rather than a Full, because the corpus's other sources are already
         // indexed and re-embedding them costs real money on a hosted provider.
-        var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
+        //
+        // Not cancellable, as in UpdateCorpusAsync: the source is saved, and a cancel before
+        // the job leaves a source nothing reads until the next scheduled refresh.
+        var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: CancellationToken.None);
 
         // And a sweep, on its own lane. The job above answers "what is in this folder"
         // as well, but only once it reaches the front of a queue that may be hours
@@ -328,8 +408,9 @@ public sealed class CorpusConfiguration(
         return new SourceAdded(source.ToSummary(corpus, Indexing), job.ToSummary());
     }
 
+    /// <param name="committed">Called after a change is saved and before its refresh is queued, as for AddSourceAsync.</param>
     public async Task<ConfigOutcome<SourceUpdated>> UpdateSourceAsync(
-        Corpus corpus, string sourceId, UpdateSourceRequest body, CancellationToken ct)
+        Corpus corpus, string sourceId, UpdateSourceRequest body, CancellationToken ct, Action<Source>? committed = null)
     {
         var source = await db.Sources.FirstOrDefaultAsync(s => s.Id == sourceId && s.CorpusId == corpus.Id, ct);
 
@@ -373,10 +454,12 @@ public sealed class CorpusConfiguration(
         if (body.Git is { } git && CorpusEndpoints.ApplyHistorySettings(source, git)) changed = true;
 
         await db.SaveChangesAsync(ct);
+        if (changed) committed?.Invoke(source);
 
         // Only when something moved. A form submitted unchanged should not re-walk a
         // library, and a refresh on every save is how that happens.
-        var job = changed ? await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct) : null;
+        // Not cancellable: the change is saved, and the job is what applies it.
+        var job = changed ? await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: CancellationToken.None) : null;
 
         return new SourceUpdated(source.ToSummary(corpus, Indexing), job?.ToSummary());
     }

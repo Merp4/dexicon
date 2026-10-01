@@ -152,16 +152,19 @@ builder.Services
     .AddMcpServer(o => o.ServerInfo = new() { Name = "dexicon", Version = ThisAssembly.Version })
     .WithHttpTransport(o => o.Stateless = true)
     .WithTools<DexiconTools>(McpJson.Options)
+    .WithTools<ConfigureTools>(McpJson.Options)
     .WithResources<DexiconResources>();
 
-// A key without `ingest` is not shown `index_refresh` at all, rather than being refused
-// when it calls it: an agent that can see a tool will call it, spend a turn on the error,
-// and sometimes retry. `tools/list` carries the bearer like every other request, so the
-// principal is available here. See docs/decisions.md D-28.
+// A key without `ingest` is not shown `index_refresh` at all, and one without `configure`
+// is not shown the three configuration tools, rather than being refused when it calls one:
+// an agent that can see a tool will call it, spend a turn on the error, and sometimes retry.
+// It also keeps the tool definitions, which every turn pays for, to what a key can use.
+// `tools/list` carries the bearer like every other request, so the principal is available
+// here. Each tool checks its scope again when called. See docs/decisions.md D-28 and D-36.
 //
 // The list is not live. The transport is stateless, so there is no
 // notifications/tools/list_changed to send, and a client lists on connect and caches:
-// granting `ingest` reaches an agent when it reconnects, whereas mapping a corpus reaches
+// granting a scope reaches an agent when it reconnects, whereas mapping a corpus reaches
 // it on the next call.
 builder.Services.Configure<McpServerOptions>(o =>
     o.Filters.Request.ListToolsFilters.Add(next => async (ctx, ct) =>
@@ -171,9 +174,10 @@ builder.Services.Configure<McpServerOptions>(o =>
         // Fully qualified: ModelContextProtocol.Server.RequestContext<T> is the filter's own
         // context type and shadows ours at this call site.
         var principal = ctx.Services?.GetService<Dexicon.Infrastructure.RequestContext>()?.Principal;
-        if (principal is null || principal.Has(Scopes.Ingest)) return result;
+        if (principal is null) return result;
 
-        result.Tools = [.. result.Tools.Where(t => t.Name != "index_refresh")];
+        var hidden = ToolVisibility.HiddenFrom(principal);
+        if (hidden.Count > 0) result.Tools = [.. result.Tools.Where(t => !hidden.Contains(t.Name))];
         return result;
     }));
 
@@ -311,8 +315,16 @@ finally
 /// <summary>Evicts cached principals so a revoked token stops working immediately.</summary>
 internal sealed class MemoryCacheEvictor(IMemoryCache cache) : IMemoryCacheEvictor
 {
+    private long _generation;
+
+    public long Generation => Interlocked.Read(ref _generation);
+
     public void EvictPrincipals()
     {
+        // Before the clear. From here every request looks under the new generation, so the
+        // clear only frees memory: an entry written late under the old one is never read.
+        Interlocked.Increment(ref _generation);
+
         // MemoryCache has no prefix-scan, and the principal TTL is 60s, so the blunt
         // instrument is the correct one: revocation is rare and correctness beats a few
         // re-verifications.

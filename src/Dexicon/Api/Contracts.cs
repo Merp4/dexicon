@@ -529,6 +529,12 @@ public sealed record CreateTokenRequest(
 /// <summary>Replaces a key's corpus mapping outright. An empty list means every corpus.</summary>
 public sealed record UpdateTokenCorporaRequest(IReadOnlyList<string> CorpusIds);
 
+/// <summary>
+/// Replaces a key's scopes outright: any of <c>search</c>, <c>ingest</c> and
+/// <c>configure</c>, at least one. Takes effect on the agent's next call.
+/// </summary>
+public sealed record UpdateTokenScopesRequest(IReadOnlyList<string> Scopes);
+
 /// <param name="CorpusIds">Empty means every corpus, which is not the same as none.</param>
 public sealed record TokenSummary(
     string Id, string Name, string Scopes,

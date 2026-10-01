@@ -197,7 +197,7 @@ public static class Bootstrapper
             generated);
     }
 
-    private static async Task EnsureBootstrapTokenAsync(
+    internal static async Task EnsureBootstrapTokenAsync(
         IServiceProvider sp, CatalogDbContext db, ILogger log, DexiconOptions options)
     {
         var tokens = sp.GetRequiredService<TokenService>();
@@ -211,7 +211,7 @@ public static class Bootstrapper
         {
             if (await tokens.VerifyAsync(pinned) is not null) return;
 
-            await tokens.AdoptAsync("bootstrap (pinned)", Scopes.Issuable, pinned);
+            await tokens.AdoptAsync("bootstrap (pinned)", Scopes.Bootstrap, pinned);
             log.LogWarning(
                 "Adopted the bootstrap key from DEXICON__BOOTSTRAP__TOKEN. It is a SECRET: " +
                 "it lives in your .env, which is gitignored and must never be committed.");

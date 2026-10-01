@@ -11,6 +11,8 @@ import { ApiError, type TokenSummary } from './api';
 const listTokens = vi.fn();
 const listCorpora = vi.fn();
 const revokeToken = vi.fn();
+const setTokenScopes = vi.fn();
+const createToken = vi.fn();
 
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
@@ -18,6 +20,8 @@ vi.mock('./api', async (importOriginal) => ({
     listTokens: (...a: unknown[]) => listTokens(...a),
     listCorpora: (...a: unknown[]) => listCorpora(...a),
     revokeToken: (...a: unknown[]) => revokeToken(...a),
+    setTokenScopes: (...a: unknown[]) => setTokenScopes(...a),
+    createToken: (...a: unknown[]) => createToken(...a),
   },
 }));
 
@@ -40,6 +44,8 @@ beforeEach(() => {
   listTokens.mockResolvedValue([token()]);
   listCorpora.mockResolvedValue([]);
   revokeToken.mockResolvedValue(undefined);
+  setTokenScopes.mockResolvedValue(token());
+  createToken.mockResolvedValue({ token: token(), secret: 'dex_a_b', mcpAddCommand: 'claude mcp add' });
 });
 
 describe('the key list', () => {
@@ -99,5 +105,59 @@ describe('revoking a key', () => {
 
     expect(await screen.findByText('revoked')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Revoke' })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * A key's scopes. Granting configure to an agent that already works should not mean issuing
+ * it a new key, and what configure reaches is said where it is granted, because the corpus
+ * mapping does not limit it.
+ */
+describe("a key's scopes", () => {
+  it('are changed in place, and the list reloads', async () => {
+    const user = userEvent.setup();
+    render(<AccessView onError={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Change the scopes of laptop-agent' }));
+    const dialog = await screen.findByRole('dialog', { name: 'What laptop-agent can do' });
+    await user.click(within(dialog).getByRole('button', { name: 'configure' }));
+    expect(within(dialog).getByText(/reaches the whole workspace/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: /Save/ }));
+
+    expect(setTokenScopes).toHaveBeenCalledWith('t1', ['search', 'configure']);
+    await waitFor(() => expect(listTokens).toHaveBeenCalledTimes(2));
+  });
+
+  it('cannot be left empty', async () => {
+    const user = userEvent.setup();
+    render(<AccessView onError={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Change the scopes of laptop-agent' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'search' }));
+
+    expect(within(dialog).getByText(/needs at least one scope/)).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /Save/ })).toBeDisabled();
+  });
+
+  it('are not offered for change on a revoked key', async () => {
+    listTokens.mockResolvedValue([token({ revokedUtc: new Date().toISOString() })]);
+    render(<AccessView onError={vi.fn()} />);
+
+    expect(await screen.findByText('revoked')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Change the scopes of laptop-agent' })).not.toBeInTheDocument();
+  });
+
+  it('include configure when a key is created', async () => {
+    const user = userEvent.setup();
+    render(<AccessView onError={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: /New key/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'New key' });
+    await user.type(within(dialog).getByPlaceholderText('claude-code'), 'setup-agent');
+    await user.click(within(dialog).getByRole('button', { name: 'configure' }));
+    await user.click(within(dialog).getByRole('button', { name: /Create/ }));
+
+    expect(createToken).toHaveBeenCalledWith('setup-agent', ['search', 'configure'], []);
   });
 });

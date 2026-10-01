@@ -1,7 +1,7 @@
 ---
-# dexicon-skill-version: 3
+# dexicon-skill-version: 4
 name: dexicon-search
-description: Search indexed code and documents by meaning using the Dexicon MCP server. Use when looking for where something is implemented, how a concept is handled, or what a document says about a topic — anything where you know the idea but not the term. Also covers reading an indexed file back, diagnosing an empty result, and keeping files out of the index.
+description: Search indexed code and documents by meaning using the Dexicon MCP server. Use when looking for where something is implemented, how a concept is handled, or what a document says about a topic — anything where you know the idea but not the term. Also covers reading an indexed file back, diagnosing an empty result, and changing what is indexed, including adding folders and corpora when the key allows it.
 ---
 
 # Dexicon
@@ -148,10 +148,25 @@ as `.gitignore`, including `!` to re-include, and is read after it, so a `!` lin
 back a file `.gitignore` excludes. It cannot bring back one that a source's exclude filter,
 include filter or size limit leaves out: those apply after it.
 
-Anything else (a new corpus or source, a source's include or exclude filters, its size
-limit, a corpus description, a chunk set) is set in the Dexicon UI by whoever runs it. Say
-exactly what to change there: which corpus, which source, which field, and the value, with
-the current one from `index_status`.
+If your key lists `configure_corpus` and `configure_source`, you can make the other changes
+yourself. `list_folders` shows what is mounted, which folders are git repositories, and
+which of your corpora read each one. `configure_source(corpus, folder, create: true)` adds a
+folder, and without `create` changes that folder's source: `exclude`, `include`,
+`gitignore`, `maxFileKb`, or for a history source (`kind: "history"`) the `history`
+settings. `configure_corpus(corpus, create: true, description: ...)` makes a corpus, and
+without `create` changes its description or the filters its sources inherit. Settings you
+leave out keep their value; `reset` returns one to its default. A new or widened source
+starts indexing at once, which for a large tree takes a long time, so tell the user what you
+added. These tools cannot remove a corpus or a source, though a narrower filter drops
+the files it stops selecting from the index on the refresh, and widening it reads them back.
+`gitignore` can be set to true but not turned off. Prefer a `.dexiconignore` for what the
+repository should never have indexed, since it travels with the tree, and a source's
+filters for what only this corpus leaves out.
+
+Without those tools, anything else (a new corpus or source, a source's filters or size
+limit, a corpus description) is set in the Dexicon UI by whoever runs it, as are chunk sets
+and removals in any case. Say exactly what to change there: which corpus, which source,
+which field, and the value, with the current one from `index_status`.
 
 ## Reporting what you find
 

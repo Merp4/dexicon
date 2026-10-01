@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Dexicon.Api;
 using Dexicon.Core.Auth;
 using Microsoft.Extensions.Caching.Memory;
 
@@ -20,12 +21,14 @@ public sealed class RequestContext
 ///
 /// Two kinds of bearer reach here. A <c>dexs_</c> value is an admin session, verified in
 /// memory and carrying the <c>admin</c> scope. A <c>dex_</c> value is an agent's key,
-/// verified against the catalogue and carrying <c>search</c> and perhaps <c>ingest</c>.
+/// verified against the catalogue and carrying one or more of <c>search</c>,
+/// <c>ingest</c> and <c>configure</c> (D-36).
 /// Which corpora a key may reach is not decided here: it is read per request by
 /// <see cref="Dexicon.Core.Auth.ScopeResolver"/>, so that a change in the UI is not held
 /// behind this cache's TTL. See docs/decisions.md D-28.
 /// </summary>
-public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cache, ILogger<DexiconAuthMiddleware> log)
+public sealed class DexiconAuthMiddleware(
+    RequestDelegate next, IMemoryCache cache, IMemoryCacheEvictor evictor, ILogger<DexiconAuthMiddleware> log)
 {
     private static readonly TimeSpan PrincipalTtl = TimeSpan.FromSeconds(60);
 
@@ -90,7 +93,14 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
             // PBKDF2 at 600k iterations on every MCP call would dominate the cost of a
             // search, so verified principals are cached briefly. Revocation punches
             // through by evicting the entry rather than waiting for the TTL.
-            var cacheKey = PrincipalCacheKey(presented);
+            //
+            // Filed under the generation this request began in. A revocation or a scope
+            // change can land while this reads the row and hashes, and the principal it read
+            // would then be written after the eviction cleared the cache. Under the old
+            // generation it is never read again: every request that begins after the eviction
+            // looks under the new one. A check before the write instead left the same gap
+            // between the check and the write.
+            var cacheKey = PrincipalCacheKey(presented, evictor.Generation);
             if (!cache.TryGetValue(cacheKey, out principal) || principal is null)
             {
                 principal = await tokens.VerifyAsync(presented, ctx.RequestAborted);
@@ -158,6 +168,10 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
     internal static string PrincipalCacheKey(string presented) =>
         "principal::" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(presented)));
 
+    /// <summary>The key for a principal verified in <paramref name="generation"/> of the cache.</summary>
+    internal static string PrincipalCacheKey(string presented, long generation) =>
+        $"{PrincipalCacheKey(presented)}::{generation}";
+
     /// <summary>
     /// A short one-way mark for a credential that was rejected, so repeats can be
     /// counted without the credential being written down.
@@ -219,8 +233,12 @@ public sealed class DexiconAuthMiddleware(RequestDelegate next, IMemoryCache cac
     /// </summary>
     internal static string OneLine(string value)
     {
+        // U+2028 and U+2029 end a line for many readers and are not control characters,
+        // so the loop below would pass them.
         var held = value.Replace("\r", ReplacementText, StringComparison.Ordinal)
-                        .Replace("\n", ReplacementText, StringComparison.Ordinal);
+                        .Replace("\n", ReplacementText, StringComparison.Ordinal)
+                        .Replace("\u2028", ReplacementText, StringComparison.Ordinal)
+                        .Replace("\u2029", ReplacementText, StringComparison.Ordinal);
 
         var at = 0;
         while (at < held.Length && !char.IsControl(held[at])) at++;

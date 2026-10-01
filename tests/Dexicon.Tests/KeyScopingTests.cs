@@ -1,10 +1,16 @@
+using Dexicon.Api;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
+using Dexicon.Core.Configuration;
 using Dexicon.Core.Search;
 using Dexicon.Core.Vectors;
+using Dexicon.Infrastructure;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Dexicon.Tests;
 
@@ -264,6 +270,134 @@ public sealed class AdminPasswordTests : IAsyncLifetime
             (await _tokens.CreateAsync("other", [Scopes.Search], null)).Issued.Presented);
         principal.ShouldNotBeNull();
         principal.Has(Scopes.Admin).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task AKeysScopesChangeInPlaceUnderTheSameRulesAsIssue()
+    {
+        // Granting configure to a working agent without issuing it another key. The stored
+        // column is read, because a principal strips admin on its own and would hide it.
+        var (row, issued) = await _tokens.CreateAsync("agent", [Scopes.Search], null);
+
+        (await _tokens.SetScopesAsync(row.Id, [" Configure ", Scopes.Search, Scopes.Admin, Scopes.Search]))
+            .ShouldBeTrue();
+
+        _db.ChangeTracker.Clear();
+        (await _db.Tokens.AsNoTracking().SingleAsync(t => t.Id == row.Id)).Scopes.ShouldBe("configure,search");
+        var principal = (await _tokens.VerifyAsync(issued.Presented)).ShouldNotBeNull();
+        principal.Has(Scopes.Configure).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ARevokedOrUnknownKeysScopesAreNotChanged()
+    {
+        var (row, _) = await _tokens.CreateAsync("agent", [Scopes.Search], null);
+        await _tokens.RevokeAsync(row.Id);
+
+        (await _tokens.SetScopesAsync(row.Id, [Scopes.Configure])).ShouldBeFalse();
+        (await _tokens.SetScopesAsync("no-such-key", [Scopes.Configure])).ShouldBeFalse();
+        _db.ChangeTracker.Clear();
+        (await _db.Tokens.AsNoTracking().SingleAsync(t => t.Id == row.Id)).Scopes.ShouldBe("search");
+    }
+
+    [Fact]
+    public async Task AScopeRemovedIsRefusedOnTheNextRequestThoughThePrincipalWasCached()
+    {
+        // The principal is cached for a minute to spare a PBKDF2 per call, and the scopes
+        // travel on it. Without the eviction a removed configure or ingest scope stayed usable
+        // until the entry expired; a test calling VerifyAsync directly never sees the cache.
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        var evictor = new MemoryCacheEvictor(cache);
+        var (row, issued) = await _tokens.CreateAsync("agent", [Scopes.Search, Scopes.Configure], null);
+
+        (await AuthenticateAsync(cache, evictor, issued.Presented)).ShouldNotBeNull()
+            .Has(Scopes.Configure).ShouldBeTrue();
+        cache.Count.ShouldBe(1, "the principal is cached");
+
+        var result = await SystemEndpoints.SetScopesAsync(row.Id, new UpdateTokenScopesRequest([Scopes.Search]),
+            _tokens, _db, evictor, NullLogger.Instance, default);
+
+        ((IStatusCodeHttpResult)result).StatusCode.ShouldBe(StatusCodes.Status200OK);
+        (await AuthenticateAsync(cache, evictor, issued.Presented)).ShouldNotBeNull().Has(Scopes.Configure)
+            .ShouldBeFalse("the next request is judged on the stored scopes, not the cached ones");
+    }
+
+    [Fact]
+    public async Task APrincipalWrittenAfterAnEvictionIsNeverReadByALaterRequest()
+    {
+        // The race itself: a request that read the key's row before a scope change, and
+        // finished hashing after the eviction, writes the old principal into the cleared
+        // cache. Filed under the generation it began in, no later request reads it.
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        var evictor = new MemoryCacheEvictor(cache);
+        var (row, issued) = await _tokens.CreateAsync("agent", [Scopes.Search], null);
+        var began = evictor.Generation;
+
+        evictor.EvictPrincipals();
+        cache.Set(DexiconAuthMiddleware.PrincipalCacheKey(issued.Presented, began),
+            new Principal(row.Id, row.Name, new HashSet<string>(StringComparer.Ordinal) { Scopes.Search, Scopes.Configure }));
+
+        (await AuthenticateAsync(cache, evictor, issued.Presented)).ShouldNotBeNull()
+            .Has(Scopes.Configure).ShouldBeFalse("the late write is under the old generation");
+    }
+
+    [Fact]
+    public async Task ARequestBeginningInALaterGenerationDoesNotReadAnEarlierGenerationsEntry()
+    {
+        // The generation is part of the cache key, read when the request begins. Only the
+        // generation moves here, as an eviction moves it, with the stored scopes changed and
+        // nothing cleared: a middleware that ignored the generation would serve the old entry.
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        var evictor = new SettableGeneration { Generation = 5 };
+        var (row, issued) = await _tokens.CreateAsync("agent", [Scopes.Search, Scopes.Configure], null);
+
+        (await AuthenticateAsync(cache, evictor, issued.Presented)).ShouldNotBeNull()
+            .Has(Scopes.Configure).ShouldBeTrue();
+
+        await _tokens.SetScopesAsync(row.Id, [Scopes.Search]);
+        evictor.Generation = 6;
+
+        (await AuthenticateAsync(cache, evictor, issued.Presented)).ShouldNotBeNull()
+            .Has(Scopes.Configure).ShouldBeFalse("generation 6 does not read generation 5's entry");
+        cache.Count.ShouldBe(2, "one entry per generation, until the clear frees the old one");
+    }
+
+    /// <summary>A generation a test moves by hand.</summary>
+    private sealed class SettableGeneration : IMemoryCacheEvictor
+    {
+        public long Generation { get; set; }
+
+        public void EvictPrincipals() { }
+    }
+
+    /// <summary>The principal one request authenticates as, through the real middleware and cache.</summary>
+    private async Task<Principal?> AuthenticateAsync(IMemoryCache cache, IMemoryCacheEvictor evictor, string presented)
+    {
+        var request = new RequestContext();
+        var middleware = new DexiconAuthMiddleware(_ => Task.CompletedTask, cache, evictor,
+            NullLogger<DexiconAuthMiddleware>.Instance);
+        var ctx = new DefaultHttpContext();
+        ctx.Request.Path = "/mcp";
+        ctx.Request.Headers.Authorization = $"Bearer {presented}";
+        await middleware.InvokeAsync(ctx, _tokens, new AdminSessions(TimeProvider.System), request);
+        return request.Principal;
+    }
+
+    [Fact]
+    public async Task ABootstrapKeyIsAdoptedWithSearchAndIngestOnly()
+    {
+        // It was adopted with every issuable scope, which gained configure: a value in .env
+        // reaching every mounted folder, where docs/12 promises search and ingest (D-36).
+        using var services = new ServiceCollection().AddSingleton(_tokens).BuildServiceProvider();
+        var options = new DexiconOptions
+        {
+            Bootstrap = new BootstrapOptions { Token = "dex_01JBXQZ9K7MNPRSTVWXYZ01234_a-secret-nobody-should-read" },
+        };
+
+        await Bootstrapper.EnsureBootstrapTokenAsync(services, _db, NullLogger.Instance, options);
+
+        _db.ChangeTracker.Clear();
+        (await _db.Tokens.AsNoTracking().SingleAsync()).Scopes.ShouldBe("search,ingest");
     }
 
     [Fact]
