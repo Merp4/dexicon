@@ -307,7 +307,7 @@ public sealed class CorpusIndexer(
                         foreach (var s in targets) db.Entry(s).State = EntityState.Detached;
                     }
 
-                    await db.SaveChangesAsync(CancellationToken.None);
+                    await SaveOutcomeAsync(job, corpus, callerCancelled);
                     Report(progress, job, null);
                 }
             }
@@ -1518,6 +1518,112 @@ public sealed class CorpusIndexer(
     /// </summary>
     private static bool Holds(CorpusLeases.Hold? hold) =>
         hold is not null && !hold.Lost.IsCancellationRequested;
+
+    /// <summary>Tries at recording how a job ended, the first included.</summary>
+    internal const int SaveAttempts = 5;
+
+    /// <summary>
+    /// The wait before the first retry of that save, doubled after each. Fifteen seconds in
+    /// all at the default, which is well inside the lease: a retry still running after the
+    /// lease had lapsed would be recording an outcome for a job the repair may already have
+    /// settled. Replaced in tests, so a run does not wait it out.
+    /// </summary>
+    internal TimeSpan SaveRetryDelay { get; init; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// Record how the job ended, trying again a bounded number of times.
+    ///
+    /// This is the write the job row cannot do without: it says Running until it lands. It
+    /// failed once, when a full disk refused every catalogue write for about four minutes,
+    /// and with a single attempt two jobs were left Running and their corpora Indexing. Most
+    /// faults of this kind are shorter, and the retries recover those here. A longer one is
+    /// not recovered here: after <see cref="SaveAttempts"/> tries the last exception is
+    /// thrown to the worker, and <see cref="StuckJobRepair"/> finishes the job once its
+    /// lease has lapsed.
+    ///
+    /// The same context saves again, which carries everything the failed save held, since a
+    /// failed SaveChanges leaves its changes tracked.
+    /// </summary>
+    /// <param name="stop">
+    /// The host's token, used only to stop waiting. Shutdown is not a reason to sit out the
+    /// delays, and startup reconciles whatever is left.
+    /// </param>
+    private async Task SaveOutcomeAsync(IndexJob job, Corpus corpus, CancellationToken stop)
+    {
+        var delay = SaveRetryDelay;
+
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await db.SaveChangesAsync(CancellationToken.None);
+
+                if (attempt > 1)
+                    log.LogWarning("Recorded the outcome of job {JobId} on attempt {Attempt} of {Attempts}",
+                        job.Id, attempt, SaveAttempts);
+                return;
+            }
+            catch (Exception ex) when (attempt < SaveAttempts && !stop.IsCancellationRequested)
+            {
+                log.LogWarning(ex,
+                    "Could not record the outcome of job {JobId} (attempt {Attempt} of {Attempts}); "
+                    + "trying again in {Delay}", job.Id, attempt, SaveAttempts, delay);
+            }
+            catch (Exception ex)
+            {
+                await GaveUpAsync(job, corpus, attempt, ex);
+                throw;
+            }
+
+            try { await Task.Delay(delay, stop); }
+            catch (OperationCanceledException) { /* shutting down: the next attempt is the last */ }
+
+            delay *= 2;
+        }
+    }
+
+    /// <summary>
+    /// Say that the outcome was not recorded and what the catalogue still holds.
+    ///
+    /// The job is read back rather than inferred from the tracked entity. A job that does not
+    /// hold the lease has its corpus and sets detached before the save, and detaching them
+    /// detaches the job too, so what the context says about it is not what the catalogue
+    /// holds. A job that failed before it reached Running is still Queued there, and the
+    /// repair of running jobs does not cover it: only a start does.
+    /// </summary>
+    private async Task GaveUpAsync(IndexJob job, Corpus corpus, int attempts, Exception ex)
+    {
+        JobState? recorded = null;
+
+        try
+        {
+            recorded = await db.Jobs.AsNoTracking()
+                .Where(j => j.Id == job.Id)
+                .Select(j => (JobState?)j.State)
+                .FirstOrDefaultAsync(CancellationToken.None);
+        }
+        catch (Exception read)
+        {
+            log.LogWarning(read, "Could not read job {JobId} back to say what was left behind", job.Id);
+        }
+
+        if (recorded != JobState.Running)
+        {
+            log.LogError(ex,
+                "Gave up recording the outcome of job {JobId} ({Outcome}) after {Attempts} attempts. "
+                + "Left behind: the job reads {Recorded} in the catalogue. The next start reconciles "
+                + "a job that reads Queued or Running",
+                job.Id, job.State, attempts, recorded?.ToString() ?? "an unknown state");
+            return;
+        }
+
+        log.LogError(ex,
+            "Gave up recording the outcome of job {JobId} ({Outcome}) after {Attempts} attempts. "
+            + "Left behind: the job still reads Running, and corpus {Corpus} and the sets it targeted "
+            + "still read Indexing. The scheduled refresh repairs them once the lease on the corpus has "
+            + "lapsed (within {Lease}); with it off, the next start does",
+            job.Id, job.State, attempts, corpus.Name, leases.Lease);
+    }
 
     /// <summary>
     /// Take the corpus, or give up quickly and let the job be put back.

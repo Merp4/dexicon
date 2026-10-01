@@ -131,6 +131,7 @@ Stated up front because these are the cases that get fudged.
 | Embedding dimensions ≠ collection dimensions | Search on that corpus is **refused** with an actionable message naming both values and the rebuild command. Never silently mismatched. |
 | PDF with no text layer | Ingest records `extracted_chars: 0` and a `no-text-layer` warning; the file appears in the UI as ingested-but-empty rather than silently absent. |
 | Workspace mount missing | Corpus marked `unavailable`; existing index retained and still searchable, no destructive reconcile. |
+| Data disk full | Catalogue writes are refused. A job retries the save that records its outcome five times, then logs that it gave up. A job left `running` with nothing holding its lease is marked `failed` by the scheduled refresh, and its corpus returns to what the last finished job says, with no restart. See [04](04-ingestion.md#when-the-catalogue-cannot-be-written). |
 
 ## What is deliberately absent
 
