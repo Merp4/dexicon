@@ -210,7 +210,15 @@ public sealed class ConfigureTools
                     resets.Contains("exclude") ? null : exclude ?? current.ExcludeGlobs)
                 : null;
 
-            var update = await config.UpdateCorpusAsync(target, new UpdateCorpusRequest(description, defaults), ct);
+            // Recorded when the change is saved, by the service's callback: the refresh is queued
+            // after the save and can still fail, and a change with no entry under the key's name
+            // is the gap the audit line exists to close.
+            var update = await config.UpdateCorpusAsync(target, new UpdateCorpusRequest(description, defaults), ct,
+                committed: c => Audit("changed", target, string.Join(", ", new[]
+                {
+                    c.Description ? "description" : null,
+                    c.Filters ? "the filters its sources inherit" : null,
+                }.OfType<string>())));
             if (update.Refusal is { } refused) throw new McpException(refused.Detail);
 
             // The service queues a refresh for moved filters only when there are sources to read.
@@ -224,10 +232,11 @@ public sealed class ConfigureTools
             }
         }
 
-        // A creation was recorded when it was saved, with everything set at creation.
+        // A creation and a change were recorded when they were saved. What no callback reports is
+        // a request that changed nothing.
         var filtersSet = changed.Contains("the filters its sources inherit");
-        if (!create)
-            Audit(changed.Count > 0 ? "changed" : "left unchanged", target, changed.Count == 0 ? "none" : string.Join(", ", changed));
+        if (!create && changed.Count == 0)
+            Audit("left unchanged", target, "none");
         if (create)
             return $"Created corpus '{DexiconTools.OneLine(target.Name)}'{(filtersSet ? ", with the filters given" : "")}. " +
                    $"It holds nothing yet: add a folder with configure_source(corpus: {DexiconTools.Quoted(target.Name)}, " +

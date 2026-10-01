@@ -292,6 +292,28 @@ public sealed class CommittedChangeTests
     }
 
     [Fact]
+    public async Task A_corpus_change_is_recorded_when_it_is_saved_even_if_the_next_step_fails()
+    {
+        // The refresh is queued after the save and can still fail. The change stays, and the line
+        // that says which key made it was written only after the method returned.
+        var watcher = new CancelAfterWriteTo("corpora") { FailAfterWrite = true };
+        await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        await using var db = harness.NewContext();
+        var logs = new RecordingLoggerFactory();
+        watcher.Armed = true;
+
+        await Should.ThrowAsync<InvalidOperationException>(() => ConfigureTools.ConfigureCorpusAsync(
+            Configure("k3", "agent-three"), new ScopeResolver(db), db, harness.NewConfiguration(db), logs,
+            "notes", description: "Notes, edited", exclude: ["**/bin/**"]));
+
+        watcher.Fired.ShouldBeTrue("the window has to have been opened");
+        (await db.Corpora.AsNoTracking().SingleAsync()).Description.ShouldBe("Notes, edited");
+        logs.Lines.ShouldContain(l => l.Contains("agent-three") && l.Contains("changed corpus notes")
+                                      && l.Contains("description, the filters its sources inherit"));
+    }
+
+    [Fact]
     public async Task A_scope_change_that_is_saved_is_logged_when_the_caller_is_cancelled_afterwards()
     {
         var watcher = new CancelAfterWriteTo("tokens");
