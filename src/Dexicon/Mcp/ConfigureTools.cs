@@ -153,6 +153,14 @@ public sealed class ConfigureTools
             // returns: the collection setup that follows can fail or be cancelled with the corpus
             // already there, and a creation with no entry under a key's name is the gap an audit
             // log exists to close.
+            //
+            // The filters are part of the creation, saved with the corpus. Applied by a second call
+            // they had a window of their own: a failure there reported a generic error with the
+            // corpus already saved, and a retry of create was refused as taken.
+            var setAtCreation = new List<string>();
+            if (description is not null) setAtCreation.Add("description");
+            if (filtersGiven) setAtCreation.Add("the filters its sources inherit");
+
             Corpus? saved = null;
             try
             {
@@ -161,8 +169,9 @@ public sealed class ConfigureTools
                     committed: c =>
                     {
                         saved = c;
-                        Audit("created", c, description is null ? "none" : "description");
-                    });
+                        Audit("created", c, setAtCreation.Count == 0 ? "none" : string.Join(", ", setAtCreation));
+                    },
+                    defaults: filtersGiven ? new CorpusDefaults(gitignore, maxBytes, include, exclude) : null);
                 if (created.Refusal is { } refused) throw new McpException(refused.Detail);
                 target = created.Value!;
             }
@@ -187,9 +196,10 @@ public sealed class ConfigureTools
 
         var changed = new List<string>();
         if (description is not null && (create || description != target.Description)) changed.Add("description");
+        if (create && filtersGiven) changed.Add("the filters its sources inherit");
 
         var queued = false;
-        if (filtersGiven || (!create && changed.Count > 0))
+        if (!create && (filtersGiven || changed.Count > 0))
         {
             var current = target.DefaultsOf();
             var defaults = filtersGiven
@@ -200,26 +210,24 @@ public sealed class ConfigureTools
                     resets.Contains("exclude") ? null : exclude ?? current.ExcludeGlobs)
                 : null;
 
-            // The description was set at creation, so only the filters are sent after it.
-            var update = await config.UpdateCorpusAsync(target,
-                new UpdateCorpusRequest(create ? null : description, defaults), ct);
+            var update = await config.UpdateCorpusAsync(target, new UpdateCorpusRequest(description, defaults), ct);
             if (update.Refusal is { } refused) throw new McpException(refused.Detail);
 
             // The service queues a refresh for moved filters only when there are sources to read.
             if (update.Value)
             {
                 changed.Add("the filters its sources inherit");
-                queued = await db.Sources.AnyAsync(s => s.CorpusId == target.Id, ct);
+
+                // Not the caller's token: the change is saved and its refresh queued whatever the
+                // caller does, and a cancel here would throw before the audit line below.
+                queued = await db.Sources.AnyAsync(s => s.CorpusId == target.Id, CancellationToken.None);
             }
         }
 
-        // A creation was recorded when it was saved. What is left to record is the filters set
-        // on a new corpus, and any change to one that existed.
+        // A creation was recorded when it was saved, with everything set at creation.
         var filtersSet = changed.Contains("the filters its sources inherit");
         if (!create)
             Audit(changed.Count > 0 ? "changed" : "left unchanged", target, changed.Count == 0 ? "none" : string.Join(", ", changed));
-        else if (filtersSet)
-            Audit("changed", target, "the filters its sources inherit");
         if (create)
             return $"Created corpus '{DexiconTools.OneLine(target.Name)}'{(filtersSet ? ", with the filters given" : "")}. " +
                    $"It holds nothing yet: add a folder with configure_source(corpus: {DexiconTools.Quoted(target.Name)}, " +

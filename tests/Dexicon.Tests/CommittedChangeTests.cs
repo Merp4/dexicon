@@ -187,6 +187,67 @@ public sealed class CommittedChangeTests
         logs.Lines.ShouldContain(l => l.Contains("agent-nine") && l.Contains("created corpus papers"));
     }
 
+    private static RequestContext Configure(string tokenId, string name) => new()
+    {
+        Principal = new Principal(tokenId, name, new HashSet<string>(StringComparer.Ordinal) { Scopes.Configure }),
+    };
+
+    [Fact]
+    public async Task The_filters_of_a_new_corpus_are_saved_with_it_and_recorded_with_its_creation()
+    {
+        // They were applied by a second call. A failure there left the corpus saved without
+        // them, reported a generic error, and refused a retry of create as taken. Here setup
+        // fails after the save, so a second call would not even have been reached.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        await using var db = harness.NewContext();
+        var logs = new RecordingLoggerFactory();
+
+        await Should.ThrowAsync<McpException>(() => ConfigureTools.ConfigureCorpusAsync(
+            Configure("k8", "agent-eight"), new ScopeResolver(db), db,
+            harness.NewConfiguration(db, new EnsureThrows(harness.Vectors)), logs,
+            "papers", create: true, description: "Conference papers", exclude: ["**/draft/**"], maxFileKb: 512));
+
+        var saved = await db.Corpora.AsNoTracking().SingleAsync(c => c.Name == "papers");
+        saved.DefaultsOf().ShouldBe(new CorpusDefaults(null, 512 * 1024, null, ["**/draft/**"]), new SameDefaults());
+        logs.Lines.ShouldContain(l => l.Contains("agent-eight") && l.Contains("created corpus papers")
+                                      && l.Contains("description, the filters its sources inherit"));
+    }
+
+    [Fact]
+    public async Task A_cancel_after_a_corpus_change_is_saved_still_reaches_the_audit_line()
+    {
+        // The service finishes the queue write after committing whatever the caller does. A
+        // follow-up query on the caller's token then threw before the line was written, leaving
+        // a persisted change with no entry under the key's name.
+        var watcher = new CancelAfterWriteTo("corpora");
+        await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        using var cts = new CancellationTokenSource();
+        watcher.Cts = cts;
+        await using var db = harness.NewContext();
+        var logs = new RecordingLoggerFactory();
+        watcher.Armed = true;
+
+        var reply = await ConfigureTools.ConfigureCorpusAsync(
+            Configure("k7", "agent-seven"), new ScopeResolver(db), db, harness.NewConfiguration(db), logs,
+            "notes", exclude: ["**/bin/**"], ct: cts.Token);
+
+        watcher.Fired.ShouldBeTrue("the window has to have been opened");
+        reply.ShouldContain("A refresh is queued.");
+        logs.Lines.ShouldContain(l => l.Contains("agent-seven") && l.Contains("changed corpus notes"));
+    }
+
+    private sealed class SameDefaults : IEqualityComparer<CorpusDefaults>
+    {
+        public bool Equals(CorpusDefaults? a, CorpusDefaults? b) =>
+            a is not null && b is not null && a.UseGitignore == b.UseGitignore && a.MaxFileBytes == b.MaxFileBytes
+            && (a.IncludeGlobs ?? []).SequenceEqual(b.IncludeGlobs ?? [])
+            && (a.ExcludeGlobs ?? []).SequenceEqual(b.ExcludeGlobs ?? []);
+
+        public int GetHashCode(CorpusDefaults d) => 0;
+    }
+
     [Fact]
     public async Task A_corpus_made_for_a_mapped_key_joins_its_mapping_and_one_made_for_an_unmapped_key_does_not()
     {

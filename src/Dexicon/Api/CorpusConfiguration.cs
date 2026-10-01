@@ -91,9 +91,20 @@ public sealed class CorpusConfiguration(
     /// caller can record the creation where it became true. Without it a failure in the
     /// collection setup below is an exception with the corpus already there and nothing said.
     /// </param>
+    /// <param name="defaults">
+    /// The filters its sources are to inherit, saved with the corpus. A second call after
+    /// creation had a window of its own, in which the corpus existed without them and a retry
+    /// of the creation was refused as taken.
+    /// </param>
     public async Task<ConfigOutcome<Corpus>> CreateCorpusAsync(
-        CreateCorpusRequest body, CancellationToken ct, string? grantToKeyId = null, Action<Corpus>? committed = null)
+        CreateCorpusRequest body, CancellationToken ct, string? grantToKeyId = null, Action<Corpus>? committed = null,
+        CorpusDefaults? defaults = null)
     {
+        // Judged before anything is built, as UpdateCorpusAsync judges its own.
+        if (defaults is { MaxFileBytes: <= 0 })
+            return new ConfigRefusal("Invalid size cap",
+                "maxFileBytes must be greater than zero, or null to follow the server's setting.", 400);
+
         if (string.IsNullOrWhiteSpace(body.Name))
             return new ConfigRefusal("Name is required", "A corpus needs a name.", 400);
 
@@ -160,6 +171,14 @@ public sealed class CorpusConfiguration(
             State = CorpusState.Ready,
             CreatedUtc = DateTime.UtcNow,
         };
+
+        if (defaults is { } inherited)
+        {
+            corpus.DefaultUseGitignore = inherited.UseGitignore;
+            corpus.DefaultMaxFileBytes = inherited.MaxFileBytes;
+            corpus.DefaultIncludeGlobs = SourceFilters.Store(inherited.IncludeGlobs);
+            corpus.DefaultExcludeGlobs = SourceFilters.Store(inherited.ExcludeGlobs);
+        }
 
         // Every corpus is born with one set. Nothing else has to special-case the
         // "no sets yet" state, and the settings a caller passed at creation have a
