@@ -317,6 +317,15 @@ public sealed class ConfigureTools
         var wanted = isHistory ? SourceKind.GitHistory : SourceKind.Workspace;
         var what = $"{(isHistory ? "commit history of" : "files under")} {(root.Length == 0 ? "the workspace root" : DexiconTools.OneLine(root))}";
 
+        // Recorded when the change is saved, by the service's callback, and not after it returns:
+        // queuing the refresh can still fail with the source in place, and a creation with no entry
+        // under a key's name is the gap an audit log exists to close. The job is logged separately.
+        void AuditSource(string what1) =>
+            logs.CreateLogger("Dexicon.Configure").LogInformation(
+                "Key {Key} {Action} the source for the {Source} in corpus {Corpus}",
+                DexiconAuthMiddleware.OneLine(principal.Name), what1, DexiconAuthMiddleware.OneLine(what),
+                DexiconAuthMiddleware.OneLine(target.Name));
+
         // Both sides canonical, so docs/. and x/../docs find the source on docs, and compared
         // as the filesystem compares them, so Docs does too where case is not significant.
         bool Same(Source s) => s.Kind == wanted
@@ -343,7 +352,8 @@ public sealed class ConfigureTools
                 var added = await config.AddSourceAsync(target, new AddSourceRequest(
                     root, gitignore, maxBytes, include, exclude,
                     GitHistory: isHistory,
-                    Git: isHistory && history is not null ? Merge(new GitHistoryOptions(), history, []) : null), ct);
+                    Git: isHistory && history is not null ? Merge(new GitHistoryOptions(), history, []) : null), ct,
+                    committed: _ => AuditSource("added"));
                 if (added.Refusal is { } refused) throw new McpException(refused.Detail);
 
                 action = "added";
@@ -382,7 +392,7 @@ public sealed class ConfigureTools
             var updated = await config.UpdateSourceAsync(target, existing.Id, new UpdateSourceRequest(
                 gitignore, maxBytes, include, exclude,
                 Clear: resets.Where(FilterNames.ContainsKey).Select(r => FilterNames[r]).ToList(),
-                Git: git), ct);
+                Git: git), ct, committed: _ => AuditSource("changed"));
             if (updated.Refusal is { } refused) throw new McpException(refused.Detail);
 
             action = updated.Value!.IndexJob is null ? "left unchanged" : "changed";
@@ -390,10 +400,15 @@ public sealed class ConfigureTools
             sourceId = existing.Id;
         }
 
-        logs.CreateLogger("Dexicon.Configure").LogInformation(
-            "Key {Key} {Action} the source for the {Source} in corpus {Corpus}; job {Job}",
-            DexiconAuthMiddleware.OneLine(principal.Name), action, DexiconAuthMiddleware.OneLine(what),
-            DexiconAuthMiddleware.OneLine(target.Name), jobId ?? "none");
+        // The change itself was recorded when it was saved. What is left is the job, or that
+        // nothing was saved, which no callback reports.
+        if (jobId is null)
+            AuditSource("left unchanged");
+        else
+            logs.CreateLogger("Dexicon.Configure").LogInformation(
+                "Key {Key} queued job {Job} for the source for the {Source} in corpus {Corpus}",
+                DexiconAuthMiddleware.OneLine(principal.Name), jobId, DexiconAuthMiddleware.OneLine(what),
+                DexiconAuthMiddleware.OneLine(target.Name));
 
         // As index_status shows it, so the effective values, and which come from the corpus,
         // are confirmed in the words the agent will read them in later.

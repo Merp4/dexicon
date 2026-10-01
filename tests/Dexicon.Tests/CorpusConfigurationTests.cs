@@ -153,6 +153,22 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_name_longer_than_the_model_allows_is_refused()
+    {
+        // The model says 200 and SQLite stores the column as unbounded text, so a long name
+        // went in and was then repeated in every listing and log line.
+        await using var db = _harness.NewContext();
+        var config = _harness.NewConfiguration(db);
+
+        var refused = await config.CreateCorpusAsync(new CreateCorpusRequest(new string('n', 201)), default);
+
+        refused.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
+        (await db.Corpora.CountAsync()).ShouldBe(1);
+        (await config.CreateCorpusAsync(new CreateCorpusRequest(new string('n', CorpusConfiguration.NameMax)), default))
+            .Refusal.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task A_name_that_is_another_corpus_s_id_is_taken()
     {
         // The resolver matches a name or an id, so this name would reach either corpus.

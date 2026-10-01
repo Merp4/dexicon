@@ -40,6 +40,9 @@ public sealed class CorpusConfiguration(
 {
     private IndexingOptions Indexing => opts.Value.Indexing;
 
+    /// <summary>The length the model declares for a corpus name.</summary>
+    internal const int NameMax = 200;
+
     /// <summary>
     /// Held from the last name check to the insert, which makes the two one step. The unique
     /// index compares names exactly, so "Notes" and "notes" created at the same moment would
@@ -117,6 +120,15 @@ public sealed class CorpusConfiguration(
         // and failed the unique index, which is a 500 where a 409 was promised. Checked here
         // so that a taken name does not wait on the model probe, and again at the insert.
         var name = body.Name.Trim();
+
+        // The model declares 200 and SQLite stores the column as unbounded TEXT, so nothing else
+        // enforces it. A name is repeated in every listing and log line, and a description,
+        // which an agent can also set, is capped at 500 for the same reason.
+        if (name.Length > NameMax)
+            return new ConfigRefusal(
+                "A corpus name is too long",
+                $"A corpus name is at most {NameMax} characters; this one is {name.Length}.",
+                400);
 
         // Shown on a line of its own in every listing, logged, and typed as an argument, so
         // a line break or an escape sequence in it breaks all three. U+2028 and U+2029 break
@@ -297,7 +309,12 @@ public sealed class CorpusConfiguration(
         return filtersChanged;
     }
 
-    public async Task<ConfigOutcome<SourceAdded>> AddSourceAsync(Corpus corpus, AddSourceRequest body, CancellationToken ct)
+    /// <param name="committed">
+    /// Called once the source is saved and before its refresh is queued, so a caller can record
+    /// the change where it became true. A failure queuing the job leaves the source in place.
+    /// </param>
+    public async Task<ConfigOutcome<SourceAdded>> AddSourceAsync(
+        Corpus corpus, AddSourceRequest body, CancellationToken ct, Action<Source>? committed = null)
     {
         // The shape of the request first, because judging it costs nothing and the
         // check below it starts a git process. A request carrying both a bad path
@@ -372,6 +389,7 @@ public sealed class CorpusConfiguration(
 
         db.Sources.Add(source);
         await db.SaveChangesAsync(ct);
+        committed?.Invoke(source);
 
         // Same reason as creation: adding a folder is asking for it to be read. A
         // Refresh rather than a Full, because the corpus's other sources are already
@@ -390,8 +408,9 @@ public sealed class CorpusConfiguration(
         return new SourceAdded(source.ToSummary(corpus, Indexing), job.ToSummary());
     }
 
+    /// <param name="committed">Called after a change is saved and before its refresh is queued, as for AddSourceAsync.</param>
     public async Task<ConfigOutcome<SourceUpdated>> UpdateSourceAsync(
-        Corpus corpus, string sourceId, UpdateSourceRequest body, CancellationToken ct)
+        Corpus corpus, string sourceId, UpdateSourceRequest body, CancellationToken ct, Action<Source>? committed = null)
     {
         var source = await db.Sources.FirstOrDefaultAsync(s => s.Id == sourceId && s.CorpusId == corpus.Id, ct);
 
@@ -435,6 +454,7 @@ public sealed class CorpusConfiguration(
         if (body.Git is { } git && CorpusEndpoints.ApplyHistorySettings(source, git)) changed = true;
 
         await db.SaveChangesAsync(ct);
+        if (changed) committed?.Invoke(source);
 
         // Only when something moved. A form submitted unchanged should not re-walk a
         // library, and a refresh on every save is how that happens.

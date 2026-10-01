@@ -861,12 +861,16 @@ leaves `ingest` meaning one thing: this key may reindex the corpora it is mapped
 `POST /api/corpora/{id}/reindex` or the MCP tool `index_refresh`. It is off unless ticked. No
 long-lived administrative credential then sits in an agent's configuration. This closes Q4.
 
-**Not as implemented (found 2026-10-01).** The three document endpoints (`POST
-/api/corpora/{id}/documents`, `.../documents/attach` and `DELETE .../documents/{fileId}`) still
-require `ingest`, not `admin`. A key holding `ingest` can therefore upload, attach and detach
-documents, and detaching removes one from a corpus. The Access page says so. Moving them to
-`admin` is what this decision describes and would break a key that uploads today; it is not done
-here, and waits on the maintainer.
+**Revised 2026-10-01: `ingest` keeps the document endpoints.** The three document endpoints
+(`POST /api/corpora/{id}/documents`, `.../documents/attach` and `DELETE .../documents/{fileId}`)
+require `ingest`, and are to stay there. Keeping ingestion an admin concern was a short-term
+stance while other functionality came first; automation from an agent for setup and ingestion is
+wanted, as long as it can be configured and controlled. So a key holding `ingest` may upload,
+attach and detach documents, as well as queue a reindex, and the Access page says so. The
+controls are what a key already has: its scopes, which corpora it reaches, the audit line, and
+what [D-36](#d-36-a-configure-scope-agents-set-up-what-is-indexed) withholds. Detaching removes a
+document from a corpus with no human step, which a proposal-and-approval flow would put back
+where it is wanted.
 
 **The password itself.** Seeded from `DEXICON__ADMIN__PASSWORD`, or generated and logged
 once on first run where that is blank, which is what `DEXICON__BOOTSTRAP__TOKEN` already does.

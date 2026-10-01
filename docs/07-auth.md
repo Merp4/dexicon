@@ -58,8 +58,8 @@ belongs to the key.
 - Stored with the same PBKDF2 parameters as the password. Presented once, at creation, with
   a copy button. There is no "show key" anywhere, because there is nothing to show.
 - Scopes: `search` reads and queries; `ingest` additionally permits a reindex of the corpora
-  the key is mapped to, and, as implemented, uploading, attaching and detaching documents
-  (D-28 says these moved to `admin`; they did not, see its note); `configure` permits creating corpora and adding or changing their
+  the key is mapped to, and uploading, attaching and detaching documents
+  ([D-28](decisions.md#d-28-an-admin-password-and-scoped-api-keys)); `configure` permits creating corpora and adding or changing their
   sources and filters over MCP, and nothing that removes or deletes
   ([D-36](decisions.md#d-36-a-configure-scope-agents-set-up-what-is-indexed)). **`admin` is
   not issuable to a key** and is stripped if requested.

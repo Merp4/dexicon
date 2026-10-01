@@ -46,6 +46,9 @@ public sealed class CommittedChangeTests
 
         public bool Armed { get; set; }
 
+        /// <summary>Fail the next command with an error of its own, as a database failing would, and not by cancel.</summary>
+        public bool FailAfterWrite { get; set; }
+
         public bool Fired { get; private set; }
 
         private void Observe(DbCommand command, CancellationToken token)
@@ -54,6 +57,12 @@ public sealed class CommittedChangeTests
 
             if (_written)
             {
+                if (FailAfterWrite && !Fired)
+                {
+                    Fired = true;
+                    throw new InvalidOperationException("the write after the save failed");
+                }
+
                 if (!Fired) Cts?.Cancel();
                 Fired = true;
                 token.ThrowIfCancellationRequested();
@@ -258,6 +267,28 @@ public sealed class CommittedChangeTests
 
         watcher.Fired.ShouldBeTrue("the window has to have been opened");
         reply.ShouldStartWith("Added a source for the files under extra");
+    }
+
+    [Fact]
+    public async Task A_source_is_recorded_when_it_is_saved_even_if_queuing_its_refresh_then_fails()
+    {
+        // The source is committed before its job is queued. A failure there left the source in
+        // place and no entry under the key's name, and a retry of create was refused as taken.
+        var watcher = new CancelAfterWriteTo("sources") { FailAfterWrite = true };
+        await using var harness = await IndexingHarness.StartAsync(watcher, "notes", "docs");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        Directory.CreateDirectory(Path.Combine(harness.DataPath, "workspace", "extra"));
+        await using var db = harness.NewContext();
+        var logs = new RecordingLoggerFactory();
+        watcher.Armed = true;
+
+        await Should.ThrowAsync<InvalidOperationException>(() => ConfigureTools.ConfigureSourceAsync(
+            Configure("k4", "agent-four"), new ScopeResolver(db), db, harness.NewConfiguration(db), harness.Settings,
+            logs, "notes", "extra", create: true));
+
+        watcher.Fired.ShouldBeTrue("the window has to have been opened");
+        (await db.Sources.CountAsync(s => s.RootPath == "extra")).ShouldBe(1, "the source is saved");
+        logs.Lines.ShouldContain(l => l.Contains("agent-four") && l.Contains("added the source for the files under extra"));
     }
 
     [Fact]
