@@ -8,6 +8,7 @@ using Dexicon.Core.Vectors;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -152,6 +153,20 @@ internal sealed class IndexingHarness : IAsyncDisposable
     }
 
     /// <summary>
+    /// The repair of jobs left running, on the harness's catalogue, with leases taken the way
+    /// the indexer and sweeper take them.
+    /// </summary>
+    public StuckJobRepair NewRepair(CatalogDbContext db, ILogger<StuckJobRepair>? log = null) =>
+        new(db, NewLeases(), log ?? NullLogger<StuckJobRepair>.Instance);
+
+    /// <summary>
+    /// Leases over the harness's catalogue. The state is the corpus row, so a hold taken
+    /// through one instance is seen by every other.
+    /// </summary>
+    public CorpusLeases NewLeases() =>
+        new(_services.GetRequiredService<IServiceScopeFactory>(), NullLogger<CorpusLeases>.Instance);
+
+    /// <summary>
     /// A document service on the harness's own storage, so blobs land where the indexer
     /// will look for them. Building one from fresh options puts them somewhere else and
     /// the pass then reports every attachment as having no stored text.
@@ -227,8 +242,18 @@ internal sealed class IndexingHarness : IAsyncDisposable
     /// Queue a job and run it to completion, as the worker does. <paramref name="readTracking"/>
     /// replaces how a history source's tracking is read, so a test can make it fail.
     /// </summary>
+    /// <param name="log">Where the indexer logs, for a test that reads what it said.</param>
+    /// <param name="saveRetryDelay">
+    /// The wait before the failure save is retried. Zero unless a test says otherwise, so a
+    /// run that retries is not slowed by it.
+    /// </param>
+    /// <param name="beforePass">
+    /// Runs once the job row is saved and before the pass starts, so a test can open a window
+    /// that covers everything the pass writes, its first claim on the corpus included.
+    /// </param>
     public async Task<IndexJob> RunIndexAsync(JobKind kind = JobKind.Refresh,
-        Func<GitRepository, string, DateTime, CancellationToken, Task<GitTracking>>? readTracking = null)
+        Func<GitRepository, string, DateTime, CancellationToken, Task<GitTracking>>? readTracking = null,
+        ILogger<CorpusIndexer>? log = null, TimeSpan? saveRetryDelay = null, Action? beforePass = null)
     {
         string jobId;
         await using (var db = NewContext())
@@ -246,6 +271,8 @@ internal sealed class IndexingHarness : IAsyncDisposable
             jobId = job.Id;
         }
 
+        beforePass?.Invoke();
+
         var options = _services.GetRequiredService<IOptions<DexiconOptions>>();
         var scopes = _services.GetRequiredService<IServiceScopeFactory>();
 
@@ -259,9 +286,10 @@ internal sealed class IndexingHarness : IAsyncDisposable
             new DocumentService(runDb, options, NullLogger<DocumentService>.Instance),
             new CorpusLeases(scopes, NullLogger<CorpusLeases>.Instance),
             options,
-            NullLogger<CorpusIndexer>.Instance)
+            log ?? NullLogger<CorpusIndexer>.Instance)
         {
             ReadTracking = readTracking ?? GitHistory.TrackingAsync,
+            SaveRetryDelay = saveRetryDelay ?? TimeSpan.Zero,
         };
 
         return await indexer.RunAsync(jobId, null, CancellationToken.None);
@@ -418,8 +446,18 @@ internal sealed class IndexingHarness : IAsyncDisposable
             return Task.CompletedTask;
         }
 
-        public Task EnsureCollectionAsync(string collection, int dimensions, CancellationToken ct = default) =>
-            Task.CompletedTask;
+        /// <summary>
+        /// Runs when a pass reaches the vector store, which is after the job's Running save
+        /// and before any file is read. A test opens a window from here, or throws to fail
+        /// the pass at a point where it is already recorded as running.
+        /// </summary>
+        public Action? OnEnsureCollection { get; set; }
+
+        public Task EnsureCollectionAsync(string collection, int dimensions, CancellationToken ct = default)
+        {
+            OnEnsureCollection?.Invoke();
+            return Task.CompletedTask;
+        }
 
         public string CollectionNameFor(EmbeddingTarget target, int dimensions) => Collection;
 
