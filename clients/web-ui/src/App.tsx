@@ -2533,7 +2533,8 @@ function ScopeField({ value, onChange }: { value: string[]; onChange: (scopes: s
       {value.includes('configure') && (
         <Notice tone="warn">
           With configure, the agent can add any mounted folder to a corpus it reaches, or to one it
-          creates, and then search it. It reaches the whole workspace, whatever corpora it is limited to.
+          creates. It reaches the whole workspace, whatever corpora it is limited to, and what it adds
+          can be searched by any key that holds search, including its own if you tick that too.
         </Notice>
       )}
     </Field>

@@ -1830,7 +1830,10 @@ key could not reach what it made; an unmapped key already reaches every corpus. 
 same reason the key adopted from `DEXICON__BOOTSTRAP__TOKEN` holds `search` and `ingest`
 only: `configure` is granted on the Access page, never by a value in `.env`.
 
-**`.gitignore` stays on.** A key cannot turn it off over MCP, for a corpus or a source. It is
+**`.gitignore` stays on.** A key cannot turn it off over MCP, for a corpus or a source, and cannot
+add a source that follows a corpus whose default the UI turned off, or reset one to follow it:
+inheriting it off is turning it off by another route. Passing `gitignore: true` pins it on for
+that one source. It is
 what keeps a file such as Dexicon's own `.env` out of the index where the workspace root is
 the checkout that holds it, as it is here: with it off, `configure` could index the file and
 read the admin password and the bootstrap token back by search, which is the route D-28 closed

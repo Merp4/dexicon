@@ -138,23 +138,19 @@ public sealed class ConfigureTools
         {
             if (resets.Count > 0) throw new McpException("reset applies to a corpus that exists. Leave it out when creating one.");
 
-            var created = await config.CreateCorpusAsync(new CreateCorpusRequest(corpus, description), ct);
+            // A mapped key reaches only its corpora, so the corpus it makes joins its mapping in
+            // the same save as the corpus: otherwise a failure between the two leaves one it
+            // cannot reach, and cannot create again, since the name is taken.
+            var created = await config.CreateCorpusAsync(
+                new CreateCorpusRequest(corpus, description), ct, grantToKeyId: principal.TokenId);
             if (created.Refusal is { } refused) throw new McpException(refused.Detail);
             target = created.Value!;
-
-            // A mapped key reaches only its corpora, so without this the corpus it just made
-            // would be invisible to it. An unmapped key already reaches every corpus.
-            if (await db.TokenCorpora.AnyAsync(tc => tc.TokenId == principal.TokenId, ct))
-            {
-                db.TokenCorpora.Add(new TokenCorpus { TokenId = principal.TokenId, CorpusId = target.Id });
-                await db.SaveChangesAsync(ct);
-            }
         }
         else
         {
             target = await WritableAsync(scopes, principal, corpus, "Pass create: true to create it.", ct);
             if (description is null && !filtersGiven)
-                return $"Nothing to change in corpus '{target.Name}': pass a description, a filter, or reset.";
+                return $"Nothing to change in corpus '{DexiconTools.OneLine(target.Name)}': pass a description, a filter, or reset.";
         }
 
         var changed = new List<string>();
@@ -194,14 +190,14 @@ public sealed class ConfigureTools
 
         var filtersSet = changed.Contains("the filters its sources inherit");
         if (create)
-            return $"Created corpus '{target.Name}'{(filtersSet ? ", with the filters given" : "")}. " +
-                   $"It holds nothing yet: add a folder with configure_source(corpus: \"{target.Name}\", " +
+            return $"Created corpus '{DexiconTools.OneLine(target.Name)}'{(filtersSet ? ", with the filters given" : "")}. " +
+                   $"It holds nothing yet: add a folder with configure_source(corpus: {DexiconTools.Quoted(target.Name)}, " +
                    "folder: ..., create: true). list_folders shows what is mounted.";
 
         if (changed.Count == 0)
-            return $"Nothing changed in corpus '{target.Name}': the values sent are the ones it has.";
+            return $"Nothing changed in corpus '{DexiconTools.OneLine(target.Name)}': the values sent are the ones it has.";
 
-        return $"Changed {string.Join(" and ", changed)} of corpus '{target.Name}'." +
+        return $"Changed {string.Join(" and ", changed)} of corpus '{DexiconTools.OneLine(target.Name)}'." +
                (queued
                    ? $" A refresh is queued.{StatusHint(principal, target.Name)} {Narrowing}"
                    : "");
@@ -263,6 +259,17 @@ public sealed class ConfigureTools
         var maxBytes = Kilobytes("maxFileKb", maxFileKb);
 
         var target = await WritableAsync(scopes, principal, corpus, "", ct);
+
+        // A source that follows the corpus follows its .gitignore setting, which the UI can have
+        // turned off. Turning it off is refused above, and inheriting it off is the same thing
+        // by another route: the new source would index what .gitignore keeps out. Pinning it on
+        // for this one source is allowed.
+        if (!isHistory && (target.DefaultUseGitignore ?? SourceFilters.ConfiguredUseGitignore) == false
+            && ((create && gitignore is null) || resets.Contains("gitignore")))
+            throw new McpException(
+                "This corpus's default turns .gitignore off, so a source that follows it would index what "
+                + ".gitignore keeps out, such as Dexicon's own .env. Pass gitignore: true to keep it on for this "
+                + "source, or ask whoever runs Dexicon to change the corpus default in the UI.");
         var workspace = opts.Value.Indexing.WorkspaceRoot;
         var root = WorkspaceDiscovery.Canonical(workspace, folder);
         // A segment of "..", not any name starting with two dots: "..data" is a folder.
@@ -292,7 +299,7 @@ public sealed class ConfigureTools
             try
             {
                 if ((await db.Sources.AsNoTracking().Where(s => s.CorpusId == target.Id).ToListAsync(ct)).Exists(Same))
-                    throw new McpException($"Corpus '{target.Name}' already has a source for the {what}. Leave out create to change it.");
+                    throw new McpException($"Corpus '{DexiconTools.OneLine(target.Name)}' already has a source for the {what}. Leave out create to change it.");
 
                 var added = await config.AddSourceAsync(target, new AddSourceRequest(
                     root, gitignore, maxBytes, include, exclude,
@@ -315,7 +322,7 @@ public sealed class ConfigureTools
             var matches = sources.FindAll(Same);
             if (matches.Count == 0)
                 throw new McpException(
-                    $"Corpus '{target.Name}' has no source for the {what}. Its sources: "
+                    $"Corpus '{DexiconTools.OneLine(target.Name)}' has no source for the {what}. Its sources: "
                     + (sources.Count == 0 ? "none" : string.Join("; ", sources.Select(Describe)))
                     + ". Pass create: true to add it.");
 
@@ -324,7 +331,7 @@ public sealed class ConfigureTools
             // would be a guess, so the change is left to the UI, which shows them apart.
             if (matches.Count > 1)
                 throw new McpException(
-                    $"Corpus '{target.Name}' has {matches.Count} sources for the {what}, and a folder "
+                    $"Corpus '{DexiconTools.OneLine(target.Name)}' has {matches.Count} sources for the {what}, and a folder "
                     + "cannot say which to change. Change them in the Dexicon UI, which lists each one.");
             var existing = matches[0];
 
@@ -357,9 +364,9 @@ public sealed class ConfigureTools
 
         return action switch
         {
-            "left unchanged" => $"Nothing changed: the source for the {what} in '{target.Name}' already has those settings, "
+            "left unchanged" => $"Nothing changed: the source for the {what} in '{DexiconTools.OneLine(target.Name)}' already has those settings, "
                                 + $"so no refresh was queued.\n  {line}\n",
-            _ => $"{(action == "added" ? $"Added a source for the {what} to" : $"Changed the source for the {what} in")} corpus '{target.Name}', "
+            _ => $"{(action == "added" ? $"Added a source for the {what} to" : $"Changed the source for the {what} in")} corpus '{DexiconTools.OneLine(target.Name)}', "
                  + $"and queued a refresh as job {jobId}. As of now:\n  {line}\n"
                  + (StatusHint(principal, target.Name) is { Length: > 0 } hint ? hint.TrimStart() + "\n" : "")
                  + (action == "added" ? "" : Narrowing + "\n"),
@@ -431,7 +438,7 @@ public sealed class ConfigureTools
     /// </summary>
     private static string StatusHint(Principal principal, string corpus) =>
         principal.Has(Scopes.Search)
-            ? $" index_status(corpus: \"{corpus}\") reports it, and what it read once it has run."
+            ? $" index_status(corpus: {DexiconTools.Quoted(corpus)}) reports it, and what it read once it has run."
             : "";
 
     /// <summary>

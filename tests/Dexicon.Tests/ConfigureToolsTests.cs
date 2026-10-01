@@ -301,6 +301,64 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_source_cannot_inherit_gitignore_off_from_the_corpus()
+    {
+        // The UI can turn .gitignore off for a corpus. A source an agent adds without saying
+        // would follow it, which is turning it off by another route: the new source indexes
+        // what .gitignore keeps out, such as a .env. Resetting a source to follow it is the same.
+        await using var db = _harness.NewContext();
+        await db.Corpora.ExecuteUpdateAsync(u => u.SetProperty(c => c.DefaultUseGitignore, false));
+        Directory.CreateDirectory(Path.Combine(Workspace, "papers"));
+        var before = await db.Sources.CountAsync();
+
+        (await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, "papers", create: true)))
+            .Message.ShouldContain("turns .gitignore off");
+        (await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, "notes", reset: ["gitignore"])))
+            .Message.ShouldContain("turns .gitignore off");
+        (await db.Sources.CountAsync()).ShouldBe(before);
+        (await db.Jobs.AnyAsync()).ShouldBeFalse();
+
+        // Pinned on for this one source, it is allowed.
+        (await SourceAsync(db, Configurer, "papers", create: true, gitignore: true)).ShouldStartWith("Added a source");
+        (await db.Sources.SingleAsync(s => s.RootPath == "papers")).UseGitignore.ShouldBe(true);
+    }
+
+    [Fact]
+    public async Task A_source_still_follows_a_corpus_that_leaves_gitignore_on()
+    {
+        await using var db = _harness.NewContext();
+        Directory.CreateDirectory(Path.Combine(Workspace, "papers"));
+
+        (await SourceAsync(db, Configurer, "papers", create: true)).ShouldStartWith("Added a source");
+        (await SourceAsync(db, Configurer, "papers", reset: ["gitignore"])).ShouldStartWith("Nothing changed");
+    }
+
+    [Fact]
+    public async Task A_corpus_name_with_a_quote_or_a_backslash_is_named_back_as_a_valid_call()
+    {
+        // Both are allowed in a name. Written raw into the call the reply suggests, the second
+        // is a string that ends early and the third escapes the quote after it.
+        await using var db = _harness.NewContext();
+
+        var reply = await CorpusAsync(db, Configurer, "a\"b\\c", create: true);
+
+        reply.ShouldContain("configure_source(corpus: \"a\\\"b\\\\c\", ");
+    }
+
+    [Fact]
+    public async Task A_corpus_name_from_before_the_rule_with_a_line_break_cannot_split_a_reply()
+    {
+        // Existing catalogues can hold a name the rule now refuses.
+        await using var db = _harness.NewContext();
+        await db.Corpora.ExecuteUpdateAsync(u => u.SetProperty(c => c.Name, "two\nlines"));
+
+        var reply = await CorpusAsync(db, Configurer, "two\nlines", description: "kept");
+
+        reply.ShouldContain("corpus 'two lines'");
+        reply.TrimEnd().ShouldNotContain("\n");
+    }
+
+    [Fact]
     public async Task A_null_folder_or_kind_is_refused_rather_than_read_as_the_root_or_dereferenced()
     {
         // JSON can send null whatever the signature says. A null folder read as "" would add a

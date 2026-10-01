@@ -4,9 +4,10 @@ namespace Dexicon.Core.Catalog;
 /// An agent's credential. Stored as PBKDF2-HMAC-SHA256 with a per-token salt; the secret
 /// itself is shown once at creation and has no retrieval path.
 ///
-/// A key carries <c>search</c> and optionally <c>ingest</c>, never <c>admin</c>. Admin
-/// comes from the password alone, because an agent's configuration file is the wrong
-/// place to keep a credential that can delete a corpus. See docs/decisions.md D-28.
+/// A key carries one or more of <c>search</c>, <c>ingest</c> and <c>configure</c>, never
+/// <c>admin</c>. Admin comes from the password alone, because an agent's configuration
+/// file is the wrong place to keep a credential that can delete a corpus. See
+/// docs/decisions.md D-28 and D-36.
 /// </summary>
 public sealed class ApiToken
 {

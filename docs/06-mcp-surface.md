@@ -270,7 +270,8 @@ that value and the others keep theirs, and `reset` names the ones to return to t
 server's setting. A change to them queues a refresh when the corpus has sources. A key
 mapped to some corpora has a corpus it creates added to its mapping, so it can reach it.
 `gitignore` takes `true` only: `.gitignore` is what keeps a file such as Dexicon's own `.env`
-out of the index, so turning it off is the UI's. A `description` is one line of at most 500
+out of the index, so turning it off is the UI's. A source cannot be added to a corpus whose
+default the UI turned off without passing `gitignore: true`, nor reset to follow that default. A `description` is one line of at most 500
 characters.
 
 `configure_source(corpus, folder, kind?, create?, include?, exclude?, gitignore?,

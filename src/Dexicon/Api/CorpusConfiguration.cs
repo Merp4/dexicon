@@ -80,7 +80,14 @@ public sealed class CorpusConfiguration(
         return null;
     }
 
-    public async Task<ConfigOutcome<Corpus>> CreateCorpusAsync(CreateCorpusRequest body, CancellationToken ct)
+    /// <param name="grantToKeyId">
+    /// A key that is to reach the corpus it is creating. When it is mapped to corpora, the new
+    /// one joins its mapping in the same save as the corpus, so a failure between the two
+    /// cannot leave a corpus its creator cannot reach, and one it cannot create again by name.
+    /// A key with no mapping already reaches every corpus.
+    /// </param>
+    public async Task<ConfigOutcome<Corpus>> CreateCorpusAsync(
+        CreateCorpusRequest body, CancellationToken ct, string? grantToKeyId = null)
     {
         if (string.IsNullOrWhiteSpace(body.Name))
             return new ConfigRefusal("Name is required", "A corpus needs a name.", 400);
@@ -184,6 +191,8 @@ public sealed class CorpusConfiguration(
         {
             if (await TakenAsync(name, ct) is { } taken) return taken;
             db.Corpora.Add(corpus);
+            if (grantToKeyId is not null && await db.TokenCorpora.AnyAsync(tc => tc.TokenId == grantToKeyId, ct))
+                db.TokenCorpora.Add(new TokenCorpus { TokenId = grantToKeyId, CorpusId = corpus.Id });
             await db.SaveChangesAsync(ct);
         }
         finally
@@ -247,8 +256,12 @@ public sealed class CorpusConfiguration(
 
         // Not for a corpus with no sources, which has nothing to re-read: defaults set just
         // after creation, before a folder is added, would otherwise leave an empty job.
-        if (filtersChanged && await db.Sources.AnyAsync(s => s.CorpusId == corpus.Id, ct))
-            await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
+        //
+        // Not cancellable: the change is committed, and the job is what makes it take effect.
+        // A cancel between the two left filters changed with no refresh, and sending the same
+        // values again reads as no change, so nothing queued one.
+        if (filtersChanged && await db.Sources.AnyAsync(s => s.CorpusId == corpus.Id, CancellationToken.None))
+            await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: CancellationToken.None);
 
         return filtersChanged;
     }
@@ -332,7 +345,10 @@ public sealed class CorpusConfiguration(
         // Same reason as creation: adding a folder is asking for it to be read. A
         // Refresh rather than a Full, because the corpus's other sources are already
         // indexed and re-embedding them costs real money on a hosted provider.
-        var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
+        //
+        // Not cancellable, as in UpdateCorpusAsync: the source is saved, and a cancel before
+        // the job leaves a source nothing reads until the next scheduled refresh.
+        var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: CancellationToken.None);
 
         // And a sweep, on its own lane. The job above answers "what is in this folder"
         // as well, but only once it reaches the front of a queue that may be hours
@@ -391,7 +407,8 @@ public sealed class CorpusConfiguration(
 
         // Only when something moved. A form submitted unchanged should not re-walk a
         // library, and a refresh on every save is how that happens.
-        var job = changed ? await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct) : null;
+        // Not cancellable: the change is saved, and the job is what applies it.
+        var job = changed ? await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: CancellationToken.None) : null;
 
         return new SourceUpdated(source.ToSummary(corpus, Indexing), job?.ToSummary());
     }
