@@ -110,15 +110,20 @@ public static class WorkspaceDiscovery
     {
         var root = Path.GetFullPath(workspaceRoot);
         var full = Path.GetFullPath(Path.Combine(root, relative ?? string.Empty));
-        // A backslash separates only where the OS says so. On Linux it is part of a name and
-        // GetFullPath leaves it, so "x\\..\\notes" is one odd name, not the folder notes; turned into
-        // a slash here it would pass for x/../notes, miss the duplicate check, and be collapsed
-        // to notes by the next call.
-        var relativePath = Path.GetRelativePath(root, full);
-        if (Path.DirectorySeparatorChar != '/') relativePath = relativePath.Replace(Path.DirectorySeparatorChar, '/');
-        var canonical = relativePath.Trim('/');
+        var canonical = Forward(Path.GetRelativePath(root, full)).Trim('/');
         return canonical == "." ? string.Empty : canonical;
     }
+
+    /// <summary>
+    /// A path with the OS's own separator written as a slash, which is how every workspace path is
+    /// stored, listed and compared. Only that separator: on Linux a backslash is part of a name and
+    /// <c>GetFullPath</c> leaves it, so <c>x\..\notes</c> is one odd name and not the folder
+    /// notes. Turned into a slash it would pass for <c>x/../notes</c>, miss the duplicate check,
+    /// and be collapsed to <c>notes</c> by the next call; and a folder genuinely named
+    /// <c>a\b</c> would be listed as <c>a/b</c>, a different folder.
+    /// </summary>
+    public static string Forward(string path) =>
+        Path.DirectorySeparatorChar == '/' ? path : path.Replace(Path.DirectorySeparatorChar, '/');
 
     /// <summary>
     /// Compares workspace paths as the filesystem does, ignoring case only on Windows and

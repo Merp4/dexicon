@@ -86,8 +86,13 @@ public sealed class CorpusConfiguration(
     /// cannot leave a corpus its creator cannot reach, and one it cannot create again by name.
     /// A key with no mapping already reaches every corpus.
     /// </param>
+    /// <param name="committed">
+    /// Called once the corpus is saved and before the work that can still fail after it, so a
+    /// caller can record the creation where it became true. Without it a failure in the
+    /// collection setup below is an exception with the corpus already there and nothing said.
+    /// </param>
     public async Task<ConfigOutcome<Corpus>> CreateCorpusAsync(
-        CreateCorpusRequest body, CancellationToken ct, string? grantToKeyId = null)
+        CreateCorpusRequest body, CancellationToken ct, string? grantToKeyId = null, Action<Corpus>? committed = null)
     {
         if (string.IsNullOrWhiteSpace(body.Name))
             return new ConfigRefusal("Name is required", "A corpus needs a name.", 400);
@@ -199,6 +204,8 @@ public sealed class CorpusConfiguration(
         {
             Naming.Release();
         }
+
+        committed?.Invoke(corpus);
 
         await vectors.EnsureCollectionAsync(corpus.ChunkSets[0].CollectionName, dims, ct);
 

@@ -221,6 +221,15 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
+    public void A_path_keeps_a_backslash_that_is_part_of_a_name_on_Unix()
+    {
+        // Listed as "a/b" it names a different folder than the one stored as "a\\b", and
+        // the "indexed by" lookup misses. CI runs the Unix branch.
+        WorkspaceDiscovery.Forward("a\\b").ShouldBe(OperatingSystem.IsWindows() ? "a/b" : "a\\b");
+        WorkspaceDiscovery.Forward("a/b").ShouldBe("a/b");
+    }
+
+    [Fact]
     public async Task Gitignore_cannot_be_turned_off_over_MCP()
     {
         // .gitignore keeps Dexicon's own .env out of the index when the workspace root is the

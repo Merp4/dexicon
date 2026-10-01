@@ -127,6 +127,13 @@ public sealed class ConfigureTools
         var principal = rc.RequirePrincipal();
         if (gitignore == false) throw new McpException(GitignoreStaysOn);
         if (description is not null) CheckDescription(description);
+
+        // Names through the log barrier: a key's name and a corpus's are typed text and can
+        // hold a line break or a terminal escape (DexiconAuthMiddleware.OneLine).
+        void Audit(string action, Corpus c, string set) =>
+            logs.CreateLogger("Dexicon.Configure").LogInformation(
+                "Key {Key} {Action} corpus {Corpus}; set: {Changed}",
+                DexiconAuthMiddleware.OneLine(principal.Name), action, DexiconAuthMiddleware.OneLine(c.Name), set);
         var resets = Resets(reset, FilterNames.Keys);
         Clashes(resets, ("include", include), ("exclude", exclude), ("gitignore", gitignore), ("maxFileKb", maxFileKb));
         var maxBytes = Kilobytes("maxFileKb", maxFileKb);
@@ -141,10 +148,35 @@ public sealed class ConfigureTools
             // A mapped key reaches only its corpora, so the corpus it makes joins its mapping in
             // the same save as the corpus: otherwise a failure between the two leaves one it
             // cannot reach, and cannot create again, since the name is taken.
-            var created = await config.CreateCorpusAsync(
-                new CreateCorpusRequest(corpus, description), ct, grantToKeyId: principal.TokenId);
-            if (created.Refusal is { } refused) throw new McpException(refused.Detail);
-            target = created.Value!;
+            //
+            // Recorded the moment the corpus is saved, by the service's callback, and not after it
+            // returns: the collection setup that follows can fail or be cancelled with the corpus
+            // already there, and a creation with no entry under a key's name is the gap an audit
+            // log exists to close.
+            Corpus? saved = null;
+            try
+            {
+                var created = await config.CreateCorpusAsync(
+                    new CreateCorpusRequest(corpus, description), ct, grantToKeyId: principal.TokenId,
+                    committed: c =>
+                    {
+                        saved = c;
+                        Audit("created", c, description is null ? "none" : "description");
+                    });
+                if (created.Refusal is { } refused) throw new McpException(refused.Detail);
+                target = created.Value!;
+            }
+            catch (Exception ex) when (saved is not null && ex is not McpException)
+            {
+                // The corpus and the key's access to it are saved; what failed is preparing its
+                // index, which indexing does again. Said as that, because the generic error an
+                // agent would otherwise get reads as "nothing happened", and a retry of create
+                // is then refused as taken.
+                throw new McpException(
+                    $"Corpus '{DexiconTools.OneLine(saved.Name)}' was created, but preparing its index failed "
+                    + $"({DexiconTools.OneLine(ex.Message)}). Add a folder to it with configure_source: indexing prepares "
+                    + "the index again.");
+            }
         }
         else
         {
@@ -181,14 +213,13 @@ public sealed class ConfigureTools
             }
         }
 
-        // Names through the log barrier: a key's name and a corpus's are typed text and can
-        // hold a line break or a terminal escape (DexiconAuthMiddleware.OneLine).
-        logs.CreateLogger("Dexicon.Configure").LogInformation(
-            "Key {Key} {Action} corpus {Corpus}; set: {Changed}",
-            DexiconAuthMiddleware.OneLine(principal.Name), create ? "created" : changed.Count > 0 ? "changed" : "left unchanged",
-            DexiconAuthMiddleware.OneLine(target.Name), changed.Count == 0 ? "none" : string.Join(", ", changed));
-
+        // A creation was recorded when it was saved. What is left to record is the filters set
+        // on a new corpus, and any change to one that existed.
         var filtersSet = changed.Contains("the filters its sources inherit");
+        if (!create)
+            Audit(changed.Count > 0 ? "changed" : "left unchanged", target, changed.Count == 0 ? "none" : string.Join(", ", changed));
+        else if (filtersSet)
+            Audit("changed", target, "the filters its sources inherit");
         if (create)
             return $"Created corpus '{DexiconTools.OneLine(target.Name)}'{(filtersSet ? ", with the filters given" : "")}. " +
                    $"It holds nothing yet: add a folder with configure_source(corpus: {DexiconTools.Quoted(target.Name)}, " +
@@ -457,7 +488,7 @@ public sealed class ConfigureTools
     /// <summary>A path as the catalogue and the listing both compare it: forward slashes, no outer ones.</summary>
     private static string Folder(string? path)
     {
-        var p = (path ?? "").Replace('\\', '/').Trim('/');
+        var p = WorkspaceDiscovery.Forward(path ?? "").Trim('/');
         return p == "." ? "" : p;
     }
 

@@ -333,7 +333,7 @@ public static class SystemEndpoints
             var root = Path.GetFullPath(opts.Value.Indexing.WorkspaceRoot);
             return Results.Ok(new WorkspaceListing(
                 opts.Value.Indexing.WorkspaceRoot,
-                Path.GetRelativePath(root, full).Replace('\\', '/'),
+                WorkspaceDiscovery.Forward(Path.GetRelativePath(root, full)),
                 FoldersIn(opts.Value.Indexing.WorkspaceRoot, full)));
         }).Produces<WorkspaceListing>().WithTags("Workspaces");
 
@@ -369,7 +369,7 @@ public static class SystemEndpoints
             if (new DirectoryInfo(dir).LinkTarget is not null) continue;
             int? children = null;
             try { children = Directory.EnumerateFileSystemEntries(dir).Take(500).Count(); } catch { /* unreadable */ }
-            entries.Add(new WorkspaceEntry(name, Path.GetRelativePath(root, dir).Replace('\\', '/'), true, children));
+            entries.Add(new WorkspaceEntry(name, WorkspaceDiscovery.Forward(Path.GetRelativePath(root, dir)), true, children));
         }
 
         return entries;
@@ -412,7 +412,7 @@ public static class SystemEndpoints
                         "Dexicon can only index paths bind-mounted into the container. See WORKSPACE_ROOT.",
                 statusCode: 404);
 
-        var relative = Path.GetRelativePath(Path.GetFullPath(workspaceRoot), repo.FullPath).Replace('\\', '/');
+        var relative = WorkspaceDiscovery.Forward(Path.GetRelativePath(Path.GetFullPath(workspaceRoot), repo.FullPath));
         if (relative == ".") relative = string.Empty;
 
         try

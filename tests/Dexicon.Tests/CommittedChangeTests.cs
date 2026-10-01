@@ -2,8 +2,15 @@ using System.Data.Common;
 using Dexicon.Api;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
+using Dexicon.Core.Embedding;
+using Dexicon.Core.Indexing;
+using Dexicon.Core.Search;
+using Dexicon.Core.Vectors;
+using Dexicon.Infrastructure;
+using Dexicon.Mcp;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using ModelContextProtocol;
 
 namespace Dexicon.Tests;
 
@@ -117,6 +124,67 @@ public sealed class CommittedChangeTests
         outcome.Refusal.ShouldBeNull();
         (await db.Sources.CountAsync(s => s.RootPath == "extra")).ShouldBe(1);
         (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh)).ShouldBe(1, "the saved source has its job");
+    }
+
+    /// <summary>A vector store whose collection setup fails, as Qdrant being down does, after the corpus is saved.</summary>
+    private sealed class EnsureThrows(IVectorStore inner) : IVectorStore
+    {
+        public string CollectionNameFor(EmbeddingTarget target, int dimensions) => inner.CollectionNameFor(target, dimensions);
+
+        public Task EnsureCollectionAsync(string collection, int dimensions, CancellationToken ct = default) =>
+            throw new InvalidOperationException("Qdrant is not answering");
+
+        public Task UpsertAsync(string collection, IReadOnlyList<Chunk> chunks, IReadOnlyList<float[]> vectors,
+            CancellationToken ct = default) => inner.UpsertAsync(collection, chunks, vectors, ct);
+
+        public Task DeleteFileChunksAsync(string collection, string chunkSetId, string sourceId, string filePath,
+            CancellationToken ct = default) => inner.DeleteFileChunksAsync(collection, chunkSetId, sourceId, filePath, ct);
+
+        public Task DeleteChunkSetAsync(string collection, string chunkSetId, CancellationToken ct = default) =>
+            inner.DeleteChunkSetAsync(collection, chunkSetId, ct);
+
+        public Task<IReadOnlyDictionary<string, int>?> CountByFileAsync(string collection, string chunkSetId,
+            string sourceId, CancellationToken ct = default) => inner.CountByFileAsync(collection, chunkSetId, sourceId, ct);
+
+        public Task<int> PurgeUnsetChunksAsync(CancellationToken ct = default) => inner.PurgeUnsetChunksAsync(ct);
+
+        public Task DeleteCorpusAsync(string collection, string corpusId, CancellationToken ct = default) =>
+            inner.DeleteCorpusAsync(collection, corpusId, ct);
+
+        public Task<IReadOnlyList<SearchHit>> GetFileChunksAsync(string collection, string chunkSetId, string filePath,
+            CancellationToken ct = default) => inner.GetFileChunksAsync(collection, chunkSetId, filePath, ct);
+
+        public Task<SearchResponse> SearchAsync(SearchQuery query, float[]? denseVector, SparseVector sparse,
+            CancellationToken ct = default) => inner.SearchAsync(query, denseVector, sparse, ct);
+
+        public Task<(long Points, int Dimensions)> GetStatsAsync(string collection, CancellationToken ct = default) =>
+            inner.GetStatsAsync(collection, ct);
+
+        public Task<bool> PingAsync(CancellationToken ct = default) => inner.PingAsync(ct);
+    }
+
+    [Fact]
+    public async Task A_creation_is_recorded_when_it_is_saved_and_a_failure_after_it_is_said_to_have_happened_after()
+    {
+        // The corpus and the key's access are committed before the collection is prepared. A
+        // failure there left the corpus in place, no entry under the key's name, and an error
+        // that read as "nothing happened" while a retry of create was refused as taken.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        await using var db = harness.NewContext();
+        var logs = new RecordingLoggerFactory();
+        var rc = new RequestContext
+        {
+            Principal = new Principal("k9", "agent-nine", new HashSet<string>(StringComparer.Ordinal) { Scopes.Configure }),
+        };
+
+        var thrown = await Should.ThrowAsync<McpException>(() => ConfigureTools.ConfigureCorpusAsync(
+            rc, new ScopeResolver(db), db, harness.NewConfiguration(db, new EnsureThrows(harness.Vectors)), logs,
+            "papers", create: true));
+
+        thrown.Message.ShouldContain("was created, but preparing its index failed");
+        (await db.Corpora.AnyAsync(c => c.Name == "papers")).ShouldBeTrue("the corpus is saved");
+        logs.Lines.ShouldContain(l => l.Contains("agent-nine") && l.Contains("created corpus papers"));
     }
 
     [Fact]

@@ -143,11 +143,11 @@ internal sealed class IndexingHarness : IAsyncDisposable
     /// workspace. Its queue is a real one on a scheduler nothing drains, so a queued job is
     /// a row a test can read.
     /// </summary>
-    public Dexicon.Api.CorpusConfiguration NewConfiguration(CatalogDbContext db)
+    public Dexicon.Api.CorpusConfiguration NewConfiguration(CatalogDbContext db, IVectorStore? vectors = null)
     {
         var options = _services.GetRequiredService<IOptions<DexiconOptions>>();
         var scheduler = new WorkScheduler(options);
-        return new Dexicon.Api.CorpusConfiguration(db, Vectors, Embedder, options,
+        return new Dexicon.Api.CorpusConfiguration(db, vectors ?? Vectors, Embedder, options,
             new IndexJobQueue(db, scheduler, NullLogger<IndexJobQueue>.Instance), new SweepQueue(scheduler));
     }
 
