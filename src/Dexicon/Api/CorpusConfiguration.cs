@@ -15,6 +15,9 @@ public sealed record ConfigRefusal(string Title, string Detail, int Status)
     public IResult ToResult() => Results.Problem(title: Title, detail: Detail, statusCode: Status);
 }
 
+/// <summary>What a saved corpus change altered, passed to the caller's callback.</summary>
+public readonly record struct CorpusChange(bool Description, bool Filters);
+
 /// <summary>What a change produced, or why it was refused. Exactly one is set.</summary>
 public sealed record ConfigOutcome<T>(T? Value, ConfigRefusal? Refusal)
 {
@@ -263,7 +266,13 @@ public sealed class CorpusConfiguration(
     }
 
     /// <summary>Changes a corpus's description and default filters. The value says whether the filters moved.</summary>
-    public async Task<ConfigOutcome<bool>> UpdateCorpusAsync(Corpus corpus, UpdateCorpusRequest body, CancellationToken ct)
+    /// <param name="committed">
+    /// Called after a change is saved and before its refresh is queued, with what it altered, and
+    /// not for a request that altered nothing. The refresh is queued after the save, so a failure
+    /// there leaves the change in place, and a caller recording changes needs to know at the save.
+    /// </param>
+    public async Task<ConfigOutcome<bool>> UpdateCorpusAsync(
+        Corpus corpus, UpdateCorpusRequest body, CancellationToken ct, Action<CorpusChange>? committed = null)
     {
         // Judged before anything is assigned: the corpus is tracked, so a field set ahead
         // of a refusal would be saved by the next change made through the same context.
@@ -274,6 +283,7 @@ public sealed class CorpusConfiguration(
         // Chunk settings are NOT here any more. They belong to a chunk set, because a
         // corpus can carry several and "the corpus's chunk size" stopped meaning
         // anything the moment that became true. See /api/corpora/{id}/chunk-sets.
+        var descriptionChanged = body.Description is not null && body.Description != corpus.Description;
         if (body.Description is not null) corpus.Description = body.Description;
 
         // Changing what sources inherit changes which files are in the index, so it
@@ -296,6 +306,7 @@ public sealed class CorpusConfiguration(
         }
 
         await db.SaveChangesAsync(ct);
+        if (descriptionChanged || filtersChanged) committed?.Invoke(new CorpusChange(descriptionChanged, filtersChanged));
 
         // Not for a corpus with no sources, which has nothing to re-read: defaults set just
         // after creation, before a folder is added, would otherwise leave an empty job.
