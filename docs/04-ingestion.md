@@ -1003,3 +1003,39 @@ points only on success), `delete`.
 Progress events are emitted per file and coalesced to at most 4/second onto
 `GET /api/events` (SSE). The UI shows phase, counts, current file, and an estimate of
 remaining time derived from the trailing rate.
+
+### When the catalogue cannot be written
+
+A job records how it ended with one catalogue write, and that write can fail. A full data
+disk once refused every write for about four minutes. The jobs in flight logged their
+failure and could not save it, so their rows stayed `running`, their corpora stayed
+`indexing` and the lease on each corpus stayed named for its job. The scheduled refresh
+skips an `indexing` corpus, so it passed over them until the container was restarted.
+
+- **The job retries its own save.** Five attempts, waiting 1, 2, 4 and 8 seconds between
+  them. A fault shorter than that is recorded as usual, and the log says which attempt
+  landed.
+- **After the last attempt** the worker logs `Gave up recording the outcome of job …` with
+  what the catalogue still holds, read back from it, and the exception reaches the worker
+  as before.
+- **The scheduled refresh repairs what is left.** Each tick first looks for jobs that read
+  `running` and tries to take the lease on their corpus. A job that is working renews its
+  lease every 30 seconds, so it turns the repair away however long it has run. A lease that
+  has lapsed (two minutes after its last renewal) or was released means nothing is working
+  on the job. The job is then marked `failed`, with `Marked failed: this job was still
+  running when nothing was working on it …` appended to its error. The corpus and the chunk
+  sets the job targeted return from `indexing` to what the most recent finished job says:
+  `ready` after `succeeded` or `cancelled`, `degraded` after `failed` or `degraded`, and
+  `degraded` when none has finished. A `degraded` job does not record whether a source was
+  unreachable, so a corpus that was `unavailable` reads `degraded` until the refresh that
+  follows in the same tick sets it again.
+- **The repair writes the job, the corpus and the sets in one save.** If that save fails,
+  none of them change and the next tick tries again. It never marks a job `succeeded` and
+  never queues one itself.
+- **With the scheduled refresh off** (`DEXICON__INDEXING__REFRESHMINUTES=0`, the default)
+  nothing runs the repair, and the next start reconciles these jobs as it does any job left
+  running: it marks them `failed` and their corpora `degraded`.
+
+A job that fails before it starts, when taking the lease raises an error, is the one case the
+repair does not cover. Its failure is not written to the row, which stays `queued`, and the
+next start reconciles it.
