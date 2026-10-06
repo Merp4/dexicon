@@ -301,10 +301,23 @@ public sealed class CorpusIndexer(
                     // not own it. Detaching rather than reverting, because the tracked
                     // values came from this job's own work and the holder's are whatever
                     // is in the row.
+                    //
+                    // The job's own row is still written when it never took the lease: the
+                    // corpus was not touched, and a request made after it coalesces onto a
+                    // row that reads Queued, which nothing then runs. A job that lost the
+                    // lease is left as it is, and so is the corpus it set to Indexing.
+                    // StuckJobRepair finds that corpus through a job that reads Running, so
+                    // recording the job here would leave nothing to find it.
                     if (!Holds(hold))
                     {
-                        db.Entry(corpus).State = EntityState.Detached;
-                        foreach (var s in targets) db.Entry(s).State = EntityState.Detached;
+                        if (hold is not null)
+                            log.LogWarning(
+                                "Job {JobId} lost its lease on corpus {Corpus}. Its outcome is not "
+                                + "recorded: the repair of running jobs finishes it once the lease "
+                                + "can be taken",
+                                job.Id, corpus.Name);
+
+                        DetachCorpus(job, corpus, targets, keepJob: hold is null);
                     }
 
                     await SaveOutcomeAsync(job, corpus, callerCancelled);
@@ -1519,6 +1532,43 @@ public sealed class CorpusIndexer(
     private static bool Holds(CorpusLeases.Hold? hold) =>
         hold is not null && !hold.Lost.IsCancellationRequested;
 
+    /// <summary>
+    /// Stop the context writing the corpus and its sets. With <paramref name="keepJob"/> it
+    /// goes on writing the job, and without it the job is not written either.
+    ///
+    /// Detaching the corpus detaches everything tracked through it, and the job is one of
+    /// those: it sits in <see cref="Corpus.Jobs"/>. The save that followed found nothing to
+    /// write and returned without error, so a job that never took the lease stayed Queued
+    /// with no reason and no finish time.
+    ///
+    /// The job goes back as Unchanged with the columns it had changed marked, which is what
+    /// the tracker would have written had the corpus stayed attached. Marking the whole row
+    /// would write columns the job did not touch, a ChunkSetId included, which the database
+    /// clears when its set is deleted. The job still points at the detached corpus, and the
+    /// save does not re-add it: only the job is tracked afterwards.
+    /// </summary>
+    private void DetachCorpus(IndexJob job, Corpus corpus, List<ChunkSet> targets, bool keepJob)
+    {
+        // Read first: the detach below takes the job's tracking with it.
+        db.ChangeTracker.DetectChanges();
+        var changed = keepJob
+            ? db.Entry(job).Properties.Where(p => p.IsModified).Select(p => p.Metadata.Name).ToList()
+            : [];
+
+        db.Entry(corpus).State = EntityState.Detached;
+        foreach (var s in targets) db.Entry(s).State = EntityState.Detached;
+
+        var entry = db.Entry(job);
+        if (!keepJob)
+        {
+            entry.State = EntityState.Detached;
+            return;
+        }
+
+        entry.State = EntityState.Unchanged;
+        foreach (var name in changed) entry.Property(name).IsModified = true;
+    }
+
     /// <summary>Tries at recording how a job ended, the first included.</summary>
     internal const int SaveAttempts = 5;
 
@@ -1585,11 +1635,10 @@ public sealed class CorpusIndexer(
     /// <summary>
     /// Say that the outcome was not recorded and what the catalogue still holds.
     ///
-    /// The job is read back rather than inferred from the tracked entity. A job that does not
-    /// hold the lease has its corpus and sets detached before the save, and detaching them
-    /// detaches the job too, so what the context says about it is not what the catalogue
-    /// holds. A job that failed before it reached Running is still Queued there, and the
-    /// repair of running jobs does not cover it: only a start does.
+    /// The job is read back rather than inferred from the tracked entity, which holds the
+    /// outcome the failed save was meant to record and not what the catalogue holds. A job
+    /// that failed before it reached Running is still Queued there, and the repair of
+    /// running jobs does not cover it: only a start does.
     /// </summary>
     private async Task GaveUpAsync(IndexJob job, Corpus corpus, int attempts, Exception ex)
     {

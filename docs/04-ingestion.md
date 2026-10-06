@@ -1036,6 +1036,11 @@ skips an `indexing` corpus, so it passed over them until the container was resta
   nothing runs the repair, and the next start reconciles these jobs as it does any job left
   running: it marks them `failed` and their corpora `degraded`.
 
-A job that fails before it starts, when taking the lease raises an error, is the one case the
-repair does not cover. Its failure is not written to the row, which stays `queued`, and the
-next start reconciles it.
+A job that fails before it starts, because taking the lease raised an error, is recorded
+`failed` with that error, and its corpus is left as it was. If the catalogue refuses that
+write too, the row stays `queued`, which the repair does not cover, and the next start
+reconciles it.
+
+A job that loses its lease while it runs, because a renewal was refused or another pass took
+the corpus, does not record how it ended. Its row stays `running` and its corpus `indexing`
+for the repair to finish, since the repair finds the corpus through that row.
