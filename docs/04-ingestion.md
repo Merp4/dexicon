@@ -560,9 +560,12 @@ value at the first one: the cached copy of such a document was cut there, and th
 indexed its head under the fingerprint of the whole. On one catalogue that was 161 of 1,956
 cached PDFs, keeping 29% of their text on average and, for eight, none of it, which were
 then recorded as having no extractable text. The PDF extractor now drops U+0000 per block,
-so the units' offsets are of the text kept. `ExtractorVersions.Current` was not bumped for
-this: the only cached text the change alters belongs to rows the length check already
-rejects.
+so the units' offsets are of the text kept. The same check covers an upload's text in
+`blob_texts`. `ExtractorVersions.Current` was not bumped for this: the only cached text the
+change alters belongs to rows the length check already rejects. A file that a pass has
+settled is not read (the section on settling, below), so a short row is met the next time
+the file is read: on the first pass after an upgrade, when its size or time changes, or on
+a full pass.
 
 | Extractor version | Change |
 |---|---|

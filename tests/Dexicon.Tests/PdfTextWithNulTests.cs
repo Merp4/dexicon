@@ -103,8 +103,13 @@ public sealed class PdfTextWithNulTests
         var whole = (await CachedRowAsync(harness)).Text;
 
         // What a cut leaves: the head of the document, with the length of the whole recorded.
+        // And the key cleared, as it is on every row the first pass after an upgrade finds: a
+        // settled file is not read, so a pass would not reach the cache at all.
         await using (var db = harness.NewContext())
+        {
             await db.FileTexts.ExecuteUpdateAsync(u => u.SetProperty(t => t.Text, whole[..20]));
+            await db.FileChunkStates.ExecuteUpdateAsync(u => u.SetProperty(s => s.SettledFor, (string?)null));
+        }
 
         var second = await harness.RunIndexAsync();
 
