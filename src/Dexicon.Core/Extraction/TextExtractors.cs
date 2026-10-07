@@ -6,6 +6,7 @@ using AngleSharp.Html.Parser;
 using DocumentFormat.OpenXml.Packaging;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.Content;
+using UglyToad.PdfPig.Core;
 using UglyToad.PdfPig.DocumentLayoutAnalysis.PageSegmenter;
 using UglyToad.PdfPig.DocumentLayoutAnalysis.ReadingOrderDetector;
 using UglyToad.PdfPig.DocumentLayoutAnalysis.WordExtractor;
@@ -175,6 +176,17 @@ public sealed partial class PdfTextExtractor : ITextExtractor
             var title = document.Information?.Title;
             return new ExtractedText(sb.ToString(), units,
                 string.IsNullOrWhiteSpace(title) ? null : title);
+        }
+        catch (PdfDocumentFormatException ex)
+        {
+            // A malformed page, found after the document opened: an invalid colour space, a
+            // broken page tree. The same kind of failure as one at open, and reported the
+            // same way, where it used to escape as a bare parser exception and be logged as
+            // "Failed to index". Only that type: anything else here may be the mount, and
+            // is not a verdict on the file. Output for a file that extracts is unchanged, so
+            // ExtractorVersions.Current is not bumped.
+            throw new ExtractionFailedException(
+                $"'{fileName}' could not be read as a PDF. It may be corrupt: {ex.Message}", ex);
         }
         finally
         {

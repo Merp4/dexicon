@@ -269,7 +269,13 @@ public sealed class WorkspaceWalker
         "*.lock", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
     ];
 
-    public sealed record Candidate(string FullPath, string RelativePath, long SizeBytes);
+    /// <param name="ModifiedTicks">
+    /// When the file was last written, as the same stat that gave its size reported it, or 0
+    /// where that is not known (a commit, which has no file). Together with the size it is
+    /// the key a pass uses to leave a file it has already finished with unopened, and 0
+    /// means there is no such key, so the file is read.
+    /// </param>
+    public sealed record Candidate(string FullPath, string RelativePath, long SizeBytes, long ModifiedTicks = 0);
 
     /// <param name="SizeBytes">
     /// What the walk measured, or 0 where it could not: the row a skip writes shows a
@@ -375,7 +381,7 @@ public sealed class WorkspaceWalker
                 continue;
             }
 
-            files.Add(new Candidate(full, relative, info.Length));
+            files.Add(new Candidate(full, relative, info.Length, info.LastWriteTimeUtc.Ticks));
         }
 
         return new WalkResult(files, skipped);
