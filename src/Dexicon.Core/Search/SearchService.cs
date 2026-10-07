@@ -195,8 +195,9 @@ public sealed class SearchService(
         // does not exist. Telling it the index is incomplete costs one sentence.
         // The SET's state, not the corpus's: a corpus is "indexing" while a replacement
         // set backfills, but the set being searched is complete and its results are not.
+        var activity = await scopes.IndexingAsync(scope.Ids, ct);
         var indexing = scope.Targets
-            .Where(t => t.Set.State == CorpusState.Indexing)
+            .Where(t => activity.Of(t.Set) == CorpusState.Indexing)
             .Select(t => t.QualifiedName).ToList();
         var notes = new List<string>();
         if (indexing.Count > 0)
@@ -214,7 +215,7 @@ public sealed class SearchService(
             Degraded = degraded,
             DegradedReason = degradedReason,
             Scope = scope.Targets
-                .Select(t => new SearchResult.ScopeEntry(t.Corpus.Id, t.QualifiedName, t.Set.State)).ToList(),
+                .Select(t => new SearchResult.ScopeEntry(t.Corpus.Id, t.QualifiedName, activity.Of(t.Set))).ToList(),
             Hits = ordered,
             TookMs = sw.ElapsedMilliseconds,
             Note = note,

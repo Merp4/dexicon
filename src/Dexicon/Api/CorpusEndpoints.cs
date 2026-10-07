@@ -579,6 +579,7 @@ public static class CorpusEndpoints
             .OrderByDescending(s => s.IsDefault).ThenBy(s => s.Name).ToListAsync(ct);
 
         var setIds = sets.Select(s => s.Id).ToList();
+        var activity = await IndexingActivity.ReadAsync(db, [c.Id], ct);
 
         // Counted per set: the same file is one attachment but several chunkings, and a
         // corpus total that summed them would double-count every document.
@@ -601,7 +602,8 @@ public static class CorpusEndpoints
                 fileCount: rows.Where(r => r.Status == FileStatus.Indexed).Sum(r => r.Count),
                 chunkCount: rows.Sum(r => r.Chunks),
                 pendingCount: rows.Where(r => r.Status == FileStatus.Pending).Sum(r => r.Count),
-                failedCount: rows.Where(r => r.Status == FileStatus.Failed).Sum(r => r.Count));
+                failedCount: rows.Where(r => r.Status == FileStatus.Failed).Sum(r => r.Count),
+                state: activity.Of(s));
         }).ToList();
 
         // The corpus-level figures describe the DEFAULT set, because that is what a search
@@ -612,7 +614,7 @@ public static class CorpusEndpoints
 
         return new CorpusSummary(
             c.Id, c.Name, c.Description,
-            c.State.ToString().ToLowerInvariant(),
+            activity.Of(c).ToString().ToLowerInvariant(),
             c.CreatedUtc, c.LastIndexedUtc,
             sources.Count,
             headline?.FileCount ?? 0,

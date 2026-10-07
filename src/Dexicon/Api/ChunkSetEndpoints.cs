@@ -124,7 +124,9 @@ public static class ChunkSetEndpoints
                 // every search with nothing, which is the outage this design exists to
                 // avoid. Promote it once it has finished backfilling.
                 IsDefault = body.MakeDefault == true || template is null,
-                State = CorpusState.Indexing,
+                // Nothing has built it, which is what the row says if its job never runs.
+                // That a job is building it is read from the jobs, not written here.
+                State = CorpusState.Degraded,
                 CreatedUtc = DateTime.UtcNow,
             };
 
@@ -141,8 +143,9 @@ public static class ChunkSetEndpoints
             // set, and the jobs list should say which of those is happening.
             var job = await queue.EnqueueAsync(corpus.Id, JobKind.Rebuild, set.Id, ct);
 
+            var activity = await IndexingActivity.ReadAsync(db, [corpus.Id], ct);
             return Results.Accepted($"/api/corpora/{corpus.Name}/chunk-sets/{set.Name}",
-                new ChunkSetCreated(set.ToSummary(0, 0, 0, 0), job.ToSummary()));
+                new ChunkSetCreated(set.ToSummary(0, 0, 0, 0, activity.Of(set)), job.ToSummary()));
         }).Produces<ChunkSetCreated>();
 
         g.MapPatch("/{setName}", async (string nameOrId, string setName, UpdateChunkSetRequest body,
@@ -188,7 +191,8 @@ public static class ChunkSetEndpoints
             if (rechunk)
                 queued = (await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, set.Id, ct)).ToSummary();
 
-            return Results.Ok(new ChunkSetUpdated(set.ToSummary(0, 0, 0, 0), queued));
+            var activity = await IndexingActivity.ReadAsync(db, [corpus.Id], ct);
+            return Results.Ok(new ChunkSetUpdated(set.ToSummary(0, 0, 0, 0, activity.Of(set)), queued));
         }).Produces<ChunkSetUpdated>();
 
         g.MapPost("/{setName}/promote", async (string nameOrId, string setName, RequestContext rc,

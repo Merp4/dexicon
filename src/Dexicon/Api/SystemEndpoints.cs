@@ -1049,7 +1049,10 @@ public static class SystemEndpoints
             catch (Exception ex) when (ex is EmbeddingUnavailableException or UnknownEmbeddingProviderException)
             { embeddingError = ex.Message; }
 
-            var activeJob = await db.Jobs.Where(j => j.State == JobState.Running)
+            // A Running row whose lease has lapsed is a job that stopped without saying so, and
+            // is not active.
+            var activeJob = await IndexingActivity.LiveJobs(db, DateTime.UtcNow)
+                .Where(j => j.State == JobState.Running)
                 .OrderByDescending(j => j.StartedUtc).FirstOrDefaultAsync(ct);
 
             return Results.Ok(new HealthResponse(

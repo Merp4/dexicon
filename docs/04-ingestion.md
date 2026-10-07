@@ -1008,39 +1008,37 @@ remaining time derived from the trailing rate.
 
 A job records how it ended with one catalogue write, and that write can fail. A full data
 disk once refused every write for about four minutes. The jobs in flight logged their
-failure and could not save it, so their rows stayed `running`, their corpora stayed
-`indexing` and the lease on each corpus stayed named for its job. The scheduled refresh
-skips an `indexing` corpus, so it passed over them until the container was restarted.
+failure and could not save it, so their rows stayed `running`, and the lease on each corpus
+stayed named for its job. Their corpora read `indexing`, which the scheduled refresh skips,
+so it passed over them until the container was restarted.
 
+Whether a corpus or a chunk set is indexing is no longer stored
+([D-37](decisions.md#d-37-indexing-is-read-not-stored)), so a job that stops cannot leave it
+set.
+
+- **Indexing is read from the jobs and the lease.** A corpus reads `indexing` while a job is
+  queued for it, or is running with the lease on the corpus still renewed. A job that is
+  working renews its lease every 30 seconds, and a lease lapses two minutes after its last
+  renewal, so a job that stopped stops counting without anything noticing. A job that names a
+  chunk set covers that set, and one that names none covers every set of the corpus. The row
+  holds only the outcome of the last pass (`ready`, `degraded` or `unavailable`), which a job
+  that stops leaves as it was. The API, the search note ("results are incomplete"), the
+  scheduled refresh and the health endpoint's active job all use the same reading.
 - **The job retries its own save.** Five attempts, waiting 1, 2, 4 and 8 seconds between
   them. A fault shorter than that is recorded as usual, and the log says which attempt
   landed.
 - **After the last attempt** the worker logs `Gave up recording the outcome of job …` with
   what the catalogue still holds, read back from it, and the exception reaches the worker
-  as before.
-- **The scheduled refresh repairs what is left.** Each tick first looks for jobs that read
-  `running` and tries to take the lease on their corpus. A job that is working renews its
-  lease every 30 seconds, so it turns the repair away however long it has run. A lease that
-  has lapsed (two minutes after its last renewal) or was released means nothing is working
-  on the job. The job is then marked `failed`, with `Marked failed: this job was still
-  running when nothing was working on it …` appended to its error. The corpus and the chunk
-  sets the job targeted return from `indexing` to what the most recent finished job says:
-  `ready` after `succeeded` or `cancelled`, `degraded` after `failed` or `degraded`, and
-  `degraded` when none has finished. A `degraded` job does not record whether a source was
-  unreachable, so a corpus that was `unavailable` reads `degraded` until the refresh that
-  follows in the same tick sets it again.
-- **The repair writes the job, the corpus and the sets in one save.** If that save fails,
-  none of them change and the next tick tries again. It never marks a job `succeeded` and
-  never queues one itself.
-- **With the scheduled refresh off** (`DEXICON__INDEXING__REFRESHMINUTES=0`, the default)
-  nothing runs the repair, and the next start reconciles these jobs as it does any job left
-  running: it marks them `failed` and their corpora `degraded`.
+  as before. The row then reads `running`. It stops counting once the lease lapses, so the
+  corpus is refreshed by the next scheduled tick, or by a refresh requested by hand, which
+  waits for the lease to lapse. The row stays until the next start, which marks every
+  job that reads `queued` or `running` failed, since the queue is in memory and nothing will
+  run them. A `queued` row counts as work, so that is what clears it.
 
 A job that fails before it starts, because taking the lease raised an error, is recorded
 `failed` with that error, and its corpus is left as it was. If the catalogue refuses that
-write too, the row stays `queued`, which the repair does not cover, and the next start
-reconciles it.
+write too, the row stays `queued` until the next start.
 
 A job that loses its lease while it runs, because a renewal was refused or another pass took
-the corpus, does not record how it ended. Its row stays `running` and its corpus `indexing`
-for the repair to finish, since the repair finds the corpus through that row.
+the corpus, records how it ended and does not write the corpus or its sets: whoever holds the
+corpus now writes them, and if nobody does, the row keeps the last pass's outcome.

@@ -153,11 +153,28 @@ internal sealed class IndexingHarness : IAsyncDisposable
     }
 
     /// <summary>
-    /// The repair of jobs left running, on the harness's catalogue, with leases taken the way
-    /// the indexer and sweeper take them.
+    /// One tick of the scheduled refresh over the harness's catalogue, as the hosted service
+    /// would run it: every corpus nothing is working on gets a refresh queued.
     /// </summary>
-    public StuckJobRepair NewRepair(CatalogDbContext db, ILogger<StuckJobRepair>? log = null) =>
-        new(db, NewLeases(), log ?? NullLogger<StuckJobRepair>.Instance);
+    public async Task RunRefreshTickAsync()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton(_services.GetRequiredService<IOptions<DexiconOptions>>());
+        services.AddSingleton(_services.GetRequiredService<DbContextOptions<CatalogDbContext>>());
+        services.AddScoped<CatalogDbContext>(sp =>
+            new CatalogDbContext(sp.GetRequiredService<DbContextOptions<CatalogDbContext>>()));
+        services.AddSingleton<WorkScheduler>();
+        services.AddScoped<IndexJobQueue>();
+
+        await using var provider = services.BuildServiceProvider();
+        var refresher = new ScheduledRefreshService(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<IOptions<DexiconOptions>>(),
+            NullLogger<ScheduledRefreshService>.Instance);
+
+        await refresher.RunTickAsync(default);
+    }
 
     /// <summary>
     /// Leases over the harness's catalogue. The state is the corpus row, so a hold taken

@@ -142,9 +142,6 @@ builder.Services.AddSingleton<SweepQueue>();
 // Singleton: the lease is a row, and the service only takes scopes to reach it.
 builder.Services.AddSingleton<CorpusLeases>();
 
-// Scoped, like the sweeper: it works one catalogue context. Run by the refresh tick.
-builder.Services.AddScoped<StuckJobRepair>();
-
 // ── MCP ──────────────────────────────────────────────────────────────────────
 // Stateless: the 2026-07-28 core removed the handshake and the session id, and
 // Dexicon needs no server-to-client calls. Verified in the M0 spike.
@@ -343,10 +340,10 @@ internal sealed class MemoryCacheEvictor(IMemoryCache cache) : IMemoryCacheEvict
 /// Optional periodic refresh. Off by default (RefreshMinutes = 0) because a tool that
 /// silently re-embeds a large repository on a timer is a surprise, not a feature.
 ///
-/// Each tick first repairs jobs left Running with nothing working on them
-/// (<see cref="StuckJobRepair"/>), because the selection below skips an Indexing corpus. A
-/// corpus that repair frees is refreshed in the same tick. With the refresh off there is no
-/// tick and so no repair: a restart is what reconciles those jobs.
+/// A corpus is skipped while a job works on it, which is read from the jobs and the corpus
+/// lease (<see cref="IndexingActivity"/>). A job that stopped without saying so, as one does
+/// when the disk is full, stops counting once its lease lapses, and the corpus is refreshed
+/// again with nothing to repair.
 /// </summary>
 internal sealed class ScheduledRefreshService(
     IServiceScopeFactory scopes,
@@ -386,14 +383,9 @@ internal sealed class ScheduledRefreshService(
         var db = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
         var queue = scope.ServiceProvider.GetRequiredService<IndexJobQueue>();
 
-        // Before the selection: it excludes Indexing corpora, and this is what stops a
-        // corpus whose job died from reading as Indexing for good.
-        var repaired = await scope.ServiceProvider.GetRequiredService<StuckJobRepair>().RepairAsync(ct);
-        if (repaired > 0)
-            log.LogWarning("Repaired {Count} job(s) left running with nothing working on them", repaired);
-
+        var working = IndexingActivity.LiveJobs(db, DateTime.UtcNow);
         var due = await db.Corpora
-            .Where(c => c.State != CorpusState.Indexing)
+            .Where(c => !working.Any(j => j.CorpusId == c.Id))
             .Select(c => c.Id)
             .ToListAsync(ct);
 
