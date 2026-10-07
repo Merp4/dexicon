@@ -262,6 +262,30 @@ public sealed class IndexingActivityTests
     // ---- the migration ----------------------------------------------------------------
 
     [Fact]
+    public async Task The_migration_is_applied_to_a_new_catalogue_with_nothing_left_pending()
+    {
+        // The harness builds its catalogue without migrations, so this is the one test that
+        // shows this one is found and runs, and that it left the model as the snapshot has it.
+        var path = Path.Combine(Path.GetTempPath(), $"dexicon-migrate-{Guid.NewGuid():N}.db");
+        try
+        {
+            await using var db = new CatalogDbContext(new DbContextOptionsBuilder<CatalogDbContext>()
+                .UseSqlite($"Data Source={path};Pooling=False").Options);
+
+            await db.Database.MigrateAsync();
+
+            (await db.Database.GetAppliedMigrationsAsync())
+                .ShouldContain("20261007020000_IndexingIsNotStored");
+            (await db.Database.GetPendingMigrationsAsync()).ShouldBeEmpty();
+            db.Database.HasPendingModelChanges().ShouldBeFalse();
+        }
+        finally
+        {
+            try { File.Delete(path); } catch { /* best effort */ }
+        }
+    }
+
+    [Fact]
     public async Task The_migration_clears_a_stored_indexing_state_and_leaves_every_other_one()
     {
         await using var harness = await StartAsync(sets: 3);
