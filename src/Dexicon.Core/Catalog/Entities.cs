@@ -363,7 +363,7 @@ public sealed class FileChunkState
     /// What this row is settled for: a hash of the file's size and modified time as the walk
     /// saw them, and of everything that decides what is indexed from it (the chunking
     /// fingerprint, which carries the extractor and chunker versions). When the walk finds a
-    /// file with the same key, nothing about it can have changed, and it is not opened.
+    /// file with the same key, nothing about it can have changed, and it is not read again.
     ///
     /// Written only where an outcome is final for that key: indexed, empty, or a failure
     /// that reading the same bytes again would repeat. Never for a failure that may not

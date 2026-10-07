@@ -1926,18 +1926,18 @@ migration. A new chunk set is stored `degraded`, which is what it reads if its j
 
 ---
 
-### D-38 A file the last pass finished with is not opened again
+### D-38 A file the last pass finished with is not read again
 
 **Status.** Accepted and implemented, 2026-10-07.
 
 **Decision.** Each file's row keeps `settled_for`, a hash of the file's size, its modified time
 as the walk saw them, and the chunking settings (extractor and chunker versions included). A
-pass that finds the same key skips the file without opening it. The key is written for every
-outcome that reading the same bytes again would repeat (indexed, empty, and a failure the
-extractor classifies as the file's own content) and for none that might not recur. The skip does
-not tell those outcomes apart: `status` already does, and a matching key means there is nothing
-to redo whichever it is. A full or rebuild job ignores the key
-([04](04-ingestion.md#a-file-the-last-pass-finished-with-is-not-opened-again)).
+pass that finds the same key skips the file: it is not read, hashed or compared. The key is
+written for every outcome that reading the same bytes again would repeat (indexed, empty, and a
+failure the extractor classifies as the file's own content) and for none that might not recur.
+The skip does not tell those outcomes apart: `status` already does, and a matching key means
+there is nothing to redo whichever it is. A full or rebuild job ignores the key
+([04](04-ingestion.md#a-file-the-last-pass-finished-with-is-not-read-again)).
 
 **Why.** Every pass over an unchanged library read every byte of every file, hashed it, loaded
 its cached text and compared a fingerprint to conclude nothing had changed: about 3.6 minutes
@@ -1954,7 +1954,10 @@ mount that blinked would leave files failed until they were touched. The extract
 throwing `UnreadableDocumentException` only where a parser rejected the bytes it was given.
 
 **Cost.** One nullable column, added by a migration that touches no data, so the first pass
-after upgrading reads every file once and writes the keys. A file whose bytes change without a
+after upgrading reads every file once and writes the keys. The walk still opens a file that is
+not a document, to look for a NUL byte in its first 8 KB, before the key is compared; a document
+is not opened. Moving that check behind the key would take the key into the walk, which the
+sweeper, the coverage report and the indexer all share. A file whose bytes change without a
 change of size or modified time is not noticed until a full pass. A mount that returns short
 reads could make a good file read as corrupt for one pass; it then stays settled as failed until
 it changes or a full pass reads it again.

@@ -1264,10 +1264,11 @@ public sealed class CorpusIndexer(
         }
         else if (!full && fingerprintOf is null)
         {
-            // A file that is settled for what it is now is not opened. Without this every
+            // A file that is settled for what it is now is not read. Without this every
             // pass read every byte of every file, hashed it, loaded its cached text and
             // compared a fingerprint, to conclude nothing had changed: about 3.6 minutes of
             // reading per ten-minute tick across the library, measured from the job history.
+            // The walk has already opened any file that is not a document, for its first 8 KB.
             //
             // Indexed, Empty and a failure that would repeat are all settled, and they are
             // not told apart here: a settled row is left alone whichever it is, and Status

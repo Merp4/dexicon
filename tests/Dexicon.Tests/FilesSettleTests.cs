@@ -11,14 +11,14 @@ using UglyToad.PdfPig.Writer;
 namespace Dexicon.Tests;
 
 /// <summary>
-/// A file a pass has finished with is not opened on the next one while its size and modified
+/// A file a pass has finished with is not read on the next one while its size and modified
 /// time and the settings it was finished under are what they were.
 ///
 /// Every pass used to read every byte of every file, hash it, load its cached text and compare
 /// a fingerprint, to learn that nothing had changed. Measured from the job history of a live
 /// instance: 58 s for a corpus of 242 books, 67 s for 6,566 files of code and 94 s for 1,834
 /// papers, each tick, which is about 3.6 minutes of reading every ten. A file whose read failed
-/// the same way every time was opened and logged every tick as well.
+/// the same way every time was read and logged every tick as well.
 ///
 /// Each case here shows one rule. The size and time are what stand in for the bytes, so a file
 /// rewritten to a different content of the same size and the same time is not noticed: a test
@@ -45,7 +45,7 @@ public sealed class FilesSettleTests
     }
 
     [Fact]
-    public async Task A_file_that_has_not_changed_is_not_opened_again()
+    public async Task A_file_that_has_not_changed_is_not_read_again()
     {
         var (harness, embedder) = await StartAsync();
         await using var _ = harness;
@@ -56,7 +56,7 @@ public sealed class FilesSettleTests
         var embedded = embedder.Inputs;
         embedded.ShouldBeGreaterThan(0);
 
-        // Different bytes, the same length and the same time. Had the file been opened this
+        // Different bytes, the same length and the same time. Had the file been read this
         // would be re-chunked and re-embedded; that it is not is how the test sees the read
         // was skipped, and it is also the price of the shortcut.
         await WriteAsync(harness, "note.md", IndexingHarness.Prose("omega"));
@@ -89,7 +89,7 @@ public sealed class FilesSettleTests
         var renewed = (await harness.StateOfAsync("note.md")).SettledFor;
         renewed.ShouldNotBeNull().ShouldNotBe(settled);
 
-        // And the next pass leaves it unopened on the new time, shown the same way as above.
+        // And the next pass leaves it unread on the new time, shown the same way as above.
         await WriteAsync(harness, "note.md", IndexingHarness.Prose("omega"), Stamp.AddHours(1));
         await harness.RunIndexAsync();
         embedder.Inputs.ShouldBe(embedded);
@@ -214,7 +214,7 @@ public sealed class FilesSettleTests
 
         var second = await harness.RunIndexAsync(log: logs.CreateLogger<CorpusIndexer>());
 
-        second.FilesFailed.ShouldBe(0, "it was not opened, so it did not fail again");
+        second.FilesFailed.ShouldBe(0, "it was not read, so it did not fail again");
         second.FilesSkipped.ShouldBe(1);
         Said(logs, "Extraction failed for").ShouldBe(1, "and the log does not say it again");
         (await harness.StateOfAsync("report.pdf")).Status.ShouldBe(FileStatus.Failed, "the row still says why");
@@ -296,13 +296,13 @@ public sealed class FilesSettleTests
         state.SettledFor.ShouldNotBeNull();
 
         // Rewritten to something with text in it, of the same length and at the same time. A
-        // pass that opened the file would index it; this one leaves it as it was.
+        // pass that read the file would index it; this one leaves it as it was.
         await WriteAsync(harness, "blank.md", "ab cd ef\n");
 
         var second = await harness.RunIndexAsync();
 
         second.FilesSkipped.ShouldBe(1);
-        embedder.Inputs.ShouldBe(0, "the file was not opened, so the text now in it was not seen");
+        embedder.Inputs.ShouldBe(0, "the file was not read, so the text now in it was not seen");
         (await harness.StateOfAsync("blank.md")).Status.ShouldBe(FileStatus.Empty);
     }
 
