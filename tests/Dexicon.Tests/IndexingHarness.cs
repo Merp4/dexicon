@@ -163,8 +163,11 @@ internal sealed class IndexingHarness : IAsyncDisposable
     /// Leases over the harness's catalogue. The state is the corpus row, so a hold taken
     /// through one instance is seen by every other.
     /// </summary>
-    public CorpusLeases NewLeases() =>
-        new(_services.GetRequiredService<IServiceScopeFactory>(), NullLogger<CorpusLeases>.Instance);
+    /// <param name="renew">How often a hold renews, for a test that needs it to notice a loss quickly.</param>
+    /// <param name="log">Where the leases log, for a test that reads what they said.</param>
+    public CorpusLeases NewLeases(TimeSpan? renew = null, ILogger<CorpusLeases>? log = null) =>
+        new(_services.GetRequiredService<IServiceScopeFactory>(),
+            log ?? NullLogger<CorpusLeases>.Instance, renew: renew);
 
     /// <summary>
     /// A document service on the harness's own storage, so blobs land where the indexer
@@ -251,9 +254,14 @@ internal sealed class IndexingHarness : IAsyncDisposable
     /// Runs once the job row is saved and before the pass starts, so a test can open a window
     /// that covers everything the pass writes, its first claim on the corpus included.
     /// </param>
+    /// <param name="leases">
+    /// The leases the pass takes the corpus with. A test that has the pass lose its lease
+    /// gives it ones that renew often enough to notice within the test.
+    /// </param>
     public async Task<IndexJob> RunIndexAsync(JobKind kind = JobKind.Refresh,
         Func<GitRepository, string, DateTime, CancellationToken, Task<GitTracking>>? readTracking = null,
-        ILogger<CorpusIndexer>? log = null, TimeSpan? saveRetryDelay = null, Action? beforePass = null)
+        ILogger<CorpusIndexer>? log = null, TimeSpan? saveRetryDelay = null, Action? beforePass = null,
+        CorpusLeases? leases = null)
     {
         string jobId;
         await using (var db = NewContext())
@@ -284,7 +292,7 @@ internal sealed class IndexingHarness : IAsyncDisposable
             Embedder,
             new RawProfiles(),
             new DocumentService(runDb, options, NullLogger<DocumentService>.Instance),
-            new CorpusLeases(scopes, NullLogger<CorpusLeases>.Instance),
+            leases ?? new CorpusLeases(scopes, NullLogger<CorpusLeases>.Instance),
             options,
             log ?? NullLogger<CorpusIndexer>.Instance)
         {
@@ -453,10 +461,17 @@ internal sealed class IndexingHarness : IAsyncDisposable
         /// </summary>
         public Action? OnEnsureCollection { get; set; }
 
-        public Task EnsureCollectionAsync(string collection, int dimensions, CancellationToken ct = default)
+        /// <summary>
+        /// The same point, given the pass's own token and able to wait on it. A test that has
+        /// the pass lose its lease waits here for the token to fire, so the pass is known to be
+        /// cancelled by the time it carries on, without a delay standing in for that.
+        /// </summary>
+        public Func<CancellationToken, Task>? OnEnsureCollectionAsync { get; set; }
+
+        public async Task EnsureCollectionAsync(string collection, int dimensions, CancellationToken ct = default)
         {
             OnEnsureCollection?.Invoke();
-            return Task.CompletedTask;
+            if (OnEnsureCollectionAsync is not null) await OnEnsureCollectionAsync(ct);
         }
 
         public string CollectionNameFor(EmbeddingTarget target, int dimensions) => Collection;
