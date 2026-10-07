@@ -239,9 +239,15 @@ public sealed class FilesSettleTests
         state.Status.ShouldBe(FileStatus.Empty);
         state.SettledFor.ShouldNotBeNull();
 
+        // Rewritten to something with text in it, of the same length and at the same time. A
+        // pass that opened the file would index it; this one leaves it as it was.
+        await WriteAsync(harness, "blank.md", "ab cd ef\n");
+
         var second = await harness.RunIndexAsync();
+
         second.FilesSkipped.ShouldBe(1);
-        embedder.Inputs.ShouldBe(0);
+        embedder.Inputs.ShouldBe(0, "the file was not opened, so the text now in it was not seen");
+        (await harness.StateOfAsync("blank.md")).Status.ShouldBe(FileStatus.Empty);
     }
 
     [Fact]
