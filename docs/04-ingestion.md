@@ -986,9 +986,45 @@ set**. Two sets over the same blob get different fingerprints and independent ve
 is what allows several chunkings of one document, including two sets on different models,
 mid-migration, in two different collections.
 
+### A file the last pass finished with is not opened again
+
+Comparing a fingerprint needs the file's content, so an unchanged tree still cost a read of
+every byte, a hash, a cached-text load and a comparison per file on every refresh. Over the
+workspace library that was about 3.6 minutes of reading per ten-minute tick, measured from
+the job history.
+
+`file_chunk_states.settled_for` is a hash of the file's size, its modified time as the walk
+saw them, and the chunking settings (the fingerprint of an empty content hash, which carries
+the extractor and chunker versions). A pass that finds the same key on a file's row skips
+it without opening it. The key is written when the pass reaches an outcome that reading the
+same bytes again would repeat:
+
+| Outcome | Key written |
+|---|---|
+| Indexed | yes |
+| Empty (no extractable text) | yes |
+| Failed because the file's own content cannot be read (a PDF with no trailer or that the parser rejects, an encrypted or malformed EPUB, a DOCX or PPTX that will not parse) | yes |
+| Failed because of something that may not recur (embedding service down, I/O error, out of memory, extractor deadline) | no, so the next pass retries |
+
+The skip does not distinguish these: a row with a matching key is left alone, and `status`
+says which it is. A failure is final only when the extractor says so, by throwing
+`UnreadableDocumentException`; a plain `ExtractionFailedException` is retried. A parser's
+error wrapped by the extractor is classified by walking its cause chain, and an I/O error,
+refused permission, out-of-memory or timeout anywhere in it makes the failure retryable.
+
+Every pass that touches a row clears the key, and the passes that settle it set it again, so
+a code path that forgets to settle costs a read and nothing else. A change of size or
+modified time, of a chunking setting, of the extractor version or of the chunker version
+changes the key. A `Full` or `Rebuild` job ignores the key and reads everything. Uploads
+and git commits have no file to stat and are keyed as before.
+
+A key written for a file whose bytes change without changing size or modified time is not
+detected. Files copied with their timestamps preserved to the same size are the case; a full
+pass finds them.
+
 Scheduling: on demand (UI button, `index_refresh` MCP tool), plus an optional interval per
-corpus, default off. There is no filesystem watcher: polling with content hashes is more
-reliable over bind mounts, particularly on Windows hosts and WSL2.
+corpus, default off. There is no filesystem watcher: polling is more reliable over bind
+mounts, particularly on Windows hosts and WSL2.
 
 ## Job semantics
 

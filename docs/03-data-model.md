@@ -178,6 +178,11 @@ CREATE TABLE file_chunk_states (
   -- the attachment, because a job can target one set while the others keep serving,
   -- and a file-wide hash would point a reader for a still-old set at the new document.
   source_sha256 TEXT,                       -- NULL for uploads; files.blob_sha256 serves
+  -- Hash of the file's size, modified time and the chunking settings, written when a pass
+  -- reaches an outcome that reading the same bytes again would repeat. A walk that finds
+  -- the same key does not open the file. NULL for uploads and commits, and cleared by every
+  -- pass that touches the row. See 04-ingestion.md and D-38.
+  settled_for   TEXT,
   chunk_count   INTEGER NOT NULL DEFAULT 0,
   status        TEXT NOT NULL,              -- pending | indexed | skipped | failed | empty
   status_detail TEXT,                       -- why, in words, for skipped/failed/empty
