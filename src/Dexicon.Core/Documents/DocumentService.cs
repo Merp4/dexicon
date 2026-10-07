@@ -358,24 +358,35 @@ public sealed class DocumentService(
 
     /// <summary>
     /// The cached text for a blob, re-extracting first if it was produced by an older
-    /// extractor. Called on the indexing path, so an extractor fix reaches a library that
-    /// was ingested before it without anyone re-uploading anything.
+    /// extractor or no longer reads back as long as it was written. Called on the indexing
+    /// path, so an extractor fix reaches a library that was ingested before it without
+    /// anyone re-uploading anything.
     /// </summary>
     public async Task<BlobText?> CurrentTextFor(string sha256, string fileName, CancellationToken ct = default)
     {
         // Check the version alone before loading anything. Extracted text runs to
         // hundreds of thousands of characters, and the usual answer is "already current"
         // There is no reason to materialise and change-track a book to learn that.
-        var version = await db.BlobTexts.AsNoTracking()
+        //
+        // The length is screened the same way. SQLite counts code points and stops at a
+        // U+0000, .NET counts UTF-16 units, so a shorter count here only says the row may be
+        // damaged; the exact comparison is made on the loaded text below.
+        var head = await db.BlobTexts.AsNoTracking()
             .Where(t => t.Sha256 == sha256)
-            .Select(t => (int?)t.ExtractorVersion)
+            .Select(t => new { t.ExtractorVersion, Suspect = t.Text.Length < t.ExtractedChars })
             .FirstOrDefaultAsync(ct);
 
-        if (version is null) return null;
-        if (version >= ExtractorVersions.Current) return await TextFor(sha256, ct);
+        if (head is null) return null;
+        if (head.ExtractorVersion >= ExtractorVersions.Current && !head.Suspect) return await TextFor(sha256, ct);
 
-        // Stale: this one is tracked, because it is about to be rewritten.
+        // Stale or suspect: this one is tracked, because it may be about to be rewritten.
         var cached = await db.BlobTexts.FirstAsync(t => t.Sha256 == sha256, ct);
+
+        // The text of some PDFs holds U+0000, which SQLite ends a value at, so the row was
+        // cut there while recording the length of the whole. Handing it out would index the
+        // head of the document.
+        var damaged = cached.Text.Length != cached.ExtractedChars;
+        if (cached.ExtractorVersion >= ExtractorVersions.Current && !damaged) return cached;
 
         if (!File.Exists(PathFor(sha256)))
         {
@@ -386,9 +397,14 @@ public sealed class DocumentService(
         }
 
         var fresh = await ExtractAsync(sha256, fileName, ct);
-        log.LogInformation(
-            "Re-extracted {Sha} with extractor v{Version}: {Before:N0} -> {After:N0} chars",
-            sha256[..12], ExtractorVersions.Current, cached.ExtractedChars, fresh.ExtractedChars);
+        if (damaged)
+            log.LogWarning(
+                "Cached text for {Sha} reads back {Read:N0} of the {Written:N0} characters stored with it; extracted again",
+                sha256[..12], cached.Text.Length, cached.ExtractedChars);
+        else
+            log.LogInformation(
+                "Re-extracted {Sha} with extractor v{Version}: {Before:N0} -> {After:N0} chars",
+                sha256[..12], ExtractorVersions.Current, cached.ExtractedChars, fresh.ExtractedChars);
 
         cached.Text = fresh.Text;
         cached.UnitsJson = fresh.UnitsJson;
@@ -398,6 +414,24 @@ public sealed class DocumentService(
         cached.ExtractorVersion = fresh.ExtractorVersion;
         cached.ExtractedUtc = fresh.ExtractedUtc;
         cached.EmptyReason = fresh.EmptyReason;
+
+        if (damaged)
+        {
+            // An upload's chunk state is fingerprinted by the blob hash and the chunk settings,
+            // not by the text, so a repaired text changes nothing the skip check compares and
+            // the head of the document would stay searchable. Cleared the way the indexer clears
+            // a file it is about to redo, in every set that holds this blob, and in the same save
+            // as the text so a crash leaves neither half.
+            var attached = await db.FileChunkStates
+                .Where(s => s.File!.BlobSha256 == sha256).ToListAsync(ct);
+            foreach (var state in attached)
+            {
+                state.ContentHash = null;
+                state.Status = FileStatus.Pending;
+                state.StatusDetail = null;
+            }
+        }
+
         await db.SaveChangesAsync(ct);
 
         return cached;

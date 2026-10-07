@@ -382,4 +382,68 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         StateOf(renamed, corpus).Status.ShouldBe(FileStatus.Pending);
         StateOf(renamed, corpus).ContentHash.ShouldBeNull();
     }
+
+    [Fact]
+    public async Task ACachedUploadThatReadsBackShortIsExtractedAgain()
+    {
+        // The text of some PDFs holds U+0000 and SQLite ends a value at the first one, so a
+        // row was cut there while it recorded the length of the whole.
+        var stored = await _documents.StoreAsync(
+            TextStream("first paragraph of the upload.\n\nsecond paragraph, which a cut would lose."), "notes.md");
+        var whole = (await _documents.TextFor(stored.Sha256))!.Text;
+
+        await _db.BlobTexts.ExecuteUpdateAsync(u => u.SetProperty(t => t.Text, "first paragraph"));
+        _db.ChangeTracker.Clear();
+
+        var current = await _documents.CurrentTextFor(stored.Sha256, "notes.md");
+
+        current!.Text.ShouldBe(whole);
+        (await _documents.TextFor(stored.Sha256))!.Text.ShouldBe(whole, "and the row was replaced, not only returned");
+    }
+
+    [Fact]
+    public async Task RepairingACachedUploadMakesEveryAttachmentPendingWithoutItsOldReason()
+    {
+        var first = AddCorpus("books", 512, 64);
+        var second = AddCorpus("papers", 256, 32);
+        var stored = await _documents.StoreAsync(
+            TextStream("first paragraph of the upload.\n\nsecond paragraph, which a cut would lose."), "notes.md");
+        var inFirst = await _documents.AttachAsync(first, stored.Sha256, "notes.md");
+        var inSecond = await _documents.AttachAsync(second, stored.Sha256, "notes.md");
+
+        // One indexed, one failed with a reason that stops being true once the text is repaired.
+        var a = StateOf(inFirst, first);
+        a.Status = FileStatus.Indexed; a.ContentHash = "old"; a.ChunkCount = 2;
+        var b = StateOf(inSecond, second);
+        b.Status = FileStatus.Failed; b.StatusDetail = "an old reason"; b.ContentHash = "old"; b.ChunkCount = 2;
+        await _db.SaveChangesAsync();
+
+        await _db.BlobTexts.ExecuteUpdateAsync(u => u.SetProperty(t => t.Text, "first paragraph"));
+        _db.ChangeTracker.Clear();
+
+        await _documents.CurrentTextFor(stored.Sha256, "notes.md");
+
+        foreach (var (file, corpus) in new[] { (inFirst, first), (inSecond, second) })
+        {
+            var state = StateOf(file, corpus);
+            state.Status.ShouldBe(FileStatus.Pending, corpus.Name);
+            state.ContentHash.ShouldBeNull(corpus.Name);
+            state.StatusDetail.ShouldBeNull(corpus.Name);
+        }
+    }
+
+    [Fact]
+    public async Task ARowThatDiffersOnlyInHowCharactersAreCountedIsNotExtractedAgain()
+    {
+        // SQLite counts code points and .NET counts UTF-16 units, so a character outside the
+        // basic plane makes a row look shorter to one and not to the other.
+        var stored = await _documents.StoreAsync(
+            TextStream("a variable \U0001D465 and another \U0001D466 in a note"), "maths.md");
+        var before = (await _documents.TextFor(stored.Sha256))!.ExtractedUtc;
+        _db.ChangeTracker.Clear();
+
+        var current = await _documents.CurrentTextFor(stored.Sha256, "maths.md");
+
+        current!.ExtractedUtc.ShouldBe(before, "the text is whole, so it was served and not extracted again");
+    }
 }
