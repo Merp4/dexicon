@@ -68,6 +68,12 @@ public sealed class AdminCredential
     public DateTime UpdatedUtc { get; set; }
 }
 
+/// <summary>
+/// What a corpus or one of its sets reads. Ready, Degraded and Unavailable are outcomes and are
+/// stored: what the last pass found. Indexing is not stored. It is reported while a job works
+/// on the corpus (see <see cref="Indexing.IndexingActivity"/>), so no row ever holds it, and a
+/// job that dies cannot leave one reading it.
+/// </summary>
 public enum CorpusState { Ready = 0, Indexing = 1, Degraded = 2, Unavailable = 3 }
 
 /// <summary>

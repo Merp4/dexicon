@@ -111,7 +111,7 @@ public sealed class CorpusIndexer(
             // Held for the whole job, so a sweep is turned away at the door rather than
             // walking the rows this is writing. Renewed in the background, so a job that
             // runs for hours keeps it without anything predicting how long it will take.
-            hold = await TryTakeLeaseAsync(corpus.Id, $"index-{job.Id}", ct);
+            hold = await TryTakeLeaseAsync(corpus.Id, $"{IndexingActivity.HolderPrefix}{job.Id}", ct);
             if (hold is null)
             {
                 // Someone else has the corpus, so this job is not runnable yet. It stays
@@ -133,8 +133,9 @@ public sealed class CorpusIndexer(
             job.State = JobState.Running;
             job.StartedUtc = DateTime.UtcNow;
             job.Phase = "discover";
-            corpus.State = CorpusState.Indexing;
-            foreach (var s in targets) s.State = CorpusState.Indexing;
+
+            // The corpus and its sets are not marked Indexing. That is read from this row and
+            // the lease (see IndexingActivity), so a job that dies cannot leave it set.
             await db.SaveChangesAsync(ct);
             Report(progress, job, null);
 
@@ -228,7 +229,11 @@ public sealed class CorpusIndexer(
                 // not: a missing mount or a folder with no repository in it finished as a
                 // ready corpus and a succeeded job, with only `job.Error` saying anything
                 // was wrong, so a caller polling the job for success was told yes.
-                unavailable |= corpus.State == CorpusState.Unavailable;
+                //
+                // Read from what this pass found, not from the row: the row holds the last
+                // pass's outcome now that nothing overwrites it at the start, and an
+                // Unavailable left by a source that has since come back is not this pass's.
+                unavailable |= _unreachable;
 
                 // Unavailable ahead of Degraded: a source nobody can reach needs someone to
                 // look at a mount, and files that failed to embed are retried next run.
@@ -257,12 +262,10 @@ public sealed class CorpusIndexer(
         }
         catch (OperationCanceledException) when (callerCancelled.IsCancellationRequested)
         {
+            // The corpus and its sets keep what the last pass found. They were set Ready here
+            // to clear the Indexing state the start of a pass wrote, and nothing writes it now,
+            // so doing it would turn a Degraded or Unavailable corpus into a Ready one.
             job.State = JobState.Cancelled;
-            if (Holds(hold))
-            {
-                corpus.State = CorpusState.Ready;
-                foreach (var s in targets) s.State = CorpusState.Ready;
-            }
         }
         catch (Exception ex)
         {
@@ -302,25 +305,21 @@ public sealed class CorpusIndexer(
                     // values came from this job's own work and the holder's are whatever
                     // is in the row.
                     //
-                    // The job's own row is still written when it never took the lease: the
-                    // corpus was not touched, and a request made after it coalesces onto a
-                    // row that reads Queued, which nothing then runs. A job that lost the
-                    // lease is left as it is, and so is the corpus it set to Indexing.
-                    // StuckJobRepair finds that corpus through a job that reads Running, so
-                    // recording the job here would leave nothing to find it.
+                    // The job's own row is written either way. One that never took the lease
+                    // left a row reading Queued, which a later request coalesces onto and
+                    // nothing runs.
                     if (!Holds(hold))
                     {
                         if (hold is not null)
                             log.LogWarning(
-                                "Job {JobId} lost its lease on corpus {Corpus}. Its outcome is not "
-                                + "recorded: the repair of running jobs finishes it once the lease "
-                                + "can be taken",
+                                "Job {JobId} lost its lease on corpus {Corpus}. Its outcome is "
+                                + "recorded, and the corpus is left to whoever holds it now",
                                 job.Id, corpus.Name);
 
-                        DetachCorpus(job, corpus, targets, keepJob: hold is null);
+                        DetachCorpus(job, corpus, targets);
                     }
 
-                    await SaveOutcomeAsync(job, corpus, callerCancelled);
+                    await SaveOutcomeAsync(job, callerCancelled);
                     Report(progress, job, null);
                 }
             }
@@ -1533,8 +1532,7 @@ public sealed class CorpusIndexer(
         hold is not null && !hold.Lost.IsCancellationRequested;
 
     /// <summary>
-    /// Stop the context writing the corpus and its sets. With <paramref name="keepJob"/> it
-    /// goes on writing the job, and without it the job is not written either.
+    /// Stop the context writing the corpus and its sets, and keep it writing the job.
     ///
     /// Detaching the corpus detaches everything tracked through it, and the job is one of
     /// those: it sits in <see cref="Corpus.Jobs"/>. The save that followed found nothing to
@@ -1547,24 +1545,17 @@ public sealed class CorpusIndexer(
     /// clears when its set is deleted. The job still points at the detached corpus, and the
     /// save does not re-add it: only the job is tracked afterwards.
     /// </summary>
-    private void DetachCorpus(IndexJob job, Corpus corpus, List<ChunkSet> targets, bool keepJob)
+    private void DetachCorpus(IndexJob job, Corpus corpus, List<ChunkSet> targets)
     {
         // Read first: the detach below takes the job's tracking with it.
         db.ChangeTracker.DetectChanges();
-        var changed = keepJob
-            ? db.Entry(job).Properties.Where(p => p.IsModified).Select(p => p.Metadata.Name).ToList()
-            : [];
+        var changed = db.Entry(job).Properties
+            .Where(p => p.IsModified).Select(p => p.Metadata.Name).ToList();
 
         db.Entry(corpus).State = EntityState.Detached;
         foreach (var s in targets) db.Entry(s).State = EntityState.Detached;
 
         var entry = db.Entry(job);
-        if (!keepJob)
-        {
-            entry.State = EntityState.Detached;
-            return;
-        }
-
         entry.State = EntityState.Unchanged;
         foreach (var name in changed) entry.Property(name).IsModified = true;
     }
@@ -1575,8 +1566,8 @@ public sealed class CorpusIndexer(
     /// <summary>
     /// The wait before the first retry of that save, doubled after each. Fifteen seconds in
     /// all at the default, which is well inside the lease: a retry still running after the
-    /// lease had lapsed would be recording an outcome for a job the repair may already have
-    /// settled. Replaced in tests, so a run does not wait it out.
+    /// lease had lapsed could be writing the corpus after another job had taken it. Replaced
+    /// in tests, so a run does not wait it out.
     /// </summary>
     internal TimeSpan SaveRetryDelay { get; init; } = TimeSpan.FromSeconds(1);
 
@@ -1585,11 +1576,11 @@ public sealed class CorpusIndexer(
     ///
     /// This is the write the job row cannot do without: it says Running until it lands. It
     /// failed once, when a full disk refused every catalogue write for about four minutes,
-    /// and with a single attempt two jobs were left Running and their corpora Indexing. Most
-    /// faults of this kind are shorter, and the retries recover those here. A longer one is
-    /// not recovered here: after <see cref="SaveAttempts"/> tries the last exception is
-    /// thrown to the worker, and <see cref="StuckJobRepair"/> finishes the job once its
-    /// lease has lapsed.
+    /// and with a single attempt two jobs were left Running. Most faults of this kind are
+    /// shorter, and the retries recover those here. A longer one is not recovered: after
+    /// <see cref="SaveAttempts"/> tries the last exception is thrown to the worker. The row
+    /// then reads Running, which nothing treats as work once its lease lapses
+    /// (<see cref="IndexingActivity"/>), and the next start marks it failed.
     ///
     /// The same context saves again, which carries everything the failed save held, since a
     /// failed SaveChanges leaves its changes tracked.
@@ -1598,7 +1589,7 @@ public sealed class CorpusIndexer(
     /// The host's token, used only to stop waiting. Shutdown is not a reason to sit out the
     /// delays, and startup reconciles whatever is left.
     /// </param>
-    private async Task SaveOutcomeAsync(IndexJob job, Corpus corpus, CancellationToken stop)
+    private async Task SaveOutcomeAsync(IndexJob job, CancellationToken stop)
     {
         var delay = SaveRetryDelay;
 
@@ -1621,7 +1612,7 @@ public sealed class CorpusIndexer(
             }
             catch (Exception ex)
             {
-                await GaveUpAsync(job, corpus, attempt, ex);
+                await GaveUpAsync(job, attempt, ex);
                 throw;
             }
 
@@ -1637,10 +1628,10 @@ public sealed class CorpusIndexer(
     ///
     /// The job is read back rather than inferred from the tracked entity, which holds the
     /// outcome the failed save was meant to record and not what the catalogue holds. A job
-    /// that failed before it reached Running is still Queued there, and the repair of
-    /// running jobs does not cover it: only a start does.
+    /// that failed before it reached Running is still Queued there, and a Queued row counts
+    /// as work: only a start clears it.
     /// </summary>
-    private async Task GaveUpAsync(IndexJob job, Corpus corpus, int attempts, Exception ex)
+    private async Task GaveUpAsync(IndexJob job, int attempts, Exception ex)
     {
         JobState? recorded = null;
 
@@ -1656,22 +1647,11 @@ public sealed class CorpusIndexer(
             log.LogWarning(read, "Could not read job {JobId} back to say what was left behind", job.Id);
         }
 
-        if (recorded != JobState.Running)
-        {
-            log.LogError(ex,
-                "Gave up recording the outcome of job {JobId} ({Outcome}) after {Attempts} attempts. "
-                + "Left behind: the job reads {Recorded} in the catalogue. The next start reconciles "
-                + "a job that reads Queued or Running",
-                job.Id, job.State, attempts, recorded?.ToString() ?? "an unknown state");
-            return;
-        }
-
         log.LogError(ex,
             "Gave up recording the outcome of job {JobId} ({Outcome}) after {Attempts} attempts. "
-            + "Left behind: the job still reads Running, and corpus {Corpus} and the sets it targeted "
-            + "still read Indexing. The scheduled refresh repairs them once the lease on the corpus has "
-            + "lapsed (within {Lease}); with it off, the next start does",
-            job.Id, job.State, attempts, corpus.Name, leases.Lease);
+            + "Left behind: the job reads {Recorded} in the catalogue. The next start marks a job "
+            + "that reads Queued or Running failed",
+            job.Id, job.State, attempts, recorded?.ToString() ?? "an unknown state");
     }
 
     /// <summary>

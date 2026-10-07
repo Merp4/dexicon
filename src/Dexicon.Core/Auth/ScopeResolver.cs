@@ -1,4 +1,5 @@
 using Dexicon.Core.Catalog;
+using Dexicon.Core.Indexing;
 using Microsoft.EntityFrameworkCore;
 
 namespace Dexicon.Core.Auth;
@@ -50,6 +51,10 @@ public sealed record ResolvedScope(IReadOnlyList<ScopedCorpus> Targets)
 /// </summary>
 public sealed class ScopeResolver(CatalogDbContext db)
 {
+    /// <summary>What is indexing now, for the corpora in an already-resolved scope.</summary>
+    public Task<IndexingActivity> IndexingAsync(IReadOnlyCollection<string> corpusIds, CancellationToken ct = default) =>
+        IndexingActivity.ReadAsync(db, corpusIds, ct);
+
     /// <summary>Root path per source id, for every source of the corpora in scope.</summary>
     public async Task<IReadOnlyDictionary<string, string>> SourceRootsAsync(
         IReadOnlyList<string> corpusIds, CancellationToken ct = default)

@@ -1889,6 +1889,43 @@ confined to part of the workspace, which would take a per-key folder list.
 
 ---
 
+### D-37 Indexing is read, not stored
+
+**Status.** Accepted and implemented, 2026-10-07.
+
+**Decision.** A corpus or chunk set reads `indexing` while a job is queued for it, or is
+running with the lease on its corpus still renewed. Nothing writes that state to its row. The
+row holds the outcome of the last pass, `ready`, `degraded` or `unavailable`. A job that names a
+chunk set covers that set, and one that names none covers every set of its corpus. The
+definition is one query, `IndexingActivity`, which the API summaries, the search note, the
+scheduled refresh and the health endpoint's active job all use
+([04](04-ingestion.md#when-the-catalogue-cannot-be-written)).
+
+**Why.** A job used to write `indexing` when it started and clear it when it finished. A job
+that could not save its outcome, as happened when a full disk refused every write for about
+four minutes, left the flag set with nothing behind it. The scheduled refresh skips an
+`indexing` corpus, so the corpus was skipped until a restart, and search told callers its
+results were incomplete for as long as a set read `indexing`. Each repair that followed
+(retrying the save, marking dead jobs failed, resetting the corpus from the job history,
+resetting it again at startup) was a writer correcting a copy of two facts the catalogue
+already keeps current without it: a job is queued, or a job holds a lease that is still
+renewed. The lease expires on its own, so a job whose holder died stops counting with nothing
+having to notice. Reading the state removes the case the repairs existed for, and a job that
+stops leaves the row as the last pass wrote it, so there is no state to reconstruct.
+
+**Rejected.** A repair keyed on the corpus, to find a flag left set by a job that recorded its
+own failure: it would have been a third layer over the first two, and each layer needed its own
+rule for a set created a moment before its job is queued. Marking the corpus `degraded` at
+startup: the failed job row says it was interrupted, and the corpus keeps what it found. Fixing
+the display of a job row that still reads `running`: it affects nothing once its lease lapses,
+and the next start marks it failed.
+
+**Cost.** Each place that reports a state reads the jobs as well as the row, one small query
+per corpus. A row left `indexing` by an earlier version is set to `degraded` once, by a
+migration. A new chunk set is stored `degraded`, which is what it reads if its job never runs.
+
+---
+
 ## Open questions
 
 | # | Question | Needed by | Current lean |

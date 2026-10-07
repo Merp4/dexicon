@@ -90,7 +90,8 @@ CREATE TABLE corpora (
   id                   TEXT PRIMARY KEY,    -- ULID
   name                 TEXT NOT NULL,
   description          TEXT,
-  state                TEXT NOT NULL,       -- ready | indexing | degraded | unavailable
+  state                TEXT NOT NULL,       -- ready | degraded | unavailable: the last pass's outcome.
+                                            -- `indexing` is reported, never stored (D-37)
   created_utc          TEXT NOT NULL,
   last_indexed_utc     TEXT,
   -- Globally unique, because the name is what an agent passes to search_index and it

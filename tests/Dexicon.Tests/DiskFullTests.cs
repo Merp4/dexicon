@@ -92,9 +92,8 @@ public sealed class DiskFullTests
         var gaveUp = logs.Lines.Single(l => l.Contains("Gave up recording the outcome"));
         gaveUp.ShouldContain(row.Id);
         gaveUp.ShouldContain($"after {CorpusIndexer.SaveAttempts} attempts");
-        gaveUp.ShouldContain("the job still reads Running");
-        gaveUp.ShouldContain("still read Indexing");
-        gaveUp.ShouldContain("scheduled refresh repairs them");
+        gaveUp.ShouldContain("the job reads Running in the catalogue");
+        gaveUp.ShouldContain("The next start marks a job that reads Queued or Running failed");
     }
 
     [Fact]
@@ -122,8 +121,8 @@ public sealed class DiskFullTests
     [Fact]
     public async Task A_job_that_never_reached_running_is_reported_as_still_queued()
     {
-        // Failing before the Running save leaves the row Queued, which the repair of running
-        // jobs does not cover, so the log has to say what does.
+        // Failing before the Running save leaves the row Queued, which counts as work and
+        // holds a later request out, so the log has to say what clears it.
         var (harness, disk) = await StartAsync();
         await using var _ = harness;
         var logs = new RecordingLoggerFactory();
@@ -139,7 +138,7 @@ public sealed class DiskFullTests
 
         var gaveUp = logs.Lines.Single(l => l.Contains("Gave up recording the outcome"));
         gaveUp.ShouldContain("the job reads Queued in the catalogue");
-        gaveUp.ShouldContain("The next start reconciles");
+        gaveUp.ShouldContain("The next start marks a job that reads Queued or Running failed");
     }
 
     [Fact]
@@ -214,7 +213,7 @@ public sealed class DiskFullTests
     }
 
     [Fact]
-    public async Task A_job_that_loses_its_lease_is_left_running_for_the_repair_to_find()
+    public async Task A_job_that_loses_its_lease_records_its_outcome_and_leaves_the_corpus_as_it_was()
     {
         // Two sets, so the pass reaches a point where it has decided the corpus is
         // Unavailable (a source is missing) and has not yet saved it. The second set's
@@ -250,52 +249,32 @@ public sealed class DiskFullTests
         job.State.ShouldBe(JobState.Failed);
         job.Error.ShouldNotBeNull().ShouldContain("is not available", customMessage: "the pass did decide the corpus was Unavailable");
 
-        // A job that lost the lease cannot say whether someone else holds the corpus now, and
-        // the corpus is left Indexing. The repair of running jobs is what puts it right, and
-        // it finds the corpus through a job that reads Running, so the row is left Running.
+        // The job says how it ended. It does not write the corpus: whoever holds it now does,
+        // and the row keeps the outcome of the last pass. It never held Indexing, so there is
+        // nothing for a job that stops to leave behind.
         await using var db = harness.NewContext();
         var row = await db.Jobs.AsNoTracking().SingleAsync();
-        row.State.ShouldBe(JobState.Running);
-        row.FinishedUtc.ShouldBeNull();
-        row.Error.ShouldBeNull();
+        row.State.ShouldBe(JobState.Failed, "recorded, not left running");
+        row.FinishedUtc.ShouldNotBeNull();
+        row.Error.ShouldNotBeNull().ShouldContain("is not available");
 
         var corpus = await db.Corpora.AsNoTracking().SingleAsync();
-        corpus.State.ShouldBe(CorpusState.Indexing, "not what this pass decided");
+        corpus.State.ShouldBe(CorpusState.Ready, "not what this pass decided");
         corpus.HeldBy.ShouldBe($"index-{row.Id}", "a hold that was lost is not released");
-        (await db.ChunkSets.AsNoTracking().ToListAsync())
-            .ShouldAllBe(s => s.State == CorpusState.Indexing);
+        (await db.ChunkSets.AsNoTracking().ToListAsync()).ShouldAllBe(s => s.State == CorpusState.Ready);
 
         logs.Lines.ShouldContain(l => l.Contains(row.Id) && l.Contains("lost its lease"));
 
-        await db.Corpora.ExecuteUpdateAsync(u => u
-            .SetProperty(c => c.HeldUntilUtc, DateTime.UtcNow.AddMinutes(-1)));
-
-        (await harness.NewRepair(db).RepairAsync(default)).ShouldBe(1);
-
-        var repaired = await db.Jobs.AsNoTracking().SingleAsync();
-        repaired.State.ShouldBe(JobState.Failed);
-        repaired.Error.ShouldNotBeNull().ShouldContain(StuckJobRepair.Reason);
-        (await db.Corpora.AsNoTracking().SingleAsync()).State.ShouldBe(CorpusState.Degraded);
-        (await db.ChunkSets.AsNoTracking().ToListAsync())
-            .ShouldAllBe(s => s.State == CorpusState.Degraded);
+        // And it does not read as indexing: the job is finished, whatever lease is left.
+        var activity = await IndexingActivity.ReadAsync(db, [corpus.Id]);
+        activity.Of(corpus).ShouldBe(CorpusState.Ready);
     }
 
     [Fact]
-    public async Task A_job_left_running_by_a_full_disk_is_repaired_once_its_lease_has_lapsed()
+    public async Task A_job_left_running_by_a_full_disk_stops_counting_once_its_lease_has_lapsed()
     {
         var (harness, disk) = await StartAsync();
         await using var _ = harness;
-        var logs = new RecordingLoggerFactory();
-
-        // Finished before the one that fails, so there is an outcome to return the corpus to.
-        var earlier = DateTime.UtcNow.AddHours(-2);
-        await using var db = harness.NewContext();
-        db.Jobs.Add(new IndexJob
-        {
-            Id = "earlier", CorpusId = IndexingHarness.CorpusId, Kind = JobKind.Refresh,
-            State = JobState.Succeeded, QueuedUtc = earlier, StartedUtc = earlier, FinishedUtc = earlier,
-        });
-        await db.SaveChangesAsync();
 
         harness.Vectors.OnEnsureCollection = () =>
         {
@@ -307,41 +286,35 @@ public sealed class DiskFullTests
 
         disk.Fired.ShouldBeTrue("the window has to have been opened");
 
-        // What the outage left, which is the state found in production: the job running, the
-        // corpus and its set indexing, and the lease still named for the job because its
-        // release was refused as well.
-        var stuck = await db.Jobs.AsNoTracking().SingleAsync(j => j.Id != "earlier");
+        // What the outage left, which is the state found in production: the job reads
+        // Running, and the lease is still named for it because its release was refused as well.
+        await using var db = harness.NewContext();
+        var stuck = await db.Jobs.AsNoTracking().SingleAsync();
         stuck.State.ShouldBe(JobState.Running);
         var corpus = await db.Corpora.AsNoTracking().SingleAsync();
-        corpus.State.ShouldBe(CorpusState.Indexing);
         corpus.HeldBy.ShouldBe($"index-{stuck.Id}");
-        (await db.ChunkSets.AsNoTracking().SingleAsync()).State.ShouldBe(CorpusState.Indexing);
+        corpus.State.ShouldBe(CorpusState.Ready, "the job never wrote Indexing, so it cannot have left it");
 
-        var repair = harness.NewRepair(db, logs.CreateLogger<StuckJobRepair>());
-
-        // The lease was renewed moments ago. A job that has stopped cannot be told from one
-        // that is slow until the lease has had time to lapse, so nothing is touched yet.
-        (await repair.RepairAsync(default)).ShouldBe(0);
-        (await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == stuck.Id)).State.ShouldBe(JobState.Running);
+        // The lease was renewed moments ago. A job that has stopped cannot be told from one that
+        // is slow until the lease has had time to lapse, so it still counts.
+        (await IndexingActivity.ReadAsync(db, [corpus.Id])).Of(corpus).ShouldBe(CorpusState.Indexing);
+        await harness.RunRefreshTickAsync();
+        (await db.Jobs.CountAsync(j => j.State == JobState.Queued)).ShouldBe(0, "a corpus a job holds is not refreshed");
 
         // The time a lease takes to lapse, without waiting it out.
         await db.Corpora.ExecuteUpdateAsync(u => u
             .SetProperty(c => c.HeldUntilUtc, DateTime.UtcNow.AddMinutes(-1)));
 
-        (await repair.RepairAsync(default)).ShouldBe(1);
+        (await IndexingActivity.ReadAsync(db, [corpus.Id])).Of(corpus)
+            .ShouldBe(CorpusState.Ready, "nothing renews the lease, so the job no longer counts and the outcome stands");
 
-        var repaired = await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == stuck.Id);
-        repaired.State.ShouldBe(JobState.Failed, "failed, not succeeded and not queued again");
-        repaired.FinishedUtc.ShouldNotBeNull();
-        repaired.Error.ShouldBe(StuckJobRepair.Reason);
-        (await db.Jobs.AsNoTracking().CountAsync()).ShouldBe(2, "nothing was queued in its place");
+        // The refresh that was held out for six hours now runs, with nothing repaired first.
+        await harness.RunRefreshTickAsync();
+        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh && j.State == JobState.Queued))
+            .ShouldBe(1, "the corpus is refreshed by the next tick");
 
-        var after = await db.Corpora.AsNoTracking().SingleAsync();
-        after.State.ShouldBe(CorpusState.Ready, "what the last finished job says");
-        after.HeldBy.ShouldBeNull("the repair's own lease is released");
-        (await db.ChunkSets.AsNoTracking().SingleAsync()).State.ShouldBe(CorpusState.Ready);
-
-        logs.Lines.ShouldContain(l => l.Contains(stuck.Id) && l.Contains($"held by index-{stuck.Id}")
-                                      && l.Contains("from Indexing to Ready"));
+        // The stopped job's row is not rewritten. Nothing reads it as work, and the next start
+        // marks it failed.
+        (await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == stuck.Id)).State.ShouldBe(JobState.Running);
     }
 }

@@ -94,11 +94,13 @@ public static class Bootstrapper
 
     /// <summary>
     /// A job left Queued or Running belongs to a process that no longer exists: the
-    /// queue is in-memory, so nothing will ever pick it up again. Without this, killing
-    /// Dexicon mid-index leaves the corpus reading "indexing" forever, the UI shows a
-    /// job that is not running, and `index_refresh` refuses to queue a replacement
-    /// because one is apparently already pending. Observed exactly that after a restart
-    /// during a large PDF.
+    /// queue is in-memory, so nothing will ever pick it up again. A Queued row is the one
+    /// that matters: it counts as work, so the corpus reads indexing for good, and
+    /// `index_refresh` refuses to queue a replacement because one is apparently already
+    /// pending. Observed exactly that after a restart during a large PDF.
+    ///
+    /// Only the jobs are written. Whether a corpus is indexing is read from them, so failing
+    /// them is what clears it, and the corpus keeps the outcome of its last finished pass.
     /// </summary>
     private static async Task ReconcileOrphanedJobsAsync(CatalogDbContext db, ILogger log)
     {
@@ -116,15 +118,8 @@ public static class Bootstrapper
             job.Error = "Interrupted: Dexicon restarted while this job was running. Re-run the index.";
         }
 
-        // Any corpus mid-index is now simply not being indexed. Say so rather than
-        // leaving a state that nothing will ever move on.
-        var corpusIds = orphaned.Select(j => j.CorpusId).Distinct().ToList();
-        await db.Corpora.Where(c => corpusIds.Contains(c.Id) && c.State == CorpusState.Indexing)
-            .ExecuteUpdateAsync(s => s.SetProperty(c => c.State, CorpusState.Degraded));
-
         await db.SaveChangesAsync();
-        log.LogWarning("Reconciled {Count} job(s) orphaned by a previous shutdown; affected corpora marked degraded",
-            orphaned.Count);
+        log.LogWarning("Reconciled {Count} job(s) orphaned by a previous shutdown", orphaned.Count);
     }
 
     /// <summary>

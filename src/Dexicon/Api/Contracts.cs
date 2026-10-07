@@ -618,12 +618,16 @@ public static class Mapping
             (state?.Status ?? FileStatus.Pending).ToString().ToLowerInvariant(),
             state?.StatusDetail, f.Language, f.SizeBytes, state?.ChunkCount ?? 0, state?.IndexedUtc);
 
+    /// <param name="state">
+    /// Taken from <see cref="IndexingActivity"/>, not read off the row. The row holds the last
+    /// outcome, and whether the set is being indexed now is not stored.
+    /// </param>
     public static ChunkSetSummary ToSummary(this ChunkSet s,
-        int fileCount, int chunkCount, int pendingCount, int failedCount) =>
+        int fileCount, int chunkCount, int pendingCount, int failedCount, CorpusState state) =>
         new(s.Id, s.Name, s.Description, s.EmbeddingProvider, s.EmbeddingModel, s.EmbeddingDimensions, s.CollectionName,
             s.ChunkSize, s.ChunkOverlap, s.BoundaryMode, s.CustomBoundaryPattern,
             s.UnitAware, s.SentenceAware, s.HeadingContext, s.IsDefault,
-            s.State.ToString().ToLowerInvariant(),
+            state.ToString().ToLowerInvariant(),
             fileCount, chunkCount, pendingCount, failedCount, s.CreatedUtc, s.LastIndexedUtc);
 
     public static JobSummary ToSummary(this IndexJob j) =>

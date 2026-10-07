@@ -153,11 +153,28 @@ internal sealed class IndexingHarness : IAsyncDisposable
     }
 
     /// <summary>
-    /// The repair of jobs left running, on the harness's catalogue, with leases taken the way
-    /// the indexer and sweeper take them.
+    /// One tick of the scheduled refresh over the harness's catalogue, as the hosted service
+    /// would run it: every corpus nothing is working on gets a refresh queued.
     /// </summary>
-    public StuckJobRepair NewRepair(CatalogDbContext db, ILogger<StuckJobRepair>? log = null) =>
-        new(db, NewLeases(), log ?? NullLogger<StuckJobRepair>.Instance);
+    public async Task RunRefreshTickAsync()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton(_services.GetRequiredService<IOptions<DexiconOptions>>());
+        services.AddSingleton(_services.GetRequiredService<DbContextOptions<CatalogDbContext>>());
+        services.AddScoped<CatalogDbContext>(sp =>
+            new CatalogDbContext(sp.GetRequiredService<DbContextOptions<CatalogDbContext>>()));
+        services.AddSingleton<WorkScheduler>();
+        services.AddScoped<IndexJobQueue>();
+
+        await using var provider = services.BuildServiceProvider();
+        var refresher = new ScheduledRefreshService(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<IOptions<DexiconOptions>>(),
+            NullLogger<ScheduledRefreshService>.Instance);
+
+        await refresher.RunTickAsync(default);
+    }
 
     /// <summary>
     /// Leases over the harness's catalogue. The state is the corpus row, so a hold taken
@@ -258,10 +275,11 @@ internal sealed class IndexingHarness : IAsyncDisposable
     /// The leases the pass takes the corpus with. A test that has the pass lose its lease
     /// gives it ones that renew often enough to notice within the test.
     /// </param>
+    /// <param name="cancel">The caller's token, for a test that stops the pass the way a caller does.</param>
     public async Task<IndexJob> RunIndexAsync(JobKind kind = JobKind.Refresh,
         Func<GitRepository, string, DateTime, CancellationToken, Task<GitTracking>>? readTracking = null,
         ILogger<CorpusIndexer>? log = null, TimeSpan? saveRetryDelay = null, Action? beforePass = null,
-        CorpusLeases? leases = null)
+        CorpusLeases? leases = null, CancellationToken cancel = default)
     {
         string jobId;
         await using (var db = NewContext())
@@ -275,7 +293,9 @@ internal sealed class IndexingHarness : IAsyncDisposable
                 QueuedUtc = DateTime.UtcNow,
             };
             db.Jobs.Add(job);
-            await db.SaveChangesAsync();
+
+            // The row has to exist for the pass to run. The token is the pass's, not this setup's.
+            await db.SaveChangesAsync(CancellationToken.None);
             jobId = job.Id;
         }
 
@@ -300,7 +320,7 @@ internal sealed class IndexingHarness : IAsyncDisposable
             SaveRetryDelay = saveRetryDelay ?? TimeSpan.Zero,
         };
 
-        return await indexer.RunAsync(jobId, null, CancellationToken.None);
+        return await indexer.RunAsync(jobId, null, cancel);
     }
 
     /// <summary>

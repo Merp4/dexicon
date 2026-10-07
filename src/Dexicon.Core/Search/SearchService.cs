@@ -81,6 +81,12 @@ public sealed class SearchService(
         if (scope.Corpora.Count == 0)
             throw new ScopeResolutionException($"Resolved scope for key '{principal.Name}' was empty.", []);
 
+        // Read now, before any vector is queried, so the note describes the index the hits came
+        // from. A job that finishes while the query runs would otherwise clear a warning that
+        // the results it returned were incomplete. One that starts meanwhile is not reported:
+        // the query had already run against what was there.
+        var activity = await scopes.IndexingAsync(scope.Ids, ct);
+
         // Qualified, so a result from a non-default set says which set it came from.
         var byId = scope.Targets.ToDictionary(t => t.Corpus.Id, t => t.QualifiedName, StringComparer.Ordinal);
         var sparse = SparseEncoder.Encode(request.Query);
@@ -196,7 +202,7 @@ public sealed class SearchService(
         // The SET's state, not the corpus's: a corpus is "indexing" while a replacement
         // set backfills, but the set being searched is complete and its results are not.
         var indexing = scope.Targets
-            .Where(t => t.Set.State == CorpusState.Indexing)
+            .Where(t => activity.Of(t.Set) == CorpusState.Indexing)
             .Select(t => t.QualifiedName).ToList();
         var notes = new List<string>();
         if (indexing.Count > 0)
@@ -214,7 +220,7 @@ public sealed class SearchService(
             Degraded = degraded,
             DegradedReason = degradedReason,
             Scope = scope.Targets
-                .Select(t => new SearchResult.ScopeEntry(t.Corpus.Id, t.QualifiedName, t.Set.State)).ToList(),
+                .Select(t => new SearchResult.ScopeEntry(t.Corpus.Id, t.QualifiedName, activity.Of(t.Set))).ToList(),
             Hits = ordered,
             TookMs = sw.ElapsedMilliseconds,
             Note = note,
