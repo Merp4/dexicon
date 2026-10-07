@@ -48,6 +48,12 @@ updates:
       # hold back vite or tailwind.
       typescript:
         patterns: ["typescript"]
+    ignore:
+      # TypeScript 7 ships a native compiler without the JavaScript API that
+      # @hey-api/openapi-ts reads (ts.SyntaxKind), so the client generation fails and with it
+      # the build. Majors only: 5.x updates still arrive. Remove this when openapi-ts supports 7.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
