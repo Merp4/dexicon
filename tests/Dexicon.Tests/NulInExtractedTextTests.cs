@@ -14,7 +14,7 @@ namespace Dexicon.Tests;
 /// Measured on a live catalogue: 161 of 1,956 cached PDFs read back shorter than they were
 /// written, keeping 29% of their text on average and, for eight, none of it.
 /// </summary>
-public sealed class PdfTextWithNulTests
+public sealed class NulInExtractedTextTests
 {
     private static readonly DateTime Stamp = new(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
 
@@ -56,9 +56,12 @@ public sealed class PdfTextWithNulTests
         new PdfTextExtractor().Extract(new MemoryStream(pdf), "paper.pdf");
 
     [Fact]
-    public void A_pdf_whose_text_holds_NUL_is_extracted_without_it()
+    public void A_pdf_whose_text_holds_NUL_reports_it_and_loses_it_in_the_step_after()
     {
-        var text = Extract(Pdf(PageWithNul("alpha beta", "gamma delta"))).Text;
+        var raw = Extract(Pdf(PageWithNul("alpha beta", "gamma delta")));
+        raw.Text.ShouldContain('\0', "the premise: the extractor does return it");
+
+        var text = raw.WithoutNul().Text;
 
         text.ShouldNotContain('\0');
         text.ShouldBe("alpha beta  gamma delta\n", "the words either side are kept, and only the NUL goes");
@@ -69,10 +72,46 @@ public sealed class PdfTextWithNulTests
     {
         var extracted = Extract(Pdf(
             PageWithNul("first page", "ends here"),
-            "BT /F1 12 Tf 60 200 Td (second page begins) Tj ET"));
+            "BT /F1 12 Tf 60 200 Td (second page begins) Tj ET")).WithoutNul();
 
         var second = extracted.Units.Single(u => u.Number == 2);
         extracted.Text[second.StartOffset..].ShouldStartWith("second page begins");
+    }
+
+    [Fact]
+    public void Removing_NUL_moves_each_unit_back_by_the_NULs_before_it()
+    {
+        // a b NUL c d NUL NUL e f, with units at c, the second NUL and e.
+        var before = new ExtractedText("ab\0cd\0\0ef",
+            [new ExtractedUnit(1, 3, "one"), new ExtractedUnit(2, 6, "two"), new ExtractedUnit(3, 7, "three")],
+            "title");
+
+        var after = before.WithoutNul();
+
+        after.Text.ShouldBe("abcdef");
+        after.Title.ShouldBe("title");
+        after.Units.Select(u => u.StartOffset).ShouldBe([2, 4, 4]);
+        after.Units.Select(u => u.Label).ShouldBe(["one", "two", "three"], "and nothing else about a unit changes");
+        after.Text[after.Units[0].StartOffset].ShouldBe('c');
+        after.Text[after.Units[2].StartOffset].ShouldBe('e');
+    }
+
+    [Fact]
+    public void Units_out_of_order_or_past_the_end_are_moved_by_the_same_rule()
+    {
+        var before = new ExtractedText("a\0b\0",
+            [new ExtractedUnit(2, 3, null), new ExtractedUnit(1, 0, null), new ExtractedUnit(3, 99, null)]);
+
+        before.WithoutNul().Units.Select(u => (u.Number, u.StartOffset))
+            .ShouldBe([(2, 2), (1, 0), (3, 97)]);
+    }
+
+    [Fact]
+    public void Text_with_nothing_to_remove_is_returned_as_it_was()
+    {
+        var text = new ExtractedText("no such character here", [new ExtractedUnit(1, 3, null)]);
+
+        text.WithoutNul().ShouldBeSameAs(text);
     }
 
     [Fact]
