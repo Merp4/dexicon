@@ -359,6 +359,24 @@ public sealed class FileChunkState
     /// </summary>
     public string? SourceSha256 { get; set; }
 
+    /// <summary>
+    /// What this row is settled for: a hash of the file's size and modified time as the walk
+    /// saw them, and of everything that decides what is indexed from it (the chunking
+    /// fingerprint, which carries the extractor and chunker versions). When the walk finds a
+    /// file with the same key, nothing about it can have changed, and it is not opened.
+    ///
+    /// Written only where an outcome is final for that key: indexed, empty, or a failure
+    /// that reading the same bytes again would repeat. Never for a failure that may not
+    /// recur, such as an embedding service that was down or a mount that blinked.
+    /// <c>Indexed</c>, <c>Empty</c> and <c>Failed</c> are told apart by <see cref="Status"/>
+    /// and not here: a settled row is not looked at again whichever it is.
+    ///
+    /// Cleared by every pass that touches the row (<c>CorpusIndexer.Track</c>) and set again
+    /// by the ones that settle it, so a branch that forgets to settle only costs a read.
+    /// Null for uploads and commits, whose own keys are known without reading anything.
+    /// </summary>
+    public string? SettledFor { get; set; }
+
     public int ChunkCount { get; set; }
     public FileStatus Status { get; set; }
 
