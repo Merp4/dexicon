@@ -181,6 +181,10 @@ public sealed class DocumentService(
                 extracted = extractor.Extract(stream, fileName);
             }
 
+            // Whatever produced it. A repair that wrote the same NUL-bearing text back would
+            // fail the length check again on the next read, and clear the chunk states again.
+            extracted = extracted.WithoutNul();
+
             // "Produced no text" is not a failure, and saying WHY is the difference
             // between a user finding their scanned PDF in the UI and concluding the
             // upload silently vanished.

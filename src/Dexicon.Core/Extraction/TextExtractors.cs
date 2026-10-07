@@ -20,6 +20,34 @@ namespace Dexicon.Core.Extraction;
 public sealed record ExtractedText(string Text, IReadOnlyList<ExtractedUnit> Units, string? Title = null)
 {
     public static readonly ExtractedText Empty = new(string.Empty, []);
+
+    /// <summary>
+    /// The text with every U+0000 removed and the units' offsets moved to match. SQLite ends a
+    /// text value at the first one, so a cached document that held one was cut there while its
+    /// row recorded the length of the whole. Some PDFs hold them by the thousand (maths-heavy
+    /// ones in particular), and a plain-text upload or any other format can. They carry
+    /// nothing, so this is applied once, to whatever an extractor returns, before the text is
+    /// stored or chunked.
+    /// </summary>
+    public ExtractedText WithoutNul()
+    {
+        if (Text.IndexOf('\0') < 0) return this;
+
+        // One pass over the text, with the units in order of offset: each unit moves back by
+        // the number of NULs that came before it.
+        var moved = new ExtractedUnit[Units.Count];
+        var removed = 0;
+        var at = 0;
+        foreach (var (unit, i) in Units.Select((u, i) => (u, i)).OrderBy(x => x.u.StartOffset))
+        {
+            var to = Math.Clamp(unit.StartOffset, at, Text.Length);
+            removed += Text.AsSpan(at, to - at).Count('\0');
+            at = to;
+            moved[i] = unit with { StartOffset = Math.Max(0, unit.StartOffset - removed) };
+        }
+
+        return this with { Text = Text.Replace("\0", string.Empty), Units = moved };
+    }
 }
 
 /// <param name="Number">1-based page / slide / chapter number.</param>
@@ -211,7 +239,7 @@ public sealed partial class PdfTextExtractor : ITextExtractor
             {
                 units.Add(new ExtractedUnit(page.Number, sb.Length, $"Page {page.Number}"));
                 foreach (var block in ReadInLayoutOrder(page))
-                    sb.Append(WithoutNul(block)).Append('\n');
+                    sb.Append(block).Append('\n');
             }
 
             var title = document.Information?.Title;
@@ -234,14 +262,6 @@ public sealed partial class PdfTextExtractor : ITextExtractor
             buffered?.Dispose();
         }
     }
-
-    /// <summary>
-    /// The text of some PDFs, maths-heavy ones in particular, holds U+0000 by the thousand.
-    /// It carries nothing, and SQLite ends a text value at the first one, so the cached copy
-    /// of a document that held one was cut there while the row recorded the length of the
-    /// whole. Dropped here, per block, so the units' offsets are of the text kept.
-    /// </summary>
-    private static string WithoutNul(string block) => block.Replace("\0", string.Empty);
 
     /// <summary>
     /// Reject a PDF whose trailer is missing before handing it to PdfPig.

@@ -433,6 +433,34 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AnUploadWhoseTextHoldsNulIsStoredWholeAndIsNotRepairedAgainAndAgain()
+    {
+        // Plain text is accepted as it is, so a U+0000 in it reached the table, which cut the
+        // value there. Every read then failed the length check, repaired the row with the same
+        // text, and cleared the chunk states: re-embedding the upload on every pass.
+        var corpus = AddCorpus("books", 512, 64);
+        var stored = await _documents.StoreAsync(TextStream("alpha\0beta\n\ngamma\0delta"), "notes.md");
+        var file = await _documents.AttachAsync(corpus, stored.Sha256, "notes.md");
+
+        var row = (await _documents.TextFor(stored.Sha256))!;
+        row.Text.ShouldBe("alphabeta\n\ngammadelta");
+        row.Text.Length.ShouldBe(row.ExtractedChars, "what the table returns is as long as what was written");
+
+        var state = StateOf(file, corpus);
+        state.Status = FileStatus.Indexed; state.ContentHash = "indexed"; state.ChunkCount = 2;
+        await _db.SaveChangesAsync();
+        _db.ChangeTracker.Clear();
+
+        await _documents.CurrentTextFor(stored.Sha256, "notes.md");
+        await _documents.CurrentTextFor(stored.Sha256, "notes.md");
+
+        var after = StateOf(file, corpus);
+        after.Status.ShouldBe(FileStatus.Indexed, "the text was never damaged, so nothing was invalidated");
+        after.ContentHash.ShouldBe("indexed");
+        (await _documents.TextFor(stored.Sha256))!.ExtractedUtc.ShouldBe(row.ExtractedUtc);
+    }
+
+    [Fact]
     public async Task ARowThatDiffersOnlyInHowCharactersAreCountedIsNotExtractedAgain()
     {
         // SQLite counts code points and .NET counts UTF-16 units, so a character outside the

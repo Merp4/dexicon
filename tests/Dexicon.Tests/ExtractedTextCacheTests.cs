@@ -97,6 +97,31 @@ public sealed class ExtractedTextCacheTests : IDisposable
     }
 
     [Fact]
+    public async Task TextWithNulIsCachedWholeWhateverTheFormatAndServedWithoutExtractingAgain()
+    {
+        // SQLite ends a text value at a U+0000. Left in, the cached copy was cut there, failed
+        // its own length check on the next read, and was extracted again on every pass.
+        await using var db = Db();
+        var cache = Cache(db);
+        var extractor = new Counting("one\0two\0three",
+            [new ExtractedUnit(1, 0, "start"), new ExtractedUnit(2, 8, "last")]);
+        var file = File("a.docx", "PK whatever");
+
+        var first = await Read(cache, file, extractor);
+        var second = await Read(cache, file, extractor);
+
+        extractor.Calls.ShouldBe(1, "the second read was served from the cache");
+        first.Text.Text.ShouldBe("onetwothree");
+        second.Text.Text.ShouldBe("onetwothree");
+        second.Text.Units.Select(u => u.StartOffset).ShouldBe([0, 6]);
+        second.Text.Text[second.Text.Units[1].StartOffset].ShouldBe('t');
+
+        await using var check = Db();
+        var row = await check.FileTexts.AsNoTracking().SingleAsync();
+        row.Text.Length.ShouldBe(row.ExtractedChars);
+    }
+
+    [Fact]
     public async Task UnitsAndTitleSurviveTheRoundTrip()
     {
         await using var db = Db();
