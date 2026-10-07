@@ -145,8 +145,9 @@ public sealed class ExtractedTextCache(
             // only way to interrupt one: Extract is synchronous and the libraries under it
             // take no cancellation token.
             //
-            // The result loses any U+0000 before it is stored or chunked: SQLite would cut the
-            // cached copy there, and the row would then fail its own length check on every read.
+            // The result loses any U+0000 before it is stored: SQLite would cut the cached copy
+            // there, and the row would then fail its own length check on every read. Plain text
+            // and code never reach here, because they are not cached.
             return (timeoutSeconds > 0
                 ? extractor.Extract(
                     new DeadlineStream(stream, TimeSpan.FromSeconds(timeoutSeconds), relativePath),

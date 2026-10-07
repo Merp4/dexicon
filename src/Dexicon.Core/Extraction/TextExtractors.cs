@@ -27,7 +27,8 @@ public sealed record ExtractedText(string Text, IReadOnlyList<ExtractedUnit> Uni
     /// row recorded the length of the whole. Some PDFs hold them by the thousand (maths-heavy
     /// ones in particular), and a plain-text upload or any other format can. They carry
     /// nothing, so this is applied once, to whatever an extractor returns, before the text is
-    /// stored or chunked.
+    /// stored. A workspace file read as plain text or code is never stored, so the cut does
+    /// not apply to it and its text is indexed as read.
     /// </summary>
     public ExtractedText WithoutNul()
     {

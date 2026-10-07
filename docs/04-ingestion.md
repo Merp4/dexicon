@@ -560,17 +560,18 @@ value at the first one: the cached copy of such a document was cut there, and th
 indexed its head under the fingerprint of the whole. On one catalogue that was 161 of 1,956
 cached PDFs, keeping 29% of their text on average and, for eight, none of it, which were
 then recorded as having no extractable text. Whatever an extractor returns now loses its
-U+0000 before it is stored or chunked, whichever the format and whether it is a workspace
-file or an upload, and the units' offsets move to match. Left to the PDF extractor alone, a
-plain-text upload with one was repaired with the same cut text on every read. The same check
-covers an upload's text in `blob_texts`, and repairing that text also clears the chunk state
-of every attachment of the blob, in every chunk set, because an upload's fingerprint comes
-from the blob hash and the settings and not from the text. `ExtractorVersions.Current` was
-not bumped for this: the only cached text the change alters belongs to rows the length check
-already rejects. A file that a pass has
-settled is not read (the section on settling, below), so a short row is met the next time
-the file is read: on the first pass after an upgrade, when its size or time changes, or on
-a full pass.
+U+0000 before it is stored, whichever the format and whether it is a workspace file or an
+upload, and the units' offsets move to match. A plain-text upload is stored too, so it gets
+the same treatment; left to the PDF extractor alone, one with a U+0000 was repaired with the
+same cut text on every read. A workspace file read as plain text or code is never cached, so
+the cut cannot happen to it and its text is indexed as read. The same check covers an
+upload's text in `blob_texts`, and repairing that text also clears the chunk state of every
+attachment of the blob, in every chunk set, because an upload's fingerprint comes from the
+blob hash and the settings and not from the text. `ExtractorVersions.Current` was not bumped
+for this: the only cached text the change alters belongs to rows the length check already
+rejects. A file that a pass has settled is not read (the section on settling, below), so a
+short row is met the next time the file is read: on the first pass after an upgrade, when
+its size or time changes, or on a full pass.
 
 | Extractor version | Change |
 |---|---|
