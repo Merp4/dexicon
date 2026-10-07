@@ -1006,6 +1006,10 @@ same bytes again would repeat:
 | Failed because the file's own content cannot be read (a PDF with no trailer or that the parser rejects, an encrypted or malformed EPUB, a DOCX or PPTX that will not parse) | yes |
 | Failed because of something that may not recur (embedding service down, I/O error, out of memory, extractor deadline) | no, so the next pass retries |
 
+A file that was indexed and has become unreadable loses its earlier chunks before the failure
+is settled, as a file that has become empty does. If they cannot be removed the row stays
+unsettled and the next pass tries again.
+
 The skip does not distinguish these: a row with a matching key is left alone, and `status`
 says which it is. A failure is final only when the extractor says so, by throwing
 `UnreadableDocumentException`; a plain `ExtractionFailedException` is retried. A parser's

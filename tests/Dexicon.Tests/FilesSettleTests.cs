@@ -5,6 +5,8 @@ using Dexicon.Core.Indexing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using UglyToad.PdfPig.Core;
+using UglyToad.PdfPig.Fonts.Standard14Fonts;
+using UglyToad.PdfPig.Writer;
 
 namespace Dexicon.Tests;
 
@@ -227,6 +229,60 @@ public sealed class FilesSettleTests
     }
 
     [Fact]
+    public async Task A_file_that_was_indexed_and_is_now_unreadable_loses_its_chunks_when_it_is_settled()
+    {
+        var (harness, _) = await StartAsync();
+        await using var _ = harness;
+        var path = Path.Combine(harness.SourceDirectory, "report.pdf");
+
+        await File.WriteAllBytesAsync(path, ReadablePdf());
+        File.SetLastWriteTimeUtc(path, Stamp);
+        await harness.RunIndexAsync();
+        harness.Vectors.CountFor("report.pdf").ShouldBeGreaterThan(0, "the first pass has to index something");
+
+        await File.WriteAllBytesAsync(path, Truncated(40_000));
+        File.SetLastWriteTimeUtc(path, Stamp.AddMinutes(5));
+        await harness.RunIndexAsync();
+
+        var state = await harness.StateOfAsync("report.pdf");
+        state.Status.ShouldBe(FileStatus.Failed);
+        state.SettledFor.ShouldNotBeNull();
+        state.ChunkCount.ShouldBe(0);
+        harness.Vectors.CountFor("report.pdf").ShouldBe(0,
+            "a settled row is not looked at again, so the old version may not go on answering searches");
+    }
+
+    [Fact]
+    public async Task A_file_whose_old_chunks_could_not_be_removed_is_not_settled()
+    {
+        var (harness, _) = await StartAsync();
+        await using var _ = harness;
+        var path = Path.Combine(harness.SourceDirectory, "report.pdf");
+
+        await File.WriteAllBytesAsync(path, ReadablePdf());
+        File.SetLastWriteTimeUtc(path, Stamp);
+        await harness.RunIndexAsync();
+
+        await File.WriteAllBytesAsync(path, Truncated(40_000));
+        File.SetLastWriteTimeUtc(path, Stamp.AddMinutes(5));
+        harness.Vectors.DeletesThrow = true;
+        await harness.RunIndexAsync();
+
+        var state = await harness.StateOfAsync("report.pdf");
+        state.Status.ShouldBe(FileStatus.Failed);
+        state.SettledFor.ShouldBeNull("settling would leave the old chunks answering searches for good");
+        harness.Vectors.CountFor("report.pdf").ShouldBeGreaterThan(0);
+
+        // The store is back. The file has not changed, and it is looked at again because it was
+        // never settled.
+        harness.Vectors.DeletesThrow = false;
+        await harness.RunIndexAsync();
+
+        (await harness.StateOfAsync("report.pdf")).SettledFor.ShouldNotBeNull();
+        harness.Vectors.CountFor("report.pdf").ShouldBe(0);
+    }
+
+    [Fact]
     public async Task A_file_with_nothing_to_index_is_settled_too()
     {
         var (harness, embedder) = await StartAsync();
@@ -323,6 +379,16 @@ public sealed class FilesSettleTests
     private static int Said(RecordingLoggerFactory logs, string text)
     {
         lock (logs.Lines) return logs.Lines.Count(l => l.Contains(text));
+    }
+
+    /// <summary>A PDF the extractor can read, with enough text to make a chunk.</summary>
+    private static byte[] ReadablePdf()
+    {
+        var builder = new PdfDocumentBuilder();
+        var font = builder.AddStandard14Font(Standard14Font.Helvetica);
+        builder.AddPage(600, 400).AddText(
+            "The quick brown fox jumps over the lazy dog and keeps running.", 12, new PdfPoint(60, 200), font);
+        return builder.Build();
     }
 
     private static byte[] Truncated(int sizeBytes)

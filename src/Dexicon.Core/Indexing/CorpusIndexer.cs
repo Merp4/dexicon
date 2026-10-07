@@ -1463,7 +1463,16 @@ public sealed class CorpusIndexer(
                 // the same bytes again would meet again: the next pass does not open it, and
                 // the log does not say it again every tick. Any other failure to read is tried
                 // again. The hash stays null: a failure never counts as indexed.
-                if (ex is UnreadableDocumentException) failedState.SettledFor = SettledKeyOf(candidate);
+                //
+                // A settled row says there is nothing left to do, so the chunks of an earlier,
+                // readable version go first, as they do for a file that has become empty. If
+                // they cannot be removed the row stays unsettled and the next pass tries again.
+                if (ex is UnreadableDocumentException && await ClearChunksAsync(candidate.RelativePath))
+                {
+                    failedState.ChunkCount = 0;
+                    failedState.SettledFor = SettledKeyOf(candidate);
+                }
+
                 job.FilesFailed++;
             }
             catch (EmbeddingUnavailableException ex)
