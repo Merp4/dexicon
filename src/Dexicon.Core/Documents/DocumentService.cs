@@ -428,6 +428,7 @@ public sealed class DocumentService(
             {
                 state.ContentHash = null;
                 state.Status = FileStatus.Pending;
+                state.StatusDetail = null;
             }
         }
 
