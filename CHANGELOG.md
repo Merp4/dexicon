@@ -40,8 +40,8 @@ with no section here fails its release rather than publishing an undescribed one
 ### Added
 
 - **A `configure` scope lets an agent set up what is indexed**
-  ([D-36](docs/decisions.md#d-36-a-configure-scope-agents-set-up-what-is-indexed)). A key
-  holding it is listed three more MCP tools: `list_folders`, `configure_corpus` and
+  ([D-36](docs/decisions.md#d-36-a-configure-scope-agents-set-up-what-is-indexed)). Three more
+  MCP tools are listed for a key holding it: `list_folders`, `configure_corpus` and
   `configure_source`. With them an agent lists the mounted folders, creates a corpus, changes a
   corpus's description and the filters its sources inherit, and adds or changes a files or
   history source. Nothing over MCP removes a corpus, source, chunk set, document or key. Each
@@ -74,7 +74,7 @@ with no section here fails its release rather than publishing an undescribed one
 - **A corpus could stay `indexing`, and be skipped by the scheduled refresh, until a restart.**
   A full data disk refused every write for about four minutes. The jobs in flight could not
   save their outcome, and the corpora they had marked `indexing` stayed so for six hours. A
-  job now retries that save five times, and since the state is read from the jobs and the
+  job now tries that save up to five times, and since the state is read from the jobs and the
   corpus lease it cannot be left set: a job that stopped stops counting once its lease lapses,
   and the corpus is refreshed again with nothing to repair.
 - **A job whose lease claim failed was left `queued` and absorbed every later refresh.** The
