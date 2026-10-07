@@ -293,7 +293,9 @@ internal sealed class IndexingHarness : IAsyncDisposable
                 QueuedUtc = DateTime.UtcNow,
             };
             db.Jobs.Add(job);
-            await db.SaveChangesAsync();
+
+            // The row has to exist for the pass to run. The token is the pass's, not this setup's.
+            await db.SaveChangesAsync(CancellationToken.None);
             jobId = job.Id;
         }
 
