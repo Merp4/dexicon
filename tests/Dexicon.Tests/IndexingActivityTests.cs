@@ -179,6 +179,40 @@ public sealed class IndexingActivityTests
         sets.Values.ShouldAllBe(s => s == outcome);
     }
 
+    [Theory]
+    [InlineData(CorpusState.Degraded)]
+    [InlineData(CorpusState.Unavailable)]
+    public async Task A_cancelled_pass_leaves_the_outcome_of_the_last_pass(CorpusState outcome)
+    {
+        // A cancelled pass used to set the corpus and its sets Ready, which cleared the
+        // Indexing state the start of a pass wrote. Nothing writes that now, so it would have
+        // turned a corpus that had failed into one that reads Ready.
+        await using var harness = await StartAsync();
+        await using (var db = harness.NewContext())
+        {
+            await db.Corpora.ExecuteUpdateAsync(u => u.SetProperty(c => c.State, outcome));
+            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.State, outcome));
+        }
+
+        using var caller = new CancellationTokenSource();
+        harness.Vectors.OnEnsureCollection = caller.Cancel;
+
+        var job = await harness.RunIndexAsync(cancel: caller.Token);
+
+        caller.IsCancellationRequested.ShouldBeTrue("the window has to have been opened");
+        job.State.ShouldBe(JobState.Cancelled);
+
+        await using var read = harness.NewContext();
+        var row = await read.Jobs.AsNoTracking().SingleAsync();
+        row.State.ShouldBe(JobState.Cancelled);
+        row.FinishedUtc.ShouldNotBeNull();
+
+        var corpus = await read.Corpora.AsNoTracking().SingleAsync();
+        corpus.State.ShouldBe(outcome);
+        corpus.HeldBy.ShouldBeNull("the lease is released when the pass ends");
+        (await read.ChunkSets.AsNoTracking().SingleAsync()).State.ShouldBe(outcome);
+    }
+
     // ---- what the API reports ---------------------------------------------------------
 
     [Fact]

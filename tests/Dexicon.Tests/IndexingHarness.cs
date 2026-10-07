@@ -275,10 +275,11 @@ internal sealed class IndexingHarness : IAsyncDisposable
     /// The leases the pass takes the corpus with. A test that has the pass lose its lease
     /// gives it ones that renew often enough to notice within the test.
     /// </param>
+    /// <param name="cancel">The caller's token, for a test that stops the pass the way a caller does.</param>
     public async Task<IndexJob> RunIndexAsync(JobKind kind = JobKind.Refresh,
         Func<GitRepository, string, DateTime, CancellationToken, Task<GitTracking>>? readTracking = null,
         ILogger<CorpusIndexer>? log = null, TimeSpan? saveRetryDelay = null, Action? beforePass = null,
-        CorpusLeases? leases = null)
+        CorpusLeases? leases = null, CancellationToken cancel = default)
     {
         string jobId;
         await using (var db = NewContext())
@@ -317,7 +318,7 @@ internal sealed class IndexingHarness : IAsyncDisposable
             SaveRetryDelay = saveRetryDelay ?? TimeSpan.Zero,
         };
 
-        return await indexer.RunAsync(jobId, null, CancellationToken.None);
+        return await indexer.RunAsync(jobId, null, cancel);
     }
 
     /// <summary>

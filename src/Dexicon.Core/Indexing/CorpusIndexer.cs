@@ -262,12 +262,10 @@ public sealed class CorpusIndexer(
         }
         catch (OperationCanceledException) when (callerCancelled.IsCancellationRequested)
         {
+            // The corpus and its sets keep what the last pass found. They were set Ready here
+            // to clear the Indexing state the start of a pass wrote, and nothing writes it now,
+            // so doing it would turn a Degraded or Unavailable corpus into a Ready one.
             job.State = JobState.Cancelled;
-            if (Holds(hold))
-            {
-                corpus.State = CorpusState.Ready;
-                foreach (var s in targets) s.State = CorpusState.Ready;
-            }
         }
         catch (Exception ex)
         {
