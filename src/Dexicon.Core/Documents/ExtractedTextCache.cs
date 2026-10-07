@@ -90,14 +90,24 @@ public sealed class ExtractedTextCache(
         // Not `==`. A row stamped NEWER than this build was written by a later one, and
         // overwriting it would make a rollback and the version it rolled back from take
         // turns re-extracting the same library.
-        if (cached is not null && cached.ExtractorVersion >= ExtractorVersions.Current)
+        //
+        // And only a row that reads back as long as it was written. The length is recorded
+        // from the text in hand, so a row that no longer matches it was damaged in the
+        // table, as one cut at a U+0000 was, and handing it out would index the head of the
+        // document under the hash of the whole.
+        var damaged = cached is not null && cached.Text.Length != cached.ExtractedChars;
+        if (cached is not null && !damaged && cached.ExtractorVersion >= ExtractorVersions.Current)
             return new ReadText(
                 fileSha, new ExtractedText(cached.Text, UnitsFrom(cached.UnitsJson), cached.Title), extractor);
 
         stream.Position = 0;
         var extracted = await ParseAsync(stream, extractor, relativePath, timeoutSeconds, ct);
 
-        if (cached is not null)
+        if (damaged)
+            log.LogWarning(
+                "Cached text for {File} reads back {Read:N0} of the {Written:N0} characters stored with it; extracted again",
+                relativePath, cached!.Text.Length, cached.ExtractedChars);
+        else if (cached is not null)
             // Same bytes, same extractor, older version: the row is overwritten rather
             // than added beside. This is what lets an extractor fix reach files indexed
             // before it.

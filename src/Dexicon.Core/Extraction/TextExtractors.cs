@@ -169,7 +169,7 @@ public sealed partial class PdfTextExtractor : ITextExtractor
             {
                 units.Add(new ExtractedUnit(page.Number, sb.Length, $"Page {page.Number}"));
                 foreach (var block in ReadInLayoutOrder(page))
-                    sb.Append(block).Append('\n');
+                    sb.Append(WithoutNul(block)).Append('\n');
             }
 
             var title = document.Information?.Title;
@@ -181,6 +181,14 @@ public sealed partial class PdfTextExtractor : ITextExtractor
             buffered?.Dispose();
         }
     }
+
+    /// <summary>
+    /// The text of some PDFs, maths-heavy ones in particular, holds U+0000 by the thousand.
+    /// It carries nothing, and SQLite ends a text value at the first one, so the cached copy
+    /// of a document that held one was cut there while the row recorded the length of the
+    /// whole. Dropped here, per block, so the units' offsets are of the text kept.
+    /// </summary>
+    private static string WithoutNul(string block) => block.Replace("\0", string.Empty);
 
     /// <summary>
     /// Reject a PDF whose trailer is missing before handing it to PdfPig.

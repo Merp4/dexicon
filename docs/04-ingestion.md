@@ -553,6 +553,17 @@ Without this the cache is permanent: a library ingested before a fix keeps the b
 forever, and no reindex repairs it, because reindexing re-chunks the *cached text* rather
 than re-reading the file.
 
+A row is also checked against itself. It records the length of the text it was written
+from, and a row that reads back at a different length is extracted again instead of served.
+The text of some PDFs holds U+0000, maths-heavy ones in particular, and SQLite ends a text
+value at the first one: the cached copy of such a document was cut there, and the next pass
+indexed its head under the fingerprint of the whole. On one catalogue that was 161 of 1,956
+cached PDFs, keeping 29% of their text on average and, for eight, none of it, which were
+then recorded as having no extractable text. The PDF extractor now drops U+0000 per block,
+so the units' offsets are of the text kept. `ExtractorVersions.Current` was not bumped for
+this: the only cached text the change alters belongs to rows the length check already
+rejects.
+
 | Extractor version | Change |
 |---|---|
 | 1 | Initial extractors |
