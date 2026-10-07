@@ -986,7 +986,7 @@ set**. Two sets over the same blob get different fingerprints and independent ve
 is what allows several chunkings of one document, including two sets on different models,
 mid-migration, in two different collections.
 
-### A file the last pass finished with is not opened again
+### A file the last pass finished with is not read again
 
 Comparing a fingerprint needs the file's content, so an unchanged tree still cost a read of
 every byte, a hash, a cached-text load and a comparison per file on every refresh. Over the
@@ -996,8 +996,11 @@ the job history.
 `file_chunk_states.settled_for` is a hash of the file's size, its modified time as the walk
 saw them, and the chunking settings (the fingerprint of an empty content hash, which carries
 the extractor and chunker versions). A pass that finds the same key on a file's row skips
-it without opening it. The key is written when the pass reaches an outcome that reading the
-same bytes again would repeat:
+it: the file is not read, hashed or compared. A document (PDF, DOCX, PPTX, EPUB or HTML) is
+not opened at all. Any other file is still opened by the walk, which reads its first 8 KB for
+a NUL byte before the key is compared, so for those files, code among them, a pass saves the
+full read and the hash and keeps one short read. The key is written when the pass reaches an
+outcome that reading the same bytes again would repeat:
 
 | Outcome | Key written |
 |---|---|
