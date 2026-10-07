@@ -26,7 +26,7 @@ public sealed class ContextReadsTheDocumentTests : IDisposable
     private CatalogDbContext Db()
     {
         var db = new CatalogDbContext(
-            new DbContextOptionsBuilder<CatalogDbContext>().UseSqlite($"Data Source={_path}").Options);
+            new DbContextOptionsBuilder<CatalogDbContext>().UseSqlite($"Data Source={_path};Pooling=False").Options);
         db.Database.EnsureCreated();
         return db;
     }

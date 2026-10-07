@@ -55,7 +55,7 @@ public sealed class ExtractedTextCacheTests : IDisposable
     private CatalogDbContext Db()
     {
         var db = new CatalogDbContext(
-            new DbContextOptionsBuilder<CatalogDbContext>().UseSqlite($"Data Source={_db}").Options);
+            new DbContextOptionsBuilder<CatalogDbContext>().UseSqlite($"Data Source={_db};Pooling=False").Options);
         db.Database.EnsureCreated();
         return db;
     }
