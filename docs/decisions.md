@@ -1926,6 +1926,41 @@ migration. A new chunk set is stored `degraded`, which is what it reads if its j
 
 ---
 
+### D-38 A file the last pass finished with is not opened again
+
+**Status.** Accepted and implemented, 2026-10-07.
+
+**Decision.** Each file's row keeps `settled_for`, a hash of the file's size, its modified time
+as the walk saw them, and the chunking settings (extractor and chunker versions included). A
+pass that finds the same key skips the file without opening it. The key is written for every
+outcome that reading the same bytes again would repeat (indexed, empty, and a failure the
+extractor classifies as the file's own content) and for none that might not recur. The skip does
+not tell those outcomes apart: `status` already does, and a matching key means there is nothing
+to redo whichever it is. A full or rebuild job ignores the key
+([04](04-ingestion.md#a-file-the-last-pass-finished-with-is-not-opened-again)).
+
+**Why.** Every pass over an unchanged library read every byte of every file, hashed it, loaded
+its cached text and compared a fingerprint to conclude nothing had changed: about 3.6 minutes
+of reading per ten-minute tick, measured from the job history. A file that could never be
+read, such as a truncated PDF, paid the same cost every tick and failed the same way. The key is
+computable from the directory walk alone, and it carries the settings, so a change to chunking
+or to either version unsettles every file once, as it already re-chunked them.
+
+**Rejected.** Hashing content to decide a file is unchanged: it needs the read the key exists to
+avoid. A second record for "failed last time and will fail again": a settled failure and a
+settled success are the same fact to the skip, which asks only whether anything changed, so the
+distinction would be a field with no reader. Settling every failure: an embedding outage or a
+mount that blinked would leave files failed until they were touched. The extractor decides, by
+throwing `UnreadableDocumentException` only where a parser rejected the bytes it was given.
+
+**Cost.** One nullable column, added by a migration that touches no data, so the first pass
+after upgrading reads every file once and writes the keys. A file whose bytes change without a
+change of size or modified time is not noticed until a full pass. A mount that returns short
+reads could make a good file read as corrupt for one pass; it then stays settled as failed until
+it changes or a full pass reads it again.
+
+---
+
 ## Open questions
 
 | # | Question | Needed by | Current lean |

@@ -41,6 +41,48 @@ public class ExtractionFailedException(string message, Exception? inner = null)
     : Exception(message, inner);
 
 /// <summary>
+/// A file that cannot be read because of what is in it: truncated, corrupt, or malformed in a
+/// way the parser rejects. Reading the same bytes again fails the same way, so the indexer
+/// settles the file and leaves it alone until it changes or the extractor does.
+///
+/// A plain <see cref="ExtractionFailedException"/> is any other failure to read, and is tried
+/// again on the next pass: the mount answered badly, the process was short of memory. The
+/// extractor is where that is known, since it is the code that can tell a parser's verdict
+/// from an I/O error, so it chooses which to throw (<see cref="ExtractionFailures.Of"/>).
+/// </summary>
+public sealed class UnreadableDocumentException(string message, Exception? inner = null)
+    : ExtractionFailedException(message, inner);
+
+internal static class ExtractionFailures
+{
+    /// <summary>
+    /// The exception for a parser that threw about a file's bytes. Anything environmental is
+    /// not a verdict on the file: an I/O error, a refused permission, memory or a timeout.
+    /// Whatever else a parser throws while reading bytes it has been given is, however it is
+    /// worded: an invalid colour space, a page it could not parse, a distance that overflows.
+    ///
+    /// Looked for anywhere in the chain of causes, not only the top. A parser catches what the
+    /// stream throws and rethrows its own, and the extraction deadline throws from a read: a
+    /// timeout that arrived wrapped as "failed to parse the page" would otherwise be taken for
+    /// a corrupt file, and a file that was only slow would stay failed.
+    ///
+    /// The cost of being wrong in each direction is not the same, and this chooses the cheaper
+    /// one for the cases it can see. A mount that returns short reads could make a good file
+    /// read as corrupt for one pass; the file then stays settled as failed until it changes,
+    /// or a full pass reads it again.
+    /// </summary>
+    public static ExtractionFailedException Of(string message, Exception cause)
+    {
+        for (var e = cause; e is not null; e = e.InnerException)
+            if (e is IOException or UnauthorizedAccessException or OutOfMemoryException
+                or TimeoutException or ExtractionFailedException)
+                return new ExtractionFailedException(message, cause);
+
+        return new UnreadableDocumentException(message, cause);
+    }
+}
+
+/// <summary>
 /// Bytes to text, per media type. The seam that keeps OCR a future registration
 /// rather than a rewrite: nothing downstream assumes the text came from a text layer.
 /// </summary>
@@ -155,7 +197,7 @@ public sealed partial class PdfTextExtractor : ITextExtractor
         catch (Exception ex) when (ex is not ExtractionFailedException)
         {
             buffered?.Dispose();
-            throw new ExtractionFailedException(
+            throw ExtractionFailures.Of(
                 $"'{fileName}' could not be opened as a PDF. It may be encrypted or corrupt: {ex.Message}", ex);
         }
 
@@ -175,6 +217,17 @@ public sealed partial class PdfTextExtractor : ITextExtractor
             var title = document.Information?.Title;
             return new ExtractedText(sb.ToString(), units,
                 string.IsNullOrWhiteSpace(title) ? null : title);
+        }
+        catch (Exception ex) when (ex is not (ExtractionFailedException or OperationCanceledException))
+        {
+            // A page that would not parse, found after the document opened: an invalid colour
+            // space, a broken page tree, a layout that overflows. The same kind of failure as
+            // one at open and reported the same way, where it escaped as a bare parser
+            // exception and was logged as "Failed to index", every pass. Whether it is the file
+            // or the mount that failed is decided by the cause. Output for a file that
+            // extracts is unchanged, so ExtractorVersions.Current is not bumped.
+            throw ExtractionFailures.Of(
+                $"'{fileName}' could not be read as a PDF. It may be corrupt: {ex.Message}", ex);
         }
         finally
         {
@@ -220,7 +273,7 @@ public sealed partial class PdfTextExtractor : ITextExtractor
         const int TailBytes = 4096;
         var length = source.Length;
         if (length == 0)
-            throw new ExtractionFailedException($"'{fileName}' is empty.");
+            throw new UnreadableDocumentException($"'{fileName}' is empty.");
 
         var take = (int)Math.Min(TailBytes, length);
         var tail = new byte[take];
@@ -241,7 +294,7 @@ public sealed partial class PdfTextExtractor : ITextExtractor
         var span = tail.AsSpan();
         if (span.IndexOf("%%EOF"u8) >= 0 && span.IndexOf("startxref"u8) >= 0) return;
 
-        throw new ExtractionFailedException(
+        throw new UnreadableDocumentException(
             $"'{fileName}' has no PDF trailer (startxref and %%EOF) in its last {take:N0} "
             + $"bytes, so it is truncated rather than merely unusual. Its {length:N0} bytes "
             + "were not read: a PDF with no cross-reference table can only be recovered by "
@@ -333,7 +386,7 @@ public sealed class DocxTextExtractor : ITextExtractor
         }
         catch (Exception ex) when (ex is not ExtractionFailedException)
         {
-            throw new ExtractionFailedException($"'{fileName}' is not a readable .docx: {ex.Message}", ex);
+            throw ExtractionFailures.Of($"'{fileName}' is not a readable .docx: {ex.Message}", ex);
         }
     }
 }
@@ -371,7 +424,7 @@ public sealed class PptxTextExtractor : ITextExtractor
         }
         catch (Exception ex) when (ex is not ExtractionFailedException)
         {
-            throw new ExtractionFailedException($"'{fileName}' is not a readable .pptx: {ex.Message}", ex);
+            throw ExtractionFailures.Of($"'{fileName}' is not a readable .pptx: {ex.Message}", ex);
         }
     }
 }
@@ -438,7 +491,7 @@ public sealed class EpubTextExtractor : ITextExtractor
         // Encryption is declared, not guessed. This is the one case where naming DRM is
         // correct, and the reason the old message applied it to every malformed book.
         if (zip.Entries.Any(e => e.FullName.Equals("META-INF/encryption.xml", StringComparison.OrdinalIgnoreCase)))
-            throw new ExtractionFailedException(
+            throw new UnreadableDocumentException(
                 $"'{fileName}' is encrypted. DRM-protected books cannot be read.", cause);
 
         var documents = zip.Entries
@@ -469,7 +522,7 @@ public sealed class EpubTextExtractor : ITextExtractor
         }
 
         if (sb.Length == 0)
-            throw new ExtractionFailedException(
+            throw new UnreadableDocumentException(
                 $"'{fileName}' could not be read: its manifest is unreadable ({cause.Message}) " +
                 "and the archive holds no readable XHTML.", cause);
 
@@ -486,7 +539,7 @@ public sealed class EpubTextExtractor : ITextExtractor
         {
             // Not a zip at all, so not an EPUB. Report the original parse failure, which
             // is the more informative of the two.
-            throw new ExtractionFailedException(
+            throw new UnreadableDocumentException(
                 $"'{fileName}' is not a readable .epub: {cause.Message}", ex);
         }
     }

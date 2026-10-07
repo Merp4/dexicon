@@ -151,6 +151,7 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             // No foreign key to file_texts: a plain-text file has a hash and no row
             // there, because reading it is the extraction.
             e.Property(x => x.SourceSha256).HasMaxLength(64);
+            e.Property(x => x.SettledFor).HasMaxLength(64);
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
             e.HasOne(x => x.File).WithMany(f => f.ChunkStates)
                 .HasForeignKey(x => x.FileId).OnDelete(DeleteBehavior.Cascade);
