@@ -271,28 +271,55 @@ public sealed class FilesSettleTests
     }
 
     [Theory]
-    [InlineData(typeof(PdfDocumentFormatException), true)]
-    [InlineData(typeof(InvalidDataException), true)]
-    [InlineData(typeof(System.Xml.XmlException), true)]
-    [InlineData(typeof(IOException), false)]
-    [InlineData(typeof(UnauthorizedAccessException), false)]
-    [InlineData(typeof(OutOfMemoryException), false)]
-    [InlineData(typeof(ArgumentException), false)]
-    public void A_failure_repeats_on_the_same_bytes_only_when_the_file_is_what_failed(Type cause, bool repeats)
+    [InlineData(typeof(PdfDocumentFormatException))]
+    [InlineData(typeof(InvalidDataException))]
+    [InlineData(typeof(System.Xml.XmlException))]
+    [InlineData(typeof(InvalidOperationException))]
+    [InlineData(typeof(OverflowException))]
+    [InlineData(typeof(ArgumentException))]
+    public void A_parser_fault_on_a_files_bytes_is_the_files_own_failure(Type cause)
     {
-        var inner = (Exception)Activator.CreateInstance(cause, "cause")!;
+        // Including the two that escaped as bare exceptions on the live library: a page the
+        // parser would not read, and a layout distance that overflows.
+        var failure = ExtractionFailures.Of("could not be read", (Exception)Activator.CreateInstance(cause, "cause")!);
 
-        CorpusIndexer.RepeatsOnTheSameBytes(new ExtractionFailedException("could not be read", inner))
-            .ShouldBe(repeats);
+        failure.ShouldBeOfType<UnreadableDocumentException>();
+    }
+
+    [Theory]
+    [InlineData(typeof(IOException))]
+    [InlineData(typeof(UnauthorizedAccessException))]
+    [InlineData(typeof(OutOfMemoryException))]
+    [InlineData(typeof(TimeoutException))]
+    public void An_environmental_failure_is_not_a_verdict_on_the_file(Type cause)
+    {
+        var failure = ExtractionFailures.Of("could not be read", (Exception)Activator.CreateInstance(cause, "cause")!);
+
+        failure.ShouldNotBeOfType<UnreadableDocumentException>();
+        failure.ShouldBeOfType<ExtractionFailedException>();
+    }
+
+    [Theory]
+    [InlineData(typeof(IOException))]
+    [InlineData(typeof(ExtractionTimeoutException))]
+    public void A_cause_wrapped_by_the_parser_is_still_found(Type inner)
+    {
+        // The extraction deadline throws from a read, and a parser may catch it and rethrow
+        // its own. A file that was only slow must not be settled as corrupt for that.
+        var wrapped = new InvalidOperationException(
+            "Failed to parse the content for the page: 1", (Exception)Activator.CreateInstance(inner, "cause")!);
+
+        ExtractionFailures.Of("could not be read", wrapped).ShouldNotBeOfType<UnreadableDocumentException>();
     }
 
     [Fact]
-    public void A_failure_with_no_cause_of_its_own_repeats_and_a_timeout_does_not()
+    public void A_pdf_with_no_trailer_is_unreadable_and_a_timeout_is_not()
     {
-        CorpusIndexer.RepeatsOnTheSameBytes(new ExtractionFailedException("has no trailer")).ShouldBeTrue();
-        CorpusIndexer.RepeatsOnTheSameBytes(new ExtractionTimeoutException("too slow")).ShouldBeFalse();
-    }
+        using var stream = new MemoryStream(Truncated(8_000));
 
+        Should.Throw<UnreadableDocumentException>(() => new PdfTextExtractor().Extract(stream, "cut.pdf"));
+        new ExtractionTimeoutException("too slow").ShouldNotBeOfType<UnreadableDocumentException>();
+    }
     private static int Said(RecordingLoggerFactory logs, string text)
     {
         lock (logs.Lines) return logs.Lines.Count(l => l.Contains(text));

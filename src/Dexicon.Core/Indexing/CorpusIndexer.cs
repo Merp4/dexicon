@@ -1,7 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Xml;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
 using Dexicon.Core.Documents;
@@ -12,7 +11,6 @@ using Dexicon.Core.Vectors;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using UglyToad.PdfPig.Core;
 
 namespace Dexicon.Core.Indexing;
 
@@ -1461,10 +1459,11 @@ public sealed class CorpusIndexer(
                 failedState.StatusDetail = ex.Message;
                 failedState.ContentHash = null;
 
-                // Settled when reading these bytes again would fail the same way, so the
-                // next pass does not open it, and the log does not say it again every tick.
-                // The hash stays null: a failure never counts as indexed.
-                if (RepeatsOnTheSameBytes(ex)) failedState.SettledFor = SettledKeyOf(candidate);
+                // Settled when the file's own content is what cannot be read, which reading
+                // the same bytes again would meet again: the next pass does not open it, and
+                // the log does not say it again every tick. Any other failure to read is tried
+                // again. The hash stays null: a failure never counts as indexed.
+                if (ex is UnreadableDocumentException) failedState.SettledFor = SettledKeyOf(candidate);
                 job.FilesFailed++;
             }
             catch (EmbeddingUnavailableException ex)
@@ -1923,22 +1922,6 @@ public sealed class CorpusIndexer(
 
         return (file, state);
     }
-
-    /// <summary>
-    /// Whether a failed read would fail the same way on the same bytes, so the file can be
-    /// left alone until it changes. A format error is: a truncated or corrupt PDF, a zip that
-    /// is not one. Anything environmental is not, and is read again next pass: a mount that
-    /// answered badly, a process short of memory, a parser fault of a kind not seen before.
-    ///
-    /// By what the failure was caused by and not by its type: every failure to open is
-    /// wrapped as an <see cref="ExtractionFailedException"/>, whatever it was, so the type
-    /// alone says nothing. An unrecognised cause counts as not repeating, since the cost of
-    /// being wrong that way is one more attempt and the other way is a file never retried.
-    /// </summary>
-    internal static bool RepeatsOnTheSameBytes(ExtractionFailedException ex) =>
-        ex is not ExtractionTimeoutException
-        && (ex.InnerException is null
-            || ex.InnerException is PdfDocumentFormatException or InvalidDataException or XmlException);
 
     private static void Report(IProgress<IndexProgress>? progress, IndexJob job, string? currentFile) =>
         progress?.Report(new IndexProgress(job.Id, job.CorpusId, job.Phase ?? job.State.ToString(),
