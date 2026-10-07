@@ -257,6 +257,16 @@ public static class ChunkSetEndpoints
                     detail: $"Promote another set first; search would otherwise have nothing to fall back to.",
                     statusCode: 409);
 
+            // A job that names this set, or names none, is working on it. Deleting the row under
+            // a job scoped to it nulls the job's ChunkSetId, which reads as every set of the
+            // corpus: it would run against, and report as indexing, sets it was never asked for.
+            var activity = await IndexingActivity.ReadAsync(db, [corpus.Id], ct);
+            if (activity.Of(set) == CorpusState.Indexing)
+                return Results.Problem(
+                    title: "Cannot delete a chunk set while it is being indexed",
+                    detail: $"A job is working on '{set.Name}'. Delete it once the job has finished.",
+                    statusCode: 409);
+
             // Vectors first: if the row went first and this threw, the collection would
             // keep points that nothing in the catalogue can name or clean up.
             await vectors.DeleteChunkSetAsync(set.CollectionName, set.Id, ct);
