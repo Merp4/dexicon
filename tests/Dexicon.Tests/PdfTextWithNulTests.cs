@@ -120,6 +120,52 @@ public sealed class PdfTextWithNulTests
         harness.Vectors.CountFor("paper.pdf").ShouldBe(chunks);
     }
 
+    [Fact]
+    public async Task A_damaged_upload_is_chunked_again_from_the_repaired_text()
+    {
+        // An upload's chunk state is fingerprinted by the blob hash, not by the text, so repairing
+        // the cached text alone leaves every attachment looking current.
+        await using var harness = await IndexingHarness.StartAsync();
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+
+        var whole = string.Join("\n\n", Enumerable.Range(1, 120).Select(i => $"Paragraph {i}: {Words(24)}"));
+        string sha;
+        await using (var db = harness.NewContext())
+        {
+            var documents = harness.NewDocumentService(db);
+            var corpus = await db.Corpora.Include(c => c.Sources).Include(c => c.ChunkSets)
+                .FirstAsync(c => c.Id == IndexingHarness.CorpusId);
+            using var bytes = new MemoryStream(Encoding.UTF8.GetBytes(whole));
+            var stored = await documents.StoreAsync(bytes, "paper.md");
+            sha = stored.Sha256;
+            await documents.AttachAsync(corpus, sha, "paper.md");
+        }
+
+        // The state the live catalogue is in: the head of the text, the length of the whole
+        // recorded with it, and the document indexed from the head. Made by indexing a row that
+        // agrees with itself, then restoring the length that was recorded at the write.
+        int recorded;
+        await using (var db = harness.NewContext())
+        {
+            recorded = (await db.BlobTexts.AsNoTracking().SingleAsync()).ExtractedChars;
+            await db.BlobTexts.ExecuteUpdateAsync(u => u
+                .SetProperty(t => t.Text, "Paragraph 1: head only")
+                .SetProperty(t => t.ExtractedChars, "Paragraph 1: head only".Length));
+        }
+
+        await harness.RunIndexAsync();
+        var fromTheHead = harness.Vectors.CountFor("paper.md");
+        fromTheHead.ShouldBeGreaterThan(0);
+
+        await using (var db = harness.NewContext())
+            await db.BlobTexts.ExecuteUpdateAsync(u => u.SetProperty(t => t.ExtractedChars, recorded));
+
+        var repaired = await harness.RunIndexAsync();
+
+        repaired.FilesDone.ShouldBe(1, "the repaired text is chunked and embedded again");
+        harness.Vectors.CountFor("paper.md").ShouldBeGreaterThan(fromTheHead,
+            "the vectors now come from the whole document, not its head");
+    }
     private static string Words(int n) => string.Join(' ', Enumerable.Range(0, n).Select(i => $"word{i}"));
 
     private static async Task WriteAsync(IndexingHarness harness, byte[] pdf)

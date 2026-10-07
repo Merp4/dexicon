@@ -414,6 +414,23 @@ public sealed class DocumentService(
         cached.ExtractorVersion = fresh.ExtractorVersion;
         cached.ExtractedUtc = fresh.ExtractedUtc;
         cached.EmptyReason = fresh.EmptyReason;
+
+        if (damaged)
+        {
+            // An upload's chunk state is fingerprinted by the blob hash and the chunk settings,
+            // not by the text, so a repaired text changes nothing the skip check compares and
+            // the head of the document would stay searchable. Cleared the way the indexer clears
+            // a file it is about to redo, in every set that holds this blob, and in the same save
+            // as the text so a crash leaves neither half.
+            var attached = await db.FileChunkStates
+                .Where(s => s.File!.BlobSha256 == sha256).ToListAsync(ct);
+            foreach (var state in attached)
+            {
+                state.ContentHash = null;
+                state.Status = FileStatus.Pending;
+            }
+        }
+
         await db.SaveChangesAsync(ct);
 
         return cached;
