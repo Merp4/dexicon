@@ -245,7 +245,7 @@ public sealed class CorpusSweepTests : IDisposable
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddDbContext<CatalogDbContext>(
-            o => o.UseSqlite($"Data Source={_db}")
+            o => o.UseSqlite($"Data Source={_db};Pooling=False")
                   .AddInterceptors(
                       new SqlitePragmas(TimeSpan.FromSeconds(30), NullLogger<SqlitePragmas>.Instance),
                       deleteOnClaim),
@@ -287,7 +287,7 @@ public sealed class CorpusSweepTests : IDisposable
             {
                 Fired = true;
 
-                using var conn = new SqliteConnection($"Data Source={dbPath}");
+                using var conn = new SqliteConnection($"Data Source={dbPath};Pooling=False");
                 conn.Open();
                 using var delete = conn.CreateCommand();
                 delete.CommandText = "DELETE FROM Corpora WHERE Id = $id";

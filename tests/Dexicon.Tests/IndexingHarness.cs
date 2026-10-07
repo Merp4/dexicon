@@ -100,7 +100,7 @@ internal sealed class IndexingHarness : IAsyncDisposable
         // Left off, these tests would diverge from production in the one respect their
         // concurrency is meant to exercise, and fail intermittently.
         services.AddDbContext<CatalogDbContext>(
-            o => o.UseSqlite($"Data Source={Path.Combine(dataPath, "catalog.db")}")
+            o => o.UseSqlite($"Data Source={Path.Combine(dataPath, "catalog.db")};Pooling=False")
                   .AddInterceptors(watcher is null
                       ? [new SqlitePragmas(TimeSpan.FromSeconds(30), NullLogger<SqlitePragmas>.Instance)]
                       : new IInterceptor[]
@@ -122,7 +122,14 @@ internal sealed class IndexingHarness : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await _services.DisposeAsync();
-        try { Directory.Delete(_dataPath, recursive: true); } catch { /* best effort */ }
+        try
+        {
+            // git leaves read-only objects behind, which Directory.Delete will not remove.
+            foreach (var file in Directory.EnumerateFiles(_dataPath, "*", SearchOption.AllDirectories))
+                File.SetAttributes(file, FileAttributes.Normal);
+            Directory.Delete(_dataPath, recursive: true);
+        }
+        catch { /* best effort */ }
     }
 
     /// <summary>

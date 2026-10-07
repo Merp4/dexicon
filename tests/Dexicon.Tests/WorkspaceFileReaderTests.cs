@@ -34,7 +34,7 @@ public sealed class WorkspaceFileReaderTests : IDisposable
         {
             Indexing = new IndexingOptions { MaxConcurrentExtractions = 4 },
         }));
-        services.AddDbContext<CatalogDbContext>(o => o.UseSqlite($"Data Source={_db}"), ServiceLifetime.Scoped);
+        services.AddDbContext<CatalogDbContext>(o => o.UseSqlite($"Data Source={_db};Pooling=False"), ServiceLifetime.Scoped);
         services.AddSingleton<IndexingLimits>();
         services.AddScoped<ExtractedTextCache>();
         services.AddSingleton<WorkspaceFileReader>();
