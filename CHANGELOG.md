@@ -16,6 +16,77 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## 0.6.5 — 2026-10-07
+
+### ⚠️ Upgrading
+
+- One migration, `IndexingIsNotStored`, applied at startup. Data only: a corpus or chunk set
+  stored as `indexing` becomes `degraded`, once, and the next pass records what it finds.
+  It cannot be undone. Nothing re-chunks or re-embeds.
+- Whether a corpus is indexing is read from its jobs and no longer stored
+  ([D-37](docs/decisions.md#d-37-indexing-is-read-not-stored)). Everything that reports it
+  says the same as before, but a restart no longer marks an interrupted corpus `degraded`:
+  it keeps the outcome of its last pass, and the job that was running reads `failed` with
+  *Interrupted*. A chunk set is stored `degraded` until its first pass finishes and reads
+  `indexing` while that pass is queued or running.
+- The skill changes (`dexicon-skill-version: 4`). Running `scripts/install-mcp.ps1` again
+  upgrades installed copies. The hooks are unchanged.
+- A key can hold a new scope, `configure`, which no existing key has and the key adopted from
+  `DEXICON__BOOTSTRAP__TOKEN` never does. `PUT /api/tokens/{id}/scopes` is new. Additive.
+- Refused where it was accepted before: a size cap of zero, which indexes nothing, when adding
+  a source or setting a corpus default; and a corpus name that matches another's ignoring case,
+  contains a colon or a control character, or is longer than 200 characters.
+
+### Added
+
+- **A `configure` scope lets an agent set up what is indexed**
+  ([D-36](docs/decisions.md#d-36-a-configure-scope-agents-set-up-what-is-indexed)). A key
+  holding it is listed three more MCP tools: `list_folders`, `configure_corpus` and
+  `configure_source`. With them an agent lists the mounted folders, creates a corpus, changes a
+  corpus's description and the filters its sources inherit, and adds or changes a files or
+  history source. Nothing over MCP removes a corpus, source, chunk set, document or key. Each
+  change goes through the service the UI uses and is logged with the key's name. A narrower
+  filter drops what it stops selecting when the refresh runs, as in the UI, and the replies
+  say so. `.gitignore` can be pinned on but not turned off over MCP, which is what keeps
+  Dexicon's own `.env` out of the index where the workspace root is its checkout.
+- **A key's scopes can be changed in place**, on the Access page or with
+  `PUT /api/tokens/{id}/scopes`, without issuing another key. A scope removed, or a key
+  revoked, is refused from the next request.
+- **`index_status` with a corpus named says why files are missing.** Each source shows what it
+  reads and its effective filters, with which come from the corpus defaults. A history source
+  shows the ref it follows, how far behind its upstream it was, and its newest commit. The
+  failed, skipped and empty files of the default chunk set follow, ten per status with the
+  recorded reason on one line. Without a corpus named it keeps to counts.
+
+### Changed
+
+- **Corpus and source changes are judged in one service**, which the UI and the agent tools
+  both call, so one cannot accept what the other refuses.
+- **A corpus change is audited when it is saved**, not after the request returns, so a failure
+  in between leaves an entry under the key's name.
+- **A chunk set cannot be deleted while a job is working on it** (409). Deleting the row
+  turned a job scoped to the set into one for the whole corpus.
+- **Dependencies:** vite 8.3.2, vitest and `@vitest/coverage-v8` 5.0.3, lucide-react 1.51.0,
+  OllamaSharp 5.5.0, AngleSharp 1.8.3, and `source-map-js` 1.2.2 for GHSA-68fv-2mgg-jv7q.
+
+### Fixed
+
+- **A corpus could stay `indexing`, and be skipped by the scheduled refresh, until a restart.**
+  A full data disk refused every write for about four minutes. The jobs in flight could not
+  save their outcome, and the corpora they had marked `indexing` stayed so for six hours. A
+  job now retries that save five times, and since the state is read from the jobs and the
+  corpus lease it cannot be left set: a job that stopped stops counting once its lease lapses,
+  and the corpus is refreshed again with nothing to repair.
+- **A job whose lease claim failed was left `queued` and absorbed every later refresh.** The
+  failure was dropped with the corpus's own state, so the row read `queued` with no error,
+  `index_refresh` returned that job, and nothing ran it. It is now recorded `failed` with the
+  reason. A job that loses its lease while running records its outcome too, and leaves the
+  corpus to whoever holds it.
+- **A name typed with different capitals or spaces made two corpora one name could reach**, or
+  failed on the unique index as a 500. It is now refused as a conflict.
+
+---
+
 ## 0.6.4 — 2026-09-30
 
 ### ⚠️ Upgrading
