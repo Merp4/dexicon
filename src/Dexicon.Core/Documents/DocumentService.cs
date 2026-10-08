@@ -47,11 +47,11 @@ public sealed class DocumentService(
     /// <summary>
     /// Held from looking for a corpus's upload source and for the document's existing attachment to the
     /// save that adds them, so two attachments cannot both find none. A corpus has one upload source and
-    /// a blob one attachment, and no unique index says so: both were checks made before the insert, and
-    /// two requests could pass them together and each add one. Dexicon is one process owning its
-    /// catalogue (D-01), so one lock is enough, and a second process writing the file is not covered, as
-    /// for <c>CorpusConfiguration.Naming</c>. One lock for all corpora, because an attachment is a few
-    /// queries and a save.
+    /// holds a blob once (the same blob may be attached to any number of corpora), and no unique index
+    /// says so: both were checks made before the insert, and two requests could pass them together and
+    /// each add one. Dexicon is one process owning its catalogue (D-01), so one lock is enough, and a
+    /// second process writing the file is not covered, as for <c>CorpusConfiguration.Naming</c>. One lock
+    /// for all corpora, because an attachment is a few queries and a save.
     /// </summary>
     private static readonly SemaphoreSlim Attaching = new(1, 1);
 

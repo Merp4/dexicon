@@ -106,9 +106,9 @@ with no section here fails its release rather than publishing an undescribed one
   was saved before the document, so a cancel between them left a source with no files. It is
   saved with the document.
 - **Two documents attached to one corpus at the same moment could create two upload sources, and
-  one document attached twice could be attached twice.** The upload source, and the document's
-  existing attachment, were looked for and then added with no lock between, so two requests passed
-  the check together. Nothing failed: the corpus listed two upload sources, and a document attached
+  one document attached to one corpus twice at the same moment could be attached twice.** The
+  upload source, and the document's existing attachment to the corpus, were looked for and then
+  added with no lock between, so two requests passed the check together. Nothing failed: the corpus listed two upload sources, and a document attached
   under both was chunked, embedded and returned twice. Attaching is now serialised in the process,
   as the corpus name and the proposal decisions are. A catalogue that already holds two upload
   sources for one corpus is not repaired, and a second process writing the same catalogue is not
