@@ -1957,7 +1957,9 @@ mount that blinked would leave files failed until they were touched. The extract
 throwing `UnreadableDocumentException` only where a parser rejected the bytes it was given.
 
 **Cost.** One nullable column, added by a migration that touches no data, so the first pass
-after upgrading reads every file once and writes the keys. The walk still opens a file that is
+over each chunk set after upgrading reads every workspace file once and writes the keys; a corpus
+with several chunk sets reads its files once per set. Uploaded documents and git-history sources
+keep their own fingerprint checks. The walk still opens a file that is
 not a document, to look for a NUL byte in its first 8 KB, before the key is compared; a document
 is not opened. Moving that check behind the key would take the key into the walk, which the
 sweeper, the coverage report and the indexer all share. A file whose bytes change without a

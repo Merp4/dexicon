@@ -23,8 +23,10 @@ with no section here fails its release rather than publishing an undescribed one
 - Two migrations, applied at startup, both additive. `FilesSettleBySizeAndModifiedTime` adds a
   nullable column to `file_chunk_states`. `AddProposals` creates the `proposals` table. Neither
   changes an existing row.
-- The first pass after upgrading reads every file once and writes the settle keys (below).
-  Nothing is re-chunked or re-embedded for that.
+- The first pass over each chunk set after upgrading reads every workspace file once and writes
+  the settle keys (below), so a corpus with several chunk sets reads its files once per set.
+  Uploaded documents and git-history sources are unchanged. Nothing is re-chunked or re-embedded
+  for that.
 - A PDF whose cached text was cut short is extracted again and re-indexed on the next pass that
   reads it. Nothing needs triggering by hand. On the library this was measured on, 164 files
   were affected, which is about 60,000 more chunks to embed.
