@@ -278,8 +278,12 @@ public sealed class SourceFilterUpdateTests
             """{"ref":"origin/main","includeMessage":true,"includeStat":true,"includeDiff":false,"maxDiffBytes":65536,"includeMerges":false}""";
         var source = new Source
         {
-            Id = "s", CorpusId = "c", Kind = SourceKind.GitHistory, RootPath = "",
-            CreatedUtc = DateTime.UtcNow, GitOptions = storedBeforeKeepIndexed,
+            Id = "s",
+            CorpusId = "c",
+            Kind = SourceKind.GitHistory,
+            RootPath = "",
+            CreatedUtc = DateTime.UtcNow,
+            GitOptions = storedBeforeKeepIndexed,
         };
 
         CorpusEndpoints.ApplyHistorySettings(source, new GitHistoryOptions { Ref = "origin/main" })
