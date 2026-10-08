@@ -12,8 +12,10 @@ case: point Dexicon at a repository and it indexes the tree.
 Discovery walks the tree and applies, **in order**:
 
 1. **Always-exclude** — binaries, media, archives, build output, VCS internals, lock files.
-   Hard-coded, not configurable, because nothing good comes of embedding a `.dll`
-   (`WorkspaceWalker.AlwaysExclude`):
+   Built in, with no setting to change them, because nothing good comes of embedding a
+   `.dll` (`WorkspaceWalker.AlwaysExclude`). They are the first patterns applied, so a later
+   negation wins: a root `.gitignore` containing `!.vscode/launch.json` brings that one file
+   back from the excluded `.vscode` directory (`DirectoryPruningTests`):
    - Directories: `.git`, `.hg`, `.svn`, `node_modules`, `bin`, `obj`, `.vs`, `.idea`,
      `.vscode`, `target`, `dist`, `build`, `__pycache__`, `.venv`, `venv`.
    - Extensions: `exe dll pdb so dylib o obj a lib zip tar gz 7z rar jar nupkg woff woff2
