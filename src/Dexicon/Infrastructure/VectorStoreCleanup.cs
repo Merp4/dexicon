@@ -16,8 +16,12 @@ public sealed class VectorStoreCleanup(CatalogDbContext db, IVectorStore vectors
     public async Task<bool> RemoveAttachmentAsync(Corpus corpus, string fileId, DocumentService documents,
         CancellationToken ct)
     {
+        // Uploaded documents only. A file read from a folder or a commit is the source's, and goes
+        // when the source does; detaching it here would take its vectors and its row from under a
+        // source that still lists it.
         var file = await db.Files.Include(f => f.Source)
-            .FirstOrDefaultAsync(f => f.Id == fileId && f.Source!.CorpusId == corpus.Id, ct);
+            .FirstOrDefaultAsync(f => f.Id == fileId && f.Source!.CorpusId == corpus.Id
+                                      && f.Source.Kind == SourceKind.Upload, ct);
 
         if (file is null) return false;
 

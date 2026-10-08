@@ -2048,8 +2048,8 @@ detach should leave `ingest` for a scope of its own was left to a separate decis
 attach and reindex. The two are independent: a key can add documents without being able to remove them,
 and the other way round. Migration `GrantDestroyToIngestKeys` appends `destroy` once to every key that
 holds `ingest` when it runs, so no existing key stops being able to detach. A key issued afterwards is
-given what is ticked, nothing is ticked by default, and the key adopted from `DEXICON__BOOTSTRAP__TOKEN`
-on a fresh install holds `search` and `ingest` only. With D-36 and D-39 the scopes on a key are the whole
+given what is ticked, `destroy` is never ticked for a new key, and the key adopted from
+`DEXICON__BOOTSTRAP__TOKEN` on a fresh install holds `search` and `ingest` only. With D-36 and D-39 the scopes on a key are the whole
 configuration, from reading only to trusted automation: `search`; `ingest` and `configure` to add and
 set up; `propose` to ask for a removal and wait; `destroy` to detach a document without waiting. `admin`
 stays the password's alone, and the setup before D-39, with no proposals, is one combination of these.
@@ -2069,9 +2069,13 @@ something granted on purpose. Sources, chunk sets and corpora stay out of every 
   survives a restart.
 - `Down` restores nothing. Afterwards there is no telling a key given `destroy` here from one given it on
   the Access page.
-- The check is in the endpoint. No MCP tool detaches a document, so there is nothing to hide from a
-  `tools/list`. The Access page lists the scope, never ticks it for a new key, and warns that nothing
-  asks first.
+- The check is in the endpoint, which is a method of its own so a test calls the handler that is mapped.
+  No MCP tool detaches a document, so there is nothing to hide from a `tools/list`. The Access page lists
+  the scope, never ticks it for a new key, and warns that nothing asks first.
+- Only an uploaded document is detached. The endpoint takes a file id, and a key that can search is
+  listed the ids of every file in a corpus, including those a source read from a folder or a commit.
+  Those answer 404 and keep their row and vectors; they go when their source does. The same filter sits
+  in `VectorStoreCleanup` and `DocumentService.DetachAsync`, so the approved removal of a document uses it too.
 
 **Rejected.** A scope that also removes sources, chunk sets and corpora, which reverses D-28's choice
 that these are for a person; an agent asks with `propose`. Leaving detach under `ingest`, so adding a
