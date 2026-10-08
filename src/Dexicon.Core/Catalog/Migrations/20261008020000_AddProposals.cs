@@ -28,7 +28,7 @@ namespace Dexicon.Core.Catalog.Migrations
                     CorpusName = table.Column<string>(type: "TEXT", maxLength: 200, nullable: false),
                     Kind = table.Column<string>(type: "TEXT", maxLength: 20, nullable: false),
                     TargetId = table.Column<string>(type: "TEXT", maxLength: 40, nullable: false),
-                    TargetLabel = table.Column<string>(type: "TEXT", maxLength: 500, nullable: false),
+                    TargetLabel = table.Column<string>(type: "TEXT", maxLength: 1100, nullable: false),
                     Reason = table.Column<string>(type: "TEXT", maxLength: 300, nullable: false),
                     Status = table.Column<string>(type: "TEXT", maxLength: 20, nullable: false),
                     DecidedUtc = table.Column<DateTime>(type: "TEXT", nullable: true),

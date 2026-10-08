@@ -655,7 +655,7 @@ public sealed class Proposal
     /// <summary>The id of the source, chunk set, file or corpus.</summary>
     public required string TargetId { get; set; }
 
-    /// <summary>What the target was called when it was proposed: a folder, a set name, a path.</summary>
+    /// <summary>What the target was called when it was proposed: a folder, a set name, a path. Kept whole.</summary>
     public required string TargetLabel { get; set; }
 
     /// <summary>The agent's own words, one line. Shown as text, and never used to describe the change.</summary>

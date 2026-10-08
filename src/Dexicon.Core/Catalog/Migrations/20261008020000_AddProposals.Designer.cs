@@ -593,7 +593,7 @@ namespace Dexicon.Core.Catalog.Migrations
 
                     b.Property<string>("TargetLabel")
                         .IsRequired()
-                        .HasMaxLength(500)
+                        .HasMaxLength(1100)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("TokenId")

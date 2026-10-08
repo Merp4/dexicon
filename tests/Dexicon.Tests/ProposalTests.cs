@@ -233,6 +233,28 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ALongSourceFolderIsKeptWholeInTheRecordOfTheRequest()
+    {
+        // A folder is modelled up to 1,000 characters and its label has files: in front.
+        var folder = string.Join('/', Enumerable.Repeat("segment", 120));
+        var label = "files:" + folder;
+        label.Length.ShouldBeGreaterThan(500, "the premise: longer than the column used to allow");
+        await using var db = _harness.NewContext();
+        db.Sources.Add(new Source
+        {
+            Id = "source-long", CorpusId = IndexingHarness.CorpusId, Kind = SourceKind.Workspace,
+            RootPath = folder, CreatedUtc = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+
+        var proposal = await AskAsync(db, ProposalKind.Source, label);
+
+        proposal.TargetId.ShouldBe("source-long");
+        (await StoredAsync(proposal.Id)).TargetLabel.ShouldBe(label);
+        (await _harness.NewProposals(db).ListAsync(decided: false, 50, default)).Single().Target.ShouldBe(label);
+    }
+
+    [Fact]
     public async Task AReasonIsRequiredShortAndOneLine()
     {
         await using var db = _harness.NewContext();

@@ -133,7 +133,7 @@ public sealed class ProposalService(
                 CorpusName = Trim(corpus.Name, 200),
                 Kind = kind,
                 TargetId = targetId,
-                TargetLabel = Trim(label, 500),
+                TargetLabel = label,
                 Reason = why,
                 Status = ProposalStatus.Pending,
             };

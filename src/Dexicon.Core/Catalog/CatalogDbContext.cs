@@ -261,7 +261,9 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             e.Property(x => x.CorpusName).HasMaxLength(200).IsRequired();
             e.Property(x => x.Kind).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.TargetId).HasMaxLength(40).IsRequired();
-            e.Property(x => x.TargetLabel).HasMaxLength(500).IsRequired();
+            // A source's folder and a document's path are modelled up to 1,000 characters, and a source's
+            // label adds files: or history: in front, so this holds any valid one whole.
+            e.Property(x => x.TargetLabel).HasMaxLength(1100).IsRequired();
             e.Property(x => x.Reason).HasMaxLength(300).IsRequired();
             // The token that makes a decision a decision: the update says "where status is still
             // what I read", so the second of two approvals matches no row and is refused.
