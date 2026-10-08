@@ -175,6 +175,18 @@ public sealed class RequestTokenAfterCommitTests
                 + "await outer(); await Task.Delay(1, ct);")
         },
         {
+            "a local function that captures it, called with an argument that writes",
+            Run("Task Follow(int saved) => Task.Delay(1, ct); await Follow(await db.SaveChangesAsync());")
+        },
+        {
+            "a lambda that captures it, held in a local and called with an argument that writes",
+            Run("Func<int, Task> follow = saved => Task.Delay(1, ct); await follow(await db.SaveChangesAsync());")
+        },
+        {
+            "a lambda that captures it, called where it is made with an argument that writes",
+            Run("await ((Func<int, Task>)(saved => Task.Delay(1, ct)))(await db.SaveChangesAsync());")
+        },
+        {
             "the request's own token on the HttpContext",
             "public async Task Run(Db db, HttpContext http) { await db.SaveChangesAsync(); await Task.Delay(1, http.RequestAborted); }"
         },
@@ -232,6 +244,14 @@ public sealed class RequestTokenAfterCommitTests
         {
             "a lambda that does not write, called before a use of the token",
             Run("Func<Task> idle = () => Task.Delay(1); await idle(); await Task.Delay(1, ct); await db.SaveChangesAsync();")
+        },
+        {
+            "a local function that captures nothing, called with an argument that writes",
+            Run("Task Follow(int saved) => Task.Delay(1); await Follow(await db.SaveChangesAsync()); await Task.Delay(1);")
+        },
+        {
+            "a local function that captures it, called with an argument and the write after it",
+            Run("Task Follow(int saved) => Task.Delay(1, ct); await Follow(1); await db.SaveChangesAsync();")
         },
         {
             "a copy of a lambda that captures nothing",
@@ -833,10 +853,15 @@ internal sealed class CommitScan
                     .FirstOrDefault();
                 if (write is null) continue;
 
-                // The rest of this operation, the rest of the block, and every block the write can reach.
+                // The rest of this operation, the rest of the block, and every block the write can reach. And the
+                // calls that enclose the write: a call's arguments and receiver are evaluated before it, so a
+                // write among them is followed by the call itself, which starts earlier in the source and is not
+                // after the write by position. A local function, a delegate or a lambda called that way runs
+                // after the write, and so does what it captured.
                 var after = operations[i].DescendantsAndSelf().Where(o => o.Syntax.SpanStart > write.Syntax.Span.End)
                     .Concat(operations.Skip(i + 1).SelectMany(o => o.DescendantsAndSelf()))
                     .Concat(Reachable(graph, block).SelectMany(Operations).SelectMany(o => o.DescendantsAndSelf()))
+                    .Concat(EnclosingCalls(write))
                     .ToList();
 
                 var afterWrite = $"{write.TargetMethod.Name} at line {write.Syntax.GetLocation().GetLineSpan().StartLinePosition.Line + 1}";
@@ -867,6 +892,23 @@ internal sealed class CommitScan
 
                 break; // the first write in a block reaches everything after it
             }
+        }
+    }
+
+    /// <summary>
+    /// The calls that enclose the operation, which run after it, and for a call through a delegate the
+    /// delegate it calls, which is where a captured token is named.
+    /// </summary>
+    private static IEnumerable<IOperation> EnclosingCalls(IOperation write)
+    {
+        for (var parent = write.Parent; parent is not null; parent = parent.Parent)
+        {
+            if (parent is not IInvocationOperation call) continue;
+
+            yield return call;
+            if (call.TargetMethod.MethodKind == MethodKind.DelegateInvoke && call.Instance is { } instance)
+                foreach (var part in instance.DescendantsAndSelf())
+                    yield return part;
         }
     }
 
