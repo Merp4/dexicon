@@ -78,6 +78,14 @@ public sealed class ProposalService(
     /// </summary>
     private static readonly SemaphoreSlim Proposing = new(1, 1);
 
+    /// <summary>
+    /// Held from reading a proposal to saving its decision. An approval deletes vectors before it
+    /// saves, and the vector store cannot be rolled back, so a rejection saved in between would leave a
+    /// rejected proposal whose vectors are gone while the catalogue still lists them. One process owns
+    /// the catalogue (D-01), so one lock is enough. The row's concurrency token stays as the check.
+    /// </summary>
+    private static readonly SemaphoreSlim Deciding = new(1, 1);
+
     private DateTime Now => clock.GetUtcNow().UtcDateTime;
 
     // ---- asking -----------------------------------------------------------------------------
@@ -153,6 +161,13 @@ public sealed class ProposalService(
         Corpus corpus, ProposalKind kind, string? target, CancellationToken ct)
     {
         var named = (target ?? string.Empty).Trim();
+
+        // A blank folder is the workspace root, so a source request that leaves target out would name
+        // the root source if there is one. The root is asked for as files: or history:, which is not blank.
+        if (kind != ProposalKind.Corpus && named.Length == 0)
+            return new ConfigRefusal("A target is required",
+                "Name what to remove in target: a source's folder, a chunk set's name or a document's path. "
+                + $"Only a corpus leaves it out. kind was {ProposalKinds.Name(kind)}.", 400);
 
         switch (kind)
         {
@@ -401,6 +416,13 @@ public sealed class ProposalService(
 
     public async Task<ConfigOutcome<ProposalView>> RejectAsync(string id, CancellationToken ct)
     {
+        await Deciding.WaitAsync(ct);
+        try { return await RejectHeldAsync(id, ct); }
+        finally { Deciding.Release(); }
+    }
+
+    private async Task<ConfigOutcome<ProposalView>> RejectHeldAsync(string id, CancellationToken ct)
+    {
         var p = await db.Proposals.FirstOrDefaultAsync(x => x.Id == id, ct);
         if (p is null) return NotFound(id);
         if (p.Status != ProposalStatus.Pending) return AlreadyDecided(p);
@@ -421,6 +443,13 @@ public sealed class ProposalService(
     /// again. A target that is no longer there is not that, and fails the proposal with the reason.
     /// </summary>
     public async Task<ConfigOutcome<ProposalView>> ApproveAsync(string id, CancellationToken ct)
+    {
+        await Deciding.WaitAsync(ct);
+        try { return await ApproveHeldAsync(id, ct); }
+        finally { Deciding.Release(); }
+    }
+
+    private async Task<ConfigOutcome<ProposalView>> ApproveHeldAsync(string id, CancellationToken ct)
     {
         var p = await db.Proposals.FirstOrDefaultAsync(x => x.Id == id, ct);
         if (p is null) return NotFound(id);

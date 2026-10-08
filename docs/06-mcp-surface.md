@@ -318,6 +318,10 @@ or `corpus`, and `corpus` is the corpus it is in.
 | `document` | The path of an uploaded document attached to the corpus, or its file id. |
 | `corpus` | Left out. The name is accepted if it is the corpus's own. |
 
+Every kind but a corpus needs a `target`: a request that leaves it out is refused, since a blank
+folder would otherwise name a source on the workspace root. That source is asked for as `files:`
+or `history:`.
+
 `reason` is required: one line, at most 300 characters, shown to the person beside what would
 go. The target is held by id from then on. A target that matches nothing is refused with what
 there is to match, and a key may have ten requests waiting. Asking again for something already

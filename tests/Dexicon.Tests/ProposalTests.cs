@@ -65,7 +65,7 @@ public sealed class ProposalTests : IAsyncLifetime
     // ---- asking -------------------------------------------------------------------------------
 
     [Fact]
-    public async Task A_key_asks_for_a_source_by_its_folder_and_the_request_is_recorded_by_id()
+    public async Task AKeyAsksForASourceByItsFolderAndTheRequestIsRecordedById()
     {
         await using var db = _harness.NewContext();
 
@@ -88,7 +88,7 @@ public sealed class ProposalTests : IAsyncLifetime
     [InlineData("./docs/", "source-2")]
     [InlineData("x/../docs", "source-2")]
     [InlineData("source-2", "source-2")]
-    public async Task A_source_is_found_by_prefix_by_id_or_by_a_path_that_collapses_to_its_folder(string asked, string expected)
+    public async Task ASourceIsFoundByPrefixByIdOrByAPathThatCollapsesToItsFolder(string asked, string expected)
     {
         await using var db = _harness.NewContext();
 
@@ -99,7 +99,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Two_sources_on_one_folder_must_be_told_apart()
+    public async Task TwoSourcesOnOneFolderMustBeToldApart()
     {
         await using var db = _harness.NewContext();
         db.Sources.Add(new Source
@@ -120,7 +120,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_source_that_is_not_there_is_named_back_with_the_ones_that_are()
+    public async Task ASourceThatIsNotThereIsNamedBackWithTheOnesThatAre()
     {
         await using var db = _harness.NewContext();
 
@@ -134,7 +134,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_chunk_set_is_asked_for_by_name_ignoring_case_or_by_id()
+    public async Task AChunkSetIsAskedForByNameIgnoringCaseOrById()
     {
         await using var db = _harness.NewContext();
 
@@ -147,7 +147,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task The_default_set_and_an_unknown_one_are_refused_when_asked()
+    public async Task TheDefaultSetAndAnUnknownOneAreRefusedWhenAsked()
     {
         await using var db = _harness.NewContext();
 
@@ -162,7 +162,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task The_only_chunk_set_is_refused_and_the_corpus_is_named_as_the_way_out()
+    public async Task TheOnlyChunkSetIsRefusedAndTheCorpusIsNamedAsTheWayOut()
     {
         await using var single = await IndexingHarness.StartAsync("notes");
         await single.SeedCorpusAsync(SourceKind.Workspace, sets: 1);
@@ -177,7 +177,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_corpus_is_asked_for_without_a_target_and_a_wrong_one_is_refused()
+    public async Task ACorpusIsAskedForWithoutATargetAndAWrongOneIsRefused()
     {
         await using var db = _harness.NewContext();
 
@@ -193,8 +193,47 @@ public sealed class ProposalTests : IAsyncLifetime
         (await TryAskAsync(db, ProposalKind.Corpus, "NOTES")).Value!.AlreadyPending.ShouldBeTrue();
     }
 
+    private static async Task AddRootSourceAsync(CatalogDbContext db)
+    {
+        db.Sources.Add(new Source
+        {
+            Id = "source-root", CorpusId = IndexingHarness.CorpusId, Kind = SourceKind.Workspace,
+            RootPath = "", CreatedUtc = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+    }
+
+    [Theory]
+    [InlineData(ProposalKind.Source, null)]
+    [InlineData(ProposalKind.Source, "   ")]
+    [InlineData(ProposalKind.ChunkSet, null)]
+    [InlineData(ProposalKind.Document, "")]
+    public async Task ATargetLeftOutIsRefusedForEveryKindExceptACorpus(ProposalKind kind, string? target)
+    {
+        // A blank folder is the workspace root, which this corpus has a source on.
+        await using var db = _harness.NewContext();
+        await AddRootSourceAsync(db);
+
+        var refused = (await TryAskAsync(db, kind, target)).Refusal.ShouldNotBeNull();
+
+        refused.Status.ShouldBe(400);
+        refused.Detail.ShouldContain("Only a corpus leaves it out");
+        (await db.Proposals.AnyAsync()).ShouldBeFalse("nothing is recorded for a request that names nothing");
+    }
+
     [Fact]
-    public async Task A_reason_is_required_short_and_one_line()
+    public async Task TheWorkspaceRootIsAskedForByNamingItAsFiles()
+    {
+        await using var db = _harness.NewContext();
+        await AddRootSourceAsync(db);
+
+        var proposal = await AskAsync(db, ProposalKind.Source, "files:");
+
+        proposal.TargetId.ShouldBe("source-root");
+    }
+
+    [Fact]
+    public async Task AReasonIsRequiredShortAndOneLine()
     {
         await using var db = _harness.NewContext();
 
@@ -209,7 +248,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Asking_twice_returns_the_one_waiting_and_records_nothing_new()
+    public async Task AskingTwiceReturnsTheOneWaitingAndRecordsNothingNew()
     {
         await using var db = _harness.NewContext();
         var first = await TryAskAsync(db, ProposalKind.Source, "docs", "first reason");
@@ -224,7 +263,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_key_may_have_ten_waiting_and_another_key_is_not_held_to_its_count()
+    public async Task AKeyMayHaveTenWaitingAndAnotherKeyIsNotHeldToItsCount()
     {
         await using var db = _harness.NewContext();
         for (var i = 0; i < 11; i++)
@@ -251,7 +290,7 @@ public sealed class ProposalTests : IAsyncLifetime
     // ---- deciding -----------------------------------------------------------------------------
 
     [Fact]
-    public async Task Approving_a_source_removes_it_from_every_set_and_records_the_approval()
+    public async Task ApprovingASourceRemovesItFromEverySetAndRecordsTheApproval()
     {
         await IndexAsync();
         _harness.Vectors.CountFor("a.md", "set-1").ShouldBeGreaterThan(0, "the premise");
@@ -276,7 +315,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Approving_a_chunk_set_removes_its_vectors_and_its_row_and_leaves_the_default()
+    public async Task ApprovingAChunkSetRemovesItsVectorsAndItsRowAndLeavesTheDefault()
     {
         await IndexAsync();
         await using var db = _harness.NewContext();
@@ -293,7 +332,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Approving_a_corpus_removes_everything_under_it_and_the_record_of_it_stays()
+    public async Task ApprovingACorpusRemovesEverythingUnderItAndTheRecordOfItStays()
     {
         await IndexAsync();
         await using var db = _harness.NewContext();
@@ -312,7 +351,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_removal_that_fails_leaves_the_proposal_waiting_and_the_target_in_place()
+    public async Task ARemovalThatFailsLeavesTheProposalWaitingAndTheTargetInPlace()
     {
         await IndexAsync();
         await using var db = _harness.NewContext();
@@ -335,7 +374,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_chunk_set_a_job_is_working_on_stays_waiting_until_the_job_has_finished()
+    public async Task AChunkSetAJobIsWorkingOnStaysWaitingUntilTheJobHasFinished()
     {
         await using var db = _harness.NewContext();
         var proposal = await AskAsync(db, ProposalKind.ChunkSet, "alt-1");
@@ -363,7 +402,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_target_that_is_already_gone_fails_the_proposal_with_the_reason()
+    public async Task ATargetThatIsAlreadyGoneFailsTheProposalWithTheReason()
     {
         await using var db = _harness.NewContext();
         var proposal = await AskAsync(db, ProposalKind.Source, "docs");
@@ -382,7 +421,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_corpus_that_is_gone_fails_the_proposal_for_what_was_in_it()
+    public async Task ACorpusThatIsGoneFailsTheProposalForWhatWasInIt()
     {
         await using var db = _harness.NewContext();
         var proposal = await AskAsync(db, ProposalKind.Source, "docs");
@@ -396,7 +435,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Rejecting_leaves_the_target_and_a_decision_cannot_be_made_twice()
+    public async Task RejectingLeavesTheTargetAndADecisionCannotBeMadeTwice()
     {
         await IndexAsync();
         await using var db = _harness.NewContext();
@@ -414,7 +453,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Two_decisions_made_from_the_same_read_cannot_both_stand()
+    public async Task TwoDecisionsMadeFromTheSameReadCannotBothStand()
     {
         await using var a = _harness.NewContext();
         await using var b = _harness.NewContext();
@@ -431,7 +470,37 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_document_is_detached_on_approval_and_its_blob_stays()
+    public async Task ARejectionMadeWhileAnApprovalIsDeletingVectorsWaitsForItAndFindsItDecided()
+    {
+        await IndexAsync();
+        await using var db = _harness.NewContext();
+        var proposal = await AskAsync(db, ProposalKind.ChunkSet, "alt-1");
+        _harness.Vectors.CountFor("a.md", chunkSetId: "set-2").ShouldBeGreaterThan(0, "the premise");
+
+        // The approval is held where the vectors are being deleted, which cannot be put back.
+        var deleting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _harness.Vectors.OnDeleteAsync = async () => { deleting.TrySetResult(); await release.Task; };
+        await using var approver = _harness.NewContext();
+        var approval = _harness.NewProposals(approver).ApproveAsync(proposal.Id, default);
+        await deleting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        await using var rejector = _harness.NewContext();
+        var rejection = _harness.NewProposals(rejector).RejectAsync(proposal.Id, default);
+        await Task.Delay(300);
+        rejection.IsCompleted.ShouldBeFalse("a rejection saved now would leave vectors gone for a proposal that reads rejected");
+
+        release.SetResult();
+        (await approval).Refusal.ShouldBeNull();
+        (await rejection).Refusal.ShouldNotBeNull().Status.ShouldBe(409);
+        (await StoredAsync(proposal.Id)).Status.ShouldBe(ProposalStatus.Approved);
+        _harness.Vectors.CountFor("a.md", chunkSetId: "set-2").ShouldBe(0);
+        await using var fresh = _harness.NewContext();
+        (await fresh.ChunkSets.AnyAsync(s => s.Id == "set-2")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ADocumentIsDetachedOnApprovalAndItsBlobStays()
     {
         await using var uploads = await IndexingHarness.StartAsync();
         await uploads.SeedCorpusAsync(SourceKind.Upload);
@@ -461,7 +530,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_document_that_is_not_attached_is_named_back_with_the_ones_that_are()
+    public async Task ADocumentThatIsNotAttachedIsNamedBackWithTheOnesThatAre()
     {
         await using var uploads = await IndexingHarness.StartAsync();
         await uploads.SeedCorpusAsync(SourceKind.Upload);
@@ -482,7 +551,7 @@ public sealed class ProposalTests : IAsyncLifetime
     // ---- reading ------------------------------------------------------------------------------
 
     [Fact]
-    public async Task Waiting_proposals_are_listed_oldest_first_with_what_each_would_take()
+    public async Task WaitingProposalsAreListedOldestFirstWithWhatEachWouldTake()
     {
         await IndexAsync();
         await using var db = _harness.NewContext();
@@ -507,7 +576,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_proposal_whose_target_has_gone_is_listed_as_gone_and_a_blocked_one_says_why()
+    public async Task AProposalWhoseTargetHasGoneIsListedAsGoneAndABlockedOneSaysWhy()
     {
         await using var db = _harness.NewContext();
         var gone = await AskAsync(db, ProposalKind.Source, "docs");
@@ -527,7 +596,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_page_of_requests_gets_each_ones_own_figures()
+    public async Task APageOfRequestsGetsTheFiguresForEachRequest()
     {
         // The first source holds more than the second, so figures read for the wrong one would differ.
         await _harness.WriteFileAsync("a.md", Long("alpha"), source: 0);
@@ -555,7 +624,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_document_request_is_listed_with_the_chunks_of_that_document()
+    public async Task ADocumentRequestIsListedWithTheChunksOfThatDocument()
     {
         await using var uploads = await IndexingHarness.StartAsync();
         await uploads.SeedCorpusAsync(SourceKind.Upload);
@@ -590,7 +659,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_second_corpus_is_counted_by_itself_and_a_target_in_another_corpus_is_gone()
+    public async Task ASecondCorpusIsCountedByItselfAndATargetInAnotherCorpusIsGone()
     {
         await IndexAsync();
         await using var db = _harness.NewContext();
@@ -620,7 +689,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_chunk_set_that_has_become_the_only_one_or_has_a_job_on_it_says_so_in_the_listing()
+    public async Task AChunkSetThatHasBecomeTheOnlyOneOrHasAJobOnItSaysSoInTheListing()
     {
         await using var db = _harness.NewContext();
         var set = await AskAsync(db, ProposalKind.ChunkSet, "alt-1");
@@ -647,7 +716,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Decided_proposals_are_listed_newest_first_without_facts_and_the_count_is_what_is_waiting()
+    public async Task DecidedProposalsAreListedNewestFirstWithoutFactsAndTheCountIsWhatIsWaiting()
     {
         await using var db = _harness.NewContext();
         var a = await AskAsync(db, ProposalKind.Source, "docs");

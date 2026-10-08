@@ -53,7 +53,7 @@ public sealed class ProposeToolsTests : IAsyncLifetime
     };
 
     [Fact]
-    public async Task A_key_without_propose_is_refused_by_the_tools_whatever_else_it_holds()
+    public async Task AKeyWithoutProposeIsRefusedByTheToolsWhateverElseItHolds()
     {
         await using var db = _harness.NewContext();
 
@@ -69,7 +69,7 @@ public sealed class ProposeToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public void Only_a_key_holding_the_scope_is_shown_the_tool_under_the_name_it_is_registered_by()
+    public void TheProposeToolsAreShownOnlyToAKeyHoldingProposeUnderTheNamesTheyAreRegisteredBy()
     {
         foreach (var name in ProposeTools.Names)
             ToolVisibility.HiddenFrom(As("k", Scopes.Search, Scopes.Configure).Principal!).ShouldContain(name);
@@ -90,7 +90,7 @@ public sealed class ProposeToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_request_is_recorded_and_the_agent_is_told_that_nothing_has_been_removed()
+    public async Task ARequestIsRecordedAndTheAgentIsToldThatNothingHasBeenRemoved()
     {
         await using var db = _harness.NewContext();
 
@@ -108,7 +108,7 @@ public sealed class ProposeToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task The_same_request_again_is_reported_as_already_waiting_and_by_whom()
+    public async Task TheSameRequestAgainIsReportedAsAlreadyWaitingAndByWhom()
     {
         await using var db = _harness.NewContext();
         await ProposeAsync(db, Proposer("k1"), "chunk_set", target: "alt-1");
@@ -125,7 +125,7 @@ public sealed class ProposeToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_kind_that_is_not_one_is_refused_with_the_choices_and_a_refusal_arrives_in_the_services_words()
+    public async Task AKindThatIsNotOneIsRefusedWithTheChoicesAndARefusalCarriesTheDetailFromTheService()
     {
         await using var db = _harness.NewContext();
 
@@ -141,7 +141,7 @@ public sealed class ProposeToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_key_mapped_to_other_corpora_cannot_ask_about_one_it_does_not_reach()
+    public async Task AKeyMappedToOtherCorporaCannotAskAboutOneItDoesNotReach()
     {
         await using var db = _harness.NewContext();
         db.Corpora.Add(new Corpus { Id = "corpus-2", Name = "papers", State = CorpusState.Ready, CreatedUtc = DateTime.UtcNow });
@@ -158,7 +158,7 @@ public sealed class ProposeToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Index_status_shows_a_key_its_own_requests_and_how_each_was_decided_and_no_one_elses()
+    public async Task IndexStatusShowsAKeyOnlyItsOwnRequestsAndHowEachWasDecided()
     {
         await using var db = _harness.NewContext();
         await ProposeAsync(db, Proposer("k1"), "source", target: "docs");
@@ -187,7 +187,7 @@ public sealed class ProposeToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_key_holding_only_propose_reads_its_requests_without_search_or_naming_a_corpus()
+    public async Task AKeyHoldingOnlyProposeReadsItsRequestsWithoutSearchOrNamingACorpus()
     {
         await using var db = _harness.NewContext();
         var asker = As("k1", Scopes.Propose);
@@ -204,7 +204,7 @@ public sealed class ProposeToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_request_to_remove_a_corpus_is_still_answered_after_the_corpus_has_gone()
+    public async Task ARequestToRemoveACorpusIsStillAnsweredAfterTheCorpusHasGone()
     {
         await using var db = _harness.NewContext();
         await ProposeAsync(db, Proposer(), "corpus", reason: "a duplicate of docs");
@@ -220,7 +220,7 @@ public sealed class ProposeToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Removal_status_puts_the_waiting_ones_first_and_says_when_older_ones_are_left_out()
+    public async Task RemovalStatusPutsTheWaitingOnesFirstAndSaysWhenOlderOnesAreLeftOut()
     {
         await using var db = _harness.NewContext();
         var start = new DateTime(2026, 10, 1, 9, 0, 0, DateTimeKind.Utc);
@@ -243,7 +243,7 @@ public sealed class ProposeToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_request_that_could_not_be_done_says_why_in_index_status()
+    public async Task ARequestThatCouldNotBeDoneSaysWhyInIndexStatus()
     {
         await using var db = _harness.NewContext();
         await ProposeAsync(db, Proposer(), "source", target: "docs");
@@ -260,7 +260,7 @@ public sealed class ProposeToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Propose_can_be_issued_alone_and_a_key_adopted_from_the_environment_never_holds_it()
+    public async Task ProposeCanBeIssuedAloneAndAKeyAdoptedFromTheEnvironmentNeverHoldsIt()
     {
         await using var db = _harness.NewContext();
         var tokens = new TokenService(db, TimeProvider.System);

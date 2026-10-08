@@ -19,7 +19,7 @@ public static class Scopes
 
     /// <summary>
     /// Ask for a removal: a source, a chunk set, a document or a corpus. Nothing is removed until
-    /// a person approves it in the UI, so this is weaker than any scope that can change the index.
+    /// the administrator approves it, so this is weaker than any scope that can change the index.
     /// Independent of <see cref="Configure"/>: a key can hold either, both or neither. See
     /// docs/decisions.md D-39.
     /// </summary>

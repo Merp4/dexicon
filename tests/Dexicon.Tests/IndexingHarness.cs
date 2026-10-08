@@ -451,6 +451,13 @@ internal sealed class IndexingHarness : IAsyncDisposable
         /// <summary>Make every delete fail as an unreachable vector store does, not as a cancel.</summary>
         public bool DeletesThrow { get; set; }
 
+        /// <summary>
+        /// Runs as any delete reaches the store, before it takes effect. A test holds a delete open
+        /// here and acts while the caller is part way through, which is the window a removal has
+        /// between the vectors going and the catalogue being saved.
+        /// </summary>
+        public Func<Task>? OnDeleteAsync { get; set; }
+
         public Task<IReadOnlyDictionary<string, int>?> CountByFileAsync(string collection,
             string chunkSetId, string sourceId, CancellationToken ct = default)
         {
@@ -471,9 +478,11 @@ internal sealed class IndexingHarness : IAsyncDisposable
             return Task.CompletedTask;
         }
 
-        public Task DeleteFileChunksAsync(string collection, string chunkSetId, string sourceId,
+        public async Task DeleteFileChunksAsync(string collection, string chunkSetId, string sourceId,
             string filePath, CancellationToken ct = default)
         {
+            if (OnDeleteAsync is not null) await OnDeleteAsync();
+
             if (AbandonNextDelete)
             {
                 AbandonNextDelete = false;
@@ -487,7 +496,6 @@ internal sealed class IndexingHarness : IAsyncDisposable
             _points.RemoveAll(p => p.ChunkSetId == chunkSetId
                                 && p.SourceId == sourceId
                                 && p.FilePath == filePath);
-            return Task.CompletedTask;
         }
 
         /// <summary>
@@ -513,21 +521,21 @@ internal sealed class IndexingHarness : IAsyncDisposable
         public string CollectionNameFor(EmbeddingTarget target, int dimensions) => Collection;
 
         /// <summary>Every point of one chunk set, as the collection-wide delete by set id does.</summary>
-        public Task DeleteChunkSetAsync(string c, string s, CancellationToken ct = default)
+        public async Task DeleteChunkSetAsync(string c, string s, CancellationToken ct = default)
         {
+            if (OnDeleteAsync is not null) await OnDeleteAsync();
             if (DeletesThrow) throw new InvalidOperationException("the vector store is unreachable");
 
             _points.RemoveAll(p => p.ChunkSetId == s);
-            return Task.CompletedTask;
         }
 
         /// <summary>Every point of one corpus, in every set.</summary>
-        public Task DeleteCorpusAsync(string c, string id, CancellationToken ct = default)
+        public async Task DeleteCorpusAsync(string c, string id, CancellationToken ct = default)
         {
+            if (OnDeleteAsync is not null) await OnDeleteAsync();
             if (DeletesThrow) throw new InvalidOperationException("the vector store is unreachable");
 
             _points.RemoveAll(p => p.CorpusId == id);
-            return Task.CompletedTask;
         }
 
         // Not reached by an indexing run. Throwing rather than returning a default, so a

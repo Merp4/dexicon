@@ -1996,6 +1996,10 @@ removal refused), so what they read is not the agent's description.
   the removal, whose save writes both, so the target is gone and the proposal approved together or
   neither. A crash before that save leaves it pending, and approving again retries.
 - `Status` is a concurrency token, so two decisions made from the same read cannot both stand.
+  Decisions are also taken one at a time. An approval deletes vectors before it saves and Qdrant
+  cannot be rolled back, so a rejection saved in between would leave a rejected proposal whose
+  vectors are gone and whose files the catalogue still lists. The token alone cannot prevent that,
+  only report it afterwards.
 - The target is held by id. A source or corpus recreated under the same name is never the thing
   removed.
 - A target already gone fails the proposal with that reason. A removal that is refused for a reason
