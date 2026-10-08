@@ -144,7 +144,11 @@ which makes the 8,000-character default roughly 2,000 tokens.
 
 **What the response admits to.** `truncated` and `droppedHits` say that hits were left
 out. `partialBlocks` counts blocks cut to fit the budget: at most one, and always the last.
-The last block is cut when at least 300 characters of it fit after its header. Its citation
+The last block is cut when at least 300 characters of room remain after its header and the
+line that discloses the cut (about 64 characters) and at least one whole line fits in that
+room; a chunk whose first line is longer than the room is dropped instead and counted in
+`droppedHits`, and when nothing at all fitted, `note` names the smallest budget that would
+have. A cut block's citation
 has `partial: true`, `omittedChars` and the lines actually present, the passage says
 `… N characters of this chunk not shown …`, and `note` reads `The last block is cut to fit
 4,000 characters. Its citation reports the lines actually present. Raise maxChars for the
@@ -197,8 +201,11 @@ with it. The reasoning is in [D-29](decisions.md#d-29-an-integration-document-an
 
 ## Errors
 
-Failures come back as `application/problem+json` with `title`, `status` and `detail`, except
-where noted.
+Failures come back as problem details: `application/problem+json` with `type`, `title`,
+`status`, a `traceId` and, where there is something to say, `detail`. The two 401 answers
+are the exception. The authentication middleware writes them as `application/json` with
+`type`, `title`, `status` and `detail` and no `traceId`, so a client that decodes errors by
+media type should accept both.
 
 | Status | `title` | `detail` |
 |---|---|---|
@@ -207,7 +214,7 @@ where noted.
 | 401 | `Missing credentials` | `Provide a key: Authorization: Bearer dex_…, or sign in at / for the UI.` |
 | 401 | `Invalid credentials` | `The credential was not recognised, or it has been revoked or has expired.` |
 | 403 | `Insufficient scope` | `This key has [search] and needs 'ingest'. Whoever runs Dexicon can grant it on the Access page.` |
-| 404 | none | `GET /api/jobs/{id}` for an unknown job, or one in a corpus the key cannot reach. The body is empty. |
+| 404 | `Not Found` | None. `GET /api/jobs/{id}` for an unknown job, or one in a corpus the key cannot reach. The handler returns an empty 404 and the status-code middleware fills the body with problem details (`title`, `status`, `traceId`). |
 | 409 | `Embedding dimension mismatch` | `Collection '<collection>' was indexed with 768-dimension vectors but the configured model produces 1024. Rebuild the corpus with the current model, or restore the original one.` |
 
 The server maps an unhandled embedding failure to 503 `Embedding service unavailable`.

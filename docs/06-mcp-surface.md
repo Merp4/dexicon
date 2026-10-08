@@ -180,7 +180,7 @@ filter, so ranking never decides which of a file's chunks come back.
 citation (`· lines 120-160`). `aroundLine` takes one integer, so an agent passes a line
 from that span, `120` to read the hit and `160` to read on past it, never the span itself.
 
-`filePath` is the path without the `:start-end` range or the `#page=`, `#chapter=` or
+`filePath` is the path without the `:start-end` range (or `:line`, for a hit of one line) or the `#page=`, `#chapter=` or
 `#slide=` anchor that `search_index` prints after it. The lookup matches the stored path
 exactly, so a path with its anchor finds nothing: `No indexed file 'moby-dick.epub#chapter=7'
 in corpus 'books'. Check the path is exactly as search_index returned it.`
