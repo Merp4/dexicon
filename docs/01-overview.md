@@ -16,7 +16,8 @@ done once, in one container.
 A single service that:
 
 1. **Indexes** recursive folder trees (source code, docs) and uploaded files (PDF, DOCX,
-   PPTX, EPUB, HTML, Markdown, text) into Qdrant, embedding via Ollama.
+   PPTX, EPUB, HTML, Markdown, text) into Qdrant, embedding through Ollama by default, or
+   through OpenAI or Azure OpenAI where configured.
 2. **Searches** them with hybrid dense + keyword retrieval, returning chunks with
    `file:line` provenance.
 3. **Serves** that search to agents over MCP (streamable HTTP) and to humans over a small
@@ -52,7 +53,7 @@ A single service that:
 | Reranking models, query rewriting, HyDE | Adds a second model dependency and latency for gains the caller can get by asking better. Revisit only with measurements. |
 | OCR of scanned PDFs | Needs a vision model and a GPU budget. Text-layer PDFs only; say so plainly when a PDF yields nothing. |
 | Graph/AST-level code understanding | Chunk-level retrieval is the target. Symbol extraction is metadata, not a call graph. |
-| Cloud embedding providers | Local-first is the product. An `IEmbeddingProvider` seam exists; no hosted implementation ships. |
+| Hosted embedding as the default | Local-first is the product. OpenAI and Azure OpenAI ship as opt-in providers ([04](04-ingestion.md#embedding-providers)); nothing leaves the machine unless a hosted provider is configured and used. |
 | SSO / OIDC / user accounts | An admin password and API keys are the auth model. See [07](07-auth.md). |
 | Horizontal scaling, HA, sharding | One container, one Qdrant. If you outgrow it, you outgrew Dexicon. |
 
