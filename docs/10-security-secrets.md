@@ -61,11 +61,12 @@ request logs a 32-bit digest of the presented credential (`CallerDigest`), which
 caller from several and cannot confirm a guess. The principal cache and the admin session
 store are keyed on a SHA-256 of the credential, never on the credential.
 
-Exception messages from the Qdrant and Ollama clients do not reach a search caller. In
-Production the MCP SDK replaces any exception other than `McpException` with a generic
-message, and the default exception handler returns a problem response with a trace id to
-REST callers (see "What an error is allowed to say"). Admin endpoints return provider errors
-in full, because an operator debugging a provider needs the endpoint in the message.
+Exception messages from the Qdrant and Ollama clients do not reach a search caller. A search
+whose query embedding fails returns keyword-only results with a fixed reason. In Production
+the MCP SDK replaces any exception other than `McpException` with a generic message, and the
+default exception handler returns a problem response with a trace id to REST callers (see
+"What an error is allowed to say"). Admin endpoints return provider errors in full, because
+an operator debugging a provider needs the endpoint in the message.
 
 ## Guards
 
