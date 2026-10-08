@@ -29,7 +29,7 @@ public sealed class DiskFullTests
     }
 
     [Fact]
-    public async Task A_failure_is_recorded_when_the_disk_recovers_within_the_retries()
+    public async Task AFailureIsRecordedWhenTheDiskRecoversWithinTheRetries()
     {
         var (harness, disk) = await StartAsync();
         await using var _ = harness;
@@ -64,7 +64,7 @@ public sealed class DiskFullTests
     }
 
     [Fact]
-    public async Task A_failure_that_cannot_be_recorded_is_tried_a_bounded_number_of_times_and_says_what_it_left()
+    public async Task AFailureThatCannotBeRecordedIsTriedABoundedNumberOfTimesAndSaysWhatItLeft()
     {
         var (harness, disk) = await StartAsync();
         await using var _ = harness;
@@ -97,7 +97,7 @@ public sealed class DiskFullTests
     }
 
     [Fact]
-    public async Task The_retries_wait_between_attempts_and_the_wait_doubles()
+    public async Task TheRetriesWaitBetweenAttemptsAndTheWaitDoubles()
     {
         // 20 + 40 + 80 + 160 ms across the four retries. A lower bound only: a delay never
         // returns early, and an upper bound would fail on a loaded machine.
@@ -119,7 +119,7 @@ public sealed class DiskFullTests
     }
 
     [Fact]
-    public async Task A_job_that_never_reached_running_is_reported_as_still_queued()
+    public async Task AJobThatNeverReachedRunningIsReportedAsStillQueued()
     {
         // Failing before the Running save leaves the row Queued, which counts as work and
         // holds a later request out, so the log has to say what clears it.
@@ -142,7 +142,7 @@ public sealed class DiskFullTests
     }
 
     [Fact]
-    public async Task A_job_that_cannot_take_the_corpus_is_recorded_as_failed_and_does_not_strand_later_requests()
+    public async Task AJobThatCannotTakeTheCorpusIsRecordedAsFailedAndDoesNotStrandLaterRequests()
     {
         var (harness, disk) = await StartAsync();
         await using var _ = harness;
@@ -183,7 +183,7 @@ public sealed class DiskFullTests
     }
 
     [Fact]
-    public async Task A_job_that_cannot_take_the_corpus_keeps_its_outcome_through_refused_saves()
+    public async Task AJobThatCannotTakeTheCorpusKeepsItsOutcomeThroughRefusedSaves()
     {
         var (harness, disk) = await StartAsync();
         await using var _ = harness;
@@ -213,7 +213,7 @@ public sealed class DiskFullTests
     }
 
     [Fact]
-    public async Task A_job_that_loses_its_lease_records_its_outcome_and_leaves_the_corpus_as_it_was()
+    public async Task AJobThatLosesItsLeaseRecordsItsOutcomeAndLeavesTheCorpusAsItWas()
     {
         // Two sets, so the pass reaches a point where it has decided the corpus is
         // Unavailable (a source is missing) and has not yet saved it. The second set's
@@ -271,7 +271,7 @@ public sealed class DiskFullTests
     }
 
     [Fact]
-    public async Task A_job_left_running_by_a_full_disk_stops_counting_once_its_lease_has_lapsed()
+    public async Task AJobLeftRunningByAFullDiskStopsCountingOnceItsLeaseHasLapsed()
     {
         var (harness, disk) = await StartAsync();
         await using var _ = harness;

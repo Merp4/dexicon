@@ -11,7 +11,7 @@ namespace Dexicon.Tests;
 /// Uncaught, the refusal failed the whole job at that source, and the sources after it
 /// were not indexed.
 /// </summary>
-public sealed class ARefusedSourceDoesNotFailTheJobTests
+public sealed class RefusedSourceTests
 {
     [Fact]
     public async Task AWorkspaceSourceKeepsWhatItHadAndTheOthersStillIndex()
@@ -46,7 +46,7 @@ public sealed class ARefusedSourceDoesNotFailTheJobTests
     }
 
     [Fact]
-    public async Task SoDoesAGitHistorySource()
+    public async Task AGitHistorySourceWhoseRootIsALinkDegradesTheJob()
     {
         await using var harness = await IndexingHarness.StartAsync("repo");
         var real = Path.Combine(harness.DataPath, "workspace", "real");

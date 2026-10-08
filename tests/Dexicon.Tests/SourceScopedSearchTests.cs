@@ -55,7 +55,7 @@ public sealed class SourceScopedSearchTests : IDisposable
     };
 
     [Fact]
-    public async Task One_folder_resolves_to_one_source()
+    public async Task OneFolderResolvesToOneSource()
     {
         var ids = await _scopes.SourceIdsAsync(["books"], "books/manuals/AI");
 
@@ -63,7 +63,7 @@ public sealed class SourceScopedSearchTests : IDisposable
     }
 
     [Fact]
-    public async Task A_parent_folder_resolves_to_everything_beneath_it()
+    public async Task AParentFolderResolvesToEverythingBeneathIt()
     {
         // `manuals` should mean the whole shelf, not nothing. Without this a caller has to
         // know every topic folder to search more than one.
@@ -73,7 +73,7 @@ public sealed class SourceScopedSearchTests : IDisposable
     }
 
     [Fact]
-    public async Task A_prefix_that_is_not_a_folder_boundary_does_not_match()
+    public async Task APrefixThatIsNotAFolderBoundaryDoesNotMatch()
     {
         // "books/manuals/A" must not drag in "books/manuals/AI" and "books/manuals/Architecture" by
         // string prefix. Folder boundaries, not characters.
@@ -82,7 +82,7 @@ public sealed class SourceScopedSearchTests : IDisposable
     }
 
     [Fact]
-    public async Task Leading_and_trailing_slashes_are_forgiven()
+    public async Task LeadingAndTrailingSlashesAreForgiven()
     {
         // list_corpora prints the stored form; a person types whatever looks like a path.
         (await _scopes.SourceIdsAsync(["books"], "/books/manuals/AI/")).ShouldBe(["src-ai"]);
@@ -90,7 +90,7 @@ public sealed class SourceScopedSearchTests : IDisposable
     }
 
     [Fact]
-    public async Task It_can_only_narrow_a_scope_never_widen_one()
+    public async Task ItCanOnlyNarrowAScopeNeverWidenOne()
     {
         // The security property. Corpus ids come from resolution that already authorised
         // them, so naming another corpus's source must not reach it.
@@ -99,7 +99,7 @@ public sealed class SourceScopedSearchTests : IDisposable
     }
 
     [Fact]
-    public async Task An_unknown_folder_says_what_there_is()
+    public async Task AnUnknownFolderSaysWhatThereIs()
     {
         // A silent empty result set is indistinguishable from "nothing matched your query".
         //
@@ -120,7 +120,7 @@ public sealed class SourceScopedSearchTests : IDisposable
     }
 
     [Fact]
-    public async Task A_corpus_of_uploads_alone_says_so_rather_than_listing_nothing()
+    public async Task ACorpusOfUploadsAloneSaysSoRatherThanListingNothing()
     {
         // "Sources: ." would read as a formatting bug. An upload has no path, so there is
         // genuinely nothing to suggest, and saying that is the useful answer.
@@ -135,7 +135,7 @@ public sealed class SourceScopedSearchTests : IDisposable
     }
 
     [Fact]
-    public async Task An_upload_source_never_matches_a_folder()
+    public async Task AnUploadSourceNeverMatchesAFolder()
     {
         // It has no root path. Matching it against one would be matching against null.
         var ids = await _scopes.SourceIdsAsync(["books"], "books/manuals");

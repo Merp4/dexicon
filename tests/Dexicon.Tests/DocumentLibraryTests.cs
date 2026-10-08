@@ -88,7 +88,7 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     private static MemoryStream TextStream(string s) => new MemoryStream(Encoding.UTF8.GetBytes(s));
 
     [Fact]
-    public async Task SameBytesUploadedTwice_AreStoredOnce_AndExtractedOnce()
+    public async Task SameBytesUploadedTwiceAreStoredOnceAndExtractedOnce()
     {
         var content = string.Join("\n\n", Enumerable.Range(1, 40).Select(i => $"Paragraph {i} of the document."));
 
@@ -106,7 +106,7 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task OneDocument_AttachedToTwoCorpora_IsChunkedDifferentlyInEach()
+    public async Task OneDocumentAttachedToTwoCorporaIsChunkedDifferentlyInEach()
     {
         // The headline capability. Extraction happens once; each corpus chunks it its
         // own way, and the two must not be able to see each other's work.
@@ -137,7 +137,7 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ChunkingFingerprint_DiffersPerCorpus_AndChangesWithTheSettings()
+    public async Task ChunkingFingerprintDiffersPerCorpusAndChangesWithTheSettings()
     {
         var coarse = AddCorpus("coarse", 768, 100);
         var fine = AddCorpus("fine", 256, 40);
@@ -153,7 +153,7 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AttachingTheSameBlobTwiceToOneCorpus_RenamesRatherThanDuplicating()
+    public async Task AttachingTheSameBlobTwiceToOneCorpusRenamesRatherThanDuplicating()
     {
         // Regression: matching on name alone let identical bytes attach twice under two
         // spellings, so the content was embedded twice and every search returned each
@@ -175,7 +175,7 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task DetachingFromOneCorpus_LeavesTheBlobForTheOther()
+    public async Task DetachingFromOneCorpusLeavesTheBlobForTheOther()
     {
         var stored = await _documents.StoreAsync(TextStream("shared content\n\nmore"), "shared.md");
         var a = AddCorpus("a", 768, 100);
@@ -233,7 +233,7 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task EmptyUpload_IsRejectedWithAReason()
+    public async Task EmptyUploadIsRejectedWithAReason()
     {
         var ex = await Should.ThrowAsync<ArgumentException>(
             () => _documents.StoreAsync(new MemoryStream([]), "empty.txt"));
@@ -241,7 +241,7 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task OversizeUpload_IsRejectedAndNamesTheSettingThatMovesTheLimit()
+    public async Task OversizeUploadIsRejectedAndNamesTheSettingThatMovesTheLimit()
     {
         var documents = ServiceCapping(64);
 
@@ -254,7 +254,7 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AnUploadExactlyAtTheLimit_IsStored()
+    public async Task AnUploadExactlyAtTheLimitIsStored()
     {
         // Off-by-one guard. The cap is the largest ACCEPTABLE size, and a limit that
         // refuses the value it advertises is a limit one byte lower than documented.
@@ -266,7 +266,7 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task OversizeUpload_StopsReadingAtTheCapInsteadOfBufferingTheWholeStream()
+    public async Task OversizeUploadStopsReadingAtTheCapInsteadOfBufferingTheWholeStream()
     {
         // The reason this is enforced during the copy and not on the finished file: the
         // old check hashed a 2 GB upload in full before refusing it, so a rejected file
@@ -324,7 +324,7 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PlainTextUpload_IsExtractedNotTreatedAsAnUnknownBinary()
+    public async Task PlainTextUploadIsExtractedNotTreatedAsAnUnknownBinary()
     {
         var stored = await _documents.StoreAsync(TextStream("# Title\n\nSome prose."), "readme.md");
         stored.ExtractedChars.ShouldBeGreaterThan(0);
@@ -336,7 +336,7 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AFreshlyAttachedDocumentIsPending_NotIndexed()
+    public async Task AFreshlyAttachedDocumentIsPendingNotIndexed()
     {
         // Regression: FileStatus.Indexed was the enum's zero value, so an attachment was
         // born claiming to be indexed. The library then showed every just-uploaded

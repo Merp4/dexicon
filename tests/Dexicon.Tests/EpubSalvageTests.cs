@@ -84,7 +84,7 @@ public class EpubSalvageTests
     }
 
     [Fact]
-    public void A_duplicate_manifest_id_does_not_lose_the_book()
+    public void ADuplicateManifestIdDoesNotLoseTheBook()
     {
         using var epub = Epub(
             duplicateId: true,
@@ -101,7 +101,7 @@ public class EpubSalvageTests
     }
 
     [Fact]
-    public void Salvaged_text_still_carries_units_so_a_citation_can_point_somewhere()
+    public void SalvagedTextStillCarriesUnitsSoACitationCanPointSomewhere()
     {
         // Without units a chunk from a 400-page book cites nothing a reader can find.
         using var epub = Epub(
@@ -130,7 +130,7 @@ public class EpubSalvageTests
     }
 
     [Fact]
-    public void A_readable_manifest_is_still_preferred()
+    public void AReadableManifestIsStillPreferred()
     {
         // The salvage path loses reading order and the title, so it must stay a fallback.
         using var epub = Epub(documents: [("OEBPS/ch1.xhtml", "<p>Perfectly ordinary.</p>")]);
@@ -142,7 +142,7 @@ public class EpubSalvageTests
     }
 
     [Fact]
-    public void An_encrypted_book_says_DRM_because_that_is_what_it_is()
+    public void AnEncryptedBookSaysDrmBecauseThatIsWhatItIs()
     {
         using var epub = Epub(
             duplicateId: true, encrypted: true,
@@ -155,7 +155,7 @@ public class EpubSalvageTests
     }
 
     [Fact]
-    public void A_malformed_book_does_not_say_DRM()
+    public void AMalformedBookDoesNotSayDrm()
     {
         // The whole point. Blaming DRM for a manifest defect sent people looking for a
         // problem they did not have.
@@ -170,7 +170,7 @@ public class EpubSalvageTests
     }
 
     [Fact]
-    public void Something_that_is_not_a_zip_is_not_reported_as_a_book_problem()
+    public void SomethingThatIsNotAZipIsNotReportedAsABookProblem()
     {
         using var notAnEpub = new MemoryStream("this is just text"u8.ToArray());
 

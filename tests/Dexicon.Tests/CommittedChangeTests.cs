@@ -94,7 +94,7 @@ public sealed class CommittedChangeTests
     }
 
     [Fact]
-    public async Task Defaults_that_are_saved_still_queue_their_refresh_when_the_caller_is_cancelled()
+    public async Task DefaultsThatAreSavedStillQueueTheirRefreshWhenTheCallerIsCancelled()
     {
         var watcher = new CancelAfterWriteTo("corpora");
         await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
@@ -115,7 +115,7 @@ public sealed class CommittedChangeTests
     }
 
     [Fact]
-    public async Task A_source_that_is_saved_still_queues_its_refresh_when_the_caller_is_cancelled()
+    public async Task ASourceThatIsSavedStillQueuesItsRefreshWhenTheCallerIsCancelled()
     {
         var watcher = new CancelAfterWriteTo("sources");
         await using var harness = await IndexingHarness.StartAsync(watcher, "notes", "docs");
@@ -173,7 +173,7 @@ public sealed class CommittedChangeTests
     }
 
     [Fact]
-    public async Task A_creation_is_recorded_when_it_is_saved_and_a_failure_after_it_is_said_to_have_happened_after()
+    public async Task ACreationIsRecordedWhenItIsSavedAndAFailureAfterItIsSaidToHaveHappenedAfter()
     {
         // The corpus and the key's access are committed before the collection is prepared. A
         // failure there left the corpus in place, no entry under the key's name, and an error
@@ -202,7 +202,7 @@ public sealed class CommittedChangeTests
     };
 
     [Fact]
-    public async Task The_filters_of_a_new_corpus_are_saved_with_it_and_recorded_with_its_creation()
+    public async Task TheFiltersOfANewCorpusAreSavedWithItAndRecordedWithItsCreation()
     {
         // They were applied by a second call. A failure there left the corpus saved without
         // them, reported a generic error, and refused a retry of create as taken. Here setup
@@ -224,7 +224,7 @@ public sealed class CommittedChangeTests
     }
 
     [Fact]
-    public async Task A_cancel_after_a_corpus_change_is_saved_still_reaches_the_audit_line()
+    public async Task ACancelAfterACorpusChangeIsSavedStillReachesTheAuditLine()
     {
         // The service finishes the queue write after committing whatever the caller does. A
         // follow-up query on the caller's token then threw before the line was written, leaving
@@ -248,7 +248,7 @@ public sealed class CommittedChangeTests
     }
 
     [Fact]
-    public async Task A_source_that_is_saved_is_reported_added_when_the_caller_is_cancelled_afterwards()
+    public async Task ASourceThatIsSavedIsReportedAddedWhenTheCallerIsCancelledAfterwards()
     {
         // The summary in the reply was read on the caller's token, so a cancel after the save
         // reported an add nothing can undo as failed, and a retry was refused as a duplicate.
@@ -270,7 +270,7 @@ public sealed class CommittedChangeTests
     }
 
     [Fact]
-    public async Task A_source_is_recorded_when_it_is_saved_even_if_queuing_its_refresh_then_fails()
+    public async Task ASourceIsRecordedWhenItIsSavedEvenIfQueuingItsRefreshThenFails()
     {
         // The source is committed before its job is queued. A failure there left the source in
         // place and no entry under the key's name, and a retry of create was refused as taken.
@@ -292,7 +292,7 @@ public sealed class CommittedChangeTests
     }
 
     [Fact]
-    public async Task A_corpus_change_is_recorded_when_it_is_saved_even_if_the_next_step_fails()
+    public async Task ACorpusChangeIsRecordedWhenItIsSavedEvenIfTheNextStepFails()
     {
         // The refresh is queued after the save and can still fail. The change stays, and the line
         // that says which key made it was written only after the method returned.
@@ -314,7 +314,7 @@ public sealed class CommittedChangeTests
     }
 
     [Fact]
-    public async Task A_scope_change_that_is_saved_is_logged_when_the_caller_is_cancelled_afterwards()
+    public async Task AScopeChangeThatIsSavedIsLoggedWhenTheCallerIsCancelledAfterwards()
     {
         var watcher = new CancelAfterWriteTo("tokens");
         await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
@@ -338,7 +338,7 @@ public sealed class CommittedChangeTests
     }
 
     [Fact]
-    public async Task A_scope_error_names_a_key_and_corpora_on_one_line()
+    public async Task AScopeErrorNamesAKeyAndCorporaOnOneLine()
     {
         // The resolver's message lists the key and every corpus it reaches, typed text that an
         // older catalogue's can hold a line break in.
@@ -366,7 +366,7 @@ public sealed class CommittedChangeTests
     }
 
     [Fact]
-    public async Task A_key_s_mapping_is_not_replaced_while_a_corpus_is_being_created()
+    public async Task AKeySMappingIsNotReplacedWhileACorpusIsBeingCreated()
     {
         // A creation reads whether its key has a mapping and adds the new corpus to it. The
         // admin clearing the mapping between the two (empty means every corpus) left the key
@@ -398,7 +398,7 @@ public sealed class CommittedChangeTests
     }
 
     [Fact]
-    public async Task A_corpus_made_for_a_mapped_key_joins_its_mapping_and_one_made_for_an_unmapped_key_does_not()
+    public async Task ACorpusMadeForAMappedKeyJoinsItsMappingAndOneMadeForAnUnmappedKeyDoesNot()
     {
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Workspace);

@@ -119,7 +119,7 @@ public sealed class SecretHygieneTests
     // ── Token handling ───────────────────────────────────────────────────────
 
     [Fact]
-    public async Task Token_IsVerifiableOnceAndNeverRecoverable()
+    public async Task TokenIsVerifiableOnceAndNeverRecoverable()
     {
         await using var conn = new SqliteConnection("Data Source=:memory:");
         await conn.OpenAsync();
@@ -147,7 +147,7 @@ public sealed class SecretHygieneTests
     }
 
     [Fact]
-    public async Task Token_RevokedAndExpired_StopVerifying()
+    public async Task TokenRevokedAndExpiredStopVerifying()
     {
         await using var conn = new SqliteConnection("Data Source=:memory:");
         await conn.OpenAsync();
@@ -168,7 +168,7 @@ public sealed class SecretHygieneTests
     }
 
     [Fact]
-    public async Task Token_Revoked_StopsVerifying()
+    public async Task TokenRevokedStopsVerifying()
     {
         // Was Token_DisabledTenant_StopsVerifying. A tenant is no longer a thing that can
         // be disabled, and revocation is now the only way a live key stops working, so it
@@ -191,7 +191,7 @@ public sealed class SecretHygieneTests
     }
 
     [Fact]
-    public void Principal_AdminImpliesEveryScope()
+    public void PrincipalAdminImpliesEveryScope()
     {
         var admin = new Principal("id", "n", new HashSet<string>(StringComparer.Ordinal) { Scopes.Admin });
         admin.Has(Scopes.Search).ShouldBeTrue();
@@ -204,7 +204,7 @@ public sealed class SecretHygieneTests
     }
 
     [Fact]
-    public void PrincipalCacheKey_IsACryptographicDigest_NotA32BitHash()
+    public void PrincipalCacheKeyIsACryptographicDigestNotA32BitHash()
     {
         // The key was `GetHashCode() + length`. A collision in 32 bits hands the second
         // caller the FIRST caller's authenticated principal without verifying anything,
@@ -217,7 +217,7 @@ public sealed class SecretHygieneTests
     }
 
     [Fact]
-    public void PrincipalCacheKey_NeverContainsTheToken()
+    public void PrincipalCacheKeyNeverContainsTheToken()
     {
         // Cache keys surface in memory dumps and diagnostics. The credential must not.
         const string Token = "dex_01JBXQZ9K7MNPRSTVWXYZ01234_a-secret-nobody-should-read";
@@ -230,7 +230,7 @@ public sealed class SecretHygieneTests
     /// guessed can be told apart. The credential itself must still never be written.
     /// </summary>
     [Fact]
-    public void CallerDigest_NeverContainsTheCredential()
+    public void CallerDigestNeverContainsTheCredential()
     {
         const string Token = "dex_01JBXQZ9K7MNPRSTVWXYZ01234_a-secret-nobody-should-read";
 
@@ -242,7 +242,7 @@ public sealed class SecretHygieneTests
     }
 
     [Fact]
-    public void CallerDigest_IsNarrowEnoughToBeWorthless_AndWideEnoughToCount()
+    public void CallerDigestIsNarrowEnoughToBeWorthlessAndWideEnoughToCount()
     {
         // 32 bits. It answers "one caller retrying, or several" and nothing else: at this
         // width a reader who wanted to confirm a guessed credential against the log finds
@@ -258,7 +258,7 @@ public sealed class SecretHygieneTests
     }
 
     [Fact]
-    public void PrincipalCacheKey_IsStableAndSeparatesTokensThatLookAlike()
+    public void PrincipalCacheKeyIsStableAndSeparatesTokensThatLookAlike()
     {
         const string Token = "dex_01JBXQZ9K7MNPRSTVWXYZ01234_secret-value";
 

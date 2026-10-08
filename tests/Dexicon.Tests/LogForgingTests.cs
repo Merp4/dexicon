@@ -43,7 +43,7 @@ public class LogForgingTests
     }
 
     [Fact]
-    public void TheConfiguredTemplate_KeepsAForgedPathOnOneLine()
+    public void TheConfiguredTemplateKeepsAForgedPathOnOneLine()
     {
         var rendered = Render(LogOutput.ConsoleTemplate, ForgedPath);
 
@@ -56,7 +56,7 @@ public class LogForgingTests
     }
 
     [Fact]
-    public void TheConfiguredTemplate_DoesNotRenderStringsLiterally()
+    public void TheConfiguredTemplateDoesNotRenderStringsLiterally()
     {
         // The whole defect was one flag. Naming it here makes the reason a later reader
         // finds before they "tidy" it back.
@@ -65,7 +65,7 @@ public class LogForgingTests
     }
 
     [Fact]
-    public void LiteralRendering_IsWhatTheDefectLookedLike()
+    public void LiteralRenderingIsWhatTheDefectLookedLike()
     {
         // Kept as the statement of the defect, so the difference is visible in one file.
         var rendered = Render("[{Level:u3}] {Message:lj}", ForgedPath);

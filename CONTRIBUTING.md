@@ -111,7 +111,7 @@ Examples in comments, docs and fixtures should be invented. Naming a real book t
 illustrate two sources sharing a filename works just as well with a made-up one, and a
 made-up one cannot be read as an endorsement or an association.
 
-`IndexedContentIsNotPublishedTests` fails the build when a name that has been found once
+`IndexedContentNameScanTests` fails the build when a name that has been found once
 reappears. It holds each name as a hash of its words, not the name itself, so adding one
 publishes nothing; its class comment says how to compute one.
 

@@ -56,7 +56,7 @@ public sealed class NulInExtractedTextTests
         new PdfTextExtractor().Extract(new MemoryStream(pdf), "paper.pdf");
 
     [Fact]
-    public void A_pdf_whose_text_holds_NUL_reports_it_and_loses_it_in_the_step_after()
+    public void APdfWhoseTextHoldsNulReportsItAndLosesItInTheStepAfter()
     {
         var raw = Extract(Pdf(PageWithNul("alpha beta", "gamma delta")));
         raw.Text.ShouldContain('\0', "the premise: the extractor does return it");
@@ -68,7 +68,7 @@ public sealed class NulInExtractedTextTests
     }
 
     [Fact]
-    public void A_units_offset_is_into_the_text_that_was_kept()
+    public void AUnitsOffsetIsIntoTheTextThatWasKept()
     {
         var extracted = Extract(Pdf(
             PageWithNul("first page", "ends here"),
@@ -79,7 +79,7 @@ public sealed class NulInExtractedTextTests
     }
 
     [Fact]
-    public void Removing_NUL_moves_each_unit_back_by_the_NULs_before_it()
+    public void RemovingNulMovesEachUnitBackByTheNulsBeforeIt()
     {
         // a b NUL c d NUL NUL e f, with units at c, the second NUL and e.
         var before = new ExtractedText("ab\0cd\0\0ef",
@@ -97,7 +97,7 @@ public sealed class NulInExtractedTextTests
     }
 
     [Fact]
-    public void Units_out_of_order_or_past_the_end_are_moved_by_the_same_rule()
+    public void UnitsOutOfOrderOrPastTheEndAreMovedByTheSameRule()
     {
         var before = new ExtractedText("a\0b\0",
             [new ExtractedUnit(2, 3, null), new ExtractedUnit(1, 0, null), new ExtractedUnit(3, 99, null)]);
@@ -107,7 +107,7 @@ public sealed class NulInExtractedTextTests
     }
 
     [Fact]
-    public void Text_with_nothing_to_remove_is_returned_as_it_was()
+    public void TextWithNothingToRemoveIsReturnedAsItWas()
     {
         var text = new ExtractedText("no such character here", [new ExtractedUnit(1, 3, null)]);
 
@@ -115,7 +115,7 @@ public sealed class NulInExtractedTextTests
     }
 
     [Fact]
-    public async Task A_pdf_whose_text_holds_NUL_is_cached_whole()
+    public async Task APdfWhoseTextHoldsNulIsCachedWhole()
     {
         await using var harness = await IndexingHarness.StartAsync();
         await harness.SeedCorpusAsync(SourceKind.Workspace);
@@ -129,7 +129,7 @@ public sealed class NulInExtractedTextTests
     }
 
     [Fact]
-    public async Task A_cached_row_that_reads_back_short_is_extracted_again_and_the_file_is_left_alone()
+    public async Task ACachedRowThatReadsBackShortIsExtractedAgainAndTheFileIsLeftAlone()
     {
         await using var harness = await IndexingHarness.StartAsync();
         await harness.SeedCorpusAsync(SourceKind.Workspace);
@@ -160,7 +160,7 @@ public sealed class NulInExtractedTextTests
     }
 
     [Fact]
-    public async Task A_damaged_upload_is_chunked_again_from_the_repaired_text()
+    public async Task ADamagedUploadIsChunkedAgainFromTheRepairedText()
     {
         // An upload's chunk state is fingerprinted by the blob hash, not by the text, so repairing
         // the cached text alone leaves every attachment looking current.

@@ -44,7 +44,7 @@ public sealed class JobCounterTests
     }
 
     [Fact]
-    public async Task ExcludedFilesAreInTheTotal_NotOnlyInTheSkippedCount()
+    public async Task ExcludedFilesAreInTheTotalNotOnlyInTheSkippedCount()
     {
         await using var harness = await WithMixedFilesAsync();
 
@@ -57,7 +57,7 @@ public sealed class JobCounterTests
     }
 
     [Fact]
-    public async Task OnASecondPassWhereNothingChanged_TheCountersStillAddUp()
+    public async Task OnASecondPassWhereNothingChangedTheCountersStillAddUp()
     {
         await using var harness = await WithMixedFilesAsync();
         await harness.RunIndexAsync();
@@ -87,7 +87,7 @@ public sealed class JobCounterTests
     }
 
     [Fact]
-    public async Task WithNestedSources_AnExcludedFileIsCountedOnceByTheSourceThatOwnsIt()
+    public async Task WithNestedSourcesAnExcludedFileIsCountedOnceByTheSourceThatOwnsIt()
     {
         // Shadowing applied to the walk's owned files and not to its skipped ones, so a
         // file an exclusion caught under a nested source was reported by every source above
@@ -113,7 +113,7 @@ public sealed class JobCounterTests
     }
 
     [Fact]
-    public async Task WithNestedSources_TheDuplicateAnEarlierPassRecordedIsRemoved()
+    public async Task WithNestedSourcesTheDuplicateAnEarlierPassRecordedIsRemoved()
     {
         // The row the outer source wrote for the nested file before skips were shadowed.
         // The outer walk no longer reports that path, so the next pass reconciles it away
