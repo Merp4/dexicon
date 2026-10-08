@@ -489,8 +489,11 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
         await using var db = _harness.NewContext();
         db.Sources.Add(new Source
         {
-            Id = "history-root", CorpusId = IndexingHarness.CorpusId, Kind = SourceKind.GitHistory,
-            RootPath = "", CreatedUtc = DateTime.UtcNow,
+            Id = "history-root",
+            CorpusId = IndexingHarness.CorpusId,
+            Kind = SourceKind.GitHistory,
+            RootPath = "",
+            CreatedUtc = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
 
@@ -511,8 +514,11 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
         await using var db = _harness.NewContext();
         db.Sources.Add(new Source
         {
-            Id = "docs-again", CorpusId = IndexingHarness.CorpusId, Kind = SourceKind.Workspace,
-            RootPath = "docs", CreatedUtc = DateTime.UtcNow,
+            Id = "docs-again",
+            CorpusId = IndexingHarness.CorpusId,
+            Kind = SourceKind.Workspace,
+            RootPath = "docs",
+            CreatedUtc = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
 
@@ -569,7 +575,10 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
         // quietly return the ref, the limit and the date to their defaults.
         var current = new GitHistoryOptions
         {
-            Ref = "origin/main", MaxCommits = 100, Since = new DateOnly(2026, 1, 1), IncludeStat = false,
+            Ref = "origin/main",
+            MaxCommits = 100,
+            Since = new DateOnly(2026, 1, 1),
+            IncludeStat = false,
         };
 
         var merged = ConfigureTools.Merge(current, new HistorySettings(Diff: true, MaxDiffKb: 16), ["since", "stat"]);

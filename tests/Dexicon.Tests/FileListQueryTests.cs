@@ -37,8 +37,13 @@ public sealed class FileListQueryTests : IAsyncLifetime
         _db.Sources.Add(new Source { Id = "s1", CorpusId = "c", Kind = SourceKind.Workspace, RootPath = "lib" });
         _db.ChunkSets.Add(new ChunkSet
         {
-            Id = Set, CorpusId = "c", Name = "default", EmbeddingModel = "m",
-            EmbeddingDimensions = 8, CollectionName = "col", BoundaryMode = "blank-line",
+            Id = Set,
+            CorpusId = "c",
+            Name = "default",
+            EmbeddingModel = "m",
+            EmbeddingDimensions = 8,
+            CollectionName = "col",
+            BoundaryMode = "blank-line",
             CreatedUtc = DateTime.UtcNow,
         });
         await _db.SaveChangesAsync();
@@ -58,7 +63,10 @@ public sealed class FileListQueryTests : IAsyncLifetime
         if (withState)
             _db.FileChunkStates.Add(new FileChunkState
             {
-                FileId = id, ChunkSetId = Set, Status = status, ChunkCount = chunks,
+                FileId = id,
+                ChunkSetId = Set,
+                Status = status,
+                ChunkCount = chunks,
             });
         await _db.SaveChangesAsync();
     }

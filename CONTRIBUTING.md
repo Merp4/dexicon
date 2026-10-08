@@ -68,7 +68,8 @@ Each of these has been decided, with the reasoning recorded in
 
 ## Style
 
-- C# with `TreatWarningsAsErrors`. `dotnet format` before you commit; the hook checks.
+- C# with `TreatWarningsAsErrors`. `dotnet format` before you commit. CI fails on
+  `dotnet format --verify-no-changes`, and the pre-commit hook runs it once enabled.
 - Comments explain *why*; the code states what.
 - Test methods are named as one PascalCase sentence with no underscores, giving the
   subject, the outcome and the condition: `AKeyWithoutConfigureIsRefusedByEveryConfigureTool`.

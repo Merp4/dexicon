@@ -36,7 +36,11 @@ public sealed class IndexingActivityTests
         var at = DateTime.UtcNow.AddHours(-2);
         db.Jobs.Add(new IndexJob
         {
-            Id = id, CorpusId = corpusId, ChunkSetId = chunkSetId, Kind = JobKind.Refresh, State = state,
+            Id = id,
+            CorpusId = corpusId,
+            ChunkSetId = chunkSetId,
+            Kind = JobKind.Refresh,
+            State = state,
             QueuedUtc = at,
             StartedUtc = state == JobState.Queued ? null : at,
             FinishedUtc = state is JobState.Queued or JobState.Running ? null : at,
