@@ -79,8 +79,9 @@ Each of these has been decided, with the reasoning recorded in
   not `ALinkSTargetIsNotReturnedToTheKey`). `Method_State_Expected` and `snake_case_sentence`
   names are not used.
 - A C# test class is named for the unit or behaviour it covers, as a noun phrase ending in
-  `Tests`: `CorpusLeaseTests`, `FailedFileSizeTests`. The build does not check either rule
-  (`CA1707` is off for tests in `.editorconfig`), so review does.
+  `Tests`: `CorpusLeaseTests`, `FailedFileSizeTests`. The build rejects an underscore in a
+  test name (`CA1707` is an error for tests in `.editorconfig`); review checks the rest of
+  both rules.
 - Timestamps are UTC everywhere: stored, returned, logged. The browser is the only thing
   that converts, because it is the only component that knows which clock applies. Any
   property holding one is named `…Utc`, and a test enforces this.
