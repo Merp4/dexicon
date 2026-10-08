@@ -81,6 +81,10 @@ public sealed class RequestTokenAfterCommitTests
 
     private static string Run(string body) => $"{Signature}\n{{\n{body}\n}}";
 
+    /// <summary>A method that writes and takes the token, for a call to be made beside a write.</summary>
+    private const string SaveAgain =
+        "private static async Task SaveAgain(Db db, int saved, CancellationToken token) { await db.SaveChangesAsync(); }";
+
     /// <summary>
     /// Ways the caller's token reaches work after a write other than naming its parameter there. Each is
     /// a bypass a reviewer found or that follows from one, and each has to be reported.
@@ -136,6 +140,14 @@ public sealed class RequestTokenAfterCommitTests
             Run("try { await db.SaveChangesAsync(ct); await Task.Delay(1, ct); } catch (OperationCanceledException) { }")
         },
         {
+            "a token passed to a call that writes, beside an argument that writes first",
+            Run("await SaveAgain(db, await db.SaveChangesAsync(), ct);") + "\n" + SaveAgain
+        },
+        {
+            "a token passed to a call that writes, beside two arguments that write",
+            Run("await SaveAgain(db, await db.SaveChangesAsync() + await db.SaveChangesAsync(), ct);") + "\n" + SaveAgain
+        },
+        {
             "the request's own token on the HttpContext",
             "public async Task Run(Db db, HttpContext http) { await db.SaveChangesAsync(); await Task.Delay(1, http.RequestAborted); }"
         },
@@ -173,6 +185,14 @@ public sealed class RequestTokenAfterCommitTests
         {
             "a value read with the token and used after the write",
             Run("var rows = await Task.FromResult(1).WaitAsync(ct); await db.SaveChangesAsync(); rows.ToString();")
+        },
+        {
+            "a call that writes, given no token, beside an argument that writes",
+            Run("await SaveAgain(db, await db.SaveChangesAsync(), CancellationToken.None);") + "\n" + SaveAgain
+        },
+        {
+            "a call that writes and takes the token, with nothing written before it",
+            Run("await SaveAgain(db, 1, ct);") + "\n" + SaveAgain
         },
         {
             "a copy of a lambda that captures nothing",
@@ -695,8 +715,14 @@ internal sealed class CommitScan
             var operations = Operations(block).ToList();
             for (var i = 0; i < operations.Count; i++)
             {
+                // The write that runs first. A call's arguments and receiver are evaluated before it, so a
+                // write among them ends earlier in the source than the call that takes them; the first in
+                // tree order is that outer call, which runs last, and taking it left the token passed to it
+                // after an inner save unreported.
                 var write = operations[i].DescendantsAndSelf().OfType<IInvocationOperation>()
-                    .FirstOrDefault(c => Writes(c.TargetMethod, committing));
+                    .Where(c => Writes(c.TargetMethod, committing))
+                    .OrderBy(c => c.Syntax.Span.End)
+                    .FirstOrDefault();
                 if (write is null) continue;
 
                 // The rest of this operation, the rest of the block, and every block the write can reach.
