@@ -23,8 +23,15 @@ public readonly record struct EmbeddingTarget(string Provider, string Model)
     /// names splits one model in half. Only `:latest` is removed; `:v1.5` and `:0.6b` are
     /// genuinely different models with genuinely different vectors.
     /// </summary>
-    public string CanonicalModel =>
-        Model.EndsWith(":latest", StringComparison.OrdinalIgnoreCase) ? Model[..^7] : Model;
+    public string CanonicalModel => Canonical(Model);
+
+    /// <summary>
+    /// <see cref="CanonicalModel"/> for a bare name, so a name that is not part of a target
+    /// yet (a request body, a stored row) is reduced by the same rule. A saved framing, a
+    /// stored measurement and the vector collection are keyed on this form.
+    /// </summary>
+    public static string Canonical(string model) =>
+        model.EndsWith(":latest", StringComparison.OrdinalIgnoreCase) ? model[..^7] : model;
 }
 
 /// <summary>Raised when a chunk set names a provider this deployment has not configured.</summary>

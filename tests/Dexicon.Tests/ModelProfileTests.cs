@@ -161,6 +161,34 @@ public sealed class ModelProfileTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TwoSpellingsOfOneModelResolveToOneSavedProfile()
+    {
+        // Ollama lists `embeddinggemma:latest` and a chunk set records `embeddinggemma`: one
+        // model, one vector space, so one framing. The row is stored under the name without the
+        // tag, and the lookup reduces the name it is given the same way.
+        _db.ModelProfiles.Add(new EmbeddingModelProfile
+        {
+            Provider = "ollama",
+            Model = "embeddinggemma",
+            DocumentTemplate = "doc: {text}",
+            QueryTemplate = "query: {text}",
+            CreatedUtc = DateTime.UtcNow,
+            UpdatedUtc = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+
+        foreach (var name in new[] { "embeddinggemma", "embeddinggemma:latest", "embeddinggemma:LATEST" })
+        {
+            var templates = await _profiles.ForAsync(Target(name));
+            templates.Origin.ShouldBe(TemplateOrigin.Configured, name);
+            templates.Apply(EmbedPurpose.Query, "x").ShouldBe("query: x", name);
+        }
+
+        // A different tag is a different model and does not inherit the framing.
+        (await _profiles.ForAsync(Target("embeddinggemma:v2"))).Origin.ShouldBe(TemplateOrigin.BuiltIn);
+    }
+
+    [Fact]
     public void AModelDeliberatelyWithoutFramingIsRecordedAsSuch()
     {
         // BGE-M3 is trained without task prefixes. Listed explicitly so that "no template"

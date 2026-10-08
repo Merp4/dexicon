@@ -549,3 +549,74 @@ describe('measuring a model', () => {
     await waitFor(() => expect(testLimits()).toBeEnabled());
   });
 });
+
+/**
+ * The "default for new corpora" badge.
+ *
+ * `/api/embedding-models` answers with the configured default model for every provider it
+ * lists, so a badge decided on the model name alone also marked a model of that name under a
+ * provider that is not the default. A new corpus is created against the default provider and
+ * model together.
+ */
+describe('the default for new corpora badge', () => {
+  const providers = {
+    default: 'ollama',
+    providers: [
+      { name: 'ollama', kind: 'ollama', managed: true, configured: true, detail: null },
+      { name: 'openai', kind: 'openai', managed: false, configured: true, detail: null },
+    ],
+  };
+
+  beforeEach(() => {
+    listEmbeddingProviders.mockResolvedValue(providers);
+    listEmbeddingModels.mockImplementation(async (provider: string) => ({
+      provider,
+      managed: provider === 'ollama',
+      // The server's answer is the same for both: the configured default is one model name.
+      configured: 'nomic-embed-text',
+      models:
+        provider === 'ollama'
+          ? [model('nomic-embed-text:latest'), model('embeddinggemma:latest')]
+          : [model('nomic-embed-text'), model('text-embedding-3-small')],
+      note: null,
+    }));
+  });
+
+  /** The rows that carry the badge, by model name. */
+  const badged = () =>
+    screen
+      .getAllByText('default for new corpora')
+      .map((badge) => badge.closest('div')?.querySelector('.mono')?.textContent);
+
+  it('marks the default model under the default provider, whether or not Ollama tags the name', async () => {
+    render(<ModelsView />);
+    await screen.findByText('embeddinggemma:latest');
+
+    expect(badged()).toEqual(['nomic-embed-text:latest']);
+  });
+
+  it('does not mark a model of the same name under a provider that is not the default', async () => {
+    const user = userEvent.setup();
+    render(<ModelsView />);
+    await screen.findByText('embeddinggemma:latest');
+
+    await user.click(screen.getByRole('radio', { name: /openai/ }));
+    await screen.findByText('text-embedding-3-small');
+
+    expect(screen.getByText('nomic-embed-text')).toBeInTheDocument();
+    expect(screen.queryByText('default for new corpora')).not.toBeInTheDocument();
+  });
+
+  it('marks it again on returning to the default provider', async () => {
+    const user = userEvent.setup();
+    render(<ModelsView />);
+    await screen.findByText('embeddinggemma:latest');
+    await user.click(screen.getByRole('radio', { name: /openai/ }));
+    await screen.findByText('text-embedding-3-small');
+
+    await user.click(screen.getByRole('radio', { name: /ollama/ }));
+    await screen.findByText('embeddinggemma:latest');
+
+    expect(badged()).toEqual(['nomic-embed-text:latest']);
+  });
+});

@@ -178,9 +178,7 @@ public sealed class CorpusIndexer(
                 // The same, for what the model measured about itself. The chunk budget is
                 // reconciled against it here rather than per file, and a set whose model
                 // was never probed gets the configured size unchanged.
-                var measured = await db.ModelMeasurements.AsNoTracking()
-                    .FirstOrDefaultAsync(mm => mm.Provider == set.EmbeddingProvider
-                                            && mm.Model == set.EmbeddingModel, ct);
+                var measured = await MeasuredModels.ForAsync(db, set.Target(), ct);
                 var chunking = set.Options(measured);
 
                 if (chunking.ChunkSizeTokens != set.ChunkSize)

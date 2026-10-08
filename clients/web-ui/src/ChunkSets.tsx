@@ -622,6 +622,10 @@ function ChunkSetModal({
 export function ModelsView() {
   const [providers, setProviders] = useState<EmbeddingProviderInfo[]>([]);
   const [provider, setProvider] = useState<string>('');
+  // The provider new corpora are created against. `configured` below is a model name and the
+  // server answers with the same one for every provider, so it names the default model only
+  // under this one.
+  const [defaultProvider, setDefaultProvider] = useState<string>('');
   const [models, setModels] = useState<EmbeddingModelInfo[]>([]);
   const [managed, setManaged] = useState(true);
   const [configured, setConfigured] = useState('');
@@ -649,6 +653,7 @@ export function ModelsView() {
       .listEmbeddingProviders()
       .then((r) => {
         setProviders(r.providers);
+        setDefaultProvider(r.default);
         setProvider((current) => current || r.default);
       })
       .catch((e) => setError(e));
@@ -762,6 +767,11 @@ export function ModelsView() {
   };
 
   const current = providers.find((p) => p.name === provider);
+
+  // A new corpus is created against the default provider and the configured model together.
+  // Ollama lists `embeddinggemma:latest` where the configuration says `embeddinggemma`.
+  const isDefaultForNewCorpora = (name: string) =>
+    provider === defaultProvider && name.replace(/:latest$/, '') === configured.replace(/:latest$/, '');
 
   return (
     <div className="grid gap-4">
@@ -908,9 +918,7 @@ export function ModelsView() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="mono font-semibold">{m.name}</span>
                       {m.inUse && <Badge tone="accent">in use</Badge>}
-                      {m.name.replace(/:latest$/, '') === configured.replace(/:latest$/, '') && (
-                        <Badge tone="ok">default for new corpora</Badge>
-                      )}
+                      {isDefaultForNewCorpora(m.name) && <Badge tone="ok">default for new corpora</Badge>}
                     </div>
                     <div className="dim text-xs mt-1">
                       {m.sizeBytes > 0 ? formatBytes(m.sizeBytes) : provider}
