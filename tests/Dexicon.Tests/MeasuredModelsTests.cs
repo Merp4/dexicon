@@ -73,6 +73,28 @@ public sealed class MeasuredModelsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AMeasurementIsFoundUnderAnyLetterCaseOfTheName()
+    {
+        await StoreAsync("EmbeddingGemma:LATEST", 2048);
+
+        (await _db.ModelMeasurements.Select(m => m.Model).ToListAsync()).ShouldBe(["embeddinggemma"]);
+        foreach (var name in new[] { "embeddinggemma", "EmbeddingGemma", "EMBEDDINGGEMMA:latest" })
+            (await MeasuredModels.ForAsync(_db, new EmbeddingTarget("ollama", name)))
+                .ShouldNotBeNull(name).ContextTokens.ShouldBe(2048);
+    }
+
+    [Fact]
+    public async Task ProbingTwoLetterCasesWritesOneRow()
+    {
+        await StoreAsync("embeddinggemma", 2048);
+        await StoreAsync("EmbeddingGemma", 1024);
+
+        (await _db.ModelMeasurements.Select(m => m.Model).ToListAsync()).ShouldBe(["embeddinggemma"]);
+        (await MeasuredModels.ForAsync(_db, new EmbeddingTarget("ollama", "embeddinggemma")))
+            .ShouldNotBeNull().ContextTokens.ShouldBe(1024);
+    }
+
+    [Fact]
     public async Task AnotherTagOrAnotherProviderIsNotTheSameMeasurement()
     {
         // Controls: the lookup must not widen into "any row that starts with the name".

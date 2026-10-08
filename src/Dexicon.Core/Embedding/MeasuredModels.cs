@@ -7,9 +7,10 @@ namespace Dexicon.Core.Embedding;
 /// Reads and writes what a probe measured about a model.
 ///
 /// A measurement is stored and found under <see cref="EmbeddingTarget.CanonicalModel"/>, the name
-/// without <c>:latest</c>. The Models screen probes the name Ollama lists
+/// without <c>:latest</c>, in lower case. The Models screen probes the name Ollama lists
 /// (<c>embeddinggemma:latest</c>) and a chunk set records the name it was created with
-/// (<c>embeddinggemma</c>); both are the same weights, so both reach the same row.
+/// (<c>embeddinggemma</c>, or <c>EmbeddingGemma</c> if that is what was typed); all of them are the
+/// same weights, so all reach the same row.
 /// </summary>
 public static class MeasuredModels
 {

@@ -287,8 +287,8 @@ CREATE TABLE file_texts (
 
 -- Embedding models ----------------------------------------------------------
 -- Saved task framing for one embedding model. A choice: it wins over the built-in
--- suggestion (04). The model is stored without a `:latest` tag, as it is in
--- model_measurements, and a lookup removes the tag from the name it is given.
+-- suggestion (04). The model is stored in lower case and without a `:latest` tag, as it
+-- is in model_measurements, and a lookup reduces the name it is given the same way.
 CREATE TABLE model_profiles (
   provider          TEXT NOT NULL,
   model             TEXT NOT NULL,

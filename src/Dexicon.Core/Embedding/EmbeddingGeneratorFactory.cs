@@ -16,22 +16,27 @@ public readonly record struct EmbeddingTarget(string Provider, string Model)
     public override string ToString() => $"{Provider}/{Model}";
 
     /// <summary>
-    /// The model without a redundant <c>:latest</c>.
+    /// The model without a redundant <c>:latest</c>, in lower case.
     ///
-    /// Ollama lists `embeddinggemma:latest`; a configuration file says `embeddinggemma`.
-    /// They are the same model and the same vectors, and anything that treats them as two
-    /// names splits one model in half. Only `:latest` is removed; `:v1.5` and `:0.6b` are
-    /// genuinely different models with genuinely different vectors.
+    /// Ollama lists `embeddinggemma:latest`; a configuration file says `embeddinggemma`; a
+    /// person typing a name may say `EmbeddingGemma`. They are the same model and the same
+    /// vectors, and anything that treats them as different names splits one model in half.
+    /// Only `:latest` is removed; `:v1.5` and `:0.6b` are genuinely different models with
+    /// genuinely different vectors.
+    ///
+    /// A key, never the name sent to a provider: requests use <see cref="Model"/> as given.
     /// </summary>
     public string CanonicalModel => Canonical(Model);
 
     /// <summary>
     /// <see cref="CanonicalModel"/> for a bare name, so a name that is not part of a target
     /// yet (a request body, a stored row) is reduced by the same rule. A saved framing, a
-    /// stored measurement and the vector collection are keyed on this form.
+    /// stored measurement and the vector collection are keyed on this form. The
+    /// <c>FoldTaggedModelNames</c> migration states the same rule in SQL.
     /// </summary>
     public static string Canonical(string model) =>
-        model.EndsWith(":latest", StringComparison.OrdinalIgnoreCase) ? model[..^7] : model;
+        (model.EndsWith(":latest", StringComparison.OrdinalIgnoreCase) ? model[..^7] : model)
+        .ToLowerInvariant();
 }
 
 /// <summary>Raised when a chunk set names a provider this deployment has not configured.</summary>

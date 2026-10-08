@@ -166,7 +166,8 @@ public sealed class ModelProfiles(CatalogDbContext db, IMemoryCache cache) : IMo
 
     /// <summary>
     /// The cache entry for a model, named by the name a profile is stored under so that
-    /// `embeddinggemma` and `embeddinggemma:latest` share one. A save removes this key.
+    /// `embeddinggemma`, `embeddinggemma:latest` and `EmbeddingGemma` share one. A save removes
+    /// this key.
     /// </summary>
     public static string CacheKey(EmbeddingTarget target) =>
         $"model-templates::{target.Provider}::{target.CanonicalModel}";

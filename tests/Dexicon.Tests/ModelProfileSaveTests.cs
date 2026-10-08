@@ -151,6 +151,22 @@ public sealed class ModelProfileSaveTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SavingUnderAnotherLetterCaseStoresOneRowAndRebuildsTheSetsOnTheModel()
+    {
+        await SetAsync("s1", "default", "embeddinggemma");
+        await SetAsync("s2", "mixed", "EmbeddingGemma:Latest");
+
+        var saved = await SaveAsync("EmbeddingGemma:LATEST");
+        await SaveAsync("embeddinggemma");
+
+        saved.Model.ShouldBe("embeddinggemma");
+        saved.Reindexing.Order().ToList().ShouldBe(["docs:default", "docs:mixed"]);
+        (await _db.ModelProfiles.Select(p => p.Model).ToListAsync()).ShouldBe(["embeddinggemma"]);
+        foreach (var name in new[] { "embeddinggemma", "EMBEDDINGGEMMA", "EmbeddingGemma:latest" })
+            (await EffectiveAsync(name)).Origin.ShouldBe(TemplateOrigin.Configured, name);
+    }
+
+    [Fact]
     public async Task TheTwoSpellingsOfOneModelResolveToTheSavedProfileEvenWhenBothWereCached()
     {
         // ForAsync caches per name for 30 seconds. Warmed under both spellings before the save, so

@@ -21,11 +21,12 @@ with no section here fails its release rather than publishing an undescribed one
 ### ⚠️ Upgrading
 
 - One migration, `FoldTaggedModelNames`, applied at startup. Data only: it renames a saved framing
-  or a measurement stored under `model:latest` (the tag in any letter case) to `model`, the name the
-  indexer reads. Where both spellings of one model have a row it keeps the newer (`UpdatedUtc` for
-  a framing, `MeasuredUtc` for a measurement) and drops the older. A chunk set whose framing was
-  saved from the tagged Models row picks it up on its next pass and re-embeds, which is what
-  saving the framing already said it would do. The migration cannot be undone.
+  or a measurement stored under `Model:latest` (the tag in any letter case) to `model`, the
+  lower-case name the indexer reads. Where several spellings of one model have a row it keeps the
+  newest (`UpdatedUtc` for a framing, `MeasuredUtc` for a measurement) and drops the others. A
+  chunk set whose framing was saved from the tagged Models row picks it up on its next pass and
+  re-embeds, which is what saving the framing already said it would do. The migration cannot be
+  undone.
 
 ## 0.6.7 — 2026-10-08
 

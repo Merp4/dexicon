@@ -1,5 +1,6 @@
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Catalog.Migrations;
+using Dexicon.Core.Embedding;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -7,9 +8,10 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace Dexicon.Tests;
 
 /// <summary>
-/// The saved framings and measurements stored under <c>model:latest</c> move to <c>model</c>.
+/// The saved framings and measurements stored under <c>Model:latest</c> move to <c>model</c>: the tag
+/// removed and the letters lower-cased, the form <c>EmbeddingTarget.Canonical</c> writes.
 ///
-/// Both tables are keyed on (provider, model), so a model stored under both spellings is two rows
+/// Both tables are keyed on (provider, model), so a model stored under two spellings is two rows
 /// and renaming one onto the other would break the key. The migration runs through the migrator the
 /// app uses, from the schema before it, over rows written the way the old code wrote them.
 /// </summary>
@@ -45,6 +47,19 @@ public sealed class FoldTaggedModelNamesTests
     private static async Task<Dictionary<string, int?>> MeasurementsAsync(CatalogDbContext db) =>
         await db.ModelMeasurements.AsNoTracking().ToDictionaryAsync(m => $"{m.Provider}/{m.Model}", m => m.ContextTokens);
 
+    /// <summary>
+    /// The SQL and <c>EmbeddingTarget.Canonical</c> are two statements of one rule, so a name the SQL
+    /// leaves must be one the code would write.
+    /// </summary>
+    private static void ShouldBeInTheFormTheCodeWrites(IEnumerable<string> keys)
+    {
+        foreach (var key in keys)
+        {
+            var model = key[(key.IndexOf('/') + 1)..];
+            EmbeddingTarget.Canonical(model).ShouldBe(model, key);
+        }
+    }
+
     private static async Task SeedProfilesAsync(CatalogDbContext db)
     {
         await SeedProfileAsync(db, "ollama", "lone:latest", "lone-tagged", "2026-10-02 00:00:00");
@@ -57,6 +72,10 @@ public sealed class FoldTaggedModelNamesTests
         await SeedProfileAsync(db, "ollama", "Upper:LATEST", "upper-tagged", "2026-10-02 00:00:00");
         await SeedProfileAsync(db, "ollama", "twice:latest", "twice-lower", "2026-10-02 00:00:00");
         await SeedProfileAsync(db, "ollama", "twice:LATEST", "twice-upper", "2026-10-03 00:00:00");
+        await SeedProfileAsync(db, "ollama", "Case", "case-bare-newest", "2026-10-04 00:00:00");
+        await SeedProfileAsync(db, "ollama", "case:LATEST", "case-tagged", "2026-10-03 00:00:00");
+        await SeedProfileAsync(db, "ollama", "CASE", "case-upper-oldest", "2026-10-02 00:00:00");
+        await SeedProfileAsync(db, "ollama", "Lone:V2", "lone-v2", "2026-10-02 00:00:00");
         await SeedProfileAsync(db, "ollama", "versioned:v1.5", "versioned", "2026-10-02 00:00:00");
         await SeedProfileAsync(db, "ollama", "versioned", "versioned-bare", "2026-10-02 00:00:00");
         await SeedProfileAsync(db, "ollama", "untouched", "untouched", "2026-10-02 00:00:00");
@@ -80,14 +99,17 @@ public sealed class FoldTaggedModelNamesTests
                 ["ollama/newer"] = "tagged-newer",
                 ["ollama/older"] = "bare-newer",
                 ["ollama/tie"] = "bare-tie",
-                ["ollama/Upper"] = "upper-tagged",
+                ["ollama/upper"] = "upper-tagged",
                 ["ollama/twice"] = "twice-upper",
+                ["ollama/case"] = "case-bare-newest",
+                ["ollama/lone:v2"] = "lone-v2",
                 ["ollama/versioned:v1.5"] = "versioned",
                 ["ollama/versioned"] = "versioned-bare",
                 ["ollama/untouched"] = "untouched",
                 ["openai/newer"] = "other-provider",
                 ["openai/lone"] = "other-provider-tagged",
             }, ignoreOrder: true);
+            ShouldBeInTheFormTheCodeWrites((await ProfilesAsync(db)).Keys);
         }
         finally
         {
@@ -109,6 +131,9 @@ public sealed class FoldTaggedModelNamesTests
             await SeedMeasurementAsync(db, "ollama", "older:latest", 5, "2026-10-02 00:00:00");
             await SeedMeasurementAsync(db, "ollama", "versioned:v1.5", 6, "2026-10-02 00:00:00");
             await SeedMeasurementAsync(db, "openai", "lone:latest", 7, "2026-10-02 00:00:00");
+            await SeedMeasurementAsync(db, "ollama", "Case", 8, "2026-10-03 00:00:00");
+            await SeedMeasurementAsync(db, "ollama", "case:LATEST", 9, "2026-10-02 00:00:00");
+            await SeedMeasurementAsync(db, "ollama", "Lone:V2", 10, "2026-10-02 00:00:00");
 
             await db.GetService<IMigrator>().MigrateAsync(TheMigration);
 
@@ -117,9 +142,12 @@ public sealed class FoldTaggedModelNamesTests
                 ["ollama/lone"] = 1,
                 ["ollama/newer"] = 3,
                 ["ollama/older"] = 4,
+                ["ollama/case"] = 8,
+                ["ollama/lone:v2"] = 10,
                 ["ollama/versioned:v1.5"] = 6,
                 ["openai/lone"] = 7,
             }, ignoreOrder: true);
+            ShouldBeInTheFormTheCodeWrites((await MeasurementsAsync(db)).Keys);
         }
         finally
         {

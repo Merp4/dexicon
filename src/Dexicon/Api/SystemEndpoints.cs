@@ -1028,9 +1028,9 @@ public static class SystemEndpoints
 
         var provider = string.IsNullOrWhiteSpace(body.Provider) ? opts.Value.Embedding.Provider : body.Provider;
 
-        // Stored under the name without `:latest`. The Models screen sends the name Ollama lists
-        // (`embeddinggemma:latest`) and a chunk set records `embeddinggemma`; one model, so one
-        // row, and the one the indexer finds.
+        // Stored under the lower-case name without `:latest`. The Models screen sends the name
+        // Ollama lists (`embeddinggemma:latest`) and a chunk set records `embeddinggemma` or
+        // whatever was typed; one model, so one row, and the one the indexer finds.
         var target = new EmbeddingTarget(provider, body.Model.Trim());
         var model = target.CanonicalModel;
 
@@ -1217,7 +1217,8 @@ public static class ModelNames
     /// stores whatever was typed, usually "nomic-embed-text". They refer to the same
     /// model, and comparing them raw made a model in active use look unused: the listing
     /// said so, and the delete guard would have let it be removed out from under four
-    /// corpora. Only ":latest" is stripped; ":v1.5" is a genuinely different model.
+    /// corpora. Only ":latest" is stripped, and the letters are lower-cased; ":v1.5" is a
+    /// genuinely different model.
     /// </summary>
     internal static string Normalise(string model) => EmbeddingTarget.Canonical(model);
 
