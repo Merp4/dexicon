@@ -19,7 +19,8 @@ namespace Dexicon.Tests;
 /// graph from each write and reports any use of the caller's token the write can reach. A write is
 /// <c>SaveChanges</c>, <c>ExecuteUpdate</c>, <c>ExecuteDelete</c> or <c>ExecuteSql</c> on the catalogue, or a
 /// call to a method in <c>src/</c> that makes one, followed through calls and interfaces declared in
-/// <c>src/</c> until nothing new is found.
+/// <c>src/</c> until nothing new is found. A lambda or method group that writes makes a write of the call
+/// to a local that holds it or a copy of it, and of a call to a lambda that calls one.
 ///
 /// The caller's token is a <see cref="CancellationToken"/> parameter of the function or of one around it
 /// (a lambda or local function can capture it), a local of type <see cref="CancellationToken"/> or
@@ -40,11 +41,12 @@ namespace Dexicon.Tests;
 /// and stores the next file on it, and its queuing of the job after the loop is not exempt. A suppression
 /// that no longer suppresses anything fails, wherever it is written, as does one without a justification.
 ///
-/// Blind to: a token held in a field, a property, a collection, a tuple or an object it was passed into, and
-/// a delegate held in a field; a <c>catch</c> reached by an exception thrown after a write, since the graph
-/// has no edge for an exception and treats every catch as following a failed write; a callback passed to
-/// the writing call and run inside it; writes to Qdrant and the blob store, which are not catalogue writes;
-/// and the conditions on a path, so a branch taken only when nothing was written is followed too.
+/// Blind to: a token held in a field, a property, a collection, a tuple or an object it was passed into; a
+/// <c>catch</c> reached by an exception thrown after a write, since the graph has no edge for an exception
+/// and treats every catch as following a failed write; a callback passed to the writing call and run inside
+/// it, and a delegate held in a field or a parameter, whose body the scan cannot see; writes to Qdrant and
+/// the blob store, which are not catalogue writes; and the conditions on a path, so a branch taken only when
+/// nothing was written is followed too.
 /// <c>TheScanReportsEveryWayTheTokenReachesWorkAfterAWrite</c> and its companions pin what is covered.
 /// </summary>
 public sealed class RequestTokenAfterCommitTests
