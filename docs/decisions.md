@@ -984,6 +984,9 @@ of which every key sees.
 key can also carry `configure`, and its scopes can be changed after issue. `admin` stays the
 password's alone.
 
+**Amended by** [D-39](#d-39-agents-ask-for-removals-and-a-person-decides) (2026-10-08): a key can
+also carry `propose`, to ask for a removal that a person decides. `admin` stays the password's alone.
+
 ---
 
 ### D-29 An integration document, and retrieval in one call
@@ -1961,6 +1964,72 @@ sweeper, the coverage report and the indexer all share. A file whose bytes chang
 change of size or modified time is not noticed until a full pass. A mount that returns short
 reads could make a good file read as corrupt for one pass; it then stays settled as failed until
 it changes or a full pass reads it again.
+
+---
+
+### D-39 Agents ask for removals and a person decides
+
+**Status.** Accepted and implemented in part, 2026-10-08: the scope, the table, the tool and the
+administrator's endpoints. The Approvals view in the UI follows.
+
+**Decision.** A key holding the `propose` scope can ask for a removal with `propose_removal`: a
+source, a chunk set, a document or a corpus, and a one-line reason. It reads how its requests were
+decided with `removal_status`, which needs no other scope and no corpus that still exists. The request
+is a row in `proposals`. Nothing is removed until an administrator approves it, and approving runs the code the
+`DELETE` endpoints run (`CorpusConfiguration`'s removals and the document detach), so the two cannot
+drift. `propose` is independent of every other scope: a key can hold it without `configure`, and
+`configure` without it. Nothing grants it by default. A key adopted from the environment never holds
+it, and a key issued without it ticked does not. Keys that never hold it see no change: the tool is
+hidden from them, the table is never written to, and the setup used before this, in which an agent
+adds and changes and a key with `ingest` detaches documents directly, remains a configuration like
+any other ([07](07-auth.md), [06](06-mcp-surface.md#propose_removal)).
+
+**Why.** An agent with `configure` could add and could not remove, so a mistake stood until a person
+found it. Giving keys the removals themselves would reverse D-28, which keeps what only a person
+should do out of a credential sitting in an agent's configuration. Asking sits between the two: the
+agent says what and why, and the person decides with the facts in front of them. The facts are worked
+out when the person looks (files, chunks and sets that would go, and anything that would make the
+removal refused), so what they read is not the agent's description.
+
+**Properties.** Chosen so that nothing in flight needs a repair (D-37).
+- There is no running status. Approving marks the proposal decided on the tracked row and then runs
+  the removal, whose save writes both, so the target is gone and the proposal approved together or
+  neither. A crash before that save leaves it pending, and approving again retries.
+- `Status` is a concurrency token, so two decisions made from the same read cannot both stand.
+  Decisions are also taken one at a time. An approval deletes vectors before it saves and Qdrant
+  cannot be rolled back, so a rejection saved in between would leave a rejected proposal whose
+  vectors are gone and whose files the catalogue still lists. The token alone cannot prevent that,
+  only report it afterwards.
+- The target is held by id. A source or corpus recreated under the same name is never the thing
+  removed.
+- A target already gone fails the proposal with that reason, including one removed by a direct
+  `DELETE` while the approval was running, which does not take the decision lock: the save conflicts,
+  and the stored status tells that apart from a decision made elsewhere. A removal that is refused for a reason
+  that can pass (the default set, a set a job is working on) leaves it pending, with the reason.
+- An approval deletes vectors before it saves, in the order the admin's `DELETE` uses, and Qdrant
+  cannot be rolled back. If the store fails part-way, or the process dies, the proposal is still pending
+  and the target still has its row, with some of its vectors gone. Approving again finishes the job.
+  Rejecting it instead leaves a target that a pass repairs: each pass compares every indexed file's
+  recorded chunk count with the store's own and indexes again the files that disagree, in either direction
+  (`ReconcileChunkCountsAsync`). A stored in-flight state that blocks rejection was considered and not
+  added: it is the state D-37 removed, it would need its own repair when it outlived the process, and
+  the repair that already exists covers the loss.
+- A key may have ten waiting, and one request per target waits at a time; asking again returns the
+  one waiting. There is no expiry and no worker.
+- The row has no foreign keys and copies in the names, so it outlives the key, the corpus and the
+  thing it names. It is the first stored record of what an agent asked for; the audit trail
+  otherwise is the log.
+
+**Rejected.** MCP elicitation, because the endpoint is stateless, the prompt is not durable, and the
+answer cannot be tied to the administrator. A per-key "needs approval" flag on the existing tools,
+which makes every tool asynchronous and reverses D-28's choice of scopes. Recording the HTTP request
+and replaying it on approval, which runs authentication and validation again against a world that has
+moved. Several approvers, expiry and notifications: one person runs the instance, and a waiting
+request costs nothing.
+
+**Cost.** One table and a migration that touches no data, two tools, and a scope to issue, show and
+document. The tools' definitions cost context only for the keys that hold the scope. Whether document
+detach should leave `ingest` for a scope of its own is a separate decision, not made here.
 
 ---
 

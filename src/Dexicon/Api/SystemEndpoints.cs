@@ -1064,7 +1064,11 @@ public static class SystemEndpoints
                 await db.Corpora.CountAsync(ct),
                 activeJob?.ToSummary(),
                 await MissingModelsAsync(db, catalog, cache, visible.Select(c => c.Id).ToList(),
-                    rc.RequirePrincipal().TokenId, ct)));
+                    rc.RequirePrincipal().TokenId, ct),
+                // The UI polls this, and what it shows beside the Approvals link is the count.
+                rc.RequirePrincipal().Scopes.Contains(Scopes.Admin)
+                    ? await db.Proposals.CountAsync(p => p.Status == ProposalStatus.Pending, ct)
+                    : null));
         }).Produces<HealthResponse>().WithTags("Health");
     }
 

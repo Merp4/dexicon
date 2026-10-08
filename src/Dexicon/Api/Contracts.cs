@@ -154,9 +154,13 @@ public sealed record EmbeddingHealth(
 /// <param name="Sets">`corpus:set` for each affected set, because the fix is per set.</param>
 public sealed record MissingModel(string Provider, string Model, IReadOnlyList<string> Sets);
 
+/// <param name="PendingProposals">
+/// How many removals agents have asked for that no one has decided. Counted for an administrator and
+/// null for a key, who has no use for it and no way to act on it.
+/// </param>
 public sealed record HealthResponse(
     string Status, HealthDependency Qdrant, EmbeddingHealth Ollama, int Corpora, JobSummary? ActiveJob,
-    IReadOnlyList<MissingModel> MissingModels);
+    IReadOnlyList<MissingModel> MissingModels, int? PendingProposals = null);
 
 public sealed record ReadinessResponse(string Status, bool Qdrant, bool Catalogue);
 

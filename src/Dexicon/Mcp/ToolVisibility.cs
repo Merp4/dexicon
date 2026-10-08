@@ -19,6 +19,7 @@ internal static class ToolVisibility
         if (!principal.Has(Scopes.Search)) hidden.UnionWith(SearchTools);
         if (!principal.Has(Scopes.Ingest)) hidden.Add("index_refresh");
         if (!principal.Has(Scopes.Configure)) hidden.UnionWith(ConfigureTools.Names);
+        if (!principal.Has(Scopes.Propose)) hidden.UnionWith(ProposeTools.Names);
         return hidden;
     }
 }

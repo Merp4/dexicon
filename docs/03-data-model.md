@@ -15,7 +15,8 @@ catalogue is authoritative and Qdrant is a derived view that can be rebuilt from
 
 | Concept | Definition |
 |---|---|
-| **Key** | An agent's credential. Carries one or more of `search`, `ingest` and `configure`, never `admin`, and maps to the corpora it may reach. |
+| **Key** | An agent's credential. Carries one or more of `search`, `ingest`, `configure` and `propose`, never `admin`, and maps to the corpora it may reach. |
+| **Proposal** | A removal an agent asked for and a person has yet to decide, or the record of how it was decided. Holds no foreign keys, so it outlives what it names. |
 | **Corpus** | A named, searchable body of content. The unit of reindexing and of search scope. It has no owner: which keys reach it is a property of those keys. |
 | **Chunk set** | One way of cutting and embedding a corpus: a model, a vector space, a chunking strategy. A corpus carries one or more, over the same documents. Addressed as `corpus:set`. |
 | **Source** | Where a corpus gets its content: a `workspace` mount path, or `upload` (files pushed through the UI/API). A corpus has one or more. |
@@ -67,7 +68,7 @@ CREATE TABLE tokens (
   name          TEXT NOT NULL,
   token_hash    BLOB NOT NULL,              -- see 10-security-secrets.md
   token_salt    BLOB NOT NULL,
-  scopes        TEXT NOT NULL,              -- csv: search, ingest, configure. Never admin.
+  scopes        TEXT NOT NULL,              -- csv: search, ingest, configure, propose. Never admin.
   created_utc   TEXT NOT NULL,
   last_used_utc TEXT,
   expires_utc   TEXT,
@@ -262,6 +263,28 @@ CREATE TABLE jobs (
   finished_utc   TEXT
 );
 CREATE INDEX ix_jobs_corpus ON jobs(corpus_id, started_utc DESC);
+
+-- Removals an agent has asked for, and how each was decided (D-39). NO FOREIGN KEYS: it is
+-- a record of what was asked, and it outlives the key, the corpus and the thing it names,
+-- which is why the names are copied in. The target is held by id.
+CREATE TABLE proposals (
+  id            TEXT PRIMARY KEY,
+  created_utc   TEXT NOT NULL,              -- the waiting list is read oldest first
+  token_id      TEXT NOT NULL,              -- the key that asked: caps its waiting count, and
+  token_name    TEXT NOT NULL,              --   shown to the person deciding, as it was named then
+  corpus_id     TEXT NOT NULL,
+  corpus_name   TEXT NOT NULL,
+  kind          TEXT NOT NULL,              -- source | chunk_set | document | corpus
+  target_id     TEXT NOT NULL,              -- the source, chunk set, file or corpus, by id
+  target_label  TEXT NOT NULL,              -- what the target was called then
+  reason        TEXT NOT NULL,              -- the agent's words, one line, at most 300 characters
+  status        TEXT NOT NULL,              -- pending | approved | rejected | failed. A concurrency token
+  decided_utc   TEXT,
+  error         TEXT                        -- why a proposal failed: what was gone when it was approved
+);
+CREATE INDEX ix_proposals_status ON proposals(status, created_utc);
+CREATE INDEX ix_proposals_token ON proposals(token_id, status);
+CREATE INDEX ix_proposals_target ON proposals(kind, target_id, status);
 ```
 
 `chunk_count` on `files` is written by the indexer **and read back** by the corpus detail

@@ -1030,6 +1030,95 @@
         }
       }
     },
+    "/api/proposals": {
+      "get": {
+        "tags": [
+          "Proposals"
+        ],
+        "parameters": [
+          {
+            "name": "decided",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProposalView"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/proposals/{id}/approve": {
+      "post": {
+        "tags": [
+          "Proposals"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/proposals/{id}/reject": {
+      "post": {
+        "tags": [
+          "Proposals"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/session": {
       "post": {
         "tags": [
@@ -2974,6 +3063,13 @@
             "items": {
               "$ref": "#/components/schemas/MissingModel"
             }
+          },
+          "pendingProposals": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
           }
         }
       },
@@ -3410,6 +3506,106 @@
             "type": [
               "null",
               "string"
+            ]
+          }
+        }
+      },
+      "ProposalFacts": {
+        "required": [
+          "sources",
+          "files",
+          "chunks",
+          "chunkSets"
+        ],
+        "type": "object",
+        "properties": {
+          "sources": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "files": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "chunks": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "chunkSets": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "blocker": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "ProposalView": {
+        "required": [
+          "id",
+          "createdUtc",
+          "keyName",
+          "corpusName",
+          "kind",
+          "target",
+          "reason",
+          "status",
+          "gone"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "createdUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "keyName": {
+            "type": "string"
+          },
+          "corpusName": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "gone": {
+            "type": "boolean"
+          },
+          "decidedUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "facts": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProposalFacts"
+              }
             ]
           }
         }
@@ -4269,6 +4465,9 @@
     },
     {
       "name": "Documents"
+    },
+    {
+      "name": "Proposals"
     },
     {
       "name": "Session"

@@ -17,21 +17,30 @@ public static class Scopes
     /// </summary>
     public const string Configure = "configure";
 
+    /// <summary>
+    /// Ask for a removal: a source, a chunk set, a document or a corpus. Nothing is removed until
+    /// the administrator approves it, so this is weaker than any scope that can change the index.
+    /// Independent of <see cref="Configure"/>: a key can hold either, both or neither. See
+    /// docs/decisions.md D-39.
+    /// </summary>
+    public const string Propose = "propose";
+
     public const string Admin = "admin";
 
-    public static readonly string[] All = [Search, Ingest, Configure, Admin];
+    public static readonly string[] All = [Search, Ingest, Configure, Propose, Admin];
 
     /// <summary>
     /// What a key may be issued with. <see cref="Admin"/> is absent deliberately: it comes
     /// from the password alone, so no credential sitting in an agent's configuration can
     /// delete a corpus or mint another key. See docs/decisions.md D-28 and D-36.
     /// </summary>
-    public static readonly string[] Issuable = [Search, Ingest, Configure];
+    public static readonly string[] Issuable = [Search, Ingest, Configure, Propose];
 
     /// <summary>
     /// What a key adopted from <c>DEXICON__BOOTSTRAP__TOKEN</c> holds, as docs/12 says. Not
     /// <see cref="Issuable"/>: <see cref="Configure"/> reaches every mounted folder (D-36), so
-    /// it is granted on the Access page and never by a value sitting in <c>.env</c>.
+    /// it is granted on the Access page and never by a value sitting in <c>.env</c>, and
+    /// <see cref="Propose"/> is granted the same way, per key.
     /// </summary>
     public static readonly string[] Bootstrap = [Search, Ingest];
 }

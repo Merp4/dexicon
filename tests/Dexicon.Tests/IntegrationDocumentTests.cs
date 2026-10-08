@@ -139,6 +139,28 @@ public sealed class IntegrationDocumentTests
         }
     }
 
+    [Theory]
+    [InlineData("ProposalFacts")]
+    [InlineData("ProposalView")]
+    public void ANullTheApiLeavesOutIsNotPublishedAsRequired(string schemaName)
+    {
+        // The API writes no JSON null (Program.cs), and a record member without a default is published as
+        // required, so a client following the document would expect a key the server never sends.
+        var schema = Document("Dexicon.json").GetProperty("components").GetProperty("schemas").GetProperty(schemaName);
+        var required = schema.GetProperty("required").EnumerateArray().Select(e => e.GetString()!).ToList();
+
+        static bool AllowsNull(JsonElement property) =>
+            (property.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.Array
+                && type.EnumerateArray().Any(t => t.GetString() == "null"))
+            || (property.TryGetProperty("oneOf", out var one)
+                && one.EnumerateArray().Any(o => o.TryGetProperty("type", out var t) && t.GetString() == "null"));
+
+        var nullable = schema.GetProperty("properties").EnumerateObject().Where(p => AllowsNull(p.Value)).Select(p => p.Name).ToList();
+
+        nullable.ShouldNotBeEmpty("the premise: the schema has members that can be null");
+        required.Intersect(nullable).ShouldBeEmpty();
+    }
+
     [Fact]
     public void BothDocumentsCarryTheSameApiVersion()
     {

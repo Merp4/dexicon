@@ -113,6 +113,7 @@ builder.Services.AddScoped<SearchService>();
 builder.Services.AddScoped<ContextService>();
 builder.Services.AddScoped<CorpusIndexer>();
 builder.Services.AddScoped<CorpusConfiguration>();
+builder.Services.AddScoped<ProposalService>();
 // A singleton, because what it counts belongs to the machine and the endpoints rather
 // than to a caller. Scoped, it would be one limit per request and describe nothing.
 builder.Services.AddSingleton<IndexingLimits>();
@@ -153,6 +154,7 @@ builder.Services
     .WithHttpTransport(o => o.Stateless = true)
     .WithTools<DexiconTools>(McpJson.Options)
     .WithTools<ConfigureTools>(McpJson.Options)
+    .WithTools<ProposeTools>(McpJson.Options)
     .WithResources<DexiconResources>();
 
 // A key without `ingest` is not shown `index_refresh` at all, and one without `configure`
@@ -215,6 +217,7 @@ app.MapCorpusEndpoints();
 app.MapChunkSetEndpoints();
 app.MapDocumentEndpoints();
 app.MapJobEndpoints();
+app.MapProposalEndpoints();
 app.MapEventEndpoints();
 app.MapWorkspaceEndpoints();
 app.MapAdminEndpoints();

@@ -461,7 +461,7 @@ public sealed class ConfigureTools
             : throw new McpException($"There is no folder '{path}' under the workspace. list_folders shows what is mounted.");
     }
 
-    private static async Task<Corpus> WritableAsync(
+    internal static async Task<Corpus> WritableAsync(
         ScopeResolver scopes, Principal principal, string corpus, string hint, CancellationToken ct)
     {
         try { return await scopes.ResolveWritableAsync(principal, corpus, ct); }

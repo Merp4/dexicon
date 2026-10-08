@@ -160,4 +160,27 @@ describe("a key's scopes", () => {
 
     expect(createToken).toHaveBeenCalledWith('setup-agent', ['search', 'configure'], []);
   });
+
+  /**
+   * Asking for a removal is its own scope, so an agent can be given it without being able to
+   * configure anything, and the other way round. Nothing about it is ticked for a new key.
+   */
+  it('offer propose on its own, and never ticked for a new key', async () => {
+    const user = userEvent.setup();
+    render(<AccessView onError={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: /New key/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'New key' });
+    const propose = within(dialog).getByRole('button', { name: 'propose' });
+    const configure = within(dialog).getByRole('button', { name: 'configure' });
+    expect(propose).toHaveAttribute('aria-pressed', 'false');
+    expect(within(dialog).getByText(/each request waits for your decision/)).toBeInTheDocument();
+
+    await user.type(within(dialog).getByPlaceholderText('claude-code'), 'reviewer');
+    await user.click(propose);
+    expect(configure).toHaveAttribute('aria-pressed', 'false');
+    await user.click(within(dialog).getByRole('button', { name: /Create/ }));
+
+    expect(createToken).toHaveBeenCalledWith('reviewer', ['search', 'propose'], []);
+  });
 });

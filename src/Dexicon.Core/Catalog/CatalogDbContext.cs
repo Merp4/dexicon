@@ -24,6 +24,7 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
     public DbSet<BlobText> BlobTexts => Set<BlobText>();
     public DbSet<FileText> FileTexts => Set<FileText>();
     public DbSet<IndexJob> Jobs => Set<IndexJob>();
+    public DbSet<Proposal> Proposals => Set<Proposal>();
 
     /// <summary>
     /// UTC everywhere, converted exactly once, at the edge that renders it.
@@ -245,6 +246,32 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             e.HasOne(x => x.Corpus).WithMany(c => c.Jobs)
                 .HasForeignKey(x => x.CorpusId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(x => new { x.CorpusId, x.StartedUtc });
+        });
+
+        // No foreign keys: a proposal is a record of what was asked and has to outlive the key,
+        // the corpus and the thing it names. See Proposal.
+        modelBuilder.Entity<Proposal>(e =>
+        {
+            e.ToTable("proposals");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasMaxLength(40);
+            e.Property(x => x.TokenId).HasMaxLength(40).IsRequired();
+            e.Property(x => x.TokenName).HasMaxLength(200).IsRequired();
+            e.Property(x => x.CorpusId).HasMaxLength(40).IsRequired();
+            e.Property(x => x.CorpusName).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Kind).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.TargetId).HasMaxLength(40).IsRequired();
+            // A source's folder and a document's path are modelled up to 1,000 characters, and a source's
+            // label adds files: or history: in front, so this holds any valid one whole.
+            e.Property(x => x.TargetLabel).HasMaxLength(1100).IsRequired();
+            e.Property(x => x.Reason).HasMaxLength(300).IsRequired();
+            // The token that makes a decision a decision: the update says "where status is still
+            // what I read", so the second of two approvals matches no row and is refused.
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20).IsConcurrencyToken();
+            e.Property(x => x.Error).HasMaxLength(500);
+            e.HasIndex(x => new { x.Status, x.CreatedUtc });
+            e.HasIndex(x => new { x.TokenId, x.Status });
+            e.HasIndex(x => new { x.Kind, x.TargetId, x.Status });
         });
     }
 }
