@@ -87,9 +87,10 @@ dotnet_diagnostic.CA5350.severity = error
 dotnet_diagnostic.CA5351.severity = error
 
 [tests/**/*.cs]
-# Test names are PascalCase sentences (CONTRIBUTING.md, Style). CA1707 flags underscores in
-# public identifiers, so enabling it here would make that rule a build error.
-dotnet_diagnostic.CA1707.severity = none
+# Test names are PascalCase sentences without underscores (CONTRIBUTING.md, Style). CA1707
+# flags an underscore in a public identifier, which includes every test method name, and
+# TreatWarningsAsErrors makes that a build error.
+dotnet_diagnostic.CA1707.severity = error
 # Tests construct throwaway objects and assert on them; disposal noise is not useful.
 dotnet_diagnostic.CA2000.severity = none
 dotnet_diagnostic.CA1861.severity = none
