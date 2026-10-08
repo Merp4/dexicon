@@ -139,8 +139,9 @@ CREATE TABLE chunk_sets (
   corpus_id               TEXT NOT NULL REFERENCES corpora(id) ON DELETE CASCADE,
   name                    TEXT NOT NULL,       -- addressed as corpus:name; no colons
   description             TEXT,
-  -- Which configured backend embeds the set: ollama, openai, or an Azure deployment name.
-  -- A provider name resolved against configuration at use; credentials never reach the catalogue.
+  -- Which configured backend embeds the set: the name of a configured provider, such as ollama
+  -- or openai. The model within it, for Azure OpenAI the deployment, is embedding_model below.
+  -- Resolved against configuration at use; credentials never reach the catalogue.
   embedding_provider      TEXT NOT NULL DEFAULT 'ollama',
   -- The vector space. Pinned per set: changing a set's model in place would strand its
   -- vectors in a collection nothing addresses. Changing model means a NEW set.
@@ -299,7 +300,9 @@ CREATE TABLE model_profiles (
 );
 
 -- What a probe measured about a model: a fact, kept apart from the profile above.
--- NULL means not measured, which is different from 0.
+-- NULL is not 0, and it does not always mean the probe is incomplete: max_input_chars is NULL
+-- when the probe found no limit below its ceiling of 262,144 characters, and chars_per_token
+-- and context_tokens are NULL when the provider supplies no token counts.
 CREATE TABLE model_measurements (
   provider                 TEXT NOT NULL,
   model                    TEXT NOT NULL,

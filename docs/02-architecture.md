@@ -94,13 +94,16 @@ Hydrate: chunk payload → file path, line span, snippet, score
 Response
 ```
 
-Two round trips to external services on the hot path (embedding provider, Qdrant query). The
-sparse encoding is in-process. Target p95 under 400 ms for a warm `embeddinggemma`.
+Two round trips to external services on the hot path (embedding provider, Qdrant query) when
+the resolved scope uses one collection. A collection is one vector space, so a scope that
+spans several embedding models embeds the query once and runs one Qdrant query for each
+collection, then merges the hits by score. The sparse encoding is in-process. Target p95 under
+400 ms for a warm `embeddinggemma` over one collection.
 
 ### Indexing (the slow path)
 
 ```
-UI / MCP ──POST /api/corpora/{nameOrId}/reindex──▶ enqueue job ──▶ 202 + job summary
+UI / API ──POST /api/corpora/{nameOrId}/reindex──▶ enqueue job ──▶ 202 + job summary
                                                   │
                            the scheduler takes it │ (a slot for its type, and its corpus free)
                                                   ▼
@@ -115,6 +118,9 @@ UI / MCP ──POST /api/corpora/{nameOrId}/reindex──▶ enqueue job ──�
                                                   │
                      progress events ─────────────┴──▶ SSE /api/events ──▶ UI
 ```
+
+The `index_refresh` MCP tool does not call that route: it enqueues the same job directly and
+replies with a sentence naming the job and its state ([06](06-mcp-surface.md#index_refresh)).
 
 Job state, per-file outcomes, and failures land in SQLite so the UI can show what happened
 after the fact, not only while it is happening.

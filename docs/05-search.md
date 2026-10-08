@@ -158,7 +158,7 @@ appear only when set).
       "corpusId": "01JD...",
       "corpusName": "api-repo",
       "sourceId": "01JD...",
-      "sourceRoot": "src",                // the root path of the source the hit came from
+      "sourceRoot": "repos/api-repo",     // the source's root; filePath is relative to it
       "filePath": "src/Auth/TokenService.cs",
       "location": "src/Auth/TokenService.cs:120-168",
       "language": "csharp",
