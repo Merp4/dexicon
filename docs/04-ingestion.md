@@ -205,12 +205,24 @@ So:
 A corpus gets at most one upload source, created on first attachment. Detaching removes
 that corpus's chunks only; the blob survives, because another corpus may still hold it.
 
-Limits: 200 MB per file (`DEXICON__UPLOAD__MAXFILEBYTES`), applied while the file is copied
-to the blob store. Before that, ASP.NET Core has read the whole multipart form into a
-temporary file under `/tmp` (a tmpfs in the compose file), because the request-size limit is
-lifted for this endpoint. The blob store buffers to a temp file rather than memory too,
-because the hash is only known once the whole stream is read and a 200 MB upload should not
-be a 200 MB allocation. See [10](10-security-secrets.md#input-handling).
+Limits: 200 MB per file (`DEXICON__UPLOAD__MAXFILEBYTES`), applied while the file is read
+off the wire. The endpoint reads the multipart body with a `MultipartReader` and hands each
+file straight to the blob store, which copies it under a cap and stops one byte over, so
+nothing is spooled to `/tmp` (a tmpfs in the compose file) first. A file over the cap is
+listed in the response's `failed` array and the files beside it are stored; its remaining
+bytes are still read off the connection and discarded.
+
+The request as a whole is bounded at ten files at the cap plus 1 MiB of multipart framing,
+which is 2,098,200,576 bytes at the default and follows `DEXICON__UPLOAD__MAXFILEBYTES`.
+The web UI sends every dropped file in one request, so the bound allows a batch. A larger
+body is refused with `413` and a message that names the bound, before any of it is read
+when the client declares its `Content-Length`, and otherwise when the body reaches the bound.
+Files stored before the bound was reached stay stored, and the response lists the overrun
+under `failed` as `(request)`.
+
+The blob store writes each file to a temp file under `/data/blobs` before the hash is
+known, because the hash is only known once the whole stream is read and a 200 MB upload
+should not be a 200 MB allocation. See [10](10-security-secrets.md#input-handling).
 
 **Staleness is a chunking fingerprint**, not a content hash: a SHA-256 over the blob hash
 and every chunking and embedding setting, listed under

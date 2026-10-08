@@ -258,7 +258,30 @@ public sealed class IndexingOptions
 
 public sealed class UploadOptions
 {
+    /// <summary>
+    /// Files at <see cref="MaxFileBytes"/> that one upload request may carry. The web UI sends
+    /// every dropped file in a single request, so the request bound has to allow a batch.
+    /// </summary>
+    public const int BatchFiles = 10;
+
+    /// <summary>
+    /// Added to the request bound for part headers, boundaries and form fields, so a batch of
+    /// <see cref="BatchFiles"/> files that each fit the cap is not refused for its framing.
+    /// </summary>
+    public const long FramingAllowanceBytes = 1_048_576;
+
+    /// <summary>The largest single file stored. Applied while the file is copied.</summary>
     public long MaxFileBytes { get; init; } = 209_715_200;
+
+    /// <summary>
+    /// The largest body one upload request may have: <see cref="BatchFiles"/> files at
+    /// <see cref="MaxFileBytes"/> plus <see cref="FramingAllowanceBytes"/>. It follows the
+    /// per-file cap and has no setting of its own.
+    /// </summary>
+    public long MaxRequestBytes =>
+        MaxFileBytes > (long.MaxValue - FramingAllowanceBytes) / BatchFiles
+            ? long.MaxValue
+            : MaxFileBytes * BatchFiles + FramingAllowanceBytes;
 }
 
 public sealed class BootstrapOptions
