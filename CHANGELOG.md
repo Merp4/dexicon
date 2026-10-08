@@ -16,6 +16,49 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## 0.6.7 — 2026-10-08
+
+### ⚠️ Upgrading
+
+- One migration, `GrantDestroyToIngestKeys`, applied at startup. Data only: it appends `destroy`
+  once to every key that holds `ingest`, including the key adopted from
+  `DEXICON__BOOTSTRAP__TOKEN` on an existing install, so none of them stops being able to detach
+  a document. It cannot be undone, and a 0.6.6 started afterwards ignores the extra word.
+- `DELETE /api/corpora/{id}/documents/{fileId}` needs `destroy` and no longer `ingest`. A key
+  issued from now on is given what is ticked, and `destroy` is never ticked for a new key, so a
+  script that detaches documents with a new key needs `destroy` added, on the Access page or with
+  `PUT /api/tokens/{id}/scopes`. On a fresh install the key adopted from the environment holds
+  `search` and `ingest` only.
+- Detaching applies to uploaded documents only. An id from a source that reads a folder or a
+  repository's commits answers 404; it used to remove that file's vectors and row while the
+  source still listed it.
+
+### Added
+
+- **A `destroy` scope lets a key detach an uploaded document**
+  ([D-40](docs/decisions.md#d-40-detaching-a-document-has-a-scope-of-its-own)). It is independent
+  of `ingest`, so a key can add documents without being able to remove them, and the other way
+  round. The Access page lists it, never ticks it for a new key, and warns that nothing asks
+  first. Sources, chunk sets and corpora stay out of every key's reach and are asked for with
+  `propose`.
+
+### Changed
+
+- **The 403 for a missing scope says who can grant it.** Every scope check over HTTP told the
+  caller to sign in to the UI, which is true only of `admin`. The other scopes now say that
+  whoever runs Dexicon can grant them on the Access page, as the MCP tools do.
+- **`dotnet format` and test names are checked in CI.** `dotnet format Dexicon.slnx
+  --verify-no-changes` is a step of the required `Build and test` job, and 13 files were
+  reformatted to pass it. An underscore in the name of a C# test method or class is a build error
+  (`CA1707`). Neither was enforced before (`CONTRIBUTING.md`).
+
+### Fixed
+
+- **The detach endpoint reached files a source had read.** It took any file id in the corpus, so
+  a key that could search, and was listed those ids, could remove a workspace or history file's
+  vectors and catalogue row. Only an uploaded document is detached now, in the cleanup and in
+  `DocumentService.DetachAsync`, which the approved removal of a document uses too.
+
 ## 0.6.6 — 2026-10-08
 
 ### ⚠️ Upgrading
