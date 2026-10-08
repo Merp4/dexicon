@@ -274,12 +274,16 @@ public static class AuthExtensions
         if (principal is null)
             return Results.Problem(title: "Not authenticated", statusCode: StatusCodes.Status401Unauthorized);
 
+        // Administration is the password's and no key can be given it. Any other scope can be added to
+        // the key on the Access page, which is what the caller needs to be told.
         return principal.Has(scope)
             ? null
             : Results.Problem(
                 title: "Insufficient scope",
                 detail: $"This key has [{string.Join(", ", principal.Scopes)}] and needs '{scope}'. " +
-                        "Administration is the password's; sign in to the UI for it.",
+                        (scope == Scopes.Admin
+                            ? "Administration is the password's; sign in to the UI for it."
+                            : "Whoever runs Dexicon can grant it on the Access page."),
                 statusCode: StatusCodes.Status403Forbidden);
     }
 }

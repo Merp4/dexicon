@@ -25,22 +25,31 @@ public static class Scopes
     /// </summary>
     public const string Propose = "propose";
 
+    /// <summary>
+    /// Detach an uploaded document from a corpus over the API, which is the one removal a key can
+    /// make without a person deciding. Sources, chunk sets and corpora stay the administrator's,
+    /// and an agent reaches them through <see cref="Propose"/>. Independent of
+    /// <see cref="Ingest"/>: adding and attaching documents does not carry it. See
+    /// docs/decisions.md D-40.
+    /// </summary>
+    public const string Destroy = "destroy";
+
     public const string Admin = "admin";
 
-    public static readonly string[] All = [Search, Ingest, Configure, Propose, Admin];
+    public static readonly string[] All = [Search, Ingest, Configure, Propose, Destroy, Admin];
 
     /// <summary>
     /// What a key may be issued with. <see cref="Admin"/> is absent deliberately: it comes
     /// from the password alone, so no credential sitting in an agent's configuration can
     /// delete a corpus or mint another key. See docs/decisions.md D-28 and D-36.
     /// </summary>
-    public static readonly string[] Issuable = [Search, Ingest, Configure, Propose];
+    public static readonly string[] Issuable = [Search, Ingest, Configure, Propose, Destroy];
 
     /// <summary>
     /// What a key adopted from <c>DEXICON__BOOTSTRAP__TOKEN</c> holds, as docs/12 says. Not
     /// <see cref="Issuable"/>: <see cref="Configure"/> reaches every mounted folder (D-36), so
     /// it is granted on the Access page and never by a value sitting in <c>.env</c>, and
-    /// <see cref="Propose"/> is granted the same way, per key.
+    /// <see cref="Propose"/> and <see cref="Destroy"/> are granted the same way, per key.
     /// </summary>
     public static readonly string[] Bootstrap = [Search, Ingest];
 }

@@ -135,7 +135,8 @@ public static class DocumentEndpoints
             string nameOrId, string fileId, RequestContext rc, ScopeResolver scopes,
             DocumentService documents, IVectorStoreCleanup cleanup, CancellationToken ct) =>
         {
-            if (rc.RequireScope(Scopes.Ingest) is { } denied) return denied;
+            // Its own scope: this removes what ingest added, with no one deciding. D-40.
+            if (rc.RequireScope(Scopes.Destroy) is { } denied) return denied;
             var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
 
             var removed = await cleanup.RemoveAttachmentAsync(corpus, fileId, documents, ct);

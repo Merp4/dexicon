@@ -987,6 +987,10 @@ password's alone.
 **Amended by** [D-39](#d-39-agents-ask-for-removals-and-a-person-decides) (2026-10-08): a key can
 also carry `propose`, to ask for a removal that a person decides. `admin` stays the password's alone.
 
+**Amended by** [D-40](#d-40-detaching-a-document-has-a-scope-of-its-own) (2026-10-08): detaching a
+document needs `destroy` and no longer `ingest`. A key that held `ingest` when the migration ran was
+given `destroy` once, so none of them stopped being able to.
+
 ---
 
 ### D-29 An integration document, and retrieval in one call
@@ -1983,8 +1987,8 @@ drift. `propose` is independent of every other scope: a key can hold it without 
 `configure` without it. Nothing grants it by default: a key adopted from the environment is not given
 it, and a key issued without it ticked is not either. An administrator can add it to any key afterwards. Keys that never hold it see no change: the tool is
 hidden from them, the table is never written to, and the setup used before this, in which an agent
-adds and changes and a key with `ingest` detaches documents directly, remains a configuration like
-any other ([07](07-auth.md), [06](06-mcp-surface.md#propose_removal)).
+adds and changes and a key with `destroy` detaches documents directly ([D-40](#d-40-detaching-a-document-has-a-scope-of-its-own)),
+remains a configuration like any other ([07](07-auth.md), [06](06-mcp-surface.md#propose_removal)).
 
 **Why.** An agent with `configure` could add and could not remove, so a mistake stood until a person
 found it. Giving keys the removals themselves would reverse D-28, which keeps what only a person
@@ -2031,7 +2035,53 @@ request costs nothing.
 
 **Cost.** One table and a migration that touches no data, two tools, and a scope to issue, show and
 document. The tools' definitions cost context only for the keys that hold the scope. Whether document
-detach should leave `ingest` for a scope of its own is a separate decision, not made here.
+detach should leave `ingest` for a scope of its own was left to a separate decision,
+[D-40](#d-40-detaching-a-document-has-a-scope-of-its-own).
+
+---
+
+### D-40 Detaching a document has a scope of its own
+
+**Status.** Accepted and implemented, 2026-10-08. The second of the two changes D-39 planned.
+
+**Decision.** `DELETE /api/corpora/{id}/documents/{fileId}` requires `destroy`. `ingest` keeps upload,
+attach and reindex. The two are independent: a key can add documents without being able to remove them,
+and the other way round. Migration `GrantDestroyToIngestKeys` appends `destroy` once to every key that
+holds `ingest` when it runs, so no existing key stops being able to detach. A key issued afterwards is
+given what is ticked, nothing is ticked by default, and the key adopted from `DEXICON__BOOTSTRAP__TOKEN`
+on a fresh install holds `search` and `ingest` only. With D-36 and D-39 the scopes on a key are the whole
+configuration, from reading only to trusted automation: `search`; `ingest` and `configure` to add and
+set up; `propose` to ask for a removal and wait; `destroy` to detach a document without waiting. `admin`
+stays the password's alone, and the setup before D-39, with no proposals, is one combination of these.
+
+**Why.** D-28 kept detach under `ingest` so that ingestion could be automated, and recorded that it
+removes a document with no human step. D-39 then gave removals a path a person decides, which left
+detach as the one removal a key made directly and one that every key able to add a document could make.
+A scope of its own lets an operator hand out adding without removing, and makes the one direct removal
+something granted on purpose. Sources, chunk sets and corpora stay out of every key's reach, as D-39 chose.
+
+**Properties.**
+- The grant is data only. One `UPDATE` matches `ingest` as a whole word in the comma-separated scopes, so
+  a longer word containing it is not taken for it, and skips a key that already holds `destroy`, so
+  running it twice changes nothing. A revoked key is included: re-adopting the bootstrap key un-revokes
+  it, and it should still do what it did.
+- Adopting a key whose id already exists rotates its hash and does not rewrite its scopes, so the grant
+  survives a restart.
+- `Down` restores nothing. Afterwards there is no telling a key given `destroy` here from one given it on
+  the Access page.
+- The check is in the endpoint. No MCP tool detaches a document, so there is nothing to hide from a
+  `tools/list`. The Access page lists the scope, never ticks it for a new key, and warns that nothing
+  asks first.
+
+**Rejected.** A scope that also removes sources, chunk sets and corpora, which reverses D-28's choice
+that these are for a person; an agent asks with `propose`. Leaving detach under `ingest`, so adding a
+document cannot be given without removing one. Making `destroy` imply `ingest`, or the other way round,
+against the independence `configure` and `propose` already have. Putting `destroy` in the bootstrap
+set, since a value sitting in `.env` should not carry a removal. Granting it to every key, which would
+widen keys that only ever searched.
+
+**Cost.** One scope, a data migration and a row in the Access page's table. A key issued with `ingest`
+alone from now on cannot detach a document, so anything scripted against it needs `destroy` added.
 
 ---
 
