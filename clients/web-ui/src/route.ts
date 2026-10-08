@@ -12,7 +12,7 @@
  */
 
 export const VIEWS = [
-  'search', 'corpora', 'documents', 'jobs', 'models', 'access', 'settings',
+  'search', 'corpora', 'documents', 'jobs', 'approvals', 'models', 'access', 'settings',
 ] as const;
 
 export type View = (typeof VIEWS)[number];

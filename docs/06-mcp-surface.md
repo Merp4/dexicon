@@ -304,9 +304,10 @@ and named in `reset`, a file setting on a history source, and a `since` that is 
 Two more tools, listed only to a key holding `propose`
 ([D-39](decisions.md#d-39-agents-ask-for-removals-and-a-person-decides)), and independent of
 `configure`. `propose_removal` asks for a removal and removes nothing: whoever runs Dexicon
-approves or rejects each request, and approving runs what the admin's delete runs. The requests
-are listed with `GET /api/proposals` and decided with `POST /api/proposals/{id}/approve` or
-`/reject`, which take the administrator's session and are not open to a key.
+approves or rejects each request, and approving runs what the admin's delete runs. They are decided
+on the [Approvals](08-ui.md#approvals) screen, which uses `GET /api/proposals` and
+`POST /api/proposals/{id}/approve` or `/reject`. Those take the administrator's session and are
+not open to a key.
 
 `propose_removal(kind, corpus, target?, reason)`: `kind` is `source`, `chunk_set`, `document`
 or `corpus`, and `corpus` is the corpus it is in.

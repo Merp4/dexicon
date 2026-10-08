@@ -1969,8 +1969,8 @@ it changes or a full pass reads it again.
 
 ### D-39 Agents ask for removals and a person decides
 
-**Status.** Accepted and implemented in part, 2026-10-08: the scope, the table, the tool and the
-administrator's endpoints. The Approvals view in the UI follows.
+**Status.** Accepted and implemented, 2026-10-08: the scope, the table, the tools, the administrator's
+endpoints and the Approvals view in the UI ([08](08-ui.md#approvals)).
 
 **Decision.** A key holding the `propose` scope can ask for a removal with `propose_removal`: a
 source, a chunk set, a document or a corpus, and a one-line reason. It reads how its requests were
