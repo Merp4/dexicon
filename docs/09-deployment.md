@@ -477,12 +477,16 @@ gh attestation verify oci://ghcr.io/<owner>/dexicon:0.6.1 --owner <owner>
 - **`qdrant_data`** — reconstructible by reindexing. Back it up to save time, not data.
 - **`ollama_data`** — model weights. Re-downloadable.
 
-`scripts/backup.sh` archives `dexicon_data` and `qdrant_data`; `WITH_MODELS=1` adds
-`ollama_data`. Run it from the repository root, where it acts on the Compose project that
-`docker compose` resolves there: `COMPOSE_PROJECT_NAME` in the shell or `.env`, or else the
-`name:` in the file. A stack started with `docker compose -p <name>` needs
-`COMPOSE_PROJECT_NAME=<name>` on the script, because `-p` on an earlier command does not
-carry over:
+`scripts/backup.sh` archives `dexicon_data` and the in-stack `qdrant_data`; `WITH_MODELS=1`
+adds `ollama_data`. Run it from the repository root, where it acts on the Compose project and
+files that `docker compose` resolves there: `COMPOSE_PROJECT_NAME` in the shell or `.env`, or
+else the `name:` in the file, and `COMPOSE_FILE` in the shell or `.env`, or else
+`docker-compose.yml` with `docker-compose.override.yml`. A stack started with
+`docker compose -p <name>` or `-f <file>` flags needs `COMPOSE_PROJECT_NAME=<name>` and
+`COMPOSE_FILE=<files>` on the script, because those flags on an earlier command do not carry
+over; without `COMPOSE_FILE`, `restore` and `verify` recreate the base stack. A Qdrant outside
+the stack (`DEXICON_QDRANT_ENDPOINT`) is not archived: it needs its own snapshot procedure, or
+restoring the catalogue means a full reindex:
 
 ```bash
 ./scripts/backup.sh backup   [dir]   # stops the app and Qdrant, archives the volumes, restarts them
@@ -551,7 +555,10 @@ The warnings are left in the log because they describe a real, if unlikely, fail
    **Upgrading** block names the migrations that cannot be undone and anything to do by hand.
 2. Take a backup: `./scripts/backup.sh backup`. Migrations run at startup and do not
    reverse; the backup is the way back.
-3. Pull and recreate. With a pinned tag, set `DEXICON_TAG` in `.env` to the new version
+3. Update the checkout: `git pull`, or `git checkout v<version>` to follow a release. The
+   compose file, overlays and scripts ship with each release and the image tag does not carry
+   them. `.env` and `docker-compose.override.yml` are ignored by git and stay as they are.
+4. Pull and recreate. With a pinned tag, set `DEXICON_TAG` in `.env` to the new version
    first:
 
    ```bash

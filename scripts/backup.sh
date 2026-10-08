@@ -28,7 +28,9 @@ set -euo pipefail
 # volumes in step with the stack that the `docker compose` calls below act on; a name assumed
 # here would archive an empty volume that `docker run` creates on demand. A `-p` given to an
 # earlier `docker compose` command does not carry over: a stack started with `-p prod` needs
-# COMPOSE_PROJECT_NAME=prod on this script, or its volumes are not the ones found.
+# COMPOSE_PROJECT_NAME=prod on this script, or its volumes are not the ones found. The same
+# holds for `-f`: COMPOSE_FILE (shell or .env) names the files, and without it `restore` and
+# `verify` bring up the base stack. Only the in-stack Qdrant is archived.
 init_project() {
   # `|| true` because pipefail would otherwise end the script here, silently, when
   # `docker compose config` fails outside a repository.
