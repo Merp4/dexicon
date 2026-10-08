@@ -165,16 +165,17 @@ filters for what only this corpus leaves out.
 
 If your key lists `propose_removal`, you can ask for something to be removed: a source, a
 chunk set, an uploaded document or a whole corpus. Nothing is removed by the call. It records
-the request and a person approves or rejects it in the Dexicon UI, so ask only for what you
+the request and whoever runs Dexicon approves or rejects it, so ask only for what you
 can say a reason for, in one line, and say in your reply that you asked and that it is
 waiting. `propose_removal(kind, corpus, target, reason)` takes `kind` as `source`,
 `chunk_set`, `document` or `corpus`. The `target` for a source is its folder as `index_status`
 shows it (`files:repos/app`, or `history:repos/app` when both read the folder), for a chunk
 set its name, for a document its path, and for a corpus nothing. The default chunk set and a
 corpus's only chunk set cannot be removed, so they are refused when asked. Ask once: a repeat
-returns the request already waiting. `index_status(corpus)` lists the requests your key has
-made and how each was decided: waiting, approved (it has been removed), rejected (it stays),
-or could not be done, with the reason.
+returns the request already waiting. `removal_status` lists the requests your key has made
+and how each was decided: waiting, approved (it has been removed), rejected (it stays), or
+could not be done, with the reason. Check it before asking again, and it still answers once a
+corpus you asked to remove is gone.
 
 Without those tools, anything else (a new corpus or source, a source's filters or size
 limit, a corpus description) is set in the Dexicon UI by whoever runs it, as are chunk sets

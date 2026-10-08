@@ -62,13 +62,13 @@ Corpus 'books' has no chunk set named 'nope'. Its sets: default, fine.
 
 ## Tools
 
-Five tools, three more for a key holding `configure`, and one more for a key holding
+Five tools, three more for a key holding `configure`, and two more for a key holding
 `propose`. The count is a design
 constraint: every tool definition is context an agent pays for on every turn, and a
 surface of thirty tools measurably degrades smaller models. So a key is listed only the
 tools its scopes let it call: the four that read the index need `search`, `index_refresh`
 needs `ingest`, the [configuration tools](#configuration-tools) need `configure`, and
-[`propose_removal`](#propose_removal) needs `propose`.
+[`propose_removal` and `removal_status`](#propose_removal) need `propose`.
 
 ### `search_index`
 
@@ -301,10 +301,12 @@ and named in `reset`, a file setting on a history source, and a `since` that is 
 
 ### `propose_removal`
 
-One more tool, listed only to a key holding `propose`
+Two more tools, listed only to a key holding `propose`
 ([D-39](decisions.md#d-39-agents-ask-for-removals-and-a-person-decides)), and independent of
-`configure`. It asks for a removal and removes nothing: a person approves or rejects each
-request in the UI, and approving runs what the admin's delete runs.
+`configure`. `propose_removal` asks for a removal and removes nothing: whoever runs Dexicon
+approves or rejects each request, and approving runs what the admin's delete runs. The requests
+are listed with `GET /api/proposals` and decided with `POST /api/proposals/{id}/approve` or
+`/reject`, which take the administrator's session and are not open to a key.
 
 `propose_removal(kind, corpus, target?, reason)`: `kind` is `source`, `chunk_set`, `document`
 or `corpus`, and `corpus` is the corpus it is in.
@@ -322,12 +324,16 @@ there is to match, and a key may have ten requests waiting. Asking again for som
 waiting returns that request and records nothing new.
 
 ```
-Recorded proposal 01K… to remove the source files:docs from corpus 'notes'. It is awaiting approval in the Dexicon UI, and nothing has been removed. index_status(corpus: "notes") shows how it is decided.
+Recorded proposal 01K… to remove the source files:docs from corpus 'notes'. It is waiting for whoever runs Dexicon to decide it, and nothing has been removed. removal_status shows how it is decided.
 ```
 
-`index_status(corpus)` shows a key its own requests in that corpus and how each was decided:
-waiting, approved (it has been removed), rejected (it stays), or could not be done with the
-reason, such as the target being gone by then. A key sees only its own.
+`removal_status` takes no arguments and lists the requests the key has made, across all
+corpora, and how each was decided: waiting, approved (it has been removed), rejected (it
+stays), or could not be done with the reason, such as the target being gone by then. Waiting
+ones come first, then the newest decided, up to twenty, and it says when older ones are left
+out. It needs only `propose`, so a key without `search` can read it, and it still answers
+after the corpus a request named has been removed. A key sees only its own requests.
+`index_status(corpus)` shows a key that can search the same for one corpus.
 
 ## Resources
 

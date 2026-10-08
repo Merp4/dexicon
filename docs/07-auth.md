@@ -105,7 +105,7 @@ configuration. That asymmetry has one exception, below.
 
 A key without `ingest` is not shown `index_refresh` at all, one without `configure` is
 not shown `list_folders`, `configure_corpus` or `configure_source`, one without `propose`
-is not shown `propose_removal`, and one without `search`
+is not shown `propose_removal` or `removal_status`, and one without `search`
 is not shown the four tools that read the index, rather than being refused when it calls
 one: an agent that can see a tool will call it, spend a turn on the error, and
 sometimes retry. `McpRequestFilters.ListToolsFilters` removes them from `tools/list`, which

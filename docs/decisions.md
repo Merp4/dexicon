@@ -1973,8 +1973,9 @@ it changes or a full pass reads it again.
 administrator's endpoints. The Approvals view in the UI follows.
 
 **Decision.** A key holding the `propose` scope can ask for a removal with `propose_removal`: a
-source, a chunk set, a document or a corpus, and a one-line reason. The request is a row in
-`proposals`. Nothing is removed until an administrator approves it, and approving runs the code the
+source, a chunk set, a document or a corpus, and a one-line reason. It reads how its requests were
+decided with `removal_status`, which needs no other scope and no corpus that still exists. The request
+is a row in `proposals`. Nothing is removed until an administrator approves it, and approving runs the code the
 `DELETE` endpoints run (`CorpusConfiguration`'s removals and the document detach), so the two cannot
 drift. `propose` is independent of every other scope: a key can hold it without `configure`, and
 `configure` without it. Nothing grants it by default. A key adopted from the environment never holds
@@ -2012,8 +2013,8 @@ and replaying it on approval, which runs authentication and validation again aga
 moved. Several approvers, expiry and notifications: one person runs the instance, and a waiting
 request costs nothing.
 
-**Cost.** One table and a migration that touches no data, one tool, and a scope to issue, show and
-document. The tool's definition costs context only for the keys that hold the scope. Whether document
+**Cost.** One table and a migration that touches no data, two tools, and a scope to issue, show and
+document. The tools' definitions cost context only for the keys that hold the scope. Whether document
 detach should leave `ingest` for a scope of its own is a separate decision, not made here.
 
 ---

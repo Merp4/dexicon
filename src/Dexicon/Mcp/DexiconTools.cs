@@ -448,7 +448,7 @@ public sealed class DexiconTools
                 // What this key has asked to have removed and how it was decided, for a key that
                 // can ask. Its own only: another key's requests are not its to read.
                 if (principal.Has(Scopes.Propose))
-                    sb.Append(await ProposeTools.RenderOwnAsync(db, principal, c, ct));
+                    sb.Append(await ProposeTools.RenderOwnAsync(db, principal, c.Id, ct));
             }
 
             sb.Append('\n');

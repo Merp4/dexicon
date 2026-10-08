@@ -113,7 +113,7 @@ public sealed class ProposalService(
             if (pending >= MaxPendingPerKey)
                 return new ConfigRefusal("Too many proposals waiting",
                     $"This key has {pending} proposals waiting for a decision, which is the most it may have. "
-                    + "Whoever runs Dexicon decides them in the UI.", 429);
+                    + "Whoever runs Dexicon has to decide them first.", 429);
 
             var proposal = new Proposal
             {
@@ -254,16 +254,6 @@ public sealed class ProposalService(
     public Task<int> PendingCountAsync(CancellationToken ct) =>
         db.Proposals.CountAsync(p => p.Status == ProposalStatus.Pending, ct);
 
-    /// <summary>A key's own recent proposals, waiting ones first, as it sees them in index_status.</summary>
-    public async Task<List<Proposal>> OwnAsync(string tokenId, string corpusId, int take, CancellationToken ct) =>
-        (await db.Proposals.AsNoTracking()
-            .Where(p => p.TokenId == tokenId && p.CorpusId == corpusId)
-            .ToListAsync(ct))
-        .OrderBy(p => p.Status == ProposalStatus.Pending ? 0 : 1)
-        .ThenByDescending(p => p.CreatedUtc)
-        .Take(take)
-        .ToList();
-
     /// <summary>
     /// What is waiting, oldest first so nothing is buried, or what has been decided, newest first. What
     /// each waiting one would take is worked out now.
@@ -276,70 +266,135 @@ public sealed class ProposalService(
             : await db.Proposals.AsNoTracking().Where(p => p.Status == ProposalStatus.Pending)
                 .OrderBy(p => p.CreatedUtc).ThenBy(p => p.Id).Take(take).ToListAsync(ct);
 
-        var views = new List<ProposalView>(rows.Count);
-        foreach (var p in rows) views.Add(await ViewAsync(p, decided: decided, ct));
-        return views;
-    }
-
-    private async Task<ProposalView> ViewAsync(Proposal p, bool decided, CancellationToken ct)
-    {
-        var (gone, facts) = decided ? (false, null) : await FactsAsync(p, ct);
-        return new ProposalView(
-            p.Id, p.CreatedUtc, p.TokenName, p.CorpusName, ProposalKinds.Name(p.Kind), p.TargetLabel, p.Reason,
-            p.Status.ToString().ToLowerInvariant(), p.DecidedUtc, p.Error, gone, facts);
-    }
-
-    private async Task<(bool Gone, ProposalFacts? Facts)> FactsAsync(Proposal p, CancellationToken ct)
-    {
-        var corpus = await db.Corpora.AsNoTracking().FirstOrDefaultAsync(c => c.Id == p.CorpusId, ct);
-        if (corpus is null) return (true, null);
-
-        var sets = await db.ChunkSets.AsNoTracking().Where(s => s.CorpusId == corpus.Id).ToListAsync(ct);
-
-        switch (p.Kind)
+        var worked = decided ? [] : await FactsAsync(rows, ct);
+        return rows.Select(p =>
         {
-            case ProposalKind.Source:
+            var (gone, facts) = worked.GetValueOrDefault(p.Id);
+            return View(p, gone, facts);
+        }).ToList();
+    }
+
+    private static ProposalView View(Proposal p, bool gone = false, ProposalFacts? facts = null) => new(
+        p.Id, p.CreatedUtc, p.TokenName, p.CorpusName, ProposalKinds.Name(p.Kind), p.TargetLabel, p.Reason,
+        p.Status.ToString().ToLowerInvariant(), p.DecidedUtc, p.Error, gone, facts);
+
+    /// <summary>
+    /// What each of these would take, or that its target has gone. The figures are read once for the
+    /// whole page, by kind: the screen lists them every time it polls, and a read per request was
+    /// about five queries each.
+    /// </summary>
+    private async Task<Dictionary<string, (bool Gone, ProposalFacts? Facts)>> FactsAsync(
+        List<Proposal> rows, CancellationToken ct)
+    {
+        var facts = new Dictionary<string, (bool Gone, ProposalFacts? Facts)>(rows.Count);
+        if (rows.Count == 0) return facts;
+
+        var corpusIds = rows.Select(p => p.CorpusId).Distinct().ToList();
+        var present = (await db.Corpora.AsNoTracking().Where(c => corpusIds.Contains(c.Id)).Select(c => c.Id)
+            .ToListAsync(ct)).ToHashSet();
+        var sets = (await db.ChunkSets.AsNoTracking().Where(s => corpusIds.Contains(s.CorpusId)).ToListAsync(ct))
+            .ToLookup(s => s.CorpusId);
+
+        // A request is gone with its corpus.
+        foreach (var p in rows.Where(p => !present.Contains(p.CorpusId))) facts[p.Id] = (true, null);
+        var here = rows.Where(p => present.Contains(p.CorpusId)).ToList();
+
+        await SourceFactsAsync(here.Where(p => p.Kind == ProposalKind.Source).ToList(), sets, facts, ct);
+        await ChunkSetFactsAsync(here.Where(p => p.Kind == ProposalKind.ChunkSet).ToList(), sets, facts, ct);
+        await DocumentFactsAsync(here.Where(p => p.Kind == ProposalKind.Document).ToList(), sets, facts, ct);
+        await CorpusFactsAsync(here.Where(p => p.Kind == ProposalKind.Corpus).ToList(), sets, facts, ct);
+        return facts;
+    }
+
+    private async Task SourceFactsAsync(
+        List<Proposal> asked, ILookup<string, ChunkSet> sets, Dictionary<string, (bool Gone, ProposalFacts? Facts)> facts,
+        CancellationToken ct)
+    {
+        if (asked.Count == 0) return;
+        var ids = asked.Select(p => p.TargetId).Distinct().ToList();
+
+        var corpusOf = await db.Sources.AsNoTracking().Where(s => ids.Contains(s.Id))
+            .ToDictionaryAsync(s => s.Id, s => s.CorpusId, ct);
+        var files = await db.Files.Where(f => ids.Contains(f.SourceId)).GroupBy(f => f.SourceId)
+            .Select(g => new { g.Key, N = g.Count() }).ToDictionaryAsync(g => g.Key, g => g.N, ct);
+        var chunks = await db.FileChunkStates.Where(s => ids.Contains(s.File!.SourceId)).GroupBy(s => s.File!.SourceId)
+            .Select(g => new { g.Key, N = g.Sum(s => s.ChunkCount) }).ToDictionaryAsync(g => g.Key, g => g.N, ct);
+
+        foreach (var p in asked)
+            facts[p.Id] = corpusOf.GetValueOrDefault(p.TargetId) == p.CorpusId
+                ? (false, new ProposalFacts(
+                    1, files.GetValueOrDefault(p.TargetId), chunks.GetValueOrDefault(p.TargetId), sets[p.CorpusId].Count(), null))
+                : (true, null);
+    }
+
+    private async Task ChunkSetFactsAsync(
+        List<Proposal> asked, ILookup<string, ChunkSet> sets, Dictionary<string, (bool Gone, ProposalFacts? Facts)> facts,
+        CancellationToken ct)
+    {
+        if (asked.Count == 0) return;
+        var ids = asked.Select(p => p.TargetId).Distinct().ToList();
+
+        var counted = await db.FileChunkStates.Where(s => ids.Contains(s.ChunkSetId)).GroupBy(s => s.ChunkSetId)
+            .Select(g => new { g.Key, Chunks = g.Sum(s => s.ChunkCount), Files = g.Count(s => s.ChunkCount > 0) })
+            .ToDictionaryAsync(g => g.Key, ct);
+        var activity = await IndexingActivity.ReadAsync(db, asked.Select(p => p.CorpusId).Distinct().ToList(), ct);
+
+        foreach (var p in asked)
+        {
+            var inCorpus = sets[p.CorpusId].ToList();
+            var set = inCorpus.FirstOrDefault(s => s.Id == p.TargetId);
+            if (set is null)
             {
-                if (!await db.Sources.AnyAsync(s => s.Id == p.TargetId && s.CorpusId == corpus.Id, ct)) return (true, null);
-                var files = await db.Files.CountAsync(f => f.SourceId == p.TargetId, ct);
-                var chunks = await db.FileChunkStates.Where(s => s.File!.SourceId == p.TargetId)
-                    .SumAsync(s => (int?)s.ChunkCount, ct) ?? 0;
-                return (false, new ProposalFacts(1, files, chunks, sets.Count, null));
+                facts[p.Id] = (true, null);
+                continue;
             }
 
-            case ProposalKind.ChunkSet:
-            {
-                var set = sets.FirstOrDefault(s => s.Id == p.TargetId);
-                if (set is null) return (true, null);
-                var chunks = await db.FileChunkStates.Where(s => s.ChunkSetId == set.Id)
-                    .SumAsync(s => (int?)s.ChunkCount, ct) ?? 0;
-                var files = await db.FileChunkStates.CountAsync(s => s.ChunkSetId == set.Id && s.ChunkCount > 0, ct);
-
-                string? blocker = null;
-                if (sets.Count == 1) blocker = "it is the only chunk set";
-                else if (set.IsDefault) blocker = "it is the default chunk set";
-                else if ((await IndexingActivity.ReadAsync(db, [corpus.Id], ct)).Of(set) == CorpusState.Indexing)
-                    blocker = "a job is working on it";
-                return (false, new ProposalFacts(0, files, chunks, 1, blocker));
-            }
-
-            case ProposalKind.Document:
-            {
-                if (!await db.Files.AnyAsync(f => f.Id == p.TargetId && f.Source!.CorpusId == corpus.Id, ct)) return (true, null);
-                var chunks = await db.FileChunkStates.Where(s => s.FileId == p.TargetId)
-                    .SumAsync(s => (int?)s.ChunkCount, ct) ?? 0;
-                return (false, new ProposalFacts(0, 1, chunks, sets.Count, null));
-            }
-
-            default:
-            {
-                var sources = await db.Sources.CountAsync(s => s.CorpusId == corpus.Id, ct);
-                var files = await db.Files.CountAsync(f => f.Source!.CorpusId == corpus.Id, ct);
-                var chunks = await db.FileChunkStates.Where(s => s.File!.Source!.CorpusId == corpus.Id)
-                    .SumAsync(s => (int?)s.ChunkCount, ct) ?? 0;
-                return (false, new ProposalFacts(sources, files, chunks, sets.Count, null));
-            }
+            var blocker = inCorpus.Count == 1 ? "it is the only chunk set"
+                : set.IsDefault ? "it is the default chunk set"
+                : activity.Of(set) == CorpusState.Indexing ? "a job is working on it"
+                : null;
+            var n = counted.GetValueOrDefault(set.Id);
+            facts[p.Id] = (false, new ProposalFacts(0, n?.Files ?? 0, n?.Chunks ?? 0, 1, blocker));
         }
+    }
+
+    private async Task DocumentFactsAsync(
+        List<Proposal> asked, ILookup<string, ChunkSet> sets, Dictionary<string, (bool Gone, ProposalFacts? Facts)> facts,
+        CancellationToken ct)
+    {
+        if (asked.Count == 0) return;
+        var ids = asked.Select(p => p.TargetId).Distinct().ToList();
+
+        var corpusOf = await db.Files.AsNoTracking().Where(f => ids.Contains(f.Id))
+            .Select(f => new { f.Id, CorpusId = f.Source!.CorpusId }).ToDictionaryAsync(f => f.Id, f => f.CorpusId, ct);
+        var chunks = await db.FileChunkStates.Where(s => ids.Contains(s.FileId)).GroupBy(s => s.FileId)
+            .Select(g => new { g.Key, N = g.Sum(s => s.ChunkCount) }).ToDictionaryAsync(g => g.Key, g => g.N, ct);
+
+        foreach (var p in asked)
+            facts[p.Id] = corpusOf.GetValueOrDefault(p.TargetId) == p.CorpusId
+                ? (false, new ProposalFacts(0, 1, chunks.GetValueOrDefault(p.TargetId), sets[p.CorpusId].Count(), null))
+                : (true, null);
+    }
+
+    private async Task CorpusFactsAsync(
+        List<Proposal> asked, ILookup<string, ChunkSet> sets, Dictionary<string, (bool Gone, ProposalFacts? Facts)> facts,
+        CancellationToken ct)
+    {
+        if (asked.Count == 0) return;
+        var ids = asked.Select(p => p.CorpusId).Distinct().ToList();
+
+        var sources = await db.Sources.Where(s => ids.Contains(s.CorpusId)).GroupBy(s => s.CorpusId)
+            .Select(g => new { g.Key, N = g.Count() }).ToDictionaryAsync(g => g.Key, g => g.N, ct);
+        var files = await db.Files.Where(f => ids.Contains(f.Source!.CorpusId)).GroupBy(f => f.Source!.CorpusId)
+            .Select(g => new { g.Key, N = g.Count() }).ToDictionaryAsync(g => g.Key, g => g.N, ct);
+        var chunks = await db.FileChunkStates.Where(s => ids.Contains(s.File!.Source!.CorpusId))
+            .GroupBy(s => s.File!.Source!.CorpusId)
+            .Select(g => new { g.Key, N = g.Sum(s => s.ChunkCount) }).ToDictionaryAsync(g => g.Key, g => g.N, ct);
+
+        foreach (var p in asked)
+            facts[p.Id] = (false, new ProposalFacts(
+                sources.GetValueOrDefault(p.CorpusId), files.GetValueOrDefault(p.CorpusId),
+                chunks.GetValueOrDefault(p.CorpusId), sets[p.CorpusId].Count(), null));
     }
 
     // ---- deciding ---------------------------------------------------------------------------
@@ -357,7 +412,7 @@ public sealed class ProposalService(
 
         log.LogInformation("Proposal {Id} to remove the {Kind} {Target} from corpus {Corpus} was rejected",
             p.Id, ProposalKinds.Name(p.Kind), DexiconAuthMiddleware.OneLine(p.TargetLabel), DexiconAuthMiddleware.OneLine(p.CorpusName));
-        return await ViewAsync(p, decided: true, ct);
+        return View(p);
     }
 
     /// <summary>
@@ -403,7 +458,7 @@ public sealed class ProposalService(
         {
             log.LogInformation("Proposal {Id} to remove the {Kind} {Target} from corpus {Corpus} was approved",
                 p.Id, ProposalKinds.Name(p.Kind), DexiconAuthMiddleware.OneLine(p.TargetLabel), DexiconAuthMiddleware.OneLine(p.CorpusName));
-            return await ViewAsync(p, decided: true, ct);
+            return View(p);
         }
 
         Undecide(p);
@@ -429,7 +484,7 @@ public sealed class ProposalService(
         log.LogInformation("Proposal {Id} to remove the {Kind} {Target} from corpus {Corpus} failed: {Reason}",
             p.Id, ProposalKinds.Name(p.Kind), DexiconAuthMiddleware.OneLine(p.TargetLabel),
             DexiconAuthMiddleware.OneLine(p.CorpusName), DexiconAuthMiddleware.OneLine(reason));
-        return await ViewAsync(p, decided: true, ct);
+        return View(p);
     }
 
     private static ConfigRefusal NotFound(string id) =>

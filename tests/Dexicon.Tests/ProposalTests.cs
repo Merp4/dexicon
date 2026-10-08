@@ -44,6 +44,10 @@ public sealed class ProposalTests : IAsyncLifetime
         return asked.Value!.Proposal;
     }
 
+    /// <summary>Long enough to fall into several chunks, where <see cref="IndexingHarness.Prose"/> is one.</summary>
+    private static string Long(string word) => string.Join("\n\n", Enumerable.Range(1, 200)
+        .Select(i => $"Paragraph {i} about {word}: " + string.Join(' ', Enumerable.Repeat("lorem ipsum dolor sit amet", 12))));
+
     /// <summary>One file in each source, indexed into both sets.</summary>
     private async Task IndexAsync()
     {
@@ -520,6 +524,126 @@ public sealed class ProposalTests : IAsyncLifetime
         listed[gone.Id].Gone.ShouldBeTrue();
         listed[gone.Id].Facts.ShouldBeNull();
         listed[set.Id].Facts.ShouldNotBeNull().Blocker.ShouldBe("it is the default chunk set");
+    }
+
+    [Fact]
+    public async Task A_page_of_requests_gets_each_ones_own_figures()
+    {
+        // The first source holds more than the second, so figures read for the wrong one would differ.
+        await _harness.WriteFileAsync("a.md", Long("alpha"), source: 0);
+        await _harness.WriteFileAsync("b.md", IndexingHarness.Prose("beta"), source: 1);
+        await _harness.RunIndexAsync(JobKind.Full);
+        await using var db = _harness.NewContext();
+        var notes = await AskAsync(db, ProposalKind.Source, "notes");
+        var docs = await AskAsync(db, ProposalKind.Source, "docs");
+        var set = await AskAsync(db, ProposalKind.ChunkSet, "alt-1");
+        var corpus = await AskAsync(db, ProposalKind.Corpus, null);
+
+        var notesChunks = await db.FileChunkStates.Where(s => s.File!.SourceId == "source-1").SumAsync(s => s.ChunkCount);
+        var docsChunks = await db.FileChunkStates.Where(s => s.File!.SourceId == "source-2").SumAsync(s => s.ChunkCount);
+        var setChunks = await db.FileChunkStates.Where(s => s.ChunkSetId == "set-2").SumAsync(s => s.ChunkCount);
+        var setFiles = await db.FileChunkStates.CountAsync(s => s.ChunkSetId == "set-2" && s.ChunkCount > 0);
+        notesChunks.ShouldBeGreaterThan(docsChunks, "the premise: the two are told apart by their size");
+
+        var listed = (await _harness.NewProposals(db).ListAsync(decided: false, 50, default)).ToDictionary(v => v.Id);
+
+        listed[notes.Id].Facts.ShouldBe(new ProposalFacts(1, 1, notesChunks, 2, null));
+        listed[docs.Id].Facts.ShouldBe(new ProposalFacts(1, 1, docsChunks, 2, null));
+        listed[set.Id].Facts.ShouldBe(new ProposalFacts(0, setFiles, setChunks, 1, null));
+        listed[corpus.Id].Facts.ShouldBe(new ProposalFacts(2, 2, notesChunks + docsChunks, 2, null));
+        listed.Values.ShouldAllBe(v => !v.Gone);
+    }
+
+    [Fact]
+    public async Task A_document_request_is_listed_with_the_chunks_of_that_document()
+    {
+        await using var uploads = await IndexingHarness.StartAsync();
+        await uploads.SeedCorpusAsync(SourceKind.Upload);
+        await using var db = uploads.NewContext();
+        var documents = uploads.NewDocumentService(db);
+        var corpus = await db.Corpora.Include(c => c.Sources).Include(c => c.ChunkSets)
+            .FirstAsync(c => c.Id == IndexingHarness.CorpusId);
+
+        async Task<string> AttachAsync(string name, string text)
+        {
+            using var bytes = new MemoryStream(Encoding.UTF8.GetBytes(text));
+            var stored = await documents.StoreAsync(bytes, name);
+            return (await documents.AttachAsync(corpus, stored.Sha256, name)).Id;
+        }
+
+        var bigId = await AttachAsync("big.md", Long("one"));
+        var smallId = await AttachAsync("small.md", IndexingHarness.Prose("three"));
+        await uploads.RunIndexAsync();
+        var bigChunks = await db.FileChunkStates.Where(s => s.FileId == bigId).SumAsync(s => s.ChunkCount);
+        var smallChunks = await db.FileChunkStates.Where(s => s.FileId == smallId).SumAsync(s => s.ChunkCount);
+        bigChunks.ShouldBeGreaterThan(smallChunks, "the premise: the two are told apart by their size");
+
+        var svc = uploads.NewProposals(db);
+        var askedBig = (await svc.ProposeAsync(Key(), corpus, ProposalKind.Document, "big.md", "obsolete", default)).Value!.Proposal;
+        var askedSmall = (await svc.ProposeAsync(Key(), corpus, ProposalKind.Document, "small.md", "obsolete", default)).Value!.Proposal;
+
+        var listed = (await svc.ListAsync(decided: false, 50, default)).ToDictionary(v => v.Id);
+
+        var sets = corpus.ChunkSets.Count;
+        listed[askedBig.Id].Facts.ShouldBe(new ProposalFacts(0, 1, bigChunks, sets, null));
+        listed[askedSmall.Id].Facts.ShouldBe(new ProposalFacts(0, 1, smallChunks, sets, null));
+    }
+
+    [Fact]
+    public async Task A_second_corpus_is_counted_by_itself_and_a_target_in_another_corpus_is_gone()
+    {
+        await IndexAsync();
+        await using var db = _harness.NewContext();
+        db.Corpora.Add(new Corpus { Id = "corpus-2", Name = "papers", State = CorpusState.Ready, CreatedUtc = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        var mine = await AskAsync(db, ProposalKind.Corpus, null);
+
+        // Written by hand: the service never records a target outside the corpus it was asked about.
+        Proposal Raw(string id, ProposalKind kind, string targetId) => new()
+        {
+            Id = id, CreatedUtc = DateTime.UtcNow, TokenId = "k1", TokenName = "research-agent",
+            CorpusId = "corpus-2", CorpusName = "papers", Kind = kind, TargetId = targetId, TargetLabel = targetId,
+            Reason = "x", Status = ProposalStatus.Pending,
+        };
+        db.Proposals.AddRange(
+            Raw("p-empty", ProposalKind.Corpus, "corpus-2"),
+            Raw("p-source", ProposalKind.Source, "source-1"),
+            Raw("p-set", ProposalKind.ChunkSet, "set-2"));
+        await db.SaveChangesAsync();
+
+        var listed = (await _harness.NewProposals(db).ListAsync(decided: false, 50, default)).ToDictionary(v => v.Id);
+
+        listed[mine.Id].Facts.ShouldNotBeNull().Sources.ShouldBe(2);
+        listed["p-empty"].Facts.ShouldBe(new ProposalFacts(0, 0, 0, 0, null), "nothing of the other corpus's is counted");
+        foreach (var strayed in new[] { "p-source", "p-set" })
+            (listed[strayed].Gone, listed[strayed].Facts).ShouldBe((true, null), $"{strayed} names a target in a different corpus");
+    }
+
+    [Fact]
+    public async Task A_chunk_set_that_has_become_the_only_one_or_has_a_job_on_it_says_so_in_the_listing()
+    {
+        await using var db = _harness.NewContext();
+        var set = await AskAsync(db, ProposalKind.ChunkSet, "alt-1");
+        var svc = _harness.NewProposals(db);
+
+        db.Jobs.Add(new IndexJob
+        {
+            Id = "job-1", CorpusId = IndexingHarness.CorpusId, ChunkSetId = "set-2",
+            Kind = JobKind.Refresh, State = JobState.Queued, QueuedUtc = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+        (await svc.ListAsync(decided: false, 50, default)).Single().Facts.ShouldNotBeNull().Blocker.ShouldBe("a job is working on it");
+
+        await db.Jobs.ExecuteUpdateAsync(u => u.SetProperty(j => j.State, JobState.Succeeded));
+        (await svc.ListAsync(decided: false, 50, default)).Single().Facts.ShouldNotBeNull().Blocker.ShouldBeNull();
+
+        // The other set goes, after the default has moved off it, and this one is all that is left.
+        await db.ChunkSets.Where(s => s.Id == "set-1").ExecuteUpdateAsync(u => u.SetProperty(s => s.IsDefault, false));
+        await db.ChunkSets.Where(s => s.Id == "set-2").ExecuteUpdateAsync(u => u.SetProperty(s => s.IsDefault, true));
+        await using (var admin = _harness.NewContext())
+            (await _harness.NewConfiguration(admin).RemoveChunkSetAsync(await CorpusAsync(admin), "default", default)).Refusal.ShouldBeNull();
+        (await svc.ListAsync(decided: false, 50, default)).Single(v => v.Id == set.Id)
+            .Facts.ShouldNotBeNull().Blocker.ShouldBe("it is the only chunk set");
     }
 
     [Fact]

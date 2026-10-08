@@ -41,14 +41,29 @@ public sealed class ProposeToolsTests : IAsyncLifetime
     private Task<string> StatusAsync(CatalogDbContext db, RequestContext rc) =>
         DexiconTools.IndexStatusAsync(rc, new ScopeResolver(db), db, _harness.Settings, "notes");
 
+    private static Task<string> RemovalStatusAsync(CatalogDbContext db, RequestContext rc) =>
+        ProposeTools.RemovalStatusAsync(rc, db);
+
+    private static Proposal Stored(string id, string tokenId, ProposalStatus status, DateTime created) => new()
+    {
+        Id = id, CreatedUtc = created, TokenId = tokenId, TokenName = "agent-" + tokenId,
+        CorpusId = IndexingHarness.CorpusId, CorpusName = "notes", Kind = ProposalKind.Source,
+        TargetId = "source-" + id, TargetLabel = "files:" + id, Reason = "x", Status = status,
+        DecidedUtc = status == ProposalStatus.Pending ? null : created.AddMinutes(1),
+    };
+
     [Fact]
-    public async Task A_key_without_propose_is_refused_by_the_tool_whatever_else_it_holds()
+    public async Task A_key_without_propose_is_refused_by_the_tools_whatever_else_it_holds()
     {
         await using var db = _harness.NewContext();
 
         foreach (var rc in new[] { As("k2", Scopes.Search), As("k3", Scopes.Search, Scopes.Ingest, Scopes.Configure) })
+        {
             (await Should.ThrowAsync<McpException>(() => ProposeAsync(db, rc, "source", target: "docs")))
                 .Message.ShouldContain("'propose'");
+            (await Should.ThrowAsync<McpException>(() => RemovalStatusAsync(db, rc)))
+                .Message.ShouldContain("'propose'");
+        }
 
         (await db.Proposals.AnyAsync()).ShouldBeFalse();
     }
@@ -56,8 +71,13 @@ public sealed class ProposeToolsTests : IAsyncLifetime
     [Fact]
     public void Only_a_key_holding_the_scope_is_shown_the_tool_under_the_name_it_is_registered_by()
     {
-        ToolVisibility.HiddenFrom(As("k", Scopes.Search, Scopes.Configure).Principal!).ShouldContain("propose_removal");
+        foreach (var name in ProposeTools.Names)
+            ToolVisibility.HiddenFrom(As("k", Scopes.Search, Scopes.Configure).Principal!).ShouldContain(name);
         ToolVisibility.HiddenFrom(As("k", Scopes.Search, Scopes.Propose).Principal!).ShouldNotContain("propose_removal");
+        ToolVisibility.HiddenFrom(As("k", Scopes.Search, Scopes.Propose).Principal!).ShouldNotContain("removal_status");
+
+        // A key may hold propose alone, and the status of its own requests is not a search tool.
+        ToolVisibility.HiddenFrom(As("k", Scopes.Propose).Principal!).ShouldNotContain("removal_status");
 
         // Propose does not carry configure's tools, and configure does not carry propose's.
         ToolVisibility.HiddenFrom(As("k", Scopes.Search, Scopes.Propose).Principal!).ShouldContain("configure_source");
@@ -79,7 +99,8 @@ public sealed class ProposeToolsTests : IAsyncLifetime
         text.ShouldStartWith("Recorded proposal ");
         text.ShouldContain("nothing has been removed");
         text.ShouldContain("remove the source files:docs from corpus 'notes'");
-        text.ShouldContain("index_status(corpus: \"notes\")");
+        text.ShouldContain("removal_status shows how it is decided");
+        text.ShouldNotContain("UI", Case.Sensitive, "an agent cannot open a screen, so it is pointed to the tool");
         var row = await db.Proposals.SingleAsync();
         text.ShouldContain(row.Id);
         (row.Status, row.TokenId, row.Reason).ShouldBe((ProposalStatus.Pending, "k1", "superseded"));
@@ -163,6 +184,62 @@ public sealed class ProposeToolsTests : IAsyncLifetime
         await svc.ApproveAsync(ids[1], default);
         (await StatusAsync(db, Proposer("k1"))).ShouldContain("approved");
         (await StatusAsync(db, Proposer("k1"))).ShouldContain("it has been removed");
+    }
+
+    [Fact]
+    public async Task A_key_holding_only_propose_reads_its_requests_without_search_or_naming_a_corpus()
+    {
+        await using var db = _harness.NewContext();
+        var asker = As("k1", Scopes.Propose);
+        await ProposeAsync(db, asker, "chunk_set", target: "alt-1");
+        await ProposeAsync(db, As("k2", Scopes.Propose), "source", target: "docs", reason: "the other key's");
+
+        var text = await RemovalStatusAsync(db, asker);
+
+        var id = await db.Proposals.Where(p => p.TokenId == "k1").Select(p => p.Id).SingleAsync();
+        text.ShouldContain($"{id}  chunk set alt-1 in notes  waiting since");
+        text.ShouldNotContain("files:docs", Case.Sensitive, "the other key's request");
+        (await Should.ThrowAsync<McpException>(() => StatusAsync(db, asker))).Message.ShouldContain("'search'");
+        (await RemovalStatusAsync(db, As("k9", Scopes.Propose))).ShouldBe("This key has asked for no removals.\n");
+    }
+
+    [Fact]
+    public async Task A_request_to_remove_a_corpus_is_still_answered_after_the_corpus_has_gone()
+    {
+        await using var db = _harness.NewContext();
+        await ProposeAsync(db, Proposer(), "corpus", reason: "a duplicate of docs");
+        var id = await db.Proposals.Select(p => p.Id).SingleAsync();
+        (await _harness.NewProposals(db).ApproveAsync(id, default)).Refusal.ShouldBeNull();
+
+        // index_status needs the corpus, which is the thing that was removed.
+        await Should.ThrowAsync<McpException>(() => StatusAsync(db, Proposer()));
+        var text = await RemovalStatusAsync(db, Proposer());
+
+        text.ShouldContain($"{id}  corpus notes  approved");
+        text.ShouldContain("it has been removed");
+    }
+
+    [Fact]
+    public async Task Removal_status_puts_the_waiting_ones_first_and_says_when_older_ones_are_left_out()
+    {
+        await using var db = _harness.NewContext();
+        var start = new DateTime(2026, 10, 1, 9, 0, 0, DateTimeKind.Utc);
+        db.Proposals.Add(Stored("p-old", "k1", ProposalStatus.Pending, start.AddDays(-1)));
+        db.Proposals.AddRange(Enumerable.Range(0, 25)
+            .Select(i => Stored($"r{i:00}", "k1", ProposalStatus.Rejected, start.AddMinutes(i))));
+        db.Proposals.Add(Stored("other", "k2", ProposalStatus.Pending, start));
+        await db.SaveChangesAsync();
+
+        var lines = (await RemovalStatusAsync(db, Proposer("k1"))).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+        lines[0].ShouldBe("removals this key has asked for:");
+        lines[1].ShouldContain("p-old", Case.Sensitive, "waiting, though it is the oldest");
+        lines[2].ShouldContain("r24", Case.Sensitive, "then the newest decided");
+        lines.Count(l => l.Contains("rejected")).ShouldBe(19);
+        lines.ShouldContain(l => l.Contains("r06"));
+        lines.ShouldNotContain(l => l.Contains("r05"), "the twentieth is the last listed");
+        lines[^1].ShouldBe("  (older ones are not listed)");
+        string.Concat(lines).ShouldNotContain("other");
     }
 
     [Fact]

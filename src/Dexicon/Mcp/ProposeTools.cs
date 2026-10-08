@@ -12,21 +12,26 @@ namespace Dexicon.Mcp;
 
 /// <summary>
 /// Asking for a removal, for a key holding <c>propose</c>. Nothing is removed by the call: it records
-/// the request, and a person approves or rejects it in the UI, which runs the same code the admin's
+/// the request, and whoever runs Dexicon approves or rejects it, which runs the same code the admin's
 /// delete runs. The key is never shown a way to remove anything itself, and the outcome comes back
-/// through <c>index_status</c>.
+/// through <c>removal_status</c>, which needs no other scope and no corpus that still exists, and
+/// through <c>index_status</c> for a key that can search.
 ///
-/// A key without the scope is not shown this tool (Program.cs), and it checks the scope itself as
+/// A key without the scope is not shown these tools (Program.cs), and each checks the scope itself as
 /// well. See docs/decisions.md D-39.
 /// </summary>
 [McpServerToolType]
 public sealed class ProposeTools
 {
     /// <summary>The tools a key without <see cref="Scopes.Propose"/> is not shown.</summary>
-    internal static readonly string[] Names = ["propose_removal"];
+    internal static readonly string[] Names = ["propose_removal", "removal_status"];
+
+    /// <summary>How many requests are listed for one corpus, and across all of them.</summary>
+    private const int InCorpus = 8;
+    private const int AcrossCorpora = 20;
 
     [McpServerTool(Name = "propose_removal")]
-    [Description("Ask for a source, chunk set, document or corpus to be removed. Nothing is removed by this call: a person approves or rejects it in the Dexicon UI, and index_status shows how it was decided.")]
+    [Description("Ask for a source, chunk set, document or corpus to be removed. Nothing is removed by this call: whoever runs Dexicon approves or rejects it, and removal_status shows how it was decided.")]
     public static async Task<string> ProposeRemovalAsync(
         RequestContext rc,
         ScopeResolver scopes,
@@ -49,40 +54,65 @@ public sealed class ProposeTools
         if (asked.Refusal is { } refused) throw new McpException(DexiconTools.OneLine(refused.Detail));
 
         var p = asked.Value!.Proposal;
-        var what = $"remove the {Describe(p.Kind)} {DexiconTools.OneLine(p.TargetLabel)} from corpus '{DexiconTools.OneLine(p.CorpusName)}'";
-        var status = principal.Has(Scopes.Search)
-            ? $" index_status(corpus: {DexiconTools.Quoted(p.CorpusName)}) shows how it is decided."
-            : string.Empty;
+        var what = $"remove {Phrase(p)}";
 
         return asked.Value.AlreadyPending
             ? $"Already waiting: proposal {p.Id} to {what}, made {p.CreatedUtc:u}"
-              + $"{(p.TokenId == principal.TokenId ? " by this key" : " by another key")}. Nothing new was recorded.{status}"
-            : $"Recorded proposal {p.Id} to {what}. It is awaiting approval in the Dexicon UI, and nothing has been removed.{status}";
+              + $"{(p.TokenId == principal.TokenId ? " by this key" : " by another key")}. Nothing new was recorded. removal_status shows how it is decided."
+            : $"Recorded proposal {p.Id} to {what}. It is waiting for whoever runs Dexicon to decide it, and nothing has been removed. removal_status shows how it is decided.";
+    }
+
+    [McpServerTool(Name = "removal_status")]
+    [Description("The removals this key has asked for with propose_removal, and how each was decided: waiting, approved (it has been removed), rejected (it stays) or could not be done. Waiting ones come first. Works after the corpus asked about is gone.")]
+    public static async Task<string> RemovalStatusAsync(RequestContext rc, CatalogDbContext db, CancellationToken ct = default)
+    {
+        DexiconTools.Require(rc, Scopes.Propose);
+        var principal = rc.RequirePrincipal();
+
+        var own = await RenderOwnAsync(db, principal, corpusId: null, ct);
+        return own.Length > 0 ? own : "This key has asked for no removals.\n";
     }
 
     /// <summary>"source", "chunk set", "document" or "corpus", as a sentence uses it.</summary>
     internal static string Describe(ProposalKind kind) => ProposalKinds.Name(kind).Replace('_', ' ');
 
+    /// <summary>What a request is for, read after "remove": the corpus itself, or a part of one.</summary>
+    private static string Phrase(Proposal p) => p.Kind == ProposalKind.Corpus
+        ? $"the corpus '{DexiconTools.OneLine(p.CorpusName)}'"
+        : $"the {Describe(p.Kind)} {DexiconTools.OneLine(p.TargetLabel)} from corpus '{DexiconTools.OneLine(p.CorpusName)}'";
+
     /// <summary>
-    /// What this key has asked for in a corpus and how each was decided, for <c>index_status</c>. Only a
-    /// key's own are listed: another key's asks are not its to read. Empty when there are none.
+    /// What this key has asked for and how each was decided, waiting ones first and newest first within
+    /// each. For one corpus when <paramref name="corpusId"/> is given, as <c>index_status</c> shows it,
+    /// and otherwise across all of them. Only a key's own are listed: another key's asks are not its to
+    /// read. Empty when there are none.
     /// </summary>
     internal static async Task<string> RenderOwnAsync(
-        CatalogDbContext db, Principal principal, Corpus corpus, CancellationToken ct)
+        CatalogDbContext db, Principal principal, string? corpusId, CancellationToken ct)
     {
-        var own = (await db.Proposals.AsNoTracking()
-                .Where(p => p.TokenId == principal.TokenId && p.CorpusId == corpus.Id)
-                .ToListAsync(ct))
+        var inCorpus = corpusId is not null;
+        var take = inCorpus ? InCorpus : AcrossCorpora;
+
+        var query = db.Proposals.AsNoTracking().Where(p => p.TokenId == principal.TokenId);
+        if (inCorpus) query = query.Where(p => p.CorpusId == corpusId);
+
+        // One more than is shown, so the listing can say there are others.
+        var own = await query
             .OrderBy(p => p.Status == ProposalStatus.Pending ? 0 : 1)
-            .ThenByDescending(p => p.CreatedUtc)
-            .Take(8)
-            .ToList();
+            .ThenByDescending(p => p.CreatedUtc).ThenByDescending(p => p.Id)
+            .Take(take + 1)
+            .ToListAsync(ct);
         if (own.Count == 0) return string.Empty;
 
-        var sb = new StringBuilder("  removals this key has asked for:\n");
-        foreach (var p in own)
+        var indent = inCorpus ? "  " : string.Empty;
+        var sb = new StringBuilder($"{indent}removals this key has asked for:\n");
+        foreach (var p in own.Take(take))
         {
-            sb.Append($"    {p.Id}  {Describe(p.Kind)} {DexiconTools.OneLine(p.TargetLabel)}  ");
+            var of = p.Kind == ProposalKind.Corpus
+                ? $"corpus {DexiconTools.OneLine(p.CorpusName)}"
+                : $"{Describe(p.Kind)} {DexiconTools.OneLine(p.TargetLabel)}{(inCorpus ? string.Empty : $" in {DexiconTools.OneLine(p.CorpusName)}")}";
+
+            sb.Append($"{indent}  {p.Id}  {of}  ");
             sb.Append(p.Status switch
             {
                 ProposalStatus.Pending => $"waiting since {p.CreatedUtc:u}",
@@ -92,6 +122,8 @@ public sealed class ProposeTools
             });
             sb.Append('\n');
         }
+
+        if (own.Count > take) sb.Append($"{indent}  (older ones are not listed)\n");
 
         return sb.ToString();
     }
