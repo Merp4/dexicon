@@ -25,6 +25,175 @@ namespace Dexicon.Api;
 /// </summary>
 public static class ChunkSetEndpoints
 {
+    /// <summary>
+    /// Add a chunk set to a corpus. A method of its own, and the one the route is mapped to, so a test
+    /// calls the handler that runs.
+    /// </summary>
+    internal static async Task<IResult> CreateAsync(string nameOrId, CreateChunkSetRequest body, RequestContext rc,
+        ScopeResolver scopes, CatalogDbContext db, IVectorStore vectors, IEmbeddingService embedder,
+        IndexJobQueue queue, IOptions<DexiconOptions> opts, CancellationToken ct)
+    {
+        if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+        var principal = rc.RequirePrincipal();
+        var corpus = await scopes.ResolveWritableAsync(principal, nameOrId, ct);
+
+        if (string.IsNullOrWhiteSpace(body.Name))
+            return Results.Problem(title: "A chunk set name is required", statusCode: 400);
+
+        var name = body.Name.Trim();
+        if (name.Contains(':'))
+            return Results.Problem(
+                title: "A chunk set name cannot contain ':'",
+                detail: "Colon separates corpus from set in `corpus:set`, so a name containing one could not be addressed.",
+                statusCode: 400);
+
+        await db.Entry(corpus).Collection(c => c.ChunkSets).LoadAsync(ct);
+
+        if (corpus.ChunkSets.Exists(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase)))
+            return Results.Problem(
+                title: "Chunk set already exists",
+                detail: $"Corpus '{corpus.Name}' already has a set named '{name}'.",
+                statusCode: 409);
+
+        var indexing = opts.Value.Indexing;
+
+        // Inherit from the default set, so "the same but on another model" is a
+        // two-field request rather than a full restatement of the configuration.
+        var template = corpus.ChunkSets.FirstOrDefault(s => s.IsDefault) ?? corpus.ChunkSets.FirstOrDefault();
+
+        var model = (body.EmbeddingModel ?? template?.EmbeddingModel)?.Trim();
+        if (string.IsNullOrWhiteSpace(model))
+            return Results.Problem(title: "An embedding model is required", statusCode: 400);
+
+        var provider = (body.EmbeddingProvider ?? template?.EmbeddingProvider ?? "ollama").Trim();
+        var target = new EmbeddingTarget(provider, model);
+
+        int dims;
+        try
+        {
+            dims = await embedder.ProbeDimensionsAsync(target, ct);
+        }
+        catch (UnknownEmbeddingProviderException ex)
+        {
+            return Results.Problem(title: "Unknown embedding provider", detail: ex.Message, statusCode: 400);
+        }
+        catch (EmbeddingUnavailableException ex)
+        {
+            // Refused rather than guessed. A set created with the wrong dimension
+            // count is unusable, and the failure would surface much later as bad
+            // results rather than as this message.
+            return Results.Problem(
+                title: "Embedding model unavailable",
+                detail: $"Could not probe '{target}': {ex.Message}. The chunk set was not created.",
+                statusCode: 503);
+        }
+
+        var set = new ChunkSet
+        {
+            Id = Ulid.NewUlid().ToString(),
+            CorpusId = corpus.Id,
+            Name = name,
+            Description = body.Description,
+            EmbeddingProvider = provider,
+            EmbeddingModel = model,
+            EmbeddingDimensions = dims,
+            CollectionName = vectors.CollectionNameFor(target, dims),
+            // Request, then the set this inherits from, then configuration. The
+            // last step was a literal 768/100 here, so DEXICON__INDEXING__CHUNKSIZE
+            // decided the size of a new corpus and nothing about a set added to one
+            // that had none to inherit from.
+            ChunkSize = body.ChunkSize ?? template?.ChunkSize ?? indexing.ChunkSize,
+            ChunkOverlap = body.ChunkOverlap ?? template?.ChunkOverlap ?? indexing.ChunkOverlap,
+            BoundaryMode = body.BoundaryMode ?? template?.BoundaryMode ?? indexing.BoundaryMode,
+            CustomBoundaryPattern = body.CustomBoundaryPattern ?? template?.CustomBoundaryPattern,
+            UnitAware = body.UnitAware ?? template?.UnitAware ?? false,
+            SentenceAware = body.SentenceAware ?? template?.SentenceAware ?? false,
+            HeadingContext = body.HeadingContext ?? template?.HeadingContext ?? false,
+            // NOT default by default. A set with no vectors in it yet would answer
+            // every search with nothing, which is the outage this design exists to
+            // avoid. Promote it once it has finished backfilling.
+            IsDefault = body.MakeDefault == true || template is null,
+            // Nothing has built it, which is what the row says if its job never runs.
+            // That a job is building it is read from the jobs, not written here.
+            State = CorpusState.Degraded,
+            CreatedUtc = DateTime.UtcNow,
+        };
+
+        if (Validate(set) is { } invalid) return invalid;
+
+        if (set.IsDefault)
+            foreach (var other in corpus.ChunkSets) other.IsDefault = false;
+
+        db.ChunkSets.Add(set);
+        await db.SaveChangesAsync(ct);
+
+        // Not cancellable from here: the set is saved, and a cancel before the job left a set marked
+        // Degraded that nothing builds. The collection is prepared again before the indexer writes.
+        await vectors.EnsureCollectionAsync(set.CollectionName, dims, CancellationToken.None);
+
+        // Rebuild, not Full: both re-index everything, but this one targets a single
+        // set, and the jobs list should say which of those is happening.
+        var job = await queue.EnqueueAsync(corpus.Id, JobKind.Rebuild, set.Id, CancellationToken.None);
+
+        var activity = await IndexingActivity.ReadAsync(db, [corpus.Id], ct);
+        return Results.Accepted($"/api/corpora/{corpus.Name}/chunk-sets/{set.Name}",
+            new ChunkSetCreated(set.ToSummary(0, 0, 0, 0, activity.Of(set)), job.ToSummary()));
+    }
+
+    /// <summary>
+    /// Change a chunk set. A method of its own, and the one the route is mapped to, so a test calls the
+    /// handler that runs.
+    /// </summary>
+    internal static async Task<IResult> UpdateAsync(string nameOrId, string setName, UpdateChunkSetRequest body,
+        RequestContext rc, ScopeResolver scopes, CatalogDbContext db, IndexJobQueue queue,
+        CancellationToken ct)
+    {
+        if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+        var principal = rc.RequirePrincipal();
+        var corpus = await scopes.ResolveWritableAsync(principal, nameOrId, ct);
+
+        var set = await FindSet(db, corpus, setName, ct);
+        if (set is null) return NotFound(corpus, setName);
+
+        // Any of these changes what ends up in Qdrant, so they are applied by
+        // re-chunking rather than by hoping someone remembers to reindex. The model is
+        // absent on purpose: that is a different vector space, so it is a new set.
+        var rechunk = false;
+
+        if (body.ChunkSize is { } size) { rechunk |= size != set.ChunkSize; set.ChunkSize = size; }
+        if (body.ChunkOverlap is { } ov) { rechunk |= ov != set.ChunkOverlap; set.ChunkOverlap = ov; }
+        if (body.BoundaryMode is { Length: > 0 } bm)
+        {
+            rechunk |= !string.Equals(bm, set.BoundaryMode, StringComparison.Ordinal);
+            set.BoundaryMode = bm;
+        }
+        if (body.CustomBoundaryPattern is not null)
+        {
+            rechunk |= body.CustomBoundaryPattern != set.CustomBoundaryPattern;
+            set.CustomBoundaryPattern = body.CustomBoundaryPattern;
+        }
+        if (body.UnitAware is { } ua) { rechunk |= ua != set.UnitAware; set.UnitAware = ua; }
+        if (body.SentenceAware is { } sa) { rechunk |= sa != set.SentenceAware; set.SentenceAware = sa; }
+        if (body.HeadingContext is { } hc) { rechunk |= hc != set.HeadingContext; set.HeadingContext = hc; }
+        if (body.Description is not null) set.Description = body.Description;
+
+        if (Validate(set) is { } invalid) return invalid;
+
+        await db.SaveChangesAsync(ct);
+
+        // The fingerprint mixes every one of these in, so a plain refresh is enough:
+        // every file in this set now looks changed, and nothing in any other does.
+        //
+        // Not cancellable: the change is saved, and sending the same values again reads as no change,
+        // so a cancel before the job left a set whose files nothing re-chunks.
+        JobSummary? queued = null;
+        if (rechunk)
+            queued = (await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, set.Id, CancellationToken.None)).ToSummary();
+
+        var activity = await IndexingActivity.ReadAsync(db, [corpus.Id], ct);
+        return Results.Ok(new ChunkSetUpdated(set.ToSummary(0, 0, 0, 0, activity.Of(set)), queued));
+    }
+
     public static void MapChunkSetEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/corpora/{nameOrId}/chunk-sets").WithTags("Chunk sets");
@@ -40,160 +209,9 @@ public static class ChunkSetEndpoints
             return Results.Ok(summary.ChunkSets);
         }).Produces<IReadOnlyList<ChunkSetSummary>>();
 
-        g.MapPost("/", async (string nameOrId, CreateChunkSetRequest body, RequestContext rc,
-            ScopeResolver scopes, CatalogDbContext db, IVectorStore vectors, IEmbeddingService embedder,
-            IndexJobQueue queue, IOptions<DexiconOptions> opts, CancellationToken ct) =>
-        {
-            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var principal = rc.RequirePrincipal();
-            var corpus = await scopes.ResolveWritableAsync(principal, nameOrId, ct);
+        g.MapPost("/", CreateAsync).Produces<ChunkSetCreated>(StatusCodes.Status202Accepted);
 
-            if (string.IsNullOrWhiteSpace(body.Name))
-                return Results.Problem(title: "A chunk set name is required", statusCode: 400);
-
-            var name = body.Name.Trim();
-            if (name.Contains(':'))
-                return Results.Problem(
-                    title: "A chunk set name cannot contain ':'",
-                    detail: "Colon separates corpus from set in `corpus:set`, so a name containing one could not be addressed.",
-                    statusCode: 400);
-
-            await db.Entry(corpus).Collection(c => c.ChunkSets).LoadAsync(ct);
-
-            if (corpus.ChunkSets.Exists(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase)))
-                return Results.Problem(
-                    title: "Chunk set already exists",
-                    detail: $"Corpus '{corpus.Name}' already has a set named '{name}'.",
-                    statusCode: 409);
-
-            var indexing = opts.Value.Indexing;
-
-            // Inherit from the default set, so "the same but on another model" is a
-            // two-field request rather than a full restatement of the configuration.
-            var template = corpus.ChunkSets.FirstOrDefault(s => s.IsDefault) ?? corpus.ChunkSets.FirstOrDefault();
-
-            var model = (body.EmbeddingModel ?? template?.EmbeddingModel)?.Trim();
-            if (string.IsNullOrWhiteSpace(model))
-                return Results.Problem(title: "An embedding model is required", statusCode: 400);
-
-            var provider = (body.EmbeddingProvider ?? template?.EmbeddingProvider ?? "ollama").Trim();
-            var target = new EmbeddingTarget(provider, model);
-
-            int dims;
-            try
-            {
-                dims = await embedder.ProbeDimensionsAsync(target, ct);
-            }
-            catch (UnknownEmbeddingProviderException ex)
-            {
-                return Results.Problem(title: "Unknown embedding provider", detail: ex.Message, statusCode: 400);
-            }
-            catch (EmbeddingUnavailableException ex)
-            {
-                // Refused rather than guessed. A set created with the wrong dimension
-                // count is unusable, and the failure would surface much later as bad
-                // results rather than as this message.
-                return Results.Problem(
-                    title: "Embedding model unavailable",
-                    detail: $"Could not probe '{target}': {ex.Message}. The chunk set was not created.",
-                    statusCode: 503);
-            }
-
-            var set = new ChunkSet
-            {
-                Id = Ulid.NewUlid().ToString(),
-                CorpusId = corpus.Id,
-                Name = name,
-                Description = body.Description,
-                EmbeddingProvider = provider,
-                EmbeddingModel = model,
-                EmbeddingDimensions = dims,
-                CollectionName = vectors.CollectionNameFor(target, dims),
-                // Request, then the set this inherits from, then configuration. The
-                // last step was a literal 768/100 here, so DEXICON__INDEXING__CHUNKSIZE
-                // decided the size of a new corpus and nothing about a set added to one
-                // that had none to inherit from.
-                ChunkSize = body.ChunkSize ?? template?.ChunkSize ?? indexing.ChunkSize,
-                ChunkOverlap = body.ChunkOverlap ?? template?.ChunkOverlap ?? indexing.ChunkOverlap,
-                BoundaryMode = body.BoundaryMode ?? template?.BoundaryMode ?? indexing.BoundaryMode,
-                CustomBoundaryPattern = body.CustomBoundaryPattern ?? template?.CustomBoundaryPattern,
-                UnitAware = body.UnitAware ?? template?.UnitAware ?? false,
-                SentenceAware = body.SentenceAware ?? template?.SentenceAware ?? false,
-                HeadingContext = body.HeadingContext ?? template?.HeadingContext ?? false,
-                // NOT default by default. A set with no vectors in it yet would answer
-                // every search with nothing, which is the outage this design exists to
-                // avoid. Promote it once it has finished backfilling.
-                IsDefault = body.MakeDefault == true || template is null,
-                // Nothing has built it, which is what the row says if its job never runs.
-                // That a job is building it is read from the jobs, not written here.
-                State = CorpusState.Degraded,
-                CreatedUtc = DateTime.UtcNow,
-            };
-
-            if (Validate(set) is { } invalid) return invalid;
-
-            if (set.IsDefault)
-                foreach (var other in corpus.ChunkSets) other.IsDefault = false;
-
-            db.ChunkSets.Add(set);
-            await db.SaveChangesAsync(ct);
-            await vectors.EnsureCollectionAsync(set.CollectionName, dims, ct);
-
-            // Rebuild, not Full: both re-index everything, but this one targets a single
-            // set, and the jobs list should say which of those is happening.
-            var job = await queue.EnqueueAsync(corpus.Id, JobKind.Rebuild, set.Id, ct);
-
-            var activity = await IndexingActivity.ReadAsync(db, [corpus.Id], ct);
-            return Results.Accepted($"/api/corpora/{corpus.Name}/chunk-sets/{set.Name}",
-                new ChunkSetCreated(set.ToSummary(0, 0, 0, 0, activity.Of(set)), job.ToSummary()));
-        }).Produces<ChunkSetCreated>(StatusCodes.Status202Accepted);
-
-        g.MapPatch("/{setName}", async (string nameOrId, string setName, UpdateChunkSetRequest body,
-            RequestContext rc, ScopeResolver scopes, CatalogDbContext db, IndexJobQueue queue,
-            CancellationToken ct) =>
-        {
-            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var principal = rc.RequirePrincipal();
-            var corpus = await scopes.ResolveWritableAsync(principal, nameOrId, ct);
-
-            var set = await FindSet(db, corpus, setName, ct);
-            if (set is null) return NotFound(corpus, setName);
-
-            // Any of these changes what ends up in Qdrant, so they are applied by
-            // re-chunking rather than by hoping someone remembers to reindex. The model is
-            // absent on purpose: that is a different vector space, so it is a new set.
-            var rechunk = false;
-
-            if (body.ChunkSize is { } size) { rechunk |= size != set.ChunkSize; set.ChunkSize = size; }
-            if (body.ChunkOverlap is { } ov) { rechunk |= ov != set.ChunkOverlap; set.ChunkOverlap = ov; }
-            if (body.BoundaryMode is { Length: > 0 } bm)
-            {
-                rechunk |= !string.Equals(bm, set.BoundaryMode, StringComparison.Ordinal);
-                set.BoundaryMode = bm;
-            }
-            if (body.CustomBoundaryPattern is not null)
-            {
-                rechunk |= body.CustomBoundaryPattern != set.CustomBoundaryPattern;
-                set.CustomBoundaryPattern = body.CustomBoundaryPattern;
-            }
-            if (body.UnitAware is { } ua) { rechunk |= ua != set.UnitAware; set.UnitAware = ua; }
-            if (body.SentenceAware is { } sa) { rechunk |= sa != set.SentenceAware; set.SentenceAware = sa; }
-            if (body.HeadingContext is { } hc) { rechunk |= hc != set.HeadingContext; set.HeadingContext = hc; }
-            if (body.Description is not null) set.Description = body.Description;
-
-            if (Validate(set) is { } invalid) return invalid;
-
-            await db.SaveChangesAsync(ct);
-
-            // The fingerprint mixes every one of these in, so a plain refresh is enough:
-            // every file in this set now looks changed, and nothing in any other does.
-            JobSummary? queued = null;
-            if (rechunk)
-                queued = (await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, set.Id, ct)).ToSummary();
-
-            var activity = await IndexingActivity.ReadAsync(db, [corpus.Id], ct);
-            return Results.Ok(new ChunkSetUpdated(set.ToSummary(0, 0, 0, 0, activity.Of(set)), queued));
-        }).Produces<ChunkSetUpdated>();
+        g.MapPatch("/{setName}", UpdateAsync).Produces<ChunkSetUpdated>();
 
         g.MapPost("/{setName}/promote", async (string nameOrId, string setName, RequestContext rc,
             ScopeResolver scopes, CatalogDbContext db, CancellationToken ct) =>

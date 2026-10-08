@@ -80,9 +80,10 @@ with no section here fails its release rather than publishing an undescribed one
   stay stored and are now indexed, the cause is listed under `failed`, and with nothing stored
   the answer is `400` "Malformed multipart upload".
 - **A client that disconnected after documents were attached left them waiting for the next
-  refresh.** The job that indexes an upload, an attach to another corpus, or a new corpus created
-  with a folder was queued on the request's token, so a cancel between the save and the job left
-  the saved change with nothing queued. The job is no longer cancellable once the change is
+  refresh.** The job that indexes an upload, an attach to another corpus, a new corpus created
+  with a folder, a new chunk set, or a chunk-set change that re-chunks was queued on the request's
+  token, so a cancel between the save and the job left the saved change with nothing queued. A new
+  chunk set stayed marked as degraded, and a change was not re-applied by sending it again. The job is no longer cancellable once the change is
   saved, and an upload cut off partway keeps and indexes the files completed before it. The file
   being attached at the moment of the cut is discarded, not saved without being reported.
 - **Stale developer scripts.** `scripts/screenshot.mjs` signs in with an admin session instead of
