@@ -325,7 +325,9 @@ its `DEXICON__SECTION__KEY` name, and `DexiconOptions.cs` has them all. The ones
 wanted:
 
 - `DEXICON__EMBEDDING__PROVIDER` (default `ollama`): which configured provider new chunk sets
-  use. Hosted providers are declared the same way; see [04](04-ingestion.md).
+  use. Hosted providers are declared the same way, in `docker-compose.override.yml` under
+  the `dexicon` service's `environment`; `.env.example` shows the OpenAI entries under
+  "Embedding providers", and [04](04-ingestion.md#embedding-providers) describes the settings.
 - `DEXICON__EMBEDDING__BATCHSIZE` (`32`): chunks per embedding request.
 - `DEXICON__INDEXING__BOUNDARYMODE` (`language-aware`): how code is split.
 - `DEXICON__OLLAMA__TIMEOUT` (`00:02:00`) and `DEXICON__OLLAMA__MAXRETRIES` (`2`).
@@ -480,14 +482,16 @@ gh attestation verify oci://ghcr.io/<owner>/dexicon:0.6.1 --owner <owner>
 `docker compose` resolves there (the `name:` in the file, or `COMPOSE_PROJECT_NAME`):
 
 ```bash
-./scripts/backup.sh backup   [dir]   # stops the app, archives the volumes, restarts
+./scripts/backup.sh backup   [dir]   # stops the app and Qdrant, archives the volumes, restarts them
 ./scripts/backup.sh restore  <dir>
 ./scripts/backup.sh verify   [dir]   # backup, DESTROY, restore, wait for liveness
 ```
 
-The app is stopped for the duration; Qdrant and Ollama keep running. The script refuses to
-archive if the app is still running after the stop, restarts it if an archive fails, and
-leaves it stopped if it was stopped before. SQLite in WAL mode will happily hand you a copy
+The app and Qdrant are stopped for the duration, because a copy of Qdrant's storage taken
+while it runs can catch a flush or compaction part-way; Ollama keeps running. The script
+refuses to archive if either is still running after the stop, starts again the ones it
+stopped (Qdrant first) even when an archive fails, and leaves alone any that were stopped
+before. SQLite in WAL mode will happily hand you a copy
 mid-write that restores into a database missing its last transactions, and a backup you
 cannot trust is worse than none, because you stop taking the other kind.
 

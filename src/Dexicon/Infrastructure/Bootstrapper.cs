@@ -149,8 +149,8 @@ public static class Bootstrapper
             // service down because one dependency is cold would be a worse outage than
             // the one being reported.
             log.LogError(ex,
-                "Ollama model '{Model}' not usable at {Endpoint}. Search degrades to keyword-only and " +
-                "files will fail to embed until it recovers.", options.Embedding.Model, options.Ollama.Endpoint);
+                "Embedding provider '{Provider}' could not embed with model '{Model}'. Search degrades to " +
+                "keyword-only and files will fail to embed until it recovers.", target.Provider, target.Model);
         }
     }
 

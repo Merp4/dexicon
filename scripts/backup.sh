@@ -17,7 +17,7 @@
 #                 to save data.
 #   ollama_data   model weights. Re-downloadable; archived only when WITH_MODELS=1.
 #
-# The app is stopped for the duration. SQLite in WAL mode will happily hand you a copy
+# The app and Qdrant are stopped for the duration. SQLite in WAL mode will happily hand you a copy
 # mid-write that restores into a database missing its last transactions, and a backup you
 # cannot trust is worse than none because you stop taking the other kind.
 
@@ -82,12 +82,20 @@ extract_volume() {
 
 volume_exists() { docker volume inspect "$1" >/dev/null 2>&1; }
 
-app_running() { docker compose ps --status running --services 2>/dev/null | tr -d '\r' | grep -qx dexicon; }
+service_running() { docker compose ps --status running --services 2>/dev/null | tr -d '\r' | grep -qx "$1"; }
 
-# Only an app this script stopped is started again, on an early exit as well: a backup that
-# fails part-way must not leave the service down.
-WAS_RUNNING=0
-restart_app() { if [ "$WAS_RUNNING" = 1 ]; then docker compose start dexicon >/dev/null 2>&1 || true; fi; WAS_RUNNING=0; }
+# Qdrant is stopped with the app: a tar of its storage taken while it runs can catch a
+# background flush or compaction part-way, and then restore into a store that does not open.
+# Ollama keeps running; its volume is read-only to the archive and holds no state of ours.
+#
+# Only services this script stopped are started again, Qdrant first, and on an early exit
+# as well: a backup that fails part-way must not leave the stack down.
+BACKUP_SERVICES="dexicon-qdrant dexicon"
+STOPPED=""
+restart_stopped() {
+  for s in $STOPPED; do docker compose start "$s" >/dev/null 2>&1 || true; done
+  STOPPED=""
+}
 
 cmd_backup() {
   init_project
@@ -110,15 +118,19 @@ cmd_backup() {
   local image
   image="$(docker compose images dexicon --format json 2>/dev/null | grep -o '"Repository":"[^"]*","Tag":"[^"]*"' | sed 's/"Repository":"//; s/","Tag":"/:/; s/"$//' | head -1)" || true
 
-  if app_running; then WAS_RUNNING=1; fi
-  trap restart_app EXIT
+  for s in $BACKUP_SERVICES; do
+    if service_running "$s"; then STOPPED="$STOPPED $s"; fi
+  done
+  trap restart_stopped EXIT
 
-  info "Stopping dexicon (the app only — dependencies keep running)"
-  docker compose stop dexicon >/dev/null 2>&1 || true
-  if app_running; then
-    red "dexicon is still running, so its database cannot be copied consistently. Nothing was archived."
-    exit 1
-  fi
+  info "Stopping dexicon and dexicon-qdrant (Ollama keeps running)"
+  docker compose stop dexicon dexicon-qdrant >/dev/null 2>&1 || true
+  for s in $BACKUP_SERVICES; do
+    if service_running "$s"; then
+      red "${s} is still running, so its data cannot be copied consistently. Nothing was archived."
+      exit 1
+    fi
+  done
 
   info "Archiving ${DATA_VOLUME}"
   archive_volume "$DATA_VOLUME" "${dir}/dexicon_data.tar.gz"
@@ -143,7 +155,7 @@ image      = ${image:-unknown}
 volumes    = $(ls "$dir" | grep '\.tar\.gz$' | tr '\n' ' ')
 EOF
 
-  restart_app
+  restart_stopped
   trap - EXIT
   green "Backed up to ${dir}"
   info "$(du -sh "$dir" | cut -f1) total"

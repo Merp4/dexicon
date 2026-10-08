@@ -48,14 +48,18 @@ LIMIT = 10
 
 
 def env_value(name):
-    """A variable from the environment, or from the .env beside the repo."""
+    """A variable from the environment, or from the .env beside the repo.
+
+    A value in .env may be quoted, as Compose accepts, and Compose strips the quotes before
+    the server reads it, so they are stripped here too or the password would not match.
+    """
     if value := os.environ.get(name):
         return value
     env = ROOT / ".env"
     if env.exists():
         for line in env.read_text(encoding="utf-8").splitlines():
             if line.startswith(f"{name}="):
-                if value := line.split("=", 1)[1].strip():
+                if value := line.split("=", 1)[1].strip().strip("'\""):
                     return value
     return None
 
