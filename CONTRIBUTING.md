@@ -10,8 +10,23 @@ code.
 git clone https://github.com/Merp4/dexicon && cd dexicon
 cp .env.example .env
 docker compose up -d
-docker compose logs dexicon | grep "bootstrap token"
+docker compose logs dexicon | grep -A 2 "admin password"
 ```
+
+The admin password is printed once on first start, in double quotes, two lines below a box
+headed `Dexicon admin password`. Copy it without the quotes and sign in at
+http://127.0.0.1:8477, then create an API key under Access. On PowerShell:
+`docker compose logs dexicon | Select-String "admin password" -Context 0,2`.
+
+Toolchain: .NET SDK 10 (CI uses `10.0.x`) and, for the web UI in `clients/web-ui`, Node 22
+(the version CI uses). For a UI change, run what CI runs from that directory:
+
+```bash
+npm ci && npm run generate && npm run typecheck && npm test && npm run build
+```
+
+`typecheck` is `tsc -b`. The root `tsconfig` is a solution file, so `tsc --noEmit` compiles
+nothing and exits 0 on code that does not type-check.
 
 For the inner loop, run the app on the host against the containerised dependencies:
 
@@ -53,8 +68,9 @@ that reproduces it is the most useful form in which to report it.
 Each of these has been decided, with the reasoning recorded in
 [docs/decisions.md](docs/decisions.md):
 
-- **New MCP tools.** There are five, and the count is a budget: every tool definition is
-  context an agent pays for on every turn ([D-11](docs/decisions.md)). New
+- **New MCP tools.** There are ten: four read tools for `search`, `index_refresh` for
+  `ingest`, three for `configure` and two for `propose`. Every tool definition is context an
+  agent pays for on every turn ([D-11](docs/decisions.md#d-11-five-mcp-tools)). New
   capability usually belongs as an argument to an existing tool, as `corpus:set` does.
 - **Unreported fallbacks.** If the embedding service is unavailable, search degrades to
   keyword **and reports this in the response**. A result that is worse than the caller
@@ -92,7 +108,7 @@ Each of these has been decided, with the reasoning recorded in
 ## Secrets
 
 Never commit one. `.env` is gitignored, and `.env.example` is the only tracked template:
-it ships every key **empty**. `gitleaks` runs as a pre-commit hook and as a CI job over
+it ships every secret empty (blank or commented out). `gitleaks` runs as a pre-commit hook and as a CI job over
 full history with rules for the `dex_` token format and provider API keys.
 
 If you believe you have committed a secret, report it immediately rather than force

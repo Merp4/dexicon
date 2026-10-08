@@ -16,6 +16,7 @@
 - [ ] Tests added for anything that could regress silently — the failures this project
       cares most about are the ones that report success
 - [ ] Docs updated if behaviour changed, including `docs/decisions.md` for a load-bearing choice
-- [ ] No secrets, and `.env.example` still lists every `DEXICON__*` key
-- [ ] If chunking, extraction or framing changed: the relevant version bumped, so existing
-      corpora re-index instead of silently keeping stale vectors
+- [ ] No secrets, and `.env.example` still lists every `DEXICON_*` variable `docker-compose.yml` reads
+- [ ] If chunking or extraction changed: `CodeChunker.Version` or `ExtractorVersions.Current`
+      bumped, so existing corpora re-index instead of silently keeping stale vectors.
+      Framing changes re-index through the template fingerprint and have no version

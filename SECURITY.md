@@ -47,9 +47,12 @@ considering exposing it to untrusted users, that is the sentence to read twice.
 
 Dexicon assumes it is reachable only by people you trust:
 
-- The app binds to `127.0.0.1` by default. Qdrant and Ollama publish **no ports at all**:
-  Qdrant's stock configuration has no authentication, so a published `6333` is an open
-  read/write door to every corpus regardless of what the application enforces.
+- The app binds to `127.0.0.1` by default. Qdrant and Ollama publish **no ports at all**
+  in `docker-compose.yml`: Qdrant's stock configuration has no authentication, so a
+  published `6333` is an open read/write door to every corpus regardless of what the
+  application enforces. The debug overlay that `scripts/dev.ps1` uses
+  (`docker-compose.debug.yml`) publishes them bound to `127.0.0.1` only (16333, 16334 and
+  21434), for the inner loop.
 - The admin password and every API key are stored as PBKDF2-HMAC-SHA256 with a per-credential
   salt. A key's secret is shown once at creation and has no retrieval path. A lost key is
   replaced, not recovered, or
@@ -72,5 +75,6 @@ So that a report is not wasted work:
   authentication on with a key nothing can present. The port is never published.
 - **Search results revealing that content exists.** Within what a key reaches, that is the
   product.
-- **An `admin` token doing administrative things.** Scopes are a capability boundary, not a
-  defence against the holder.
+- **The administrator doing administrative things.** No key can carry `admin`: it is the
+  session the admin password is exchanged for. Scopes are a capability boundary for keys,
+  not a defence against the holder of the admin password.
