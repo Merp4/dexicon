@@ -186,18 +186,13 @@ builder.Services.Configure<McpServerOptions>(o =>
 builder.WebHost.ConfigureKestrel(k => k.AddServerHeader = false);
 
 // Kestrel's stock 30 MB request cap stays on for every endpoint EXCEPT the document
-// upload, which lifts it per request (DocumentEndpoints). That cap is the right guard for
-// a JSON body and the wrong one for a book: DEXICON__UPLOAD__MAXFILEBYTES advertises
-// 200 MB per file and nothing could ever reach it: a 40 MB PDF died on a bare 413 with
-// no message, which reads as the upload being broken rather than as a limit.
+// upload, which lifts it per request and applies its own bound (DocumentEndpoints,
+// UploadOptions.MaxRequestBytes). That cap is the right guard for a JSON body and the
+// wrong one for a book: DEXICON__UPLOAD__MAXFILEBYTES advertises 200 MB per file and a
+// 40 MB PDF died on a bare 413 with no message.
 //
-// The multipart limit has to move with it. It governs the whole form, and the UI posts
-// every dropped file in ONE request, so a fixed number here would cap a batch rather than
-// a file. The real per-file limit is enforced while streaming, in DocumentService.
-builder.Services.Configure<FormOptions>(o =>
-{
-    o.MultipartBodyLengthLimit = long.MaxValue;
-});
+// No FormOptions override: the upload reads its body with a MultipartReader and no
+// endpoint reads a form, so the framework's form limits have nothing to govern.
 
 var app = builder.Build();
 

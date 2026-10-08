@@ -5,8 +5,11 @@ using Dexicon.Core.Documents;
 using Dexicon.Core.Indexing;
 using Dexicon.Infrastructure;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Primitives;
+using Microsoft.Net.Http.Headers;
 
 namespace Dexicon.Api;
 
@@ -34,6 +37,9 @@ public sealed record LibraryAttachment(
 
 public static class DocumentEndpoints
 {
+    /// <summary>The <see cref="UploadFailure.File"/> of a failure that belongs to the request, not to a file.</summary>
+    internal const string RequestFailureName = "(request)";
+
     /// <summary>
     /// Detach an uploaded document from a corpus (the blob survives; other corpora may still use it).
     /// A method of its own, and the one the route is mapped to, so a test calls the handler that
@@ -51,76 +57,190 @@ public static class DocumentEndpoints
         return removed ? Results.NoContent() : Results.NotFound();
     }
 
-    public static void MapDocumentEndpoints(this IEndpointRouteBuilder app)
+    /// <summary>
+    /// Upload into a corpus. A method of its own, and the one the route is mapped to, so a test
+    /// calls the handler that runs and sees how it reads the body.
+    ///
+    /// The body is read with a <see cref="MultipartReader"/> and each file goes straight from the
+    /// wire into <see cref="DocumentService.StoreAsync"/>, which holds it to
+    /// <see cref="UploadOptions.MaxFileBytes"/> as the bytes arrive. Nothing is spooled to a temp
+    /// file first, which on the container's tmpfs would be memory. The request as a whole is held
+    /// to <see cref="UploadOptions.MaxRequestBytes"/>.
+    /// </summary>
+    internal static async Task<IResult> UploadAsync(
+        string nameOrId, HttpRequest http, RequestContext rc, ScopeResolver scopes,
+        DocumentService documents, IndexJobQueue queue, IOptions<DexiconOptions> opts,
+        CancellationToken ct)
     {
-        var g = app.MapGroup("/api").WithTags("Documents");
+        if (rc.RequireScope(Scopes.Ingest) is { } denied) return denied;
 
-        // ── Upload into a corpus ────────────────────────────────────────────
-        g.MapPost("/corpora/{nameOrId}/documents", async (
-            string nameOrId, HttpRequest http, RequestContext rc, ScopeResolver scopes,
-            DocumentService documents, IndexJobQueue queue, IOptions<DexiconOptions> opts,
-            CancellationToken ct) =>
+        if (BoundaryOf(http.ContentType) is not { } boundary)
+            return Results.Problem(
+                title: "Expected a multipart upload",
+                detail: "POST the file as multipart/form-data with a 'files' field.",
+                statusCode: 415);
+
+        // The one endpoint that legitimately carries a large body, so the one that opts out of
+        // Kestrel's 30 MB default. Without this, DEXICON__UPLOAD__MAXFILEBYTES was unreachable
+        // above ~28.6 MB and the caller got a bare 413 rather than the service's own message.
+        // The bound that replaces it is UploadOptions.MaxRequestBytes, applied below with a
+        // message that names it.
+        //
+        // Set BEFORE the body is read, which is the only point at which the feature is still
+        // writable.
+        var bodySize = http.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>();
+        if (bodySize is { IsReadOnly: false }) bodySize.MaxRequestBodySize = null;
+
+        var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
+
+        var upload = opts.Value.Upload;
+        var bound = upload.MaxRequestBytes;
+
+        // A client that declares its length is refused before a byte of the body is read.
+        if (http.ContentLength > bound) return TooLarge(upload);
+
+        var stored = new List<UploadedDocumentResponse>();
+        var failures = new List<UploadFailure>();
+        var filesSeen = 0;
+        var overran = false;
+        string? malformed = null;
+
+        // Counts what is read, so a body with no declared length (chunked) is refused at the
+        // bound too, and so is a declared length that understates the body.
+        var body = new BoundedReadStream(http.Body, bound);
+        var reader = new MultipartReader(boundary, body)
         {
-            if (rc.RequireScope(Scopes.Ingest) is { } denied) return denied;
+            HeadersCountLimit = MultipartReader.DefaultHeadersCountLimit,
+            HeadersLengthLimit = MultipartReader.DefaultHeadersLengthLimit,
+            BodyLengthLimit = bound,
+        };
 
-            if (!http.HasFormContentType)
-                return Results.Problem(
-                    title: "Expected a multipart upload",
-                    detail: "POST the file as multipart/form-data with a 'files' field.",
-                    statusCode: 415);
-
-            // The one endpoint that legitimately carries a large body, so the one that
-            // opts out of Kestrel's 30 MB default. Without this, DEXICON__UPLOAD__MAXFILEBYTES
-            // was unreachable above ~28.6 MB and the caller got a bare 413 rather than the
-            // service's own message: a 512 MB DOCUMENTMAXBYTES with a 30 MB front door.
-            //
-            // Set BEFORE the body is read, which is the only point at which the feature is
-            // still writable. The real limit is per FILE and is enforced while streaming in
-            // DocumentService.StoreAsync; a request bound cannot be the same number, because
-            // the UI posts a whole dropped batch as one request.
-            var bodySize = http.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>();
-            if (bodySize is { IsReadOnly: false }) bodySize.MaxRequestBodySize = null;
-
-            var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
-            var form = await http.ReadFormAsync(ct);
-            if (form.Files.Count == 0)
-                return Results.Problem(title: "No files in the request", statusCode: 400);
-
-            var stored = new List<UploadedDocumentResponse>();
-            var failures = new List<UploadFailure>();
-
-            foreach (var file in form.Files)
+        try
+        {
+            // ReadNextSectionAsync discards what is left of the section before it, so a file
+            // refused for its size still has its remaining bytes read off the wire. They are
+            // not kept, and the files after it are reached.
+            while (await reader.ReadNextSectionAsync(ct) is { } section)
             {
+                if (section.AsFileSection() is not { } part) continue;   // a form field
+
+                filesSeen++;
+                var fileName = part.FileName ?? "";
                 try
                 {
-                    await using var stream = file.OpenReadStream();
-                    var doc = await documents.StoreAsync(stream, file.FileName, ct);
-                    var attachment = await documents.AttachAsync(corpus, doc.Sha256, file.FileName, ct);
+                    var doc = await documents.StoreAsync(part.FileStream!, fileName, ct);
+                    var attachment = await documents.AttachAsync(corpus, doc.Sha256, fileName, ct);
 
                     stored.Add(new UploadedDocumentResponse(
-                        doc.Sha256, file.FileName, doc.SizeBytes, doc.Title, doc.ExtractedChars,
+                        doc.Sha256, fileName, doc.SizeBytes, doc.Title, doc.ExtractedChars,
                         doc.AlreadyExisted, doc.EmptyReason, attachment.Id));
                 }
                 catch (ArgumentException ex)
                 {
                     // One bad file in a batch must not lose the good ones.
-                    failures.Add(new UploadFailure(file.FileName, ex.Message));
+                    failures.Add(new UploadFailure(fileName, ex.Message));
                 }
             }
+        }
+        catch (UploadTooLargeException)
+        {
+            overran = true;
+            failures.Add(new UploadFailure(RequestFailureName, TooLargeMessage(upload)));
+        }
+        catch (InvalidDataException ex)
+        {
+            malformed = ex.Message;
+            failures.Add(new UploadFailure(RequestFailureName, $"The multipart body could not be read: {ex.Message}"));
+        }
 
-            if (stored.Count == 0)
-                return Results.Problem(
-                    title: "No files could be stored",
-                    detail: string.Join("; ", failures.Select(f => $"{f.File}: {f.Error}")),
-                    statusCode: 400);
+        if (stored.Count == 0)
+        {
+            if (overran) return TooLarge(upload);
 
-            // Chunking and embedding happen in the indexer, not on the request thread:
-            // a 400-page PDF outlasts any sensible HTTP timeout.
-            var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
+            if (malformed is not null)
+                return Results.Problem(title: "Malformed multipart upload", detail: malformed, statusCode: 400);
 
-            return Results.Accepted($"/api/jobs/{job.Id}",
-                new UploadResponse(corpus.Name, stored, failures, job.ToSummary()));
-        }).Produces<UploadResponse>(StatusCodes.Status202Accepted).DisableAntiforgery();
+            if (filesSeen == 0)
+                return Results.Problem(title: "No files in the request", statusCode: 400);
+
+            return Results.Problem(
+                title: "No files could be stored",
+                detail: string.Join("; ", failures.Select(f => $"{f.File}: {f.Error}")),
+                statusCode: 400);
+        }
+
+        // Chunking and embedding happen in the indexer, not on the request thread:
+        // a 400-page PDF outlasts any sensible HTTP timeout.
+        var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
+
+        return Results.Accepted($"/api/jobs/{job.Id}",
+            new UploadResponse(corpus.Name, stored, failures, job.ToSummary()));
+    }
+
+    /// <summary>
+    /// The multipart boundary, or null when the request is not <c>multipart/form-data</c> or names
+    /// none. The length limit is the one the framework applies to a form.
+    /// </summary>
+    private static string? BoundaryOf(string? contentType)
+    {
+        if (!MediaTypeHeaderValue.TryParse(contentType, out var mediaType)
+            || !mediaType.MediaType.Equals("multipart/form-data", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var boundary = HeaderUtilities.RemoveQuotes(mediaType.Boundary);
+        return StringSegment.IsNullOrEmpty(boundary) || boundary.Length > FormOptions.DefaultMultipartBoundaryLengthLimit
+            ? null
+            : boundary.Value;
+    }
+
+    private static string TooLargeMessage(UploadOptions upload) =>
+        $"The upload is over the {upload.MaxRequestBytes:N0} byte request limit: {UploadOptions.BatchFiles} files " +
+        $"at the {upload.MaxFileBytes:N0} byte per-file limit (DEXICON__UPLOAD__MAXFILEBYTES) plus form framing. " +
+        "Send fewer files in each request.";
+
+    private static IResult TooLarge(UploadOptions upload) =>
+        Results.Problem(title: "Upload too large", detail: TooLargeMessage(upload), statusCode: 413);
+
+    private sealed class UploadTooLargeException : Exception;
+
+    /// <summary>Passes reads through and throws <see cref="UploadTooLargeException"/> once more than the limit has been read.</summary>
+    private sealed class BoundedReadStream(Stream inner, long limit) : Stream
+    {
+        private long _read;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => _read; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override int Read(byte[] buffer, int offset, int count) => Counted(inner.Read(buffer, offset, count));
+
+        public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            Counted(await inner.ReadAsync(buffer.AsMemory(offset, count), cancellationToken));
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            Counted(await inner.ReadAsync(buffer, cancellationToken));
+
+        private int Counted(int read)
+        {
+            _read += read;
+            if (_read > limit) throw new UploadTooLargeException();
+            return read;
+        }
+    }
+
+    public static void MapDocumentEndpoints(this IEndpointRouteBuilder app)
+    {
+        var g = app.MapGroup("/api").WithTags("Documents");
+
+        // ── Upload into a corpus ────────────────────────────────────────────
+        g.MapPost("/corpora/{nameOrId}/documents", UploadAsync)
+            .Produces<UploadResponse>(StatusCodes.Status202Accepted).DisableAntiforgery();
 
         // ── Attach an already-stored document to another corpus ─────────────
         g.MapPost("/corpora/{nameOrId}/documents/attach", async (
