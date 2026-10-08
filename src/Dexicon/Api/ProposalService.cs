@@ -11,14 +11,18 @@ using Microsoft.Extensions.Options;
 namespace Dexicon.Api;
 
 /// <summary>What deleting the target would take, worked out when a person looks, not when it was asked.</summary>
-/// <param name="Blocker">Why approving it would be refused now, or null when nothing stands in the way.</param>
-public sealed record ProposalFacts(int Sources, int Files, int Chunks, int ChunkSets, string? Blocker);
+/// <param name="Blocker">Why approving it would be refused now, or absent when nothing stands in the way.</param>
+public sealed record ProposalFacts(int Sources, int Files, int Chunks, int ChunkSets, string? Blocker = null);
 
+/// <summary>
+/// The nullable members trail with a default, because the API leaves a null out of the JSON it writes and
+/// a member without a default is published as required.
+/// </summary>
 /// <param name="Gone">The target is no longer there, so approving would record the proposal as failed.</param>
-/// <param name="Facts">Null once decided, and when the target is gone.</param>
+/// <param name="Facts">Absent once decided, and when the target is gone.</param>
 public sealed record ProposalView(
     string Id, DateTime CreatedUtc, string KeyName, string CorpusName, string Kind, string Target, string Reason,
-    string Status, DateTime? DecidedUtc, string? Error, bool Gone, ProposalFacts? Facts);
+    string Status, bool Gone, DateTime? DecidedUtc = null, string? Error = null, ProposalFacts? Facts = null);
 
 /// <param name="AlreadyPending">The same thing was already waiting for a decision, so nothing new was recorded.</param>
 public sealed record ProposalAsked(Proposal Proposal, bool AlreadyPending);
@@ -293,7 +297,7 @@ public sealed class ProposalService(
 
     private static ProposalView View(Proposal p, bool gone = false, ProposalFacts? facts = null) => new(
         p.Id, p.CreatedUtc, p.TokenName, p.CorpusName, ProposalKinds.Name(p.Kind), p.TargetLabel, p.Reason,
-        p.Status.ToString().ToLowerInvariant(), p.DecidedUtc, p.Error, gone, facts);
+        p.Status.ToString().ToLowerInvariant(), gone, p.DecidedUtc, p.Error, facts);
 
     /// <summary>
     /// What each of these would take, or that its target has gone. The figures are read once for the

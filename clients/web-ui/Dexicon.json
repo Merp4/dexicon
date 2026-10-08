@@ -3515,8 +3515,7 @@
           "sources",
           "files",
           "chunks",
-          "chunkSets",
-          "blocker"
+          "chunkSets"
         ],
         "type": "object",
         "properties": {
@@ -3554,10 +3553,7 @@
           "target",
           "reason",
           "status",
-          "decidedUtc",
-          "error",
-          "gone",
-          "facts"
+          "gone"
         ],
         "type": "object",
         "properties": {
@@ -3586,6 +3582,9 @@
           "status": {
             "type": "string"
           },
+          "gone": {
+            "type": "boolean"
+          },
           "decidedUtc": {
             "type": [
               "null",
@@ -3598,9 +3597,6 @@
               "null",
               "string"
             ]
-          },
-          "gone": {
-            "type": "boolean"
           },
           "facts": {
             "oneOf": [
