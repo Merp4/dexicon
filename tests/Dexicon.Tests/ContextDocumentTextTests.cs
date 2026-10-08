@@ -42,15 +42,23 @@ public sealed class ContextDocumentTextTests : IDisposable
         var source = new Source { Id = Ulid.NewUlid().ToString(), CorpusId = corpus.Id, Kind = SourceKind.Workspace, RootPath = "books" };
         var set = new ChunkSet
         {
-            Id = Ulid.NewUlid().ToString(), CorpusId = corpus.Id, Name = "default",
-            EmbeddingModel = "m", EmbeddingDimensions = 8, CollectionName = "c",
-            BoundaryMode = "blank-line", CreatedUtc = DateTime.UtcNow,
+            Id = Ulid.NewUlid().ToString(),
+            CorpusId = corpus.Id,
+            Name = "default",
+            EmbeddingModel = "m",
+            EmbeddingDimensions = 8,
+            CollectionName = "c",
+            BoundaryMode = "blank-line",
+            CreatedUtc = DateTime.UtcNow,
         };
 
         var file = new IndexedFile { Id = Ulid.NewUlid().ToString(), SourceId = source.Id, RelativePath = path };
         file.ChunkStates.Add(new FileChunkState
         {
-            FileId = file.Id, ChunkSetId = set.Id, SourceSha256 = "sha1", Status = FileStatus.Indexed,
+            FileId = file.Id,
+            ChunkSetId = set.Id,
+            SourceSha256 = "sha1",
+            Status = FileStatus.Indexed,
         });
 
         db.Corpora.Add(corpus);
@@ -59,8 +67,11 @@ public sealed class ContextDocumentTextTests : IDisposable
         db.Files.Add(file);
         db.FileTexts.Add(new FileText
         {
-            Sha256 = "sha1", Extractor = "PdfTextExtractor", Text = text,
-            ExtractedChars = text.Length, ExtractorVersion = ExtractorVersions.Current,
+            Sha256 = "sha1",
+            Extractor = "PdfTextExtractor",
+            Text = text,
+            ExtractedChars = text.Length,
+            ExtractorVersion = ExtractorVersions.Current,
             ExtractedUtc = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
@@ -71,9 +82,14 @@ public sealed class ContextDocumentTextTests : IDisposable
     private static SearchHit Chunk(string sourceId, int index, int startLine, int endLine, string content) =>
         new()
         {
-            CorpusId = "unused", SourceId = sourceId,
-            FilePath = "book.pdf", ChunkIndex = index,
-            StartLine = startLine, EndLine = endLine, Content = content, Score = 1,
+            CorpusId = "unused",
+            SourceId = sourceId,
+            FilePath = "book.pdf",
+            ChunkIndex = index,
+            StartLine = startLine,
+            EndLine = endLine,
+            Content = content,
+            Score = 1,
         };
 
     private static ContextService Service(CatalogDbContext db) =>
@@ -195,9 +211,14 @@ public sealed class ContextDocumentTextTests : IDisposable
         var source = new Source { Id = Ulid.NewUlid().ToString(), CorpusId = corpus.Id, Kind = SourceKind.Workspace, RootPath = "src" };
         var set = new ChunkSet
         {
-            Id = Ulid.NewUlid().ToString(), CorpusId = corpus.Id, Name = "default",
-            EmbeddingModel = "m", EmbeddingDimensions = 8, CollectionName = "c",
-            BoundaryMode = "blank-line", CreatedUtc = DateTime.UtcNow,
+            Id = Ulid.NewUlid().ToString(),
+            CorpusId = corpus.Id,
+            Name = "default",
+            EmbeddingModel = "m",
+            EmbeddingDimensions = 8,
+            CollectionName = "c",
+            BoundaryMode = "blank-line",
+            CreatedUtc = DateTime.UtcNow,
         };
         var file = new IndexedFile { Id = Ulid.NewUlid().ToString(), SourceId = source.Id, RelativePath = "book.pdf" };
         file.ChunkStates.Add(new FileChunkState { FileId = file.Id, ChunkSetId = set.Id, Status = FileStatus.Indexed });

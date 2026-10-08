@@ -38,11 +38,16 @@ public sealed class DocumentReaderTests : IDisposable
     {
         var corpus = new Corpus
         {
-            Id = Ulid.NewUlid().ToString(), Name = $"c{Ulid.NewUlid()}", CreatedUtc = DateTime.UtcNow,
+            Id = Ulid.NewUlid().ToString(),
+            Name = $"c{Ulid.NewUlid()}",
+            CreatedUtc = DateTime.UtcNow,
         };
         var source = new Source
         {
-            Id = Ulid.NewUlid().ToString(), CorpusId = corpus.Id, Kind = kind, RootPath = "books",
+            Id = Ulid.NewUlid().ToString(),
+            CorpusId = corpus.Id,
+            Kind = kind,
+            RootPath = "books",
         };
         var set = Set(corpus.Id, "default");
         db.Corpora.Add(corpus);
@@ -85,18 +90,20 @@ public sealed class DocumentReaderTests : IDisposable
         return file;
     }
 
-    private static FileText Text(string sha, string extractor, string body, string? units = null,
-                                 string? title = null, int? version = null) => new()
-    {
-        Sha256 = sha,
-        Extractor = extractor,
-        Text = body,
-        UnitsJson = units,
-        Title = title,
-        ExtractedChars = body.Length,
-        ExtractorVersion = version ?? ExtractorVersions.Current,
-        ExtractedUtc = DateTime.UtcNow,
-    };
+    private static FileText Text(
+        string sha, string extractor, string body, string? units = null,
+        string? title = null, int? version = null)
+        => new()
+        {
+            Sha256 = sha,
+            Extractor = extractor,
+            Text = body,
+            UnitsJson = units,
+            Title = title,
+            ExtractedChars = body.Length,
+            ExtractorVersion = version ?? ExtractorVersions.Current,
+            ExtractedUtc = DateTime.UtcNow,
+        };
 
     [Fact]
     public async Task AWorkspaceFileResolvesToItsExtractedText()
@@ -163,7 +170,10 @@ public sealed class DocumentReaderTests : IDisposable
         var file = File(sourceId, "x.pdf", oldSet, sha: "old");
         file.ChunkStates.Add(new FileChunkState
         {
-            FileId = file.Id, ChunkSetId = newSet.Id, SourceSha256 = "new", Status = FileStatus.Indexed,
+            FileId = file.Id,
+            ChunkSetId = newSet.Id,
+            SourceSha256 = "new",
+            Status = FileStatus.Indexed,
         });
         db.Files.Add(file);
         await db.SaveChangesAsync();
@@ -235,8 +245,10 @@ public sealed class DocumentReaderTests : IDisposable
         var (corpusId, firstSource, setId) = await CorpusAsync(db);
         var second = new Source
         {
-            Id = Ulid.NewUlid().ToString(), CorpusId = corpusId,
-            Kind = SourceKind.Workspace, RootPath = "papers",
+            Id = Ulid.NewUlid().ToString(),
+            CorpusId = corpusId,
+            Kind = SourceKind.Workspace,
+            RootPath = "papers",
         };
         db.Sources.Add(second);
         db.FileTexts.Add(Text("dd44", "PdfTextExtractor", "the first book"));

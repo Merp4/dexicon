@@ -82,18 +82,32 @@ public sealed class ContextExpansionScopeTests
         var corpus = new Corpus { Id = "01BOOKS", Name = "books", State = CorpusState.Ready };
         corpus.ChunkSets.Add(new ChunkSet
         {
-            Id = "01SET-DEFAULT", CorpusId = corpus.Id, Name = "default", IsDefault = true,
-            EmbeddingProvider = "ollama", EmbeddingModel = "embeddinggemma",
-            EmbeddingDimensions = 768, CollectionName = "coll__default",
-            ChunkSize = 768, ChunkOverlap = 100, BoundaryMode = "language-aware",
+            Id = "01SET-DEFAULT",
+            CorpusId = corpus.Id,
+            Name = "default",
+            IsDefault = true,
+            EmbeddingProvider = "ollama",
+            EmbeddingModel = "embeddinggemma",
+            EmbeddingDimensions = 768,
+            CollectionName = "coll__default",
+            ChunkSize = 768,
+            ChunkOverlap = 100,
+            BoundaryMode = "language-aware",
             State = CorpusState.Ready,
         });
         corpus.ChunkSets.Add(new ChunkSet
         {
-            Id = "01SET-FINE", CorpusId = corpus.Id, Name = "fine", IsDefault = false,
-            EmbeddingProvider = "ollama", EmbeddingModel = "embeddinggemma",
-            EmbeddingDimensions = 768, CollectionName = "coll__fine",
-            ChunkSize = 256, ChunkOverlap = 32, BoundaryMode = "language-aware",
+            Id = "01SET-FINE",
+            CorpusId = corpus.Id,
+            Name = "fine",
+            IsDefault = false,
+            EmbeddingProvider = "ollama",
+            EmbeddingModel = "embeddinggemma",
+            EmbeddingDimensions = 768,
+            CollectionName = "coll__fine",
+            ChunkSize = 256,
+            ChunkOverlap = 32,
+            BoundaryMode = "language-aware",
             State = CorpusState.Ready,
         });
         db.Corpora.Add(corpus);

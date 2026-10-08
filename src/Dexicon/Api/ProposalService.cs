@@ -185,86 +185,86 @@ public sealed class ProposalService(
                 return (corpus.Id, corpus.Name);
 
             case ProposalKind.ChunkSet:
-            {
-                var sets = await db.ChunkSets.AsNoTracking().Where(s => s.CorpusId == corpus.Id).ToListAsync(ct);
-                var set = sets.FirstOrDefault(s =>
-                    string.Equals(s.Name, named, StringComparison.OrdinalIgnoreCase) || s.Id == named);
-                if (set is null)
-                    return new ConfigRefusal("No such chunk set",
-                        $"Corpus '{Line(corpus.Name)}' has no chunk set '{Line(named)}'. Its sets: "
-                        + $"{string.Join(", ", sets.Select(s => Line(s.Name)).Order(StringComparer.Ordinal))}.", 404);
-
-                // Refused now rather than left to fail when approved: an agent can act on it.
-                if (sets.Count == 1)
-                    return new ConfigRefusal("Cannot remove the only chunk set",
-                        $"'{Line(set.Name)}' is the only way '{Line(corpus.Name)}' is indexed. Propose removing the corpus, "
-                        + "or add another set and promote it first.", 409);
-                if (set.IsDefault)
-                    return new ConfigRefusal("Cannot remove the default chunk set",
-                        "Search would have nothing to fall back to. The default has to be changed in the UI first.", 409);
-                return (set.Id, set.Name);
-            }
-
-            case ProposalKind.Document:
-            {
-                // Looked up in the query. A library can hold thousands, and only the not-found answer
-                // needs to name any of them.
-                var uploads = db.Files.AsNoTracking()
-                    .Where(f => f.Source!.CorpusId == corpus.Id && f.Source.Kind == SourceKind.Upload);
-                var file = await uploads.FirstOrDefaultAsync(f => f.Id == named, ct)
-                           ?? await uploads.FirstOrDefaultAsync(f => f.RelativePath == named, ct);
-                if (file is not null) return (file.Id, file.RelativePath);
-
-                var held = await uploads.CountAsync(ct);
-                var first = await uploads.Select(f => f.RelativePath).OrderBy(p => p).Take(20).ToListAsync(ct);
-                return new ConfigRefusal("No such document",
-                    $"Corpus '{Line(corpus.Name)}' has no uploaded document '{Line(named)}'. Documents attached to it: "
-                    + (held == 0
-                        ? "none."
-                        : string.Join(", ", first.Select(Line)) + (held > 20 ? $" and {held - 20} more." : ".")), 404);
-            }
-
-            default:
-            {
-                var sources = await db.Sources.AsNoTracking()
-                    .Where(s => s.CorpusId == corpus.Id && s.Kind != SourceKind.Upload).ToListAsync(ct);
-                var root = options.Value.Indexing.WorkspaceRoot;
-                string Describe(Source s) =>
-                    $"{(s.Kind == SourceKind.GitHistory ? "history" : "files")}:{WorkspaceDiscovery.Canonical(root, s.RootPath)}";
-                string Listing() => sources.Count == 0
-                    ? "none"
-                    : string.Join(", ", sources.Select(s => Line(Describe(s))).Order(StringComparer.Ordinal));
-
-                var byId = sources.FirstOrDefault(s => s.Id == named);
-                if (byId is not null) return (byId.Id, Describe(byId));
-
-                SourceKind? only = null;
-                var folder = named;
-                if (folder.StartsWith("files:", StringComparison.OrdinalIgnoreCase))
-                { only = SourceKind.Workspace; folder = folder[6..]; }
-                else if (folder.StartsWith("history:", StringComparison.OrdinalIgnoreCase))
-                { only = SourceKind.GitHistory; folder = folder[8..]; }
-
-                string canonical;
-                try { canonical = WorkspaceDiscovery.Canonical(root, folder); }
-                catch (ArgumentException)
                 {
-                    return new ConfigRefusal("Not a folder",
-                        $"'{Line(named)}' is not a folder path. The sources of '{Line(corpus.Name)}': {Listing()}.", 400);
+                    var sets = await db.ChunkSets.AsNoTracking().Where(s => s.CorpusId == corpus.Id).ToListAsync(ct);
+                    var set = sets.FirstOrDefault(s =>
+                        string.Equals(s.Name, named, StringComparison.OrdinalIgnoreCase) || s.Id == named);
+                    if (set is null)
+                        return new ConfigRefusal("No such chunk set",
+                            $"Corpus '{Line(corpus.Name)}' has no chunk set '{Line(named)}'. Its sets: "
+                            + $"{string.Join(", ", sets.Select(s => Line(s.Name)).Order(StringComparer.Ordinal))}.", 404);
+
+                    // Refused now rather than left to fail when approved: an agent can act on it.
+                    if (sets.Count == 1)
+                        return new ConfigRefusal("Cannot remove the only chunk set",
+                            $"'{Line(set.Name)}' is the only way '{Line(corpus.Name)}' is indexed. Propose removing the corpus, "
+                            + "or add another set and promote it first.", 409);
+                    if (set.IsDefault)
+                        return new ConfigRefusal("Cannot remove the default chunk set",
+                            "Search would have nothing to fall back to. The default has to be changed in the UI first.", 409);
+                    return (set.Id, set.Name);
                 }
 
-                var matches = sources
-                    .Where(s => (only is null || s.Kind == only)
-                                && WorkspaceDiscovery.PathComparer.Equals(WorkspaceDiscovery.Canonical(root, s.RootPath), canonical))
-                    .ToList();
-                if (matches.Count == 1) return (matches[0].Id, Describe(matches[0]));
-                if (matches.Count > 1)
-                    return new ConfigRefusal("Two sources read that folder",
-                        $"Both its files and its commit history are sources of '{Line(corpus.Name)}'. Pass "
-                        + $"files:{Line(canonical)} or history:{Line(canonical)}.", 409);
-                return new ConfigRefusal("No such source",
-                    $"Corpus '{Line(corpus.Name)}' has no source on '{Line(named)}'. Its sources: {Listing()}.", 404);
-            }
+            case ProposalKind.Document:
+                {
+                    // Looked up in the query. A library can hold thousands, and only the not-found answer
+                    // needs to name any of them.
+                    var uploads = db.Files.AsNoTracking()
+                        .Where(f => f.Source!.CorpusId == corpus.Id && f.Source.Kind == SourceKind.Upload);
+                    var file = await uploads.FirstOrDefaultAsync(f => f.Id == named, ct)
+                               ?? await uploads.FirstOrDefaultAsync(f => f.RelativePath == named, ct);
+                    if (file is not null) return (file.Id, file.RelativePath);
+
+                    var held = await uploads.CountAsync(ct);
+                    var first = await uploads.Select(f => f.RelativePath).OrderBy(p => p).Take(20).ToListAsync(ct);
+                    return new ConfigRefusal("No such document",
+                        $"Corpus '{Line(corpus.Name)}' has no uploaded document '{Line(named)}'. Documents attached to it: "
+                        + (held == 0
+                            ? "none."
+                            : string.Join(", ", first.Select(Line)) + (held > 20 ? $" and {held - 20} more." : ".")), 404);
+                }
+
+            default:
+                {
+                    var sources = await db.Sources.AsNoTracking()
+                        .Where(s => s.CorpusId == corpus.Id && s.Kind != SourceKind.Upload).ToListAsync(ct);
+                    var root = options.Value.Indexing.WorkspaceRoot;
+                    string Describe(Source s) =>
+                        $"{(s.Kind == SourceKind.GitHistory ? "history" : "files")}:{WorkspaceDiscovery.Canonical(root, s.RootPath)}";
+                    string Listing() => sources.Count == 0
+                        ? "none"
+                        : string.Join(", ", sources.Select(s => Line(Describe(s))).Order(StringComparer.Ordinal));
+
+                    var byId = sources.FirstOrDefault(s => s.Id == named);
+                    if (byId is not null) return (byId.Id, Describe(byId));
+
+                    SourceKind? only = null;
+                    var folder = named;
+                    if (folder.StartsWith("files:", StringComparison.OrdinalIgnoreCase))
+                    { only = SourceKind.Workspace; folder = folder[6..]; }
+                    else if (folder.StartsWith("history:", StringComparison.OrdinalIgnoreCase))
+                    { only = SourceKind.GitHistory; folder = folder[8..]; }
+
+                    string canonical;
+                    try { canonical = WorkspaceDiscovery.Canonical(root, folder); }
+                    catch (ArgumentException)
+                    {
+                        return new ConfigRefusal("Not a folder",
+                            $"'{Line(named)}' is not a folder path. The sources of '{Line(corpus.Name)}': {Listing()}.", 400);
+                    }
+
+                    var matches = sources
+                        .Where(s => (only is null || s.Kind == only)
+                                    && WorkspaceDiscovery.PathComparer.Equals(WorkspaceDiscovery.Canonical(root, s.RootPath), canonical))
+                        .ToList();
+                    if (matches.Count == 1) return (matches[0].Id, Describe(matches[0]));
+                    if (matches.Count > 1)
+                        return new ConfigRefusal("Two sources read that folder",
+                            $"Both its files and its commit history are sources of '{Line(corpus.Name)}'. Pass "
+                            + $"files:{Line(canonical)} or history:{Line(canonical)}.", 409);
+                    return new ConfigRefusal("No such source",
+                        $"Corpus '{Line(corpus.Name)}' has no source on '{Line(named)}'. Its sources: {Listing()}.", 404);
+                }
         }
     }
 

@@ -335,8 +335,12 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
         {
             seed.Jobs.Add(new IndexJob
             {
-                Id = "job-1", CorpusId = IndexingHarness.CorpusId, ChunkSetId = "set-2",
-                Kind = JobKind.Refresh, State = JobState.Queued, QueuedUtc = DateTime.UtcNow,
+                Id = "job-1",
+                CorpusId = IndexingHarness.CorpusId,
+                ChunkSetId = "set-2",
+                Kind = JobKind.Refresh,
+                State = JobState.Queued,
+                QueuedUtc = DateTime.UtcNow,
             });
             await seed.SaveChangesAsync();
         }

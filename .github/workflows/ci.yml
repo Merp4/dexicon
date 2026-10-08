@@ -66,6 +66,13 @@ jobs:
       - name: Build
         run: dotnet build --no-restore --configuration Release
 
+      # Fails when `dotnet format` would change a file, under the rules in .editorconfig.
+      # The pre-commit hook runs the same command, but a hook is opt-in (core.hooksPath), so
+      # this is the check that applies to every change. It is a step in this job, not a job
+      # of its own, so the required "Build and test" check covers it.
+      - name: Format
+        run: dotnet format Dexicon.slnx --verify-no-changes --no-restore
+
       - name: Test
         run: dotnet test --no-build --configuration Release --logger "console;verbosity=normal"
 
