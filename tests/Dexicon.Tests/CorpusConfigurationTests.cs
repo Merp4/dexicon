@@ -353,6 +353,46 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
         removed.Refusal.ShouldBeNull();
     }
 
+    /// <summary>
+    /// Vectors go first. If the row went first and the delete then failed, the collection would keep
+    /// points that nothing in the catalogue can name or clean up; this order leaves the row in place so
+    /// the removal can be asked for again.
+    /// </summary>
+    [Fact]
+    public async Task A_chunk_set_whose_vectors_cannot_be_deleted_keeps_its_row()
+    {
+        await _harness.WriteFileAsync("a.md", IndexingHarness.Prose("alpha"), source: 0);
+        await _harness.RunIndexAsync(JobKind.Full);
+        _harness.Vectors.DeletesThrow = true;
+
+        await using var db = _harness.NewContext();
+        var corpus = await CorpusAsync(db);
+        await Should.ThrowAsync<InvalidOperationException>(
+            _harness.NewConfiguration(db).RemoveChunkSetAsync(corpus, "alt-1", default));
+
+        await using var fresh = _harness.NewContext();
+        (await fresh.ChunkSets.AnyAsync(s => s.Id == "set-2")).ShouldBeTrue("the row stays while its vectors may still exist");
+        _harness.Vectors.CountFor("a.md", "set-2").ShouldBeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task A_corpus_whose_vectors_cannot_be_deleted_keeps_its_rows()
+    {
+        await _harness.WriteFileAsync("a.md", IndexingHarness.Prose("alpha"), source: 0);
+        await _harness.RunIndexAsync(JobKind.Full);
+        _harness.Vectors.DeletesThrow = true;
+
+        await using var db = _harness.NewContext();
+        var corpus = await CorpusAsync(db);
+        await Should.ThrowAsync<InvalidOperationException>(
+            _harness.NewConfiguration(db).RemoveCorpusAsync(corpus, default));
+
+        await using var fresh = _harness.NewContext();
+        (await fresh.Corpora.CountAsync()).ShouldBe(1);
+        (await fresh.Files.AnyAsync()).ShouldBeTrue();
+        _harness.Vectors.CountFor("a.md", "set-1").ShouldBeGreaterThan(0);
+    }
+
     [Fact]
     public async Task A_removed_corpus_takes_its_vectors_in_every_set_and_every_row_under_it()
     {

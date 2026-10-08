@@ -506,6 +506,8 @@ internal sealed class IndexingHarness : IAsyncDisposable
         /// <summary>Every point of one chunk set, as the collection-wide delete by set id does.</summary>
         public Task DeleteChunkSetAsync(string c, string s, CancellationToken ct = default)
         {
+            if (DeletesThrow) throw new InvalidOperationException("the vector store is unreachable");
+
             _points.RemoveAll(p => p.ChunkSetId == s);
             return Task.CompletedTask;
         }
@@ -513,6 +515,8 @@ internal sealed class IndexingHarness : IAsyncDisposable
         /// <summary>Every point of one corpus, in every set.</summary>
         public Task DeleteCorpusAsync(string c, string id, CancellationToken ct = default)
         {
+            if (DeletesThrow) throw new InvalidOperationException("the vector store is unreachable");
+
             _points.RemoveAll(p => p.CorpusId == id);
             return Task.CompletedTask;
         }
