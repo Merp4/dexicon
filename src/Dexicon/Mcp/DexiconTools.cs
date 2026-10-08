@@ -17,12 +17,14 @@ using ModelContextProtocol.Server;
 namespace Dexicon.Mcp;
 
 /// <summary>
-/// The MCP tool surface. FIVE tools, and the count is a design constraint rather than
-/// an accident: every tool definition is context the agent pays for on every turn, and
-/// a large surface measurably degrades smaller models. See docs/06-mcp-surface.md.
+/// The read and refresh tools: search_index, list_corpora, get_context, index_refresh and
+/// index_status. The configure and propose tools are in ConfigureTools and ProposeTools, and
+/// ToolVisibility lists a key only the tools its scopes allow. The surface is kept small
+/// because every tool definition is context the agent pays for on every turn, and a large
+/// surface measurably degrades smaller models. See docs/06-mcp-surface.md.
 ///
-/// Errors are written for a model to act on. "Unknown corpus 'api'. Visible: api-repo,
-/// rfc-library." is actionable; a stack trace is not.
+/// Errors are written for a model to act on. "Unknown corpus 'api'. Corpora this key can
+/// reach: api-repo, rfc-library." is actionable; a stack trace is not.
 /// </summary>
 [McpServerToolType]
 public sealed class DexiconTools

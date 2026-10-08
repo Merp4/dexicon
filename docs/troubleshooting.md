@@ -39,8 +39,9 @@ Three causes, in the order to check:
 Check `/healthz` or the Settings → **Check connectivity** button.
 
 If embeddings are unavailable, semantic and hybrid search degrade to **keyword only** and
-report it in the response as `degraded: true` with a reason. Returning degraded results
-without indicating so would be harder to diagnose. Keyword search continues to work.
+report it in the response: the REST result carries `degraded: true` and a `degradedReason`,
+and the MCP reply a `! DEGRADED: <reason>` line after its header. Keyword search continues
+to work.
 
 If the corpus was indexed a while ago and nothing matches at all, it may be holding vectors
 in a collection nothing addresses any more. Extraction, chunking and framing are all
@@ -69,9 +70,9 @@ Mounts are read-only by design; Dexicon does not write to source trees.
 
 ## "Everything is 401"
 
-- **No token**: `Provide a token: Authorization: Bearer dex_…`.
-- **Revoked or expired**: revocation takes effect immediately; there is no cache to wait
-  out.
+- **No key**: `Provide a key: Authorization: Bearer dex_…, or sign in at / for the UI.`
+- **Revoked or expired**: a revoked key is refused from the next request. A key that has
+  expired can still be accepted for up to 60 seconds, the lifetime of the principal cache.
 - **Lost a key**: there is nothing to recover. Sign in and issue another under
   **Access**, then revoke the old one. A key's secret is stored only as a PBKDF2 hash.
 - **Lost the admin password**: set `DEXICON_ADMIN_PASSWORD` in `.env` and restart. A
@@ -81,6 +82,10 @@ Mounts are read-only by design; Dexicon does not write to source trees.
 - **Pasted a key into the sign-in form**: the UI takes the password, not a key. A key
   authenticates but can never carry `admin`, so it would load the shell and then be
   refused on every screen.
+- **The password is refused, and then the form waits**: the log prints it in double quotes,
+  and the quotes are not part of it. After two failed attempts each further one doubles the
+  wait, up to 30 seconds. The count is shared by every caller, is forgotten after 15
+  minutes without a failure, and is cleared by a correct password.
 
 ---
 
@@ -88,38 +93,47 @@ Mounts are read-only by design; Dexicon does not write to source trees.
 
 Ollama is downloading the embedding model, several hundred megabytes. The healthcheck
 waits for the **model** to be present rather than the daemon alone; otherwise Dexicon
-begins indexing against a model that is still downloading and spends its
-first minutes in embedding backoff, which reads as a bug.
+begins indexing against a model that is still downloading, and its first files fail to
+embed, which reads as a bug.
 
 ```bash
 docker compose logs -f dexicon-ollama
 ```
 
+`docker compose up -d` waits for that healthcheck, which allows about ten minutes. On a slow
+connection it can give up first with a dependency that failed to become healthy. The download
+carries on in the container, so run `docker compose up -d` again once
+`docker compose logs dexicon-ollama` shows the pull finished.
+
 ---
 
-## "A migration warning on first start"
+## "Warnings on first start"
 
 ```
-The migration operation 'PRAGMA foreign_keys = 0;' cannot be executed in a transaction.
+[WRN] The migration operation '"PRAGMA foreign_keys = 0;\n"' from migration '"DocumentLibrary"' cannot be executed in a transaction. If the app is terminated or an unrecoverable error occurs ...
+[WRN] Overriding HTTP_PORTS '"8080"' and HTTPS_PORTS '""'. Binding to values defined by URLS instead '"http://0.0.0.0:8477"'.
 ```
 
 Expected, and not suppressed. SQLite cannot drop a column in place, so EF rebuilds the
 table and has to disable foreign keys outside the transaction. It matters only if the
 process is killed *during* a schema migration; see
-[09-deployment.md](09-deployment.md#the-migration-warning-on-first-run) for what to do then.
+[09-deployment.md](09-deployment.md#the-warnings-on-first-run) for what to do then, and for
+the full list. The `HTTP_PORTS` line is ASP.NET Core noting that the base image sets a port
+and Dexicon sets another.
 
 ---
 
 ## "Indexing is slow"
 
-On CPU Ollama, roughly 32 chunks per 18 seconds was measured while building this. A
-400-page book is thousands of chunks. This reflects hardware throughput rather than a
-stall; the job reports a phase and a per-file count, which distinguishes a slow job from a
-stalled one.
+On CPU Ollama, `embeddinggemma` embeds roughly 0.5 to 2 chunks per second: batches of 32
+chunks of about 1,000 characters took 15 to 81 seconds on a CPU-only desktop. A 400-page
+book is thousands of chunks. This reflects hardware throughput rather than a stall; the job
+reports a phase and a per-file count, which distinguishes a slow job from a stalled one.
 
 To make it faster: use a GPU (`docker-compose.gpu.yml`), raise
-`DEXICON__EMBEDDING__MAXCONCURRENCY`, or use a smaller model. A corpus with several chunk
-sets walks the tree once per set, so it costs proportionally more.
+`DEXICON_EMBEDDING_MAXCONCURRENCY` and `OLLAMA_NUM_PARALLEL` together in `.env`, or use a
+smaller model. A corpus with several chunk sets walks the tree once per set, so it costs
+proportionally more.
 
 ---
 
@@ -128,7 +142,7 @@ sets walks the tree once per set, so it costs proportionally more.
 Only when running the app on the host. The detached dev instance holds its own DLLs, and
 the test project references the host so `dotnet test` rebuilds it.
 
-```bash
+```powershell
 ./scripts/dev.ps1 test      # stops, tests, restarts if it was running
 ```
 
@@ -143,9 +157,13 @@ If it is an **embedding model**, it cannot be edited at all. A different model i
 different vector space, so you add a set on the new model, let it backfill while the live
 one keeps serving, and promote it when it is complete.
 
-If it is a `DEXICON__*` **environment variable**, restart the container: configuration is
-bound at startup. A setting that has no effect is a defect: a test fails the build for
-configuration that nothing reads, and has caught two such cases.
+If it is a setting in **`.env`**, run `docker compose up -d` to recreate the container:
+configuration is bound at startup, and `docker compose restart` keeps the old environment.
+`.env` takes the `DEXICON_*` names listed in `.env.example` and in
+[09-deployment.md](09-deployment.md#configuration); Compose passes each to the container as
+`DEXICON__SECTION__KEY`, and a `DEXICON__*` name written in `.env` is not passed at all. A
+setting that has no effect is a defect: a test fails the build for configuration that
+nothing reads, and has caught two such cases.
 
 ---
 
@@ -167,15 +185,26 @@ Dexicon does not fetch.
 
 ---
 
+## "The container restarts in a loop"
+
+```
+Unhandled exception. System.ArgumentException: A bootstrap token must start with 'dex_'.
+```
+
+`DEXICON_BOOTSTRAP_TOKEN` in `.env` is set to something that is not a Dexicon key. A value
+there must read `dex_<id>_<secret>`; blank it, or use a key issued under **Access**, then run
+`docker compose up -d`.
+
+---
+
 ## Getting more detail
 
 ```bash
 docker compose logs -f dexicon
-DEXICON__LOG__LEVEL=Debug docker compose up -d dexicon
+DEXICON_LOG_LEVEL=Debug docker compose up -d dexicon
 ```
 
-Logs are UTC with a `Z`, matching the API. Secrets are redacted; tokens appear as their
-public id only.
+Set `DEXICON_LOG_LEVEL` in `.env` to keep it. Logs are UTC with a `Z`, matching the API.
 
 If none of this covers it, open an issue with the log lines around the failure and what you
 expected instead. If it is a security problem, use the process in

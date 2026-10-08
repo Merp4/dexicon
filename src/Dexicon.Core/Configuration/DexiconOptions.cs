@@ -2,8 +2,8 @@ namespace Dexicon.Core.Configuration;
 
 /// <summary>
 /// Root configuration, bound from <c>DEXICON__*</c> environment variables.
-/// Every value has a working default except workspace availability, which is a
-/// property of the bind mount rather than of configuration.
+/// Every value has a working default. Which workspace the container can see is a property
+/// of the bind mount (<c>WORKSPACE_ROOT</c> in <c>.env</c>), not of this tree.
 /// </summary>
 public sealed class DexiconOptions
 {
@@ -263,7 +263,10 @@ public sealed class UploadOptions
 
 public sealed class BootstrapOptions
 {
-    /// <summary>Blank generates one on first run and logs it exactly once.</summary>
+    /// <summary>
+    /// Blank mints nothing; keys are created under Access. Set, it must read
+    /// <c>dex_&lt;id&gt;_&lt;secret&gt;</c> and is adopted as a key holding <c>search</c> and <c>ingest</c>.
+    /// </summary>
     public string? Token { get; init; }
 }
 
@@ -273,9 +276,8 @@ public sealed class BootstrapOptions
 public sealed class AdminOptions
 {
     /// <summary>
-    /// Blank generates a password on first run and logs it exactly once, the way the
-    /// bootstrap token already works. Set, it is applied on every start, so it is also the
-    /// way back in after a forgotten one.
+    /// Blank generates a password on first run and logs it exactly once. Set, it is applied
+    /// on every start, so it is also the way back in after a forgotten one.
     /// </summary>
     public string? Password { get; init; }
 }

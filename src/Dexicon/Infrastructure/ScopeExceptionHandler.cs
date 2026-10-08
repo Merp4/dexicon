@@ -9,7 +9,7 @@ namespace Dexicon.Infrastructure;
 /// Turns the domain's own refusals into answers a caller can act on.
 ///
 /// These exceptions all carry a written, specific message, such as "Unknown corpus 'api'.
-/// Visible corpora: api-repo, rfc-library.", and the MCP surface has always surfaced
+/// Corpora this key can reach: api-repo, rfc-library.", and the MCP surface has always surfaced
 /// them verbatim. The REST surface did not: every one of them fell through to the default
 /// handler as a bare 500 with a trace id, so the UI's own search box answered a mistyped
 /// corpus name with "An error occurred while processing your request."

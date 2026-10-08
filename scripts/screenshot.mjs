@@ -42,8 +42,8 @@ function token() {
     }
   }
   throw new Error(
-    'DEXICON_BOOTSTRAP_TOKEN is blank in .env, so the server generated one and logged it once:\n' +
-    "    docker compose logs dexicon | grep 'bootstrap token'",
+    'DEXICON_BOOTSTRAP_TOKEN is blank in .env, and the server mints no key. Issue one under Access\n' +
+    'and pass it as DEXICON_TOKEN, or set DEXICON_BOOTSTRAP_TOKEN to a dex_<id>_<secret> of your own.',
   );
 }
 

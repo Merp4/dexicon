@@ -22,7 +22,7 @@ public sealed class RequestContext
 /// Two kinds of bearer reach here. A <c>dexs_</c> value is an admin session, verified in
 /// memory and carrying the <c>admin</c> scope. A <c>dex_</c> value is an agent's key,
 /// verified against the catalogue and carrying one or more of <c>search</c>,
-/// <c>ingest</c> and <c>configure</c> (D-36).
+/// <c>ingest</c>, <c>configure</c>, <c>propose</c> and <c>destroy</c> (D-36, D-39, D-40).
 /// Which corpora a key may reach is not decided here: it is read per request by
 /// <see cref="Dexicon.Core.Auth.ScopeResolver"/>, so that a change in the UI is not held
 /// behind this cache's TTL. See docs/decisions.md D-28.

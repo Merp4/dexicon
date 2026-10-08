@@ -209,7 +209,7 @@ public sealed class SearchService(
             notes.Add($"Corpus {string.Join(", ", indexing.Select(n => $"'{n}'"))} is still indexing; results are incomplete.");
         if (collapsed)
             notes.Add($"{ordered.Count} of {request.Limit} asked for: the rest were the same documents again. "
-                      + "Pass distinct_titles=false to see every copy.");
+                      + "Pass distinctTitles=false to see every copy.");
 
         var note = notes.Count > 0 ? string.Join(" ", notes) : null;
 

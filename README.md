@@ -1,6 +1,6 @@
 # Dexicon
 
-**Semantic search over your own files, for coding agents. One container, on your machine.**
+**Semantic search over your own files, for coding agents. One `docker compose up`, on your machine.**
 
 [![Release](https://img.shields.io/github/v/tag/Merp4/dexicon?label=release&sort=semver)](CHANGELOG.md)
 [![Licence](https://img.shields.io/badge/licence-Apache--2.0-blue)](LICENSE)
@@ -33,16 +33,20 @@ cp .env.example .env
 docker compose up -d
 ```
 
-The first start downloads an embedding model of a few hundred megabytes. The admin
-password is printed once:
+The first start downloads an embedding model of a few hundred megabytes, so `docker compose up -d`
+can take several minutes to return. Dexicon generates an admin password on the first start
+and prints it once, in double quotes, two lines below a box headed `Dexicon admin password`:
 
 ```bash
-docker compose logs dexicon | grep "admin password"
+docker compose logs dexicon | grep -A 2 "admin password"
 ```
 
-Open <http://127.0.0.1:8477>, sign in with it, and create a corpus pointing at a directory
-under `./workspaces`, which is mounted read-only. Set `DEXICON_ADMIN_PASSWORD` in `.env` to pin
-your own, or change it in the UI.
+In PowerShell: `docker compose logs dexicon | Select-String "admin password" -Context 0,2`.
+
+Open <http://127.0.0.1:8477>, sign in with the password (without the quotes), and create a
+corpus pointing at a directory under `./workspaces`. That folder is `WORKSPACE_ROOT` in
+`.env`, mounted read-only at `/workspaces`. Set `DEXICON_ADMIN_PASSWORD` in `.env` to choose
+your own password instead; a value set there is applied on every start.
 
 To connect an agent, issue a key under **Access** and tick which corpora it may reach.
 Leaving them all unticked means every corpus, and the ticks can be changed later without
@@ -61,11 +65,12 @@ Code the same script installs a skill that does, and a hook that says what is in
 start of a session:
 
 ```powershell
-./scripts/install-mcp.ps1 -What all -WhatIf   # show the plan
-./scripts/install-mcp.ps1 -What all           # skill, hooks and MCP
+./scripts/install-mcp.ps1 -What all -Token dex_… -WhatIf   # show the plan
+./scripts/install-mcp.ps1 -What all -Token dex_…           # skill, hooks and MCP
 ```
 
-`-Uninstall` takes it back out. [hooks/claude](hooks/claude/README.md) describes both hooks,
+The script needs PowerShell 7 (`pwsh`) and a key. Without `-Token` it reads
+`DEXICON_BOOTSTRAP_TOKEN` from `.env`, which is blank unless you set it. `-Uninstall` takes it back out. [hooks/claude](hooks/claude/README.md) describes both hooks,
 including the per-prompt one that is installed but left switched off.
 
 ## Features

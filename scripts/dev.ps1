@@ -20,8 +20,8 @@
   down     stop the app and the dependency containers
   logs     tail the app log
   password print the admin password from the log (first run only)
-  token    print a pinned bootstrap key from the log, if one was adopted
-  reset    stop, delete the local catalogue and Qdrant collections, start fresh
+  token    say how to get an API key (none is logged, so there is none to print)
+  reset    stop, delete the local catalogue (Qdrant collections stay), start fresh
   ui       build the SPA and copy it into wwwroot (the container does this at image build)
   test     stop the app, run the test suite, and put the app back as it was
 
@@ -31,7 +31,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Position = 0)]
-  [ValidateSet('up', 'restart', 'stop', 'down', 'logs', 'token', 'reset', 'ui', 'test')]
+  [ValidateSet('up', 'restart', 'stop', 'down', 'logs', 'password', 'token', 'reset', 'ui', 'test')]
   [string]$Command = 'restart'
 )
 
@@ -136,12 +136,14 @@ switch ($Command) {
   }
   'logs' { Get-Content $logFile -Tail 60 -ErrorAction SilentlyContinue }
   'password' {
-    # The banner frames the value on its own line, so the line after it is the password.
+    # The banner is a box whose middle line is matched here, then the box bottom, then the
+    # password on its own line, in the double quotes the log format puts around a string.
     # Matching the frame rather than the value: the password is plain alphanumeric and a
-    # pattern loose enough to catch it would catch half the log with it.
+    # pattern loose enough to catch it would catch half the log with it. LineNumber is
+    # 1-based, so $lines[$i] is the line after the match and $lines[$i + 1] the one after that.
     $lines = Get-Content $logFile -ErrorAction SilentlyContinue
     $i = ($lines | Select-String -Pattern 'Dexicon admin password' | Select-Object -First 1).LineNumber
-    $value = if ($i) { ($lines[$i..($i + 2)] | Where-Object { $_.Trim() } | Select-Object -First 1).Trim() }
+    $value = if ($i) { $lines[$i + 1].Trim().Trim('"') }
     if ($value) {
       $value
     } else {
@@ -152,17 +154,11 @@ DEXICON_ADMIN_PASSWORD is blank. If it is set in .env, that is the password.
     }
   }
   'token' {
-    $m = Select-String -Path $logFile -Pattern 'dex_[A-Za-z0-9_-]+' -ErrorAction SilentlyContinue |
-      Select-Object -First 1
-    if ($m) {
-      $m.Matches[0].Value
-    } else {
-      Write-Warning @'
-No key in the log, and none is minted on first run any more. Sign in at the web UI and
-issue one under Access, which is also where you choose the corpora it reaches. For
-scripted setup, set DEXICON_BOOTSTRAP_TOKEN in .env and restart.
+    Write-Warning @'
+No key is logged, and none is minted on first run. Sign in at the web UI and issue one
+under Access, which is also where you choose the corpora it reaches. For scripted setup,
+set DEXICON_BOOTSTRAP_TOKEN in .env and restart.
 '@
-    }
   }
   'reset' {
     Stop-Dexicon

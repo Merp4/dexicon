@@ -20,7 +20,8 @@ for a query. See [13](13-integration.md).
 > **Where the key comes from.** Issue it on the **Access** screen, which is also where
 > you tick the corpora it may reach and copy the command below. Nothing is minted for you
 > on first run: what is printed once is the admin password, which signs you in
-> (`docker compose logs dexicon | grep "admin password"`).
+> (`docker compose logs dexicon | grep -A 2 "admin password"`; it is the quoted value on the
+> third line, and the quotes are not part of it).
 >
 > For scripted setup with no browser, set `DEXICON_BOOTSTRAP_TOKEN` in `.env` to a value
 > of your own and restart; it is adopted with `search` and `ingest`, and reaches every
@@ -220,7 +221,8 @@ Two things that trip people up with any client:
 ```
 
 It merges into an existing config rather than replacing it, backs the file up first, and
-prints what it wrote, excluding the token. `-WhatIf` shows the change without making it.
+prints the file and URL it wrote with the key masked as `dex_***`. `-WhatIf` shows the
+change (the JSON, or for Claude Code the command, key masked) without making it.
 `-Project` is the directory to write into for project scope, defaulting to the current one
 rather than the Dexicon checkout.
 

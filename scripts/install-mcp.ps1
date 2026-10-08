@@ -518,8 +518,8 @@ No key, and this script will not invent one.
 
 Issue one on the Access screen, which is also where you tick the corpora it may reach.
 Nothing is minted on first run; what is printed once is the admin password that signs
-you in:
-  docker compose logs dexicon | Select-String "admin password"
+you in, in quotes on the third line:
+  docker compose logs dexicon | Select-String "admin password" -Context 0,2
 
 A search-only key cannot reindex, and no key can carry admin, so none of them can delete
 a corpus.
