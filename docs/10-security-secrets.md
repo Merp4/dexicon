@@ -55,11 +55,15 @@ data/
 
 ### Logs and errors
 
-No credential is written to a log. The console template renders values as JSON
-(`LogOutput.ConsoleTemplate`), so a request path cannot start a new log line. A rejected
-request logs a 32-bit digest of the presented credential (`CallerDigest`), which tells one
-caller from several and cannot confirm a guess. The principal cache and the admin session
-store are keyed on a SHA-256 of the credential, never on the credential.
+The one credential written to a log is the generated admin password, printed once on the
+first start (see the table above). A presented credential is not logged. The console
+template renders values as JSON (`LogOutput.ConsoleTemplate`), so a request path cannot
+start a new log line. A rejected request logs a 32-bit digest of the presented credential
+(`CallerDigest`), which tells one caller from several. It is not a secret: whoever can read
+the logs can compute the digest of a candidate credential and compare, and a match is a
+1 in 2^32 coincidence for a wrong guess, so 32 bits limits what the digest reveals and does
+not make a guess impossible to test. The principal cache and the admin session store are
+keyed on a SHA-256 of the credential, never on the credential.
 
 Exception messages from the Qdrant and Ollama clients do not reach a search caller. A search
 whose query embedding fails returns keyword-only results with a fixed reason. In Production
@@ -78,7 +82,7 @@ as the rule it protects.
 | No secret in tracked config | `NoSecretValuesInTrackedConfiguration` scans `appsettings*.json` (excluding `.local`) for keys matching `password|secret|apikey|api_key|token|credential` with a non-empty value. Fails the build. |
 | No secret committed, ever | `gitleaks` as a pre-commit hook **and** a CI job over full history, with a custom rule for the `dex_` prefix. |
 | `.env.example` stays complete | `EnvExampleDocumentsEveryVariableComposeUses` asserts every variable `docker-compose.yml` references appears in `.env.example`, and `EveryDocumentedEnvironmentVariableBindsToARealOption` asserts every `DEXICON__` variable compose sets binds to an option. A new setting that is undocumented fails CI. |
-| No credential in a log or a cache key | `PrincipalCacheKeyNeverContainsTheToken`, `CallerDigestNeverContainsTheCredential`; `LogForgingTests` for a request path that tries to start a log line. |
+| No credential in a derived key or digest, no forged log line | `PrincipalCacheKeyNeverContainsTheToken` asserts the principal cache key does not contain the token's secret; `CallerDigestNeverContainsTheCredential` asserts the caller digest holds neither the secret nor the id and is hex; `LogForgingTests` asserts a request path carrying a newline cannot start a log line. No test scans log calls for credentials. |
 | No unfiltered vector query | `VectorStoreRefusesAQueryWithNoCorpusFilter` asserts that `SearchAsync` throws on an empty scope. The other read methods take a chunk set and are reached after scope resolution. |
 | Key scoping | `KeyScopingTests` and `AdminPasswordTests` — see [07](07-auth.md). |
 
