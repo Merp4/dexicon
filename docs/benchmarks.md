@@ -164,8 +164,6 @@ python scripts/bench/sweep.py --queries queries-code.json   # code
 (`bench-sweep`) and deletes it afterwards. Raw per-configuration numbers are in
 `scripts/bench/results-docs.json` and `scripts/bench/results-code.json`.
 
-`sweep.py` authenticates with `DEXICON_TOKEN`, or `DEXICON_BOOTSTRAP_TOKEN` from `.env`.
-Creating and deleting a corpus need the `admin` scope, which no API key can hold, so against
-a current server the corpus-creation call is refused with 403.
-`scripts/bench/passages.py` signs in with `DEXICON_ADMIN_PASSWORD` for the same reason;
-`sweep.py` does not.
+Creating and deleting a corpus need the `admin` scope, which no API key can hold, so
+`sweep.py` signs in with `DEXICON_ADMIN_PASSWORD` (from the environment or `.env`), or takes
+a session bearer in `DEXICON_TOKEN_ADMIN`. `scripts/bench/passages.py` does the same.
