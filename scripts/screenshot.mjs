@@ -9,10 +9,17 @@
  * `npm install` for that would be a poor trade. `--no-save` keeps it out of package.json
  * and out of the dependency tree that docs/10 reviews.
  *
- * THE TOKEN IS READ IN THIS PROCESS AND NEVER PRINTED. Same reasoning as
- * scripts/dev-token.py: whatever drives the browser should not put a live credential into
- * a transcript, a log or a shell history. It goes from .env into the page's sessionStorage
- * through an init script and nowhere else.
+ * SIGN-IN. The admin password (DEXICON_ADMIN_PASSWORD, from the environment and then
+ * .env, as in scripts/dev-token.py) is exchanged for a session at POST /api/session inside
+ * this process. Only the session reaches the page, through an init script that stores it
+ * in sessionStorage['dexicon.token'], where the sign-in form would. Neither value is
+ * printed or written to disk. An API key would not do: a key never carries the `admin`
+ * scope (docs/decisions.md D-28), so a browser holding one loads the shell and then gets
+ * 403 on the admin screens. The session is checked against /api/tokens, which is
+ * admin-only, before the browser starts.
+ *
+ * DEXICON_BASE selects the instance (default http://127.0.0.1:8477). A wrong password is
+ * throttled by the server and can take up to 30 seconds to answer.
  *
  * Shots are written to docs/images/ and are committed — a README that renders a broken
  * image is worse than one with no image at all.
@@ -26,25 +33,77 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const BASE = process.env.DEXICON_BASE ?? 'http://127.0.0.1:8477';
 const OUT = join(REPO, 'docs', 'images');
 
-/** Environment first, then .env — the precedence the other tooling uses. */
-function token() {
-  if (process.env.DEXICON_TOKEN) return process.env.DEXICON_TOKEN.trim();
+/** Environment first, then .env — the precedence scripts/dev-token.py uses. */
+function adminPassword() {
+  if (process.env.DEXICON_ADMIN_PASSWORD) return process.env.DEXICON_ADMIN_PASSWORD.trim();
 
   const env = join(REPO, '.env');
   if (!existsSync(env)) {
-    throw new Error('No DEXICON_TOKEN set and no .env file. See .env.example.');
+    throw new Error('No DEXICON_ADMIN_PASSWORD set and no .env file. See .env.example.');
   }
-  for (const line of readFileSync(env, 'utf8').split('\n')) {
+  for (const line of readFileSync(env, 'utf8').split(/\r?\n/)) {
     const trimmed = line.trim();
-    if (trimmed.startsWith('DEXICON_BOOTSTRAP_TOKEN=') && !trimmed.startsWith('#')) {
-      const value = trimmed.slice('DEXICON_BOOTSTRAP_TOKEN='.length).trim().replace(/^['"]|['"]$/g, '');
+    if (trimmed.startsWith('DEXICON_ADMIN_PASSWORD=') && !trimmed.startsWith('#')) {
+      const value = trimmed.slice('DEXICON_ADMIN_PASSWORD='.length).trim().replace(/^['"]|['"]$/g, '');
       if (value) return value;
     }
   }
   throw new Error(
-    'DEXICON_BOOTSTRAP_TOKEN is blank in .env, and the server mints no key. Issue one under Access\n' +
-    'and pass it as DEXICON_TOKEN, or set DEXICON_BOOTSTRAP_TOKEN to a dex_<id>_<secret> of your own.',
+    'DEXICON_ADMIN_PASSWORD is blank in .env, so the server generated one on first run and logged it\n' +
+    "once, in quotes on the third line: docker compose logs dexicon | grep -A 2 'admin password'\n" +
+    'Set it in the environment or in .env.',
   );
+}
+
+/**
+ * Exchange the password for a session, and prove the session carries admin.
+ *
+ * Exits with a message that names the status and the instance, never the password or the
+ * session. The check goes to an admin-only endpoint on purpose: one a plain key could also
+ * read would pass for a credential that then fails on every screen this script drives.
+ */
+async function adminSession() {
+  const password = adminPassword();
+
+  /**
+   * Exit once the body is drained and the connection has had a moment to settle: on
+   * Windows, process.exit() with a fetch socket still closing aborts node with a libuv
+   * assertion and a -1073740791 exit code instead of 1.
+   */
+  const fail = async (res, message) => {
+    await res?.arrayBuffer().catch(() => {});
+    console.error(message);
+    await new Promise((done) => setTimeout(done, 250));
+    process.exit(1);
+  };
+
+  let response;
+  try {
+    response = await fetch(`${BASE}/api/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (error) {
+    await fail(null, `Cannot reach ${BASE}: ${error.cause?.code ?? error.name}. Is the stack up?`);
+  }
+  if (response.status === 401) {
+    await fail(response, `${BASE} did not accept the admin password (HTTP 401). Is DEXICON_ADMIN_PASSWORD current?`);
+  }
+  if (!response.ok) {
+    await fail(response, `${BASE}/api/session answered HTTP ${response.status}. Is this the right instance?`);
+  }
+
+  const { token } = await response.json();
+  if (!token) await fail(null, `${BASE}/api/session answered without a token.`);
+
+  const admin = await fetch(`${BASE}/api/tokens`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!admin.ok) {
+    await fail(admin, `The session was issued but ${BASE}/api/tokens answered HTTP ${admin.status}.`);
+  }
+  await admin.arrayBuffer();
+  return token;
 }
 
 /**
@@ -75,14 +134,8 @@ if (!chromium) {
   process.exit(1);
 }
 
-const bearer = token();
-
 // Fail here rather than screenshotting a sign-in page that looks like a product shot.
-const probe = await fetch(`${BASE}/api/corpora`, { headers: { Authorization: `Bearer ${bearer}` } });
-if (!probe.ok) {
-  console.error(`${BASE} answered ${probe.status} for /api/corpora. Is the stack up, and is .env current?`);
-  process.exit(1);
-}
+const bearer = await adminSession();
 
 mkdirSync(OUT, { recursive: true });
 
@@ -111,7 +164,7 @@ async function shot(name, { height = 900, prepare }) {
   await page.getByRole('button', { name: 'Corpora' }).waitFor({ timeout: 30_000 });
 
   if (await page.getByRole('button', { name: /^Sign in$/ }).count()) {
-    throw new Error('the page is showing the sign-in gate — the token did not take');
+    throw new Error('the page is showing the sign-in gate: the session did not take');
   }
 
   await prepare(page);
