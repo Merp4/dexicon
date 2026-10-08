@@ -203,9 +203,12 @@ So:
 A corpus gets at most one upload source, created on first attachment. Detaching removes
 that corpus's chunks only; the blob survives, because another corpus may still hold it.
 
-Limits: 200 MB per file (`DEXICON__UPLOAD__MAXFILEBYTES`). Uploads are buffered to a temp
-file rather than memory, because the hash is only known once the whole stream is read and a
-200 MB upload should not be a 200 MB allocation.
+Limits: 200 MB per file (`DEXICON__UPLOAD__MAXFILEBYTES`), applied while the file is copied
+to the blob store. Before that, ASP.NET Core has read the whole multipart form into a
+temporary file under `/tmp` (a tmpfs in the compose file), because the request-size limit is
+lifted for this endpoint. The blob store buffers to a temp file rather than memory too,
+because the hash is only known once the whole stream is read and a 200 MB upload should not
+be a 200 MB allocation. See [10](10-security-secrets.md#input-handling).
 
 **Staleness is a chunking fingerprint**, not a content hash: a SHA-256 over the blob hash
 and every chunking and embedding setting, listed under
