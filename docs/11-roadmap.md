@@ -117,8 +117,9 @@ finding the matched text there.
 tools across the `search`, `ingest`, `configure` and `propose` scopes ([06](06-mcp-surface.md)),
 fusion is DBSF ([D-06](decisions.md#d-06-score-fusion-server-side)), and the `destroy` scope
 exists ([D-40](decisions.md#d-40-detaching-a-document-has-a-scope-of-its-own)). A failed
-embedding request is retried twice with jitter, and the file is then recorded `failed`: there
-is no backoff ([04](04-ingestion.md#embedding)). The test counts are those of 2026-09-16.
+embedding request is retried twice, waiting about 0.5 s and then 1 s with jitter, and the file
+is then recorded `failed`: there is no job-level pause and no 5 to 320 s backoff
+([04](04-ingestion.md#embedding)). The test counts are those of 2026-09-16.
 
 **Since closed:** `get_context` de-overlapping is now tested, including a chunk-then-stitch
 round-trip property, and verified against this repository's own docs: twelve files

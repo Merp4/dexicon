@@ -755,8 +755,8 @@ costs a split and not a truncation.
 The probe measures the ratio once per model, which turns the character budget into a real
 token figure without putting a tokenizer in the hot path.
 
-`mxbai-embed-large` accepts 2,816 characters, which is 704 tokens at ratio 4, and the default
-of 256 tokens is well inside that. The probe exists because a default of 768 tokens (3,072
+`mxbai-embed-large` accepts 2,816 characters, which is about 1,000 tokens at its measured
+ratio of 2.82 (704 at the flat 4), and the default of 256 tokens is well inside that. The probe exists because a default of 768 tokens (3,072
 characters) truncated every full-size chunk on that model.
 
 ### Chunk sets — a corpus can be cut several ways at once
@@ -873,9 +873,11 @@ the vector is unchanged. Bisecting on that finds the real limit in about two doz
 calls, with no documentation to trust and nothing indexed.
 
 Measured on this stack, both `nomic-embed-text` and `embeddinggemma` accept about 11,776
-characters of English prose, or 2,048 tokens, and **truncate without error** beyond it. The recommendation is two thirds of the measured figure, because the measurement
-is in characters and the model counts tokens: code, minified output and CJK reach the same
-token limit in far fewer characters.
+characters of English prose, or 2,048 tokens, and **truncate without error** beyond it. Where the provider reports tokens, the recommended chunk size is 90% of the
+measured context (`CodeChunker.UsableContext`); where it does not, it is two thirds of the
+measured characters divided by the characters-per-token estimate. The measurement is in
+characters of prose and the model counts tokens: code, minified output and CJK reach the same
+token limit in far fewer characters, which the margin absorbs.
 
 ### Meaning, not just budget
 
@@ -999,7 +1001,7 @@ Pinned per chunk set at creation. Candidates, all available through Ollama:
 | Model | Dims | Size | Use for |
 |---|---|---|---|
 | `embeddinggemma` | 768 | ~620 MB | **Default.** Won both sweeps — best mean MRR on documents and on code. |
-| `mxbai-embed-large` | 1024 | ~670 MB | Close behind, and took the single best code configuration. Accepts only 2,816 characters, so a chunk set on it needs a size under about 700 tokens; the default of 256 qualifies. |
+| `mxbai-embed-large` | 1024 | ~670 MB | Close behind, and took the single best code configuration. Accepts only 2,816 characters, about 1,000 tokens at its measured 2.82 characters per token. A chunk set's size is capped at 90% of a model's measured context, and a chunk the provider refuses is split; the default of 256 tokens is well inside it. |
 | `nomic-embed-text` | 768 | ~300 MB | About half the download. Mid on documents, last on code by a clear margin. |
 | `qwen3-embedding:0.6b` | 1024 | ~1.5 GB | Strongest general quality per VRAM; 32k context; multilingual. Not yet swept. |
 | `bge-m3` | 1024 | ~2.2 GB | Long documents (8k context). Not yet swept. |
