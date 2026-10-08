@@ -467,7 +467,7 @@ public static class SystemEndpoints
             if (header is not null && header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
                 sessions.Revoke(header["Bearer ".Length..].Trim());
             return Results.NoContent();
-        });
+        }).Produces(StatusCodes.Status204NoContent);
 
         var t = app.MapGroup("/api/tokens").WithTags("Tokens");
 
@@ -514,7 +514,7 @@ public static class SystemEndpoints
             // Revocation must be effective immediately, not after the principal cache TTL.
             evictor.EvictPrincipals();
             return Results.NoContent();
-        });
+        }).Produces(StatusCodes.Status204NoContent);
 
         // Replaces the mapping outright rather than patching it, because the UI edits the
         // whole set of ticks at once and a partial update would need a way to say "leave
@@ -1029,7 +1029,7 @@ public static class SystemEndpoints
             {
                 return Results.Problem(title: "Could not delete model", detail: ex.Message, statusCode: 503);
             }
-        }).WithTags("System");
+        }).Produces(StatusCodes.Status204NoContent).WithTags("System");
 
         app.MapGet("/healthz", async (RequestContext rc, IVectorStore vectors, IEmbeddingService embedder,
             IModelCatalog catalog, IEmbeddingGeneratorFactory factory, CatalogDbContext db,

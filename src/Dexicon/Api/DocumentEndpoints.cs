@@ -120,7 +120,7 @@ public static class DocumentEndpoints
 
             return Results.Accepted($"/api/jobs/{job.Id}",
                 new UploadResponse(corpus.Name, stored, failures, job.ToSummary()));
-        }).Produces<UploadResponse>().DisableAntiforgery();
+        }).Produces<UploadResponse>(StatusCodes.Status202Accepted).DisableAntiforgery();
 
         // ── Attach an already-stored document to another corpus ─────────────
         g.MapPost("/corpora/{nameOrId}/documents/attach", async (
@@ -145,10 +145,10 @@ public static class DocumentEndpoints
                 [.. corpus.ChunkSets.Select(s => new AttachedChunking(
                     s.Name, s.ChunkSize, s.ChunkOverlap, s.BoundaryMode, s.EmbeddingModel))],
                 job.ToSummary()));
-        }).Produces<DocumentAttached>();
+        }).Produces<DocumentAttached>(StatusCodes.Status202Accepted);
 
         // ── Detach (the blob survives; other corpora may still use it) ──────
-        g.MapDelete("/corpora/{nameOrId}/documents/{fileId}", DetachAsync);
+        g.MapDelete("/corpora/{nameOrId}/documents/{fileId}", DetachAsync).Produces(StatusCodes.Status204NoContent);
 
         // ── The library: every stored document, and where it is attached ────
         g.MapGet("/documents", async (RequestContext rc, ScopeResolver scopes, CatalogDbContext db,

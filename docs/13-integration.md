@@ -172,7 +172,7 @@ hit for the same budget, so raise `maxChars` with it.
 `POST /api/corpora/{name}/reindex` queues the job and answers `202 Accepted` with the job as
 the body and `/api/jobs/{id}` as `Location`; `?full=true` queues a full reindex. Indexing a
 large repository outlasts any sensible request timeout, so poll the job to wait for it. The
-OpenAPI documents list this response as 200.
+integration document declares the 202.
 
 ```bash
 job=$(curl -s -X POST "http://127.0.0.1:8477/api/corpora/docs/reindex" \

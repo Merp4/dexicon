@@ -49,7 +49,7 @@ public static class CorpusEndpoints
 
             var corpus = created.Value!;
             return Results.Created($"/api/corpora/{corpus.Id}", await Summarise(db, corpus, opts.Value.Indexing, ct));
-        }).Produces<CorpusSummary>();
+        }).Produces<CorpusSummary>(StatusCodes.Status201Created);
 
         g.MapPatch("/{nameOrId}", async (string nameOrId, UpdateCorpusRequest body, RequestContext rc,
             ScopeResolver scopes, CatalogDbContext db, CorpusConfiguration config, IOptions<DexiconOptions> opts,
@@ -71,7 +71,7 @@ public static class CorpusEndpoints
 
             var removed = await config.RemoveCorpusAsync(corpus, ct);
             return removed.Refusal is { } refused ? refused.ToResult() : Results.NoContent();
-        });
+        }).Produces(StatusCodes.Status204NoContent);
 
         g.MapPost("/{nameOrId}/sources", async (string nameOrId, AddSourceRequest body, RequestContext rc,
             ScopeResolver scopes, CorpusConfiguration config, CancellationToken ct) =>
@@ -94,7 +94,7 @@ public static class CorpusEndpoints
 
             var removed = await config.RemoveSourceAsync(corpus, sourceId, ct);
             return removed.Refusal is { } refused ? refused.ToResult() : Results.NoContent();
-        });
+        }).Produces(StatusCodes.Status204NoContent);
 
         // Filters were write-once: set when the folder was added and then unreachable, so
         // changing one meant deleting the source, which drops its files from every chunk
@@ -146,7 +146,7 @@ public static class CorpusEndpoints
             var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
             var job = await queue.EnqueueAsync(corpus.Id, full == true ? JobKind.Full : JobKind.Refresh, ct: ct);
             return Results.Accepted($"/api/jobs/{job.Id}", job.ToSummary());
-        }).Produces<JobSummary>().WithGroupName(OpenApiDocuments.Integration);
+        }).Produces<JobSummary>(StatusCodes.Status202Accepted).WithGroupName(OpenApiDocuments.Integration);
 
         // `name` and `sort` are the query's, not the page's. A client can only filter and
         // order what it has fetched, so on a corpus larger than one page a name that IS
