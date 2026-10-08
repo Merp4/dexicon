@@ -175,7 +175,7 @@ public class CorpusDiagnosisTests
             OwnExcludeGlobs: ownExclude ? exclude : null);
 
     [Fact]
-    public void AFileSourceSaysHowItIsFilteredAndWhichFiltersAreTheCorpusS()
+    public void AFileSourceSaysHowItIsFilteredAndWhichFiltersComeFromTheCorpus()
     {
         var text = DexiconTools.RenderSources(
             [Files("docs", gitignore: false, cap: 2 * 1024 * 1024, include: ["**/*.md"], exclude: ["**/draft/**"], ownExclude: false)],
@@ -195,7 +195,7 @@ public class CorpusDiagnosisTests
     }
 
     [Fact]
-    public void AHistorySourceSPathsFromTheCorpusAreNamedAsTheCorpusS()
+    public void AHistorySourceNamesPathsInheritedFromTheCorpusAsDefaults()
     {
         var history = new SourceSummary("h", "githistory", "repo", true, 262_144, ["src/**"], [], 10,
             Git: new Dexicon.Core.Indexing.GitHistoryOptions());

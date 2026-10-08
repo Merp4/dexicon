@@ -74,8 +74,10 @@ Each of these has been decided, with the reasoning recorded in
   subject, the outcome and the condition: `AKeyWithoutConfigureIsRefusedByEveryConfigureTool`.
   Name the method under test only when it is the subject (`ChunkNeverSplitsALine`). The name
   has to make sense alone in a list of failures, so it does not open with `So`, `Nor` or `Or`
-  to continue the test above it. Acronyms are cased as words (`Pdf`, `Nul`, `Mcp`).
-  `Method_State_Expected` and `snake_case_sentence` names are not used.
+  to continue the test above it. Acronyms are cased as words (`Pdf`, `Nul`, `Mcp`), and a
+  possessive is reworded rather than left as a lone `S` (`ALinkTargetIsNotReturnedToTheKey`,
+  not `ALinkSTargetIsNotReturnedToTheKey`). `Method_State_Expected` and `snake_case_sentence`
+  names are not used.
 - A test class is named for the unit or behaviour it covers, as a noun phrase ending in
   `Tests`: `CorpusLeaseTests`, `FailedFileSizeTests`.
 - Timestamps are UTC everywhere: stored, returned, logged. The browser is the only thing

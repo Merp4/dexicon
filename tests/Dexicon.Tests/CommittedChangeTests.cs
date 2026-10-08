@@ -366,7 +366,7 @@ public sealed class CommittedChangeTests
     }
 
     [Fact]
-    public async Task AKeySMappingIsNotReplacedWhileACorpusIsBeingCreated()
+    public async Task AKeyMappingIsNotReplacedWhileACorpusIsBeingCreated()
     {
         // A creation reads whether its key has a mapping and adds the new corpus to it. The
         // admin clearing the mapping between the two (empty means every corpus) left the key

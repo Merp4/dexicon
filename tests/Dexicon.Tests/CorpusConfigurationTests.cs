@@ -169,7 +169,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ANameThatIsAnotherCorpusSIdIsTaken()
+    public async Task ANameThatIsTheIdOfAnotherCorpusIsTaken()
     {
         // The resolver matches a name or an id, so this name would reach either corpus.
         await using var db = _harness.NewContext();
