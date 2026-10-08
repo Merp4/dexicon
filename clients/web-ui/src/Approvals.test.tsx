@@ -225,6 +225,33 @@ describe('what has been decided', () => {
     expect(listProposals).toHaveBeenLastCalledWith(true);
   });
 
+  it('does not draw the waiting requests as decided ones while the decided list loads', async () => {
+    const user = userEvent.setup();
+    let answer!: (rows: Proposal[]) => void;
+    listProposals.mockImplementation((decided: boolean) => decided
+      ? new Promise<Proposal[]>((resolve) => { answer = resolve; })
+      : Promise.resolve([proposal()]));
+    show();
+    await screen.findByText('Remove the source files:docs from notes');
+
+    // Testing Library flushes effects before it returns, so the commit that would draw the old
+    // rows is gone by the time anything can query the page. What React added is recorded as it
+    // happens instead.
+    const drawn: string[] = [];
+    const watch = new MutationObserver((records) => records.forEach((r) => r.addedNodes.forEach((n) => drawn.push(n.textContent ?? ''))));
+    watch.observe(document.body, { childList: true, subtree: true });
+
+    await user.click(screen.getByRole('radio', { name: 'Decided' }));
+    await screen.findByText(/Loading/);
+    watch.disconnect();
+
+    expect(drawn.join('\n')).not.toContain('pending');
+    expect(screen.queryByText('Remove the source files:docs from notes')).not.toBeInTheDocument();
+
+    answer([proposal({ id: 'a', status: 'approved', decidedUtc: new Date().toISOString(), facts: null })]);
+    expect(await screen.findByText('approved')).toBeInTheDocument();
+  });
+
   it('says so when nothing has been decided', async () => {
     const user = userEvent.setup();
     listProposals.mockImplementation((decided: boolean) => Promise.resolve(decided ? [] : [proposal()]));

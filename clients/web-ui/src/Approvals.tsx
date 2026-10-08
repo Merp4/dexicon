@@ -65,22 +65,22 @@ export function ApprovalsView({ onError, onDecided }: {
   onDecided: () => void;
 }) {
   const [tab, setTab] = useState<Tab>('waiting');
-  const [rows, setRows] = useState<Proposal[] | null>(null);
+  // The rows are kept with the tab they were read for: the other tab's rows are not these, and
+  // clearing them in an effect would draw them once under the wrong tab first.
+  const [loaded, setLoaded] = useState<{ tab: Tab; rows: Proposal[] } | null>(null);
+  const rows = loaded?.tab === tab ? loaded.rows : null;
   const [confirming, setConfirming] = useState<Proposal | null>(null);
   const [rejecting, setRejecting] = useState<string | null>(null);
   // A refusal belongs to the row it came from, not to a banner at the top of the page.
   const [refused, setRefused] = useState<Record<string, unknown>>({});
   const [reload, setReload] = useState(0);
 
-  // The other tab's rows are not these, so they are not shown while these load.
-  useEffect(() => { setRows(null); }, [tab]);
-
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
         const listed = await api.listProposals(tab === 'decided');
-        if (!cancelled) setRows(listed);
+        if (!cancelled) setLoaded({ tab, rows: listed });
       } catch (e) {
         if (!cancelled) onError(e);
       }
