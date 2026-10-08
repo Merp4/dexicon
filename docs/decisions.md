@@ -2006,6 +2006,14 @@ removal refused), so what they read is not the agent's description.
   `DELETE` while the approval was running, which does not take the decision lock: the save conflicts,
   and the stored status tells that apart from a decision made elsewhere. A removal that is refused for a reason
   that can pass (the default set, a set a job is working on) leaves it pending, with the reason.
+- An approval deletes vectors before it saves, in the order the admin's `DELETE` uses, and Qdrant
+  cannot be rolled back. If the store fails part-way, or the process dies, the proposal is still pending
+  and the target still has its row, with some of its vectors gone. Approving again finishes the job.
+  Rejecting it instead leaves a target that a pass repairs: each pass compares every indexed file's
+  recorded chunk count with the store's own and indexes again the files that disagree, in either direction
+  (`ReconcileChunkCountsAsync`). A stored in-flight state that blocks rejection was considered and not
+  added: it is the state D-37 removed, it would need its own repair when it outlived the process, and
+  the repair that already exists covers the loss.
 - A key may have ten waiting, and one request per target waits at a time; asking again returns the
   one waiting. There is no expiry and no worker.
 - The row has no foreign keys and copies in the names, so it outlives the key, the corpus and the

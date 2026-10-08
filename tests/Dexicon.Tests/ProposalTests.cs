@@ -522,6 +522,41 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ARejectedProposalWhoseApprovalFailedPartWayThroughItsDeletesLeavesATargetThePassRepairs()
+    {
+        await IndexAsync();
+        await using var db = _harness.NewContext();
+        var proposal = await AskAsync(db, ProposalKind.Source, "notes");
+        _harness.Vectors.CountFor("a.md", "set-1").ShouldBeGreaterThan(0, "the premise");
+        _harness.Vectors.CountFor("a.md", "set-2").ShouldBeGreaterThan(0, "the premise");
+
+        // The source's vectors go one set at a time. The store fails on the second, after the first
+        // is gone, which cannot be put back.
+        var calls = 0;
+        _harness.Vectors.OnDeleteAsync = () => Interlocked.Increment(ref calls) == 2
+            ? throw new InvalidOperationException("the vector store went away")
+            : Task.CompletedTask;
+        await using var approver = _harness.NewContext();
+        await Should.ThrowAsync<InvalidOperationException>(
+            () => _harness.NewProposals(approver).ApproveAsync(proposal.Id, default));
+        (await StoredAsync(proposal.Id)).Status.ShouldBe(ProposalStatus.Pending, "the approval did not save");
+        var lostSets = new[] { "set-1", "set-2" }.Where(s => _harness.Vectors.CountFor("a.md", s) == 0).ToList();
+        lostSets.Count.ShouldBe(1, "one set's vectors went before the store failed, and the other's did not");
+
+        // Rejected now, with the source still listed and one of its sets short of vectors.
+        await using var rejector = _harness.NewContext();
+        (await _harness.NewProposals(rejector).RejectAsync(proposal.Id, default)).Refusal.ShouldBeNull();
+        await using (var check = _harness.NewContext())
+            (await check.Sources.AnyAsync(s => s.Id == "source-1")).ShouldBeTrue();
+
+        // The next pass compares each file's recorded chunk count with the store's and indexes it again.
+        _harness.Vectors.OnDeleteAsync = null;
+        await _harness.RunIndexAsync(JobKind.Refresh);
+
+        _harness.Vectors.CountFor("a.md", lostSets[0]).ShouldBeGreaterThan(0, "the pass found the deficit and indexed the file again");
+    }
+
+    [Fact]
     public async Task ATargetRemovedDirectlyWhileItsApprovalIsDeletingVectorsFailsTheProposalAsGone()
     {
         await IndexAsync();
