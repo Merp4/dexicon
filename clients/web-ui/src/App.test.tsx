@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
@@ -42,6 +42,34 @@ beforeEach(() => {
 });
 
 afterEach(() => setToken(null));
+
+/**
+ * The Approvals link carries how many requests are waiting, for the administrator who can decide
+ * them. The count rides on the health poll the page already makes, and a count of nothing is not
+ * shown: a badge that reads zero all week is noise.
+ */
+describe('the Approvals link', () => {
+  it('shows how many requests are waiting', async () => {
+    health.mockResolvedValue({ ...healthy, pendingProposals: 3 });
+    render(<App />);
+
+    const link = await screen.findByRole('button', { name: /^Approvals/ });
+    await waitFor(() => expect(link).toHaveAccessibleName('Approvals, 3 waiting'));
+    expect(within(link).getByText('3')).toBeInTheDocument();
+  });
+
+  it('shows no count when nothing is waiting, and none for a key', async () => {
+    for (const pendingProposals of [0, null, undefined]) {
+      health.mockResolvedValue({ ...healthy, pendingProposals });
+      const { unmount } = render(<App />);
+
+      const link = await screen.findByRole('button', { name: /^Approvals/ });
+      await waitFor(() => expect(health).toHaveBeenCalled());
+      expect(link).toHaveAccessibleName('Approvals');
+      unmount();
+    }
+  });
+});
 
 describe('signing out', () => {
   it('ignores a 401 for a session that is no longer the stored one', async () => {

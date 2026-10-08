@@ -45,6 +45,7 @@ import {
   getApiEmbeddingModels,
   getApiEmbeddingProviders,
   getApiJobs,
+  getApiProposals,
   getApiTokens,
   getApiWorkspaces,
   getApiWorkspacesGit,
@@ -58,6 +59,8 @@ import {
   postApiCorporaByNameOrIdReindex,
   postApiCorporaByNameOrIdSources,
   postApiEmbeddingModelsProbe,
+  postApiProposalsByIdApprove,
+  postApiProposalsByIdReject,
   postApiSearch,
   postApiTokens,
   putApiEmbeddingModelsProfile,
@@ -127,6 +130,7 @@ export type {
   HealthResponse as Health,
   IndexedFileText,
   JobSummary as Job,
+  ProposalView as Proposal,
   LibraryAttachment,
   LibraryDocument,
   ModelCapabilities,
@@ -231,6 +235,17 @@ export const api = {
   search: (body: SearchApiRequest) => call(() => postApiSearch({ body })),
 
   listCorpora: () => call(() => getApiCorpora()),
+
+  /**
+   * The removals agents have asked for: the ones waiting, oldest first, or with `decided` the rest,
+   * newest first. Each waiting one carries what it would take, worked out by the server when asked.
+   */
+  listProposals: (decided = false) => call(() => getApiProposals({ query: { decided } })),
+
+  /** Runs the removal and records the approval together. Refused, with the reason, if it cannot be done now. */
+  approveProposal: (id: string) => call(() => postApiProposalsByIdApprove({ path: { id } })),
+
+  rejectProposal: (id: string) => call(() => postApiProposalsByIdReject({ path: { id } })),
 
   getCorpus: (nameOrId: string) => call(() => getApiCorporaByNameOrId({ path: { nameOrId } })),
 

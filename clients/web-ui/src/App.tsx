@@ -24,7 +24,7 @@ import {
 } from './ui';
 import {
   ArrowLeft, Check, Database, FileText, Key, ListChecks, LogOut, Plus, RefreshCw, RotateCcw,
-  Search, Settings, Sliders, SlidersHorizontal, Trash2, TriangleAlert,
+  Search, Settings, ShieldCheck, Sliders, SlidersHorizontal, Trash2, TriangleAlert,
 } from 'lucide-react';
 import { cn } from 'cn';
 import { historyContent, sourceName } from './lib/sources';
@@ -41,6 +41,7 @@ const sameModelName = (a: string, b: string) =>
 
 import { DocumentsView } from './Documents';
 import { ChunkSetsPanel, ModelsView } from './ChunkSets';
+import { ApprovalsView } from './Approvals';
 
 // The list and the parsing live in route.ts, so the URL and the switch below cannot
 // drift apart.
@@ -194,27 +195,30 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
     }
   }, []);
 
+  // Its own callback, so a decision on the Approvals screen can refresh the count it moved
+  // without waiting for the next poll.
+  const refreshHealth = useCallback(async () => {
+    // The session this poll is sent with, so a 401 names the one it was refused for.
+    const sent = getToken();
+    try {
+      setHealth(await api.health());
+      setHealthStale(false);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) { onSignOut(sent); return; }
+      // A failed poll is NOT an outage. /healthz can be slow while indexing
+      // saturates Ollama, and blanking the state would paint both dots red during
+      // perfectly normal work, and a false alarm is as bad as a missed one. Keep the
+      // last known state and say that it is stale.
+      setHealthStale(true);
+    }
+  }, [onSignOut]);
+
   useEffect(() => {
     void refreshCorpora();
-    const tick = async () => {
-      // The session this poll is sent with, so a 401 names the one it was refused for.
-      const sent = getToken();
-      try {
-        setHealth(await api.health());
-        setHealthStale(false);
-      } catch (e) {
-        if (e instanceof ApiError && e.status === 401) { onSignOut(sent); return; }
-        // A failed poll is NOT an outage. /healthz can be slow while indexing
-        // saturates Ollama, and blanking the state would paint both dots red during
-        // perfectly normal work, and a false alarm is as bad as a missed one. Keep the
-        // last known state and say that it is stale.
-        setHealthStale(true);
-      }
-    };
-    void tick();
-    const id = setInterval(tick, 15000);
+    void refreshHealth();
+    const id = setInterval(refreshHealth, 15000);
     return () => clearInterval(id);
-  }, [refreshCorpora, onSignOut]);
+  }, [refreshCorpora, refreshHealth]);
 
   // Seed from the jobs listing, because the stream only carries what happens NEXT.
   // Opening the page during an index showed the corpus badge saying "indexing" with no
@@ -260,11 +264,15 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
     [refreshCorpora],
   );
 
+  // Present for an administrator and absent for a key, which cannot decide anything.
+  const waiting = health?.pendingProposals ?? 0;
+
   const nav = [
     { id: 'search', label: 'Search', Icon: Search },
     { id: 'corpora', label: 'Corpora', Icon: Database },
     { id: 'documents', label: 'Documents', Icon: FileText },
     { id: 'jobs', label: 'Jobs', Icon: ListChecks },
+    { id: 'approvals', label: 'Approvals', Icon: ShieldCheck },
     { id: 'models', label: 'Models', Icon: Sliders },
     { id: 'access', label: 'Access', Icon: Key },
     { id: 'settings', label: 'Settings', Icon: Settings },
@@ -295,10 +303,18 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
               // toggle semantics and announce the six you are NOT on as buttons you had
               // not pressed.
               aria-current={view === n.id ? 'page' : false}
+              // Said whole, because the label and the count are separate elements and a screen
+              // reader would join them as "Approvals3".
+              aria-label={n.id === 'approvals' && waiting > 0 ? `Approvals, ${waiting} waiting` : undefined}
               onClick={() => { setView(n.id); setSelected(null); }}
             >
               <n.Icon />
               {n.label}
+              {/* Only where something is waiting for the person at the screen: a count that
+                  reads zero all week is noise, and a dot that never goes away is ignored. */}
+              {n.id === 'approvals' && waiting > 0 && (
+                <Badge tone="warn" className="ml-0.5">{waiting}</Badge>
+              )}
             </Chip>
           ))}
         </nav>
@@ -331,6 +347,12 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
           <DocumentsView corpora={corpora} onError={setError} onRefresh={refreshCorpora} />
         )}
         {view === 'jobs' && <JobsView corpora={corpora} live={live} onError={setError} />}
+        {view === 'approvals' && (
+          <ApprovalsView
+            onError={setError}
+            onDecided={() => { void refreshCorpora(); void refreshHealth(); }}
+          />
+        )}
         {view === 'access' && <AccessView onError={setError} />}
         {view === 'models' && <ModelsView />}
         {view === 'settings' && <SettingsView health={health} />}
