@@ -149,17 +149,17 @@ public static class Bootstrapper
             // service down because one dependency is cold would be a worse outage than
             // the one being reported.
             log.LogError(ex,
-                "Ollama model '{Model}' not usable at {Endpoint}. Search degrades to keyword-only and " +
-                "indexing will back off until it recovers.", options.Embedding.Model, options.Ollama.Endpoint);
+                "Embedding provider '{Provider}' could not embed with model '{Model}'. Search degrades to " +
+                "keyword-only and files will fail to embed until it recovers.", target.Provider, target.Model);
         }
     }
 
     /// <summary>
     /// Ensure there is an admin password, because the UI cannot be reached without one.
     ///
-    /// Configured, or generated and printed once, which is what the bootstrap token has
-    /// always done. Stored hashed in the catalogue rather than read from the environment on
-    /// each request, so it can be changed in the UI without a restart.
+    /// Configured, or generated and printed once. Stored hashed in the catalogue rather than
+    /// read from the environment on each request. A configured value is written on every
+    /// start; nothing in the UI or the API changes it.
     /// </summary>
     private static async Task EnsureAdminPasswordAsync(
         IServiceProvider sp, ILogger log, DexiconOptions options)
@@ -187,8 +187,8 @@ public static class Bootstrapper
             "  │  Dexicon admin password: shown once, copy it now                      │\n" +
             "  └───────────────────────────────────────────────────────────────────────┘\n" +
             "  {Password}\n\n" +
-            "  Sign in at the web UI with this. Set DEXICON_ADMIN_PASSWORD in your .env to\n" +
-            "  own, or change it in the UI once you are in.\n",
+            "  Sign in at the web UI with this, without the quotes. Set DEXICON_ADMIN_PASSWORD in\n" +
+            "  your .env to choose your own; a value set there is applied on every start.\n",
             generated);
     }
 

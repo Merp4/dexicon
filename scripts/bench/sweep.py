@@ -47,33 +47,56 @@ SEARCH_MODES = ["hybrid", "semantic", "keyword"]
 LIMIT = 10
 
 
-def token():
-    """The caller's token, from the environment or the local .env — never a literal here."""
-    if value := os.environ.get("DEXICON_TOKEN"):
-        return value
+def env_value(name):
+    """A variable from the environment, or from the .env beside the repo.
 
+    A value in .env may be quoted, as Compose accepts, and Compose strips the quotes before
+    the server reads it, so they are stripped here too or the password would not match.
+    """
+    if value := os.environ.get(name):
+        return value
     env = ROOT / ".env"
     if env.exists():
         for line in env.read_text(encoding="utf-8").splitlines():
-            if line.startswith("DEXICON_BOOTSTRAP_TOKEN="):
-                value = line.split("=", 1)[1].strip()
-                if value:
+            if line.startswith(f"{name}="):
+                if value := line.split("=", 1)[1].strip().strip("'\""):
                     return value
+    return None
 
-    sys.exit("Set DEXICON_TOKEN to a token with the search and ingest scopes.")
+
+def token():
+    """An admin bearer, because this builds and deletes a corpus.
+
+    An API key cannot do that: `admin` belongs to the password alone, so a key gets a 403
+    naming the missing scope on the first POST. Signing in is what the API intends for
+    administration. DEXICON_TOKEN_ADMIN wins when set, for a caller that already holds a
+    session bearer.
+    """
+    if value := os.environ.get("DEXICON_TOKEN_ADMIN"):
+        return value
+
+    if password := env_value("DEXICON_ADMIN_PASSWORD"):
+        session = call("POST", "/api/session", {"password": password}, authed=False)
+        if session and (bearer := session.get("token")):
+            return bearer
+        sys.exit("Signing in with DEXICON_ADMIN_PASSWORD returned no token.")
+
+    sys.exit(
+        "No admin credential. This builds and deletes a corpus, which needs the admin "
+        "password: set DEXICON_ADMIN_PASSWORD in .env, or DEXICON_TOKEN_ADMIN to a "
+        "session bearer. An API key cannot do it.")
 
 
 TOKEN = None
 
 
-def call(method, path, body=None, timeout=300):
+def call(method, path, body=None, timeout=300, authed=True):
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(
-        f"{BASE}{path}",
-        data=data,
-        method=method,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
-    )
+    headers = {"Content-Type": "application/json"}
+    # Sign-in is the one call made before there is a bearer to send.
+    if authed:
+        headers["Authorization"] = f"Bearer {TOKEN}"
+    req = urllib.request.Request(f"{BASE}{path}", data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             raw = r.read()

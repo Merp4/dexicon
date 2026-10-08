@@ -371,7 +371,7 @@ public sealed class WorkspaceWalker
                 {
                     skipped.Add(new Skipped(relative,
                         $"document over the {documentCap:N0} byte cap ({info.Length:N0} bytes). " +
-                        "Raise DEXICON__INDEXING__DOCUMENTMAXBYTES if you have the memory for it.", info.Length));
+                        "Raise DEXICON_INDEXING_DOCUMENTMAXBYTES in .env if you have the memory for it.", info.Length));
                     continue;
                 }
             }

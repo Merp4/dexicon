@@ -499,9 +499,9 @@ public sealed record SearchApiRequest(
 /// </summary>
 /// <param name="Limit">Hits to consider. What reaches the passage is decided by the budget.</param>
 /// <param name="MaxChars">
-/// Characters for the whole passage, headers included. Null takes the default. A
-/// budget smaller than one chunk returns nothing and says so rather than returning
-/// the middle of a passage.
+/// Characters for the whole passage, headers included. Null takes the default. The last
+/// block is cut to fit when at least 300 characters of it fit, and its citation reports the
+/// lines present. A budget too small for even that returns nothing and says so.
 /// </param>
 /// <param name="Neighbours">Chunks to include either side of each hit, for reading past what matched.</param>
 /// <param name="LineNumbers">Prefix each line with its number in the file. Off by default.</param>
@@ -534,8 +534,8 @@ public sealed record CreateTokenRequest(
 public sealed record UpdateTokenCorporaRequest(IReadOnlyList<string> CorpusIds);
 
 /// <summary>
-/// Replaces a key's scopes outright: any of <c>search</c>, <c>ingest</c> and
-/// <c>configure</c>, at least one. Takes effect on the agent's next call.
+/// Replaces a key's scopes outright: any of <c>search</c>, <c>ingest</c>, <c>configure</c>,
+/// <c>propose</c> and <c>destroy</c>, at least one. Takes effect on the agent's next call.
 /// </summary>
 public sealed record UpdateTokenScopesRequest(IReadOnlyList<string> Scopes);
 

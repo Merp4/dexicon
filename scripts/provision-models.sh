@@ -7,8 +7,8 @@
 # The pull happens here rather than in a separate init container so the model is
 # a precondition of the service being healthy. docker-compose.yml gates Dexicon's
 # start on `ollama list` reporting the model — without that, Dexicon would come up
-# against a model still downloading and spend its first minutes in embedding
-# backoff, which reads as a bug rather than as a first run.
+# against a model still downloading and its first files would fail to embed, which
+# reads as a bug rather than as a first run.
 
 set -e
 

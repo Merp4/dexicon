@@ -129,9 +129,10 @@ function SignInGate({ onToken }: { onToken: (t: string) => void }) {
           // sentence that happens to contain a pipe.
           hint={
             <>
-              On a fresh install it is printed once in the container log:{' '}
-              <code className="mono">docker compose logs dexicon | grep 'admin password'</code>. Set{' '}
-              <code className="mono">DEXICON_ADMIN_PASSWORD</code> in <code className="mono">.env</code> to pin your own.
+              On a fresh install it is printed once in the container log, in quotes on the third line:{' '}
+              <code className="mono">docker compose logs dexicon | grep -A 2 'admin password'</code>. Enter it without
+              the quotes. Set <code className="mono">DEXICON_ADMIN_PASSWORD</code> in{' '}
+              <code className="mono">.env</code> to pin your own.
             </>
           }
         >

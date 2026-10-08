@@ -108,7 +108,7 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
     }
 
     /// <summary>
-    /// <c>dexicon__{model}__{dims}</c>. Encoding the model and dimensionality in the name
+    /// <c>dexicon__{provider}__{model}__{dims}</c>. Encoding the model and dimensionality in the name
     /// makes a mismatch structurally impossible: a corpus pinned to a model can only ever
     /// address that model's collection. See docs/03-data-model.md.
     /// </summary>

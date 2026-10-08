@@ -5,19 +5,16 @@
 # Worth it when the models are already pulled and a GPU is already configured: the in-stack
 # Ollama keeps its own volume and would download them again into it.
 #
-# docs/09-deployment.md has described this file, contents and all, since before it existed.
-# Written from that description rather than invented, so the documentation and the
-# repository finally agree.
-#
 # `depends_on: !reset []` is the load-bearing line. The base file waits for
-# dexicon-ollama to report healthy, and that service is not here, so without the reset
-# Compose refuses to start anything at all.
+# dexicon-ollama to report healthy, and that service is not started here, so without the
+# reset Compose refuses to start anything at all. `!reset` is a Compose tag that older
+# releases do not recognise.
 #
 # Ollama is the one worth sharing: its models are already pulled and its GPU already
-# configured. DEXICON_QDRANT_ENDPOINT is here because docs/09 promises both, but it is left
-# pointing at the in-stack Qdrant, which is cheap to run and whose collections are this
-# corpus's. Sharing one means sharing collections, and two Dexicons writing into a single
-# store is a data question rather than a deployment one.
+# configured. DEXICON_QDRANT_ENDPOINT redirects the vector store as well, but defaults to
+# the in-stack Qdrant, which is cheap to run and whose collections are this corpus's.
+# Sharing one means sharing collections, and two Dexicons writing into a single store is
+# a data question rather than a deployment one.
 
 services:
   dexicon:

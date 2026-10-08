@@ -78,8 +78,8 @@ def password_from_env() -> str:
 
     sys.exit(
         "DEXICON_ADMIN_PASSWORD is blank in .env, which means the server generated one\n"
-        "on first run and logged it once:\n"
-        "    docker compose logs dexicon | grep 'admin password'\n"
+        "on first run and logged it once, in quotes on the third line:\n"
+        "    docker compose logs dexicon | grep -A 2 'admin password'\n"
         "Set it in .env to make this repeatable; a configured value is applied on every start."
     )
 
@@ -107,7 +107,7 @@ def sign_in(base: str, password: str) -> str:
             sys.exit(
                 f"{base} did not accept the password (HTTP 401).\n"
                 "If the catalogue was recreated, the server printed a new one:\n"
-                "    docker compose logs dexicon | grep 'admin password'"
+                "    docker compose logs dexicon | grep -A 2 'admin password'"
             )
         sys.exit(f"{base} answered HTTP {e.code}. Is this the right instance?")
     except urllib.error.URLError as e:
