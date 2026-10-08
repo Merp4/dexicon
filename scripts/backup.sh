@@ -95,8 +95,15 @@ service_running() { docker compose ps --status running --services 2>/dev/null | 
 BACKUP_SERVICES="dexicon-qdrant dexicon"
 STOPPED=""
 restart_stopped() {
-  for s in $STOPPED; do docker compose start "$s" >/dev/null 2>&1 || true; done
+  local failed=""
+  for s in $STOPPED; do
+    if ! docker compose start "$s" >/dev/null 2>&1; then failed="$failed $s"; fi
+  done
   STOPPED=""
+  if [ -n "$failed" ]; then
+    red "Could not start${failed} again. Run: docker compose start${failed}"
+    return 1
+  fi
 }
 
 cmd_backup() {
@@ -157,7 +164,10 @@ image      = ${image:-unknown}
 volumes    = $(ls "$dir" | grep '\.tar\.gz$' | tr '\n' ' ')
 EOF
 
-  restart_stopped
+  if ! restart_stopped; then
+    red "The archive is complete in ${dir}, but the stack is not back up."
+    exit 1
+  fi
   trap - EXIT
   green "Backed up to ${dir}"
   info "$(du -sh "$dir" | cut -f1) total"
