@@ -77,6 +77,13 @@ Each of these has been decided, with the reasoning recorded in
   expects, without saying so, is the failure mode this project is designed to avoid.
 - **Configuration nothing reads.** There is a test that fails the build for it. Two real
   settings had been configured, documented and passed by compose while nothing read them.
+- **The caller's token after a catalogue write.** Once a change is saved, what makes it take
+  effect or reports it (the job, the collection, the audit line, the reply) runs on
+  `CancellationToken.None`, or goes into the same save. A cancel between the two left saved
+  changes with no job, and review found it fourteen times. `RequestTokenAfterCommitTests`
+  fails on any use of a function's token that a write can reach. A background pass whose writes
+  are each safe to stop after carries
+  `[SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", Justification = "...")]`.
 - **A number without a measurement.** Chunk sizes, overlaps and model choices are
   estimates until `scripts/retrieval-bench.py` establishes otherwise, and the documentation
   labels them as such. Changes are welcome; changes accompanied by the measurements are

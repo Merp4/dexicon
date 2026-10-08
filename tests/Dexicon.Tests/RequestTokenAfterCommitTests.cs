@@ -264,57 +264,57 @@ internal sealed class CommitScan
         var suppressions = new Dictionary<AttributeData, bool>();
 
         foreach (var compilation in compilations)
-        foreach (var tree in compilation.SyntaxTrees)
-        {
-            var model = compilation.GetSemanticModel(tree);
-            foreach (var node in tree.GetRoot().DescendantNodes())
+            foreach (var tree in compilation.SyntaxTrees)
             {
-                if (node is BaseTypeDeclarationSyntax typeDeclaration
-                    && model.GetDeclaredSymbol(typeDeclaration) is INamedTypeSymbol type)
+                var model = compilation.GetSemanticModel(tree);
+                foreach (var node in tree.GetRoot().DescendantNodes())
                 {
-                    types.Add(type);
-                    Track(type, suppressions);
+                    if (node is BaseTypeDeclarationSyntax typeDeclaration
+                        && model.GetDeclaredSymbol(typeDeclaration) is INamedTypeSymbol type)
+                    {
+                        types.Add(type);
+                        Track(type, suppressions);
+                    }
+
+                    if (node is not (BaseMethodDeclarationSyntax or AccessorDeclarationSyntax)) continue;
+                    if (model.GetDeclaredSymbol(node) is not IMethodSymbol method) continue;
+                    Track(method, suppressions);
+                    if (model.GetOperation(node) is { } body && Graph(body) is { } graph)
+                        Collect(functions, bodies, graph, method, $"{method.ContainingType.Name}.{method.Name}");
                 }
 
-                if (node is not (BaseMethodDeclarationSyntax or AccessorDeclarationSyntax)) continue;
-                if (model.GetDeclaredSymbol(node) is not IMethodSymbol method) continue;
-                Track(method, suppressions);
-                if (model.GetOperation(node) is { } body && Graph(body) is { } graph)
-                    Collect(functions, bodies, graph, method, $"{method.ContainingType.Name}.{method.Name}");
-            }
+                if (tree.GetRoot() is CompilationUnitSyntax unit && unit.Members.OfType<GlobalStatementSyntax>().Any()
+                    && model.GetOperation(unit) is { } main && Graph(main) is { } mainGraph)
+                    Collect(functions, bodies, mainGraph, null, "<top-level>");
 
-            if (tree.GetRoot() is CompilationUnitSyntax unit && unit.Members.OfType<GlobalStatementSyntax>().Any()
-                && model.GetOperation(unit) is { } main && Graph(main) is { } mainGraph)
-                Collect(functions, bodies, mainGraph, null, "<top-level>");
-
-            foreach (var call in tree.GetRoot().DescendantNodes().OfType<InvocationExpressionSyntax>())
-            {
-                var name = call.Expression switch
+                foreach (var call in tree.GetRoot().DescendantNodes().OfType<InvocationExpressionSyntax>())
                 {
-                    MemberAccessExpressionSyntax m => m.Name.Identifier.Text,
-                    IdentifierNameSyntax n => n.Identifier.Text,
-                    _ => null,
-                };
-                if (name is null || !WriteNames.Contains(name)) continue;
+                    var name = call.Expression switch
+                    {
+                        MemberAccessExpressionSyntax m => m.Name.Identifier.Text,
+                        IdentifierNameSyntax n => n.Identifier.Text,
+                        _ => null,
+                    };
+                    if (name is null || !WriteNames.Contains(name)) continue;
 
-                WriteCalls++;
-                if (model.GetSymbolInfo(call).Symbol is not IMethodSymbol bound || !IsWrite(bound))
-                    UnresolvedWrites.Add($"{SiteOf(call.GetLocation())} {call}");
+                    WriteCalls++;
+                    if (model.GetSymbolInfo(call).Symbol is not IMethodSymbol bound || !IsWrite(bound))
+                        UnresolvedWrites.Add($"{SiteOf(call.GetLocation())} {call}");
+                }
             }
-        }
 
         var committing = Writers(bodies, types);
         foreach (var m in committing) Committing.Add($"{m.ContainingType.ToDisplayString()}.{m.Name}");
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var f in functions.Where(f => f.Tokens.Count > 0))
-        foreach (var finding in Check(f, committing))
-        {
-            if (!seen.Add($"{finding.Site} {finding.Use} {finding.Function}")) continue;
-            var by = SuppressionFor(f.Symbol, finding, suppressions);
-            if (by is null) Unsuppressed.Add(finding);
-            else suppressions[by] = true;
-        }
+            foreach (var finding in Check(f, committing))
+            {
+                if (!seen.Add($"{finding.Site} {finding.Use} {finding.Function}")) continue;
+                var by = SuppressionFor(f.Symbol, finding, suppressions);
+                if (by is null) Unsuppressed.Add(finding);
+                else suppressions[by] = true;
+            }
 
         foreach (var (attribute, used) in suppressions)
         {
@@ -385,11 +385,11 @@ internal sealed class CommitScan
                     grew |= committing.Add(method);
 
             foreach (var type in types)
-            foreach (var contract in type.AllInterfaces.Where(i => i.Locations.Any(l => l.IsInSource)))
-            foreach (var member in contract.GetMembers().OfType<IMethodSymbol>())
-                if (type.FindImplementationForInterfaceMember(member) is IMethodSymbol implementation
-                    && committing.Contains(implementation.OriginalDefinition))
-                    grew |= committing.Add(member.OriginalDefinition);
+                foreach (var contract in type.AllInterfaces.Where(i => i.Locations.Any(l => l.IsInSource)))
+                    foreach (var member in contract.GetMembers().OfType<IMethodSymbol>())
+                        if (type.FindImplementationForInterfaceMember(member) is IMethodSymbol implementation
+                            && committing.Contains(implementation.OriginalDefinition))
+                            grew |= committing.Add(member.OriginalDefinition);
         } while (grew);
 
         return committing;

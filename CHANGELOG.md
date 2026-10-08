@@ -62,6 +62,10 @@ with no section here fails its release rather than publishing an undescribed one
   only "N files stored", so a file over the size cap or an empty one vanished without a reason.
   Each is listed with its reason under the count, and a failure of the whole request is listed
   without a file name.
+- **A test rejects the request's token after a catalogue write.** `RequestTokenAfterCommitTests`
+  compiles `src/` and fails on any use of a function's `CancellationToken` that a catalogue write
+  can reach, so the job, audit line or reply that follows a save is not cancellable
+  (`CONTRIBUTING.md`).
 
 ### Fixed
 
@@ -86,6 +90,13 @@ with no section here fails its release rather than publishing an undescribed one
   chunk set stayed marked as degraded, and a change was not re-applied by sending it again. The job is no longer cancellable once the change is
   saved, and an upload cut off partway keeps and indexes the files completed before it. The file
   being attached at the moment of the cut is discarded, not saved without being reported.
+- **A key issued for chosen corpora could be saved reaching every corpus.** The key and its
+  corpora were two saves: an unknown corpus id was refused with `400` after the key was saved,
+  and a cancel between the saves left it unmapped. A key with no mapping reaches every corpus,
+  and its secret had not been shown. The corpora are checked first and saved with the key.
+- **Attaching the first document to a corpus could leave an empty upload source.** The source
+  was saved before the document, so a cancel between them left a source with no files. It is
+  saved with the document.
 - **Stale developer scripts.** `scripts/screenshot.mjs` signs in with an admin session instead of
   an API key, which never carries `admin`; `scripts/retrieval-bench.py` queries files and content
   that exist; `scripts/bench/sweep.py` signs in as admin; `scripts/dev.ps1 password` returns the
