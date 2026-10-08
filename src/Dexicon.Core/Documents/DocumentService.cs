@@ -330,7 +330,11 @@ public sealed class DocumentService(
         }
     }
 
-    /// <summary>Every corpus gets at most one upload source, created on first attachment.</summary>
+    /// <summary>
+    /// Every corpus gets at most one upload source, created on first attachment. A new one is added
+    /// to the context and saved with the attachment it was made for: saved on its own, a cancel
+    /// before the attachment's save left a source with nothing in it.
+    /// </summary>
     private async Task<Source> UploadSourceFor(Corpus corpus, CancellationToken ct)
     {
         var source = await db.Sources.FirstOrDefaultAsync(
@@ -348,7 +352,6 @@ public sealed class DocumentService(
             CreatedUtc = DateTime.UtcNow,
         };
         db.Sources.Add(source);
-        await db.SaveChangesAsync(ct);
         return source;
     }
 

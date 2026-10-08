@@ -524,15 +524,14 @@ public static class SystemEndpoints
         var requested = body.Scopes is { Count: > 0 } ? body.Scopes : [Scopes.Search];
         if (UnissuableScopes(requested) is { } unissuable) return unissuable;
 
-        var expires = body.ExpiresInDays is { } d and > 0 ? DateTime.UtcNow.AddDays(d) : (DateTime?)null;
-        var (row, issued) = await tokens.CreateAsync(body.Name.Trim(), requested, expires, ct);
+        // Checked before the key exists and saved with it. Mapped by a second save, the key was saved
+        // first, so a refusal here, or a cancel between the two saves, left a key with no mapping, which
+        // reaches every corpus.
+        var corpusIds = (body.CorpusIds ?? []).Distinct(StringComparer.Ordinal).ToList();
+        if (await UnknownCorporaAsync(db, corpusIds, "The key was not created.", ct) is { } unknown) return unknown;
 
-        if (body.CorpusIds is { Count: > 0 })
-        {
-            var denied2 = await MapCorporaAsync(db, row.Id, body.CorpusIds, ct);
-            if (denied2 is not null) return denied2;
-            await db.Entry(row).Collection(x => x.Corpora).LoadAsync(ct);
-        }
+        var expires = body.ExpiresInDays is { } d and > 0 ? DateTime.UtcNow.AddDays(d) : (DateTime?)null;
+        var (row, issued) = await tokens.CreateAsync(body.Name.Trim(), requested, expires, corpusIds, ct);
 
         // The highest-value thing on the page: the step between installed and working.
         return Results.Ok(new CreatedTokenResponse(row.ToSummary(), issued.Presented, McpAddCommand(issued.Presented)));
@@ -550,7 +549,7 @@ public static class SystemEndpoints
         var refused = await MapCorporaAsync(db, id, body.CorpusIds, ct);
         if (refused is not null) return refused;
 
-        await db.Entry(token).Collection(x => x.Corpora).LoadAsync(ct);
+        // The tracked key already holds the saved mapping: the save fixes up its collection.
         return Results.Ok(token.ToSummary());
     }
 
@@ -629,14 +628,7 @@ public static class SystemEndpoints
         try
         {
             var wanted = corpusIds.Distinct(StringComparer.Ordinal).ToList();
-
-            var known = await db.Corpora.Where(c => wanted.Contains(c.Id)).Select(c => c.Id).ToListAsync(ct);
-            var unknown = wanted.Except(known, StringComparer.Ordinal).ToList();
-            if (unknown.Count > 0)
-                return Results.Problem(
-                    title: "Unknown corpus",
-                    detail: $"No corpus with id {string.Join(", ", unknown)}. The mapping was not changed.",
-                    statusCode: 400);
+            if (await UnknownCorporaAsync(db, wanted, "The mapping was not changed.", ct) is { } unknown) return unknown;
 
             var existing = await db.TokenCorpora.Where(tc => tc.TokenId == tokenId).ToListAsync(ct);
             db.TokenCorpora.RemoveRange(existing);
@@ -650,6 +642,22 @@ public static class SystemEndpoints
         {
             CorpusConfiguration.Naming.Release();
         }
+    }
+
+    /// <summary>A problem result naming each id that is not a corpus, or null when every one is.</summary>
+    private static async Task<IResult?> UnknownCorporaAsync(
+        CatalogDbContext db, List<string> wanted, string outcome, CancellationToken ct)
+    {
+        if (wanted.Count == 0) return null;
+
+        var known = await db.Corpora.Where(c => wanted.Contains(c.Id)).Select(c => c.Id).ToListAsync(ct);
+        var unknown = wanted.Except(known, StringComparer.Ordinal).ToList();
+        return unknown.Count == 0
+            ? null
+            : Results.Problem(
+                title: "Unknown corpus",
+                detail: $"No corpus with id {string.Join(", ", unknown)}. {outcome}",
+                statusCode: 400);
     }
 
     public static void MapHealthEndpoints(this IEndpointRouteBuilder app)

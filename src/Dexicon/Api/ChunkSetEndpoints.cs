@@ -135,7 +135,8 @@ public static class ChunkSetEndpoints
         // set, and the jobs list should say which of those is happening.
         var job = await queue.EnqueueAsync(corpus.Id, JobKind.Rebuild, set.Id, CancellationToken.None);
 
-        var activity = await IndexingActivity.ReadAsync(db, [corpus.Id], ct);
+        // The reply as well: on the caller's token a cancel here answered a saved set with an error.
+        var activity = await IndexingActivity.ReadAsync(db, [corpus.Id], CancellationToken.None);
         return Results.Accepted($"/api/corpora/{corpus.Name}/chunk-sets/{set.Name}",
             new ChunkSetCreated(set.ToSummary(0, 0, 0, 0, activity.Of(set)), job.ToSummary()));
     }
@@ -190,7 +191,7 @@ public static class ChunkSetEndpoints
         if (rechunk)
             queued = (await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, set.Id, CancellationToken.None)).ToSummary();
 
-        var activity = await IndexingActivity.ReadAsync(db, [corpus.Id], ct);
+        var activity = await IndexingActivity.ReadAsync(db, [corpus.Id], CancellationToken.None);
         return Results.Ok(new ChunkSetUpdated(set.ToSummary(0, 0, 0, 0, activity.Of(set)), queued));
     }
 

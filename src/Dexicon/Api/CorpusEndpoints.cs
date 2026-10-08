@@ -171,8 +171,11 @@ public static class CorpusEndpoints
         var created = await config.CreateCorpusAsync(body, ct);
         if (created.Refusal is { } refused) return refused.ToResult();
 
+        // The reply is read after the corpus is saved, so not on the caller's token: a cancel here answered
+        // a creation that had happened with an error.
         var corpus = created.Value!;
-        return Results.Created($"/api/corpora/{corpus.Id}", await Summarise(db, corpus, opts.Value.Indexing, ct));
+        return Results.Created($"/api/corpora/{corpus.Id}",
+            await Summarise(db, corpus, opts.Value.Indexing, CancellationToken.None));
     }
 
     /// <summary>The handler of <c>PATCH /api/corpora/{name}</c>, a method so a test can call it without a server.</summary>
@@ -185,7 +188,8 @@ public static class CorpusEndpoints
 
         if ((await config.UpdateCorpusAsync(corpus, body, ct)).Refusal is { } refused) return refused.ToResult();
 
-        return Results.Ok(new CorpusUpdated(await Summarise(db, corpus, opts.Value.Indexing, ct)));
+        // Not the caller's token, as in CreateAsync: the change is saved.
+        return Results.Ok(new CorpusUpdated(await Summarise(db, corpus, opts.Value.Indexing, CancellationToken.None)));
     }
 
     /// <summary>
