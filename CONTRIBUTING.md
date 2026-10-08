@@ -81,8 +81,9 @@ Each of these has been decided, with the reasoning recorded in
   effect or reports it (the job, the collection, the audit line, the reply) runs on
   `CancellationToken.None`, or goes into the same save. A cancel between the two left saved
   changes with no job, and review found it fourteen times. `RequestTokenAfterCommitTests`
-  fails on any use of a function's token that a write can reach. A background pass whose writes
-  are each safe to stop after carries
+  fails on a use of a function's token that a write can reach, other than inside a `try` that
+  catches `OperationCanceledException`. A function the rule does not fit, such as a background
+  pass whose writes are each safe to stop after, carries
   `[SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", Justification = "...")]`.
 - **A number without a measurement.** Chunk sizes, overlaps and model choices are
   estimates until `scripts/retrieval-bench.py` establishes otherwise, and the documentation

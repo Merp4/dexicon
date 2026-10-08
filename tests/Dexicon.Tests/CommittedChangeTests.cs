@@ -530,8 +530,8 @@ public sealed class CommittedChangeTests
     public async Task ACorpusThatIsCreatedIsReportedWhenTheCallerIsCancelledAfterwards()
     {
         // The summary in the reply was read on the caller's token after the corpus was saved, so a cancel
-        // there answered a creation that had happened with an error. Watched on the chunk sets, the last
-        // rows the save writes.
+        // there threw from a handler whose creation had happened. Watched on the chunk sets, the last rows
+        // the save writes.
         var watcher = new CancelAfterWriteTo("chunk_sets");
         await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
         await harness.SeedCorpusAsync(SourceKind.Workspace);

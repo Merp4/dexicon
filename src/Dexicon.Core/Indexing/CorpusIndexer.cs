@@ -41,9 +41,9 @@ public sealed record IndexProgress(
 ///     next scan and is retried, instead of being remembered as done.
 /// </summary>
 [SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", Justification =
-    "A pass's token is its job's stop signal. Each write leaves a state the next pass repairs (a file is "
-    + "marked Pending with no hash before its vectors are deleted), and the outcome is saved without the "
-    + "token, so stopping between two writes is a restart at that point.")]
+    "A pass's token is its job's stop signal. Its writes are ordered for a pass that stops between "
+    + "them, as a restart does (a file is marked Pending with no hash before its vectors are deleted), "
+    + "and the job's outcome is saved without the token.")]
 public sealed class CorpusIndexer(
     CatalogDbContext db,
     WorkspaceFileReader reader,

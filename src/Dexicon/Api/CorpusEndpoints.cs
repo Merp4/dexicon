@@ -171,8 +171,8 @@ public static class CorpusEndpoints
         var created = await config.CreateCorpusAsync(body, ct);
         if (created.Refusal is { } refused) return refused.ToResult();
 
-        // The reply is read after the corpus is saved, so not on the caller's token: a cancel here answered
-        // a creation that had happened with an error.
+        // The reply is read after the corpus is saved, so not on the caller's token: a cancel here threw
+        // from a handler whose creation had happened.
         var corpus = created.Value!;
         return Results.Created($"/api/corpora/{corpus.Id}",
             await Summarise(db, corpus, opts.Value.Indexing, CancellationToken.None));
