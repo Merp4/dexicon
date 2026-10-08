@@ -123,7 +123,7 @@ public sealed class TokenService(CatalogDbContext db, TimeProvider clock)
         // use ExecuteUpdateAsync, which writes straight to the database and does NOT
         // update the change tracker. A tracked read therefore returns the stale entity,
         // with RevokedUtc still null, so a revoked token kept authenticating for the
-        // lifetime of the DbContext. Caught by Token_RevokedAndExpired_StopVerifying.
+        // lifetime of the DbContext. Caught by TokenRevokedAndExpiredStopVerifying.
         var row = await db.Tokens.AsNoTracking().FirstOrDefaultAsync(t => t.Id == id, ct);
         if (row is null) return null;
         if (!row.IsActive(clock.GetUtcNow().UtcDateTime)) return null;

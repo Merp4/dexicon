@@ -29,7 +29,7 @@ namespace Dexicon.Tests;
 /// loop has nothing to offer it, and a refusal costs about 350 ms flat whatever the input
 /// size, which is what makes it cheap enough to size by. See D-31.
 /// </summary>
-public sealed class TruncationIsNotSilentTests
+public sealed class EmbeddingTruncationTests
 {
     /// <summary>Records the options it was asked with, and fails on demand.</summary>
     private sealed class FakeGenerator(params Exception?[] failures)

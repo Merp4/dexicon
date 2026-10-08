@@ -12,7 +12,7 @@ namespace Dexicon.Tests;
 /// the codebase read it, so raising it changed nothing and reported nothing. This test catches
 /// the whole class rather than that one instance.
 /// </summary>
-public sealed class ConfigurationIsReadTests
+public sealed class UnreadConfigurationTests
 {
     private static string RepoRoot()
     {

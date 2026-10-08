@@ -10,7 +10,7 @@ namespace Dexicon.Tests;
 /// source that could not be reached wrote its reason there and the next one replaced it,
 /// and an embedding failure at the end of the pass replaced whatever was left.
 /// </summary>
-public sealed class EveryReasonAJobDegradedTests
+public sealed class JobDegradedReasonTests
 {
     [Fact]
     public async Task AnUnreachableSourceIsNotHiddenByAnEmbeddingFailure()

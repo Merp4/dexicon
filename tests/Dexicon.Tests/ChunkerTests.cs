@@ -5,7 +5,7 @@ namespace Dexicon.Tests;
 public class ChunkerTests
 {
     [Fact]
-    public void Chunk_LineNumbers_PointAtTheRealLines()
+    public void ChunkLineNumbersPointAtTheRealLines()
     {
         // The single most important property: a result must be openable at the line it
         // claims. M1's definition of done was "open the file at the line and find the
@@ -31,7 +31,7 @@ public class ChunkerTests
     }
 
     [Fact]
-    public void Chunk_NeverSplitsALine()
+    public void ChunkNeverSplitsALine()
     {
         var content = string.Join('\n', Enumerable.Range(1, 50).Select(i => new string('x', 200) + i));
         var chunks = CodeChunker.Chunk("a.txt", content, chunkSizeTokens: 60, overlapTokens: 5, boundaryMode: "none");
@@ -42,11 +42,11 @@ public class ChunkerTests
     }
 
     [Fact]
-    public void Chunk_OverlapLargerThanChunkSize_Throws() =>
+    public void ChunkOverlapLargerThanChunkSizeThrows() =>
         Should.Throw<ArgumentException>(() => CodeChunker.Chunk("a.cs", "x", 100, 100));
 
     [Fact]
-    public void Chunk_InvalidCustomBoundaryRegex_ThrowsRatherThanSilentlyFallingBack()
+    public void ChunkInvalidCustomBoundaryRegexThrowsRatherThanSilentlyFallingBack()
     {
         // No silent fallback: an operator's bad regex must fail loudly, not quietly
         // produce differently-shaped chunks they never asked for.
@@ -56,7 +56,7 @@ public class ChunkerTests
     }
 
     [Fact]
-    public void Chunk_UnknownBoundaryMode_Throws() =>
+    public void ChunkUnknownBoundaryModeThrows() =>
         Should.Throw<ArgumentException>(() => CodeChunker.Chunk("a.cs", "x", boundaryMode: "wishful"));
 
     // ── Markdown heading detection ───────────────────────────────────────────
@@ -69,7 +69,7 @@ public class ChunkerTests
     [InlineData("### D-04 Corpus as the Qdrant tenant key", "D-04 Corpus as the Qdrant tenant key")]
     [InlineData("  ## Indented up to three spaces", "Indented up to three spaces")]
     [InlineData("## Closed ATX ##", "Closed ATX")]
-    public void TryReadHeading_RealHeadings_AreRecognised(string line, string expected)
+    public void TryReadHeadingRealHeadingsAreRecognised(string line, string expected)
     {
         CodeChunker.TryReadHeading(line, out var heading).ShouldBeTrue();
         heading.ShouldBe(expected);
@@ -82,11 +82,11 @@ public class ChunkerTests
     [InlineData("code # trailing hash")]
     [InlineData("#")]
     [InlineData("")]
-    public void TryReadHeading_NonHeadings_AreRejected(string line) =>
+    public void TryReadHeadingNonHeadingsAreRejected(string line) =>
         CodeChunker.TryReadHeading(line, out _).ShouldBeFalse();
 
     [Fact]
-    public void Chunk_Markdown_DoesNotTakeSectionFromInsideACodeFence()
+    public void ChunkMarkdownDoesNotTakeSectionFromInsideACodeFence()
     {
         var md = string.Join('\n',
         [
@@ -120,7 +120,7 @@ public class ChunkerTests
     // character mean against budgets of 3072 and 1024.
 
     [Fact]
-    public void Chunk_ChunkSize_ChangesOutput_EvenWithABoundaryMode()
+    public void ChunkSizeChangesOutputEvenWithABoundaryMode()
     {
         var prose = string.Join("\n\n",
             Enumerable.Range(1, 120).Select(i => $"Paragraph {i}. " + string.Join(' ', Enumerable.Repeat("word", 30))));
@@ -135,7 +135,7 @@ public class ChunkerTests
     }
 
     [Fact]
-    public void Chunk_FillsTowardTheBudget_RatherThanEmittingOneChunkPerParagraph()
+    public void ChunkFillsTowardTheBudgetRatherThanEmittingOneChunkPerParagraph()
     {
         var prose = string.Join("\n\n",
             Enumerable.Range(1, 200).Select(i => $"Paragraph {i}. " + string.Join(' ', Enumerable.Repeat("word", 25))));
@@ -156,7 +156,7 @@ public class ChunkerTests
     }
 
     [Fact]
-    public void Chunk_BoundaryMode_StillDecidesWhereTheSplitLands()
+    public void ChunkBoundaryModeStillDecidesWhereTheSplitLands()
     {
         // Filling to the budget must not mean splitting mid-paragraph: the split should
         // land on a blank line whenever the buffer contains one.
@@ -176,7 +176,7 @@ public class ChunkerTests
     }
 
     [Fact]
-    public void Chunk_LineNumbersStayExact_AfterFillingAndBackingUp()
+    public void ChunkLineNumbersStayExactAfterFillingAndBackingUp()
     {
         var lines = Enumerable.Range(1, 300).Select(i => i % 7 == 0 ? "" : $"line {i} content here");
         var content = string.Join('\n', lines);
@@ -192,7 +192,7 @@ public class ChunkerTests
     }
 
     [Fact]
-    public void Chunk_TerminatesOnPathologicalInput()
+    public void ChunkTerminatesOnPathologicalInput()
     {
         // The rewind-for-overlap loop must always make forward progress. A file of
         // single characters with a large overlap is the case that would hang it.
@@ -203,7 +203,7 @@ public class ChunkerTests
     }
 
     [Fact]
-    public void Chunk_LanguageAware_SplitsCSharpAtMemberBoundaries()
+    public void ChunkLanguageAwareSplitsCSharpAtMemberBoundaries()
     {
         var code = """
             public class TokenService
@@ -225,7 +225,7 @@ public class ChunkerTests
     }
 
     [Fact]
-    public void Chunk_EmptyOrWhitespaceContent_ProducesNothing()
+    public void ChunkEmptyOrWhitespaceContentProducesNothing()
     {
         CodeChunker.Chunk("a.cs", "").ShouldBeEmpty();
         CodeChunker.Chunk("a.cs", "   \n  \n").ShouldBeEmpty();
@@ -238,11 +238,11 @@ public class ChunkerTests
     [InlineData("Component.razor", "razor")]
     [InlineData("Dockerfile", "dockerfile")]
     [InlineData("whatever.unknown", "text")]
-    public void DetectLanguage_MapsExtensions(string path, string expected) =>
+    public void DetectLanguageMapsExtensions(string path, string expected) =>
         LanguageMap.Detect(path).ShouldBe(expected);
 
     [Fact]
-    public void BoundaryPattern_TemplateLanguages_UseBlankLinesNotHeadings()
+    public void BoundaryPatternTemplateLanguagesUseBlankLinesNotHeadings()
     {
         // These are template SOURCE, not HTML documents. Splitting an Angular or Razor
         // template at its <h1> produces slices that mean nothing.

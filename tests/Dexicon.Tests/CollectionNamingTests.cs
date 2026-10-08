@@ -28,7 +28,7 @@ public class CollectionNamingTests
         Store().CollectionNameFor(new EmbeddingTarget(provider, model), dimensions);
 
     [Fact]
-    public void A_tagged_latest_lands_in_the_same_collection_as_the_untagged_name()
+    public void ATaggedLatestLandsInTheSameCollectionAsTheUntaggedName()
     {
         Name("ollama", "embeddinggemma:latest").ShouldBe(Name("ollama", "embeddinggemma"));
     }
@@ -37,13 +37,13 @@ public class CollectionNamingTests
     [InlineData("nomic-embed-text")]
     [InlineData("mxbai-embed-large")]
     [InlineData("bge-m3")]
-    public void The_same_holds_for_every_model_a_provider_might_tag(string model)
+    public void TheSameHoldsForEveryModelAProviderMightTag(string model)
     {
         Name("ollama", $"{model}:latest").ShouldBe(Name("ollama", model));
     }
 
     [Fact]
-    public void A_real_version_tag_is_a_different_model_and_keeps_its_own_collection()
+    public void ARealVersionTagIsADifferentModelAndKeepsItsOwnCollection()
     {
         // The line this must not cross. `:latest` is an alias; `:v1.5` and `:0.6b` are
         // different weights producing different vectors, and merging them would corrupt
@@ -53,7 +53,7 @@ public class CollectionNamingTests
     }
 
     [Fact]
-    public void Two_providers_serving_one_model_name_stay_apart()
+    public void TwoProvidersServingOneModelNameStayApart()
     {
         // Pre-existing behaviour worth keeping: the same name from OpenAI and from Ollama
         // is not the same vector space.
@@ -61,13 +61,13 @@ public class CollectionNamingTests
     }
 
     [Fact]
-    public void Different_dimensions_stay_apart()
+    public void DifferentDimensionsStayApart()
     {
         Name("ollama", "bge-m3", 1024).ShouldNotBe(Name("ollama", "bge-m3", 768));
     }
 
     [Fact]
-    public void The_name_is_still_a_legal_qdrant_collection_name()
+    public void TheNameIsStillALegalQdrantCollectionName()
     {
         var name = Name("ollama", "embeddinggemma:latest");
 
@@ -76,7 +76,7 @@ public class CollectionNamingTests
     }
 
     [Fact]
-    public void Case_does_not_create_a_second_collection()
+    public void CaseDoesNotCreateASecondCollection()
     {
         Name("ollama", "EmbeddingGemma:LATEST").ShouldBe(Name("ollama", "embeddinggemma"));
     }

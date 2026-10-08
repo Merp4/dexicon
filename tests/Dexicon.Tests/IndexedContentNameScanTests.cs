@@ -34,7 +34,7 @@ namespace Dexicon.Tests;
 ///
 /// Holding no names, this file is scanned like any other.
 /// </summary>
-public sealed class IndexedContentIsNotPublishedTests
+public sealed class IndexedContentNameScanTests
 {
     /// <summary>
     /// A forbidden name. One that matches by words is found as <paramref name="Length"/>

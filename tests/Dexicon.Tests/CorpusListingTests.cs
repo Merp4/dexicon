@@ -43,7 +43,7 @@ public class CorpusListingTests
             CreatedUtc: DateTime.UnixEpoch, LastIndexedUtc: DateTime.UnixEpoch);
 
     [Fact]
-    public void The_description_comes_before_the_machinery()
+    public void TheDescriptionComesBeforeTheMachinery()
     {
         // It is the only line that answers "should I search here". It used to sit under
         // the state, the counts, the chunk sets, the embedding dimensions and the overlap.
@@ -59,7 +59,7 @@ public class CorpusListingTests
     }
 
     [Fact]
-    public void A_corpus_with_no_description_says_so_rather_than_saying_nothing()
+    public void ACorpusWithNoDescriptionSaysSoRatherThanSayingNothing()
     {
         // Silence reads as "no information"; an agent cannot tell an undescribed corpus
         // from one that is genuinely unsuitable. It also nudges the human who reads it.
@@ -69,7 +69,7 @@ public class CorpusListingTests
     }
 
     [Fact]
-    public void An_empty_corpus_is_marked_as_unable_to_answer()
+    public void AnEmptyCorpusIsMarkedAsUnableToAnswer()
     {
         // Listed identically to a full one, an empty corpus reads as a reasonable place to
         // look, and the agent spends a whole call finding out otherwise.
@@ -81,7 +81,7 @@ public class CorpusListingTests
     }
 
     [Fact]
-    public void A_corpus_still_indexing_is_told_apart_from_one_that_is_simply_empty()
+    public void ACorpusStillIndexingIsToldApartFromOneThatIsSimplyEmpty()
     {
         // Different problems with different responses: wait and retry, versus never bother.
         var indexing = DexiconTools.RenderCorpus(
@@ -92,13 +92,13 @@ public class CorpusListingTests
     }
 
     [Fact]
-    public void A_corpus_with_content_carries_no_warning()
+    public void ACorpusWithContentCarriesNoWarning()
     {
         DexiconTools.RenderCorpus(Corpus()).ShouldNotContain("NOT SEARCHABLE");
     }
 
     [Fact]
-    public void Every_chunk_set_is_named_with_the_address_that_reaches_it()
+    public void EveryChunkSetIsNamedWithTheAddressThatReachesIt()
     {
         // A set that is not the default is only reachable as `corpus:set`. An agent told
         // only the corpus name cannot get to it, so the address has to be in the listing.
@@ -111,7 +111,7 @@ public class CorpusListingTests
     }
 
     [Fact]
-    public void Failed_files_are_reported_because_a_gap_in_a_corpus_is_invisible_otherwise()
+    public void FailedFilesAreReportedBecauseAGapInACorpusIsInvisibleOtherwise()
     {
         // Six of nineteen books failed to extract once, and search simply returned less.
         // Nothing in a result set says "and there were six books I could not read".
@@ -126,7 +126,7 @@ public class CorpusListingTests
     /// commits" — an agent reading both has to decide which one is lying.
     /// </summary>
     [Fact]
-    public void A_history_corpus_reports_commits_failed_not_files()
+    public void AHistoryCorpusReportsCommitsFailedNotFiles()
     {
         var sources = new[]
         {
@@ -145,7 +145,7 @@ public class CorpusListingTests
     /// which an agent cannot do.
     /// </summary>
     [Fact]
-    public void Failed_files_point_to_where_an_agent_can_read_why()
+    public void FailedFilesPointToWhereAnAgentCanReadWhy()
     {
         var text = DexiconTools.RenderCorpus(Corpus(failed: 6));
 
@@ -154,7 +154,7 @@ public class CorpusListingTests
     }
 
     [Fact]
-    public void The_suggested_call_survives_a_name_with_a_quote_in_it()
+    public void TheSuggestedCallSurvivesANameWithAQuoteInIt()
     {
         // Only a blank name is refused, and `a"b` rendered as index_status("a"b").
         DexiconTools.RenderCorpus(Corpus(name: "a\"b", failed: 1)).ShouldContain("index_status(\"a\\\"b\")");
@@ -175,7 +175,7 @@ public class CorpusDiagnosisTests
             OwnExcludeGlobs: ownExclude ? exclude : null);
 
     [Fact]
-    public void A_file_source_says_how_it_is_filtered_and_which_filters_are_the_corpus_s()
+    public void AFileSourceSaysHowItIsFilteredAndWhichFiltersComeFromTheCorpus()
     {
         var text = DexiconTools.RenderSources(
             [Files("docs", gitignore: false, cap: 2 * 1024 * 1024, include: ["**/*.md"], exclude: ["**/draft/**"], ownExclude: false)],
@@ -186,7 +186,7 @@ public class CorpusDiagnosisTests
     }
 
     [Fact]
-    public void An_empty_list_from_the_corpus_is_not_credited_for_a_filter_that_is_not_shown()
+    public void AnEmptyListFromTheCorpusIsNotCreditedForAFilterThatIsNotShown()
     {
         var source = new SourceSummary("f", "workspace", "docs", true, 262_144, [], [], 3);
 
@@ -195,7 +195,7 @@ public class CorpusDiagnosisTests
     }
 
     [Fact]
-    public void A_history_source_s_paths_from_the_corpus_are_named_as_the_corpus_s()
+    public void AHistorySourceNamesPathsInheritedFromTheCorpusAsDefaults()
     {
         var history = new SourceSummary("h", "githistory", "repo", true, 262_144, ["src/**"], [], 10,
             Git: new Dexicon.Core.Indexing.GitHistoryOptions());
@@ -207,14 +207,14 @@ public class CorpusDiagnosisTests
     }
 
     [Fact]
-    public void One_file_is_one_file()
+    public void OneFileIsOneFile()
     {
         // Found live, on a source holding one book: "1 files".
         DexiconTools.RenderSources([Files("books/manuals", files: 1)], null).ShouldContain("files under books/manuals: 1 file found;");
     }
 
     [Fact]
-    public void A_source_that_sets_its_own_filters_names_no_corpus_default()
+    public void ASourceThatSetsItsOwnFiltersNamesNoCorpusDefault()
     {
         var text = DexiconTools.RenderSources([Files("docs", exclude: ["x"])], new CorpusDefaults(null, null, null, ["y"]));
 
@@ -223,7 +223,7 @@ public class CorpusDiagnosisTests
     }
 
     [Fact]
-    public void A_history_source_says_what_it_follows_how_current_it_is_and_what_each_commit_holds()
+    public void AHistorySourceSaysWhatItFollowsHowCurrentItIsAndWhatEachCommitHolds()
     {
         var history = new SourceSummary("h", "githistory", "", true, 262_144, ["src/**"], [], 256,
             Git: new Dexicon.Core.Indexing.GitHistoryOptions { Ref = "refs/heads/main", IncludeDiff = true, MaxCommits = 500, KeepIndexed = true },
@@ -254,7 +254,7 @@ public class CorpusDiagnosisTests
     [InlineData(52, 3, false, null, "52 behind and 3 ahead of origin/main")]
     [InlineData(null, null, true, null, "its upstream origin/main is gone")]
     [InlineData(52, 0, false, "2026-09-27T08:15:00Z", "52 behind origin/main as of the fetch at 2026-09-27 08:15 UTC")]
-    public void The_distance_from_upstream_says_what_was_observed(int? behind, int? ahead, bool gone, string? fetched, string expected)
+    public void TheDistanceFromUpstreamSaysWhatWasObserved(int? behind, int? ahead, bool gone, string? fetched, string expected)
     {
         var tracking = new Dexicon.Core.Indexing.GitTracking("refs/heads/main", "refs/heads/main",
             new Dexicon.Core.Indexing.GitUpstream("refs/remotes/origin/main", "origin/main", ahead, behind, gone),
@@ -265,7 +265,7 @@ public class CorpusDiagnosisTests
     }
 
     [Fact]
-    public void Nothing_is_said_where_nothing_was_observed()
+    public void NothingIsSaidWhereNothingWasObserved()
     {
         DexiconTools.Distance(new Dexicon.Core.Indexing.GitTracking("HEAD", null, null, null, DateTime.UtcNow)).ShouldBeNull();
         DexiconTools.Distance(new Dexicon.Core.Indexing.GitTracking("refs/heads/main", "refs/heads/main",
@@ -274,7 +274,7 @@ public class CorpusDiagnosisTests
     }
 
     [Fact]
-    public void Uploaded_documents_are_not_described_as_a_walk()
+    public void UploadedDocumentsAreNotDescribedAsAWalk()
     {
         var upload = new SourceSummary("u", "upload", null, false, int.MaxValue, [], [], 3);
 
@@ -285,7 +285,7 @@ public class CorpusDiagnosisTests
     }
 
     [Fact]
-    public void Problem_files_are_listed_with_their_reason_on_one_line_and_the_rest_counted()
+    public void ProblemFilesAreListedWithTheirReasonOnOneLineAndTheRestCounted()
     {
         var reason = "Extraction failed:\n" + new string('x', 400);
         var text = DexiconTools.RenderProblemFiles(
@@ -307,7 +307,7 @@ public class CorpusDiagnosisTests
     /// and began a line that could read as a status of its own.
     /// </summary>
     [Fact]
-    public void A_path_holding_a_line_break_stays_on_its_own_line()
+    public void APathHoldingALineBreakStaysOnItsOwnLine()
     {
         var problems = DexiconTools.RenderProblemFiles(
             [new DexiconTools.ProblemFiles("failed", 1, [("notes/a\n  skipped: 0\r\nb.md", "unreadable")])]);

@@ -42,7 +42,7 @@ public class BoundaryProgressTests
         CodeChunker.Chunk("book.pdf", text, ChunkTokens, OverlapTokens, boundaryMode: "blank-line");
 
     [Fact]
-    public void A_boundary_far_behind_the_fill_point_does_not_shred_the_file()
+    public void ABoundaryFarBehindTheFillPointDoesNotShredTheFile()
     {
         // 486 characters of prose then 11,000 of listing is the exact ratio from the book.
         var text = ProseThenListing(proseChars: 500, listingChars: 11_000);
@@ -55,7 +55,7 @@ public class BoundaryProgressTests
     }
 
     [Fact]
-    public void No_chunk_is_a_one_line_shift_of_the_one_before_it()
+    public void NoChunkIsAOneLineShiftOfTheOneBeforeIt()
     {
         // The signature of the defect: successive chunks ending on the SAME line, each
         // starting one line later. Cheap to assert and impossible to produce by accident.
@@ -71,7 +71,7 @@ public class BoundaryProgressTests
     }
 
     [Fact]
-    public void Every_chunk_carries_a_useful_amount_of_text()
+    public void EveryChunkCarriesAUsefulAmountOfText()
     {
         // A chunk far below budget is not free: it costs a vector, and it lacks the
         // context that makes an embedding worth searching.
@@ -88,7 +88,7 @@ public class BoundaryProgressTests
     }
 
     [Fact]
-    public void A_boundary_near_the_fill_point_is_still_used()
+    public void ABoundaryNearTheFillPointIsStillUsed()
     {
         // The fix must not throw away the reason boundaries exist. With blank lines
         // throughout, chunks should end ON one rather than mid-paragraph.
@@ -105,7 +105,7 @@ public class BoundaryProgressTests
     }
 
     [Fact]
-    public void Text_with_no_boundaries_at_all_still_fills_its_chunks()
+    public void TextWithNoBoundariesAtAllStillFillsItsChunks()
     {
         // The control from the real shelf: a PDF whose extraction contains no blank lines
         // chunked correctly all along, which is why this went unnoticed.
@@ -121,7 +121,7 @@ public class BoundaryProgressTests
     }
 
     [Fact]
-    public void The_whole_file_is_still_covered()
+    public void TheWholeFileIsStillCovered()
     {
         // Splitting differently must not lose text. Chunks overlap, so the union of their
         // line ranges, rather than their concatenation, has to cover every line.

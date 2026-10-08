@@ -147,7 +147,7 @@ public sealed class SourceSummaryTests
     }
 
     [Fact]
-    public void NoFilterIsAnEmptyList_NotNull()
+    public void NoFilterIsAnEmptyListNotNull()
     {
         // A caller rendering `globs.length` should not have to guard against null for the
         // ordinary case of "no filter", which is most sources.
@@ -162,7 +162,7 @@ public sealed class SourceSummaryTests
     [InlineData("   ")]
     [InlineData("not json at all")]
     [InlineData("{\"not\":\"an array\"}")]
-    public void AnUnreadableColumnIsEmpty_NotAnException(string stored)
+    public void AnUnreadableColumnIsEmptyNotAnException(string stored)
     {
         // "No filter" and "a filter we cannot read" look the same to a caller. The honest
         // one of those two is the one that does not take a screen down: a corpus listing

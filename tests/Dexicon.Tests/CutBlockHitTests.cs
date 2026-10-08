@@ -15,7 +15,7 @@ namespace Dexicon.Tests;
 /// This is the failure 05-search.md records for the search window — "head truncation was
 /// the obvious implementation and loses the answer" — arriving one layer up.
 /// </summary>
-public sealed class CutBlockKeepsTheHitTests
+public sealed class CutBlockHitTests
 {
     private static string Body(string marker) => string.Join('\n',
         Enumerable.Range(0, 12).Select(i => $"{marker} line {i} with enough text to cost something"));

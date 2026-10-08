@@ -132,7 +132,7 @@ public sealed class SearchRenderTests
     }
 
     [Fact]
-    public void Two_sources_holding_one_filename_are_told_apart()
+    public void TwoSourcesHoldingOneFilenameAreToldApart()
     {
         // The books corpus has sources manuals/AI and manuals/Philosophy, and BOTH contain
         // "Installation Guide, 2nd Edition.pdf". Rendered without their folders the two
@@ -147,7 +147,7 @@ public sealed class SearchRenderTests
     }
 
     [Fact]
-    public void One_source_does_not_repeat_its_folder_on_every_line()
+    public void OneSourceDoesNotRepeatItsFolderOnEveryLine()
     {
         // Noise that never disambiguates anything is still noise, and every token of it is
         // read by something paying per token.

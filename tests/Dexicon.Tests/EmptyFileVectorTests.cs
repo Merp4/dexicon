@@ -11,10 +11,10 @@ namespace Dexicon.Tests;
 /// A file that is still on disk and still walked is therefore nobody's job to clean up,
 /// so it kept answering searches with text it no longer contains.
 /// </summary>
-public sealed class EmptyFileLosesItsVectorsTests
+public sealed class EmptyFileVectorTests
 {
     [Fact]
-    public async Task AFileWhoseTextDisappears_LosesTheVectorsItHad()
+    public async Task AFileWhoseTextDisappearsLosesTheVectorsItHad()
     {
         await using var harness = await IndexingHarness.StartAsync();
         await harness.SeedCorpusAsync(SourceKind.Workspace);
@@ -40,7 +40,7 @@ public sealed class EmptyFileLosesItsVectorsTests
     }
 
     [Fact]
-    public async Task AFileTruncatedToNothing_LosesTheVectorsItHad()
+    public async Task AFileTruncatedToNothingLosesTheVectorsItHad()
     {
         await using var harness = await IndexingHarness.StartAsync();
         await harness.SeedCorpusAsync(SourceKind.Workspace);
@@ -63,7 +63,7 @@ public sealed class EmptyFileLosesItsVectorsTests
     }
 
     [Fact]
-    public async Task AnUploadedDocumentThatExtractsToNothing_LosesTheVectorsItHad()
+    public async Task AnUploadedDocumentThatExtractsToNothingLosesTheVectorsItHad()
     {
         await using var harness = await IndexingHarness.StartAsync();
         await harness.SeedCorpusAsync(SourceKind.Upload);

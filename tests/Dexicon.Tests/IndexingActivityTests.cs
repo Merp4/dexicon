@@ -64,7 +64,7 @@ public sealed class IndexingActivityTests
     }
 
     [Fact]
-    public async Task A_queued_job_makes_the_corpus_and_every_set_it_covers_indexing()
+    public async Task AQueuedJobMakesTheCorpusAndEverySetItCoversIndexing()
     {
         await using var harness = await StartAsync(sets: 2);
         await AddJobAsync(harness, JobState.Queued);
@@ -76,7 +76,7 @@ public sealed class IndexingActivityTests
     }
 
     [Fact]
-    public async Task A_job_for_one_set_makes_that_set_and_the_corpus_indexing_and_not_the_other_set()
+    public async Task AJobForOneSetMakesThatSetAndTheCorpusIndexingAndNotTheOtherSet()
     {
         // The live set is complete while its replacement backfills, and says so.
         await using var harness = await StartAsync(sets: 2);
@@ -90,7 +90,7 @@ public sealed class IndexingActivityTests
     }
 
     [Fact]
-    public async Task A_running_job_counts_while_it_holds_a_live_lease_and_stops_counting_when_the_lease_lapses()
+    public async Task ARunningJobCountsWhileItHoldsALiveLeaseAndStopsCountingWhenTheLeaseLapses()
     {
         await using var harness = await StartAsync();
         await AddJobAsync(harness, JobState.Running);
@@ -107,7 +107,7 @@ public sealed class IndexingActivityTests
     }
 
     [Fact]
-    public async Task A_running_job_that_never_took_or_has_released_the_lease_does_not_count()
+    public async Task ARunningJobThatNeverTookOrHasReleasedTheLeaseDoesNotCount()
     {
         await using var harness = await StartAsync();
         await AddJobAsync(harness, JobState.Running);
@@ -117,7 +117,7 @@ public sealed class IndexingActivityTests
     }
 
     [Fact]
-    public async Task A_running_job_does_not_count_on_a_lease_that_is_someone_elses()
+    public async Task ARunningJobDoesNotCountOnALeaseThatIsSomeoneElses()
     {
         // A sweep holds the corpus. That is not this job working, and a row left Running by a
         // job that died must not read as work for as long as a sweep happens to run.
@@ -133,7 +133,7 @@ public sealed class IndexingActivityTests
     [InlineData(JobState.Failed)]
     [InlineData(JobState.Degraded)]
     [InlineData(JobState.Cancelled)]
-    public async Task A_finished_job_does_not_count_whatever_lease_is_left(JobState state)
+    public async Task AFinishedJobDoesNotCountWhateverLeaseIsLeft(JobState state)
     {
         await using var harness = await StartAsync();
         await AddJobAsync(harness, state);
@@ -143,7 +143,7 @@ public sealed class IndexingActivityTests
     }
 
     [Fact]
-    public async Task A_job_for_another_corpus_does_not_count()
+    public async Task AJobForAnotherCorpusDoesNotCount()
     {
         await using var harness = await StartAsync();
         await using (var db = harness.NewContext())
@@ -160,7 +160,7 @@ public sealed class IndexingActivityTests
     [Theory]
     [InlineData(CorpusState.Degraded)]
     [InlineData(CorpusState.Unavailable)]
-    public async Task A_job_that_stops_leaves_the_outcome_of_the_last_pass(CorpusState outcome)
+    public async Task AJobThatStopsLeavesTheOutcomeOfTheLastPass(CorpusState outcome)
     {
         // What a reader sees once nothing counts is what was stored, so there is nothing to
         // reconstruct from the job history.
@@ -182,7 +182,7 @@ public sealed class IndexingActivityTests
     [Theory]
     [InlineData(CorpusState.Degraded)]
     [InlineData(CorpusState.Unavailable)]
-    public async Task A_cancelled_pass_leaves_the_outcome_of_the_last_pass(CorpusState outcome)
+    public async Task ACancelledPassLeavesTheOutcomeOfTheLastPass(CorpusState outcome)
     {
         // A cancelled pass used to set the corpus and its sets Ready, which cleared the
         // Indexing state the start of a pass wrote. Nothing writes that now, so it would have
@@ -216,7 +216,7 @@ public sealed class IndexingActivityTests
     // ---- what the API reports ---------------------------------------------------------
 
     [Fact]
-    public async Task The_corpus_summary_says_indexing_while_a_job_works_and_the_stored_outcome_after()
+    public async Task TheCorpusSummarySaysIndexingWhileAJobWorksAndTheStoredOutcomeAfter()
     {
         await using var harness = await StartAsync(sets: 2);
         await AddJobAsync(harness, JobState.Queued, chunkSetId: "set-2");
@@ -246,7 +246,7 @@ public sealed class IndexingActivityTests
     }
 
     [Fact]
-    public async Task The_refresh_tick_refreshes_a_corpus_nothing_is_working_on()
+    public async Task TheRefreshTickRefreshesACorpusNothingIsWorkingOn()
     {
         await using var harness = await StartAsync();
 
@@ -256,7 +256,7 @@ public sealed class IndexingActivityTests
     }
 
     [Fact]
-    public async Task The_refresh_tick_leaves_a_corpus_a_live_job_is_working_on()
+    public async Task TheRefreshTickLeavesACorpusALiveJobIsWorkingOn()
     {
         await using var harness = await StartAsync();
         await AddJobAsync(harness, JobState.Running);
@@ -268,7 +268,7 @@ public sealed class IndexingActivityTests
     }
 
     [Fact]
-    public async Task The_refresh_tick_leaves_a_corpus_that_has_a_queued_job()
+    public async Task TheRefreshTickLeavesACorpusThatHasAQueuedJob()
     {
         await using var harness = await StartAsync();
         await AddJobAsync(harness, JobState.Queued);
@@ -280,7 +280,7 @@ public sealed class IndexingActivityTests
     }
 
     [Fact]
-    public async Task The_refresh_tick_refreshes_a_corpus_whose_job_stopped_without_saying_so()
+    public async Task TheRefreshTickRefreshesACorpusWhoseJobStoppedWithoutSayingSo()
     {
         // The state a full disk left: the job reads Running and nothing renews its lease. It
         // held the corpus out of every refresh for hours, until a restart.
@@ -296,7 +296,7 @@ public sealed class IndexingActivityTests
     // ---- the migration ----------------------------------------------------------------
 
     [Fact]
-    public async Task The_migration_is_applied_to_a_new_catalogue_with_nothing_left_pending()
+    public async Task TheMigrationIsAppliedToANewCatalogueWithNothingLeftPending()
     {
         // The harness builds its catalogue without migrations, so this is the one test that
         // shows this one is found and runs, and that it left the model as the snapshot has it.
@@ -320,7 +320,7 @@ public sealed class IndexingActivityTests
     }
 
     [Fact]
-    public async Task The_migration_clears_a_stored_indexing_state_and_leaves_every_other_one()
+    public async Task TheMigrationClearsAStoredIndexingStateAndLeavesEveryOtherOne()
     {
         await using var harness = await StartAsync(sets: 3);
         await using var db = harness.NewContext();
