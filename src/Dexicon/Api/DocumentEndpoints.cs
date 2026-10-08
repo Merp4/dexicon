@@ -40,6 +40,9 @@ public static class DocumentEndpoints
     /// <summary>The <see cref="UploadFailure.File"/> of a failure that belongs to the request, not to a file.</summary>
     internal const string RequestFailureName = "(request)";
 
+    /// <summary>The start of the text <see cref="MultipartReader"/> throws when the body ends early.</summary>
+    private const string TruncatedBodyMessage = "Unexpected end of Stream";
+
     /// <summary>
     /// Detach an uploaded document from a corpus (the blob survives; other corpora may still use it).
     /// A method of its own, and the one the route is mapped to, so a test calls the handler that
@@ -152,6 +155,16 @@ public static class DocumentEndpoints
             malformed = ex.Message;
             failures.Add(new UploadFailure(RequestFailureName, $"The multipart body could not be read: {ex.Message}"));
         }
+        // The body ended before its closing boundary: a client that stopped sending, or a proxy
+        // that cut it. The reader reports that as an IOException, as a failing disk would be, so
+        // it is the client's fault only when the request stream really ended and the message is
+        // the reader's. Any other IOException is the server's and stays a 500.
+        catch (IOException ex) when (body.ReachedEnd
+                                     && ex.Message.StartsWith(TruncatedBodyMessage, StringComparison.Ordinal))
+        {
+            malformed = "The body ended before its closing boundary.";
+            failures.Add(new UploadFailure(RequestFailureName, $"The multipart body could not be read: {malformed}"));
+        }
 
         if (stored.Count == 0)
         {
@@ -208,6 +221,9 @@ public static class DocumentEndpoints
     {
         private long _read;
 
+        /// <summary>Whether the request stream has been read to its end.</summary>
+        public bool ReachedEnd { get; private set; }
+
         public override bool CanRead => true;
         public override bool CanSeek => false;
         public override bool CanWrite => false;
@@ -228,6 +244,7 @@ public static class DocumentEndpoints
 
         private int Counted(int read)
         {
+            if (read == 0) ReachedEnd = true;
             _read += read;
             if (_read > limit) throw new UploadTooLargeException();
             return read;

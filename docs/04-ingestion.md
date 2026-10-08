@@ -220,6 +220,12 @@ when the client declares its `Content-Length`, and otherwise when the body reach
 Files stored before the bound was reached stay stored, and the response lists the overrun
 under `failed` as `(request)`.
 
+A body that ends before its closing boundary, or whose headers are over the reader's limits, is
+treated the same way: files completed before it stay stored and are indexed, the response lists
+the cause under `failed` as `(request)`, and when nothing was stored the answer is `400`
+"Malformed multipart upload". The Documents screen names each file in `failed` under the count it
+stored.
+
 The blob store writes each file to a temp file under `/data/blobs` before the hash is
 known, because the hash is only known once the whole stream is read and a 200 MB upload
 should not be a 200 MB allocation. See [10](10-security-secrets.md#input-handling).

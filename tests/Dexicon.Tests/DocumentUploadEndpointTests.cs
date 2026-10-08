@@ -37,7 +37,8 @@ public sealed class DocumentUploadEndpointTests
     private sealed record Posted(IResult Result, long BytesRead, long BodyLength, bool BufferedToATempFile);
 
     private static async Task<Posted> PostAsync(
-        IndexingHarness harness, MultipartBody body, RequestContext? rc = null, bool declareLength = false)
+        IndexingHarness harness, MultipartBody body, RequestContext? rc = null, bool declareLength = false,
+        Func<Stream, Stream>? wrap = null)
     {
         await using var db = harness.NewContext();
         var options = Options.Create(new DexiconOptions
@@ -51,7 +52,7 @@ public sealed class DocumentUploadEndpointTests
         var http = new DefaultHttpContext();
         http.Request.Method = "POST";
         http.Request.ContentType = MultipartBody.ContentType;
-        http.Request.Body = stream;
+        http.Request.Body = wrap is null ? stream : wrap(stream);
         if (declareLength) http.Request.ContentLength = body.Length;
 
         var result = await DocumentEndpoints.UploadAsync(
@@ -247,6 +248,54 @@ public sealed class DocumentUploadEndpointTests
     }
 
     [Fact]
+    public async Task ABodyThatEndsBeforeItsClosingBoundaryIsRefusedAs400AndStoresNothing()
+    {
+        // The reader reports this as an IOException, which nothing caught: a 500 for a client's
+        // mistake.
+        await using var harness = await StartAsync();
+
+        var posted = await PostAsync(harness, new MultipartBody().File("files", "only.txt", 100, 'a').Truncated());
+
+        var refused = posted.Result.ShouldBeOfType<ProblemHttpResult>();
+        refused.StatusCode.ShouldBe(400);
+        refused.ProblemDetails.Title.ShouldBe("Malformed multipart upload");
+        refused.ProblemDetails.Detail.ShouldBe("The body ended before its closing boundary.");
+        await using var db = harness.NewContext();
+        (await db.Jobs.CountAsync()).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task FilesStoredBeforeATruncatedPartStayStoredAndAreIndexed()
+    {
+        // The first file completed before the body was cut. Without the catch the request threw
+        // after attaching it, so no indexing job was queued for it.
+        await using var harness = await StartAsync();
+        var body = new MultipartBody().File("files", "first.txt", 100, 'a').File("files", "second.txt", 100, 'b').Truncated();
+
+        var posted = await PostAsync(harness, body);
+
+        var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
+        accepted.Stored.Select(s => s.FileName).ShouldBe(["first.txt"]);
+        accepted.Failed.Select(f => f.File).ShouldBe([DocumentEndpoints.RequestFailureName]);
+        accepted.Failed[0].Error.ShouldContain("closing boundary");
+        await using var db = harness.NewContext();
+        (await db.Jobs.CountAsync()).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AnIoFailureThatIsNotTheEndOfTheBodyStaysAServerError()
+    {
+        // Control: only the reader's own "ended early" is the client's mistake. A read that fails
+        // for another reason (here partway through a file) is not reported as a malformed upload.
+        await using var harness = await StartAsync();
+
+        var thrown = await Should.ThrowAsync<IOException>(() => PostAsync(
+            harness, new MultipartBody().File("files", "only.txt", 500, 'a'), wrap: s => new FailingAfter(s, 300)));
+
+        thrown.Message.ShouldBe("the disk is full");
+    }
+
+    [Fact]
     public async Task ABodyThatIsNotMultipartIsRefusedAs415WithoutBeingRead()
     {
         await using var harness = await StartAsync();
@@ -316,6 +365,38 @@ public sealed class DocumentUploadEndpointTests
         }
     }
 
+    /// <summary>Reads through to <paramref name="inner"/>, then fails with an <see cref="IOException"/> once <paramref name="after"/> bytes have been read.</summary>
+    private sealed class FailingAfter(Stream inner, long after) : Stream
+    {
+        private long _read;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => _read; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+
+        public override int Read(Span<byte> buffer)
+        {
+            if (_read >= after) throw new IOException("the disk is full");
+            var read = inner.Read(buffer[..(int)Math.Min(buffer.Length, after - _read)]);
+            _read += read;
+            return read;
+        }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(Read(buffer.Span));
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            Task.FromResult(Read(buffer.AsSpan(offset, count)));
+    }
+
     /// <summary>A body that fails the test if anything reads it.</summary>
     private sealed class UnreadableStream : Stream
     {
@@ -340,10 +421,18 @@ public sealed class DocumentUploadEndpointTests
     {
         private const string Boundary = "dexicon-test-boundary";
         private readonly List<Segment> _segments = [];
+        private bool _truncated;
 
         public static string ContentType => $"multipart/form-data; boundary={Boundary}";
 
-        public long Length => _segments.Sum(s => s.Length) + Closing.Length;
+        public long Length => _segments.Sum(s => s.Length) + (_truncated ? 0 : Closing.Length);
+
+        /// <summary>Ends the body after the last part, without the closing boundary.</summary>
+        public MultipartBody Truncated()
+        {
+            _truncated = true;
+            return this;
+        }
 
         private static byte[] Closing => Encoding.UTF8.GetBytes($"--{Boundary}--\r\n");
 
@@ -369,7 +458,7 @@ public sealed class DocumentUploadEndpointTests
         }
 
         public BodyStream Open(Action<long> onRead) =>
-            new([.. _segments, new Segment(Closing, Closing.Length, 0)], onRead);
+            new(_truncated ? [.. _segments] : [.. _segments, new Segment(Closing, Closing.Length, 0)], onRead);
     }
 
     /// <summary>A run of a body: literal bytes, or <paramref name="Length"/> copies of <paramref name="Fill"/>.</summary>

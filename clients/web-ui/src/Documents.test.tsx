@@ -225,3 +225,69 @@ describe('the document library', () => {
     expect(noop.onError).not.toHaveBeenCalled();
   });
 });
+
+describe('uploading a batch', () => {
+  const stored = (fileName: string) => ({ fileName, deduplicated: false });
+
+  async function renderReady() {
+    const user = userEvent.setup();
+    const { container } = render(<DocumentsView corpora={[corpus('library')]} {...noop} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /choose files/i })).toBeEnabled());
+    return { user, input: container.querySelector('input[type="file"]') as HTMLInputElement };
+  }
+
+  /**
+   * A batch is accepted when any file is stored, and the files the server refused come back in
+   * `failed`. The screen said "1 file stored." and nothing else, so a file over the size cap
+   * vanished from a drop of two with no reason anywhere.
+   */
+  it('names each file the server refused beside the count it stored', async () => {
+    uploadDocuments.mockResolvedValue({
+      corpus: 'library',
+      stored: [stored('notes.txt')],
+      failed: [
+        { file: 'huge.iso', error: 'huge.iso is over the 200 MB limit.' },
+        { file: '(request)', error: 'The request is over the 2.0 GB bound.' },
+      ],
+      job: {},
+    });
+    const { user, input } = await renderReady();
+
+    await user.upload(input, [new File(['x'], 'notes.txt'), new File(['x'], 'huge.iso')]);
+
+    expect(await screen.findByText('1 file stored.')).toBeInTheDocument();
+    expect(screen.getByText('2 files not stored:')).toBeInTheDocument();
+    expect(screen.getByText('huge.iso: huge.iso is over the 200 MB limit.')).toBeInTheDocument();
+    // A failure of the request as a whole is not attributed to a file called "(request)".
+    expect(screen.getByText('The request is over the 2.0 GB bound.')).toBeInTheDocument();
+    expect(screen.queryByText(/\(request\)/)).not.toBeInTheDocument();
+  });
+
+  it('says nothing about refused files when none were refused', async () => {
+    uploadDocuments.mockResolvedValue({
+      corpus: 'library', stored: [stored('notes.txt')], failed: [], job: {},
+    });
+    const { user, input } = await renderReady();
+
+    await user.upload(input, new File(['x'], 'notes.txt'));
+
+    expect(await screen.findByText('1 file stored.')).toBeInTheDocument();
+    expect(screen.queryByText(/not stored/)).not.toBeInTheDocument();
+  });
+
+  it("clears the previous batch's refusals when the next upload starts", async () => {
+    uploadDocuments.mockResolvedValueOnce({
+      corpus: 'library', stored: [stored('a.txt')], failed: [{ file: 'b.bin', error: "'b.bin' is empty." }], job: {},
+    });
+    uploadDocuments.mockResolvedValueOnce({
+      corpus: 'library', stored: [stored('c.txt')], failed: [], job: {},
+    });
+    const { user, input } = await renderReady();
+
+    await user.upload(input, new File(['x'], 'a.txt'));
+    expect(await screen.findByText('1 file not stored:')).toBeInTheDocument();
+    await user.upload(input, new File(['x'], 'c.txt'));
+
+    await waitFor(() => expect(screen.queryByText(/not stored/)).not.toBeInTheDocument());
+  });
+});
