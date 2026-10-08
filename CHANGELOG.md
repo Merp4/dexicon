@@ -21,9 +21,11 @@ with no section here fails its release rather than publishing an undescribed one
 ### ⚠️ Upgrading
 
 - One migration, `GrantDestroyToIngestKeys`, applied at startup. Data only: it appends `destroy`
-  once to every key that holds `ingest`, including the key adopted from
-  `DEXICON__BOOTSTRAP__TOKEN` on an existing install, so none of them stops being able to detach
-  a document. It cannot be undone, and a 0.6.6 started afterwards ignores the extra word.
+  once to every key that holds `ingest` when it runs, so none of them stops being able to detach
+  a document. That includes the key adopted from `DEXICON__BOOTSTRAP__TOKEN` if its row already
+  exists. A token value adopted for the first time after the upgrade is a new key, holds `search`
+  and `ingest` only, and needs `destroy` added to detach. The migration cannot be undone, and a
+  0.6.6 started afterwards ignores the extra word.
 - `DELETE /api/corpora/{id}/documents/{fileId}` needs `destroy` and no longer `ingest`. A key
   issued from now on is given what is ticked, and `destroy` is never ticked for a new key, so a
   script that detaches documents with a new key needs `destroy` added, on the Access page or with
@@ -54,9 +56,10 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Fixed
 
-- **The detach endpoint reached files a source had read.** It took any file id in the corpus, so
-  a key that could search, and was listed those ids, could remove a workspace or history file's
-  vectors and catalogue row. Only an uploaded document is detached now, in the cleanup and in
+- **The detach endpoint reached files a source had read.** It took any file id in the corpus, so a
+  key holding the scope it needed (`ingest` until now) could remove a workspace or history file's
+  vectors and catalogue row by giving an id that `GET /api/corpora/{id}/files` lists to a key that
+  can search. Only an uploaded document is detached now, in the cleanup and in
   `DocumentService.DetachAsync`, which the approved removal of a document uses too.
 
 ## 0.6.6 — 2026-10-08
