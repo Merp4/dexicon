@@ -308,6 +308,13 @@ public sealed class DocumentService(
     }
 
     /// <summary>
+    /// Stop tracking changes that were not saved. After a save that was cancelled the context still
+    /// holds what that save was going to write, and the next save, from anything sharing the
+    /// context, would write it. Called when the caller means to carry on without the failed step.
+    /// </summary>
+    public void DiscardUnsavedChanges() => db.ChangeTracker.Clear();
+
+    /// <summary>
     /// Mark a file as needing re-indexing in EVERY chunk set. A rename invalidates chunks
     /// keyed by file path, and replaced bytes invalidate the chunks themselves, in both
     /// cases for all sets at once, because they all read the same attachment.

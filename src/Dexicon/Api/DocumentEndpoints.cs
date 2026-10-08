@@ -37,8 +37,8 @@ public sealed record LibraryAttachment(
 
 public static class DocumentEndpoints
 {
-    /// <summary>The <see cref="UploadFailure.File"/> of a failure that belongs to the request, not to a file.</summary>
-    internal const string RequestFailureName = "(request)";
+    /// <summary>The start of the text <see cref="MultipartReader"/> throws when the body ends early.</summary>
+    private const string TruncatedBodyMessage = "Unexpected end of Stream";
 
     /// <summary>
     /// Detach an uploaded document from a corpus (the blob survives; other corpora may still use it).
@@ -142,15 +142,36 @@ public static class DocumentEndpoints
                 }
             }
         }
+        // The caller went away partway through. A file stored before that is attached already, so
+        // it is queued below like the rest; with nothing stored there is nothing to finish and the
+        // cancellation propagates as before.
+        catch (OperationCanceledException) when (ct.IsCancellationRequested && stored.Count > 0)
+        {
+            // The file that was being attached when the save was cancelled is still tracked as added.
+            // The save below is not cancellable, so it would persist that file, which is not in
+            // `stored`. Only the files reported above stay.
+            documents.DiscardUnsavedChanges();
+            failures.Add(new UploadFailure(null, "The connection closed before the upload finished."));
+        }
         catch (UploadTooLargeException)
         {
             overran = true;
-            failures.Add(new UploadFailure(RequestFailureName, TooLargeMessage(upload)));
+            failures.Add(new UploadFailure(null, TooLargeMessage(upload)));
         }
         catch (InvalidDataException ex)
         {
             malformed = ex.Message;
-            failures.Add(new UploadFailure(RequestFailureName, $"The multipart body could not be read: {ex.Message}"));
+            failures.Add(new UploadFailure(null, $"The multipart body could not be read: {ex.Message}"));
+        }
+        // The body ended before its closing boundary: a client that stopped sending, or a proxy
+        // that cut it. The reader reports that as an IOException, as a failing disk would be, so
+        // it is the client's fault only when the request stream really ended and the message is
+        // the reader's. Any other IOException is the server's and stays a 500.
+        catch (IOException ex) when (body.ReachedEnd
+                                     && ex.Message.StartsWith(TruncatedBodyMessage, StringComparison.Ordinal))
+        {
+            malformed = "The body ended before its closing boundary.";
+            failures.Add(new UploadFailure(null, $"The multipart body could not be read: {malformed}"));
         }
 
         if (stored.Count == 0)
@@ -165,16 +186,50 @@ public static class DocumentEndpoints
 
             return Results.Problem(
                 title: "No files could be stored",
-                detail: string.Join("; ", failures.Select(f => $"{f.File}: {f.Error}")),
+                detail: string.Join("; ", failures.Select(f => f.File is null ? f.Error : $"{f.File}: {f.Error}")),
                 statusCode: 400);
         }
 
         // Chunking and embedding happen in the indexer, not on the request thread:
         // a 400-page PDF outlasts any sensible HTTP timeout.
-        var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
+        //
+        // Not cancellable: the files are attached, and the job is what indexes them. A cancel
+        // between the two left documents attached with nothing queued until the next refresh,
+        // as in CorpusConfiguration.
+        var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: CancellationToken.None);
 
         return Results.Accepted($"/api/jobs/{job.Id}",
             new UploadResponse(corpus.Name, stored, failures, job.ToSummary()));
+    }
+
+    /// <summary>
+    /// Attach a stored document to another corpus. A method of its own, and the one the route is
+    /// mapped to, so a test calls the handler that runs.
+    /// </summary>
+    internal static async Task<IResult> AttachAsync(
+        string nameOrId, AttachDocumentRequest body, RequestContext rc, ScopeResolver scopes,
+        DocumentService documents, CatalogDbContext db, IndexJobQueue queue, CancellationToken ct)
+    {
+        if (rc.RequireScope(Scopes.Ingest) is { } denied) return denied;
+        var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
+
+        var blob = await db.Blobs.FirstOrDefaultAsync(b => b.Sha256 == body.Sha256, ct);
+        if (blob is null) return Results.Problem(title: "No such document", statusCode: 404);
+
+        // This is the point of the whole design: the same bytes, chunked this
+        // corpus's way, without re-uploading or re-extracting anything.
+        var name = body.FileName ?? blob.OriginalFileName ?? body.Sha256[..12];
+        var file = await documents.AttachAsync(corpus, body.Sha256, name, ct);
+
+        // Not cancellable, as in UploadAsync: the attachment is saved and the job indexes it.
+        var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: CancellationToken.None);
+
+        return Results.Accepted($"/api/jobs/{job.Id}", new DocumentAttached(
+            corpus.Name, file.Id, name,
+            // Every set, because attaching queues the document into all of them.
+            [.. corpus.ChunkSets.Select(s => new AttachedChunking(
+                s.Name, s.ChunkSize, s.ChunkOverlap, s.BoundaryMode, s.EmbeddingModel))],
+            job.ToSummary()));
     }
 
     /// <summary>
@@ -208,6 +263,9 @@ public static class DocumentEndpoints
     {
         private long _read;
 
+        /// <summary>Whether the request stream has been read to its end.</summary>
+        public bool ReachedEnd { get; private set; }
+
         public override bool CanRead => true;
         public override bool CanSeek => false;
         public override bool CanWrite => false;
@@ -228,6 +286,7 @@ public static class DocumentEndpoints
 
         private int Counted(int read)
         {
+            if (read == 0) ReachedEnd = true;
             _read += read;
             if (_read > limit) throw new UploadTooLargeException();
             return read;
@@ -243,29 +302,8 @@ public static class DocumentEndpoints
             .Produces<UploadResponse>(StatusCodes.Status202Accepted).DisableAntiforgery();
 
         // ── Attach an already-stored document to another corpus ─────────────
-        g.MapPost("/corpora/{nameOrId}/documents/attach", async (
-            string nameOrId, AttachDocumentRequest body, RequestContext rc, ScopeResolver scopes,
-            DocumentService documents, CatalogDbContext db, IndexJobQueue queue, CancellationToken ct) =>
-        {
-            if (rc.RequireScope(Scopes.Ingest) is { } denied) return denied;
-            var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
-
-            var blob = await db.Blobs.FirstOrDefaultAsync(b => b.Sha256 == body.Sha256, ct);
-            if (blob is null) return Results.Problem(title: "No such document", statusCode: 404);
-
-            // This is the point of the whole design: the same bytes, chunked this
-            // corpus's way, without re-uploading or re-extracting anything.
-            var name = body.FileName ?? blob.OriginalFileName ?? body.Sha256[..12];
-            var file = await documents.AttachAsync(corpus, body.Sha256, name, ct);
-            var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
-
-            return Results.Accepted($"/api/jobs/{job.Id}", new DocumentAttached(
-                corpus.Name, file.Id, name,
-                // Every set, because attaching queues the document into all of them.
-                [.. corpus.ChunkSets.Select(s => new AttachedChunking(
-                    s.Name, s.ChunkSize, s.ChunkOverlap, s.BoundaryMode, s.EmbeddingModel))],
-                job.ToSummary()));
-        }).Produces<DocumentAttached>(StatusCodes.Status202Accepted);
+        g.MapPost("/corpora/{nameOrId}/documents/attach", AttachAsync)
+            .Produces<DocumentAttached>(StatusCodes.Status202Accepted);
 
         // ── Detach (the blob survives; other corpora may still use it) ──────
         g.MapDelete("/corpora/{nameOrId}/documents/{fileId}", DetachAsync).Produces(StatusCodes.Status204NoContent);

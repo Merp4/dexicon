@@ -27,6 +27,68 @@ with no section here fails its release rather than publishing an undescribed one
   chunk set whose framing was saved from the tagged Models row picks it up on its next pass and
   re-embeds, which is what saving the framing already said it would do. The migration cannot be
   undone.
+- A document upload is bounded as a request: ten files at `DEXICON__UPLOAD__MAXFILEBYTES` plus
+  1 MiB of multipart framing, which is 2,098,200,576 bytes at the default. A body that declares a
+  larger length, or that crosses the bound before any file is stored, answers `413` "Upload too
+  large" with a message that names the bound. When files were stored before the bound was
+  crossed they stay stored and the answer is `202`, with the overrun listed under `failed` with a
+  `null` `file`, so a script checks `failed` and does not treat every `202` as a full success.
+  `failed[].file` is `null` for any failure of the request as a whole and a file's name otherwise.
+  Only the per-file cap applied before. A script that posts a batch beyond the bound needs to
+  split it.
+- The skill changes (`dexicon-skill-version: 6`). Running `scripts/install-mcp.ps1` again
+  upgrades installed copies. The hooks are unchanged.
+
+### Changed
+
+- **An upload is streamed into the blob store.** The endpoint read the whole multipart form into
+  `/tmp`, a tmpfs in the compose file, before the per-file cap applied: a 400 MB file held
+  400 MiB for about 8 seconds. Each file now goes from the connection into the store under the
+  cap, and the peak in `/tmp` measured 0 for a 400 MB file, a 50 MB file and a mixed batch. A file
+  over the cap or an empty one is listed in the response's `failed` array and the files beside
+  it are stored.
+- **The OpenAPI documents declare the status each operation returns.** Twelve operations answered
+  201, 202 or 204 while declaring 200, so a generated client typed the wrong response. The
+  committed documents and the typed web client are regenerated.
+- **The first-start log and the sign-in screen say how to read the admin password.** It is the
+  quoted value on the third line after `admin password`, so the commands read
+  `grep -A 2 "admin password"`. The banner no longer says the password can be changed in the UI;
+  a value set in `DEXICON_ADMIN_PASSWORD` is applied on every start and nothing else changes it.
+  The warning for an embedding provider that cannot embed names the provider and model it tried.
+- **`scripts/backup.sh` stops Qdrant as well as Dexicon during the backup,** restarts what it
+  stopped even when the archive fails, exits nonzero if that restart fails, and takes the Compose
+  project name from `.env`. It had archived an empty volume under a project name set there.
+- **The Documents screen names each file the server refused.** A drop of several files showed
+  only "N files stored", so a file over the size cap or an empty one vanished without a reason.
+  Each is listed with its reason under the count, and a failure of the whole request is listed
+  without a file name.
+
+### Fixed
+
+- **A framing saved from the tagged Models row never reached a set recorded without the tag.**
+  Ollama lists `embeddinggemma:latest` and a set records `embeddinggemma`; a saved framing and a
+  measurement were stored under the name they were sent with, so the indexer read a different
+  row and saving answered `reindexing: []`. Both are now stored and read under the lower-case
+  name without `:latest`, saving rebuilds every set on the model whichever spelling it records,
+  and the rebuilds are not cancelled once the framing is committed. The **default for new
+  corpora** badge also requires the default provider. See Upgrading for the migration.
+- **Two sources holding the same file path were read as one text.** `GET /api/corpora/{x}/file`
+  and the `dexicon://` file resource stitched the chunks of both into one text with no warning.
+  They read the source with the most chunks and say how many sources hold the path, as
+  `get_context` already did, counting a source whose copy is empty.
+- **A body that ends before its closing boundary answered 500.** Files completed before the cut
+  stay stored and are now indexed, the cause is listed under `failed`, and with nothing stored
+  the answer is `400` "Malformed multipart upload".
+- **A client that disconnected after documents were attached left them waiting for the next
+  refresh.** The job that indexes an upload, an attach to another corpus, or a new corpus created
+  with a folder was queued on the request's token, so a cancel between the save and the job left
+  the saved change with nothing queued. The job is no longer cancellable once the change is
+  saved, and an upload cut off partway keeps and indexes the files completed before it. The file
+  being attached at the moment of the cut is discarded, not saved without being reported.
+- **Stale developer scripts.** `scripts/screenshot.mjs` signs in with an admin session instead of
+  an API key, which never carries `admin`; `scripts/retrieval-bench.py` queries files and content
+  that exist; `scripts/bench/sweep.py` signs in as admin; `scripts/dev.ps1 password` returns the
+  password. The unused Markdig package is removed from `Dexicon.Core`.
 
 ## 0.6.7 — 2026-10-08
 

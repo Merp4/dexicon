@@ -175,7 +175,14 @@ public sealed record WorkspaceListing(string Root, string Path, IReadOnlyList<Wo
 /// <param name="Listing">The refs, when it is one.</param>
 public sealed record GitRefsResponse(string Path, bool IsRepository, GitRefListing? Listing);
 
-public sealed record UploadFailure(string File, string Error);
+/// <summary>A file an upload refused, or a failure of the request as a whole.</summary>
+/// <param name="File">
+/// The file's name. Null when the failure belongs to the request and not to a file: a body over the
+/// bound, one that cannot be read, a connection that closed. A file's own name is never a marker, since
+/// any name is a legal one.
+/// </param>
+/// <param name="Error">Why.</param>
+public sealed record UploadFailure(string? File, string Error);
 
 public sealed record UploadResponse(
     string Corpus, IReadOnlyList<UploadedDocumentResponse> Stored,

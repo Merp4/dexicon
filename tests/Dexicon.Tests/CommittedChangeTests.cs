@@ -8,8 +8,10 @@ using Dexicon.Core.Search;
 using Dexicon.Core.Vectors;
 using Dexicon.Infrastructure;
 using Dexicon.Mcp;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol;
 
 namespace Dexicon.Tests;
@@ -38,7 +40,7 @@ public sealed class CommittedChangeTests
     /// The command then honours the token it was given, as a driver that supports cancellation
     /// does: SQLite's does not, so without it a cancel in this window is invisible here.
     /// </summary>
-    private sealed class CancelAfterWriteTo(string table) : DbCommandInterceptor
+    internal sealed class CancelAfterWriteTo(string table) : DbCommandInterceptor
     {
         private bool _written;
 
@@ -135,13 +137,13 @@ public sealed class CommittedChangeTests
         (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh)).ShouldBe(1, "the saved source has its job");
     }
 
-    /// <summary>A vector store whose collection setup fails, as Qdrant being down does, after the corpus is saved.</summary>
-    private sealed class EnsureThrows(IVectorStore inner) : IVectorStore
+    /// <summary>A vector store that passes everything to <paramref name="inner"/>, for a test to override one call.</summary>
+    private class ForwardingStore(IVectorStore inner) : IVectorStore
     {
         public string CollectionNameFor(EmbeddingTarget target, int dimensions) => inner.CollectionNameFor(target, dimensions);
 
-        public Task EnsureCollectionAsync(string collection, int dimensions, CancellationToken ct = default) =>
-            throw new InvalidOperationException("Qdrant is not answering");
+        public virtual Task EnsureCollectionAsync(string collection, int dimensions, CancellationToken ct = default) =>
+            inner.EnsureCollectionAsync(collection, dimensions, ct);
 
         public Task UpsertAsync(string collection, IReadOnlyList<Chunk> chunks, IReadOnlyList<float[]> vectors,
             CancellationToken ct = default) => inner.UpsertAsync(collection, chunks, vectors, ct);
@@ -170,6 +172,51 @@ public sealed class CommittedChangeTests
             inner.GetStatsAsync(collection, ct);
 
         public Task<bool> PingAsync(CancellationToken ct = default) => inner.PingAsync(ct);
+    }
+
+    /// <summary>A vector store whose collection setup fails, as Qdrant being down does, after the corpus is saved.</summary>
+    private sealed class EnsureThrows(IVectorStore inner) : ForwardingStore(inner)
+    {
+        public override Task EnsureCollectionAsync(string collection, int dimensions, CancellationToken ct = default) =>
+            throw new InvalidOperationException("Qdrant is not answering");
+    }
+
+    /// <summary>
+    /// A vector store whose collection setup is where the caller cancels, as a client leaving during the
+    /// call to Qdrant does. It then honours the token it was given, as a client library does.
+    /// </summary>
+    private sealed class EnsureCancels(IVectorStore inner, CancellationTokenSource cts) : ForwardingStore(inner)
+    {
+        public bool Called { get; private set; }
+
+        public override Task EnsureCollectionAsync(string collection, int dimensions, CancellationToken ct = default)
+        {
+            Called = true;
+            cts.Cancel();
+            ct.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task ANewCorpusWithAFolderIsQueuedWhenTheCallerIsCancelledDuringCollectionSetup()
+    {
+        // The corpus and its source are saved before the collection is prepared, and the full pass is
+        // queued after it. A cancel inside the call to the vector store threw before the job was queued.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        Directory.CreateDirectory(Path.Combine(harness.DataPath, "workspace", "extra"));
+        using var cts = new CancellationTokenSource();
+        await using var db = harness.NewContext();
+        var vectors = new EnsureCancels(harness.Vectors, cts);
+
+        var outcome = await harness.NewConfiguration(db, vectors).CreateCorpusAsync(
+            new CreateCorpusRequest("papers", WorkspacePath: "extra"), cts.Token);
+
+        vectors.Called.ShouldBeTrue("the window has to have been opened");
+        outcome.Refusal.ShouldBeNull();
+        var papers = await db.Corpora.AsNoTracking().SingleAsync(c => c.Name == "papers");
+        (await db.Jobs.CountAsync(j => j.CorpusId == papers.Id && j.Kind == JobKind.Full)).ShouldBe(1, "the new corpus has its job");
     }
 
     [Fact]
@@ -267,6 +314,58 @@ public sealed class CommittedChangeTests
 
         watcher.Fired.ShouldBeTrue("the window has to have been opened");
         reply.ShouldStartWith("Added a source for the files under extra");
+    }
+
+    [Fact]
+    public async Task ADocumentThatIsAttachedIsQueuedForIndexingWhenTheCallerIsCancelledAfterwards()
+    {
+        // The attachment is saved, and the job that indexes it was queued on the caller's token.
+        // Watched on the chunk-state rows, which are the last written by the save.
+        var watcher = new CancelAfterWriteTo("file_chunk_states");
+        await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        using var cts = new CancellationTokenSource();
+        watcher.Cts = cts;
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var stored = await documents.StoreAsync(new MemoryStream("some text to index"u8.ToArray()), "doc.txt");
+        var rc = new RequestContext
+        {
+            Principal = new Principal("k", "agent", new HashSet<string>(StringComparer.Ordinal) { Scopes.Search, Scopes.Ingest }),
+        };
+        watcher.Armed = true;
+
+        var result = await DocumentEndpoints.AttachAsync(
+            IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256), rc, new ScopeResolver(db), documents, db,
+            new IndexJobQueue(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance), cts.Token);
+
+        watcher.Fired.ShouldBeTrue("the window has to have been opened");
+        result.ShouldBeOfType<Accepted<DocumentAttached>>();
+        (await db.Files.CountAsync()).ShouldBe(1);
+        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh)).ShouldBe(1, "the attached document has its job");
+    }
+
+    [Fact]
+    public async Task ANewCorpusWithAFolderIsQueuedForIndexingWhenTheCallerIsCancelledAfterwards()
+    {
+        // Naming a folder is asking for it to be indexed. The corpus and its source are saved, and
+        // the full pass was queued on the caller's token.
+        var watcher = new CancelAfterWriteTo("sources");
+        await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        Directory.CreateDirectory(Path.Combine(harness.DataPath, "workspace", "extra"));
+        using var cts = new CancellationTokenSource();
+        watcher.Cts = cts;
+        await using var db = harness.NewContext();
+        watcher.Armed = true;
+
+        var outcome = await harness.NewConfiguration(db).CreateCorpusAsync(
+            new CreateCorpusRequest("papers", WorkspacePath: "extra"), cts.Token);
+
+        watcher.Fired.ShouldBeTrue("the window has to have been opened");
+        outcome.Refusal.ShouldBeNull();
+        var papers = await db.Corpora.AsNoTracking().SingleAsync(c => c.Name == "papers");
+        (await db.Jobs.CountAsync(j => j.CorpusId == papers.Id && j.Kind == JobKind.Full)).ShouldBe(1, "the new corpus has its job");
     }
 
     [Fact]

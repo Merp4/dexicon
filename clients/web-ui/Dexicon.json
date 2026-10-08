@@ -4304,7 +4304,10 @@
         "type": "object",
         "properties": {
           "file": {
-            "type": "string"
+            "type": [
+              "null",
+              "string"
+            ]
           },
           "error": {
             "type": "string"

@@ -246,7 +246,9 @@ public sealed class CorpusConfiguration(
 
         committed?.Invoke(corpus);
 
-        await vectors.EnsureCollectionAsync(corpus.ChunkSets[0].CollectionName, dims, ct);
+        // Not cancellable either: the corpus is saved, and a cancel in this call threw before the
+        // job below was queued.
+        await vectors.EnsureCollectionAsync(corpus.ChunkSets[0].CollectionName, dims, CancellationToken.None);
 
         // Naming a folder is asking for it to be indexed. Without this the corpus is
         // created EMPTY and reports itself ready, and the only sign is a file count of
@@ -254,7 +256,9 @@ public sealed class CorpusConfiguration(
         // user does appears to do nothing until someone thinks to press Refresh.
         if (corpus.Sources.Count > 0)
         {
-            await queue.EnqueueAsync(corpus.Id, JobKind.Full, ct: ct);
+            // Not cancellable: the corpus and its source are saved, and a cancel before the job
+            // left a corpus nothing reads until the next scheduled refresh.
+            await queue.EnqueueAsync(corpus.Id, JobKind.Full, ct: CancellationToken.None);
 
             // And a sweep, which is the case D-32 was written for: a corpus created
             // while another is indexing would otherwise report nothing at all until

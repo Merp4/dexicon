@@ -81,6 +81,7 @@ import type {
   SearchApiRequest,
   UpdateChunkSetRequest,
   UpdateCorpusRequest,
+  UploadResponse,
 } from './generated';
 import { client } from './generated/client.gen';
 import { getToken } from './token';
@@ -137,6 +138,8 @@ export type {
   SearchHit,
   SearchResult,
   TokenSummary,
+  UploadFailure,
+  UploadResponse,
   WorkspaceListing,
   GitRef,
   GitRefListing,
@@ -385,7 +388,7 @@ export const api = {
    * so going through the generated path would mean fighting it to send what it already
    * knows how to send.
    */
-  uploadDocuments: async (corpus: string, files: File[]) => {
+  uploadDocuments: async (corpus: string, files: File[]): Promise<UploadResponse> => {
     const form = new FormData();
     for (const f of files) form.append('files', f, f.name);
 

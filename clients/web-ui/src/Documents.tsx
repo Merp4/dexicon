@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, type Corpus, type DocumentText, type LibraryDocument } from './api';
+import { api, type Corpus, type DocumentText, type LibraryDocument, type UploadFailure } from './api';
 import {
   Badge, Button, CopyButton, Empty, ErrorBanner, Field, Modal, Notice, Select, SelectItem, Spinner,
   formatBytes, localTime, relativeTime, stateTone,
@@ -33,6 +33,11 @@ export function DocumentsView({
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [lastUpload, setLastUpload] = useState<string | null>(null);
+  const [notStored, setNotStored] = useState<UploadFailure[]>([]);
+  // `file` is null for a failure of the request as a whole (a body over the bound, one that cannot
+  // be read, a connection that closed). A file's own name says nothing about which it is.
+  const refusedFiles = notStored.filter((f) => f.file != null);
+  const requestFailures = notStored.filter((f) => f.file == null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   // Everything the signed-in admin can see is writable; there is no owner to test.
@@ -65,9 +70,14 @@ export function DocumentsView({
       }
       setBusy(true);
       setLastUpload(null);
+      setNotStored([]);
       try {
         const result = await api.uploadDocuments(uploadTo, files);
-        const deduped = result.stored.filter((s: { deduplicated: boolean }) => s.deduplicated).length;
+        // A batch is accepted when any file is stored. The files the server refused (over the
+        // size cap, or empty) come back in `failed` beside the stored ones, and are the only
+        // place the reason is said.
+        setNotStored(result.failed);
+        const deduped = result.stored.filter((s) => s.deduplicated).length;
         // On screen, not in the console. Re-uploading a file that is already stored is
         // the case that looks like nothing happened — same row, same count, no new
         // document — and the explanation was being written somewhere nobody was looking.
@@ -159,6 +169,26 @@ export function DocumentsView({
       {lastUpload && (
         <Notice tone="ok">
           {lastUpload}
+        </Notice>
+      )}
+
+      {notStored.length > 0 && (
+        <Notice tone="warn">
+          {/* The files counted are the ones named. A failure of the whole request is not a file
+              and follows the list as a sentence of its own. */}
+          {refusedFiles.length > 0 && (
+            <>
+              <p className="m-0 font-semibold">{count(refusedFiles.length, 'file')} not stored:</p>
+              <ul className="m-0 mt-1 list-disc pl-5">
+                {refusedFiles.map((f, i) => (
+                  <li key={`${f.file}-${i}`}>{`${f.file}: ${f.error}`}</li>
+                ))}
+              </ul>
+            </>
+          )}
+          {requestFailures.map((f, i) => (
+            <p key={i} className={cn('m-0', refusedFiles.length > 0 && 'mt-1')}>{f.error}</p>
+          ))}
         </Notice>
       )}
 
