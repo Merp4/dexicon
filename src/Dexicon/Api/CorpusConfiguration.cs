@@ -508,4 +508,66 @@ public sealed class CorpusConfiguration(
 
         return true;
     }
+
+    /// <summary>
+    /// Removes a chunk set and its vectors. Refused where it would leave the corpus unable to
+    /// answer: the only set, the default set, or a set a job is working on.
+    /// </summary>
+    public async Task<ConfigOutcome<bool>> RemoveChunkSetAsync(Corpus corpus, string setName, CancellationToken ct)
+    {
+        await db.Entry(corpus).Collection(c => c.ChunkSets).LoadAsync(ct);
+        var set = corpus.ChunkSets.FirstOrDefault(s =>
+            string.Equals(s.Name, setName, StringComparison.OrdinalIgnoreCase) || s.Id == setName);
+
+        if (set is null)
+            return new ConfigRefusal("Unknown chunk set",
+                $"Corpus '{corpus.Name}' has no chunk set named '{setName}'.", 404);
+
+        // A corpus with no sets is a corpus nothing can search. Refuse rather than
+        // leave it in a state whose only exit is creating a set by hand.
+        if (corpus.ChunkSets.Count == 1)
+            return new ConfigRefusal("Cannot delete the only chunk set",
+                $"'{set.Name}' is the only way '{corpus.Name}' is indexed. Delete the corpus instead, " +
+                "or add another set and promote it first.", 409);
+
+        if (set.IsDefault)
+            return new ConfigRefusal("Cannot delete the default chunk set",
+                "Promote another set first; search would otherwise have nothing to fall back to.", 409);
+
+        // A job that names this set, or names none, is working on it. Deleting the row under
+        // a job scoped to it nulls the job's ChunkSetId, which reads as every set of the
+        // corpus: it would run against, and report as indexing, sets it was never asked for.
+        var activity = await IndexingActivity.ReadAsync(db, [corpus.Id], ct);
+        if (activity.Of(set) == CorpusState.Indexing)
+            return new ConfigRefusal("Cannot delete a chunk set while it is being indexed",
+                $"A job is working on '{set.Name}'. Delete it once the job has finished.", 409);
+
+        // Vectors first: if the row went first and this threw, the collection would
+        // keep points that nothing in the catalogue can name or clean up.
+        await vectors.DeleteChunkSetAsync(set.CollectionName, set.Id, ct);
+        db.ChunkSets.Remove(set);
+        await db.SaveChangesAsync(ct);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Removes a corpus: its vectors in every collection it has sets in, then its rows, which
+    /// take its sources, files, chunk states and jobs with them.
+    /// </summary>
+    public async Task<ConfigOutcome<bool>> RemoveCorpusAsync(Corpus corpus, CancellationToken ct)
+    {
+        // Per collection, because a corpus mid-migration has sets in two of them and
+        // a single delete would leave one half behind with nothing left to name it.
+        var collections = await db.ChunkSets.Where(s => s.CorpusId == corpus.Id)
+            .Select(s => s.CollectionName).Distinct().ToListAsync(ct);
+
+        foreach (var collection in collections)
+            await vectors.DeleteCorpusAsync(collection, corpus.Id, ct);
+
+        db.Corpora.Remove(corpus);
+        await db.SaveChangesAsync(ct);
+
+        return true;
+    }
 }

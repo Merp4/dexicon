@@ -230,50 +230,13 @@ public static class ChunkSetEndpoints
         }).Produces<ChunkSetPromoted>();
 
         g.MapDelete("/{setName}", async (string nameOrId, string setName, RequestContext rc,
-            ScopeResolver scopes, CatalogDbContext db, IVectorStore vectors, CancellationToken ct) =>
+            ScopeResolver scopes, CorpusConfiguration config, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var principal = rc.RequirePrincipal();
-            var corpus = await scopes.ResolveWritableAsync(principal, nameOrId, ct);
+            var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
 
-            await db.Entry(corpus).Collection(c => c.ChunkSets).LoadAsync(ct);
-            var set = corpus.ChunkSets.FirstOrDefault(s =>
-                string.Equals(s.Name, setName, StringComparison.OrdinalIgnoreCase) || s.Id == setName);
-
-            if (set is null) return NotFound(corpus, setName);
-
-            // A corpus with no sets is a corpus nothing can search. Refuse rather than
-            // leave it in a state whose only exit is creating a set by hand.
-            if (corpus.ChunkSets.Count == 1)
-                return Results.Problem(
-                    title: "Cannot delete the only chunk set",
-                    detail: $"'{set.Name}' is the only way '{corpus.Name}' is indexed. Delete the corpus instead, " +
-                            "or add another set and promote it first.",
-                    statusCode: 409);
-
-            if (set.IsDefault)
-                return Results.Problem(
-                    title: "Cannot delete the default chunk set",
-                    detail: $"Promote another set first; search would otherwise have nothing to fall back to.",
-                    statusCode: 409);
-
-            // A job that names this set, or names none, is working on it. Deleting the row under
-            // a job scoped to it nulls the job's ChunkSetId, which reads as every set of the
-            // corpus: it would run against, and report as indexing, sets it was never asked for.
-            var activity = await IndexingActivity.ReadAsync(db, [corpus.Id], ct);
-            if (activity.Of(set) == CorpusState.Indexing)
-                return Results.Problem(
-                    title: "Cannot delete a chunk set while it is being indexed",
-                    detail: $"A job is working on '{set.Name}'. Delete it once the job has finished.",
-                    statusCode: 409);
-
-            // Vectors first: if the row went first and this threw, the collection would
-            // keep points that nothing in the catalogue can name or clean up.
-            await vectors.DeleteChunkSetAsync(set.CollectionName, set.Id, ct);
-            db.ChunkSets.Remove(set);
-            await db.SaveChangesAsync(ct);
-
-            return Results.NoContent();
+            var removed = await config.RemoveChunkSetAsync(corpus, setName, ct);
+            return removed.Refusal is { } refused ? refused.ToResult() : Results.NoContent();
         });
     }
 

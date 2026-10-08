@@ -269,4 +269,149 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
         refusal.Status.ShouldBe(404);
         refusal.Detail.ShouldContain("'nope'");
     }
+
+    [Fact]
+    public async Task A_removed_chunk_set_takes_its_vectors_and_leaves_the_other_set_alone()
+    {
+        await _harness.WriteFileAsync("a.md", IndexingHarness.Prose("alpha"), source: 0);
+        await _harness.RunIndexAsync(JobKind.Full);
+        _harness.Vectors.CountFor("a.md", "set-2").ShouldBeGreaterThan(0, "the premise: the set to remove holds vectors");
+
+        await using var db = _harness.NewContext();
+        var removed = await _harness.NewConfiguration(db).RemoveChunkSetAsync(await CorpusAsync(db), "alt-1", default);
+
+        removed.Refusal.ShouldBeNull();
+        _harness.Vectors.CountFor("a.md", "set-2").ShouldBe(0);
+        _harness.Vectors.CountFor("a.md", "set-1").ShouldBeGreaterThan(0, "the default set is untouched");
+        (await db.ChunkSets.AnyAsync(s => s.Id == "set-2")).ShouldBeFalse();
+        (await db.ChunkSets.AnyAsync(s => s.Id == "set-1")).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task A_chunk_set_that_is_not_there_is_named_back()
+    {
+        await using var db = _harness.NewContext();
+
+        var removed = await _harness.NewConfiguration(db).RemoveChunkSetAsync(await CorpusAsync(db), "set-3", default);
+
+        var refusal = removed.Refusal.ShouldNotBeNull();
+        refusal.Status.ShouldBe(404);
+        refusal.Detail.ShouldContain("'set-3'");
+        (await db.ChunkSets.CountAsync()).ShouldBe(2, "a refusal removes nothing");
+    }
+
+    [Fact]
+    public async Task The_default_chunk_set_is_refused_while_another_exists()
+    {
+        await using var db = _harness.NewContext();
+
+        var removed = await _harness.NewConfiguration(db).RemoveChunkSetAsync(await CorpusAsync(db), "default", default);
+
+        var refusal = removed.Refusal.ShouldNotBeNull();
+        refusal.Status.ShouldBe(409);
+        refusal.Title.ShouldContain("default chunk set");
+        (await db.ChunkSets.CountAsync()).ShouldBe(2, "a refusal removes nothing");
+    }
+
+    [Fact]
+    public async Task The_only_chunk_set_is_refused_and_the_corpus_is_named_as_the_way_out()
+    {
+        await using var single = await IndexingHarness.StartAsync("notes");
+        await single.SeedCorpusAsync(SourceKind.Workspace, sets: 1);
+        await using var db = single.NewContext();
+
+        var removed = await single.NewConfiguration(db).RemoveChunkSetAsync(await CorpusAsync(db), "default", default);
+
+        var refusal = removed.Refusal.ShouldNotBeNull();
+        refusal.Status.ShouldBe(409);
+        refusal.Title.ShouldContain("only chunk set");
+        refusal.Detail.ShouldContain("Delete the corpus instead");
+    }
+
+    [Fact]
+    public async Task A_chunk_set_a_job_is_working_on_is_refused_until_the_job_has_finished()
+    {
+        await using (var seed = _harness.NewContext())
+        {
+            seed.Jobs.Add(new IndexJob
+            {
+                Id = "job-1", CorpusId = IndexingHarness.CorpusId, ChunkSetId = "set-2",
+                Kind = JobKind.Refresh, State = JobState.Queued, QueuedUtc = DateTime.UtcNow,
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        await using var db = _harness.NewContext();
+        var refused = await _harness.NewConfiguration(db).RemoveChunkSetAsync(await CorpusAsync(db), "alt-1", default);
+
+        refused.Refusal.ShouldNotBeNull().Status.ShouldBe(409);
+        (await db.ChunkSets.AnyAsync(s => s.Id == "set-2")).ShouldBeTrue("nothing was removed under the job");
+
+        await db.Jobs.ExecuteUpdateAsync(u => u.SetProperty(j => j.State, JobState.Succeeded));
+        var removed = await _harness.NewConfiguration(db).RemoveChunkSetAsync(await CorpusAsync(db), "alt-1", default);
+
+        removed.Refusal.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// Vectors go first. If the row went first and the delete then failed, the collection would keep
+    /// points that nothing in the catalogue can name or clean up; this order leaves the row in place so
+    /// the removal can be asked for again.
+    /// </summary>
+    [Fact]
+    public async Task A_chunk_set_whose_vectors_cannot_be_deleted_keeps_its_row()
+    {
+        await _harness.WriteFileAsync("a.md", IndexingHarness.Prose("alpha"), source: 0);
+        await _harness.RunIndexAsync(JobKind.Full);
+        _harness.Vectors.DeletesThrow = true;
+
+        await using var db = _harness.NewContext();
+        var corpus = await CorpusAsync(db);
+        await Should.ThrowAsync<InvalidOperationException>(
+            _harness.NewConfiguration(db).RemoveChunkSetAsync(corpus, "alt-1", default));
+
+        await using var fresh = _harness.NewContext();
+        (await fresh.ChunkSets.AnyAsync(s => s.Id == "set-2")).ShouldBeTrue("the row stays while its vectors may still exist");
+        _harness.Vectors.CountFor("a.md", "set-2").ShouldBeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task A_corpus_whose_vectors_cannot_be_deleted_keeps_its_rows()
+    {
+        await _harness.WriteFileAsync("a.md", IndexingHarness.Prose("alpha"), source: 0);
+        await _harness.RunIndexAsync(JobKind.Full);
+        _harness.Vectors.DeletesThrow = true;
+
+        await using var db = _harness.NewContext();
+        var corpus = await CorpusAsync(db);
+        await Should.ThrowAsync<InvalidOperationException>(
+            _harness.NewConfiguration(db).RemoveCorpusAsync(corpus, default));
+
+        await using var fresh = _harness.NewContext();
+        (await fresh.Corpora.CountAsync()).ShouldBe(1);
+        (await fresh.Files.AnyAsync()).ShouldBeTrue();
+        _harness.Vectors.CountFor("a.md", "set-1").ShouldBeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task A_removed_corpus_takes_its_vectors_in_every_set_and_every_row_under_it()
+    {
+        await _harness.WriteFileAsync("a.md", IndexingHarness.Prose("alpha"), source: 0);
+        await _harness.RunIndexAsync(JobKind.Full);
+        foreach (var set in new[] { "set-1", "set-2" })
+            _harness.Vectors.CountFor("a.md", set).ShouldBeGreaterThan(0, $"the premise: {set} holds vectors");
+
+        await using var db = _harness.NewContext();
+        var removed = await _harness.NewConfiguration(db).RemoveCorpusAsync(await CorpusAsync(db), default);
+
+        removed.Refusal.ShouldBeNull();
+        foreach (var set in new[] { "set-1", "set-2" })
+            _harness.Vectors.CountFor("a.md", set).ShouldBe(0, $"gone from {set}");
+        (await db.Corpora.CountAsync()).ShouldBe(0);
+        (await db.Sources.CountAsync()).ShouldBe(0);
+        (await db.Files.CountAsync()).ShouldBe(0);
+        (await db.FileChunkStates.CountAsync()).ShouldBe(0);
+        (await db.ChunkSets.CountAsync()).ShouldBe(0);
+        (await db.Jobs.CountAsync()).ShouldBe(0);
+    }
 }

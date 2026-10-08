@@ -503,13 +503,27 @@ internal sealed class IndexingHarness : IAsyncDisposable
 
         public string CollectionNameFor(EmbeddingTarget target, int dimensions) => Collection;
 
+        /// <summary>Every point of one chunk set, as the collection-wide delete by set id does.</summary>
+        public Task DeleteChunkSetAsync(string c, string s, CancellationToken ct = default)
+        {
+            if (DeletesThrow) throw new InvalidOperationException("the vector store is unreachable");
+
+            _points.RemoveAll(p => p.ChunkSetId == s);
+            return Task.CompletedTask;
+        }
+
+        /// <summary>Every point of one corpus, in every set.</summary>
+        public Task DeleteCorpusAsync(string c, string id, CancellationToken ct = default)
+        {
+            if (DeletesThrow) throw new InvalidOperationException("the vector store is unreachable");
+
+            _points.RemoveAll(p => p.CorpusId == id);
+            return Task.CompletedTask;
+        }
+
         // Not reached by an indexing run. Throwing rather than returning a default, so a
         // change that starts calling one of these is visible instead of silently passing.
-        public Task DeleteChunkSetAsync(string c, string s, CancellationToken ct = default) =>
-            throw new NotSupportedException();
         public Task<int> PurgeUnsetChunksAsync(CancellationToken ct = default) =>
-            throw new NotSupportedException();
-        public Task DeleteCorpusAsync(string c, string id, CancellationToken ct = default) =>
             throw new NotSupportedException();
         public Task<IReadOnlyList<SearchHit>> GetFileChunksAsync(string c, string s, string f,
             CancellationToken ct = default) => throw new NotSupportedException();
