@@ -58,7 +58,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
             _harness.Settings, _logs, "notes", folder, kind, create, include, exclude, gitignore, maxFileKb, history, reset);
 
     [Fact]
-    public async Task A_key_without_configure_is_refused_by_every_configure_tool()
+    public async Task AKeyWithoutConfigureIsRefusedByEveryConfigureTool()
     {
         await using var db = _harness.NewContext();
         var searcher = As("k2", Scopes.Search, Scopes.Ingest);
@@ -74,7 +74,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public void Only_a_key_holding_the_scope_is_shown_the_tools()
+    public void OnlyAKeyHoldingTheScopeIsShownTheTools()
     {
         ToolVisibility.HiddenFrom(As("k", Scopes.Search).Principal!)
             .ShouldBe(new[] { "index_refresh", "list_folders", "configure_corpus", "configure_source" }, ignoreOrder: true);
@@ -88,7 +88,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Two_calls_adding_one_folder_at_once_leave_one_source()
+    public async Task TwoCallsAddingOneFolderAtOnceLeaveOneSource()
     {
         // Both could read the corpus's sources before either wrote, and a duplicate cannot be
         // removed from here. Each call has its own catalogue context, as two requests do.
@@ -110,7 +110,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public void The_names_hidden_are_the_names_the_tools_are_registered_under()
+    public void TheNamesHiddenAreTheNamesTheToolsAreRegisteredUnder()
     {
         // A tool renamed without this list would be shown to every key. It would still refuse
         // the call, but the listing is what keeps an agent from spending a turn on it.
@@ -122,7 +122,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_corpus_is_created_only_when_asked_and_a_mapped_key_then_reaches_it()
+    public async Task ACorpusIsCreatedOnlyWhenAskedAndAMappedKeyThenReachesIt()
     {
         await using var db = _harness.NewContext();
         var (row, _) = await new TokenService(db, TimeProvider.System)
@@ -144,7 +144,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_corpus_s_filters_are_merged_with_what_it_has_and_reset_by_name()
+    public async Task ACorpusSFiltersAreMergedWithWhatItHasAndResetByName()
     {
         await using var db = _harness.NewContext();
 
@@ -158,7 +158,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_folder_is_added_only_if_it_exists_and_the_reply_shows_it_as_index_status_does()
+    public async Task AFolderIsAddedOnlyIfItExistsAndTheReplyShowsItAsIndexStatusDoes()
     {
         await using var db = _harness.NewContext();
         var before = await db.Sources.CountAsync();
@@ -181,7 +181,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     [InlineData("notes/.")]
     [InlineData("docs/../notes")]
     [InlineData("notes/")]
-    public async Task Another_spelling_of_a_folder_finds_its_source_rather_than_adding_a_second(string spelling)
+    public async Task AnotherSpellingOfAFolderFindsItsSourceRatherThanAddingASecond(string spelling)
     {
         // A duplicate added here could not be removed from here, and would index and embed
         // the same files twice.
@@ -195,7 +195,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_folder_outside_the_workspace_is_refused_and_one_named_with_two_dots_is_not()
+    public async Task AFolderOutsideTheWorkspaceIsRefusedAndOneNamedWithTwoDotsIsNot()
     {
         await using var db = _harness.NewContext();
 
@@ -209,7 +209,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public void A_backslash_is_a_separator_only_where_the_operating_system_says_so()
+    public void ABackslashIsASeparatorOnlyWhereTheOperatingSystemSaysSo()
     {
         // On Linux "x\\..\\notes" is one odd name. Read as x/../notes it skipped the duplicate check,
         // passed the existence check once collapsed, and was stored as notes: a second source
@@ -221,7 +221,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public void A_path_keeps_a_backslash_that_is_part_of_a_name_on_Unix()
+    public void APathKeepsABackslashThatIsPartOfANameOnUnix()
     {
         // Listed as "a/b" it names a different folder than the one stored as "a\\b", and
         // the "indexed by" lookup misses. CI runs the Unix branch.
@@ -230,7 +230,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Gitignore_cannot_be_turned_off_over_MCP()
+    public async Task GitignoreCannotBeTurnedOffOverMcp()
     {
         // .gitignore keeps Dexicon's own .env out of the index when the workspace root is the
         // checkout that holds it. A key holding configure could otherwise index it and read the
@@ -253,7 +253,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     [InlineData("two\nlines")]
     [InlineData("line\u2028separator")]
     [InlineData("esc\u001B[2J")]
-    public async Task A_description_is_one_short_line(string description)
+    public async Task ADescriptionIsOneShortLine(string description)
     {
         // One agent writes it and every other agent that lists corpora reads it, so a block of
         // instructions or a forged listing line is the thing to keep out.
@@ -269,7 +269,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_link_s_target_is_not_returned_to_the_key()
+    public async Task ALinkSTargetIsNotReturnedToTheKey()
     {
         // The resolver's message says where a link leads: host text, for a key that holds
         // configure and nothing else.
@@ -285,7 +285,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_key_without_search_is_not_sent_to_index_status()
+    public async Task AKeyWithoutSearchIsNotSentToIndexStatus()
     {
         // index_status needs search, and a configure-only key is not shown it.
         await using var db = _harness.NewContext();
@@ -299,7 +299,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_change_says_what_a_narrower_setting_does_to_what_is_indexed()
+    public async Task AChangeSaysWhatANarrowerSettingDoesToWhatIsIndexed()
     {
         // Nothing here removes a corpus or a source, but a filter that stops selecting a file
         // drops it from the index on the refresh, as it does in the UI.
@@ -310,7 +310,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_source_cannot_inherit_gitignore_off_from_the_corpus()
+    public async Task ASourceCannotInheritGitignoreOffFromTheCorpus()
     {
         // The UI can turn .gitignore off for a corpus. A source an agent adds without saying
         // would follow it, which is turning it off by another route: the new source indexes
@@ -333,7 +333,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_source_still_follows_a_corpus_that_leaves_gitignore_on()
+    public async Task ASourceStillFollowsACorpusThatLeavesGitignoreOn()
     {
         await using var db = _harness.NewContext();
         Directory.CreateDirectory(Path.Combine(Workspace, "papers"));
@@ -343,7 +343,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_corpus_name_with_a_quote_or_a_backslash_is_named_back_as_a_valid_call()
+    public async Task ACorpusNameWithAQuoteOrABackslashIsNamedBackAsAValidCall()
     {
         // Both are allowed in a name. Written raw into the call the reply suggests, the second
         // is a string that ends early and the third escapes the quote after it.
@@ -355,7 +355,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_corpus_name_from_before_the_rule_with_a_line_break_cannot_split_a_reply()
+    public async Task ACorpusNameFromBeforeTheRuleWithALineBreakCannotSplitAReply()
     {
         // Existing catalogues can hold a name the rule now refuses.
         await using var db = _harness.NewContext();
@@ -368,7 +368,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_null_folder_or_kind_is_refused_rather_than_read_as_the_root_or_dereferenced()
+    public async Task ANullFolderOrKindIsRefusedRatherThanReadAsTheRootOrDereferenced()
     {
         // JSON can send null whatever the signature says. A null folder read as "" would add a
         // source over the whole workspace, which nothing here can remove.
@@ -384,7 +384,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_corpus_name_with_a_line_break_stays_on_the_folder_s_line()
+    public async Task ACorpusNameWithALineBreakStaysOnTheFolderSLine()
     {
         // New names cannot hold one; a corpus created before that rule can.
         await using var db = _harness.NewContext();
@@ -394,7 +394,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public void A_setting_list_of_the_wrong_shape_is_refused_in_its_own_words()
+    public void ASettingListOfTheWrongShapeIsRefusedInItsOwnWords()
     {
         // The corpus converter meets every string[] and says "corpus"; these lists are a type of
         // their own so that a bad include is not reported as a bad corpus.
@@ -409,7 +409,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     [Theory]
     [InlineData(nameof(ConfigureTools.ConfigureCorpusAsync))]
     [InlineData(nameof(ConfigureTools.ConfigureSourceAsync))]
-    public void The_lists_are_advertised_as_arrays_of_strings(string method)
+    public void TheListsAreAdvertisedAsArraysOfStrings(string method)
     {
         // A custom converter can turn the advertised schema into {} and leave a caller guessing.
         var tool = McpServerTool.Create(typeof(ConfigureTools).GetMethod(method)!,
@@ -426,7 +426,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_folder_differing_in_case_is_the_same_source_only_where_the_filesystem_says_so()
+    public async Task AFolderDifferingInCaseIsTheSameSourceOnlyWhereTheFilesystemSaysSo()
     {
         // On Windows and macOS "NOTES" is the folder notes, and adding it would be a second
         // source over the same files. On Linux it is another folder, which is not there.
@@ -456,11 +456,11 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     [InlineData("", "")]
     [InlineData(".", "")]
     [InlineData("../x", "../x")]
-    public void A_source_root_has_one_spelling(string written, string canonical) =>
+    public void ASourceRootHasOneSpelling(string written, string canonical) =>
         WorkspaceDiscovery.Canonical(Workspace, written).ShouldBe(canonical);
 
     [Fact]
-    public async Task A_source_added_through_the_api_is_stored_in_that_spelling()
+    public async Task ASourceAddedThroughTheApiIsStoredInThatSpelling()
     {
         await using var db = _harness.NewContext();
         Directory.CreateDirectory(Path.Combine(Workspace, "extra"));
@@ -473,7 +473,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public void A_null_or_unknown_scope_is_refused_and_a_padded_one_is_not()
+    public void ANullOrUnknownScopeIsRefusedAndAPaddedOneIsNot()
     {
         // A null element binds from JSON, and was dereferenced: a 500 where a 400 was meant.
         ((IStatusCodeHttpResult)SystemEndpoints.UnissuableScopes([null]).ShouldNotBeNull()).StatusCode.ShouldBe(400);
@@ -482,7 +482,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Changing_a_source_that_is_not_there_names_the_ones_that_are()
+    public async Task ChangingASourceThatIsNotThereNamesTheOnesThatAre()
     {
         await using var db = _harness.NewContext();
         db.Sources.Add(new Source
@@ -503,7 +503,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Two_sources_on_one_folder_are_not_changed_by_guessing_which()
+    public async Task TwoSourcesOnOneFolderAreNotChangedByGuessingWhich()
     {
         // The UI allows it, as for two history sources following different branches.
         await using var db = _harness.NewContext();
@@ -523,7 +523,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_change_that_moves_nothing_queues_nothing()
+    public async Task AChangeThatMovesNothingQueuesNothing()
     {
         await using var db = _harness.NewContext();
 
@@ -541,7 +541,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     [InlineData("history reset on files", "reset takes")]
     [InlineData("unknown kind", "files or history")]
     [InlineData("zero cap", "greater than zero")]
-    public async Task Settings_that_contradict_or_do_not_apply_are_refused_before_anything_changes(string @case, string expected)
+    public async Task SettingsThatContradictOrDoNotApplyAreRefusedBeforeAnythingChanges(string @case, string expected)
     {
         await using var db = _harness.NewContext();
 
@@ -561,7 +561,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public void History_settings_sent_are_laid_over_the_current_ones_and_reset_ones_return_to_default()
+    public void HistorySettingsSentAreLaidOverTheCurrentOnesAndResetOnesReturnToDefault()
     {
         // The API replaces a history source's settings whole. Sending only diff must not
         // quietly return the ref, the limit and the date to their defaults.
@@ -576,7 +576,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public void A_since_that_is_not_a_date_is_refused()
+    public void ASinceThatIsNotADateIsRefused()
     {
         Should.Throw<McpException>(() =>
                 ConfigureTools.Merge(new GitHistoryOptions(), new HistorySettings(Since: "last week"), []))
@@ -584,7 +584,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Every_change_is_logged_with_the_key_that_made_it()
+    public async Task EveryChangeIsLoggedWithTheKeyThatMadeIt()
     {
         await using var db = _harness.NewContext();
 
@@ -596,7 +596,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_link_is_neither_listed_nor_looked_through()
+    public async Task ALinkIsNeitherListedNorLookedThrough()
     {
         // A link can lead out of the workspace. Counting its entries, or finding a .git behind
         // it, reads wherever it points, and it could not be added as a source anyway (D-35).
@@ -615,7 +615,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_name_in_a_change_s_log_line_can_neither_break_it_nor_reach_a_terminal()
+    public async Task ANameInAChangeSLogLineCanNeitherBreakItNorReachATerminal()
     {
         // A key's name and a corpus's are typed text. Raw, a line break forges a log line and
         // an escape sequence clears the screen of a terminal tailing the log.
@@ -630,7 +630,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Folders_show_repositories_and_what_reads_them_but_only_from_corpora_the_key_reaches()
+    public async Task FoldersShowRepositoriesAndWhatReadsThemButOnlyFromCorporaTheKeyReaches()
     {
         await using var db = _harness.NewContext();
         Directory.CreateDirectory(Path.Combine(Workspace, "repo", ".git"));
