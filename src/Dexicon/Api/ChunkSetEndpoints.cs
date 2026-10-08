@@ -146,7 +146,7 @@ public static class ChunkSetEndpoints
             var activity = await IndexingActivity.ReadAsync(db, [corpus.Id], ct);
             return Results.Accepted($"/api/corpora/{corpus.Name}/chunk-sets/{set.Name}",
                 new ChunkSetCreated(set.ToSummary(0, 0, 0, 0, activity.Of(set)), job.ToSummary()));
-        }).Produces<ChunkSetCreated>();
+        }).Produces<ChunkSetCreated>(StatusCodes.Status202Accepted);
 
         g.MapPatch("/{setName}", async (string nameOrId, string setName, UpdateChunkSetRequest body,
             RequestContext rc, ScopeResolver scopes, CatalogDbContext db, IndexJobQueue queue,
@@ -237,7 +237,7 @@ public static class ChunkSetEndpoints
 
             var removed = await config.RemoveChunkSetAsync(corpus, setName, ct);
             return removed.Refusal is { } refused ? refused.ToResult() : Results.NoContent();
-        });
+        }).Produces(StatusCodes.Status204NoContent);
     }
 
     private static Task<ChunkSet?> FindSet(CatalogDbContext db, Corpus corpus, string setName, CancellationToken ct) =>
