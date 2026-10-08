@@ -572,8 +572,9 @@ public sealed class HtmlTextExtractor : ITextExtractor
 
     public ExtractedText Extract(Stream content, string fileName)
     {
-        // NOTE: this handles HTML *documents* reached as uploads. HTML found inside a
-        // workspace tree is template source and is indexed as code; see LanguageMap.
+        // Every .html and .htm file reaches this extractor, from an upload or from a
+        // workspace tree (ExtractorRegistry.For). The text is chunked as prose; the
+        // language-aware boundary patterns in LanguageMap apply to Razor, Vue and Svelte.
         using var reader = new StreamReader(content, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
         var parser = new HtmlParser();
         using var doc = parser.ParseDocument(reader.ReadToEnd());

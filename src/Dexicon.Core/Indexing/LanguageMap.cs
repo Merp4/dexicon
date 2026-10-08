@@ -3,9 +3,11 @@ namespace Dexicon.Core.Indexing;
 /// <summary>
 /// Extension → canonical language name, and the member-boundary pattern per language.
 ///
-/// One choice is easy to get backwards: HTML, Razor, Vue and Svelte split on blank
-/// lines, not on headings. They are template <i>source</i>, not documents, so splitting
-/// an Angular template at its <c>&lt;h1&gt;</c> produces slices that mean nothing.
+/// One choice is easy to get backwards: Razor, Vue and Svelte split on blank lines, not
+/// on headings. They are template <i>source</i>, not documents, so splitting a Vue
+/// component at its <c>&lt;h1&gt;</c> produces slices that mean nothing. <c>.html</c>
+/// and <c>.htm</c> files are documents: <c>HtmlTextExtractor</c> reads them and the
+/// indexer chunks the extracted text as prose.
 /// </summary>
 public static class LanguageMap
 {
@@ -103,8 +105,11 @@ public static class LanguageMap
         ["shell"] = @"(?m)^(\w+\s*\(\)\s*\{|function\s+\w+)",
         ["powershell"] = @"(?m)^(function\s+|class\s+|\[CmdletBinding)",
 
-        // Template source, not documents. See the class remark.
+        // HTML is read by HtmlTextExtractor and chunked on blank lines whatever the set's
+        // boundary mode, so this entry only names the language.
         ["html"] = BlankLine,
+
+        // Template source, not documents. See the class remark.
         ["razor"] = BlankLine,
         ["vue"] = BlankLine,
         ["svelte"] = BlankLine,

@@ -30,11 +30,11 @@ BASE = os.environ.get("DEXICON_URL", "http://127.0.0.1:8477")
 # whose answer is genuinely spread across three files measures the query set, not the
 # model.
 QUERIES = [
-    ("what is the Qdrant tenant key and why was it chosen", "03-data-model.md"),
+    ("why is chunk_set_id a plain filter and not a second partition key", "03-data-model.md"),
     ("how does an incremental refresh decide a file is unchanged", "04-ingestion.md"),
     ("how are dense and sparse results fused into one ranking", "05-search.md"),
     ("which MCP revision removed the initialize handshake", "06-mcp-surface.md"),
-    ("how does one tenant get read access to another tenant's corpus", "07-tenancy-auth.md"),
+    ("what does the Qdrant client wrapper do with a query that has no corpus filter", "07-auth.md"),
     ("what do the two dependency status dots in the header show", "08-ui.md"),
     ("why is Qdrant not published on a host port", "09-deployment.md"),
     ("how are API tokens stored and verified", "10-security-secrets.md"),
