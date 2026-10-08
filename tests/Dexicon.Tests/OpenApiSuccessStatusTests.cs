@@ -49,13 +49,23 @@ public sealed class OpenApiSuccessStatusTests
         { "delete", "/api/tokens/{id}", "204" },
     };
 
+    /// <summary>
+    /// The success status is declared and 200 is not. Other entries are allowed: documenting a
+    /// refusal (a 404 for an unknown token, say) must not fail a test about the success status.
+    /// </summary>
+    private static void ShouldDeclareOnlyThisSuccess(string[] declared, string status)
+    {
+        declared.ShouldContain(status);
+        declared.ShouldNotContain("200");
+    }
+
     [Theory]
     [MemberData(nameof(OperationsThatAnswerOtherThan200))]
     public void TheFullDocumentDeclaresTheStatusTheHandlerReturns(string method, string path, string status) =>
-        DeclaredStatuses(Document("Dexicon.json"), path, method).ShouldBe([status]);
+        ShouldDeclareOnlyThisSuccess(DeclaredStatuses(Document("Dexicon.json"), path, method), status);
 
     [Fact]
     public void ReindexIsPublishedAsAcceptedBecauseThatIsWhatItReturns() =>
-        DeclaredStatuses(Document("Dexicon_integration.json"), "/api/corpora/{nameOrId}/reindex", "post")
-            .ShouldBe(["202"]);
+        ShouldDeclareOnlyThisSuccess(
+            DeclaredStatuses(Document("Dexicon_integration.json"), "/api/corpora/{nameOrId}/reindex", "post"), "202");
 }
