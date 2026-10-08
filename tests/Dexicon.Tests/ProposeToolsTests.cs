@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using Dexicon.Api;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
@@ -35,8 +36,8 @@ public sealed class ProposeToolsTests : IAsyncLifetime
     private static RequestContext Proposer(string id = "k1") => As(id, Scopes.Search, Scopes.Propose);
 
     private Task<string> ProposeAsync(CatalogDbContext db, RequestContext rc, string kind, string corpus = "notes",
-        string? target = null, string? reason = "no longer needed") =>
-        ProposeTools.ProposeRemovalAsync(rc, new ScopeResolver(db), _harness.NewProposals(db), kind, corpus, target, reason);
+        string? target = null, string reason = "no longer needed") =>
+        ProposeTools.ProposeRemovalAsync(rc, new ScopeResolver(db), _harness.NewProposals(db), kind, corpus, reason, target);
 
     private Task<string> StatusAsync(CatalogDbContext db, RequestContext rc) =>
         DexiconTools.IndexStatusAsync(rc, new ScopeResolver(db), db, _harness.Settings, "notes");
@@ -87,6 +88,25 @@ public sealed class ProposeToolsTests : IAsyncLifetime
             .Select(m => m.GetCustomAttribute<McpServerToolAttribute>()?.Name)
             .OfType<string>()
             .ShouldBe(ProposeTools.Names, ignoreOrder: true);
+    }
+
+    [Fact]
+    public void TheReasonIsAdvertisedAsRequiredAndTheTargetAsOptional()
+    {
+        // A schema that lists reason as optional lets an agent that follows it leave it out and learn
+        // otherwise only from a refusal.
+        var tool = McpServerTool.Create(typeof(ProposeTools).GetMethod(nameof(ProposeTools.ProposeRemovalAsync))!,
+            new McpServerToolCreateOptions { SerializerOptions = McpJson.Options });
+        using var schema = JsonDocument.Parse(tool.ProtocolTool.InputSchema.GetRawText());
+
+        // Created outside the host, so the three parameters it supplies from services are listed too.
+        string[] arguments = ["kind", "corpus", "reason", "target"];
+        var required = schema.RootElement.GetProperty("required").EnumerateArray().Select(e => e.GetString()).ToList();
+        var advertised = schema.RootElement.GetProperty("properties").EnumerateObject().Select(p => p.Name).ToList();
+
+        advertised.ShouldBeSubsetOf(["rc", "scopes", "proposals", .. arguments]);
+        arguments.ShouldAllBe(a => advertised.Contains(a));
+        required.Where(arguments.Contains).ShouldBe(["kind", "corpus", "reason"], ignoreOrder: true);
     }
 
     [Fact]

@@ -38,8 +38,8 @@ public sealed class ProposeTools
         ProposalService proposals,
         [Description("What to remove: source, chunk_set, document or corpus.")] string kind,
         [Description("The corpus it is in, as list_corpora names it. For kind corpus, the one to remove.")] string corpus,
+        [Description("One line on why, at most 300 characters. Required: the person deciding reads it beside what would go.")] string reason,
         [Description("What to remove from that corpus. A source: its folder as index_status shows it, with files: or history: in front when both read the folder. A chunk set: its name. A document: its path. Leave out for a corpus.")] string? target = null,
-        [Description("One line on why, at most 300 characters. The person deciding reads it beside what would go.")] string? reason = null,
         CancellationToken ct = default)
     {
         DexiconTools.Require(rc, Scopes.Propose);
