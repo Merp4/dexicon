@@ -61,6 +61,12 @@ every count an aggregation, and there are no transactions); Postgres (a fourth c
 for a workload that peaks at thousands of rows); LiteDB or files on disk (no migration
 story, no query story).
 
+**Amended by** [D-28](#d-28-an-admin-password-and-scoped-api-keys): there is no tenants table.
+Among other things the catalogue holds corpora, chunk sets, sources, files, jobs and keys, and
+also the admin credential, each key's corpus mapping, stored blobs and their extracted text,
+per-set file states, model profiles and measurements, and removal proposals
+(`CatalogDbContext`).
+
 ---
 
 ### D-04 Corpus as the Qdrant tenant key
@@ -104,6 +110,13 @@ is an accurate description of the operation.
 collection overhead); a single collection with mixed dimensions (not possible); named
 vectors per model within one collection (works, but every point then carries every model's
 vector, or sparse point structures with awkward filtering).
+
+**Amended: the provider is part of the name.** Collections are named
+`dexicon__{provider}__{model}__{dims}`, with the model's `:latest` tag removed, because two
+providers can serve a model of the same name and those are different vectors. A chunk set
+stores its collection name; a migration rewrote the names built before the provider existed to
+`dexicon__ollama__...`. [D-28](#d-28-an-admin-password-and-scoped-api-keys) removed tenants, so
+a collection is shared by every corpus whose sets use that provider and model.
 
 ---
 
@@ -207,6 +220,10 @@ an unchanged tree makes zero embedding calls, which is the property that matters
 mtime comparison (wrong after checkout, clone, or restore); inotify in the host (outside the
 container boundary).
 
+**Amended by** [D-38](#d-38-a-file-the-last-pass-finished-with-is-not-read-again): a file whose
+size, modified time and chunking settings match the last pass is skipped before it is hashed.
+Content hashing applies to the files that key does not settle.
+
 ---
 
 ### D-10 Static tokens and a tenant header
@@ -255,6 +272,10 @@ which every key sees. `index_refresh` is listed only for a key granted `ingest`.
 **Amended by** [D-36](#d-36-a-configure-scope-agents-set-up-what-is-indexed) (2026-09-30):
 three configuration tools, listed only for a key granted `configure`. A key without it is
 still listed at most these five.
+
+**Amended by** [D-39](#d-39-agents-ask-for-removals-and-a-person-decides) (2026-10-08): two more
+tools, `propose_removal` and `removal_status`, listed only for a key granted `propose`. A key
+holding every scope is listed ten.
 
 ---
 
@@ -370,6 +391,11 @@ the index to a tokenizer. What does not hold is "a rounding error" — one index
 212 truncations across 74 files — nor the character conversion itself, which D-31 replaces
 with the provider's own refusal.
 
+**Amended in the shipped chunker.** The character conversion remains, and uses the measured
+ratio where the model has one ([D-27](#d-27-a-chunk-budget-is-characters-and-the-ratio-is-measured));
+the provider's refusal is the backstop behind it. The flat four applies to a model that has not
+been measured.
+
 ---
 
 ### D-17 Name
@@ -377,6 +403,10 @@ with the provider's own refusal.
 **Decision.** **Dexicon** — `dex` (index) + `lexicon`. Repository `Merp4/dexicon`, image
 `ghcr.io/merp4/dexicon`, config prefix `DEXICON__`, tenant header `X-Dexicon-Tenant`, token
 prefix `dex_`, collections `dexicon__{model}__{dims}`, MCP resources `dexicon://`.
+
+**Amended by** [D-28](#d-28-an-admin-password-and-scoped-api-keys) and
+[D-05](#d-05-one-collection-per-embedding-model): the tenant header is gone, and collections
+are `dexicon__{provider}__{model}__{dims}`. The rest of the naming stands.
 
 **Why.** A lexicon is a reference work that is *consulted*: the reader arrives with a
 question and leaves with an answer, which is the category this tool belongs to. Category
@@ -457,6 +487,10 @@ property test across chunk sizes, including input with no spaces at all.
 lies about it); trusting extractors not to produce them, which they did (see
 [D-18](#d-18-versioned-extraction-cache)).
 
+**Amended by** [D-27](#d-27-a-chunk-budget-is-characters-and-the-ratio-is-measured): the factor
+is the characters-per-token ratio in force, which is the model's measured ratio where it has
+one and 4 where it has not. The budget is also capped at 90% of the model's measured context.
+
 ---
 
 ### D-20 Jobs are ordered by when they were queued
@@ -499,6 +533,10 @@ duration of every model change); per-document models (different vector spaces ca
 fused, and a corpus would have to fan out across collections and merge incomparable
 scores); keeping chunk settings on the corpus and adding only a model field (the same
 problem one field later).
+
+**Amended by** [D-28](#d-28-an-admin-password-and-scoped-api-keys): visibility and grants went
+with tenancy. A corpus owns content and sources, and which keys reach it is the key's corpus
+mapping.
 
 **Cost, accepted.** A workspace tree is walked once per set. Real but bounded, and most
 corpora carry one set; sharing a walk would mean holding the whole discovery in memory,
@@ -817,6 +855,12 @@ stops deciding the size at all. The provider's refusal does, which costs about 3
 against the six seconds a file the measurement costs. The ratio remains worth reporting;
 it is no longer worth chunking by.
 
+**Amended in the shipped chunker.** The chunker does divide by the measured ratio. For a model
+that has been measured, `ChunkSetOptions.Options` converts the configured size to characters
+with that model's ratio and caps the size at 90% of the model's context (`CodeChunker.ContextShare`);
+an unmeasured model uses 4. The ratio does not make the size exact, so the provider's refusal
+that D-31 describes still splits a chunk the model will not read.
+
 ---
 
 ### D-28 An admin password and scoped API keys
@@ -876,6 +920,10 @@ where it is wanted.
 once on first run where that is blank, which is what `DEXICON__BOOTSTRAP__TOKEN` already does.
 It is stored hashed in the catalogue rather than read from the environment on each request, so
 it can be changed in the UI without a restart.
+
+**Amended:** no screen or endpoint changes the password. A `DEXICON__ADMIN__PASSWORD` value
+is written to the catalogue on every start, so changing the variable and restarting is the way
+to change it, and the way back in after a forgotten one.
 
 Failed attempts are throttled by a delay that doubles and is capped, counted globally rather
 than per caller: there is one password, so there is one thing to guess, and in a single
@@ -949,7 +997,9 @@ A key with no mapping reads every corpus, and a leaked key reads whatever it is 
 where tenancy confined a leak to one tenant. For one operator on one machine that is the
 right trade, and the mapping is the mitigation when it stops being. Writes lose their owner:
 `ingest` alone governs reindexing. `POST /api/corpora/{id}/documents` stops being reachable
-with a key, so a script that uploads needs the admin session.
+with a key, so a script that uploads needs the admin session. The **Revised 2026-10-01**
+paragraph above reverses this: a key holding `ingest` uploads and attaches documents, and
+[D-40](#d-40-detaching-a-document-has-a-scope-of-its-own) moved detaching to `destroy`.
 
 **Consequence.** The corpus mapping is live and the tool list is not. The transport is
 stateless ([D-12](#d-12-stateless-streamable-http-mcp-2026-07-28)), with no session id and no
@@ -1229,8 +1279,9 @@ start.
 **Revisit if.** The `UserPromptSubmit` hook proves useful enough to default on, which needs
 a relevance floor Dexicon does not currently expose: `POST /api/context` reports `usedChars`,
 `truncated` and `droppedHits`, but no score, so a hook cannot yet tell a good passage from
-the best of a bad set. Fused RRF rank is ordering, not magnitude, so the figure would have to
-be chosen and measured the way the chunk ratio was in
+the best of a bad set. A fused DBSF score is comparable within one search and not across
+searches ([D-06](#d-06-score-fusion-server-side)), so the figure would have to be chosen and
+measured the way the chunk ratio was in
 [D-27](#d-27-a-chunk-budget-is-characters-and-the-ratio-is-measured). A `minScore` parameter,
 or returning the fused score, is the smaller change that would make the default defensible.
 
@@ -1249,6 +1300,12 @@ decides the size, so nothing predicts it. A smaller target may be configured, an
 recursion is only the guarantee behind it. `TextDensity` is deleted and `CharsPerToken`
 stops being load-bearing. Amends [D-16](#d-16-approximate-token-counting) and
 [D-27](#d-27-a-chunk-budget-is-characters-and-the-ratio-is-measured).
+
+**Status.** The locator half is implemented. The self-sizing default is not: chunks are cut at
+the configured target, and a chunk the provider refuses is split in two (see the amendment by
+measurement below). `TextDensity` is deleted. The per-model ratio still converts the configured
+size to characters ([D-27](#d-27-a-chunk-budget-is-characters-and-the-ratio-is-measured)), so
+`CharsPerToken` is still read by the chunker.
 
 **What was actually wrong.** The chunk budget is defined in tokens and enforced in
 characters, and everything built on that conversion leaks. One index run logged 212
@@ -1412,6 +1469,7 @@ either side of the hit, still awaits its experiment: it needs `/api/context` to 
 that way and a benchmark arm that scores it. The neighbour result above suggests where to
 look, since two chunks either side already pays at a wide budget. A larger or more varied
 corpus could also move the size result, which rests on 55 questions over 16 documents.
+
 ---
 
 ### D-32 Discovery is its own pass, and does not queue behind indexing
@@ -1466,6 +1524,10 @@ already documents. `FileStatus.Pending` is commented "discovered, not yet chunke
 no indexing in them. `pendingCount` is already computed by the corpus endpoint and already
 rendered by `ChunkSets.tsx`. What is missing is a caller that stops after the walk, and a
 lane for it to run on.
+
+**Status.** Accepted and implemented, 2026-09-20. `CorpusSweeper` is the caller that stops after the walk,
+and [D-33](#d-33-one-queue-one-pool-a-concurrency-per-work-type) gave it its lane
+(`MaxConcurrentSweeps`).
 
 **Rejected.** A new `JobKind` on the existing queue. `IndexJobQueue` is one channel with a
 single reader, so a discovery job would wait behind precisely the work it exists to get in
@@ -1683,7 +1745,9 @@ rather than files-to-read, the walk is a `git log` rather than a directory desce
 the file list stays legible instead of mixing files with commits under one set of counts.
 A repository whose files and history are both wanted takes two sources over one root, and
 adding one is a checkbox on the add-source form, which hides the size cap and the
-`.gitignore` toggle because neither means anything to a commit.
+`.gitignore` toggle because neither means anything to a commit. Since 2026-09-30 it is the
+**Commit history** choice at the top of the form instead (**Files** or **Commit history**),
+with the same fields hidden.
 
 Everything after "what are the units and how do I read one" is shared with the file path:
 the chunking fingerprint, the four empty branches that drop their vectors, the claim
@@ -1894,6 +1958,10 @@ it would not limit what `configure` can add, only make it harder to see.
 **Revisit if.** Agents need to remove what they set up, or a deployment needs `configure`
 confined to part of the workspace, which would take a per-key folder list.
 
+**Amended by** [D-39](#d-39-agents-ask-for-removals-and-a-person-decides) (2026-10-08): the removal
+an agent proposes and a person approves in the UI is built. A key holding `propose` is listed two
+more tools, so the counts under **Tool count** are for a key without it.
+
 ---
 
 ### D-37 Indexing is read, not stored
@@ -2042,7 +2110,7 @@ detach should leave `ingest` for a scope of its own was left to a separate decis
 
 ### D-40 Detaching a document has a scope of its own
 
-**Status.** Accepted and implemented, 2026-10-08. The second of the two changes D-39 planned.
+**Status.** Accepted and implemented, 2026-10-08. Follows [D-39](#d-39-agents-ask-for-removals-and-a-person-decides).
 
 **Decision.** `DELETE /api/corpora/{id}/documents/{fileId}` requires `destroy`. `ingest` keeps upload,
 attach and reindex. The two are independent: a key can add documents without being able to remove them,
@@ -2089,7 +2157,7 @@ alone from now on cannot detach a document, so anything scripted against it need
 
 ---
 
-## Open questions
+## Resolved questions
 
 | # | Question | Needed by | Current lean |
 |---|---|---|---|
