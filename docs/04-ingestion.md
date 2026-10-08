@@ -2,7 +2,7 @@
 
 ## Sources
 
-Two kinds, same pipeline after discovery.
+Three kinds, same pipeline after discovery: `workspace`, `upload` and `git-history`.
 
 ### `workspace` — recursive folder index
 
@@ -11,13 +11,17 @@ case: point Dexicon at a repository and it indexes the tree.
 
 Discovery walks the tree and applies, **in order**:
 
-1. **Always-exclude** — binaries, media, archives, build output, VCS internals. Hard-coded,
-   not configurable, because nothing good comes of embedding a `.dll`:
-   `.git`, `**/node_modules/**`, `**/bin/**`, `**/obj/**`, `**/.vs/**`, `**/.idea/**`,
-   `**/target/**`, `**/dist/**`, `**/__pycache__/**`, and by extension:
-   `exe dll pdb so dylib o obj a lib zip tar gz 7z rar jar woff woff2 ttf eot
-   ico png jpg jpeg gif bmp webp svg mp3 mp4 avi mov wav db sqlite sqlite3
-   safetensors gguf bin pt pth pkl npy npz`
+1. **Always-exclude** — binaries, media, archives, build output, VCS internals, lock files.
+   Built in, with no setting to change them, because nothing good comes of embedding a
+   `.dll` (`WorkspaceWalker.AlwaysExclude`). They are the first patterns applied, so a later
+   negation wins: a root `.gitignore` containing `!.vscode/launch.json` brings that one file
+   back from the excluded `.vscode` directory (`DirectoryPruningTests`):
+   - Directories: `.git`, `.hg`, `.svn`, `node_modules`, `bin`, `obj`, `.vs`, `.idea`,
+     `.vscode`, `target`, `dist`, `build`, `__pycache__`, `.venv`, `venv`.
+   - Extensions: `exe dll pdb so dylib o obj a lib zip tar gz 7z rar jar nupkg woff woff2
+     ttf eot otf ico png jpg jpeg gif bmp webp svg mp3 mp4 avi mov wav flac db sqlite
+     sqlite3 safetensors gguf bin pt pth pkl npy npz lock`.
+   - File names: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`.
 
    `.git` carries no trailing slash because in a linked worktree and in a submodule it is
    a file, holding `gitdir: <absolute host path>` — and an absolute host path in a payload
@@ -47,13 +51,18 @@ Discovery walks the tree and applies, **in order**:
    at the source root. Disable per source with `use_gitignore: false`, which turns off `2`
    with it: one setting, and it says whether git decides what is indexed.
 4. **`.dexiconignore`** — same syntax and the same reach, for things that are checked in
-   but not worth indexing (lock files, generated clients, vendored trees). Separate from
+   but not worth indexing (generated clients, vendored trees). Separate from
    `.gitignore` so you never have to change VCS behaviour to change index behaviour, and
    read whatever `use_gitignore` says, because that setting is a statement about git.
-5. **`exclude_globs`**, then **`include_globs`** as an override.
-6. **Size cap** — `max_file_bytes`, default 256 KB. A file over the cap is recorded as
-   `skipped` with the reason, never dropped without record.
-7. **Binary sniff** — a NUL byte in the first 8 KB means binary, regardless of extension.
+5. **`exclude_globs`**, then **`include_globs`**. A non-empty include list keeps only the
+   files it matches, after every rule above has run, so it narrows the set and cannot bring
+   back a file an earlier rule dropped. An empty list means everything not excluded.
+6. **Size cap** — `max_file_bytes`, default 256 KB, for code and text. A PDF, DOCX, PPTX,
+   EPUB or HTML file has its own cap, `DEXICON__INDEXING__DOCUMENTMAXBYTES` (default
+   512 MB). A file over its cap is recorded as `skipped` with the reason, never dropped
+   without record.
+7. **Binary sniff** — a NUL byte in the first 8 KB of a code or text file means binary,
+   whatever the extension. Document formats are not sniffed.
 
 Within `2`, `3` and `4` the later file wins, which is git's precedence: a `!generated/` in
 `.gitignore` re-includes what `info/exclude` dropped, and a deeper file outranks a
@@ -127,7 +136,8 @@ narrowest first:
 ```
   the source's own value        set on one folder
   the corpus default            inherited by every source that sets none
-  the configured value          DEXICON__INDEXING__*
+  the configured value          DEXICON__INDEXING__MAXFILEBYTES for the cap
+                                (.gitignore on and both glob lists empty are constants)
 ```
 
 Each field resolves on its own, so a source that only wants a larger cap still follows the
@@ -160,10 +170,13 @@ Changing a filter queues a refresh, and only when something actually moved. Narr
 removes the files it now excludes through the ordinary reconcile: the walk stops seeing
 them, which is the path a file deleted from disk already takes. Nothing on disk is touched.
 
-Text extraction on a workspace source is `File.ReadAllText` with encoding detection (BOM,
-then UTF-8, then Latin-1 fallback). Document formats (PDF, DOCX, …) found inside a
-workspace tree **are** extracted with their loaders: a repository with reference PDFs in `docs/`
-gets them indexed.
+Plain text and code on a workspace source are read as bytes and decoded as BOM, then
+UTF-8, then Latin-1. Document formats (PDF, DOCX, …) found inside a workspace tree **are**
+extracted with their loaders: a repository with reference PDFs in `docs/` gets them
+indexed. A document is bounded by `DEXICON__INDEXING__DOCUMENTMAXBYTES` (512 MB), and
+extraction of one file is abandoned after `DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS`
+(300 s). The clock is read between reads of the file, so it bounds a file that keeps
+reading and not a single read that never returns ([09](09-deployment.md)).
 
 ### `upload` — files pushed through the UI or API
 
@@ -192,12 +205,16 @@ So:
 A corpus gets at most one upload source, created on first attachment. Detaching removes
 that corpus's chunks only; the blob survives, because another corpus may still hold it.
 
-Limits: 200 MB per file (`DEXICON__UPLOAD__MAXFILEBYTES`). Uploads are buffered to a temp
-file rather than memory, because the hash is only known once the whole stream is read and a
-200 MB upload should not be a 200 MB allocation.
+Limits: 200 MB per file (`DEXICON__UPLOAD__MAXFILEBYTES`), applied while the file is copied
+to the blob store. Before that, ASP.NET Core has read the whole multipart form into a
+temporary file under `/tmp` (a tmpfs in the compose file), because the request-size limit is
+lifted for this endpoint. The blob store buffers to a temp file rather than memory too,
+because the hash is only known once the whole stream is read and a 200 MB upload should not
+be a 200 MB allocation. See [10](10-security-secrets.md#input-handling).
 
-**Staleness is a chunking fingerprint**, not a content hash: `sha256(blob | chunkSize |
-chunkOverlap | boundaryMode | model)`. With a bare content hash, changing a corpus's chunk
+**Staleness is a chunking fingerprint**, not a content hash: a SHA-256 over the blob hash
+and every chunking and embedding setting, listed under
+[Incremental refresh](#incremental-refresh). With a bare content hash, changing a corpus's chunk
 size left every file looking unchanged, so a refresh re-chunked nothing and the new setting
 had no effect. The fingerprint marks precisely the affected files as stale and no
 others.
@@ -459,10 +476,10 @@ See [D-34](decisions.md#d-34-a-commit-is-a-document).
 | Format | Extensions | Library | Licence | Provenance unit | Notes |
 |---|---|---|---|---|---|
 | Plain text | `.txt`, `.log`, code | — | — | line | Encoding-detected |
-| Markdown | `.md`, `.markdown` | Markdig | BSD-2 | line + heading | Headings become `section` |
+| Markdown | `.md`, `.markdown` | — | — | line + heading | Plain text, no extractor. ATX headings outside code fences become `section` and the heading trail |
 | HTML | `.html`, `.htm` | AngleSharp | MIT | line | One line per block element; `script`/`style` skipped; `<title>` kept |
 | PDF | `.pdf` | PdfPig | Apache-2.0 | **page** | Text layer only — no OCR |
-| DOCX | `.docx` | DocumentFormat.OpenXml | MIT | paragraph | Headings become `section` |
+| DOCX | `.docx` | DocumentFormat.OpenXml | MIT | none | One line per non-empty paragraph; headings are not detected |
 | PPTX | `.pptx` | DocumentFormat.OpenXml | MIT | **slide** | Slide notes included |
 | EPUB | `.epub` | VersOne.Epub | MIT | **chapter** | Reading order from `content.opf`; chapter HTML walked block by block |
 | JSON/YAML/TOML | `.json`, `.yaml`, `.yml`, `.toml` | — | — | line | Treated as text; structure-aware chunking is not attempted |
@@ -615,21 +632,29 @@ next chunk, so every chunk has an exact `start_line`/`end_line`. Never splits a 
 
 With `boundary_mode: language-aware`, the file is first split at member boundaries by
 language, then each segment is size-chunked. This keeps a method with its signature instead
-of slicing it at an arbitrary token count. Patterns per language:
+of slicing it at an arbitrary token count. The patterns are in `LanguageMap.Boundaries`.
+These languages have a member pattern: C#, F#, VB, Java, Kotlin, Scala, Swift, TypeScript,
+JavaScript, Python, Ruby, Go, Rust, PHP, Lua, C, C++, SQL, CSS, SCSS, LESS, shell and
+PowerShell. Examples:
 
-| Language | Boundary |
-|---|---|
-| C# | `^\s*(public|private|protected|internal|static|abstract|sealed|override|virtual|async)\s` |
-| TypeScript / JavaScript | `^(export )?(default )?(async )?(function|class|const|let|var|interface|type|enum)\b` |
-| Python | `^(async def |def |class )` |
-| Go | `^(func |type |var |const )` |
-| Rust | `^(pub )?(fn|struct|impl|trait|enum|mod|type)\b` |
-| Java / Kotlin | access-modifier anchor at line start |
-| SQL | `^(CREATE|ALTER|DROP|SELECT|INSERT|UPDATE|DELETE|MERGE|WITH)\b` |
-| CSS / SCSS / LESS | rule opener `^[.#\[\w@:][^{]*\{` |
-| Markdown | ATX headings |
-| HTML, Razor, Vue, Svelte | **blank line** — these are template *source*, not documents; splitting them on `<h1>` produces nonsense |
-| everything else | blank line |
+- **C#**: a line that starts, after optional indentation, with `public`, `private`,
+  `protected`, `internal`, `static`, `abstract`, `sealed`, `override`, `virtual`, `async`,
+  `record`, `class`, `struct`, `interface` or `enum`.
+- **TypeScript**: optional `export`, `default` and `async`, then `function`, `class`,
+  `const`, `let`, `var`, `interface`, `type`, `enum` or `abstract class`, at the start of a
+  line. JavaScript is the same without `interface`, `type`, `enum` and `abstract class`.
+- **Python**: `async def`, `def` or `class` at the start of a line.
+- **Go**: `func`, `type`, `var` or `const` at the start of a line.
+- **Rust**: after optional indentation, an optional `pub` and `async`, then `fn`, `struct`,
+  `impl`, `trait`, `enum`, `mod` or `type`.
+- **SQL**: `CREATE`, `ALTER`, `DROP`, `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`,
+  `MERGE` or `WITH` at the start of a line, in any case.
+- **CSS, SCSS, LESS**: a rule opener, `^[.#\[\w@:][^{]*\{`.
+- **Markdown**: ATX headings.
+- **Razor, Vue, Svelte**: blank line. These are template *source*, not documents, and
+  splitting them on `<h1>` produces nonsense.
+- **Every other language**, `.html` and `.htm` included: blank line. An HTML file is
+  extracted as a document (see Extraction) and the extracted text is then chunked.
 
 Boundary modes: `none` | `blank-line` | `language-aware` | `custom` (operator regex, compiled
 with a 500 ms timeout; an invalid or timing-out regex fails the job with a clear error and
@@ -709,27 +734,32 @@ re-indexes every chunk set on that model rather than leaving the two sides to di
 ### "Tokens" is a character budget, and the ratio is measured
 
 A chunk size is set in tokens and enforced in **characters**. There is no tokenizer in the
-chunking path; `CodeChunker` performs one conversion, `maxChars = chunkSizeTokens * 4`, and
-counts characters thereafter. `768` means 3,072 characters, for every model and every kind
-of text.
+chunking path. `CodeChunker` converts once, `maxChars = chunkSizeTokens * charsPerToken`,
+and counts characters thereafter. The ratio is 4 for a model that has not been probed
+(`CodeChunker.CharsPerToken`) and the ratio the probe measured with the model's own
+tokenizer otherwise: 2.82 for `nomic-embed-text`, 3.80 for `embeddinggemma`. The size is
+also capped at 90% of the model's measured context (`ChunkSetOptions.Options`,
+`CodeChunker.ContextShare`). The default of 256 tokens is 1,024 characters at ratio 4 and
+about 722 at 2.82.
 
 The trade is cost. An exact tokenizer means a versioned vocabulary per model, for models
 pulled at runtime that may not exist yet; the only tokenizer guaranteed right for an
 arbitrary model is the one inside it, and asking costs a round trip per chunk. Counting
 characters is free, and happens tens of thousands of times per index.
 
-The flat 4 is wrong in a known direction. English prose is around four characters a token,
-dense code nearer three, CJK one or less. A "768 token" chunk of minified JavaScript can be
-two or three times the budget, and a truncating model drops the end without failing.
+A ratio is still an estimate. English prose is around four characters a token, dense code
+nearer three, CJK one or less, and the probe measures one ratio per model from three samples,
+so a chunk of minified JavaScript can hold more tokens than its budget. The embedding request asks the
+provider to refuse input past its context instead of truncating it, and a chunk the model
+refuses is divided and written as two (`DivideAndWriteAsync`). A wrong ratio therefore
+costs a split and not a truncation.
 
-The probe measures the ratio once per model with the model's own tokenizer, which turns the
-character budget into a real token figure without putting a tokenizer in the hot path. On
-this machine `nomic-embed-text` is 2.82, not 4, so the default 768-token chunk is nearer
-1,090 tokens.
+The probe measures the ratio once per model, which turns the character budget into a real
+token figure without putting a tokenizer in the hot path.
 
-The consequence that matters: `mxbai-embed-large` accepts 2,816 characters, and the default
-768 tokens is 3,072. **At the default, that model truncates every full-size chunk.** The
-probe exists because that happened, reached from the defaults.
+`mxbai-embed-large` accepts 2,816 characters, which is about 1,000 tokens at its measured
+ratio of 2.82 (704 at the flat 4), and the default of 256 tokens is well inside that. The probe exists because a default of 768 tokens (3,072
+characters) truncated every full-size chunk on that model.
 
 ### Chunk sets — a corpus can be cut several ways at once
 
@@ -765,19 +795,33 @@ only by duplicating the corpus, which duplicated its grants and its sources alon
 ### Embedding providers
 
 A chunk set names a **provider** and a **model**. Ollama is configured by default and
-needs nothing; OpenAI and Azure OpenAI are opt-in:
+needs nothing; OpenAI and Azure OpenAI are opt-in. Compose forwards only the variables
+`docker-compose.yml` lists, so a provider is configured in `docker-compose.override.yml`,
+under `services.dexicon.environment`, and its key is kept in `.env`:
+
+```yaml
+services:
+  dexicon:
+    environment:
+      DEXICON__EMBEDDING__PROVIDERS__openai__KIND: OpenAI
+      DEXICON__EMBEDDING__PROVIDERS__openai__APIKEYENVVAR: OPENAI_API_KEY
+      DEXICON__EMBEDDING__PROVIDERS__openai__MODELS__0: text-embedding-3-small
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+```
 
 ```
-DEXICON__EMBEDDING__PROVIDERS__openai__KIND=OpenAI
-DEXICON__EMBEDDING__PROVIDERS__openai__APIKEYENVVAR=OPENAI_API_KEY
-DEXICON__EMBEDDING__PROVIDERS__openai__MODELS__0=text-embedding-3-small
+# .env
 OPENAI_API_KEY=…
 ```
 
-The configuration names **the environment variable** holding the key, not the key.
-Configuration files get committed; environment variables do not. The catalogue records
-only which provider a set uses. A database row holding an API key cannot be backed up
-casually, and Dexicon's backup instructions direct the operator to copy the catalogue.
+An Azure OpenAI provider takes `KIND: AzureOpenAI` and an `ENDPOINT` in the same way.
+
+The configuration names **the environment variable** holding the key (`APIKEYENVVAR`).
+Configuration files get committed; environment variables do not. `ApiKey` can be set
+directly for a deployment that injects configuration from a secret store, and is never
+logged. The catalogue records only which provider a set uses. A database row holding an API
+key cannot be backed up casually, and Dexicon's backup instructions direct the operator to
+copy the catalogue.
 
 A provider that is configured but missing its credential is reported as such in the
 Models screen and in `/api/embedding-providers`.
@@ -818,7 +862,8 @@ Measured on the three models here:
 | `embeddinggemma` | 3.80 | 11,776 chars |
 | `mxbai-embed-large` | 2.82 | **2,816 chars** |
 
-Two of the three are well below the 4 the chunker assumes; see below.
+Each is below the 4 the chunker uses for a model that has not been probed. With a
+measurement, the chunker converts with the measured figure (above).
 
 This exists because of the EPUB failure above: a truncating model returns a perfectly good
 vector for the part it read, so nothing downstream could tell that most of the book was
@@ -830,9 +875,11 @@ the vector is unchanged. Bisecting on that finds the real limit in about two doz
 calls, with no documentation to trust and nothing indexed.
 
 Measured on this stack, both `nomic-embed-text` and `embeddinggemma` accept about 11,776
-characters of English prose, or 2,048 tokens, and **truncate without error** beyond it. The recommendation is two thirds of the measured figure, because the measurement
-is in characters and the model counts tokens: code, minified output and CJK reach the same
-token limit in far fewer characters.
+characters of English prose, or 2,048 tokens, and **truncate without error** beyond it. Where the provider reports tokens, the recommended chunk size is 90% of the
+measured context (`CodeChunker.UsableContext`); where it does not, it is two thirds of the
+measured characters divided by the characters-per-token estimate. The measurement is in
+characters of prose and the model counts tokens: code, minified output and CJK reach the same
+token limit in far fewer characters, which the margin absorbs.
 
 ### Meaning, not just budget
 
@@ -844,7 +891,8 @@ fits. Each is per-set and off by default.
 budget`, is prepended to the text that is *embedded*, so a chunk's vector carries the section it came
 from. Stored text stays verbatim: it is what search returns, what `get_context` stitches,
 and what a `dexicon://` resource read reconstructs a file from, and prepending would insert
-lines the file never had.
+lines the file never had. Heading context applies to Markdown files, the only format whose
+headings are detected.
 
 The trail is resolved per line, up front. Reading a running cursor when a chunk is emitted
 looks equivalent but is not: the accumulator fills *past* a boundary before backing up to
@@ -919,9 +967,10 @@ can say *"p. 34"* rather than *"chunk 87"*.
 | `chunk_overlap` | 32 tokens | ~13%, the same share of the chunk the previous default was, so the size moved and this did not. The same measurement found nothing to gain from more: 0.527 with no overlap against 0.473 with 100, which is 29 answers against 26 and therefore noise. |
 | `boundary_mode` | `language-aware` | The reason to run this over grep is chunks that mean something. |
 
-Token counts are approximated at 4 characters per token. Exact tokenization would mean
-shipping the model's tokenizer per model; the approximation costs a few percent of window
-and removes a whole dependency. Chunk size is a target, not a contract.
+A chunk size is set in tokens and enforced in characters, converted at the model's measured
+characters-per-token ratio, or 4 where the model has not been probed (see the section on
+the ratio, above). Exact tokenization would mean shipping the model's tokenizer per model;
+the conversion removes a whole dependency. Chunk size is a target, not a contract.
 
 ### Symbol extraction
 
@@ -932,26 +981,30 @@ rather than implying call-graph fidelity.
 
 ## Embedding
 
-- Provider: Ollama, over `Microsoft.Extensions.AI` abstractions (`IEmbeddingGenerator`), so
-  another provider is a registration, not a rewrite.
-- Batched: up to 32 chunks per request, bounded by `MaxConcurrentEmbeddings` (default 4).
-- Per-request timeout 2 minutes; 2 retries with jitter.
-- **Capped exponential backoff** on repeated failure: 5s → 10s → 20s … → 320s cap. While
-  backed off, the job reports `degraded` with the failure count and next retry time.
-- A single chunk that fails after retries skips its **file** (not the scan), records the
-  reason, and flags the job degraded. The file's hash is deliberately not written, so the
-  next scan retries it. One oversized chunk must never be able to starve the rest of a
-  repository.
+- Provider: Ollama by default, OpenAI and Azure OpenAI where configured, over
+  `Microsoft.Extensions.AI` abstractions (`IEmbeddingGenerator`, built per provider by
+  `EmbeddingGeneratorFactory`), so another provider is a registration, not a rewrite.
+- Batched: `DEXICON__EMBEDDING__BATCHSIZE` chunks per request (default 32), with at most
+  `DEXICON__EMBEDDING__MAXCONCURRENCY` requests in flight per provider across all jobs
+  (default 4).
+- An Ollama request times out after 2 minutes. A request that fails, whichever the
+  provider, is retried twice, waiting about 500 ms and then 1 s, each with up to 250 ms of
+  jitter.
+- A chunk that still fails after the retries fails its **file**, not the scan: the file is
+  recorded `failed` with the reason, the pass continues with the next file, and the job
+  ends `degraded`. Nothing pauses the job and no retry time is reported. The file's hash is
+  deliberately not written, so the next scan retries it. One oversized chunk must never be
+  able to starve the rest of a repository.
 
 ### Model choice
 
-Pinned per corpus at creation. Candidates, all available through Ollama:
+Pinned per chunk set at creation. Candidates, all available through Ollama:
 
 | Model | Dims | Size | Use for |
 |---|---|---|---|
 | `embeddinggemma` | 768 | ~620 MB | **Default.** Won both sweeps — best mean MRR on documents and on code. |
-| `mxbai-embed-large` | 1024 | ~670 MB | Close behind, and took the single best code configuration. Accepts only 2,816 characters, so it needs a chunk size well under the default. |
-| `nomic-embed-text` | 768 | ~300 MB | A third the download. Mid on documents, last on code by a clear margin. |
+| `mxbai-embed-large` | 1024 | ~670 MB | Close behind, and took the single best code configuration. Accepts only 2,816 characters, about 1,000 tokens at its measured 2.82 characters per token. A chunk set's size is capped at 90% of a model's measured context, and a chunk the provider refuses is split; the default of 256 tokens is well inside it. |
+| `nomic-embed-text` | 768 | ~300 MB | About half the download. Mid on documents, last on code by a clear margin. |
 | `qwen3-embedding:0.6b` | 1024 | ~1.5 GB | Strongest general quality per VRAM; 32k context; multilingual. Not yet swept. |
 | `bge-m3` | 1024 | ~2.2 GB | Long documents (8k context). Not yet swept. |
 
@@ -981,7 +1034,7 @@ be noise and the alternative is a vocabulary to version.
 for each discovered file:
     hash = sha256(content)
     if catalog.hash == hash      -> skip          (unchanged)
-    if catalog.hash != hash      -> delete chunks by (corpus_id, file_path), re-chunk, re-embed
+    if catalog.hash != hash      -> delete chunks by (chunk set, source, file_path), re-chunk, re-embed
     if not in catalog            -> chunk, embed
 after the walk:
     for each catalog file not seen -> delete its chunks and its row
@@ -996,10 +1049,14 @@ Two properties this buys:
 The hash above is the **chunking fingerprint**, not the content hash alone:
 
 ```
-sha256(blob | chunk_size | chunk_overlap | boundary_mode | custom_pattern
+sha256(blob | chunk_size | chunk_overlap | chars_per_token | boundary_mode | custom_pattern
        | unit_aware | sentence_aware | heading_context
-       | embedding_model | extractor_version | chunker_version)
+       | embedding_provider | embedding_model | task_templates
+       | extractor_version | chunker_version)
 ```
+
+`chunk_size` and `chunk_overlap` are the effective values, after the cap at 90% of the
+model's measured context (`CorpusIndexer.ChunkingFingerprint`).
 
 Everything that determines what ends up in Qdrant is in it, and it is computed **per chunk
 set**. Two sets over the same blob get different fingerprints and independent vectors, which
@@ -1049,23 +1106,32 @@ A key written for a file whose bytes change without changing size or modified ti
 detected. Files copied with their timestamps preserved to the same size are the case; a full
 pass finds them.
 
-Scheduling: on demand (UI button, `index_refresh` MCP tool), plus an optional interval per
-corpus, default off. There is no filesystem watcher: polling is more reliable over bind
-mounts, particularly on Windows hosts and WSL2.
+Scheduling: on demand (UI button, `index_refresh` MCP tool), plus one optional interval for
+every corpus, `DEXICON__INDEXING__REFRESHMINUTES` (`DEXICON_INDEXING_REFRESHMINUTES` in
+`.env`), default 0 (off). At each tick `ScheduledRefreshService` queues a refresh for every
+corpus that has no job in flight. There is no filesystem watcher: polling is more reliable
+over bind mounts, particularly on Windows hosts and WSL2.
 
 ## Job semantics
 
-One job runs at a time per instance, in a bounded in-process queue. Queuing a refresh for a
-corpus that already has one queued is a no-op returning the existing job id, not a second
-job.
+A corpus has at most one running job: the corpus lease excludes a second, and
+`WorkScheduler` does not start an item whose corpus already has one running. Across corpora
+the scheduler runs up to `MaxConcurrentCorpora` incremental passes at once (default 4),
+`MaxConcurrentRebuilds` full or rebuild passes (default 1) and `MaxConcurrentSweeps`
+discovery sweeps (default 2), each type against its own slots. Queuing a refresh for a
+corpus and chunk set that already has one queued returns the existing job id instead of
+creating a second job, and a queued full or rebuild pass covers a refresh requested behind
+it. A running job is never joined, because it has already taken its list of sources.
 
-Job kinds: `full` (everything, ignoring hashes), `refresh` (incremental, the default),
-`rebuild` (new embedding model, which writes into the new collection and drops the old
-points only on success), `delete`.
+Job kinds: `full` (every file, ignoring fingerprints and settle keys), `refresh`
+(incremental, the default) and `rebuild` (a full pass for one chunk set, used to backfill a
+new set while the live set keeps serving). Deletes are synchronous and are not jobs.
 
-Progress events are emitted per file and coalesced to at most 4/second onto
-`GET /api/events` (SSE). The UI shows phase, counts, current file, and an estimate of
-remaining time derived from the trailing rate.
+Progress is reported after each embedding batch and, between files, once a second (a
+workspace pass also reports every 25 files). It is streamed on `GET /api/events` (SSE),
+with a ping every 20 seconds. Each subscriber has a buffer of 64 reports and the oldest is
+dropped when it fills. The UI shows phase, processed and total counts, chunks written and
+the current file.
 
 ### When the catalogue cannot be written
 

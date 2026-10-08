@@ -18,6 +18,9 @@ was caught before it could ship.**
 | 3 | ⚠️ **Confirmed with a correction** | Stateless streamable HTTP works; no `Mcp-Session-Id` is ever emitted; static bearer auth rejects with 401 ahead of the handler; **Claude Code 2.1.248 connects and reports `✔ Connected`**. But `initialize` **rejects `2026-07-28`** — SDK 2.2.0 negotiates up to `2025-11-25`, because 2026-07-28 removed the handshake and its clients do not call `initialize` at all. Handshake-free `tools/list` and `tools/call` both verified working cold. [06](06-mcp-surface.md) rewritten. |
 | 4 | ✅ **Confirmed** | Collection reports `m=0, payload_m=16` server-side. At **50,007 points across 20 corpora**, filtered 1.5 ms vs unfiltered 3.1 ms — **2.0× slower unfiltered**. Isolation verified: a query embedded from another corpus's most distinctive content returned zero of its points. [03](03-data-model.md) updated with the numbers and the caveat that 2× is a deterrent, not a safety mechanism. |
 
+**Status (2026-10-08).** Row 1 records what the spike measured. Production fusion has been
+DBSF since 2026-09-18 ([D-06](decisions.md#d-06-score-fusion-server-side)).
+
 **Defect caught:** `QDRANT__SERVICE__API_KEY` set to an empty string does not disable
 Qdrant auth. It **enables** it with an unmatchable key, returning 401 for everything including the
 dashboard. `${QDRANT_API_KEY:-}` with a blank `.env` reproduced it on the first run. Fixed
@@ -109,6 +112,14 @@ finding the matched text there.
 | **Providers** | ✅ Ollama, OpenAI and Azure OpenAI through `IEmbeddingGenerator`, model chosen per call. Model list/pull/delete, and a probe that measures a model's real input limit without indexing anything ([D-24](decisions.md)). |
 | **Tests** | ✅ 697 server + 183 UI passing, including guards for the "configured but unread" defect class and for chunk-then-stitch round-tripping. Every fix is mutation-verified: break it, watch the named test go red, restore. |
 | **CI** | ✅ Build, test, type-check, gitleaks over full history, vulnerable-dependency checks, and an image build that starts the container. |
+
+**Status (2026-10-08).** The table is as of 2026-09-16. Since then the server exposes ten MCP
+tools across the `search`, `ingest`, `configure` and `propose` scopes ([06](06-mcp-surface.md)),
+fusion is DBSF ([D-06](decisions.md#d-06-score-fusion-server-side)), and the `destroy` scope
+exists ([D-40](decisions.md#d-40-detaching-a-document-has-a-scope-of-its-own)). A failed
+embedding request is retried twice, waiting about 0.5 s and then 1 s with jitter, and the file
+is then recorded `failed`: there is no job-level pause and no 5 to 320 s backoff
+([04](04-ingestion.md#embedding)). The test counts are those of 2026-09-16.
 
 **Since closed:** `get_context` de-overlapping is now tested, including a chunk-then-stitch
 round-trip property, and verified against this repository's own docs: twelve files
@@ -225,10 +236,11 @@ was confirmed as the default it already was. `language-aware` lost on both corpo
 reindex to buy a rounding error.
 
 **What it closed.** The probe measured ~1,962 tokens as the safe ceiling while the default
-chunk size was 768. That is no longer a guess in either direction: a new chunk set is sized
-from what its model was *measured* to accept. The same measurement is what stops
-`mxbai-embed-large`, offered in a dropdown and accepting only 2,816 characters, from
-truncating every full-size chunk at the old default.
+chunk size was 768. A chunk set's size is now capped at 90% of what its model was measured to
+read (`ChunkSetOptions`), and a new set takes its size from the request, the set it inherits
+from, or `DEXICON__INDEXING__CHUNKSIZE` (default 256). At 256 tokens a chunk stays inside the
+2,816 characters `mxbai-embed-large` accepts. That model is offered in a dropdown, and the old
+default of 768 tokens exceeded its limit in every full-size chunk.
 
 **Done when:** ✅ `docs/benchmarks.md` exists with reproducible numbers, the defaults cite
 it, and anyone proposing a reranker has a baseline to beat.
@@ -282,13 +294,18 @@ row was asked for and has shipped.
 | ~~Integration OpenAPI document and `POST /api/context`~~ | **Done.** See [D-29](decisions.md#d-29-an-integration-document-and-retrieval-in-one-call) and [13](13-integration.md). |
 | ~~Skill and hook installation from `install-mcp.ps1`~~ | **Done** in 0.5.0. See [D-30](decisions.md#d-30-skills-and-hooks-install-with-the-client-under-a-dexicon-prefix). |
 | ~~Chunks as index entries, sized by the provider's refusal~~ | **Done** in 0.6.0, after the passage evaluation it waited for. See [D-31](decisions.md#d-31-a-chunk-is-an-index-entry-and-the-model-decides-how-big-it-can-be). |
+| ~~A `configure` scope, so an agent sets up what is indexed~~ | **Done** in 0.6.5. See [D-36](decisions.md#d-36-a-configure-scope-agents-set-up-what-is-indexed). |
+| ~~Indexing read from the jobs and leases, not stored~~ | **Done** in 0.6.5. See [D-37](decisions.md#d-37-indexing-is-read-not-stored). |
+| ~~Skip a file the last pass finished with~~ | **Done** in 0.6.6. See [D-38](decisions.md#d-38-a-file-the-last-pass-finished-with-is-not-read-again). |
+| ~~Removals asked for by agents and decided by a person~~ | **Done** in 0.6.6, with the Approvals view. See [D-39](decisions.md#d-39-agents-ask-for-removals-and-a-person-decides). |
+| ~~A `destroy` scope for detaching a document~~ | **Done** in 0.6.7. See [D-40](decisions.md#d-40-detaching-a-document-has-a-scope-of-its-own). |
 
 **Sizing an ask to index something new.** Most requests land on one of four seams, and
 the seam decides the size:
 
 | The ask | Where it goes | What it costs |
 |---|---|---|
-| A format with no extractor, read today as raw text or not at all: `.ipynb`, mbox, `.eml`, `.odt`, subtitles | An `ITextExtractor` in `ExtractorRegistry` | One class and its tests. No schema change, no new source kind and no version bump: the extraction cache is keyed by extractor, so files of that format re-extract on the next pass. `ExtractorVersions.Current` is for output that changed, and it is in every file's chunking fingerprint, so bumping it re-embeds every document in every corpus. |
+| A format with no extractor, read today as raw text or not at all: `.ipynb`, mbox, `.eml`, `.odt`, subtitles | An `ITextExtractor` in `ExtractorRegistry` | One class and its tests. No schema change and no new source kind. A file that a pass has settled is not read again ([D-38](decisions.md#d-38-a-file-the-last-pass-finished-with-is-not-read-again)), and registering an extractor changes neither the settle key nor the fingerprint, so files of that format are read through the new extractor when their size or modified time changes, or on a full pass. `ExtractorVersions.Current` is for output that changed. It is in every file's chunking fingerprint and settle key, so bumping it re-reads and re-embeds every file in every corpus. |
 | Content from somewhere that is neither a folder nor an upload: a mailbox, a database query | A source kind: an inventory and a read, handed to `IndexUnitsAsync` | The git-history source is the worked example ([D-34](decisions.md#d-34-a-commit-is-a-document)). Everything after "what are the units and how is one read" is shared. |
 | A derived view of what is indexed: per-file summaries | A chunk set holds one corpus more than one way, but every strategy today cuts the text rather than writing new text | A strategy that calls a model, which is the LLM-driven chunking [04](04-ingestion.md#meaning-not-just-budget) defers. Its seam is `ChunkOptions`. |
 | Content fetched over the network: an issue tracker, a wiki, a remote repository | Not offered | Rejected in [D-34](decisions.md#d-34-a-commit-is-a-document). Clone into the workspace mount and keep it current from the host ([04](04-ingestion.md#following-a-remote-without-dexicon-fetching)). |

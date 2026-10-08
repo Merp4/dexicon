@@ -44,8 +44,10 @@ retrieval position only, not relevance or passage quality. MRR is the mean of `1
 Best single configuration: `embeddinggemma` / 256 / `blank-line` / `semantic`, **MRR
 0.836**, 41 of 55 queries answered first.
 
-Current defaults: `nomic-embed-text` / 768 / `language-aware` / `hybrid`, **MRR 0.744**,
-34 of 55 first. That ranks **30th of 81**.
+Defaults at the time of the run: `nomic-embed-text` / 768 / `language-aware` / `hybrid`,
+**MRR 0.744**, 34 of 55 first. That ranks **30th of 81**. The defaults since then are
+`embeddinggemma` / 256 tokens / `language-aware` / `hybrid` ([04](04-ingestion.md#defaults),
+[D-31](decisions.md#d-31-a-chunk-is-an-index-entry-and-the-model-decides-how-big-it-can-be)).
 
 ## What that does and does not justify
 
@@ -71,12 +73,13 @@ because changing it costs a reindex and buys a rounding error, not because it wo
 metric: a file split finer has more chances to land one chunk in the top ten.
 
 **`mxbai-embed-large`'s numbers are not a fair reading of the model.** It accepts 2,816
-characters; at 768 tokens the chunker produces 3,072 and at 1536 it produces 6,144. Two
+characters. At the time of the run the chunker converted tokens to characters at a flat 4, so
+768 tokens produced 3,072 characters and 1536 produced 6,144. Two
 thirds of its rows measure truncation rather than retrieval quality, and the degradation
 across sizes (0.714 → 0.687 → 0.668) reflects that. This is the clearest result in the
 sweep, and it is a finding about the defaults rather than about the
-model: **the default chunk size truncates every full-size chunk on a model the UI offers
-in a dropdown.**
+model: **the default chunk size then truncated every full-size chunk on a model the UI
+offers in a dropdown.**
 
 **embeddinggemma won both corpora, and that is what moved the default.** On documents
 it leads `nomic-embed-text` by 0.025 mean MRR, which alone is suggestive and not decisive.
@@ -138,9 +141,9 @@ to land a chunk in the top ten, and the single best code configuration is `mxbai
 one size its character limit does not ruin. A default should be the thing that is hardest
 to be badly wrong with.
 
-The chunk size is no longer a fixed 768: it is set from what the model was measured to
-accept, which is what stops the `mxbai` truncation described above from being reachable
-from the defaults at all.
+The default chunk size is no longer 768. It is 256 tokens, and a chunk set's size is capped
+at 90% of what its model was measured to read, so the `mxbai` truncation described above is
+not reachable from the defaults.
 
 ## What this is not
 
@@ -152,10 +155,15 @@ retrieval returned the correct file.
 Reproduce with:
 
 ```bash
-python scripts/bench/sweep.py --dry-run   # the plan and the cost
-python scripts/bench/sweep.py             # documents, ~12 minutes on a GPU
-python scripts/bench/sweep.py --queries scripts/bench/queries-code.json
+python scripts/bench/sweep.py --dry-run                     # the plan and the cost
+python scripts/bench/sweep.py                               # documents, ~12 minutes on a GPU
+python scripts/bench/sweep.py --queries queries-code.json   # code
 ```
 
-It builds its own corpus and deletes it afterwards. Raw per-configuration numbers are in
-`scripts/bench/results.json`.
+`--queries` names a file in `scripts/bench/`. The script builds its own corpus
+(`bench-sweep`) and deletes it afterwards. Raw per-configuration numbers are in
+`scripts/bench/results-docs.json` and `scripts/bench/results-code.json`.
+
+Creating and deleting a corpus need the `admin` scope, which no API key can hold, so
+`sweep.py` signs in with `DEXICON_ADMIN_PASSWORD` (from the environment or `.env`), or takes
+a session bearer in `DEXICON_TOKEN_ADMIN`. `scripts/bench/passages.py` does the same.
