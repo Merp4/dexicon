@@ -15,7 +15,7 @@ namespace Dexicon.Tests;
 /// Found on a real corpus: three files short by 13,016 points, two of them reporting
 /// thousands of chunks and holding none.
 /// </summary>
-public sealed class IndexedFileKeepsItsVectorsTests
+public sealed class IndexedFileVectorTests
 {
     private static async Task<IndexingHarness> IndexedAsync()
     {
@@ -28,7 +28,7 @@ public sealed class IndexedFileKeepsItsVectorsTests
     }
 
     [Fact]
-    public async Task VectorsLostBehindTheCatalogue_AreNoticedAndReindexed()
+    public async Task VectorsLostBehindTheCatalogueAreNoticedAndReindexed()
     {
         await using var harness = await IndexedAsync();
         var before = harness.Vectors.CountFor("note.md");
@@ -48,7 +48,7 @@ public sealed class IndexedFileKeepsItsVectorsTests
     }
 
     [Fact]
-    public async Task APartialLoss_IsNoticedToo()
+    public async Task APartialLossIsNoticedToo()
     {
         await using var harness = await IndexingHarness.StartAsync();
         await harness.SeedCorpusAsync(SourceKind.Workspace);
@@ -70,7 +70,7 @@ public sealed class IndexedFileKeepsItsVectorsTests
     }
 
     [Fact]
-    public async Task ASurplusIsADisagreementToo_AndIsRepairedTheSameWay()
+    public async Task ASurplusIsADisagreementTooAndIsRepairedTheSameWay()
     {
         // The check compares, it does not subtract. A file holding MORE points than its
         // row records - a stale chunk left at a high index - is the same disagreement,
@@ -89,7 +89,7 @@ public sealed class IndexedFileKeepsItsVectorsTests
     }
 
     [Fact]
-    public async Task PointsNoRowNames_AreRemoved()
+    public async Task PointsNoRowNamesAreRemoved()
     {
         // The other record missing: points held, and no row for their path at all. A pass
         // interrupted after writing a file's points and before saving its row leaves this,
@@ -109,7 +109,7 @@ public sealed class IndexedFileKeepsItsVectorsTests
     }
 
     [Fact]
-    public async Task AFailedOrphanDeleteIsLeftForTheNextPass_NotAFailedJob()
+    public async Task AFailedOrphanDeleteIsLeftForTheNextPassNotAFailedJob()
     {
         // Best effort: the cleanup is a repair, and the job it runs in is not about it.
         await using var harness = await IndexedAsync();
@@ -130,7 +130,7 @@ public sealed class IndexedFileKeepsItsVectorsTests
     }
 
     [Fact]
-    public async Task AndAFileStillInScopeIsIndexedFromNothing()
+    public async Task AFileStillInScopeIsIndexedFromNothingAfterItsRowIsRemoved()
     {
         // Removing the points first must not cost the file: it is walked, found to have no
         // row, and indexed as new, once.
@@ -146,7 +146,7 @@ public sealed class IndexedFileKeepsItsVectorsTests
     }
 
     [Fact]
-    public async Task OnAnUploadSource_OnlyPointsWithNoRowAtAllAreRemoved()
+    public async Task OnAnUploadSourceOnlyPointsWithNoRowAtAllAreRemoved()
     {
         // Uploads reconcile over their attachments, the rows with stored text. An orphan is
         // a path with no row at all: a row without stored text still names its points, and
@@ -212,7 +212,7 @@ public sealed class IndexedFileKeepsItsVectorsTests
     }
 
     [Fact]
-    public async Task AFailedCountReadDoesNotFailTheJob_OrReindexAnything()
+    public async Task AFailedCountReadDoesNotFailTheJobOrReindexAnything()
     {
         // An outage is not a report that the index is empty.
         await using var harness = await IndexedAsync();
@@ -227,7 +227,7 @@ public sealed class IndexedFileKeepsItsVectorsTests
     }
 
     [Fact]
-    public async Task APassInterruptedAtTheDelete_LeavesNoRowClaimingAHash()
+    public async Task APassInterruptedAtTheDeleteLeavesNoRowClaimingAHash()
     {
         // The write-ahead claim, read back from the catalogue.
         //
@@ -262,7 +262,7 @@ public sealed class IndexedFileKeepsItsVectorsTests
     }
 
     [Fact]
-    public async Task AnUploadPassInterruptedAtTheDelete_LeavesNoRowClaimingAHash()
+    public async Task AnUploadPassInterruptedAtTheDeleteLeavesNoRowClaimingAHash()
     {
         // The workspace path has the same test above. Uploads take a different branch to
         // the same delete-then-write ordering, so the claim has to hold on both.
@@ -310,7 +310,7 @@ public sealed class IndexedFileKeepsItsVectorsTests
     }
 
     [Fact]
-    public async Task OneSetLosingItsVectors_DoesNotDragTheOtherThroughTheModel()
+    public async Task OneSetLosingItsVectorsDoesNotDragTheOtherThroughTheModel()
     {
         // The count is read per set. If it were read across them, the other set's copy
         // of the same file would make this one look healthy and the loss would stand.
@@ -334,7 +334,7 @@ public sealed class IndexedFileKeepsItsVectorsTests
     }
 
     [Fact]
-    public async Task OneSourceLosingItsVectors_LeavesAnotherSourcesSamePathAlone()
+    public async Task OneSourceLosingItsVectorsLeavesAnotherSourcesSamePathAlone()
     {
         // Two sources of one corpus can hold the same relative path, and the count is
         // read per source for exactly that reason. Read across sources, the healthy
@@ -362,7 +362,7 @@ public sealed class IndexedFileKeepsItsVectorsTests
     }
 
     [Fact]
-    public async Task AnUploadedDocumentThatLosesItsVectors_IsNoticedToo()
+    public async Task AnUploadedDocumentThatLosesItsVectorsIsNoticedToo()
     {
         // Uploads reach the same skip check with a matching fingerprint, and have no
         // reconcile pass behind them, so the comparison has to run on that path as well.

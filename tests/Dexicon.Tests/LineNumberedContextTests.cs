@@ -17,7 +17,7 @@ public sealed class LineNumberedContextTests
         string.Join('\n', Enumerable.Range(from, to - from + 1).Select(i => $"line {i}"));
 
     [Fact]
-    public void NumbersAreTheFilesOwn_NotThePositionInTheOutput()
+    public void NumbersAreTheFilesOwnNotThePositionInTheOutput()
     {
         // The passage starts at line 40. Numbering from 1 would be confidently wrong.
         var stitched = Passage.Stitch([(40, 44, Lines(40, 44))], lineNumbers: true);

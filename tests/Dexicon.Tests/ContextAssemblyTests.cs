@@ -357,7 +357,7 @@ public sealed class ContextAssemblyTests
     }
 
     [Fact]
-    public void OnlyOneBlockIsCut_AndItComesLast()
+    public void OnlyOneBlockIsCutAndItComesLast()
     {
         // A passage ending in several fragments is a list of beginnings, not something to
         // read, so the run stops at the first cut.

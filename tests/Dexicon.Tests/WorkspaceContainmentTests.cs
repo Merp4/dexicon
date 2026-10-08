@@ -68,7 +68,7 @@ public sealed class WorkspaceContainmentTests
     }
 
     [Fact]
-    public void ResolveWorkspacePath_RefusesASiblingReachedByTraversal()
+    public void ResolveWorkspacePathRefusesASiblingReachedByTraversal()
     {
         var indexer = IndexerRootedAt(Root);
 
@@ -78,7 +78,7 @@ public sealed class WorkspaceContainmentTests
     }
 
     [Fact]
-    public void ResolveWorkspacePath_RefusesAnAbsolutePathOutsideTheRoot()
+    public void ResolveWorkspacePathRefusesAnAbsolutePathOutsideTheRoot()
     {
         var indexer = IndexerRootedAt(Root);
 
@@ -89,7 +89,7 @@ public sealed class WorkspaceContainmentTests
     }
 
     [Fact]
-    public void ResolveWorkspacePath_AllowsAChild()
+    public void ResolveWorkspacePathAllowsAChild()
     {
         var indexer = IndexerRootedAt(Root);
 

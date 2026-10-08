@@ -29,7 +29,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
         await db.Corpora.SingleAsync(c => c.Id == IndexingHarness.CorpusId);
 
     [Fact]
-    public async Task A_source_added_with_nothing_set_follows_the_corpus_and_is_read_at_once()
+    public async Task ASourceAddedWithNothingSetFollowsTheCorpusAndIsReadAtOnce()
     {
         await using var db = _harness.NewContext();
         Directory.CreateDirectory(Path.Combine(_harness.DataPath, "workspace", "extra"));
@@ -50,7 +50,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     /// corpus default accepted it, and both are about to be reachable by agents.
     /// </summary>
     [Fact]
-    public async Task A_size_cap_of_zero_is_refused_wherever_one_is_set()
+    public async Task ASizeCapOfZeroIsRefusedWhereverOneIsSet()
     {
         await using var db = _harness.NewContext();
         var config = _harness.NewConfiguration(db);
@@ -71,7 +71,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_source_saved_unchanged_queues_nothing()
+    public async Task ASourceSavedUnchangedQueuesNothing()
     {
         await using var db = _harness.NewContext();
 
@@ -92,7 +92,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     [InlineData("notes")]
     [InlineData(" notes ")]
     [InlineData("NOTES")]
-    public async Task A_name_already_taken_is_refused_as_a_conflict(string name)
+    public async Task ANameAlreadyTakenIsRefusedAsAConflict(string name)
     {
         await using var db = _harness.NewContext();
 
@@ -108,7 +108,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     /// comparison under NOCASE would too, since it folds ASCII only.
     /// </summary>
     [Fact]
-    public async Task A_name_differing_only_in_the_case_of_a_non_ascii_letter_is_taken()
+    public async Task ANameDifferingOnlyInTheCaseOfANonAsciiLetterIsTaken()
     {
         await using var db = _harness.NewContext();
         var config = _harness.NewConfiguration(db);
@@ -123,7 +123,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_name_with_a_colon_is_refused_because_it_could_not_be_addressed()
+    public async Task ANameWithAColonIsRefusedBecauseItCouldNotBeAddressed()
     {
         // "notes:x" resolves as the corpus "notes" and its chunk set "x", so a corpus with
         // that name would be listed and never reached.
@@ -141,7 +141,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     [InlineData("esc\u001B[2J")]
     [InlineData("line\u2028separator")]
     [InlineData("paragraph\u2029separator")]
-    public async Task A_name_with_a_control_character_is_refused(string name)
+    public async Task ANameWithAControlCharacterIsRefused(string name)
     {
         // Every listing puts a name on a line of its own, and every change is logged with it.
         await using var db = _harness.NewContext();
@@ -153,7 +153,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_name_longer_than_the_model_allows_is_refused()
+    public async Task ANameLongerThanTheModelAllowsIsRefused()
     {
         // The model says 200 and SQLite stores the column as unbounded text, so a long name
         // went in and was then repeated in every listing and log line.
@@ -169,7 +169,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_name_that_is_another_corpus_s_id_is_taken()
+    public async Task ANameThatIsTheIdOfAnotherCorpusIsTaken()
     {
         // The resolver matches a name or an id, so this name would reach either corpus.
         await using var db = _harness.NewContext();
@@ -184,7 +184,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Defaults_changed_on_a_corpus_with_no_sources_queue_nothing()
+    public async Task DefaultsChangedOnACorpusWithNoSourcesQueueNothing()
     {
         // An agent creating a corpus sets its filters before adding a folder; a refresh then
         // would be a job that reads nothing.
@@ -207,7 +207,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     /// before the refusal would be saved by the next change on the same context.
     /// </summary>
     [Fact]
-    public async Task A_refused_corpus_change_leaves_nothing_behind_for_the_next_save()
+    public async Task ARefusedCorpusChangeLeavesNothingBehindForTheNextSave()
     {
         await using var db = _harness.NewContext();
         var config = _harness.NewConfiguration(db);
@@ -232,7 +232,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     /// two sets, which is the case a delete in the default set alone would get wrong.
     /// </summary>
     [Fact]
-    public async Task A_removed_source_leaves_the_index_in_every_set_and_the_other_source_stays()
+    public async Task ARemovedSourceLeavesTheIndexInEverySetAndTheOtherSourceStays()
     {
         await _harness.WriteFileAsync("same.md", IndexingHarness.Prose("alpha"), source: 0);
         await _harness.WriteFileAsync("same.md", IndexingHarness.Prose("beta"), source: 1);
@@ -259,7 +259,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_source_that_is_not_there_is_named_back()
+    public async Task ASourceThatIsNotThereIsNamedBack()
     {
         await using var db = _harness.NewContext();
 
@@ -271,7 +271,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_removed_chunk_set_takes_its_vectors_and_leaves_the_other_set_alone()
+    public async Task ARemovedChunkSetTakesItsVectorsAndLeavesTheOtherSetAlone()
     {
         await _harness.WriteFileAsync("a.md", IndexingHarness.Prose("alpha"), source: 0);
         await _harness.RunIndexAsync(JobKind.Full);
@@ -288,7 +288,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_chunk_set_that_is_not_there_is_named_back()
+    public async Task AChunkSetThatIsNotThereIsNamedBack()
     {
         await using var db = _harness.NewContext();
 
@@ -301,7 +301,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task The_default_chunk_set_is_refused_while_another_exists()
+    public async Task TheDefaultChunkSetIsRefusedWhileAnotherExists()
     {
         await using var db = _harness.NewContext();
 
@@ -314,7 +314,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task The_only_chunk_set_is_refused_and_the_corpus_is_named_as_the_way_out()
+    public async Task TheOnlyChunkSetIsRefusedAndTheCorpusIsNamedAsTheWayOut()
     {
         await using var single = await IndexingHarness.StartAsync("notes");
         await single.SeedCorpusAsync(SourceKind.Workspace, sets: 1);
@@ -329,7 +329,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_chunk_set_a_job_is_working_on_is_refused_until_the_job_has_finished()
+    public async Task AChunkSetAJobIsWorkingOnIsRefusedUntilTheJobHasFinished()
     {
         await using (var seed = _harness.NewContext())
         {
@@ -359,7 +359,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     /// the removal can be asked for again.
     /// </summary>
     [Fact]
-    public async Task A_chunk_set_whose_vectors_cannot_be_deleted_keeps_its_row()
+    public async Task AChunkSetWhoseVectorsCannotBeDeletedKeepsItsRow()
     {
         await _harness.WriteFileAsync("a.md", IndexingHarness.Prose("alpha"), source: 0);
         await _harness.RunIndexAsync(JobKind.Full);
@@ -376,7 +376,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_corpus_whose_vectors_cannot_be_deleted_keeps_its_rows()
+    public async Task ACorpusWhoseVectorsCannotBeDeletedKeepsItsRows()
     {
         await _harness.WriteFileAsync("a.md", IndexingHarness.Prose("alpha"), source: 0);
         await _harness.RunIndexAsync(JobKind.Full);
@@ -394,7 +394,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_removed_corpus_takes_its_vectors_in_every_set_and_every_row_under_it()
+    public async Task ARemovedCorpusTakesItsVectorsInEverySetAndEveryRowUnderIt()
     {
         await _harness.WriteFileAsync("a.md", IndexingHarness.Prose("alpha"), source: 0);
         await _harness.RunIndexAsync(JobKind.Full);

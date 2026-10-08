@@ -47,7 +47,7 @@ public class ModelProfileCoverageTests
 
     [Theory]
     [MemberData(nameof(EveryModel))]
-    public void Every_model_in_the_library_has_a_deliberate_framing(string model)
+    public void EveryModelInTheLibraryHasADeliberateFraming(string model)
     {
         // Not "has a template": being embedded raw is a legitimate answer for a symmetric
         // sentence-transformers model. What must not happen is a model falling through to
@@ -62,7 +62,7 @@ public class ModelProfileCoverageTests
 
     [Theory]
     [MemberData(nameof(EveryModel))]
-    public void A_tagged_name_resolves_to_the_same_framing(string model)
+    public void ATaggedNameResolvesToTheSameFraming(string model)
     {
         // Ollama serves "bge-large:latest" and "bge-large:335m"; a corpus stores whichever
         // was typed. Framing that depended on the tag would differ between the corpus and
@@ -74,7 +74,7 @@ public class ModelProfileCoverageTests
     }
 
     [Fact]
-    public void The_two_Arctic_generations_are_framed_differently()
+    public void TheTwoArcticGenerationsAreFramedDifferently()
     {
         // v1 wants "Represent this sentence…", v2 wants "query: ". They differ by one
         // character in the model name, and using either prefix on the other generation is
@@ -95,7 +95,7 @@ public class ModelProfileCoverageTests
     }
 
     [Fact]
-    public void A_model_nobody_has_heard_of_gets_no_framing_rather_than_a_guess()
+    public void AModelNobodyHasHeardOfGetsNoFramingRatherThanAGuess()
     {
         // The fallback that makes runtime-added models safe: an unknown model is embedded
         // raw and the UI says so, instead of inheriting a neighbour's prefix by name match.
@@ -104,7 +104,7 @@ public class ModelProfileCoverageTests
 
     [Theory]
     [MemberData(nameof(EveryModel))]
-    public void Every_model_in_the_library_survives_the_listing_filter(string model)
+    public void EveryModelInTheLibrarySurvivesTheListingFilter(string model)
     {
         // A model with a perfect profile that never appears in the picker is not usable.
         // Four of the twelve carry no "embed" in their name, so this asserts the family
@@ -116,7 +116,7 @@ public class ModelProfileCoverageTests
     }
 
     [Fact]
-    public void A_chat_model_is_still_filtered_out()
+    public void AChatModelIsStillFilteredOut()
     {
         // The filter has to keep earning its place: offering a chat model turns a bad pick
         // into a 503 at index time.

@@ -186,7 +186,7 @@ public sealed class KeyScopingTests : IAsyncLifetime
     // ── The repository-level guard, unchanged by D-28 ────────────────────────
 
     [Fact]
-    public async Task VectorStore_RefusesAQueryWithNoCorpusFilter()
+    public async Task VectorStoreRefusesAQueryWithNoCorpusFilter()
     {
         // The second of three independent guards. Even if scope resolution were bypassed
         // entirely, the store will not issue an unfiltered query.

@@ -121,7 +121,7 @@ public sealed class NestedIgnoreFilesTests : IDisposable
     }
 
     [Fact]
-    public void NorThroughOneTheAlwaysExcludeListRemoved()
+    public void ANestedIgnoreFileCannotBringBackWhatTheAlwaysExcludeListRemoved()
     {
         Write("node_modules/.gitignore", "!index.js\n");
         Write("node_modules/pkg/index.js");

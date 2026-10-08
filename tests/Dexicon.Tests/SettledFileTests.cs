@@ -24,7 +24,7 @@ namespace Dexicon.Tests;
 /// rewritten to a different content of the same size and the same time is not noticed: a test
 /// states that, because it is the price of not reading, and a full pass is how to pay it back.
 /// </summary>
-public sealed class FilesSettleTests
+public sealed class SettledFileTests
 {
     private static readonly DateTime Stamp = new(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
 
@@ -45,7 +45,7 @@ public sealed class FilesSettleTests
     }
 
     [Fact]
-    public async Task A_file_that_has_not_changed_is_not_read_again()
+    public async Task AFileThatHasNotChangedIsNotReadAgain()
     {
         var (harness, embedder) = await StartAsync();
         await using var _ = harness;
@@ -69,7 +69,7 @@ public sealed class FilesSettleTests
     }
 
     [Fact]
-    public async Task A_file_whose_time_changed_but_not_its_text_is_read_and_not_embedded_again()
+    public async Task AFileWhoseTimeChangedButNotItsTextIsReadAndNotEmbeddedAgain()
     {
         var (harness, embedder) = await StartAsync();
         await using var _ = harness;
@@ -96,7 +96,7 @@ public sealed class FilesSettleTests
     }
 
     [Fact]
-    public async Task A_file_that_changed_is_indexed_again()
+    public async Task AFileThatChangedIsIndexedAgain()
     {
         var (harness, embedder) = await StartAsync();
         await using var _ = harness;
@@ -113,7 +113,7 @@ public sealed class FilesSettleTests
     }
 
     [Fact]
-    public async Task A_changed_chunking_setting_indexes_a_settled_file_again()
+    public async Task AChangedChunkingSettingIndexesASettledFileAgain()
     {
         var (harness, embedder) = await StartAsync();
         await using var _ = harness;
@@ -131,7 +131,7 @@ public sealed class FilesSettleTests
     }
 
     [Fact]
-    public async Task A_full_pass_reads_every_file_whatever_it_is_settled_for()
+    public async Task AFullPassReadsEveryFileWhateverItIsSettledFor()
     {
         var (harness, embedder) = await StartAsync();
         await using var _ = harness;
@@ -146,7 +146,7 @@ public sealed class FilesSettleTests
     }
 
     [Fact]
-    public async Task A_file_that_failed_for_a_reason_that_may_pass_is_tried_again()
+    public async Task AFileThatFailedForAReasonThatMayPassIsTriedAgain()
     {
         var (harness, embedder) = await StartAsync();
         await using var _ = harness;
@@ -167,7 +167,7 @@ public sealed class FilesSettleTests
     }
 
     [Fact]
-    public async Task A_settled_file_that_fails_on_a_later_pass_is_not_left_settled()
+    public async Task ASettledFileThatFailsOnALaterPassIsNotLeftSettled()
     {
         // The pass that touches a row unsettles it. A full pass reprocesses a file that was
         // settled, the embedding service is down, and the row must not keep the key from
@@ -193,7 +193,7 @@ public sealed class FilesSettleTests
     }
 
     [Fact]
-    public async Task A_file_that_failed_to_read_and_would_again_is_left_alone_until_it_changes()
+    public async Task AFileThatFailedToReadAndWouldAgainIsLeftAloneUntilItChanges()
     {
         var (harness, _) = await StartAsync();
         await using var _ = harness;
@@ -229,7 +229,7 @@ public sealed class FilesSettleTests
     }
 
     [Fact]
-    public async Task A_file_that_was_indexed_and_is_now_unreadable_loses_its_chunks_when_it_is_settled()
+    public async Task AFileThatWasIndexedAndIsNowUnreadableLosesItsChunksWhenItIsSettled()
     {
         var (harness, _) = await StartAsync();
         await using var _ = harness;
@@ -253,7 +253,7 @@ public sealed class FilesSettleTests
     }
 
     [Fact]
-    public async Task A_file_whose_old_chunks_could_not_be_removed_is_not_settled()
+    public async Task AFileWhoseOldChunksCouldNotBeRemovedIsNotSettled()
     {
         var (harness, _) = await StartAsync();
         await using var _ = harness;
@@ -283,7 +283,7 @@ public sealed class FilesSettleTests
     }
 
     [Fact]
-    public async Task A_file_with_nothing_to_index_is_settled_too()
+    public async Task AFileWithNothingToIndexIsSettledToo()
     {
         var (harness, embedder) = await StartAsync();
         await using var _ = harness;
@@ -307,7 +307,7 @@ public sealed class FilesSettleTests
     }
 
     [Fact]
-    public async Task A_row_indexed_before_keys_existed_is_read_once_and_settled()
+    public async Task ARowIndexedBeforeKeysExistedIsReadOnceAndSettled()
     {
         var (harness, embedder) = await StartAsync();
         await using var _ = harness;
@@ -333,7 +333,7 @@ public sealed class FilesSettleTests
     [InlineData(typeof(InvalidOperationException))]
     [InlineData(typeof(OverflowException))]
     [InlineData(typeof(ArgumentException))]
-    public void A_parser_fault_on_a_files_bytes_is_the_files_own_failure(Type cause)
+    public void AParserFaultOnAFilesBytesIsTheFilesOwnFailure(Type cause)
     {
         // Including the two that escaped as bare exceptions on the live library: a page the
         // parser would not read, and a layout distance that overflows.
@@ -347,7 +347,7 @@ public sealed class FilesSettleTests
     [InlineData(typeof(UnauthorizedAccessException))]
     [InlineData(typeof(OutOfMemoryException))]
     [InlineData(typeof(TimeoutException))]
-    public void An_environmental_failure_is_not_a_verdict_on_the_file(Type cause)
+    public void AnEnvironmentalFailureIsNotAVerdictOnTheFile(Type cause)
     {
         var failure = ExtractionFailures.Of("could not be read", (Exception)Activator.CreateInstance(cause, "cause")!);
 
@@ -358,7 +358,7 @@ public sealed class FilesSettleTests
     [Theory]
     [InlineData(typeof(IOException))]
     [InlineData(typeof(ExtractionTimeoutException))]
-    public void A_cause_wrapped_by_the_parser_is_still_found(Type inner)
+    public void ACauseWrappedByTheParserIsStillFound(Type inner)
     {
         // The extraction deadline throws from a read, and a parser may catch it and rethrow
         // its own. A file that was only slow must not be settled as corrupt for that.
@@ -369,7 +369,7 @@ public sealed class FilesSettleTests
     }
 
     [Fact]
-    public void A_pdf_with_no_trailer_is_unreadable_and_a_timeout_is_not()
+    public void APdfWithNoTrailerIsUnreadableAndATimeoutIsNot()
     {
         using var stream = new MemoryStream(Truncated(8_000));
 

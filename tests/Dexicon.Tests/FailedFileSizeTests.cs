@@ -13,7 +13,7 @@ namespace Dexicon.Tests;
 /// walk knows the size before the read is attempted, so nothing about the read can take
 /// it away.
 /// </summary>
-public sealed class AFailedFileKeepsItsSizeTests
+public sealed class FailedFileSizeTests
 {
     /// <summary>
     /// A PDF with no trailer, which is what a truncated download is. The extractor
@@ -30,7 +30,7 @@ public sealed class AFailedFileKeepsItsSizeTests
     }
 
     [Fact]
-    public async Task AFileWhoseReadFails_StillRecordsTheSizeTheWalkMeasured()
+    public async Task AFileWhoseReadFailsStillRecordsTheSizeTheWalkMeasured()
     {
         const int Size = 40_000;
 
@@ -56,7 +56,7 @@ public sealed class AFailedFileKeepsItsSizeTests
     /// reason beside it, which names the cap and the measurement that exceeded it.
     /// </summary>
     [Fact]
-    public async Task AFileSkippedForBeingTooLarge_RecordsHowLargeItWas()
+    public async Task AFileSkippedForBeingTooLargeRecordsHowLargeItWas()
     {
         // Over the 262,144-byte cap that applies to everything but a document format.
         const int Size = 300_000;

@@ -19,7 +19,7 @@ namespace Dexicon.Tests;
 /// The chunks still decide WHERE. Only the text changes source, so `neighbours` keeps
 /// its meaning.
 /// </summary>
-public sealed class ContextReadsTheDocumentTests : IDisposable
+public sealed class ContextDocumentTextTests : IDisposable
 {
     private readonly string _path = Path.Combine(Path.GetTempPath(), $"ctxdoc-{Guid.NewGuid():N}.db");
 

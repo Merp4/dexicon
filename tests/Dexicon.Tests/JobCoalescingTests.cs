@@ -78,7 +78,7 @@ public sealed class JobCoalescingTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_queued_job_absorbs_the_new_request()
+    public async Task AQueuedJobAbsorbsTheNewRequest()
     {
         // It has not looked at the corpus yet, so it will see the new source when it runs.
         // Queuing a second job here would index the same thing twice.
@@ -98,7 +98,7 @@ public sealed class JobCoalescingTests : IAsyncLifetime
     /// `MaxConcurrentRebuilds` comes from the job's kind.
     /// </summary>
     [Fact]
-    public async Task A_full_request_is_not_absorbed_by_a_queued_refresh()
+    public async Task AFullRequestIsNotAbsorbedByAQueuedRefresh()
     {
         var queued = await Existing(JobState.Queued);
 
@@ -115,7 +115,7 @@ public sealed class JobCoalescingTests : IAsyncLifetime
     /// queuing both would walk the corpus twice for one answer.
     /// </summary>
     [Fact]
-    public async Task A_refresh_is_absorbed_by_a_queued_full()
+    public async Task ARefreshIsAbsorbedByAQueuedFull()
     {
         var queued = await Existing(JobState.Queued, JobKind.Full);
 
@@ -126,7 +126,7 @@ public sealed class JobCoalescingTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_running_job_does_not_absorb_it()
+    public async Task ARunningJobDoesNotAbsorbIt()
     {
         // The bug. A running job's source list is already fixed; handing back its id says
         // "your new folder is covered" when it is not, and nothing ever revisits it.
@@ -140,7 +140,7 @@ public sealed class JobCoalescingTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Repeated_requests_during_one_run_still_queue_only_one_job()
+    public async Task RepeatedRequestsDuringOneRunStillQueueOnlyOneJob()
     {
         // The reason coalescing exists at all. Nine sources added while a job runs must
         // produce one follow-up job rather than nine: the first creates it, the rest fold in.
@@ -154,7 +154,7 @@ public sealed class JobCoalescingTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_finished_job_never_absorbs_anything()
+    public async Task AFinishedJobNeverAbsorbsAnything()
     {
         await Existing(JobState.Succeeded);
 
@@ -165,7 +165,7 @@ public sealed class JobCoalescingTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Jobs_for_different_chunk_sets_do_not_collide()
+    public async Task JobsForDifferentChunkSetsDoNotCollide()
     {
         // Pre-existing behaviour worth keeping: backfilling a new set must not be handed
         // the live set's refresh, report success, and build nothing.

@@ -6,7 +6,7 @@ namespace Dexicon.Tests;
 public class SparseEncoderTests
 {
     [Fact]
-    public void Hash_IsStableAcrossProcesses()
+    public void HashIsStableAcrossProcesses()
     {
         // THE critical property. string.GetHashCode() is randomised per process in
         // .NET, so using it would make an index built in one run unqueryable after a
@@ -22,7 +22,7 @@ public class SparseEncoderTests
     }
 
     [Fact]
-    public void Encode_SplitsIdentifiersSoTokenRefreshReachesTokenServiceRefreshAsync()
+    public void EncodeSplitsIdentifiersSoTokenRefreshReachesTokenServiceRefreshAsync()
     {
         // The reason identifier splitting earns its place on code.
         var doc = SparseEncoder.Encode("public async Task<TokenPair> RefreshAsync(string refreshToken)");
@@ -43,14 +43,14 @@ public class SparseEncoderTests
     [InlineData("kebab-case-name", new[] { "kebab", "case", "name" })]
     [InlineData("HTTPServer", new[] { "httpserver", "http", "server" })]
     [InlineData("base64Encode", new[] { "base", "64", "encode" })]
-    public void Tokenize_ProducesWholeIdentifierAndItsParts(string input, string[] expected)
+    public void TokenizeProducesWholeIdentifierAndItsParts(string input, string[] expected)
     {
         var tokens = SparseEncoder.Tokenize(input).ToList();
         foreach (var e in expected) tokens.ShouldContain(e);
     }
 
     [Fact]
-    public void Encode_TermFrequency_CountsRepeats()
+    public void EncodeTermFrequencyCountsRepeats()
     {
         var v = SparseEncoder.Encode("alpha alpha alpha beta");
         var idx = Array.IndexOf(v.Indices, SparseEncoder.Hash("alpha"));
@@ -59,7 +59,7 @@ public class SparseEncoderTests
     }
 
     [Fact]
-    public void Encode_EmptyInput_IsEmptyNotNull()
+    public void EncodeEmptyInputIsEmptyNotNull()
     {
         SparseEncoder.Encode(null).IsEmpty.ShouldBeTrue();
         SparseEncoder.Encode("").IsEmpty.ShouldBeTrue();
@@ -68,7 +68,7 @@ public class SparseEncoderTests
     }
 
     [Fact]
-    public void Encode_StoplistIsShort_BecauseCodeUsesCommonWordsAsIdentifiers()
+    public void EncodeStoplistIsShortBecauseCodeUsesCommonWordsAsIdentifiers()
     {
         // An aggressive stoplist hurts code search: `for`, `in` and `is` are frequently
         // part of an identifier that matters.
@@ -89,7 +89,7 @@ public class GitignoreFilterTests
     [InlineData("**/generated/**", "a/b/generated/c.cs", true)]
     [InlineData("docs/*.md", "docs/readme.md", true)]
     [InlineData("docs/*.md", "docs/nested/readme.md", false)]
-    public void IsIgnored_FollowsGitignoreSemantics(string pattern, string path, bool expected)
+    public void IsIgnoredFollowsGitignoreSemantics(string pattern, string path, bool expected)
     {
         var rules = new IgnoreRuleSet();
         rules.AddPatterns([pattern], "test");
@@ -97,7 +97,7 @@ public class GitignoreFilterTests
     }
 
     [Fact]
-    public void Negation_LaterPatternWins()
+    public void ALaterNegationOverridesAnEarlierPattern()
     {
         var rules = new IgnoreRuleSet();
         rules.AddPatterns(["*.log", "!keep.log"], "test");
@@ -106,7 +106,7 @@ public class GitignoreFilterTests
     }
 
     [Fact]
-    public void CommentsAndBlankLines_AreIgnored()
+    public void CommentsAndBlankLinesAreIgnored()
     {
         var rules = new IgnoreRuleSet();
         rules.AddPatterns(["# a comment", "", "   ", "*.tmp"], "test");

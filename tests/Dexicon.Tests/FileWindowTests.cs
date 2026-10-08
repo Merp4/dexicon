@@ -35,7 +35,7 @@ public class FileWindowTests
         string.Join('\n', Enumerable.Range(1, n).Select(i => $"line {i}"));
 
     [Fact]
-    public void A_short_file_comes_back_whole_and_offers_nothing_more()
+    public void AShortFileComesBackWholeAndOffersNothingMore()
     {
         var (text, start, end, more, next) = Window(Lines(4), firstLine: 1, start: null);
 
@@ -47,7 +47,7 @@ public class FileWindowTests
     }
 
     [Fact]
-    public void The_windows_line_numbers_are_the_windows_own()
+    public void TheWindowsLineNumbersAreTheWindowsOwn()
     {
         // The bug this replaces: the header reported the whole file's range over a
         // fraction of its text, so every line number after the first screen was wrong.
@@ -60,7 +60,7 @@ public class FileWindowTests
     }
 
     [Fact]
-    public void A_files_own_first_line_is_carried_into_the_window()
+    public void AFilesOwnFirstLineIsCarriedIntoTheWindow()
     {
         // Chunks do not have to start at line 1; an indexed file can begin further in.
         var (_, start, end, _, _) = Window(Lines(3), firstLine: 900, start: null);
@@ -70,7 +70,7 @@ public class FileWindowTests
     }
 
     [Fact]
-    public void Reading_on_continues_exactly_where_the_last_window_stopped()
+    public void ReadingOnContinuesExactlyWhereTheLastWindowStopped()
     {
         // No gap and no repeat: the offset handed back must be the next character, or the
         // reader silently loses or re-reads a screenful.
@@ -87,7 +87,7 @@ public class FileWindowTests
     }
 
     [Fact]
-    public void An_offset_past_the_end_does_not_throw()
+    public void AnOffsetPastTheEndDoesNotThrow()
     {
         // A stale client, or a file that shrank between two requests.
         var (text, _, _, more, _) = Window(Lines(3), firstLine: 1, start: 10_000);
@@ -97,7 +97,7 @@ public class FileWindowTests
     }
 
     [Fact]
-    public void A_negative_offset_is_treated_as_the_beginning()
+    public void ANegativeOffsetIsTreatedAsTheBeginning()
     {
         var (text, start, _, _, _) = Window(Lines(3), firstLine: 1, start: -5);
 
@@ -106,7 +106,7 @@ public class FileWindowTests
     }
 
     [Fact]
-    public void An_empty_file_does_not_throw()
+    public void AnEmptyFileDoesNotThrow()
     {
         var (text, _, _, more, next) = Window(string.Empty, firstLine: 1, start: null);
 
@@ -116,7 +116,7 @@ public class FileWindowTests
     }
 
     [Fact]
-    public void Every_window_of_a_long_file_joins_back_into_the_whole_file()
+    public void EveryWindowOfALongFileJoinsBackIntoTheWholeFile()
     {
         // The property that matters: paging must be lossless. A book read end to end
         // through this has to equal the book.

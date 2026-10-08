@@ -31,7 +31,7 @@ public class SourceAmbiguityTests
         };
 
     [Fact]
-    public void Deleting_one_source_file_does_not_take_the_other_sources_copy()
+    public void DeletingOneSourceFileDoesNotTakeTheOtherSourcesCopy()
     {
         // The filter decides which points die. Without source_id, refreshing the AI copy
         // deletes the Philosophy copy too, and an incremental refresh only rewrites the
@@ -50,7 +50,7 @@ public class SourceAmbiguityTests
     }
 
     [Fact]
-    public void Reading_a_file_can_still_span_every_source_when_that_is_asked_for()
+    public void ReadingAFileCanStillSpanEverySourceWhenThatIsAskedFor()
     {
         // The read path keeps the old behaviour available; only the DELETE is unconditional.
         var unscoped = QdrantVectorStore.FileChunksFilter("set-1", null, "Installation Guide.pdf");
@@ -59,7 +59,7 @@ public class SourceAmbiguityTests
     }
 
     [Fact]
-    public void Two_books_with_one_path_group_into_two_sources()
+    public void TwoBooksWithOnePathGroupIntoTwoSources()
     {
         // The property get_context relies on to notice the problem at all.
         var chunks = new[]
@@ -78,7 +78,7 @@ public class SourceAmbiguityTests
     }
 
     [Fact]
-    public void Stitching_one_source_reads_as_one_document()
+    public void StitchingOneSourceReadsAsOneDocument()
     {
         // The fix, stated as the property that matters: the passage a model quotes must
         // come from a single file. Mixed, it reads as a coherent argument that no book
@@ -104,7 +104,7 @@ public class SourceAmbiguityTests
     }
 
     [Fact]
-    public void The_choice_is_deterministic_when_sources_are_the_same_size()
+    public void TheChoiceIsDeterministicWhenSourcesAreTheSameSize()
     {
         // Two copies of equal length must not alternate between calls: an agent that reads
         // a passage twice and gets two different books has no way to notice.
@@ -120,7 +120,7 @@ public class SourceAmbiguityTests
     }
 
     [Fact]
-    public void Two_sources_holding_one_path_do_not_derive_the_same_point_id()
+    public void TwoSourcesHoldingOnePathDoNotDeriveTheSamePointId()
     {
         // The quieter half of the same bug, and the one the delete fix did NOT cover.
         // Point ids were derived from (chunk set, path, index). Two sources of one corpus
@@ -134,7 +134,7 @@ public class SourceAmbiguityTests
     }
 
     [Fact]
-    public void The_same_chunk_keeps_the_same_id_so_reindexing_stays_idempotent()
+    public void TheSameChunkKeepsTheSameIdSoReindexingStaysIdempotent()
     {
         // The property the deterministic id exists for. If it changed per run, every
         // refresh would duplicate every chunk instead of replacing it.
@@ -146,14 +146,14 @@ public class SourceAmbiguityTests
     }
 
     [Fact]
-    public void Chunk_index_still_separates_chunks_of_one_file()
+    public void ChunkIndexStillSeparatesChunksOfOneFile()
     {
         QdrantVectorStore.DeterministicId("set-1", "src", "a.pdf", 0)
             .ShouldNotBe(QdrantVectorStore.DeterministicId("set-1", "src", "a.pdf", 1));
     }
 
     [Fact]
-    public void Two_chunk_sets_do_not_share_ids_either()
+    public void TwoChunkSetsDoNotShareIdsEither()
     {
         // Pre-existing behaviour worth keeping: a corpus mid-migration holds two sets, and
         // one overwriting the other would corrupt whichever finished second.

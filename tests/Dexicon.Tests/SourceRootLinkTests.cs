@@ -37,7 +37,7 @@ public sealed class SourceRootLinkTests : IDisposable
     }
 
     [Fact]
-    public void SoIsOneHalfWayAlongThePath()
+    public void ALinkHalfWayAlongTheRootPathIsRefused()
     {
         // Checking only the last component would miss this, and a source two levels down
         // is the ordinary shape: `repos/link/src`.
@@ -49,7 +49,7 @@ public sealed class SourceRootLinkTests : IDisposable
     }
 
     [Fact]
-    public void SoIsALinkThatStaysInside()
+    public void ALinkThatStaysInsideIsRefusedButItsTargetCanBeNamedInstead()
     {
         // The directory it points at can be named instead, and is then an ordinary path.
         Directory.CreateDirectory(Path.Combine(_workspace, "real"));
@@ -96,7 +96,7 @@ public sealed class SourceRootLinkTests : IDisposable
     }
 
     [Fact]
-    public void NorDoesALinkThatPointsAtItself()
+    public void ALinkCycleNeverYieldsAPath()
     {
         // Callers translate UnauthorizedAccessException and nothing else, so an
         // IOException from a cycle would reach source creation as a 500.
@@ -148,7 +148,7 @@ public sealed class SourceRootLinkTests : IDisposable
     }
 
     [Fact]
-    public void OrAFileLink()
+    public void TheWalkFollowsNoFileLinkAndListsEach()
     {
         File.WriteAllText(Path.Combine(_workspace, "app.cs"), "class A {}");
         File.WriteAllText(Path.Combine(_outside, "secret.txt"), "not in the workspace");
@@ -227,7 +227,7 @@ public sealed class SourceRootLinkTests : IDisposable
     }
 
     [Fact]
-    public void CoverageDoesNotWalkThroughOneEither()
+    public void CoverageDoesNotWalkThroughALinkThatLeavesTheWorkspace()
     {
         // The one path that reaches a directory NOBODY created a source on: coverage
         // derives the shared parent of two sources and walks it. So `link` gets walked
