@@ -2528,8 +2528,8 @@ const KEY_SCOPES: { id: string; does: string }[] = [
   { id: 'search', does: 'search and read the corpora the key reaches' },
   {
     id: 'ingest',
-    does: 'queue a reindex, with index_refresh, and add, attach or detach documents over the API. '
-      + 'Detaching removes a document from a corpus',
+    does: 'queue a reindex, with index_refresh, and add or attach documents over the API. '
+      + 'It cannot detach one: that is destroy',
   },
   {
     id: 'configure',
@@ -2540,6 +2540,12 @@ const KEY_SCOPES: { id: string; does: string }[] = [
     id: 'propose',
     does: 'ask for a source, chunk set, document or corpus to be removed, with propose_removal. '
       + 'It removes nothing itself: each request waits for your decision. Independent of configure',
+  },
+  {
+    id: 'destroy',
+    does: 'detach an uploaded document from a corpus over the API. Nothing asks first. '
+      + 'Sources, chunk sets and corpora are never removed by a key: it asks with propose. '
+      + 'Independent of ingest',
   },
 ];
 
@@ -2567,6 +2573,13 @@ function ScopeField({ value, onChange }: { value: string[]; onChange: (scopes: s
           creates. It reaches the whole workspace, whatever corpora it is limited to. What it adds is
           searchable by a key that holds search and reaches that corpus, which includes this key if
           you tick search too.
+        </Notice>
+      )}
+      {/* The one removal a key makes with no one deciding. */}
+      {value.includes('destroy') && (
+        <Notice tone="warn">
+          With destroy, the agent can detach any document from the corpora it reaches, and nothing
+          asks first. The document stays in the library, and attaching it again indexes it again.
         </Notice>
       )}
     </Field>

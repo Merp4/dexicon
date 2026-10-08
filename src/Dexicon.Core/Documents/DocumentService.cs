@@ -345,11 +345,15 @@ public sealed class DocumentService(
         return source;
     }
 
-    /// <summary>Detach from one corpus. The blob survives, since other corpora may still use it.</summary>
+    /// <summary>
+    /// Detach an uploaded document from one corpus. The blob survives, since other corpora may still
+    /// use it. A file a source read from a folder or a commit is not a document and is not detached.
+    /// </summary>
     public async Task<bool> DetachAsync(string corpusId, string fileId, CancellationToken ct = default)
     {
         var file = await db.Files.Include(f => f.Source)
-            .FirstOrDefaultAsync(f => f.Id == fileId && f.Source!.CorpusId == corpusId, ct);
+            .FirstOrDefaultAsync(f => f.Id == fileId && f.Source!.CorpusId == corpusId
+                                      && f.Source.Kind == SourceKind.Upload, ct);
 
         if (file is null) return false;
         db.Files.Remove(file);

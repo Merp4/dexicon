@@ -183,4 +183,43 @@ describe("a key's scopes", () => {
 
     expect(createToken).toHaveBeenCalledWith('reviewer', ['search', 'propose'], []);
   });
+
+  /**
+   * Detaching a document is its own scope, separate from adding one. A key that was given ingest
+   * can no longer detach unless it also holds destroy, so ingest says so and destroy says what it
+   * does, and ticking it warns that nothing asks first.
+   */
+  it('offer destroy on its own, never ticked for a new key, and warn when it is', async () => {
+    const user = userEvent.setup();
+    render(<AccessView onError={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: /New key/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'New key' });
+    const ingest = within(dialog).getByRole('button', { name: 'ingest' });
+    const destroy = within(dialog).getByRole('button', { name: 'destroy' });
+    expect(destroy).toHaveAttribute('aria-pressed', 'false');
+    expect(within(dialog).getByText(/It cannot detach one: that is destroy/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/nothing asks first. The document stays in the library/)).not.toBeInTheDocument();
+
+    await user.type(within(dialog).getByPlaceholderText('claude-code'), 'cleaner');
+    await user.click(destroy);
+    expect(ingest).toHaveAttribute('aria-pressed', 'false');
+    expect(within(dialog).getByText(/nothing asks first. The document stays in the library/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: /Create/ }));
+
+    expect(createToken).toHaveBeenCalledWith('cleaner', ['search', 'destroy'], []);
+  });
+
+  it('can give an existing key destroy, and the key keeps what it held', async () => {
+    const user = userEvent.setup();
+    listTokens.mockResolvedValue([token({ scopes: 'search,ingest' })]);
+    render(<AccessView onError={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Change the scopes of laptop-agent' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'destroy' }));
+    await user.click(within(dialog).getByRole('button', { name: /Save/ }));
+
+    expect(setTokenScopes).toHaveBeenCalledWith('t1', ['search', 'ingest', 'destroy']);
+  });
 });

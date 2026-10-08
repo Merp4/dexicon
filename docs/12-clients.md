@@ -24,8 +24,9 @@ for a query. See [13](13-integration.md).
 >
 > For scripted setup with no browser, set `DEXICON_BOOTSTRAP_TOKEN` in `.env` to a value
 > of your own and restart; it is adopted with `search` and `ingest`, and reaches every
-> corpus because nothing has narrowed it. A key can never carry `admin`, so no agent
-> configuration can delete a corpus.
+> corpus because nothing has narrowed it. It can add and attach documents but not detach
+> one, which needs `destroy`, granted on the Access screen. A key can never carry `admin`,
+> so no agent configuration can delete a corpus.
 
 ---
 

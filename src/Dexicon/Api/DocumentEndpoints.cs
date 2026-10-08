@@ -34,6 +34,23 @@ public sealed record LibraryAttachment(
 
 public static class DocumentEndpoints
 {
+    /// <summary>
+    /// Detach an uploaded document from a corpus (the blob survives; other corpora may still use it).
+    /// A method of its own, and the one the route is mapped to, so a test calls the handler that
+    /// runs and sees its scope check and its refusals.
+    /// </summary>
+    internal static async Task<IResult> DetachAsync(
+        string nameOrId, string fileId, RequestContext rc, ScopeResolver scopes,
+        DocumentService documents, IVectorStoreCleanup cleanup, CancellationToken ct)
+    {
+        // Its own scope: this removes what ingest added, with no one deciding. D-40.
+        if (rc.RequireScope(Scopes.Destroy) is { } denied) return denied;
+        var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
+
+        var removed = await cleanup.RemoveAttachmentAsync(corpus, fileId, documents, ct);
+        return removed ? Results.NoContent() : Results.NotFound();
+    }
+
     public static void MapDocumentEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api").WithTags("Documents");
@@ -131,16 +148,7 @@ public static class DocumentEndpoints
         }).Produces<DocumentAttached>();
 
         // ── Detach (the blob survives; other corpora may still use it) ──────
-        g.MapDelete("/corpora/{nameOrId}/documents/{fileId}", async (
-            string nameOrId, string fileId, RequestContext rc, ScopeResolver scopes,
-            DocumentService documents, IVectorStoreCleanup cleanup, CancellationToken ct) =>
-        {
-            if (rc.RequireScope(Scopes.Ingest) is { } denied) return denied;
-            var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
-
-            var removed = await cleanup.RemoveAttachmentAsync(corpus, fileId, documents, ct);
-            return removed ? Results.NoContent() : Results.NotFound();
-        });
+        g.MapDelete("/corpora/{nameOrId}/documents/{fileId}", DetachAsync);
 
         // ── The library: every stored document, and where it is attached ────
         g.MapGet("/documents", async (RequestContext rc, ScopeResolver scopes, CatalogDbContext db,
