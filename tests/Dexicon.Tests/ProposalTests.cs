@@ -522,6 +522,41 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ATargetRemovedDirectlyWhileItsApprovalIsDeletingVectorsFailsTheProposalAsGone()
+    {
+        await IndexAsync();
+        await using var db = _harness.NewContext();
+        var proposal = await AskAsync(db, ProposalKind.Source, "docs");
+
+        // The approval is held at its first vector delete. The administrator's own delete of the same
+        // source takes no decision lock and runs to the end meanwhile, so the approval's save finds the
+        // source already gone. The proposal is unchanged and must not be reported as decided by someone.
+        var calls = 0;
+        var deleting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _harness.Vectors.OnDeleteAsync = async () =>
+        {
+            if (Interlocked.Increment(ref calls) != 1) return;
+            deleting.TrySetResult();
+            await release.Task;
+        };
+        await using var approver = _harness.NewContext();
+        var approval = _harness.NewProposals(approver).ApproveAsync(proposal.Id, default);
+        await deleting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await using (var admin = _harness.NewContext())
+            (await _harness.NewConfiguration(admin).RemoveSourceAsync(await CorpusAsync(admin), "source-2", default)).Refusal.ShouldBeNull();
+
+        release.SetResult();
+        var decided = await approval;
+
+        decided.Refusal.ShouldBeNull("it is recorded, not refused");
+        decided.Value!.Status.ShouldBe("failed");
+        decided.Value.Error.ShouldNotBeNull().ShouldContain("removed");
+        var stored = await StoredAsync(proposal.Id);
+        (stored.Status, stored.DecidedUtc is not null).ShouldBe((ProposalStatus.Failed, true));
+    }
+
+    [Fact]
     public async Task ADocumentIsDetachedOnApprovalAndItsBlobStays()
     {
         await using var uploads = await IndexingHarness.StartAsync();

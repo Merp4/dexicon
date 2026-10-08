@@ -56,10 +56,15 @@ public sealed class ProposeTools
         var p = asked.Value!.Proposal;
         var what = $"remove {Phrase(p)}";
 
-        return asked.Value.AlreadyPending
-            ? $"Already waiting: proposal {p.Id} to {what}, made {p.CreatedUtc:u}"
-              + $"{(p.TokenId == principal.TokenId ? " by this key" : " by another key")}. Nothing new was recorded. removal_status shows how it is decided."
-            : $"Recorded proposal {p.Id} to {what}. It is waiting for whoever runs Dexicon to decide it, and nothing has been removed. removal_status shows how it is decided.";
+        if (!asked.Value.AlreadyPending)
+            return $"Recorded proposal {p.Id} to {what}. It is waiting for whoever runs Dexicon to decide it, and nothing has been removed. removal_status shows how it is decided.";
+
+        // removal_status lists a key's own requests, so a request another key made is not in it.
+        var own = p.TokenId == principal.TokenId;
+        return $"Already waiting: proposal {p.Id} to {what}, made {p.CreatedUtc:u} by {(own ? "this key" : "another key")}. "
+            + (own
+                ? "Nothing new was recorded. removal_status shows how it is decided."
+                : "Nothing new was recorded, and removal_status lists only this key's own requests, so it will not show this one.");
     }
 
     [McpServerTool(Name = "removal_status")]

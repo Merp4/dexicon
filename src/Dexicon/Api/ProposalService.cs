@@ -476,7 +476,7 @@ public sealed class ProposalService(
                     : new ConfigRefusal("No such document", "The document is no longer attached.", 404),
             };
         }
-        catch (DbUpdateConcurrencyException) { return DecidedElsewhere(); }
+        catch (DbUpdateConcurrencyException) { return await ConflictAsync(id, ct); }
         catch
         {
             Undecide(p);
@@ -494,6 +494,25 @@ public sealed class ProposalService(
         // Nothing to remove is a fact about the target; anything else is about now, and is told to the
         // person who asked to approve it.
         return refusal.Status == 404 ? await FailAsync(p, refusal.Detail, ct) : refusal;
+    }
+
+    /// <summary>
+    /// The approval's save conflicted. Either the proposal was decided by another request, or the target
+    /// was removed by a direct DELETE between the read and the save (those endpoints do not take the
+    /// decision lock), and the removal's own delete found nothing to delete. The stored status says which:
+    /// in the second case the proposal is still waiting for a target that has gone, and is recorded as
+    /// failed like any other.
+    /// </summary>
+    private async Task<ConfigOutcome<ProposalView>> ConflictAsync(string id, CancellationToken ct)
+    {
+        // The failed save left the removal's pending changes on the context; none of them is wanted now.
+        db.ChangeTracker.Clear();
+
+        var stored = await db.Proposals.FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (stored is null) return NotFound(id);
+        if (stored.Status != ProposalStatus.Pending) return DecidedElsewhere();
+
+        return await FailAsync(stored, "The target was removed while this was being approved.", ct);
     }
 
     private static void Undecide(Proposal p)

@@ -2002,7 +2002,9 @@ removal refused), so what they read is not the agent's description.
   only report it afterwards.
 - The target is held by id. A source or corpus recreated under the same name is never the thing
   removed.
-- A target already gone fails the proposal with that reason. A removal that is refused for a reason
+- A target already gone fails the proposal with that reason, including one removed by a direct
+  `DELETE` while the approval was running, which does not take the decision lock: the save conflicts,
+  and the stored status tells that apart from a decision made elsewhere. A removal that is refused for a reason
   that can pass (the default set, a set a job is working on) leaves it pending, with the reason.
 - A key may have ten waiting, and one request per target waits at a time; asking again returns the
   one waiting. There is no expiry and no worker.

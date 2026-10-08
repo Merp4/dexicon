@@ -118,8 +118,11 @@ public sealed class ProposeToolsTests : IAsyncLifetime
 
         own.ShouldStartWith("Already waiting");
         own.ShouldContain("by this key");
+        own.ShouldContain("removal_status shows how it is decided");
         other.ShouldStartWith("Already waiting");
         other.ShouldContain("by another key");
+        other.ShouldNotContain("shows how it is decided", Case.Sensitive, "removal_status lists a key's own requests and would not show this one");
+        other.ShouldContain("lists only this key's own requests");
         other.ShouldNotContain("agent-k1", Case.Insensitive, "another key's name is not this key's to read");
         (await db.Proposals.CountAsync()).ShouldBe(1);
     }
