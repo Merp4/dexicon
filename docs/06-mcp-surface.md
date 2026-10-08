@@ -62,11 +62,13 @@ Corpus 'books' has no chunk set named 'nope'. Its sets: default, fine.
 
 ## Tools
 
-Five tools, and three more for a key holding `configure`. The count is a design
+Five tools, three more for a key holding `configure`, and one more for a key holding
+`propose`. The count is a design
 constraint: every tool definition is context an agent pays for on every turn, and a
 surface of thirty tools measurably degrades smaller models. So a key is listed only the
 tools its scopes let it call: the four that read the index need `search`, `index_refresh`
-needs `ingest`, and the [configuration tools](#configuration-tools) need `configure`.
+needs `ingest`, the [configuration tools](#configuration-tools) need `configure`, and
+[`propose_removal`](#propose_removal) needs `propose`.
 
 ### `search_index`
 
@@ -246,7 +248,8 @@ of them would be the longest tool result an agent sees.
 Three more tools, listed only to a key holding `configure`
 ([D-36](decisions.md#d-36-a-configure-scope-agents-set-up-what-is-indexed)). They create
 and change; nothing over MCP removes a corpus or a source, so one added by mistake is
-removed in the UI. A narrower filter or limit still drops the files or commits it stops
+removed in the UI, or asked for with [`propose_removal`](#propose_removal) by a key that holds
+`propose`. A narrower filter or limit still drops the files or commits it stops
 selecting from the index when the refresh runs, as in the UI, and the reply says so. Every change goes through the same checks as the UI's, and is logged
 with the key's name: `Key claude-code added the source for the files under repos/app in
 corpus app; job 01K…`.
@@ -295,6 +298,36 @@ index_status(corpus: "app") reports the refresh, and what it read once it has ru
 A change that leaves every value as it was queues nothing and says so. A setting both sent
 and named in `reset`, a file setting on a history source, and a `since` that is not a
 `yyyy-MM-dd` date are refused before anything changes.
+
+### `propose_removal`
+
+One more tool, listed only to a key holding `propose`
+([D-39](decisions.md#d-39-agents-ask-for-removals-and-a-person-decides)), and independent of
+`configure`. It asks for a removal and removes nothing: a person approves or rejects each
+request in the UI, and approving runs what the admin's delete runs.
+
+`propose_removal(kind, corpus, target?, reason)`: `kind` is `source`, `chunk_set`, `document`
+or `corpus`, and `corpus` is the corpus it is in.
+
+| `kind` | `target` |
+|---|---|
+| `source` | The folder as `index_status` shows it, written `files:repos/app` or `history:repos/app` when both read the folder. A source id is accepted. |
+| `chunk_set` | The set's name, ignoring case, or its id. The default set and the only set are refused when asked, since they cannot be removed. |
+| `document` | The path of an uploaded document attached to the corpus, or its file id. |
+| `corpus` | Left out. The name is accepted if it is the corpus's own. |
+
+`reason` is required: one line, at most 300 characters, shown to the person beside what would
+go. The target is held by id from then on. A target that matches nothing is refused with what
+there is to match, and a key may have ten requests waiting. Asking again for something already
+waiting returns that request and records nothing new.
+
+```
+Recorded proposal 01K… to remove the source files:docs from corpus 'notes'. It is awaiting approval in the Dexicon UI, and nothing has been removed. index_status(corpus: "notes") shows how it is decided.
+```
+
+`index_status(corpus)` shows a key its own requests in that corpus and how each was decided:
+waiting, approved (it has been removed), rejected (it stays), or could not be done with the
+reason, such as the target being gone by then. A key sees only its own.
 
 ## Resources
 

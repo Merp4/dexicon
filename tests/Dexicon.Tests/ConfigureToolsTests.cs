@@ -77,14 +77,16 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     public void Only_a_key_holding_the_scope_is_shown_the_tools()
     {
         ToolVisibility.HiddenFrom(As("k", Scopes.Search).Principal!)
-            .ShouldBe(new[] { "index_refresh", "list_folders", "configure_corpus", "configure_source" }, ignoreOrder: true);
+            .ShouldBe(new[] { "index_refresh", "list_folders", "configure_corpus", "configure_source", "propose_removal" }, ignoreOrder: true);
         ToolVisibility.HiddenFrom(As("k", Scopes.Search, Scopes.Configure).Principal!)
-            .ShouldBe(new[] { "index_refresh" });
-        ToolVisibility.HiddenFrom(As("k", Scopes.Search, Scopes.Ingest, Scopes.Configure).Principal!).ShouldBeEmpty();
+            .ShouldBe(new[] { "index_refresh", "propose_removal" }, ignoreOrder: true);
+        ToolVisibility.HiddenFrom(As("k", Scopes.Search, Scopes.Ingest, Scopes.Configure).Principal!)
+            .ShouldBe(new[] { "propose_removal" });
+        ToolVisibility.HiddenFrom(As("k", Scopes.Search, Scopes.Ingest, Scopes.Configure, Scopes.Propose).Principal!).ShouldBeEmpty();
 
         // A key may hold configure alone, and each search tool would refuse it.
         ToolVisibility.HiddenFrom(As("k", Scopes.Configure).Principal!).ShouldBe(
-            new[] { "search_index", "list_corpora", "get_context", "index_status", "index_refresh" }, ignoreOrder: true);
+            new[] { "search_index", "list_corpora", "get_context", "index_status", "index_refresh", "propose_removal" }, ignoreOrder: true);
     }
 
     [Fact]

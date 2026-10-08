@@ -61,8 +61,14 @@ belongs to the key.
   the key is mapped to, and uploading, attaching and detaching documents
   ([D-28](decisions.md#d-28-an-admin-password-and-scoped-api-keys)); `configure` permits creating corpora and adding or changing their
   sources and filters over MCP, and nothing that removes or deletes
-  ([D-36](decisions.md#d-36-a-configure-scope-agents-set-up-what-is-indexed)). **`admin` is
-  not issuable to a key** and is stripped if requested.
+  ([D-36](decisions.md#d-36-a-configure-scope-agents-set-up-what-is-indexed)); `propose`
+  permits asking for a source, chunk set, document or corpus to be removed, which a person
+  then approves or rejects, and removes nothing itself
+  ([D-39](decisions.md#d-39-agents-ask-for-removals-and-a-person-decides)). The scopes are
+  independent, and a key holds the ones it is given: `propose` is neither implied by
+  `configure` nor required for it, and none of `configure`, `propose` or `admin` is held by
+  a key adopted from the environment. **`admin` is not issuable to a key** and is stripped
+  if requested.
 - Scopes can be changed after issue, on the Access page or with
   `PUT /api/tokens/{id}/scopes`, under the same rules. The change evicts cached principals,
   so a scope removed is refused from the agent's next call.
@@ -98,7 +104,8 @@ configuration. That asymmetry has one exception, below.
 ### The MCP tool list is not live
 
 A key without `ingest` is not shown `index_refresh` at all, one without `configure` is
-not shown `list_folders`, `configure_corpus` or `configure_source`, and one without `search`
+not shown `list_folders`, `configure_corpus` or `configure_source`, one without `propose`
+is not shown `propose_removal`, and one without `search`
 is not shown the four tools that read the index, rather than being refused when it calls
 one: an agent that can see a tool will call it, spend a turn on the error, and
 sometimes retry. `McpRequestFilters.ListToolsFilters` removes them from `tools/list`, which
@@ -147,8 +154,10 @@ The last rule is the one that matters, so it is defended three times over:
 
 Writes are governed by the scope guard at the endpoint and the same resolution: `ingest`
 decides whether a caller may reindex at all, `configure` whether it may change a corpus or
-its sources, and `ResolveWritableAsync` decides which corpus they meant, within what they
-can reach. Neither substitutes for the other.
+its sources, `propose` whether it may ask for a removal, and `ResolveWritableAsync` decides
+which corpus they meant, within what they can reach. None substitutes for another. Deciding a
+request is administration: the endpoints that approve or reject it require `admin`, which no
+key can hold, so a key that asked cannot also approve.
 
 ### The tests that prove it
 

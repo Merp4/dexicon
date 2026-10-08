@@ -160,6 +160,15 @@ internal sealed class IndexingHarness : IAsyncDisposable
     }
 
     /// <summary>
+    /// The proposal service over one catalogue context, as the app builds it: the removals it runs
+    /// share the context, which is what lets a decision and the removal it names be one save.
+    /// </summary>
+    public Dexicon.Api.ProposalService NewProposals(CatalogDbContext db) =>
+        new(db, NewConfiguration(db), new Dexicon.Infrastructure.VectorStoreCleanup(db, Vectors),
+            NewDocumentService(db), Settings, TimeProvider.System,
+            NullLogger<Dexicon.Api.ProposalService>.Instance);
+
+    /// <summary>
     /// One tick of the scheduled refresh over the harness's catalogue, as the hosted service
     /// would run it: every corpus nothing is working on gets a refresh queued.
     /// </summary>

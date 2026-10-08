@@ -2514,6 +2514,11 @@ const KEY_SCOPES: { id: string; does: string }[] = [
     does: 'create corpora and add or change their folders and filters, with list_folders, '
       + 'configure_corpus and configure_source. It cannot remove anything',
   },
+  {
+    id: 'propose',
+    does: 'ask for a source, chunk set, document or corpus to be removed, with propose_removal. '
+      + 'It removes nothing itself: each request waits for your decision. Independent of configure',
+  },
 ];
 
 function ScopeField({ value, onChange }: { value: string[]; onChange: (scopes: string[]) => void }) {

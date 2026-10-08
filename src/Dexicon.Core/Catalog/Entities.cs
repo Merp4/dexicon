@@ -618,3 +618,52 @@ public sealed class IndexJob
     public DateTime? StartedUtc { get; set; }
     public DateTime? FinishedUtc { get; set; }
 }
+
+public enum ProposalKind { Source = 0, ChunkSet = 1, Document = 2, Corpus = 3 }
+
+public enum ProposalStatus { Pending = 0, Approved = 1, Rejected = 2, Failed = 3 }
+
+/// <summary>
+/// A removal an agent has asked for and a person has yet to decide, or the record of how it
+/// was decided. Approving it runs the code the admin's DELETE endpoint runs; nothing here
+/// removes anything by itself (docs/decisions.md D-39).
+///
+/// Deliberately without foreign keys, like <see cref="FileText"/>: it is a record of what was
+/// asked, and it has to outlive the key that asked, the corpus it names and the thing it
+/// names. The names are copied in for the same reason, so a row reads correctly after any of
+/// them is renamed, revoked or gone. The target is held by id, so a source or corpus recreated
+/// under the same name is never the thing that gets removed.
+///
+/// There is no running state. Approving removes the target and sets <see cref="Status"/> in one
+/// save, so a crash leaves it pending and the next approval retries, and <see cref="Status"/> is
+/// a concurrency token so two decisions cannot both be made.
+/// </summary>
+public sealed class Proposal
+{
+    public required string Id { get; set; }
+    public DateTime CreatedUtc { get; set; }
+
+    /// <summary>The key that asked: its id and, as it was then, its name.</summary>
+    public required string TokenId { get; set; }
+    public required string TokenName { get; set; }
+
+    public required string CorpusId { get; set; }
+    public required string CorpusName { get; set; }
+
+    public ProposalKind Kind { get; set; }
+
+    /// <summary>The id of the source, chunk set, file or corpus.</summary>
+    public required string TargetId { get; set; }
+
+    /// <summary>What the target was called when it was proposed: a folder, a set name, a path.</summary>
+    public required string TargetLabel { get; set; }
+
+    /// <summary>The agent's own words, one line. Shown as text, and never used to describe the change.</summary>
+    public required string Reason { get; set; }
+
+    public ProposalStatus Status { get; set; }
+    public DateTime? DecidedUtc { get; set; }
+
+    /// <summary>Why a proposal failed: what was no longer there when it was approved.</summary>
+    public string? Error { get; set; }
+}

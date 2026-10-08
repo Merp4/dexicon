@@ -1,7 +1,7 @@
 ---
-# dexicon-skill-version: 4
+# dexicon-skill-version: 5
 name: dexicon-search
-description: Search indexed code and documents by meaning using the Dexicon MCP server. Use when looking for where something is implemented, how a concept is handled, or what a document says about a topic — anything where you know the idea but not the term. Also covers reading an indexed file back, diagnosing an empty result, and changing what is indexed, including adding folders and corpora when the key allows it.
+description: Search indexed code and documents by meaning using the Dexicon MCP server. Use when looking for where something is implemented, how a concept is handled, or what a document says about a topic — anything where you know the idea but not the term. Also covers reading an indexed file back, diagnosing an empty result, and changing what is indexed, including adding folders and corpora, and asking for a removal, when the key allows it.
 ---
 
 # Dexicon
@@ -162,6 +162,19 @@ the files it stops selecting from the index on the refresh, and widening it read
 `gitignore` can be set to true but not turned off. Prefer a `.dexiconignore` for what the
 repository should never have indexed, since it travels with the tree, and a source's
 filters for what only this corpus leaves out.
+
+If your key lists `propose_removal`, you can ask for something to be removed: a source, a
+chunk set, an uploaded document or a whole corpus. Nothing is removed by the call. It records
+the request and a person approves or rejects it in the Dexicon UI, so ask only for what you
+can say a reason for, in one line, and say in your reply that you asked and that it is
+waiting. `propose_removal(kind, corpus, target, reason)` takes `kind` as `source`,
+`chunk_set`, `document` or `corpus`. The `target` for a source is its folder as `index_status`
+shows it (`files:repos/app`, or `history:repos/app` when both read the folder), for a chunk
+set its name, for a document its path, and for a corpus nothing. The default chunk set and a
+corpus's only chunk set cannot be removed, so they are refused when asked. Ask once: a repeat
+returns the request already waiting. `index_status(corpus)` lists the requests your key has
+made and how each was decided: waiting, approved (it has been removed), rejected (it stays),
+or could not be done, with the reason.
 
 Without those tools, anything else (a new corpus or source, a source's filters or size
 limit, a corpus description) is set in the Dexicon UI by whoever runs it, as are chunk sets
