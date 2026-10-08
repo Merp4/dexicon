@@ -368,6 +368,85 @@ public sealed class CommittedChangeTests
         (await db.Jobs.CountAsync(j => j.CorpusId == papers.Id && j.Kind == JobKind.Full)).ShouldBe(1, "the new corpus has its job");
     }
 
+    private static RequestContext AsAdmin() => new()
+    {
+        Principal = new Principal("k", "admin", new HashSet<string>(StringComparer.Ordinal) { Scopes.Admin }),
+    };
+
+    private static IndexJobQueue QueueOn(IndexingHarness harness, CatalogDbContext db) =>
+        new(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance);
+
+    /// <summary>
+    /// The handlers read their reply on the caller's token, and a caller that cancelled gets none, so the
+    /// call may throw. What these tests are about is what was saved and queued before that.
+    /// </summary>
+    private static async Task WithoutTheReplyAsync(Func<Task> call)
+    {
+        try { await call(); }
+        catch (OperationCanceledException) { /* the caller left */ }
+    }
+
+    [Fact]
+    public async Task AChunkSetThatIsSavedIsBuiltWhenTheCallerIsCancelledDuringCollectionSetup()
+    {
+        // The set is saved as Degraded, marked as built by nothing until its job runs. A cancel inside
+        // the call to the vector store threw before the job was queued.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        using var cts = new CancellationTokenSource();
+        await using var db = harness.NewContext();
+        var vectors = new EnsureCancels(harness.Vectors, cts);
+
+        await WithoutTheReplyAsync(() => ChunkSetEndpoints.CreateAsync(
+            IndexingHarness.CorpusId, new CreateChunkSetRequest("second"), AsAdmin(), new ScopeResolver(db), db, vectors,
+            harness.Embedder, QueueOn(harness, db), harness.Settings, cts.Token));
+
+        vectors.Called.ShouldBeTrue("the window has to have been opened");
+        var second = await db.ChunkSets.AsNoTracking().SingleAsync(s => s.Name == "second");
+        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Rebuild && j.ChunkSetId == second.Id)).ShouldBe(1, "the saved set has its job");
+    }
+
+    [Fact]
+    public async Task AChunkSetThatIsSavedIsBuiltWhenTheCallerIsCancelledBeforeItsJobIsQueued()
+    {
+        var watcher = new CancelAfterWriteTo("chunk_sets");
+        await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        using var cts = new CancellationTokenSource();
+        watcher.Cts = cts;
+        await using var db = harness.NewContext();
+        watcher.Armed = true;
+
+        await WithoutTheReplyAsync(() => ChunkSetEndpoints.CreateAsync(
+            IndexingHarness.CorpusId, new CreateChunkSetRequest("second"), AsAdmin(), new ScopeResolver(db), db, harness.Vectors,
+            harness.Embedder, QueueOn(harness, db), harness.Settings, cts.Token));
+
+        watcher.Fired.ShouldBeTrue("the window has to have been opened");
+        var second = await db.ChunkSets.AsNoTracking().SingleAsync(s => s.Name == "second");
+        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Rebuild && j.ChunkSetId == second.Id)).ShouldBe(1, "the saved set has its job");
+    }
+
+    [Fact]
+    public async Task AChunkSetChangeThatIsSavedIsRechunkedWhenTheCallerIsCancelledBeforeItsJobIsQueued()
+    {
+        // Sending the same values again reads as no change, so nothing would queue the job a second time.
+        var watcher = new CancelAfterWriteTo("chunk_sets");
+        await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        using var cts = new CancellationTokenSource();
+        watcher.Cts = cts;
+        await using var db = harness.NewContext();
+        watcher.Armed = true;
+
+        await WithoutTheReplyAsync(() => ChunkSetEndpoints.UpdateAsync(
+            IndexingHarness.CorpusId, "default", new UpdateChunkSetRequest(ChunkSize: 400), AsAdmin(),
+            new ScopeResolver(db), db, QueueOn(harness, db), cts.Token));
+
+        watcher.Fired.ShouldBeTrue("the window has to have been opened");
+        (await db.ChunkSets.AsNoTracking().SingleAsync()).ChunkSize.ShouldBe(400, "the change is saved");
+        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh && j.ChunkSetId == "set-1")).ShouldBe(1, "the saved change has its job");
+    }
+
     [Fact]
     public async Task ASourceIsRecordedWhenItIsSavedEvenIfQueuingItsRefreshThenFails()
     {
