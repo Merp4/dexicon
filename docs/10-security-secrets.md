@@ -48,23 +48,24 @@ data/
 | Secret | Storage | Notes |
 |---|---|---|
 | Dexicon API tokens | PBKDF2-HMAC-SHA256, 600 000 iterations, 32-byte per-token salt, in SQLite | Shown once at creation. No retrieval path exists. Constant-time comparison. |
-| Bootstrap token | Generated if unset; printed to the container log **once**, on first run only | A log line is an acceptable delivery channel for a value that is about to be rotated; a config file is not. |
+| Admin password | PBKDF2-HMAC-SHA256, as for tokens, in SQLite | Set from `DEXICON__ADMIN__PASSWORD` (`DEXICON_ADMIN_PASSWORD` in `.env`) on every start. If unset, a generated password is printed to the container log **once**, on first run only. Nothing in the UI or API changes it. A log line is an acceptable delivery channel for a value shown once; a config file is not. |
+| Bootstrap token | `DEXICON__BOOTSTRAP__TOKEN`, adopted as a key holding `search` and `ingest` | Never generated. A blank value creates no key. A set value must read `dex_<id>_<secret>`. It lives in `.env`. |
 | `QDRANT_API_KEY` | Environment / `/run/secrets` | Never persisted by Dexicon. |
 | Qdrant / Ollama endpoints | Environment | Not secret, but shown read-only in the UI so nobody is tempted to make them editable-and-therefore-stored. |
 
-### Redaction
+### Logs and errors
 
-A single `Redact` helper is applied to every log sink and every error response. It masks:
+No credential is written to a log. The console template renders values as JSON
+(`LogOutput.ConsoleTemplate`), so a request path cannot start a new log line. A rejected
+request logs a 32-bit digest of the presented credential (`CallerDigest`), which tells one
+caller from several and cannot confirm a guess. The principal cache and the admin session
+store are keyed on a SHA-256 of the credential, never on the credential.
 
-- anything matching `dex_[A-Za-z0-9_-]{20,}`
-- `Authorization` and `X-Api-Key` header values
-- query strings on outbound URLs
-- connection strings
-
-And a rule with teeth: **exception messages from the Qdrant and Ollama clients are not
-returned verbatim to unauthenticated callers.** They can carry endpoint and credential
-detail. Authenticated callers get the real message, because a tool that hides its errors
-from its operator is unusable.
+Exception messages from the Qdrant and Ollama clients do not reach a search caller. In
+Production the MCP SDK replaces any exception other than `McpException` with a generic
+message, and the default exception handler returns a problem response with a trace id to
+REST callers (see "What an error is allowed to say"). Admin endpoints return provider errors
+in full, because an operator debugging a provider needs the endpoint in the message.
 
 ## Guards
 
@@ -73,11 +74,11 @@ as the rule it protects.
 
 | Guard | Mechanism |
 |---|---|
-| No secret in tracked config | Test scans `appsettings*.json` (excluding `.local`) for keys matching `password|secret|token|apikey|key` with a non-empty value. Fails the build. |
+| No secret in tracked config | `NoSecretValuesInTrackedConfiguration` scans `appsettings*.json` (excluding `.local`) for keys matching `password|secret|apikey|api_key|token|credential` with a non-empty value. Fails the build. |
 | No secret committed, ever | `gitleaks` as a pre-commit hook **and** a CI job over full history, with a custom rule for the `dex_` prefix. |
-| `.env.example` stays complete | Test asserts every `DEXICON__*` key read by the config binder appears in `.env.example`. A new setting that is undocumented fails CI. |
-| Tokens never logged | Test writes a token through the logging pipeline and asserts the sink received the mask. |
-| No unfiltered vector query | Test calls every public repository read method with an empty scope and asserts each throws. |
+| `.env.example` stays complete | `EnvExampleDocumentsEveryVariableComposeUses` asserts every variable `docker-compose.yml` references appears in `.env.example`, and `EveryDocumentedEnvironmentVariableBindsToARealOption` asserts every `DEXICON__` variable compose sets binds to an option. A new setting that is undocumented fails CI. |
+| No credential in a log or a cache key | `PrincipalCacheKeyNeverContainsTheToken`, `CallerDigestNeverContainsTheCredential`; `LogForgingTests` for a request path that tries to start a log line. |
+| No unfiltered vector query | `VectorStoreRefusesAQueryWithNoCorpusFilter` asserts that `SearchAsync` throws on an empty scope. The other read methods take a chunk set and are reached after scope resolution. |
 | Key scoping | `KeyScopingTests` and `AdminPasswordTests` — see [07](07-auth.md). |
 
 Each guard is verified by **breaking the value and watching it go red**, then restoring it.
@@ -181,17 +182,19 @@ Covered operationally in [09](09-deployment.md); the security-relevant points:
   no API key on an exposed port bypasses per-corpus scoping entirely.
 - No outbound network calls at runtime other than Qdrant, Ollama, and an OpenAI or Azure
   OpenAI embedding provider where the operator has configured one
-  ([04](04-ingestion.md#embedding-providers)). No telemetry, no update check, no model
-  download at request time.
+  ([04](04-ingestion.md#embedding-providers)). No telemetry and no update check. Models
+  download in the Ollama container: the configured embedding model on first start
+  (`scripts/provision-models.sh`), and any model an administrator pulls from the Models
+  screen.
 
 ## Input handling
 
 | Risk | Mitigation |
 |---|---|
 | Path traversal via a workspace source path | Canonicalise, then assert the result is under `/workspaces`. A source path through a link is refused. The walk follows no links, and records each as `skipped` with the reason ([D-35](decisions.md#d-35-links-are-not-followed)). |
-| Zip-bomb EPUB / OOXML | Bounded decompressed size and entry count; exceed either and the file fails with a clear reason. |
-| Malicious PDF | PdfPig is managed code; extraction runs with a wall-clock timeout per file. |
-| Oversized upload | Enforced at the request-size limit, before buffering. |
+| Zip-bomb EPUB / OOXML | No decompressed-size or entry-count bound. A file over `DEXICON__INDEXING__DOCUMENTMAXBYTES` (512 MB, compressed) is skipped, and a file that keeps reading is abandoned after `DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS` (300 s). A highly compressed archive under both limits is not bounded. |
+| Malicious PDF | PdfPig is managed code. Extraction is abandoned after 300 s of reading (`DeadlineStream`). The clock is checked between reads, so a read that never returns, or a long computation between reads, is not bounded ([09](09-deployment.md)). |
+| Oversized upload | The request-size limit is lifted for the upload endpoint. `DEXICON__UPLOAD__MAXFILEBYTES` (200 MB) is enforced per file while the file streams to a temporary file, which is removed when the limit is exceeded. |
 | Regex denial of service (custom boundary patterns) | Compiled with a 500 ms `matchTimeout`; timeout fails the job explicitly rather than falling back. |
 | Stored content echoed into the UI | React escapes by default; syntax highlighting operates on text nodes, never `dangerouslySetInnerHTML`. |
 | SSRF via configured endpoints | Endpoints come from the environment only — never from a request body or the UI. |
@@ -203,7 +206,7 @@ Covered operationally in [09](09-deployment.md); the security-relevant points:
 - CI: `dotnet list package --vulnerable --include-transitive` and `npm audit`, both failing
   the build on high severity.
 - CodeQL for C# and TypeScript on pull requests, on `main`, and weekly.
-- Release builds publish an SBOM (CycloneDX) and pin base images by digest.
+- Release builds publish an SBOM (BuildKit, `sbom: true`) and pin base images by digest.
 - Every third-party extraction library is permissively licensed and listed with its licence
   in [04](04-ingestion.md#extraction).
 
