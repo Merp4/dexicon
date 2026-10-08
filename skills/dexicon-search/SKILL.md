@@ -1,5 +1,5 @@
 ---
-# dexicon-skill-version: 5
+# dexicon-skill-version: 6
 name: dexicon-search
 description: Search indexed code and documents by meaning using the Dexicon MCP server. Use when looking for where something is implemented, how a concept is handled, or what a document says about a topic — anything where you know the idea but not the term. Also covers reading an indexed file back, diagnosing an empty result, and changing what is indexed, including adding folders and corpora, and asking for a removal, when the key allows it.
 ---
@@ -51,7 +51,7 @@ is the only one.
 ## Searching
 
 ```
-search_index(query, corpus?, mode?, limit?, pathPrefix?, language?, symbol?)
+search_index(query, corpus?, mode?, limit?, pathPrefix?, source?, language?, symbol?, maxCharsPerHit?, distinctTitles?)
 ```
 
 Write the query as a **question or a description**, not keywords. "how are refresh tokens
@@ -61,8 +61,12 @@ revoked" outperforms "refresh token revoke" — the embedding model was trained 
 choice almost always. Use `semantic` when the wording in the source is certainly different
 from yours; `keyword` when you want exact-match behaviour, or when embeddings are down.
 
-Narrow with `pathPrefix`, `language` or `symbol` before raising `limit`. Twenty results
-across the whole index is usually worse than eight from `src/Auth/`.
+Narrow with `pathPrefix`, `source`, `language` or `symbol` before raising `limit`. Twenty
+results across the whole index is usually worse than eight from `src/Auth/`. `pathPrefix` is
+relative to a source's root, so it cannot select a folder that is itself a source's root;
+`source` does that. A result names its source's root (`· in books/manuals/Architecture` after
+the path) when the results span several sources, and a source that matches nothing is
+refused with an error that lists them all. A parent matches everything beneath it.
 
 Omitting `corpus` searches everything visible to you, and with several corpora of different
 kinds that is noisy: asked of five corpora, a question about one project's design drew 6 of
@@ -95,8 +99,11 @@ fragment is not enough:
 get_context(corpus, filePath, aroundLine, before?, after?)
 ```
 
-Pass the path **exactly as `search_index` printed it**. This stitches the surrounding
-indexed lines together and reports any gap rather than papering over it.
+Pass `filePath` as `search_index` printed it, without the `:start-end` range or the `#page=`,
+`#chapter=` or `#slide=` anchor after it: the lookup matches the stored path exactly, so a
+path with its anchor finds nothing. For a hit in a book, pass the `lines` span it prints as
+`aroundLine`. This returns the surrounding lines and reports any gap rather than papering
+over it.
 
 If the corpus indexes a local source tree you can also just read the file directly — that
 is usually better, because it is the live file and Dexicon's copy is as old as the last
@@ -122,8 +129,8 @@ there are five common ones:
 - **Never indexed.** The corpus exists, the files were never walked.
 - **Indexed, but the query missed.** Try `keyword` mode with a term you are sure appears.
   If keyword finds it and hybrid did not, your phrasing was too far from the source.
-- **Degraded.** A result beginning `! DEGRADED:` means embeddings were unavailable and you
-  got **keyword-only** results. They are real, but they are not semantic — do not report
+- **Degraded.** A `! DEGRADED:` line after the result header means embeddings were
+  unavailable and you got **keyword-only** results. They are real, but they are not semantic — do not report
   "nothing found" from a degraded search without saying it was degraded.
 - **Left out.** A filter excluded the file, it was over the size limit, it failed to
   extract or held no text (a scanned PDF), or no source covers its folder. `index_status`
@@ -167,7 +174,7 @@ If your key lists `propose_removal`, you can ask for something to be removed: a 
 chunk set, an uploaded document or a whole corpus. Nothing is removed by the call. It records
 the request and whoever runs Dexicon approves or rejects it, so ask only for what you
 can say a reason for, in one line, and say in your reply that you asked and that it is
-waiting. `propose_removal(kind, corpus, target, reason)` takes `kind` as `source`,
+waiting. `propose_removal(kind, corpus, reason, target)` takes `kind` as `source`,
 `chunk_set`, `document` or `corpus`. The `target` for a source is its folder as `index_status`
 shows it (`files:repos/app`, or `history:repos/app` when both read the folder), for a chunk
 set its name, for a document its path, and for a corpus nothing. The default chunk set and a
