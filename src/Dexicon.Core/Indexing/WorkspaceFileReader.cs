@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Dexicon.Core.Configuration;
@@ -75,6 +76,10 @@ public sealed class WorkspaceFileReader(IServiceScopeFactory scopes, IOptions<De
         }
     }
 
+    [SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", MessageId = "WriteAsync", Justification =
+        "Reading ahead for an indexing pass: reading a file may store its extracted text, which is a cache "
+        + "that is rebuilt when missing, and the channel write after it is on the pass's token because "
+        + "stopping the pass is what that token is for.")]
     private async Task FillAsync(
         IReadOnlyList<WorkspaceWalker.Candidate> files,
         ChannelWriter<ReadFile> writer, CancellationToken ct)
