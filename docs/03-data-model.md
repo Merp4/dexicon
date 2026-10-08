@@ -486,7 +486,7 @@ overwrite each other, without error, and only for the paths they share.
   "language":    "csharp",
   "start_line":  120,                // text sources
   "end_line":    168,
-  "page":        3,                  // PDF/PPTX sources; omitted for line-addressed content
+  "page":        3,                  // page (PDF), slide (PPTX) or chapter (EPUB); omitted for line-addressed content
   "section":     "Retry policy",     // Markdown heading, or the page, slide or chapter label
   "symbols":     ["TokenService", "Refresh"],
   "chunk_index": 7,
