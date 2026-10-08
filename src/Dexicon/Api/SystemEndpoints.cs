@@ -784,75 +784,8 @@ public static class SystemEndpoints
         app.MapPut("/api/embedding-models/profile", async (SaveModelProfileRequest body, RequestContext rc,
             CatalogDbContext db, IMemoryCache cache, IndexJobQueue queue,
             IOptions<DexiconOptions> opts, CancellationToken ct) =>
-        {
-            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-
-            if (string.IsNullOrWhiteSpace(body.Model))
-                return Results.Problem(title: "A model name is required", statusCode: 400);
-
-            // A template without the placeholder would silently drop every input and embed
-            // a constant string, which returns the same vector for everything.
-            foreach (var (label, template) in new[]
-                     { ("documentTemplate", body.DocumentTemplate), ("queryTemplate", body.QueryTemplate) })
-            {
-                if (string.IsNullOrEmpty(template) || !template.Contains("{text}", StringComparison.Ordinal))
-                    return Results.Problem(
-                        title: $"{label} must contain {{text}}",
-                        detail: "That is where the text being embedded goes. Use exactly \"{text}\" to embed it unchanged.",
-                        statusCode: 400);
-            }
-
-            var provider = string.IsNullOrWhiteSpace(body.Provider) ? opts.Value.Embedding.Provider : body.Provider;
-            var model = body.Model.Trim();
-
-            var existing = await db.ModelProfiles.FirstOrDefaultAsync(
-                p => p.Provider == provider && p.Model == model, ct);
-
-            if (existing is null)
-            {
-                db.ModelProfiles.Add(new EmbeddingModelProfile
-                {
-                    Provider = provider,
-                    Model = model,
-                    DocumentTemplate = body.DocumentTemplate,
-                    QueryTemplate = body.QueryTemplate,
-                    Notes = body.Notes,
-                    CreatedUtc = DateTime.UtcNow,
-                    UpdatedUtc = DateTime.UtcNow,
-                });
-            }
-            else
-            {
-                existing.DocumentTemplate = body.DocumentTemplate;
-                existing.QueryTemplate = body.QueryTemplate;
-                existing.Notes = body.Notes;
-                existing.UpdatedUtc = DateTime.UtcNow;
-            }
-
-            await db.SaveChangesAsync(ct);
-            cache.Remove($"model-templates::{provider}::{model}");
-
-            // Framing is part of the chunking fingerprint, so every set on this model is
-            // now stale: its documents were embedded one way and its queries would arrive
-            // framed another. Re-indexed rather than left to disagree quietly.
-            var affected = await db.ChunkSets
-                .Where(s => s.EmbeddingProvider == provider && s.EmbeddingModel == model)
-                .Select(s => new { s.Id, s.CorpusId, s.Name, Corpus = s.Corpus!.Name })
-                .ToListAsync(ct);
-
-            var queued = new List<string>();
-            foreach (var set in affected)
-            {
-                await queue.EnqueueAsync(set.CorpusId, JobKind.Rebuild, set.Id, ct);
-                queued.Add($"{set.Corpus}:{set.Name}");
-            }
-
-            return Results.Ok(new ModelProfileSaved(
-                provider, model, queued,
-                queued.Count == 0
-                    ? null
-                    : $"{queued.Count} chunk set(s) are re-indexing: framing changes the vectors."));
-        }).Produces<ModelProfileSaved>().WithTags("System");
+            await SaveModelProfileAsync(body, rc, db, cache, queue, opts, ct))
+            .Produces<ModelProfileSaved>().WithTags("System");
 
         app.MapPost("/api/embedding-models/probe", async (ProbeModelRequest body, RequestContext rc,
             ModelProbe probe, CatalogDbContext db, IOptions<DexiconOptions> opts,
@@ -883,12 +816,7 @@ public static class SystemEndpoints
                 // measurement nobody takes. Two dozen embed calls to learn a number that
                 // then vanished on reload is why the chunk size field could never say what
                 // the chosen model accepts.
-                var row = await db.ModelMeasurements.FindAsync([target.Provider, target.Model], ct);
-                if (row is null)
-                {
-                    row = new EmbeddingModelMeasurement { Provider = target.Provider, Model = target.Model };
-                    db.ModelMeasurements.Add(row);
-                }
+                var row = await MeasuredModels.RowForAsync(db, target, ct);
 
                 row.Dimensions = caps.Dimensions;
                 row.MaxInputChars = caps.MaxInputChars;
@@ -1073,6 +1001,98 @@ public static class SystemEndpoints
     }
 
     /// <summary>
+    /// <c>PUT /api/embedding-models/profile</c>: saves the task framing for one model and queues a
+    /// rebuild of every chunk set on it. A method of its own so a test calls the handler that is
+    /// mapped.
+    /// </summary>
+    internal static async Task<IResult> SaveModelProfileAsync(
+        SaveModelProfileRequest body, RequestContext rc, CatalogDbContext db, IMemoryCache cache,
+        IndexJobQueue queue, IOptions<DexiconOptions> opts, CancellationToken ct)
+    {
+        if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+
+        if (string.IsNullOrWhiteSpace(body.Model))
+            return Results.Problem(title: "A model name is required", statusCode: 400);
+
+        // A template without the placeholder would silently drop every input and embed
+        // a constant string, which returns the same vector for everything.
+        foreach (var (label, template) in new[]
+                 { ("documentTemplate", body.DocumentTemplate), ("queryTemplate", body.QueryTemplate) })
+        {
+            if (string.IsNullOrEmpty(template) || !template.Contains("{text}", StringComparison.Ordinal))
+                return Results.Problem(
+                    title: $"{label} must contain {{text}}",
+                    detail: "That is where the text being embedded goes. Use exactly \"{text}\" to embed it unchanged.",
+                    statusCode: 400);
+        }
+
+        var provider = string.IsNullOrWhiteSpace(body.Provider) ? opts.Value.Embedding.Provider : body.Provider;
+
+        // Stored under the lower-case name without `:latest`. The Models screen sends the name
+        // Ollama lists (`embeddinggemma:latest`) and a chunk set records `embeddinggemma` or
+        // whatever was typed; one model, so one row, and the one the indexer finds.
+        var target = new EmbeddingTarget(provider, body.Model.Trim());
+        var model = target.CanonicalModel;
+
+        var existing = await db.ModelProfiles.FirstOrDefaultAsync(
+            p => p.Provider == provider && p.Model == model, ct);
+
+        if (existing is null)
+        {
+            db.ModelProfiles.Add(new EmbeddingModelProfile
+            {
+                Provider = provider,
+                Model = model,
+                DocumentTemplate = body.DocumentTemplate,
+                QueryTemplate = body.QueryTemplate,
+                Notes = body.Notes,
+                CreatedUtc = DateTime.UtcNow,
+                UpdatedUtc = DateTime.UtcNow,
+            });
+        }
+        else
+        {
+            existing.DocumentTemplate = body.DocumentTemplate;
+            existing.QueryTemplate = body.QueryTemplate;
+            existing.Notes = body.Notes;
+            existing.UpdatedUtc = DateTime.UtcNow;
+        }
+
+        await db.SaveChangesAsync(ct);
+        cache.Remove(ModelProfiles.CacheKey(target));
+
+        // Not cancellable from here: the framing is committed, and the rebuilds are what make
+        // it apply. A cancel between the two left queries framed one way against stored
+        // document vectors framed another, and saving the same values again does not queue
+        // them (as in CorpusConfiguration).
+        //
+        // Framing is part of the chunking fingerprint, so every set on this model is
+        // now stale: its documents were embedded one way and its queries would arrive
+        // framed another. Re-indexed rather than left to disagree quietly. A set records
+        // the name it was created with, so `embeddinggemma` and `embeddinggemma:latest`
+        // are both this model; the tag is compared in memory, where the rule lives.
+        var affected = (await db.ChunkSets
+                .Where(s => s.EmbeddingProvider == provider)
+                .Select(s => new { s.Id, s.CorpusId, s.Name, s.EmbeddingModel, Corpus = s.Corpus!.Name })
+                .ToListAsync(CancellationToken.None))
+            .Where(s => ModelNames.SameModel(s.EmbeddingModel, model))
+            .ToList();
+
+        var queued = new List<string>();
+        foreach (var set in affected)
+        {
+            await queue.EnqueueAsync(set.CorpusId, JobKind.Rebuild, set.Id, CancellationToken.None);
+            queued.Add($"{set.Corpus}:{set.Name}");
+        }
+
+        return Results.Ok(new ModelProfileSaved(
+            provider, model, queued,
+            queued.Count == 0
+                ? null
+                : $"{queued.Count} chunk set(s) are re-indexing: framing changes the vectors."));
+    }
+
+    /// <summary>
     /// Where the provider actually in use answers, not where Ollama does.
     ///
     /// This reported <c>Ollama.Endpoint</c> unconditionally, so a deployment whose default
@@ -1197,10 +1217,10 @@ public static class ModelNames
     /// stores whatever was typed, usually "nomic-embed-text". They refer to the same
     /// model, and comparing them raw made a model in active use look unused: the listing
     /// said so, and the delete guard would have let it be removed out from under four
-    /// corpora. Only ":latest" is stripped; ":v1.5" is a genuinely different model.
+    /// corpora. Only ":latest" is stripped, and the letters are lower-cased; ":v1.5" is a
+    /// genuinely different model.
     /// </summary>
-    internal static string Normalise(string model) =>
-        model.EndsWith(":latest", StringComparison.OrdinalIgnoreCase) ? model[..^7] : model;
+    internal static string Normalise(string model) => EmbeddingTarget.Canonical(model);
 
     internal static bool SameModel(string a, string b) =>
         string.Equals(Normalise(a), Normalise(b), StringComparison.OrdinalIgnoreCase);

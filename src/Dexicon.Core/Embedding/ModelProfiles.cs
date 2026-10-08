@@ -66,7 +66,8 @@ public enum TemplateOrigin
 /// The resolution order is the whole design, and it exists because models are added at
 /// RUNTIME through the UI:
 ///
-///   1. a saved row for this (provider, model), which always wins
+///   1. a saved row for this (provider, model), which always wins; rows are stored and
+///      found under the name without <c>:latest</c>
 ///   2. a built-in suggestion for a recognised name, correct out of the box
 ///   3. nothing, and the text goes through unchanged
 ///
@@ -163,13 +164,25 @@ public sealed class ModelProfiles(CatalogDbContext db, IMemoryCache cache) : IMo
         ["granite-embedding"] = ModelTemplates.Raw with { Origin = TemplateOrigin.BuiltIn },
     };
 
+    /// <summary>
+    /// The cache entry for a model, named by the name a profile is stored under so that
+    /// `embeddinggemma`, `embeddinggemma:latest` and `EmbeddingGemma` share one. A save removes
+    /// this key.
+    /// </summary>
+    public static string CacheKey(EmbeddingTarget target) =>
+        $"model-templates::{target.Provider}::{target.CanonicalModel}";
+
     public async Task<ModelTemplates> ForAsync(EmbeddingTarget target, CancellationToken ct = default)
     {
-        var key = $"model-templates::{target.Provider}::{target.Model}";
+        var key = CacheKey(target);
         if (cache.TryGetValue(key, out ModelTemplates? hit) && hit is not null) return hit;
 
+        // Looked up by the canonical name, which is also the name a save stores: Ollama lists
+        // `embeddinggemma:latest` and a chunk set records `embeddinggemma`, one model with one
+        // framing.
+        var canonical = target.CanonicalModel;
         var saved = await db.ModelProfiles.AsNoTracking().FirstOrDefaultAsync(
-            p => p.Provider == target.Provider && p.Model == target.Model, ct);
+            p => p.Provider == target.Provider && p.Model == canonical, ct);
 
         var resolved = saved is not null
             ? new ModelTemplates(saved.DocumentTemplate, saved.QueryTemplate, TemplateOrigin.Configured)

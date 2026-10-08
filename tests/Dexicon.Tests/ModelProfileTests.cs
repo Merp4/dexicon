@@ -161,6 +161,70 @@ public sealed class ModelProfileTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TwoSpellingsOfOneModelResolveToOneSavedProfile()
+    {
+        // Ollama lists `embeddinggemma:latest` and a chunk set records `embeddinggemma`: one
+        // model, one vector space, so one framing. The row is stored under the name without the
+        // tag, and the lookup reduces the name it is given the same way.
+        _db.ModelProfiles.Add(new EmbeddingModelProfile
+        {
+            Provider = "ollama",
+            Model = "embeddinggemma",
+            DocumentTemplate = "doc: {text}",
+            QueryTemplate = "query: {text}",
+            CreatedUtc = DateTime.UtcNow,
+            UpdatedUtc = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+
+        foreach (var name in new[] { "embeddinggemma", "embeddinggemma:latest", "embeddinggemma:LATEST" })
+        {
+            var templates = await _profiles.ForAsync(Target(name));
+            templates.Origin.ShouldBe(TemplateOrigin.Configured, name);
+            templates.Apply(EmbedPurpose.Query, "x").ShouldBe("query: x", name);
+        }
+
+        // A different tag is a different model and does not inherit the framing.
+        (await _profiles.ForAsync(Target("embeddinggemma:v2"))).Origin.ShouldBe(TemplateOrigin.BuiltIn);
+    }
+
+    [Fact]
+    public async Task ANameThatDiffersOnlyInLetterCaseResolvesToTheSameSavedProfile()
+    {
+        // Model identity ignores case everywhere else (the in-use badge, the sets a save rebuilds, the
+        // vector collection name), so the row a framing is read from does too.
+        _db.ModelProfiles.Add(new EmbeddingModelProfile
+        {
+            Provider = "ollama",
+            Model = "embeddinggemma",
+            DocumentTemplate = "doc: {text}",
+            QueryTemplate = "query: {text}",
+            CreatedUtc = DateTime.UtcNow,
+            UpdatedUtc = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+
+        foreach (var name in new[] { "EmbeddingGemma", "EMBEDDINGGEMMA:latest", "EmbeddingGemma:LATEST" })
+        {
+            var templates = await _profiles.ForAsync(Target(name));
+            templates.Origin.ShouldBe(TemplateOrigin.Configured, name);
+            templates.Apply(EmbedPurpose.Query, "x").ShouldBe("query: x", name);
+        }
+    }
+
+    [Theory]
+    [InlineData("embeddinggemma", "embeddinggemma")]
+    [InlineData("embeddinggemma:latest", "embeddinggemma")]
+    [InlineData("EmbeddingGemma:LATEST", "embeddinggemma")]
+    [InlineData("BAAI/bge-m3", "baai/bge-m3")]
+    [InlineData("Nomic-Embed-Text:V1.5", "nomic-embed-text:v1.5")]
+    public void TheStoredFormOfAModelNameIsLowerCaseWithoutLatest(string name, string stored)
+    {
+        EmbeddingTarget.Canonical(name).ShouldBe(stored);
+        new EmbeddingTarget("ollama", name).CanonicalModel.ShouldBe(stored);
+    }
+
+    [Fact]
     public void AModelDeliberatelyWithoutFramingIsRecordedAsSuch()
     {
         // BGE-M3 is trained without task prefixes. Listed explicitly so that "no template"
