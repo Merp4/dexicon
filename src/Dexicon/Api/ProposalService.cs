@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
@@ -455,6 +456,9 @@ public sealed class ProposalService(
         finally { Deciding.Release(); }
     }
 
+    [SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", MessageId = "FailAsync", Justification =
+        "FailAsync follows a refused removal, and every refusal is returned before the removal writes to "
+        + "the catalogue.")]
     private async Task<ConfigOutcome<ProposalView>> ApproveHeldAsync(string id, CancellationToken ct)
     {
         var p = await db.Proposals.FirstOrDefaultAsync(x => x.Id == id, ct);

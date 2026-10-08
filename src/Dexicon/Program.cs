@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -343,6 +344,9 @@ internal sealed class MemoryCacheEvictor(IMemoryCache cache) : IMemoryCacheEvict
 /// when the disk is full, stops counting once its lease lapses, and the corpus is refreshed
 /// again with nothing to repair.
 /// </summary>
+[SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", Justification =
+    "Queues a refresh for each idle corpus until the host stops. A corpus not reached is queued at the "
+    + "next tick.")]
 internal sealed class ScheduledRefreshService(
     IServiceScopeFactory scopes,
     IOptions<DexiconOptions> options,

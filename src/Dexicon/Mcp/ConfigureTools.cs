@@ -186,20 +186,21 @@ public sealed class ConfigureTools
                     + $"({DexiconTools.OneLine(ex.Message)}). Add a folder to it with configure_source: indexing prepares "
                     + "the index again.");
             }
+
+            return $"Created corpus '{DexiconTools.OneLine(target.Name)}'{(filtersGiven ? ", with the filters given" : "")}. " +
+                   $"It holds nothing yet: add a folder with configure_source(corpus: {DexiconTools.Quoted(target.Name)}, " +
+                   "folder: ..., create: true). list_folders shows what is mounted.";
         }
-        else
-        {
-            target = await WritableAsync(scopes, principal, corpus, "Pass create: true to create it.", ct);
-            if (description is null && !filtersGiven)
-                return $"Nothing to change in corpus '{DexiconTools.OneLine(target.Name)}': pass a description, a filter, or reset.";
-        }
+
+        target = await WritableAsync(scopes, principal, corpus, "Pass create: true to create it.", ct);
+        if (description is null && !filtersGiven)
+            return $"Nothing to change in corpus '{DexiconTools.OneLine(target.Name)}': pass a description, a filter, or reset.";
 
         var changed = new List<string>();
-        if (description is not null && (create || description != target.Description)) changed.Add("description");
-        if (create && filtersGiven) changed.Add("the filters its sources inherit");
+        if (description is not null && description != target.Description) changed.Add("description");
 
         var queued = false;
-        if (!create && (filtersGiven || changed.Count > 0))
+        if (filtersGiven || changed.Count > 0)
         {
             var current = target.DefaultsOf();
             var defaults = filtersGiven
@@ -232,18 +233,13 @@ public sealed class ConfigureTools
             }
         }
 
-        // A creation and a change were recorded when they were saved. What no callback reports is
-        // a request that changed nothing.
-        var filtersSet = changed.Contains("the filters its sources inherit");
-        if (!create && changed.Count == 0)
-            Audit("left unchanged", target, "none");
-        if (create)
-            return $"Created corpus '{DexiconTools.OneLine(target.Name)}'{(filtersSet ? ", with the filters given" : "")}. " +
-                   $"It holds nothing yet: add a folder with configure_source(corpus: {DexiconTools.Quoted(target.Name)}, " +
-                   "folder: ..., create: true). list_folders shows what is mounted.";
-
+        // A change was recorded when it was saved. What no callback reports is a request that changed
+        // nothing.
         if (changed.Count == 0)
+        {
+            Audit("left unchanged", target, "none");
             return $"Nothing changed in corpus '{DexiconTools.OneLine(target.Name)}': the values sent are the ones it has.";
+        }
 
         return $"Changed {string.Join(" and ", changed)} of corpus '{DexiconTools.OneLine(target.Name)}'." +
                (queued
