@@ -174,10 +174,10 @@ If your key lists `propose_removal`, you can ask for something to be removed: a 
 chunk set, an uploaded document or a whole corpus. Nothing is removed by the call. It records
 the request and whoever runs Dexicon approves or rejects it, so ask only for what you
 can say a reason for, in one line, and say in your reply that you asked and that it is
-waiting. `propose_removal(kind, corpus, reason, target)` takes `kind` as `source`,
+waiting. `propose_removal(kind, corpus, reason, target?)` takes `kind` as `source`,
 `chunk_set`, `document` or `corpus`. The `target` for a source is its folder as `index_status`
 shows it (`files:repos/app`, or `history:repos/app` when both read the folder), for a chunk
-set its name, for a document its path, and for a corpus nothing. The default chunk set and a
+set its name, for a document its path; for a `corpus` leave `target` out. The default chunk set and a
 corpus's only chunk set cannot be removed, so they are refused when asked. Ask once: a repeat
 returns the request already waiting. `removal_status` lists the requests your key has made
 and how each was decided: waiting, approved (it has been removed), rejected (it stays), or

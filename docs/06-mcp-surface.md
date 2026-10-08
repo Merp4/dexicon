@@ -19,7 +19,7 @@ The 2026-07-28 revision also defines `Mcp-Method` and `Mcp-Name` request headers
 protocol version and client identity in `_meta`, and allows `tools/list` responses to
 advertise `ttlMs` / `cacheScope`.
 
-A key is listed only the tools its scopes allow. The transport is stateless, so the server
+A key is shown only the tools its scopes allow. The transport is stateless, so the server
 sends no `notifications/tools/list_changed`: a client lists on connect and caches, and a
 scope granted to a key reaches its agent's tool list when the client reconnects
 ([07](07-auth.md#the-mcp-tool-list-is-not-live)).
