@@ -93,7 +93,7 @@ public sealed class DexiconResources
 
         // A path two sources of the corpus hold is two files. The one with the most chunks
         // is read, and the header says there is another.
-        var file = FileSources.Choose(chunks);
+        var file = await FileSources.ResolveAsync(chunks, documents, corpus.Id, path, ct);
 
         // The stored document where there is one. Stitching the chunks back together is
         // the fallback, and it is a reconstruction: it can only return the lines the

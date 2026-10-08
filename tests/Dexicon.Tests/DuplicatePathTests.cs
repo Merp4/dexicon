@@ -205,6 +205,74 @@ public sealed class DuplicatePathTests : IAsyncLifetime
         body.Warning.ShouldBeNull();
     }
 
+    /// <summary>
+    /// The first source's copy of <c>scan.md</c> extracts to nothing, as a scanned PDF does: it
+    /// is catalogued as Empty with no chunks, so only the second source's copy is in the index.
+    /// <c>blank.md</c> is empty in the second source and exists nowhere else.
+    /// </summary>
+    private async Task IndexWithAnEmptyCopyAsync()
+    {
+        await _harness.WriteFileAsync("scan.md", "   \n\n   \n", source: 0);
+        await _harness.WriteFileAsync("scan.md", Paragraphs("beta", 12), source: 1);
+        await _harness.WriteFileAsync("solo.md", Paragraphs("gamma", 12), source: 0);
+        await _harness.WriteFileAsync("blank.md", "   \n\n   \n", source: 1);
+        await _harness.RunIndexAsync();
+
+        (await _harness.StateOfAsync("scan.md", sourceId: IndexingHarness.SourceIdFor(0)))
+            .Status.ShouldBe(FileStatus.Empty);
+        _harness.Vectors.CountFor("scan.md", sourceId: IndexingHarness.SourceIdFor(0)).ShouldBe(0);
+        _harness.Vectors.CountFor("scan.md", sourceId: IndexingHarness.SourceIdFor(1)).ShouldBeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task TheToolWarnsWhenTheOtherSourcesCopyIsEmpty()
+    {
+        await IndexWithAnEmptyCopyAsync();
+
+        var text = await ToolAsync("scan.md");
+
+        text.ShouldContain("about beta");
+        text.ShouldContain("! " + Warning);
+    }
+
+    [Fact]
+    public async Task TheResourceWarnsWhenTheOtherSourcesCopyIsEmpty()
+    {
+        await IndexWithAnEmptyCopyAsync();
+
+        var text = await ResourceAsync("scan.md");
+
+        text.ShouldContain("about beta");
+        text.ShouldContain("! " + Warning);
+    }
+
+    [Fact]
+    public async Task TheEndpointWarnsWhenTheOtherSourcesCopyIsEmpty()
+    {
+        await IndexWithAnEmptyCopyAsync();
+
+        var body = await EndpointAsync("scan.md");
+
+        body.Text.ShouldContain("about beta");
+        body.Warning.ShouldNotBeNull().ShouldStartWith(Warning);
+    }
+
+    [Fact]
+    public async Task AnEmptyFileAtAnotherPathDoesNotMakeAPathShared()
+    {
+        // The control for the three above: the second source's empty file is blank.md, not solo.md.
+        await IndexWithAnEmptyCopyAsync();
+
+        var tool = await ToolAsync("solo.md");
+        var resource = await ResourceAsync("solo.md");
+        var body = await EndpointAsync("solo.md");
+
+        tool.ShouldContain("about gamma");
+        tool.ShouldNotContain("sources in this corpus");
+        resource.ShouldNotContain("sources in this corpus");
+        body.Warning.ShouldBeNull();
+    }
+
     [Fact]
     public async Task TheThreePathsAgreeOnWhichSourceTheyRead()
     {

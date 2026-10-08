@@ -276,7 +276,7 @@ public sealed class DexiconTools
         // here, and stitching them interleaves two different books into one passage with
         // line numbers on it. FileSources picks the one with the most chunks, and the
         // header says that it did.
-        var file = FileSources.Choose(chunks);
+        var file = await FileSources.ResolveAsync(chunks, documents, target.Corpus.Id, filePath, ct);
         chunks = file.Chunks;
 
         var lo = Math.Max(1, aroundLine - before);

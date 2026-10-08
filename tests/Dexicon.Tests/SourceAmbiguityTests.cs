@@ -126,6 +126,30 @@ public class SourceAmbiguityTests
     }
 
     [Fact]
+    public void ASourceWithNoChunksAtThePathStillCountsWhenTheCatalogueRecordsIt()
+    {
+        // A scanned PDF is catalogued as empty and has no chunks; its sibling in another source does.
+        var chunks = new[] { Chunk("source-ai", 0, 1, "a") };
+
+        var file = FileSources.Choose(chunks, catalogued: 2);
+
+        file.Chunks.ShouldBe(chunks);
+        file.SourceId.ShouldBe("source-ai");
+        file.Ambiguous.ShouldBeTrue();
+        file.Warning.ShouldNotBeNull().ShouldStartWith("2 sources in this corpus");
+    }
+
+    [Fact]
+    public void TheCatalogueCountDoesNotAddToTheSourcesTheChunksCameFrom()
+    {
+        // The same source seen twice, once in the chunks and once in the catalogue, is one source.
+        var chunks = new[] { Chunk("source-ai", 0, 1, "a"), Chunk("source-philosophy", 0, 1, "b") };
+
+        FileSources.Choose(chunks, catalogued: 2).SourceCount.ShouldBe(2);
+        FileSources.Choose(chunks[..1], catalogued: 1).Ambiguous.ShouldBeFalse();
+    }
+
+    [Fact]
     public void ANoChunkPathHasNoSourceAndNoWarning()
     {
         var file = FileSources.Choose([]);

@@ -238,7 +238,7 @@ public static class CorpusEndpoints
         // A path two sources of the corpus hold is two files, and chunks of both would
         // stitch into one text. FileSources picks the source with the most chunks, as
         // get_context does, and the response carries the warning.
-        var file = FileSources.Choose(chunks);
+        var file = await FileSources.ResolveAsync(chunks, documents, target.Corpus.Id, path, ct);
         chunks = file.Chunks;
         var document = await documents.ForAsync(target.Corpus.Id, target.Set.Id, path, file.SourceId, ct);
 

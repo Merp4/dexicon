@@ -277,7 +277,8 @@ endpoint returns the same sentence, without the `! `, as the `warning` property 
 JSON body on every window of the file, and omits the property when one source holds the
 path. The sentence is `2 sources in this corpus contain a file at that path. They are
 different files with the same name. This is one of them, the largest; the others are not
-shown and not mixed in.`, where the count is the number of sources.
+shown and not mixed in.`, where the count is the number of sources of the corpus that have
+a file at the path, including one with no text (a scanned PDF) and so no chunks.
 
 `POST /api/context` is answering a search, and a hit carries the source it came from, so
 there is no ambiguity to resolve and it reads that source's document.

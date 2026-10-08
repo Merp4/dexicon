@@ -169,7 +169,8 @@ path for different files. Then `get_context` reads the source with the most chun
 to the lower source id) and puts this line under the header: `! 2 sources in this corpus
 contain a file at that path. They are different files with the same name. This is one of
 them, the largest; the others are not shown and not mixed in.` (the count is the number of
-sources). The file resource ([below](#resources)) and `GET /api/corpora/{name}/file` choose
+sources, counted from the catalogue, so a source whose file at that path has no text, such
+as a scanned PDF, is counted too). The file resource ([below](#resources)) and `GET /api/corpora/{name}/file` choose
 the source the same way and carry the same sentence.
 
 This is also how an agent **reads on**. Chunks overlap and tile the file, so calling it

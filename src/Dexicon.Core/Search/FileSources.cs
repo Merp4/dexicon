@@ -1,3 +1,5 @@
+using Dexicon.Core.Documents;
+
 namespace Dexicon.Core.Search;
 
 /// <summary>
@@ -5,7 +7,7 @@ namespace Dexicon.Core.Search;
 /// </summary>
 /// <param name="Chunks">The chunks to read from, in chunk order, all from <paramref name="SourceId"/>.</param>
 /// <param name="SourceId">The source the chunks belong to. Null for an empty path or for points written before sources were recorded.</param>
-/// <param name="SourceCount">How many sources of the corpus hold the path: 0 when no chunk came back.</param>
+/// <param name="SourceCount">How many sources of the corpus hold a file at the path, indexed or not: 0 when no chunk came back.</param>
 public sealed record FileSource(IReadOnlyList<SearchHit> Chunks, string? SourceId, int SourceCount)
 {
     /// <summary>More than one source holds the path, so the other sources' files are not shown.</summary>
@@ -28,10 +30,32 @@ public sealed record FileSource(IReadOnlyList<SearchHit> Chunks, string? SourceI
 public static class FileSources
 {
     /// <summary>
+    /// <see cref="Choose"/>, counting the sources from the catalogue as well as the chunks.
+    /// This is the entry point for a read by path: the chunks say which source to read, and
+    /// the catalogue says how many sources hold the path. A source whose file there is empty
+    /// has no chunks and would otherwise go uncounted.
+    /// </summary>
+    public static async Task<FileSource> ResolveAsync(
+        IReadOnlyList<SearchHit> chunks, DocumentReader documents, string corpusId, string path,
+        CancellationToken ct = default)
+    {
+        // Nothing to read, so nothing to warn about, and no reason to ask the catalogue.
+        if (chunks.Count == 0) return Choose(chunks);
+
+        return Choose(chunks, await documents.SourceCountAtAsync(corpusId, path, ct));
+    }
+
+    /// <summary>
     /// The source with the most chunks, ties broken by source id so that two calls on an
     /// unchanged index return the same book. A path held by one source comes back unchanged.
     /// </summary>
-    public static FileSource Choose(IReadOnlyList<SearchHit> chunks)
+    /// <param name="chunks">The chunks of the path.</param>
+    /// <param name="catalogued">
+    /// Sources the catalogue records a file at the path for. The count is the larger of this
+    /// and the sources the chunks come from, which keeps chunks with no recorded source (older
+    /// points) from adding one.
+    /// </param>
+    public static FileSource Choose(IReadOnlyList<SearchHit> chunks, int catalogued = 0)
     {
         var bySource = chunks
             .GroupBy(c => c.SourceId ?? string.Empty)
@@ -44,7 +68,7 @@ public static class FileSources
             ? [.. bySource[0].OrderBy(c => c.ChunkIndex)]
             : chunks;
 
-        return new FileSource(chosen, chosen[0].SourceId, bySource.Count);
+        return new FileSource(chosen, chosen[0].SourceId, Math.Max(bySource.Count, catalogued));
     }
 
     /// <summary>
