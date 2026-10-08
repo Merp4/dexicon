@@ -64,22 +64,13 @@ public static class CorpusEndpoints
         }).Produces<CorpusUpdated>();
 
         g.MapDelete("/{nameOrId}", async (string nameOrId, RequestContext rc, ScopeResolver scopes,
-            CatalogDbContext db, IVectorStore vectors, CancellationToken ct) =>
+            CorpusConfiguration config, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
 
-            // Per collection, because a corpus mid-migration has sets in two of them and
-            // a single delete would leave one half behind with nothing left to name it.
-            var collections = await db.ChunkSets.Where(s => s.CorpusId == corpus.Id)
-                .Select(s => s.CollectionName).Distinct().ToListAsync(ct);
-
-            foreach (var collection in collections)
-                await vectors.DeleteCorpusAsync(collection, corpus.Id, ct);
-
-            db.Corpora.Remove(corpus);
-            await db.SaveChangesAsync(ct);
-            return Results.NoContent();
+            var removed = await config.RemoveCorpusAsync(corpus, ct);
+            return removed.Refusal is { } refused ? refused.ToResult() : Results.NoContent();
         });
 
         g.MapPost("/{nameOrId}/sources", async (string nameOrId, AddSourceRequest body, RequestContext rc,
