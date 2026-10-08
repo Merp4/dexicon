@@ -104,8 +104,11 @@ public sealed class ProposalTests : IAsyncLifetime
         await using var db = _harness.NewContext();
         db.Sources.Add(new Source
         {
-            Id = "source-h", CorpusId = IndexingHarness.CorpusId, Kind = SourceKind.GitHistory,
-            RootPath = "notes", CreatedUtc = DateTime.UtcNow,
+            Id = "source-h",
+            CorpusId = IndexingHarness.CorpusId,
+            Kind = SourceKind.GitHistory,
+            RootPath = "notes",
+            CreatedUtc = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
 
@@ -197,8 +200,11 @@ public sealed class ProposalTests : IAsyncLifetime
     {
         db.Sources.Add(new Source
         {
-            Id = "source-root", CorpusId = IndexingHarness.CorpusId, Kind = SourceKind.Workspace,
-            RootPath = "", CreatedUtc = DateTime.UtcNow,
+            Id = "source-root",
+            CorpusId = IndexingHarness.CorpusId,
+            Kind = SourceKind.Workspace,
+            RootPath = "",
+            CreatedUtc = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
     }
@@ -242,8 +248,11 @@ public sealed class ProposalTests : IAsyncLifetime
         await using var db = _harness.NewContext();
         db.Sources.Add(new Source
         {
-            Id = "source-long", CorpusId = IndexingHarness.CorpusId, Kind = SourceKind.Workspace,
-            RootPath = folder, CreatedUtc = DateTime.UtcNow,
+            Id = "source-long",
+            CorpusId = IndexingHarness.CorpusId,
+            Kind = SourceKind.Workspace,
+            RootPath = folder,
+            CreatedUtc = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
 
@@ -291,8 +300,11 @@ public sealed class ProposalTests : IAsyncLifetime
         for (var i = 0; i < 11; i++)
             db.Sources.Add(new Source
             {
-                Id = $"x{i}", CorpusId = IndexingHarness.CorpusId, Kind = SourceKind.Workspace,
-                RootPath = $"extra/{i}", CreatedUtc = DateTime.UtcNow,
+                Id = $"x{i}",
+                CorpusId = IndexingHarness.CorpusId,
+                Kind = SourceKind.Workspace,
+                RootPath = $"extra/{i}",
+                CreatedUtc = DateTime.UtcNow,
             });
         await db.SaveChangesAsync();
 
@@ -402,8 +414,12 @@ public sealed class ProposalTests : IAsyncLifetime
         var proposal = await AskAsync(db, ProposalKind.ChunkSet, "alt-1");
         db.Jobs.Add(new IndexJob
         {
-            Id = "job-1", CorpusId = IndexingHarness.CorpusId, ChunkSetId = "set-2",
-            Kind = JobKind.Refresh, State = JobState.Queued, QueuedUtc = DateTime.UtcNow,
+            Id = "job-1",
+            CorpusId = IndexingHarness.CorpusId,
+            ChunkSetId = "set-2",
+            Kind = JobKind.Refresh,
+            State = JobState.Queued,
+            QueuedUtc = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
 
@@ -648,7 +664,9 @@ public sealed class ProposalTests : IAsyncLifetime
         await using var db = uploads.NewContext();
         db.Files.AddRange(Enumerable.Range(1, 23).Select(i => new IndexedFile
         {
-            Id = $"file-{i:00}", SourceId = IndexingHarness.SourceId, RelativePath = $"doc-{i:00}.md",
+            Id = $"file-{i:00}",
+            SourceId = IndexingHarness.SourceId,
+            RelativePath = $"doc-{i:00}.md",
         }));
         await db.SaveChangesAsync();
         var corpus = await db.Corpora.Include(c => c.Sources).Include(c => c.ChunkSets)
@@ -790,9 +808,17 @@ public sealed class ProposalTests : IAsyncLifetime
         // Written by hand: the service never records a target outside the corpus it was asked about.
         Proposal Raw(string id, ProposalKind kind, string targetId) => new()
         {
-            Id = id, CreatedUtc = DateTime.UtcNow, TokenId = "k1", TokenName = "research-agent",
-            CorpusId = "corpus-2", CorpusName = "papers", Kind = kind, TargetId = targetId, TargetLabel = targetId,
-            Reason = "x", Status = ProposalStatus.Pending,
+            Id = id,
+            CreatedUtc = DateTime.UtcNow,
+            TokenId = "k1",
+            TokenName = "research-agent",
+            CorpusId = "corpus-2",
+            CorpusName = "papers",
+            Kind = kind,
+            TargetId = targetId,
+            TargetLabel = targetId,
+            Reason = "x",
+            Status = ProposalStatus.Pending,
         };
         db.Proposals.AddRange(
             Raw("p-empty", ProposalKind.Corpus, "corpus-2"),
@@ -817,8 +843,12 @@ public sealed class ProposalTests : IAsyncLifetime
 
         db.Jobs.Add(new IndexJob
         {
-            Id = "job-1", CorpusId = IndexingHarness.CorpusId, ChunkSetId = "set-2",
-            Kind = JobKind.Refresh, State = JobState.Queued, QueuedUtc = DateTime.UtcNow,
+            Id = "job-1",
+            CorpusId = IndexingHarness.CorpusId,
+            ChunkSetId = "set-2",
+            Kind = JobKind.Refresh,
+            State = JobState.Queued,
+            QueuedUtc = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
         (await svc.ListAsync(decided: false, 50, default)).Single().Facts.ShouldNotBeNull().Blocker.ShouldBe("a job is working on it");

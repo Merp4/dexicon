@@ -961,8 +961,12 @@ public sealed class GitHistoryTests : IDisposable
     {
         var options = new GitHistoryOptions
         {
-            Ref = "release/1.0", IncludeDiff = true, MaxDiffBytes = 1234,
-            IncludeMerges = true, MaxCommits = 50, Since = new DateOnly(2026, 1, 2),
+            Ref = "release/1.0",
+            IncludeDiff = true,
+            MaxDiffBytes = 1234,
+            IncludeMerges = true,
+            MaxCommits = 50,
+            Since = new DateOnly(2026, 1, 2),
         };
 
         GitHistoryOptions.FromJson(options.ToJson()).ShouldBe(options);

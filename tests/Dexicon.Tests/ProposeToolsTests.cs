@@ -47,9 +47,17 @@ public sealed class ProposeToolsTests : IAsyncLifetime
 
     private static Proposal Stored(string id, string tokenId, ProposalStatus status, DateTime created) => new()
     {
-        Id = id, CreatedUtc = created, TokenId = tokenId, TokenName = "agent-" + tokenId,
-        CorpusId = IndexingHarness.CorpusId, CorpusName = "notes", Kind = ProposalKind.Source,
-        TargetId = "source-" + id, TargetLabel = "files:" + id, Reason = "x", Status = status,
+        Id = id,
+        CreatedUtc = created,
+        TokenId = tokenId,
+        TokenName = "agent-" + tokenId,
+        CorpusId = IndexingHarness.CorpusId,
+        CorpusName = "notes",
+        Kind = ProposalKind.Source,
+        TargetId = "source-" + id,
+        TargetLabel = "files:" + id,
+        Reason = "x",
+        Status = status,
         DecidedUtc = status == ProposalStatus.Pending ? null : created.AddMinutes(1),
     };
 
