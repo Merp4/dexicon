@@ -30,8 +30,9 @@ with no section here fails its release rather than publishing an undescribed one
 - A PDF whose cached text was cut short is extracted again and re-indexed on the next pass that
   reads it. Nothing needs triggering by hand. On the library this was measured on, 164 files
   were affected, which is about 60,000 more chunks to embed.
-- A key can hold a new scope, `propose`, which no existing key has and the key adopted from
-  `DEXICON__BOOTSTRAP__TOKEN` never does. `GET /api/proposals` and
+- A key can hold a new scope, `propose`, which no existing key has. The key adopted from
+  `DEXICON__BOOTSTRAP__TOKEN` is not given it, and an administrator can add it to any key with
+  `PUT /api/tokens/{id}/scopes`. `GET /api/proposals` and
   `POST /api/proposals/{id}/approve` and `/reject` are new, and take the administrator's session.
   `/healthz` gains `pendingProposals` in the administrator's reply. Additive.
 - The skill changes (`dexicon-skill-version: 5`). Running `scripts/install-mcp.ps1` again

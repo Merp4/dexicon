@@ -66,9 +66,9 @@ belongs to the key.
   then approves or rejects, and removes nothing itself
   ([D-39](decisions.md#d-39-agents-ask-for-removals-and-a-person-decides)). The scopes are
   independent, and a key holds the ones it is given: `propose` is neither implied by
-  `configure` nor required for it, and none of `configure`, `propose` or `admin` is held by
-  a key adopted from the environment. **`admin` is not issuable to a key** and is stripped
-  if requested.
+  `configure` nor required for it. A key adopted from the environment starts with `search`
+  and `ingest` only, and the others can be added afterwards. **`admin` is not issuable to a
+  key** and is stripped if requested.
 - Scopes can be changed after issue, on the Access page or with
   `PUT /api/tokens/{id}/scopes`, under the same rules. The change evicts cached principals,
   so a scope removed is refused from the agent's next call.

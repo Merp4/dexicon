@@ -1980,8 +1980,8 @@ decided with `removal_status`, which needs no other scope and no corpus that sti
 is a row in `proposals`. Nothing is removed until an administrator approves it, and approving runs the code the
 `DELETE` endpoints run (`CorpusConfiguration`'s removals and the document detach), so the two cannot
 drift. `propose` is independent of every other scope: a key can hold it without `configure`, and
-`configure` without it. Nothing grants it by default. A key adopted from the environment never holds
-it, and a key issued without it ticked does not. Keys that never hold it see no change: the tool is
+`configure` without it. Nothing grants it by default: a key adopted from the environment is not given
+it, and a key issued without it ticked is not either. An administrator can add it to any key afterwards. Keys that never hold it see no change: the tool is
 hidden from them, the table is never written to, and the setup used before this, in which an agent
 adds and changes and a key with `ingest` detaches documents directly, remains a configuration like
 any other ([07](07-auth.md), [06](06-mcp-surface.md#propose_removal)).
