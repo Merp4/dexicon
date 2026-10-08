@@ -640,6 +640,34 @@ public sealed class ProposalTests : IAsyncLifetime
         refusal.Detail.ShouldContain("kept.md");
     }
 
+    [Fact]
+    public async Task ADocumentIsFoundByPathOrIdAndANotFoundAnswerNamesTheFirstTwentyAndCountsTheRest()
+    {
+        await using var uploads = await IndexingHarness.StartAsync();
+        await uploads.SeedCorpusAsync(SourceKind.Upload);
+        await using var db = uploads.NewContext();
+        db.Files.AddRange(Enumerable.Range(1, 23).Select(i => new IndexedFile
+        {
+            Id = $"file-{i:00}", SourceId = IndexingHarness.SourceId, RelativePath = $"doc-{i:00}.md",
+        }));
+        await db.SaveChangesAsync();
+        var corpus = await db.Corpora.Include(c => c.Sources).Include(c => c.ChunkSets)
+            .FirstAsync(c => c.Id == IndexingHarness.CorpusId);
+        var svc = uploads.NewProposals(db);
+
+        var byPath = await svc.ProposeAsync(Key(), corpus, ProposalKind.Document, "doc-07.md", "x", default);
+        var byId = await svc.ProposeAsync(Key("k2"), corpus, ProposalKind.Document, "file-12", "x", default);
+        var missing = await svc.ProposeAsync(Key(), corpus, ProposalKind.Document, "missing.md", "x", default);
+
+        byPath.Value!.Proposal.TargetId.ShouldBe("file-07");
+        byId.Value!.Proposal.TargetLabel.ShouldBe("doc-12.md");
+        var refusal = missing.Refusal.ShouldNotBeNull();
+        refusal.Status.ShouldBe(404);
+        refusal.Detail.ShouldContain("doc-01.md, doc-02.md");
+        refusal.Detail.ShouldContain("doc-20.md and 3 more.");
+        refusal.Detail.ShouldNotContain("doc-21.md");
+    }
+
     // ---- reading ------------------------------------------------------------------------------
 
     [Fact]

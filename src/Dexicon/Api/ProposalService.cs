@@ -203,19 +203,21 @@ public sealed class ProposalService(
 
             case ProposalKind.Document:
             {
-                var files = await db.Files.AsNoTracking()
-                    .Where(f => f.Source!.CorpusId == corpus.Id && f.Source.Kind == SourceKind.Upload)
-                    .ToListAsync(ct);
-                var file = files.FirstOrDefault(f => f.Id == named)
-                           ?? files.FirstOrDefault(f => string.Equals(f.RelativePath, named, StringComparison.Ordinal));
-                if (file is null)
-                    return new ConfigRefusal("No such document",
-                        $"Corpus '{Line(corpus.Name)}' has no uploaded document '{Line(named)}'. Documents attached to it: "
-                        + (files.Count == 0
-                            ? "none."
-                            : string.Join(", ", files.Select(f => Line(f.RelativePath)).Order(StringComparer.Ordinal).Take(20))
-                              + (files.Count > 20 ? $" and {files.Count - 20} more." : ".")), 404);
-                return (file.Id, file.RelativePath);
+                // Looked up in the query. A library can hold thousands, and only the not-found answer
+                // needs to name any of them.
+                var uploads = db.Files.AsNoTracking()
+                    .Where(f => f.Source!.CorpusId == corpus.Id && f.Source.Kind == SourceKind.Upload);
+                var file = await uploads.FirstOrDefaultAsync(f => f.Id == named, ct)
+                           ?? await uploads.FirstOrDefaultAsync(f => f.RelativePath == named, ct);
+                if (file is not null) return (file.Id, file.RelativePath);
+
+                var held = await uploads.CountAsync(ct);
+                var first = await uploads.Select(f => f.RelativePath).OrderBy(p => p).Take(20).ToListAsync(ct);
+                return new ConfigRefusal("No such document",
+                    $"Corpus '{Line(corpus.Name)}' has no uploaded document '{Line(named)}'. Documents attached to it: "
+                    + (held == 0
+                        ? "none."
+                        : string.Join(", ", first.Select(Line)) + (held > 20 ? $" and {held - 20} more." : ".")), 404);
             }
 
             default:
