@@ -479,7 +479,10 @@ gh attestation verify oci://ghcr.io/<owner>/dexicon:0.6.1 --owner <owner>
 
 `scripts/backup.sh` archives `dexicon_data` and `qdrant_data`; `WITH_MODELS=1` adds
 `ollama_data`. Run it from the repository root, where it acts on the Compose project that
-`docker compose` resolves there (the `name:` in the file, or `COMPOSE_PROJECT_NAME`):
+`docker compose` resolves there: `COMPOSE_PROJECT_NAME` in the shell or `.env`, or else the
+`name:` in the file. A stack started with `docker compose -p <name>` needs
+`COMPOSE_PROJECT_NAME=<name>` on the script, because `-p` on an earlier command does not
+carry over:
 
 ```bash
 ./scripts/backup.sh backup   [dir]   # stops the app and Qdrant, archives the volumes, restarts them
