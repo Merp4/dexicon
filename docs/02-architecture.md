@@ -96,9 +96,10 @@ Response
 
 Two round trips to external services on the hot path (embedding provider, Qdrant query) when
 the resolved scope uses one collection. A collection is one vector space, so a scope that
-spans several embedding models embeds the query once and runs one Qdrant query for each
-collection, then merges the hits by score. The sparse encoding is in-process. Target p95 under
-400 ms for a warm `embeddinggemma` over one collection.
+spans several embedding models embeds the query for each model (a query embedding is cached
+by model and text) and runs one Qdrant query for each collection, then merges the hits by
+score. The sparse encoding is in-process. Target p95 under 400 ms for a warm `embeddinggemma`
+over one collection.
 
 ### Indexing (the slow path)
 
