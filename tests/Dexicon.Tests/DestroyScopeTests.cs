@@ -12,11 +12,12 @@ namespace Dexicon.Tests;
 /// <summary>
 /// Detaching a document has a scope of its own, and every key that could detach one still can.
 ///
-/// The endpoint's check is one line in a handler and nothing here hosts the app, so it is shown
-/// by running the built service. What is held here is the rest: where the scope is listed and
-/// not listed, that it is independent of <c>ingest</c>, that a key can be given it, and that the
-/// migration gives it to exactly the keys that held <c>ingest</c>, through the migrator the app
-/// uses and not a copy of its text. See docs/decisions.md D-40.
+/// The endpoint's own check is held by <see cref="DocumentDetachEndpointTests"/>, which call the
+/// handler the route is mapped to. What is held here is the rest: where the scope is listed and
+/// not listed, that it is independent of <c>ingest</c>, that a key can be given it, what a key
+/// refused for lack of a scope is told, and that the migration gives it to exactly the keys that
+/// held <c>ingest</c>, through the migrator the app uses and not a copy of its text. See
+/// docs/decisions.md D-40.
 /// </summary>
 public sealed class DestroyScopeTests
 {
