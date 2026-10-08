@@ -87,7 +87,8 @@ dotnet_diagnostic.CA5350.severity = error
 dotnet_diagnostic.CA5351.severity = error
 
 [tests/**/*.cs]
-# Test names read as sentences: Method_Condition_ExpectedOutcome.
+# Test names are PascalCase sentences (CONTRIBUTING.md, Style). CA1707 flags underscores in
+# public identifiers, so enabling it here would make that rule a build error.
 dotnet_diagnostic.CA1707.severity = none
 # Tests construct throwaway objects and assert on them; disposal noise is not useful.
 dotnet_diagnostic.CA2000.severity = none

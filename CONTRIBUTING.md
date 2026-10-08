@@ -70,6 +70,14 @@ Each of these has been decided, with the reasoning recorded in
 
 - C# with `TreatWarningsAsErrors`. `dotnet format` before you commit; the hook checks.
 - Comments explain *why*; the code states what.
+- Test methods are named as one PascalCase sentence with no underscores, giving the
+  subject, the outcome and the condition: `AKeyWithoutConfigureIsRefusedByEveryConfigureTool`.
+  Name the method under test only when it is the subject (`ChunkNeverSplitsALine`). The name
+  has to make sense alone in a list of failures, so it does not open with `So`, `Nor` or `Or`
+  to continue the test above it. Acronyms are cased as words (`Pdf`, `Nul`, `Mcp`).
+  `Method_State_Expected` and `snake_case_sentence` names are not used.
+- A test class is named for the unit or behaviour it covers, as a noun phrase ending in
+  `Tests`: `CorpusLeaseTests`, `FailedFileSizeTests`.
 - Timestamps are UTC everywhere: stored, returned, logged. The browser is the only thing
   that converts, because it is the only component that knows which clock applies. Any
   property holding one is named `…Utc`, and a test enforces this.
