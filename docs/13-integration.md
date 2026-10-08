@@ -36,7 +36,7 @@ revision you have checked out. No other document name is served: `/openapi/v1.js
 404, because the full surface is the UI's contract rather than yours.
 
 The `info.version` there is the version of the **running build**. A release image carries
-its tag, so a 0.4.x instance reports `0.4`. An `edge` or a hand-built image reports `0.0`,
+its tag, so a 0.6.x instance reports `0.6`. An `edge` or a hand-built image reports `0.0`,
 which is the Dockerfile saying the build is not a release rather than a version to compare
 against.
 
@@ -65,7 +65,8 @@ curl -s http://127.0.0.1:8477/api/corpora \
 
 The key reaches the corpora it is mapped to, and a key mapped to none reaches all of them.
 Naming a corpus it cannot read is a 400 that names what is visible, rather than a result
-set quietly narrowed to what was permitted.
+set quietly narrowed to what was permitted. The other failures are listed under
+[Errors](#errors).
 
 ## `POST /api/context`
 
@@ -85,33 +86,41 @@ curl -s http://127.0.0.1:8477/api/context \
 {
   "query": "how does chunk set promotion work",
   "mode": "Hybrid",
+  "degraded": false,
+  "scope": [{ "id": "01K…", "name": "docs", "state": "Ready" }],
   "context": "04-ingestion.md:353-390 (corpus: docs) · Embedding providers\n…",
   "citations": [
     {
       "corpus": "docs",
+      "sourceRoot": "docs",
       "filePath": "04-ingestion.md",
       "location": "04-ingestion.md:353-390",
       "startLine": 353,
       "endLine": 390,
       "section": "Embedding providers",
       "score": 1.924,
-      "chars": 2027
+      "chars": 2027,
+      "partial": false,
+      "omittedChars": 0
     }
   ],
   "usedChars": 3581,
   "maxChars": 4000,
   "truncated": true,
   "droppedHits": 8,
-  "degraded": false,
+  "partialBlocks": 0,
   "tookMs": 15
 }
 ```
 
 `context` is the passage, ready to paste into a prompt. `citations` says where each block
 of it came from, in the same order. A file path is relative to its source root rather than
-to the corpus, so a corpus with several sources also carries `sourceRoot`, and the block
-headers name it when the passage spans more than one. Null fields are omitted, so `note`
-and `degradedReason` are absent rather than null when there is nothing to report.
+to the corpus, so a citation also carries `sourceRoot`, the root of the source the file came
+from (absent for an uploaded document, which has none, and an empty string for a source on
+the workspace root). The block headers name it when the passage spans more than one. Null fields are omitted, so `note`
+and `degradedReason` are absent rather than null when there is nothing to report. Enum
+values in a response are PascalCase (`"mode": "Hybrid"`, `"state": "Ready"`); the request's
+`mode` is case-insensitive, so `"hybrid"` is accepted.
 
 **Request**
 
@@ -120,9 +129,9 @@ and `degradedReason` are absent rather than null when there is nothing to report
 | `query` | — | Required. Natural language, or a code fragment. |
 | `corpus` | every visible corpus | Names, `corpus` or `corpus:set`. |
 | `mode` | `hybrid` | `hybrid`, `semantic` or `keyword`. |
-| `limit` | 10 | Hits to consider. The budget decides how many reach the passage. |
-| `maxChars` | 8000 | Characters for the whole passage, headers included. |
-| `neighbours` | 0 | Chunks to include either side of each hit. |
+| `limit` | 10 | Hits to consider, 1-50. The budget decides how many reach the passage. |
+| `maxChars` | 8000 | Characters for the whole passage, headers included, 1-200,000. |
+| `neighbours` | 0 | Chunks to include either side of each hit, 0-5. |
 | `lineNumbers` | false | Prefix each line with its number in the file. |
 | `pathPrefix`, `source`, `language`, `symbol` | — | The search filters, unchanged. |
 | `distinctTitles` | true | Collapse one document held in two formats. |
@@ -134,7 +143,12 @@ approximation elsewhere in the project ([D-16](decisions.md#d-16-approximate-tok
 which makes the 8,000-character default roughly 2,000 tokens.
 
 **What the response admits to.** `truncated` and `droppedHits` say that hits were left
-out. `degraded` says the embedding service was unavailable and the results are keyword
+out. `partialBlocks` counts blocks cut to fit the budget: at most one, and always the last.
+The last block is cut when at least 300 characters of it fit after its header. Its citation
+has `partial: true`, `omittedChars` and the lines actually present, the passage says
+`… N characters of this chunk not shown …`, and `note` reads `The last block is cut to fit
+4,000 characters. Its citation reports the lines actually present. Raise maxChars for the
+whole chunk.` `degraded` says the embedding service was unavailable and the results are keyword
 matches, which matters most here: a script pastes this into a prompt without reading it.
 `note` carries anything else worth knowing, including a corpus still indexing, and the
 case where nothing fitted:
@@ -151,8 +165,10 @@ hit for the same budget, so raise `maxChars` with it.
 
 ## Reindexing from a script
 
-`POST /api/corpora/{name}/reindex` queues the job and returns it; indexing a large
-repository outlasts any sensible request timeout. Poll the job to wait for it:
+`POST /api/corpora/{name}/reindex` queues the job and answers `202 Accepted` with the job as
+the body and `/api/jobs/{id}` as `Location`; `?full=true` queues a full reindex. Indexing a
+large repository outlasts any sensible request timeout, so poll the job to wait for it. The
+OpenAPI documents list this response as 200.
 
 ```bash
 job=$(curl -s -X POST "http://127.0.0.1:8477/api/corpora/docs/reindex" \
@@ -170,8 +186,28 @@ means the pass ran without covering everything: a source could not be reached, o
 more files could not be embedded and were skipped (those are retried on the next run).
 `error` gives every reason, one sentence each.
 
-The key needs the `ingest` scope for this, which is off unless it was ticked when the key
-was issued.
+The key needs the `ingest` scope for this. A key holds it when it was ticked at creation,
+when it was added later on the Access page or with `PUT /api/tokens/{id}/scopes`, or when
+the key was adopted from `DEXICON__BOOTSTRAP__TOKEN`.
+
+## Errors
+
+Failures come back as `application/problem+json` with `title`, `status` and `detail`, except
+where noted.
+
+| Status | `title` | `detail` |
+|---|---|---|
+| 400 | `Unknown or unreadable corpus` | The message, for example `Unknown corpus 'x'. Corpora this key can reach: a, b.` |
+| 400 | `Query is required` | None. `POST /api/search` and `POST /api/context` with a blank `query`. |
+| 401 | `Missing credentials` | `Provide a key: Authorization: Bearer dex_…, or sign in at / for the UI.` |
+| 401 | `Invalid credentials` | `The credential was not recognised, or it has been revoked or has expired.` |
+| 403 | `Insufficient scope` | `This key has [search] and needs 'ingest'. Whoever runs Dexicon can grant it on the Access page.` |
+| 404 | none | `GET /api/jobs/{id}` for an unknown job, or one in a corpus the key cannot reach. The body is empty. |
+| 409 | `Embedding dimension mismatch` | `Collection '<collection>' was indexed with 768-dimension vectors but the configured model produces 1024. Rebuild the corpus with the current model, or restore the original one.` |
+
+The server maps an unhandled embedding failure to 503 `Embedding service unavailable`.
+`POST /api/search` and `POST /api/context` catch it and return keyword results with
+`degraded: true` instead.
 
 There is no outbound webhook. `GET /api/jobs` answers the same question for any caller
 that can poll, `/api/events` streams progress to one that can hold a connection, and
@@ -201,7 +237,7 @@ stating because the names invite the assumption that they do.
 on from a hit has to generate against the full document or call the path directly, which
 is a gap rather than a decision: nothing about the endpoint is UI-specific.
 
-`get_context(corpus, file_path, around_line, before, after)` is a lookup: it takes a place
+`get_context(corpus, filePath, aroundLine, before, after)` is a lookup: it takes a place
 and returns what is there. `POST /api/context` takes a *query*, runs the search, and packs
 the results into one passage that stops at `maxChars` (D-29). Its handle is a question,
 not a location, and there is no MCP tool for it — an agent already has a loop, so it
@@ -221,19 +257,17 @@ decide which lines. Where none is, which is code and plain text on a mount, beca
 reading those IS the extraction and nothing is cached, the passage is stitched back
 together from the chunk payloads, and it can then carry the gaps the chunker left, which
 `get_context` and the file endpoint both disclose in the text as `… lines N-M not indexed …`.
+`POST /api/context` follows the same split for each hit.
 
-That split is what `POST /api/context` did not do until recently: it stitched chunk
-payloads in every case, including for a book whose document was sitting in the catalogue.
-
-**A duplicate path is where the three diverge, and it is not a discrepancy.** A file path
-is relative to its source root, so within a corpus it is not unique: two sources can each
-hold `Installation Guide.pdf`, and they are two different books. A lookup is given only
-the path, so `get_context` and the file endpoint detect the ambiguity, keep the chunk path
-and warn, because serving one book's text under the other's name is plausible and
-quotable and wrong. `POST /api/context` is answering a search, and a hit carries the
-source it came from, so there is no ambiguity to resolve and it reads that source's
-document. Same rule, different evidence: read the document when it is known which
-document, and say so when it is not.
+**A duplicate path is where the three diverge.** A file path is relative to its source
+root, so within a corpus it is not unique: two sources can each hold
+`Installation Guide.pdf`, and they are two different books. A lookup is given only the
+path. `get_context` detects the ambiguity, reads the source with the most chunks and
+warns, because serving one book's text under the other's name is plausible, quotable and
+wrong. The file endpoint and the `dexicon://.../file/` resource read the chunks of every
+source that holds the path and join them without a warning. `POST /api/context` is
+answering a search, and a hit carries the source it came from, so there is no ambiguity to
+resolve and it reads that source's document.
 
 ### Why the two reads are POST
 

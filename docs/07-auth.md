@@ -30,14 +30,15 @@ One password for the install. It is the only route to the `admin` scope, so noth
 can delete a corpus or mint a key ever sits in an agent's configuration file.
 
 - Seeded from `DEXICON__ADMIN__PASSWORD`, which is `DEXICON_ADMIN_PASSWORD` in `.env`,
-  or generated and printed once to the container log
-  on first run. Set, it is applied on every start, which is also the way back in after a
-  forgotten one.
-- Stored as **PBKDF2-HMAC-SHA256, 600 000 iterations, 32-byte salt**, verified in constant
-  time, in the catalogue rather than read from the environment per request, so it can be
-  changed in the UI without a restart.
-- Posted to `POST /api/session`, which returns a short-lived `dexs_…` bearer held in memory
-  and nowhere else. A restart signs you out.
+  or generated and printed once to the container log on first start. The log shows it in
+  double quotes, two lines below a box headed `Dexicon admin password`:
+  `docker compose logs dexicon | grep -A 2 "admin password"`. A set value is applied on
+  every start, which is also the way back in after a forgotten one. Nothing in the UI or
+  the API changes the password.
+- Stored as **PBKDF2-HMAC-SHA256, 600 000 iterations, 32-byte salt** and verified in
+  constant time, in the catalogue; the environment is read at start-up, not per request.
+- Posted to `POST /api/session`, which returns a `dexs_…` bearer valid for 12 hours, held
+  in memory and nowhere else. A restart signs you out.
 
 It is the first credential here a human chooses, so it is the first that can be guessed.
 Failed attempts are throttled by a delay that doubles from the third attempt and caps at 30
@@ -54,7 +55,8 @@ How an agent authenticates. One per agent is the intended shape, because the cor
 belongs to the key.
 
 - Format `dex_<26-char ULID>_<32-byte base64url secret>`. The prefix makes it greppable by
-  secret scanners; the id lets the UI show and revoke it without storing the secret.
+  secret scanners; the id lets the UI show and revoke it without storing the secret. A key
+  adopted from `DEXICON__BOOTSTRAP__TOKEN` keeps the id it was given.
 - Stored with the same PBKDF2 parameters as the password. Presented once, at creation, with
   a copy button. There is no "show key" anywhere, because there is nothing to show.
 - Scopes: `search` reads and queries; `ingest` additionally permits a reindex of the corpora
@@ -70,11 +72,17 @@ belongs to the key.
   are independent, and a key holds the ones it is given: `propose` is neither implied by
   `configure` nor required for it, and `ingest` does not carry `destroy`. A key adopted from the
   environment starts with `search` and `ingest` only, and the others can be added afterwards.
-  **`admin` is not issuable to a key** and is stripped if requested.
+  The migration `GrantDestroyToIngestKeys` gave `destroy` once to every key that held `ingest`
+  at the 0.6.7 upgrade, so none of them lost the ability to detach a document; a key issued
+  afterwards holds what is ticked when it is created, and the Access page ticks `search`
+  alone by default. **`admin` is not issuable to a key.** `POST /api/tokens` and
+  `PUT /api/tokens/{id}/scopes` answer 400 `Unknown scope` when it is requested, and the
+  token service drops it from any key that reaches it another way.
 - Scopes can be changed after issue, on the Access page or with
   `PUT /api/tokens/{id}/scopes`, under the same rules. The change evicts cached principals,
   so a scope removed is refused from the agent's next call.
-- Optional expiry. Optional revocation, effective immediately: the principal cache holds
+- Optional expiry, set with `expiresInDays` on `POST /api/tokens`; the Access page does not
+  offer it. Optional revocation, effective immediately: the principal cache holds
   entries for 60 s and revocation evicts rather than waiting. Each entry is filed under the
   cache's generation, which every eviction moves, so a request already verifying the key
   when it is revoked, or its scopes changed, is served on what it read and whatever it
@@ -177,15 +185,15 @@ resets.
 ## Audit
 
 Every authenticated request writes a structured log line: the credential's id and name,
-never its value, plus method, path and status. Authorization failures log at Warning with
-the reason, and a failed sign-in logs the consecutive count and the delay the next attempt
-will wait.
+never its value, plus method, path and status. A rejected credential (401) logs at Warning
+with the reason, and a failed sign-in logs the consecutive count and the delay the next
+attempt will wait. A 403 for a missing scope appears only in the request line. The bodies
+of the 401 and 403 answers are in [13](13-integration.md#errors).
 
 A rejected credential has no id or name to log, so the line carries the remote address,
 the caller's user agent and eight hex characters of a SHA-256 of what was presented. That
 is what separates a browser tab left open on an expired session from someone working
-through a list: both used to write the same line, and a page of them said only that
-something was failing. The digest is 32 bits on purpose — enough to recognise one caller
+through a list, which would otherwise write the same line and fill a page with it. The digest is 32 bits on purpose — enough to recognise one caller
 repeating, and too narrow to confirm a guess for anyone who can read the logs. The user
 agent is the caller's own text, so it is capped, and every control character in it is
 replaced with U+FFFD before it is logged, as they are in the request path and in a key's
