@@ -193,8 +193,10 @@ of the 401 and 403 answers are in [13](13-integration.md#errors).
 A rejected credential has no id or name to log, so the line carries the remote address,
 the caller's user agent and eight hex characters of a SHA-256 of what was presented. That
 is what separates a browser tab left open on an expired session from someone working
-through a list, which would otherwise write the same line and fill a page with it. The digest is 32 bits on purpose — enough to recognise one caller
-repeating, and too narrow to confirm a guess for anyone who can read the logs. The user
+through a list, which would otherwise write the same line and fill a page with it. The
+digest is 32 bits on purpose: enough to recognise one caller repeating, and a limit on what
+it reveals. It is not a secret. Whoever can read the logs can compute the digest of a
+candidate credential and compare, with a 1 in 2^32 chance that a wrong guess matches. The user
 agent is the caller's own text, so it is capped, and every control character in it is
 replaced with U+FFFD before it is logged, as they are in the request path and in a key's
 name and id. The console template also escapes properties: that covers the sink it is

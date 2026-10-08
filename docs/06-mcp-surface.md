@@ -177,8 +177,8 @@ filter, so ranking never decides which of a file's chunks come back.
 
 `aroundLine` is a line number, and a hit in a PDF or an EPUB is cited by its unit:
 `moby-dick.epub#chapter=7`. So `search_index` prints the line span alongside that
-citation (`· lines 120-160`), which is what an agent passes as `aroundLine` to continue
-from it.
+citation (`· lines 120-160`). `aroundLine` takes one integer, so an agent passes a line
+from that span, `120` to read the hit and `160` to read on past it, never the span itself.
 
 `filePath` is the path without the `:start-end` range or the `#page=`, `#chapter=` or
 `#slide=` anchor that `search_index` prints after it. The lookup matches the stored path

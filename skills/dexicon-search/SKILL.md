@@ -101,9 +101,9 @@ get_context(corpus, filePath, aroundLine, before?, after?)
 
 Pass `filePath` as `search_index` printed it, without the `:start-end` range or the `#page=`,
 `#chapter=` or `#slide=` anchor after it: the lookup matches the stored path exactly, so a
-path with its anchor finds nothing. For a hit in a book, pass the `lines` span it prints as
-`aroundLine`. This returns the surrounding lines and reports any gap rather than papering
-over it.
+path with its anchor finds nothing. For a hit in a book, `aroundLine` is one integer taken
+from the `lines 120-160` span the hit prints: `120` for the hit itself, `160` to read on past
+it. This returns the surrounding lines and reports any gap rather than papering over it.
 
 If the corpus indexes a local source tree you can also just read the file directly — that
 is usually better, because it is the live file and Dexicon's copy is as old as the last
