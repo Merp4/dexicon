@@ -62,6 +62,12 @@ with no section here fails its release rather than publishing an undescribed one
   only "N files stored", so a file over the size cap or an empty one vanished without a reason.
   Each is listed with its reason under the count, and a failure of the whole request is listed
   without a file name.
+- **Stacked doc comments fail CI.** `scripts/check-doc-comments.py`, a step of the required
+  `Build and test` job, fails on a `/// <summary>` line whose previous non-blank line is also
+  `///`. Inserting a member between another member's doc block and its signature leaves that
+  shape, and a documentation build does not report it. The script reads every tracked `*.cs`
+  file and fails when it reads none. Its one hit, a stale summary stacked on
+  `CodeChunker.IsFenceDelimiter`'s, is removed.
 
 ### Fixed
 

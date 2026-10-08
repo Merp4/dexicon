@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail when two `///` doc blocks are stacked on one C# member.
+"""Fail when a C# `/// <summary>` block is stacked under another `///` block.
 
 Inserting a member by anchoring an edit on the next member's signature puts the new member
 between that member's `///` block and its signature. Both blocks then document the new
@@ -49,7 +49,25 @@ def stacked(lines: list[str]) -> list[tuple[int, int]]:
     return hits
 
 
+def count(n: int, one: str, many: str) -> str:
+    return f"{n} {one if n == 1 else many}"
+
+
+def shown(path: str, annotate: bool) -> str:
+    """A tracked path as one line of output. In a workflow command it is a property, escaped as
+    @actions/core does, so a name holding a line break or `::` cannot start a command of its own."""
+    for brk in ("\r", "\n", "\x85", " ", " "):
+        path = path.replace(brk, f"\\u{ord(brk):04x}")
+    if annotate:
+        path = path.replace("%", "%25").replace(":", "%3A").replace(",", "%2C")
+    return path
+
+
 def main() -> int:
+    if len(sys.argv) > 1:
+        print("check-doc-comments.py takes no arguments: it reads every tracked *.cs file.",
+              file=sys.stderr)
+        return 2
     root = subprocess.run(["git", "rev-parse", "--show-toplevel"],
                           capture_output=True, text=True, check=True).stdout.strip()
     listing = subprocess.run(["git", "-C", root, "ls-files", "-z", "--", "*.cs"],
@@ -73,14 +91,15 @@ def main() -> int:
                        f"Both document the next member; move the member inserted here above "
                        f"line {start}.")
             if annotate:
-                print(f"::error file={path},line={line}::{message}")
+                print(f"::error file={shown(path, annotate)},line={line}::{message}")
             else:
-                print(f"{path}:{line}: {message}")
+                print(f"{shown(path, annotate)}:{line}: {message}")
 
     if absent:
-        print(f"Skipped {len(absent)} listed file(s) absent from the working tree: "
-              + ", ".join(absent))
-    print(f"Read {read} C# file(s) under {root}; {found} stacked summary block(s).")
+        print(f"Skipped {count(len(absent), 'listed file', 'listed files')} absent from the "
+              "working tree: " + ", ".join(shown(p, False) for p in absent))
+    print(f"Read {count(read, 'C# file', 'C# files')} under {root}; "
+          f"{count(found, 'stacked summary', 'stacked summaries')}.")
     if read == 0:
         message = "Read no C# files: `git ls-files -- '*.cs'` listed nothing to check."
         print(f"::error::{message}" if annotate else message)
