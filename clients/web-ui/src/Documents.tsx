@@ -8,12 +8,6 @@ import { cn } from 'cn';
 import { count } from './lib/units';
 
 /**
- * The `file` of a failure that belongs to the request as a whole (a body over the bound, a
- * body that cannot be read), not to one file. `DocumentEndpoints.RequestFailureName`.
- */
-const REQUEST_FAILURE = '(request)';
-
-/**
  * The document library.
  *
  * The thing this screen has to make obvious, because it is the whole point of the
@@ -40,8 +34,10 @@ export function DocumentsView({
   const [dragging, setDragging] = useState(false);
   const [lastUpload, setLastUpload] = useState<string | null>(null);
   const [notStored, setNotStored] = useState<UploadFailure[]>([]);
-  const refusedFiles = notStored.filter((f) => f.file !== REQUEST_FAILURE);
-  const requestFailures = notStored.filter((f) => f.file === REQUEST_FAILURE);
+  // `file` is null for a failure of the request as a whole (a body over the bound, one that cannot
+  // be read, a connection that closed). A file's own name says nothing about which it is.
+  const refusedFiles = notStored.filter((f) => f.file != null);
+  const requestFailures = notStored.filter((f) => f.file == null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   // Everything the signed-in admin can see is writable; there is no owner to test.

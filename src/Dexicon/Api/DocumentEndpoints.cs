@@ -37,9 +37,6 @@ public sealed record LibraryAttachment(
 
 public static class DocumentEndpoints
 {
-    /// <summary>The <see cref="UploadFailure.File"/> of a failure that belongs to the request, not to a file.</summary>
-    internal const string RequestFailureName = "(request)";
-
     /// <summary>The start of the text <see cref="MultipartReader"/> throws when the body ends early.</summary>
     private const string TruncatedBodyMessage = "Unexpected end of Stream";
 
@@ -150,17 +147,21 @@ public static class DocumentEndpoints
         // cancellation propagates as before.
         catch (OperationCanceledException) when (ct.IsCancellationRequested && stored.Count > 0)
         {
-            failures.Add(new UploadFailure(RequestFailureName, "The connection closed before the upload finished."));
+            // The file that was being attached when the save was cancelled is still tracked as added.
+            // The save below is not cancellable, so it would persist that file, which is not in
+            // `stored`. Only the files reported above stay.
+            documents.DiscardUnsavedChanges();
+            failures.Add(new UploadFailure(null, "The connection closed before the upload finished."));
         }
         catch (UploadTooLargeException)
         {
             overran = true;
-            failures.Add(new UploadFailure(RequestFailureName, TooLargeMessage(upload)));
+            failures.Add(new UploadFailure(null, TooLargeMessage(upload)));
         }
         catch (InvalidDataException ex)
         {
             malformed = ex.Message;
-            failures.Add(new UploadFailure(RequestFailureName, $"The multipart body could not be read: {ex.Message}"));
+            failures.Add(new UploadFailure(null, $"The multipart body could not be read: {ex.Message}"));
         }
         // The body ended before its closing boundary: a client that stopped sending, or a proxy
         // that cut it. The reader reports that as an IOException, as a failing disk would be, so
@@ -170,7 +171,7 @@ public static class DocumentEndpoints
                                      && ex.Message.StartsWith(TruncatedBodyMessage, StringComparison.Ordinal))
         {
             malformed = "The body ended before its closing boundary.";
-            failures.Add(new UploadFailure(RequestFailureName, $"The multipart body could not be read: {malformed}"));
+            failures.Add(new UploadFailure(null, $"The multipart body could not be read: {malformed}"));
         }
 
         if (stored.Count == 0)
@@ -185,7 +186,7 @@ public static class DocumentEndpoints
 
             return Results.Problem(
                 title: "No files could be stored",
-                detail: string.Join("; ", failures.Select(f => $"{f.File}: {f.Error}")),
+                detail: string.Join("; ", failures.Select(f => f.File is null ? f.Error : $"{f.File}: {f.Error}")),
                 statusCode: 400);
         }
 

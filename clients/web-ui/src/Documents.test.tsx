@@ -247,7 +247,7 @@ describe('uploading a batch', () => {
       stored: [stored('notes.txt')],
       failed: [
         { file: 'huge.iso', error: 'huge.iso is over the 200 MB limit.' },
-        { file: '(request)', error: 'The request is over the 2.0 GB bound.' },
+        { file: null, error: 'The request is over the 2.0 GB bound.' },
       ],
       job: {},
     });
@@ -260,16 +260,33 @@ describe('uploading a batch', () => {
     expect(screen.getByText('1 file not stored:')).toBeInTheDocument();
     expect(screen.queryByText(/2 files not stored/)).not.toBeInTheDocument();
     expect(screen.getByText('huge.iso: huge.iso is over the 200 MB limit.')).toBeInTheDocument();
-    // A failure of the request as a whole is not attributed to a file called "(request)".
+    // A failure of the request as a whole is not attributed to a file.
     expect(screen.getByText('The request is over the 2.0 GB bound.')).toBeInTheDocument();
-    expect(screen.queryByText(/\(request\)/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/null/)).not.toBeInTheDocument();
+  });
+
+  it('counts a refused file whose name looks like a marker as a file', async () => {
+    // Any name is a legal file name. Telling the request's failure from a file's by its name sent a
+    // refused file called "(request)" to the sentence list, uncounted and unnamed.
+    uploadDocuments.mockResolvedValue({
+      corpus: 'library',
+      stored: [stored('notes.txt')],
+      failed: [{ file: '(request)', error: "'(request)' is empty." }],
+      job: {},
+    });
+    const { user, input } = await renderReady();
+
+    await user.upload(input, [new File(['x'], 'notes.txt'), new File([''], '(request)')]);
+
+    expect(await screen.findByText('1 file not stored:')).toBeInTheDocument();
+    expect(screen.getByText("(request): '(request)' is empty.")).toBeInTheDocument();
   });
 
   it('shows a failure of the whole request without counting a file', async () => {
     uploadDocuments.mockResolvedValue({
       corpus: 'library',
       stored: [stored('notes.txt')],
-      failed: [{ file: '(request)', error: 'The request is over the 2.0 GB bound.' }],
+      failed: [{ file: null, error: 'The request is over the 2.0 GB bound.' }],
       job: {},
     });
     const { user, input } = await renderReady();

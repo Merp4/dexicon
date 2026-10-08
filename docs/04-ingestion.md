@@ -218,13 +218,15 @@ The web UI sends every dropped file in one request, so the bound allows a batch.
 body is refused with `413` and a message that names the bound, before any of it is read
 when the client declares its `Content-Length`, and otherwise when the body reaches the bound.
 Files stored before the bound was reached stay stored, and the answer is then `202` with the
-overrun listed under `failed` as `(request)`.
+overrun listed under `failed`. A failure of the request as a whole has a `null` `file`; a failure
+of one file carries its name, whatever that name is.
 
 A body that ends before its closing boundary, or whose headers are over the reader's limits, is
 treated the same way: files completed before it stay stored and are indexed, the response lists
-the cause under `failed` as `(request)`, and when nothing was stored the answer is `400`
+the cause under `failed` with a `null` `file`, and when nothing was stored the answer is `400`
 "Malformed multipart upload". A client that disconnects after some files were stored is handled
-the same way: those files are attached and indexed. The Documents screen names each file in
+the same way: those files are attached and indexed, and the file being attached at that moment is
+discarded rather than saved without being reported. The Documents screen names each file in
 `failed` under the count it stored.
 
 The blob store writes each file to a temp file under `/data/blobs` before the hash is

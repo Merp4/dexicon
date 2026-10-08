@@ -31,9 +31,11 @@ with no section here fails its release rather than publishing an undescribed one
   1 MiB of multipart framing, which is 2,098,200,576 bytes at the default. A body that declares a
   larger length, or that crosses the bound before any file is stored, answers `413` "Upload too
   large" with a message that names the bound. When files were stored before the bound was
-  crossed they stay stored and the answer is `202`, with the overrun listed under `failed` as
-  `(request)`, so a script checks `failed` and does not treat every `202` as a full success. Only
-  the per-file cap applied before. A script that posts a batch beyond the bound needs to split it.
+  crossed they stay stored and the answer is `202`, with the overrun listed under `failed` with a
+  `null` `file`, so a script checks `failed` and does not treat every `202` as a full success.
+  `failed[].file` is `null` for any failure of the request as a whole and a file's name otherwise.
+  Only the per-file cap applied before. A script that posts a batch beyond the bound needs to
+  split it.
 - The skill changes (`dexicon-skill-version: 6`). Running `scripts/install-mcp.ps1` again
   upgrades installed copies. The hooks are unchanged.
 
@@ -81,7 +83,8 @@ with no section here fails its release rather than publishing an undescribed one
   refresh.** The job that indexes an upload, an attach to another corpus, or a new corpus created
   with a folder was queued on the request's token, so a cancel between the save and the job left
   the saved change with nothing queued. The job is no longer cancellable once the change is
-  saved, and an upload cut off partway keeps and indexes the files completed before it.
+  saved, and an upload cut off partway keeps and indexes the files completed before it. The file
+  being attached at the moment of the cut is discarded, not saved without being reported.
 - **Stale developer scripts.** `scripts/screenshot.mjs` signs in with an admin session instead of
   an API key, which never carries `admin`; `scripts/retrieval-bench.py` queries files and content
   that exist; `scripts/bench/sweep.py` signs in as admin; `scripts/dev.ps1 password` returns the

@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Text;
 using Dexicon.Api;
 using Dexicon.Core.Auth;
@@ -10,6 +11,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -156,7 +158,7 @@ public sealed class DocumentUploadEndpointTests
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Select(s => s.FileName).ShouldBe(["first.txt"]);
-        accepted.Failed.Select(f => f.File).ShouldBe(["huge.bin", DocumentEndpoints.RequestFailureName]);
+        accepted.Failed.Select(f => f.File).ShouldBe(["huge.bin", null]);
         accepted.Failed[1].Error.ShouldContain(bound.ToString("N0"));
         posted.BytesRead.ShouldBeLessThan(posted.BodyLength);
     }
@@ -207,6 +209,22 @@ public sealed class DocumentUploadEndpointTests
     }
 
     [Fact]
+    public async Task AFileNamedLikeAMarkerIsStillReportedUnderItsOwnName()
+    {
+        // A failure of the request as a whole has no file name (null). A file may be called anything,
+        // "(request)" among it, and is named in its own failure.
+        await using var harness = await StartAsync();
+        var body = new MultipartBody()
+            .File("files", "(request)", 0)
+            .File("files", "full.txt", 100, 'b');
+
+        var posted = await PostAsync(harness, body);
+
+        var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
+        accepted.Failed.Select(f => f.File).ShouldBe(["(request)"]);
+    }
+
+    [Fact]
     public async Task ABodyWithNoFilesIsRefusedAs400()
     {
         await using var harness = await StartAsync();
@@ -230,7 +248,7 @@ public sealed class DocumentUploadEndpointTests
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Select(s => s.FileName).ShouldBe(["before.txt"]);
-        accepted.Failed.Select(f => f.File).ShouldBe([DocumentEndpoints.RequestFailureName]);
+        accepted.Failed.Select(f => f.File).ShouldBe([null]);
     }
 
     [Fact]
@@ -276,7 +294,7 @@ public sealed class DocumentUploadEndpointTests
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Select(s => s.FileName).ShouldBe(["first.txt"]);
-        accepted.Failed.Select(f => f.File).ShouldBe([DocumentEndpoints.RequestFailureName]);
+        accepted.Failed.Select(f => f.File).ShouldBe([null]);
         accepted.Failed[0].Error.ShouldContain("closing boundary");
         await using var db = harness.NewContext();
         (await db.Jobs.CountAsync()).ShouldBe(1);
@@ -319,9 +337,73 @@ public sealed class DocumentUploadEndpointTests
         cts.IsCancellationRequested.ShouldBeTrue("the cancel has to have happened");
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Select(s => s.FileName).ShouldBe(["first.txt"]);
-        accepted.Failed.Select(f => f.File).ShouldBe([DocumentEndpoints.RequestFailureName]);
+        accepted.Failed.Select(f => f.File).ShouldBe([null]);
         accepted.Failed[0].Error.ShouldContain("connection closed");
         await using var db = harness.NewContext();
+        (await db.Jobs.CountAsync()).ShouldBe(1);
+    }
+
+    /// <summary>
+    /// Cancels on the <paramref name="nth"/> INSERT into <paramref name="table"/> and then honours the
+    /// token it was given, as a driver that supports cancellation does: the save in progress fails and
+    /// rolls back, and the rows it was about to write stay tracked on the context.
+    /// </summary>
+    private sealed class CancelOnInsert(string table, int nth, CancellationTokenSource cts) : DbCommandInterceptor
+    {
+        private int _seen;
+
+        public bool Fired { get; private set; }
+
+        private void Observe(DbCommand command, CancellationToken token)
+        {
+            if (!command.CommandText.StartsWith("INSERT", StringComparison.OrdinalIgnoreCase)
+                || !command.CommandText.Contains($"\"{table}\"", StringComparison.OrdinalIgnoreCase)
+                || ++_seen != nth)
+                return;
+
+            Fired = true;
+            cts.Cancel();
+            token.ThrowIfCancellationRequested();
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Observe(command, cancellationToken);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            Observe(command, cancellationToken);
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
+    [Fact]
+    public async Task AFileWhoseAttachmentWasCancelledMidSaveIsNotSavedWithTheJob()
+    {
+        // The cancel lands in the second file's save. The rows that save was about to write stay
+        // tracked on the context the job is queued through, and the save that queues the job
+        // wrote them: a file missing from `stored` was attached anyway.
+        using var cts = new CancellationTokenSource();
+        var watcher = new CancelOnInsert("files", 2, cts);
+        await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        var body = new MultipartBody().File("files", "first.txt", 100, 'a').File("files", "second.txt", 100, 'b');
+
+        var posted = await PostAsync(harness, body, ct: cts.Token);
+
+        watcher.Fired.ShouldBeTrue("the window has to have been opened");
+        var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
+        accepted.Stored.Select(s => s.FileName).ShouldBe(["first.txt"]);
+        accepted.Failed.Select(f => f.File).ShouldBe([null]);
+        await using var db = harness.NewContext();
+        (await db.Files.Select(f => f.RelativePath).ToListAsync()).ShouldBe(["first.txt"], "only the reported file is attached");
+        (await db.FileChunkStates.CountAsync()).ShouldBe(1);
         (await db.Jobs.CountAsync()).ShouldBe(1);
     }
 
