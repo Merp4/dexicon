@@ -63,8 +63,10 @@ with no section here fails its release rather than publishing an undescribed one
   Each is listed with its reason under the count, and a failure of the whole request is listed
   without a file name.
 - **A test rejects the request's token after a catalogue write.** `RequestTokenAfterCommitTests`
-  compiles `src/` and fails on a use of a function's `CancellationToken` that a catalogue write can
-  reach, so the job, audit line or reply that follows a save is not cancellable. A use inside a
+  compiles `src/` and fails on a use of the request's `CancellationToken` that a catalogue write can
+  reach, whether named, copied, linked, captured by a lambda or local function, or read from
+  `HttpContext.RequestAborted`, so the job, audit line or reply that follows a save is not
+  cancellable. A use inside a
   `try` that catches `OperationCanceledException` is allowed, and a function exempted by a
   justified `[SuppressMessage]` is skipped (`CONTRIBUTING.md`).
 
