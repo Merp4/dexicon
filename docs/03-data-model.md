@@ -62,9 +62,10 @@ The listing is logical. It follows the EF Core model (`CatalogDbContext` and
   in the comments below are the stored ones. Columns that are free strings (`boundary_mode`,
   `phase`, `scopes`) keep the lowercase values shown.
 - Dates are `TEXT`, booleans are `INTEGER`.
-- Only two columns carry a `DEFAULT` clause: `blob_texts.extractor_version` (0) and
-  `chunk_sets.embedding_provider` (`'ollama'`). The other defaults of the entity classes
-  are applied by the application and are not written in the listing.
+- In a catalogue created by the migrations, only two columns carry a `DEFAULT` clause:
+  `blob_texts.extractor_version` (0) and `chunk_sets.embedding_provider` (`'ollama'`). The
+  other defaults of the entity classes are applied by the application and are not written
+  in the listing.
 - Index names are `IX_<table>_<Columns>` (`IX_token_corpora_CorpusId`), primary keys are
   `PK_<table>` and foreign keys `FK_<table>_<referenced table>_<Column>`. A `UNIQUE`
   clause on a table is a unique index.
