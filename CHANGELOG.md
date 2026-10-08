@@ -16,6 +16,67 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## 0.6.6 — 2026-10-08
+
+### ⚠️ Upgrading
+
+- Two migrations, applied at startup, both additive. `FilesSettleBySizeAndModifiedTime` adds a
+  nullable column to `file_chunk_states`. `AddProposals` creates the `proposals` table. Neither
+  changes an existing row.
+- The first pass over each chunk set after upgrading reads every workspace file once and writes
+  the settle keys (below), so a corpus with several chunk sets reads its files once per set.
+  Uploaded documents and git-history sources are unchanged. Nothing is re-chunked or re-embedded
+  for that.
+- A PDF whose cached text was cut short is extracted again and re-indexed on the next pass that
+  reads it. Nothing needs triggering by hand. On the library this was measured on, 164 files
+  were affected, which is about 60,000 more chunks to embed.
+- A key can hold a new scope, `propose`, which no existing key has. The key adopted from
+  `DEXICON__BOOTSTRAP__TOKEN` is not given it, and an administrator can add it to any key with
+  `PUT /api/tokens/{id}/scopes`. `GET /api/proposals` and
+  `POST /api/proposals/{id}/approve` and `/reject` are new, and take the administrator's session.
+  `/healthz` gains `pendingProposals` in the administrator's reply. Additive.
+- The skill changes (`dexicon-skill-version: 5`). Running `scripts/install-mcp.ps1` again
+  upgrades installed copies. The hooks are unchanged.
+
+### Added
+
+- **A `propose` scope lets an agent ask for a removal, and the administrator decides**
+  ([D-39](docs/decisions.md#d-39-agents-ask-for-removals-and-a-person-decides)). Two more MCP
+  tools are listed for a key holding it. `propose_removal` asks for a source, chunk set, uploaded
+  document or corpus to go, with a one-line reason, and removes nothing. `removal_status` lists
+  the key's own requests and how each was decided, and needs no other scope and no corpus that
+  still exists. `propose` is independent of every other scope: a key can hold it alone, and
+  holding `configure` does not carry it.
+- **An Approvals screen lists what agents have asked for.** Each request says what would go and
+  how much (files or commits, chunks, chunk sets), who asked and why. Approving asks first, runs
+  the code the admin's delete runs, and records the approval in the same save. Rejecting leaves
+  everything as it is. The nav link carries how many are waiting.
+
+### Changed
+
+- **A settle key skips unchanged files on reindex**
+  ([D-38](docs/decisions.md#d-38-a-file-the-last-pass-finished-with-is-not-read-again)).
+  `file_chunk_states.settled_for` holds a hash of the file's size, modified time and chunking
+  settings, and a pass that finds the same key does not open the file. A document (PDF, DOCX,
+  PPTX, EPUB, HTML) is not opened at all; other files are still opened for the 8 KB check for a
+  NUL byte. `Full` and `Rebuild` jobs ignore the key.
+- **Corpus and chunk-set removal live in one service.** The admin's `DELETE` endpoints and
+  approving a request run the same code, so the two cannot drift.
+- **Dependencies:** lucide-react 1.52.0 and jsdom 30.1.2.
+- Test methods are named as PascalCase sentences and test classes for the behaviour they cover
+  (`CONTRIBUTING.md`).
+
+### Fixed
+
+- **The cached text of a PDF could be cut at its first U+0000, and the document indexed from the
+  head of it.** SQLite ends a text value there while the row recorded the full length. A cache row
+  is now a hit only when what it reads back is as long as what was written; otherwise the text is
+  extracted again, replaced and logged. An upload's repaired text also clears the chunk state of
+  every attachment of that blob, so the repaired text is chunked and embedded.
+- **U+0000 is removed from every format's text where it is stored**, not only a PDF's, with the
+  offsets of its units moved to match. A plain-text upload holding one was otherwise repaired,
+  and chunked and embedded again, on every pass.
+
 ## 0.6.5 — 2026-10-07
 
 ### ⚠️ Upgrading

@@ -1957,7 +1957,9 @@ mount that blinked would leave files failed until they were touched. The extract
 throwing `UnreadableDocumentException` only where a parser rejected the bytes it was given.
 
 **Cost.** One nullable column, added by a migration that touches no data, so the first pass
-after upgrading reads every file once and writes the keys. The walk still opens a file that is
+over each chunk set after upgrading reads every workspace file once and writes the keys; a corpus
+with several chunk sets reads its files once per set. Uploaded documents and git-history sources
+keep their own fingerprint checks. The walk still opens a file that is
 not a document, to look for a NUL byte in its first 8 KB, before the key is compared; a document
 is not opened. Moving that check behind the key would take the key into the walk, which the
 sweeper, the coverage report and the indexer all share. A file whose bytes change without a
@@ -1978,8 +1980,8 @@ decided with `removal_status`, which needs no other scope and no corpus that sti
 is a row in `proposals`. Nothing is removed until an administrator approves it, and approving runs the code the
 `DELETE` endpoints run (`CorpusConfiguration`'s removals and the document detach), so the two cannot
 drift. `propose` is independent of every other scope: a key can hold it without `configure`, and
-`configure` without it. Nothing grants it by default. A key adopted from the environment never holds
-it, and a key issued without it ticked does not. Keys that never hold it see no change: the tool is
+`configure` without it. Nothing grants it by default: a key adopted from the environment is not given
+it, and a key issued without it ticked is not either. An administrator can add it to any key afterwards. Keys that never hold it see no change: the tool is
 hidden from them, the table is never written to, and the setup used before this, in which an agent
 adds and changes and a key with `ingest` detaches documents directly, remains a configuration like
 any other ([07](07-auth.md), [06](06-mcp-surface.md#propose_removal)).
