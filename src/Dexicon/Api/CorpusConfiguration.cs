@@ -254,7 +254,9 @@ public sealed class CorpusConfiguration(
         // user does appears to do nothing until someone thinks to press Refresh.
         if (corpus.Sources.Count > 0)
         {
-            await queue.EnqueueAsync(corpus.Id, JobKind.Full, ct: ct);
+            // Not cancellable: the corpus and its source are saved, and a cancel before the job
+            // left a corpus nothing reads until the next scheduled refresh.
+            await queue.EnqueueAsync(corpus.Id, JobKind.Full, ct: CancellationToken.None);
 
             // And a sweep, which is the case D-32 was written for: a corpus created
             // while another is indexing would otherwise report nothing at all until

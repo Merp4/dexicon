@@ -145,6 +145,13 @@ public static class DocumentEndpoints
                 }
             }
         }
+        // The caller went away partway through. A file stored before that is attached already, so
+        // it is queued below like the rest; with nothing stored there is nothing to finish and the
+        // cancellation propagates as before.
+        catch (OperationCanceledException) when (ct.IsCancellationRequested && stored.Count > 0)
+        {
+            failures.Add(new UploadFailure(RequestFailureName, "The connection closed before the upload finished."));
+        }
         catch (UploadTooLargeException)
         {
             overran = true;
@@ -184,10 +191,44 @@ public static class DocumentEndpoints
 
         // Chunking and embedding happen in the indexer, not on the request thread:
         // a 400-page PDF outlasts any sensible HTTP timeout.
-        var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
+        //
+        // Not cancellable: the files are attached, and the job is what indexes them. A cancel
+        // between the two left documents attached with nothing queued until the next refresh,
+        // as in CorpusConfiguration.
+        var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: CancellationToken.None);
 
         return Results.Accepted($"/api/jobs/{job.Id}",
             new UploadResponse(corpus.Name, stored, failures, job.ToSummary()));
+    }
+
+    /// <summary>
+    /// Attach a stored document to another corpus. A method of its own, and the one the route is
+    /// mapped to, so a test calls the handler that runs.
+    /// </summary>
+    internal static async Task<IResult> AttachAsync(
+        string nameOrId, AttachDocumentRequest body, RequestContext rc, ScopeResolver scopes,
+        DocumentService documents, CatalogDbContext db, IndexJobQueue queue, CancellationToken ct)
+    {
+        if (rc.RequireScope(Scopes.Ingest) is { } denied) return denied;
+        var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
+
+        var blob = await db.Blobs.FirstOrDefaultAsync(b => b.Sha256 == body.Sha256, ct);
+        if (blob is null) return Results.Problem(title: "No such document", statusCode: 404);
+
+        // This is the point of the whole design: the same bytes, chunked this
+        // corpus's way, without re-uploading or re-extracting anything.
+        var name = body.FileName ?? blob.OriginalFileName ?? body.Sha256[..12];
+        var file = await documents.AttachAsync(corpus, body.Sha256, name, ct);
+
+        // Not cancellable, as in UploadAsync: the attachment is saved and the job indexes it.
+        var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: CancellationToken.None);
+
+        return Results.Accepted($"/api/jobs/{job.Id}", new DocumentAttached(
+            corpus.Name, file.Id, name,
+            // Every set, because attaching queues the document into all of them.
+            [.. corpus.ChunkSets.Select(s => new AttachedChunking(
+                s.Name, s.ChunkSize, s.ChunkOverlap, s.BoundaryMode, s.EmbeddingModel))],
+            job.ToSummary()));
     }
 
     /// <summary>
@@ -260,29 +301,8 @@ public static class DocumentEndpoints
             .Produces<UploadResponse>(StatusCodes.Status202Accepted).DisableAntiforgery();
 
         // ── Attach an already-stored document to another corpus ─────────────
-        g.MapPost("/corpora/{nameOrId}/documents/attach", async (
-            string nameOrId, AttachDocumentRequest body, RequestContext rc, ScopeResolver scopes,
-            DocumentService documents, CatalogDbContext db, IndexJobQueue queue, CancellationToken ct) =>
-        {
-            if (rc.RequireScope(Scopes.Ingest) is { } denied) return denied;
-            var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
-
-            var blob = await db.Blobs.FirstOrDefaultAsync(b => b.Sha256 == body.Sha256, ct);
-            if (blob is null) return Results.Problem(title: "No such document", statusCode: 404);
-
-            // This is the point of the whole design: the same bytes, chunked this
-            // corpus's way, without re-uploading or re-extracting anything.
-            var name = body.FileName ?? blob.OriginalFileName ?? body.Sha256[..12];
-            var file = await documents.AttachAsync(corpus, body.Sha256, name, ct);
-            var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: ct);
-
-            return Results.Accepted($"/api/jobs/{job.Id}", new DocumentAttached(
-                corpus.Name, file.Id, name,
-                // Every set, because attaching queues the document into all of them.
-                [.. corpus.ChunkSets.Select(s => new AttachedChunking(
-                    s.Name, s.ChunkSize, s.ChunkOverlap, s.BoundaryMode, s.EmbeddingModel))],
-                job.ToSummary()));
-        }).Produces<DocumentAttached>(StatusCodes.Status202Accepted);
+        g.MapPost("/corpora/{nameOrId}/documents/attach", AttachAsync)
+            .Produces<DocumentAttached>(StatusCodes.Status202Accepted);
 
         // ── Detach (the blob survives; other corpora may still use it) ──────
         g.MapDelete("/corpora/{nameOrId}/documents/{fileId}", DetachAsync).Produces(StatusCodes.Status204NoContent);

@@ -77,6 +77,11 @@ with no section here fails its release rather than publishing an undescribed one
 - **A body that ends before its closing boundary answered 500.** Files completed before the cut
   stay stored and are now indexed, the cause is listed under `failed`, and with nothing stored
   the answer is `400` "Malformed multipart upload".
+- **A client that disconnected after documents were attached left them waiting for the next
+  refresh.** The job that indexes an upload, an attach to another corpus, or a new corpus created
+  with a folder was queued on the request's token, so a cancel between the save and the job left
+  the saved change with nothing queued. The job is no longer cancellable once the change is
+  saved, and an upload cut off partway keeps and indexes the files completed before it.
 - **Stale developer scripts.** `scripts/screenshot.mjs` signs in with an admin session instead of
   an API key, which never carries `admin`; `scripts/retrieval-bench.py` queries files and content
   that exist; `scripts/bench/sweep.py` signs in as admin; `scripts/dev.ps1 password` returns the

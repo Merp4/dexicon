@@ -38,7 +38,7 @@ public sealed class DocumentUploadEndpointTests
 
     private static async Task<Posted> PostAsync(
         IndexingHarness harness, MultipartBody body, RequestContext? rc = null, bool declareLength = false,
-        Func<Stream, Stream>? wrap = null)
+        Func<Stream, Stream>? wrap = null, CancellationToken ct = default)
     {
         await using var db = harness.NewContext();
         var options = Options.Create(new DexiconOptions
@@ -59,7 +59,7 @@ public sealed class DocumentUploadEndpointTests
             "notes", http.Request, rc ?? As(Scopes.Search, Scopes.Ingest), new ScopeResolver(db),
             new DocumentService(db, options, NullLogger<DocumentService>.Instance),
             new IndexJobQueue(db, new WorkScheduler(options), NullLogger<IndexJobQueue>.Instance),
-            options, default);
+            options, ct);
 
         return new Posted(result, stream.BytesRead, body.Length, watch.SawABufferFile);
     }
@@ -283,6 +283,65 @@ public sealed class DocumentUploadEndpointTests
     }
 
     [Fact]
+    public async Task FilesAttachedBeforeTheCallerIsCancelledAreStillQueuedForIndexing()
+    {
+        // The attachments are saved, and the job that indexes them was queued on the caller's token:
+        // a cancel in that window left documents attached with nothing queued. The interceptor
+        // opens the window right after the last row of the attachment is written (the chunk-state
+        // rows follow the file row in the same save), and `Fired` shows that it opened.
+        var watcher = new CommittedChangeTests.CancelAfterWriteTo("file_chunk_states");
+        await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        using var cts = new CancellationTokenSource();
+        watcher.Cts = cts;
+        watcher.Armed = true;
+
+        var posted = await PostAsync(harness, new MultipartBody().File("files", "one.txt", 100, 'a'), ct: cts.Token);
+
+        watcher.Fired.ShouldBeTrue("the window has to have been opened");
+        posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull()
+            .Stored.Select(s => s.FileName).ShouldBe(["one.txt"]);
+        await using var db = harness.NewContext();
+        (await db.Jobs.CountAsync()).ShouldBe(1, "the attached file has its job");
+    }
+
+    [Fact]
+    public async Task FilesStoredBeforeTheClientDisconnectedAreStillQueuedForIndexing()
+    {
+        // The token fires while the second file is being read. The first is attached by then, and
+        // the cancellation used to leave the request with no answer and no job.
+        await using var harness = await StartAsync();
+        using var cts = new CancellationTokenSource();
+        var body = new MultipartBody().File("files", "first.txt", 100, 'a').File("files", "second.txt", 20_000, 'b');
+
+        var posted = await PostAsync(harness, body, ct: cts.Token, wrap: s => new CancelOnRead(s, 2, cts));
+
+        cts.IsCancellationRequested.ShouldBeTrue("the cancel has to have happened");
+        var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
+        accepted.Stored.Select(s => s.FileName).ShouldBe(["first.txt"]);
+        accepted.Failed.Select(f => f.File).ShouldBe([DocumentEndpoints.RequestFailureName]);
+        accepted.Failed[0].Error.ShouldContain("connection closed");
+        await using var db = harness.NewContext();
+        (await db.Jobs.CountAsync()).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ACancelBeforeAnyFileIsStoredPropagatesAndQueuesNothing()
+    {
+        // Control: with nothing attached there is nothing to finish.
+        await using var harness = await StartAsync();
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Should.ThrowAsync<OperationCanceledException>(() => PostAsync(
+            harness, new MultipartBody().File("files", "a.txt", 100, 'a'), ct: cts.Token));
+
+        await using var db = harness.NewContext();
+        (await db.Jobs.CountAsync()).ShouldBe(0);
+        (await db.Files.CountAsync()).ShouldBe(0);
+    }
+
+    [Fact]
     public async Task AnIoFailureThatIsNotTheEndOfTheBodyStaysAServerError()
     {
         // Control: only the reader's own "ended early" is the client's mistake. A read that fails
@@ -388,6 +447,36 @@ public sealed class DocumentUploadEndpointTests
             var read = inner.Read(buffer[..(int)Math.Min(buffer.Length, after - _read)]);
             _read += read;
             return read;
+        }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(Read(buffer.Span));
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            Task.FromResult(Read(buffer.AsSpan(offset, count)));
+    }
+
+    /// <summary>Reads through to <paramref name="inner"/> and cancels <paramref name="cts"/> on read number <paramref name="readNumber"/>, as a client disconnecting does.</summary>
+    private sealed class CancelOnRead(Stream inner, int readNumber, CancellationTokenSource cts) : Stream
+    {
+        private int _reads;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+
+        public override int Read(Span<byte> buffer)
+        {
+            if (++_reads == readNumber) cts.Cancel();
+            return inner.Read(buffer);
         }
 
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
