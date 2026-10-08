@@ -770,8 +770,7 @@ export function ModelsView() {
 
   // A new corpus is created against the default provider and the configured model together.
   // Ollama lists `embeddinggemma:latest` where the configuration says `embeddinggemma`.
-  const isDefaultForNewCorpora = (name: string) =>
-    provider === defaultProvider && name.replace(/:latest$/, '') === configured.replace(/:latest$/, '');
+  const isDefaultForNewCorpora = (name: string) => provider === defaultProvider && sameModel(name, configured);
 
   return (
     <div className="grid gap-4">

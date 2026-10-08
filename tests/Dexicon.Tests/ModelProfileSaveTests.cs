@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -178,6 +179,36 @@ public sealed class ModelProfileSaveTests : IAsyncLifetime
 
         saved.Reindexing.Order().ToList().ShouldBe(["docs:tagged", "docs:untagged"]);
         (await _db.Jobs.Select(j => j.ChunkSetId).ToListAsync()).Order().ToList().ShouldBe(["s1", "s2"]);
+    }
+
+    /// <summary>Cancels the request the moment a save has committed, as a client that goes away would.</summary>
+    private sealed class CancelAfterSave(CancellationTokenSource source) : SaveChangesInterceptor
+    {
+        public override ValueTask<int> SavedChangesAsync(
+            SaveChangesCompletedEventData eventData, int result, CancellationToken cancellationToken = default)
+        {
+            source.Cancel();
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    [Fact]
+    public async Task ACancelAfterTheSaveCommitsStillRebuildsTheSetsOnTheModel()
+    {
+        // The framing is committed when the cancel arrives. Dropping the rebuilds then leaves
+        // queries framed one way against stored document vectors framed another, and saving the
+        // same values again queues nothing.
+        await SetAsync("s1", "default", "embeddinggemma");
+        using var cancel = new CancellationTokenSource();
+        await using var cancelling = new CatalogDbContext(new DbContextOptionsBuilder<CatalogDbContext>()
+            .UseSqlite(_connection).AddInterceptors(new CancelAfterSave(cancel)).Options);
+
+        var result = await SystemEndpoints.SaveModelProfileAsync(
+            new SaveModelProfileRequest("embeddinggemma:latest", Doc, Query), AsAdmin(), cancelling, _cache,
+            _queue, _options, cancel.Token);
+
+        result.ShouldBeOfType<Ok<ModelProfileSaved>>().Value!.Reindexing.ShouldBe(["docs:default"]);
+        (await _db.Jobs.CountAsync()).ShouldBe(1);
     }
 
     [Fact]

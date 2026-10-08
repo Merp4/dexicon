@@ -1061,6 +1061,11 @@ public static class SystemEndpoints
         await db.SaveChangesAsync(ct);
         cache.Remove(ModelProfiles.CacheKey(target));
 
+        // Not cancellable from here: the framing is committed, and the rebuilds are what make
+        // it apply. A cancel between the two left queries framed one way against stored
+        // document vectors framed another, and saving the same values again does not queue
+        // them (as in CorpusConfiguration).
+        //
         // Framing is part of the chunking fingerprint, so every set on this model is
         // now stale: its documents were embedded one way and its queries would arrive
         // framed another. Re-indexed rather than left to disagree quietly. A set records
@@ -1069,14 +1074,14 @@ public static class SystemEndpoints
         var affected = (await db.ChunkSets
                 .Where(s => s.EmbeddingProvider == provider)
                 .Select(s => new { s.Id, s.CorpusId, s.Name, s.EmbeddingModel, Corpus = s.Corpus!.Name })
-                .ToListAsync(ct))
+                .ToListAsync(CancellationToken.None))
             .Where(s => ModelNames.SameModel(s.EmbeddingModel, model))
             .ToList();
 
         var queued = new List<string>();
         foreach (var set in affected)
         {
-            await queue.EnqueueAsync(set.CorpusId, JobKind.Rebuild, set.Id, ct);
+            await queue.EnqueueAsync(set.CorpusId, JobKind.Rebuild, set.Id, CancellationToken.None);
             queued.Add($"{set.Corpus}:{set.Name}");
         }
 

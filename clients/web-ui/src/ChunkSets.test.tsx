@@ -595,6 +595,21 @@ describe('the default for new corpora badge', () => {
     expect(badged()).toEqual(['nomic-embed-text:latest']);
   });
 
+  it('matches the default model whatever the case of its tag, as the server does', async () => {
+    listEmbeddingModels.mockImplementation(async (provider: string) => ({
+      provider,
+      managed: true,
+      configured: 'nomic-embed-text',
+      models: [model('Nomic-Embed-Text:LATEST'), model('embeddinggemma:latest')],
+      note: null,
+    }));
+
+    render(<ModelsView />);
+    await screen.findByText('embeddinggemma:latest');
+
+    expect(badged()).toEqual(['Nomic-Embed-Text:LATEST']);
+  });
+
   it('does not mark a model of the same name under a provider that is not the default', async () => {
     const user = userEvent.setup();
     render(<ModelsView />);
