@@ -98,7 +98,15 @@ async function adminSession() {
   const { token } = await response.json();
   if (!token) await fail(null, `${BASE}/api/session answered without a token.`);
 
-  const admin = await fetch(`${BASE}/api/tokens`, { headers: { Authorization: `Bearer ${token}` } });
+  let admin;
+  try {
+    admin = await fetch(`${BASE}/api/tokens`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (error) {
+    await fail(null, `The session was issued but ${BASE}/api/tokens did not answer: ${error.cause?.code ?? error.name}.`);
+  }
   if (!admin.ok) {
     await fail(admin, `The session was issued but ${BASE}/api/tokens answered HTTP ${admin.status}.`);
   }
