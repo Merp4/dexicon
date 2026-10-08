@@ -148,6 +148,31 @@ public sealed class RequestTokenAfterCommitTests
             Run("await SaveAgain(db, await db.SaveChangesAsync() + await db.SaveChangesAsync(), ct);") + "\n" + SaveAgain
         },
         {
+            "a local function that writes",
+            Run("async Task Save() { await db.SaveChangesAsync(); } await Save(); await Task.Delay(1, ct);")
+        },
+        {
+            "a lambda that writes, held in a local and called",
+            Run("Func<Task> save = async () => { await db.SaveChangesAsync(); }; await save(); await Task.Delay(1, ct);")
+        },
+        {
+            "a copy of a lambda that writes",
+            Run("Func<Task> a = async () => { await db.SaveChangesAsync(); }; var b = a; await b(); await Task.Delay(1, ct);")
+        },
+        {
+            "a local function that writes, held as a delegate",
+            Run("async Task Save() { await db.SaveChangesAsync(); } Func<Task> held = Save; await held(); await Task.Delay(1, ct);")
+        },
+        {
+            "a lambda that writes, called where it is made",
+            Run("await ((Func<Task>)(async () => { await db.SaveChangesAsync(); }))(); await Task.Delay(1, ct);")
+        },
+        {
+            "a lambda that calls a held lambda that writes",
+            Run("Func<Task> inner = async () => { await db.SaveChangesAsync(); }; Func<Task> outer = async () => { await inner(); }; "
+                + "await outer(); await Task.Delay(1, ct);")
+        },
+        {
             "the request's own token on the HttpContext",
             "public async Task Run(Db db, HttpContext http) { await db.SaveChangesAsync(); await Task.Delay(1, http.RequestAborted); }"
         },
@@ -193,6 +218,18 @@ public sealed class RequestTokenAfterCommitTests
         {
             "a call that writes and takes the token, with nothing written before it",
             Run("await SaveAgain(db, 1, ct);") + "\n" + SaveAgain
+        },
+        {
+            "a lambda that writes, called after the token's last use",
+            Run("Func<Task> save = async () => { await db.SaveChangesAsync(); }; await Task.Delay(1, ct); await save();")
+        },
+        {
+            "a lambda that writes, made and never called",
+            Run("Func<Task> save = async () => { await db.SaveChangesAsync(); }; await Task.Delay(1, ct); _ = save;")
+        },
+        {
+            "a lambda that does not write, called before a use of the token",
+            Run("Func<Task> idle = () => Task.Delay(1); await idle(); await Task.Delay(1, ct); await db.SaveChangesAsync();")
         },
         {
             "a copy of a lambda that captures nothing",
@@ -242,6 +279,18 @@ public sealed class RequestTokenAfterCommitTests
         var scan = CommitScan.Run([CommitScan.Source.FromSnippet(members)]);
 
         scan.UnusedSuppressions.Count.ShouldBe(1, $"the suppression on {where} suppresses nothing");
+    }
+
+    [Fact]
+    public void AMissingBodyIsAnExpectedErrorOnlyForAGeneratedRegexPartial()
+    {
+        // The source generator that writes a [GeneratedRegex] body is not run here, so that error is
+        // expected. The filter went by the diagnostic's id alone, which let any other partial method
+        // without a body through, and the scan then ran over an incomplete compilation.
+        CommitScan.Source.UnexpectedErrorsIn(CommitScan.Source.Compile("[GeneratedRegex(\"a\")] public static partial Regex Pattern();"))
+            .ShouldBeEmpty("the generated regex is the expected error");
+        CommitScan.Source.UnexpectedErrorsIn(CommitScan.Source.Compile("public partial void Missing();"))
+            .ShouldNotBeEmpty("a partial method with no body and no generator is an error");
     }
 
     [Fact]
@@ -350,11 +399,21 @@ internal sealed class CommitScan
         /// </summary>
         public static Compilation FromSnippet(string members)
         {
+            var compilation = Compile(members);
+            var errors = compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
+            if (errors.Count > 0)
+                throw new InvalidOperationException("the snippet does not compile:\n" + string.Join("\n", errors));
+            return compilation;
+        }
+
+        /// <summary>The snippet's compilation as it is, errors and all, for a test of what is made of the errors.</summary>
+        public static Compilation Compile(string members)
+        {
             var options = new CSharpParseOptions(LanguageVersion.Latest);
-            var code = "using System.Diagnostics.CodeAnalysis;\n"
+            var code = "using System.Diagnostics.CodeAnalysis;\nusing System.Text.RegularExpressions;\n"
                        + "public sealed class Db : Microsoft.EntityFrameworkCore.DbContext;\n"
-                       + $"public sealed class Handler\n{{\n{members}\n}}\n";
-            var compilation = CSharpCompilation.Create("Snippet",
+                       + $"public sealed partial class Handler\n{{\n{members}\n}}\n";
+            return CSharpCompilation.Create("Snippet",
                 [
                     CSharpSyntaxTree.ParseText(code, options, "Snippet.cs"),
                     CSharpSyntaxTree.ParseText(
@@ -362,12 +421,25 @@ internal sealed class CommitScan
                 ],
                 References.Value,
                 new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
-
-            var errors = compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
-            if (errors.Count > 0)
-                throw new InvalidOperationException("the snippet does not compile:\n" + string.Join("\n", errors));
-            return compilation;
         }
+
+        /// <summary>
+        /// The errors the scan cannot work past: every error but the missing body of a <c>[GeneratedRegex]</c>
+        /// partial method, which a source generator writes and these compilations do not run.
+        /// </summary>
+        public static List<string> UnexpectedErrorsIn(params Compilation[] compilations) =>
+            [.. compilations.SelectMany(c => c.GetDiagnostics())
+                .Where(d => d.Severity == DiagnosticSeverity.Error && !IsGeneratedRegexBody(d))
+                .Select(d => d.ToString())];
+
+        /// <summary>CS8795 on a method that carries <c>[GeneratedRegex]</c>, and no other missing body.</summary>
+        private static bool IsGeneratedRegexBody(Diagnostic diagnostic) =>
+            diagnostic.Id == "CS8795"
+            && diagnostic.Location.SourceTree is { } tree
+            && tree.GetRoot().FindNode(diagnostic.Location.SourceSpan).AncestorsAndSelf()
+                .OfType<MethodDeclarationSyntax>().FirstOrDefault() is { } method
+            && method.AttributeLists.SelectMany(l => l.Attributes)
+                .Any(a => a.Name.ToString().Split('.')[^1] is "GeneratedRegex" or "GeneratedRegexAttribute");
 
         public static Source Load()
         {
@@ -388,9 +460,7 @@ internal sealed class CommitScan
             return new Source
             {
                 Compilations = [core, web],
-                UnexpectedErrors = [.. new Compilation[] { core, web }.SelectMany(c => c.GetDiagnostics())
-                    .Where(d => d.Severity == DiagnosticSeverity.Error && d.Id != "CS8795")
-                    .Select(d => d.ToString())],
+                UnexpectedErrors = UnexpectedErrorsIn(core, web),
             };
         }
 
@@ -538,14 +608,14 @@ internal sealed class CommitScan
                 }
             }
 
-        var committing = Writers(bodies, types);
+        var (committing, writingLocals) = Writers(bodies, types);
         foreach (var m in committing) Committing.Add($"{m.ContainingType.ToDisplayString()}.{m.Name}");
 
         // Every function, whether or not it names a token parameter: the request's token can also come
         // from the HttpContext.
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var f in functions)
-            foreach (var finding in Check(f, committing))
+            foreach (var finding in Check(f, committing, writingLocals))
             {
                 if (!seen.Add($"{finding.Site} {finding.Use} {finding.Target} {finding.Function}")) continue;
                 if (SuppressionFor(f.Symbol, finding, suppressions) is { } by) by.Used = true;
@@ -614,14 +684,7 @@ internal sealed class CommitScan
         ControlFlowGraph graph, IReadOnlyList<IParameterSymbol> tokens, IReadOnlySet<ILocalSymbol> outer)
     {
         var aliases = new HashSet<ILocalSymbol>(outer, SymbolEqualityComparer.Default);
-        var all = graph.Blocks.SelectMany(Operations).SelectMany(o => o.DescendantsAndSelf()).ToList();
-
-        // A declaration with an initializer reaches the graph as an assignment or kept as a declarator.
-        var given = all.OfType<ISimpleAssignmentOperation>()
-            .Where(a => a.Target is ILocalReferenceOperation)
-            .Select(a => (Local: ((ILocalReferenceOperation)a.Target).Local, Value: (IOperation)a.Value))
-            .Concat(all.OfType<IVariableDeclaratorOperation>().Where(d => d.Initializer is not null)
-                .Select(d => (Local: d.Symbol, Value: (IOperation)d.Initializer!.Value)))
+        var given = Givings(graph.Blocks.SelectMany(Operations).SelectMany(o => o.DescendantsAndSelf()))
             .Where(g => IsTokenLocal(g.Local))
             .ToList();
 
@@ -668,21 +731,33 @@ internal sealed class CommitScan
     }
 
     /// <summary>
-    /// The methods in src that write, directly or through another: followed to a fixed point, with an
-    /// interface method declared in src counted when an implementation writes.
+    /// The methods in src that write, directly or through another, and the locals that hold a delegate which
+    /// does: followed together to a fixed point, with an interface method declared in src counted when an
+    /// implementation writes. A lambda or a method group that writes makes the local it is given a writer,
+    /// and so does a copy of that local, and a call to such a local is a write. Without the locals a write
+    /// made through <c>Func&lt;Task&gt; save = async () =&gt; { await db.SaveChangesAsync(); }; await save();</c> was a
+    /// call to <c>Func.Invoke</c>, which writes nothing.
     /// </summary>
-    private static HashSet<IMethodSymbol> Writers(
+    private static (HashSet<IMethodSymbol> Committing, HashSet<ILocalSymbol> WritingLocals) Writers(
         Dictionary<IMethodSymbol, List<IOperation>> bodies, List<INamedTypeSymbol> types)
     {
         var committing = new HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
+        var writingLocals = new HashSet<ILocalSymbol>(SymbolEqualityComparer.Default);
+        var givings = Givings(bodies.Values.SelectMany(ops => ops.SelectMany(o => o.DescendantsAndSelf()))).ToList();
+
         bool grew;
         do
         {
             grew = false;
             foreach (var (method, operations) in bodies)
                 if (!committing.Contains(method) && operations.Any(o => o.DescendantsAndSelf()
-                        .OfType<IInvocationOperation>().Any(i => Writes(i.TargetMethod, committing))))
+                        .OfType<IInvocationOperation>().Any(i => Writes(i, committing, writingLocals))))
                     grew |= committing.Add(method);
+
+            foreach (var (local, value) in givings)
+                if (!writingLocals.Contains(local)
+                    && value.DescendantsAndSelf().Any(v => HoldsAWrite(v, committing, writingLocals)))
+                    grew |= writingLocals.Add(local);
 
             foreach (var type in types)
                 foreach (var contract in type.AllInterfaces.Where(i => i.Locations.Any(l => l.IsInSource)))
@@ -692,8 +767,38 @@ internal sealed class CommitScan
                             grew |= committing.Add(member.OriginalDefinition);
         } while (grew);
 
-        return committing;
+        return (committing, writingLocals);
     }
+
+    /// <summary>
+    /// The locals given a value in the operations, and the value: by an assignment, or by an initializer
+    /// the graph kept as a declarator.
+    /// </summary>
+    private static IEnumerable<(ILocalSymbol Local, IOperation Value)> Givings(IEnumerable<IOperation> all)
+    {
+        var operations = all as IList<IOperation> ?? [.. all];
+        return operations.OfType<ISimpleAssignmentOperation>()
+            .Where(a => a.Target is ILocalReferenceOperation)
+            .Select(a => (((ILocalReferenceOperation)a.Target).Local, (IOperation)a.Value))
+            .Concat(operations.OfType<IVariableDeclaratorOperation>().Where(d => d.Initializer is not null)
+                .Select(d => (d.Symbol, (IOperation)d.Initializer!.Value)));
+    }
+
+    /// <summary>A lambda or method group that writes, or a local already known to hold one.</summary>
+    private static bool HoldsAWrite(IOperation value, HashSet<IMethodSymbol> committing, HashSet<ILocalSymbol> writingLocals) =>
+        value switch
+        {
+            IFlowAnonymousFunctionOperation lambda => lambda.Symbol is { } symbol && committing.Contains(symbol.OriginalDefinition),
+            IMethodReferenceOperation reference => committing.Contains(reference.Method.OriginalDefinition),
+            ILocalReferenceOperation local => writingLocals.Contains(local.Local),
+            _ => false,
+        };
+
+    /// <summary>A call that writes: to a method that does, or through a delegate that holds one.</summary>
+    private static bool Writes(IInvocationOperation call, HashSet<IMethodSymbol> committing, HashSet<ILocalSymbol> writingLocals) =>
+        Writes(call.TargetMethod, committing)
+        || (call.TargetMethod.MethodKind == MethodKind.DelegateInvoke && call.Instance is { } instance
+            && instance.DescendantsAndSelf().Any(v => HoldsAWrite(v, committing, writingLocals)));
 
     private static bool Writes(IMethodSymbol m, HashSet<IMethodSymbol> committing) =>
         IsWrite(m) || committing.Contains(m.OriginalDefinition)
@@ -704,7 +809,8 @@ internal sealed class CommitScan
     /// token, a local function or lambda that captures one (called or passed on after the write, or held in
     /// a local made before it), and a nested function's own use of a token it captured from outside.
     /// </summary>
-    private static IEnumerable<Finding> Check(Function f, HashSet<IMethodSymbol> committing)
+    private static IEnumerable<Finding> Check(
+        Function f, HashSet<IMethodSymbol> committing, HashSet<ILocalSymbol> writingLocals)
     {
         var graph = f.Graph;
         var model = graph.OriginalOperation.SemanticModel!;
@@ -720,7 +826,7 @@ internal sealed class CommitScan
                 // tree order is that outer call, which runs last, and taking it left the token passed to it
                 // after an inner save unreported.
                 var write = operations[i].DescendantsAndSelf().OfType<IInvocationOperation>()
-                    .Where(c => Writes(c.TargetMethod, committing))
+                    .Where(c => Writes(c, committing, writingLocals))
                     .OrderBy(c => c.Syntax.Span.End)
                     .FirstOrDefault();
                 if (write is null) continue;
@@ -780,13 +886,7 @@ internal sealed class CommitScan
     /// </summary>
     private static HashSet<ILocalSymbol> DelegatesCapturingAToken(Function f, SemanticModel model)
     {
-        var all = f.Graph.Blocks.SelectMany(Operations).SelectMany(o => o.DescendantsAndSelf()).ToList();
-        var given = all.OfType<ISimpleAssignmentOperation>()
-            .Where(a => a.Target is ILocalReferenceOperation)
-            .Select(a => (Local: ((ILocalReferenceOperation)a.Target).Local, Value: (IOperation)a.Value))
-            .Concat(all.OfType<IVariableDeclaratorOperation>().Where(d => d.Initializer is not null)
-                .Select(d => (Local: d.Symbol, Value: (IOperation)d.Initializer!.Value)))
-            .ToList();
+        var given = Givings(f.Graph.Blocks.SelectMany(Operations).SelectMany(o => o.DescendantsAndSelf())).ToList();
 
         var held = new HashSet<ILocalSymbol>(SymbolEqualityComparer.Default);
         bool grew;
