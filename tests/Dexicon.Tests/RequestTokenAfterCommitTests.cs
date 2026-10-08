@@ -30,14 +30,15 @@ namespace Dexicon.Tests;
 ///
 /// After a write a function passes <see cref="CancellationToken.None"/>, records what it did through a
 /// callback at the write (<c>committed:</c> on <c>CorpusConfiguration</c>), or saves the follow-up in the
-/// same save. A use inside a <c>try</c> whose <c>catch</c> takes <see cref="OperationCanceledException"/>
-/// is allowed: that is how a loop over several writes turns a late cancel into what it saved
-/// (<c>DocumentEndpoints.UploadAsync</c>).
+/// same save. Catching <see cref="OperationCanceledException"/> around the use is not enough: swallowing
+/// the cancellation is how the follow-up is skipped.
 ///
 /// A function, type or member is exempt only through
 /// <c>[SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", Justification = "...")]</c>, with a
-/// reason, and optionally a <c>MessageId</c> naming the one call it covers. A suppression that no longer
-/// suppresses anything fails, wherever it is written, as does one without a justification.
+/// reason, and a <c>MessageId</c> naming the one call it covers where the function has other uses that
+/// must stay reported. A loop that stops on the token is one: <c>DocumentEndpoints.UploadAsync</c> reads
+/// and stores the next file on it, and its queuing of the job after the loop is not exempt. A suppression
+/// that no longer suppresses anything fails, wherever it is written, as does one without a justification.
 ///
 /// Blind to: a token held in a field, a property, a collection, a tuple or an object it was passed into, and
 /// a delegate held in a field; a <c>catch</c> reached by an exception thrown after a write, since the graph
@@ -119,6 +120,22 @@ public sealed class RequestTokenAfterCommitTests
             Run("Func<Task> work = async () => { await db.SaveChangesAsync(); await Task.Delay(1, ct); }; await work();")
         },
         {
+            "a copy of a lambda that captures it",
+            Run("Func<Task> a = () => Task.Delay(1, ct); var b = a; await db.SaveChangesAsync(); await b();")
+        },
+        {
+            "a lambda that calls a held lambda that captures it",
+            Run("Func<Task> a = () => Task.Delay(1, ct); Func<Task> b = () => a(); await db.SaveChangesAsync(); await b();")
+        },
+        {
+            "a copy of a local function that captures it",
+            Run("Task Follow() => Task.Delay(1, ct); Func<Task> a = Follow; var b = a; await db.SaveChangesAsync(); await b();")
+        },
+        {
+            "a use inside a try that swallows the cancellation",
+            Run("try { await db.SaveChangesAsync(ct); await Task.Delay(1, ct); } catch (OperationCanceledException) { }")
+        },
+        {
             "the request's own token on the HttpContext",
             "public async Task Run(Db db, HttpContext http) { await db.SaveChangesAsync(); await Task.Delay(1, http.RequestAborted); }"
         },
@@ -158,8 +175,12 @@ public sealed class RequestTokenAfterCommitTests
             Run("var rows = await Task.FromResult(1).WaitAsync(ct); await db.SaveChangesAsync(); rows.ToString();")
         },
         {
-            "a use inside a try that catches the cancellation",
-            Run("try { await db.SaveChangesAsync(ct); await Task.Delay(1, ct); } catch (OperationCanceledException) { }")
+            "a copy of a lambda that captures nothing",
+            Run("Func<Task> a = () => Task.Delay(1); var b = a; await db.SaveChangesAsync(); await b();")
+        },
+        {
+            "a copy of a lambda that captures it, called before the write only",
+            Run("Func<Task> a = () => Task.Delay(1, ct); var b = a; await b(); await db.SaveChangesAsync();")
         },
         {
             "a use covered by a justified suppression",
@@ -506,7 +527,7 @@ internal sealed class CommitScan
         foreach (var f in functions)
             foreach (var finding in Check(f, committing))
             {
-                if (!seen.Add($"{finding.Site} {finding.Use} {finding.Function}")) continue;
+                if (!seen.Add($"{finding.Site} {finding.Use} {finding.Target} {finding.Function}")) continue;
                 if (SuppressionFor(f.Symbol, finding, suppressions) is { } by) by.Used = true;
                 else Unsuppressed.Add(finding);
             }
@@ -696,16 +717,16 @@ internal sealed class CommitScan
                         ILocalReferenceOperation l when delegates.Contains(l.Local) => (l.Syntax, "delegate"),
                         IPropertyReferenceOperation property when IsRequestAborted(property.Property)
                             => (property.Syntax, TargetOf(property)),
-                        IFlowAnonymousFunctionOperation lambda when MentionIn(lambda.Syntax, model, f) is { } named
+                        IFlowAnonymousFunctionOperation lambda when MentionIn(lambda.Syntax, model, f, delegates) is { } named
                             => (named, "lambda"),
                         IInvocationOperation { TargetMethod.MethodKind: MethodKind.LocalFunction } call
-                            when CapturesAToken(call.TargetMethod, model, f) => (call.Syntax, call.TargetMethod.Name),
+                            when CapturesAToken(call.TargetMethod, model, f, delegates) => (call.Syntax, call.TargetMethod.Name),
                         IMethodReferenceOperation { Method.MethodKind: MethodKind.LocalFunction } reference
-                            when CapturesAToken(reference.Method, model, f) => (reference.Syntax, reference.Method.Name),
+                            when CapturesAToken(reference.Method, model, f, delegates) => (reference.Syntax, reference.Method.Name),
                         _ => null,
                     };
 
-                    if (use is not { } found || CaughtAsCancellation(graph, op)) continue;
+                    if (use is not { } found) continue;
                     yield return new Finding(SiteOf(found.Where.GetLocation()), f.Name, found.Where.ToString(),
                         found.Target, afterWrite);
                 }
@@ -728,48 +749,61 @@ internal sealed class CommitScan
 
     /// <summary>
     /// Locals that hold a lambda or local function which captures a token, so that making it before the write
-    /// and calling it after is as much a use as naming the token there.
+    /// and calling it after is as much a use as naming the token there. Followed to a fixed point, as the
+    /// aliases are: a copy of such a local holds it too, and so does a lambda that calls one.
     /// </summary>
     private static HashSet<ILocalSymbol> DelegatesCapturingAToken(Function f, SemanticModel model)
     {
         var all = f.Graph.Blocks.SelectMany(Operations).SelectMany(o => o.DescendantsAndSelf()).ToList();
-        return
-        [
-            .. all.OfType<ISimpleAssignmentOperation>()
-                .Where(a => a.Target is ILocalReferenceOperation)
-                .Select(a => (Local: ((ILocalReferenceOperation)a.Target).Local, Value: (IOperation)a.Value))
-                .Concat(all.OfType<IVariableDeclaratorOperation>().Where(d => d.Initializer is not null)
-                    .Select(d => (Local: d.Symbol, Value: (IOperation)d.Initializer!.Value)))
-                .Where(g => g.Value.DescendantsAndSelf().Any(v => v switch
+        var given = all.OfType<ISimpleAssignmentOperation>()
+            .Where(a => a.Target is ILocalReferenceOperation)
+            .Select(a => (Local: ((ILocalReferenceOperation)a.Target).Local, Value: (IOperation)a.Value))
+            .Concat(all.OfType<IVariableDeclaratorOperation>().Where(d => d.Initializer is not null)
+                .Select(d => (Local: d.Symbol, Value: (IOperation)d.Initializer!.Value)))
+            .ToList();
+
+        var held = new HashSet<ILocalSymbol>(SymbolEqualityComparer.Default);
+        bool grew;
+        do
+        {
+            grew = false;
+            foreach (var (local, value) in given)
+                if (!held.Contains(local) && value.DescendantsAndSelf().Any(v => v switch
                 {
-                    IFlowAnonymousFunctionOperation lambda => MentionIn(lambda.Syntax, model, f) is not null,
+                    IFlowAnonymousFunctionOperation lambda => MentionIn(lambda.Syntax, model, f, held) is not null,
                     IMethodReferenceOperation { Method.MethodKind: MethodKind.LocalFunction } reference
-                        => CapturesAToken(reference.Method, model, f),
+                        => CapturesAToken(reference.Method, model, f, held),
+                    ILocalReferenceOperation other => held.Contains(other.Local),
                     _ => false,
                 }))
-                .Select(g => g.Local),
-        ];
+                    grew |= held.Add(local);
+        } while (grew);
+
+        return held;
     }
 
-    private static bool CapturesAToken(IMethodSymbol localFunction, SemanticModel model, Function f) =>
-        localFunction.DeclaringSyntaxReferences.Any(r => MentionIn(r.GetSyntax(), model, f) is not null);
+    private static bool CapturesAToken(
+        IMethodSymbol localFunction, SemanticModel model, Function f, HashSet<ILocalSymbol> held) =>
+        localFunction.DeclaringSyntaxReferences.Any(r => MentionIn(r.GetSyntax(), model, f, held) is not null);
 
     /// <summary>
     /// The first place in the code that names one of the function's tokens or aliases, or the HttpContext's
-    /// token, or calls a local function that does. Null when the code uses none of them.
+    /// token, or a delegate held in a local that captures one, or calls a local function that does. Null when
+    /// the code uses none of them.
     /// </summary>
-    private static IdentifierNameSyntax? MentionIn(SyntaxNode code, SemanticModel model, Function f, HashSet<ISymbol>? visiting = null)
+    private static IdentifierNameSyntax? MentionIn(
+        SyntaxNode code, SemanticModel model, Function f, HashSet<ILocalSymbol> held, HashSet<ISymbol>? visiting = null)
     {
         visiting ??= new HashSet<ISymbol>(SymbolEqualityComparer.Default);
         foreach (var name in code.DescendantNodesAndSelf().OfType<IdentifierNameSyntax>())
             switch (model.GetSymbolInfo(name).Symbol)
             {
                 case IParameterSymbol p when f.Tokens.Contains(p, SymbolEqualityComparer.Default):
-                case ILocalSymbol l when f.Aliases.Contains(l):
+                case ILocalSymbol l when f.Aliases.Contains(l) || held.Contains(l):
                 case IPropertySymbol property when IsRequestAborted(property):
                     return name;
                 case IMethodSymbol { MethodKind: MethodKind.LocalFunction } local when visiting.Add(local):
-                    if (local.DeclaringSyntaxReferences.Any(r => MentionIn(r.GetSyntax(), model, f, visiting) is not null))
+                    if (local.DeclaringSyntaxReferences.Any(r => MentionIn(r.GetSyntax(), model, f, held, visiting) is not null))
                         return name;
                     break;
             }
@@ -809,23 +843,6 @@ internal sealed class CommitScan
             Follow(block.FallThroughSuccessor);
             Follow(block.ConditionalSuccessor);
         }
-    }
-
-    /// <summary>Whether the use is inside a <c>try</c> with a <c>catch</c> for <see cref="OperationCanceledException"/>.</summary>
-    private static bool CaughtAsCancellation(ControlFlowGraph graph, IOperation use)
-    {
-        var block = graph.Blocks.FirstOrDefault(b => Operations(b).Any(o => o.DescendantsAndSelf().Contains(use)));
-        for (var region = block?.EnclosingRegion; region is not null; region = region.EnclosingRegion)
-        {
-            if (region is not { Kind: ControlFlowRegionKind.Try, EnclosingRegion: { Kind: ControlFlowRegionKind.TryAndCatch } tryAndCatch })
-                continue;
-            if (tryAndCatch.NestedRegions.Any(r => r.Kind is ControlFlowRegionKind.Catch or ControlFlowRegionKind.FilterAndHandler
-                                                   && r.ExceptionType?.ToDisplayString() is "System.OperationCanceledException"
-                                                       or "System.Threading.Tasks.TaskCanceledException"))
-                return true;
-        }
-
-        return false;
     }
 
     private static bool IsOurs(AttributeData a) =>

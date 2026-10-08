@@ -66,7 +66,7 @@ with no section here fails its release rather than publishing an undescribed one
   compiles `src/` and fails on a use of the request's `CancellationToken` that a catalogue write can
   reach, whether named, copied, linked, captured by a lambda or local function, or read from
   `HttpContext.RequestAborted`, so the job, audit line or reply that follows a save is not
-  cancellable. A use inside a `try` that catches `OperationCanceledException` is allowed, and a
+  cancellable. Catching `OperationCanceledException` around the use does not clear it, and a
   function exempted by a justified `[SuppressMessage]` is skipped (`CONTRIBUTING.md`).
 - **Stacked doc comments fail CI.** `scripts/check-doc-comments.py`, a step of the required
   `Build and test` job, fails on a `/// <summary>` line whose previous non-blank line is also
