@@ -190,6 +190,11 @@ The key needs the `ingest` scope for this. A key holds it when it was ticked at 
 when it was added later on the Access page or with `PUT /api/tokens/{id}/scopes`, or when
 the key was adopted from `DEXICON__BOOTSTRAP__TOKEN`.
 
+There is no outbound webhook. `GET /api/jobs` answers the same question for any caller
+that can poll, `/api/events` streams progress to one that can hold a connection, and
+posting to a URL from inside the container brings signing, retry and a dead-letter story
+with it. The reasoning is in [D-29](decisions.md#d-29-an-integration-document-and-retrieval-in-one-call).
+
 ## Errors
 
 Failures come back as `application/problem+json` with `title`, `status` and `detail`, except
@@ -208,11 +213,6 @@ where noted.
 The server maps an unhandled embedding failure to 503 `Embedding service unavailable`.
 `POST /api/search` and `POST /api/context` catch it and return keyword results with
 `degraded: true` instead.
-
-There is no outbound webhook. `GET /api/jobs` answers the same question for any caller
-that can poll, `/api/events` streams progress to one that can hold a connection, and
-posting to a URL from inside the container brings signing, retry and a dead-letter story
-with it. The reasoning is in [D-29](decisions.md#d-29-an-integration-document-and-retrieval-in-one-call).
 
 ## Which endpoint
 
