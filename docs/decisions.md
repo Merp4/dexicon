@@ -353,7 +353,7 @@ did land on commit one. The roadmap and open-questions table now say *before fir
 push*.
 
 **Compatible with every dependency** in [04](04-ingestion.md#extraction): PdfPig is
-Apache-2.0; Markdig is BSD-2; AngleSharp, VersOne.Epub and DocumentFormat.OpenXml are MIT.
+Apache-2.0; AngleSharp, VersOne.Epub and DocumentFormat.OpenXml are MIT.
 
 ---
 
