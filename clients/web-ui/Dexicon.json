@@ -3133,6 +3133,12 @@
           "store": {
             "type": "string",
             "default": "chunks"
+          },
+          "warning": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },

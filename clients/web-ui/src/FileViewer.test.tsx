@@ -141,6 +141,24 @@ describe('opening a file from the list', () => {
     expect(await within(dialog).findByText('2 gaps in the index')).toBeInTheDocument();
   });
 
+  it('says so when another source of the corpus holds a file at the same path', async () => {
+    // The text is one of two different files with the same name, and the list shows both
+    // rows. Without the server's warning the viewer presents it as the file.
+    const warning = '2 sources in this corpus contain a file at that path. They are different files.';
+    fileText.mockResolvedValue(text({ warning }));
+
+    const { dialog } = await openTheFile();
+
+    expect(await within(dialog).findByText(warning)).toBeInTheDocument();
+  });
+
+  it('shows no warning for a path one source holds', async () => {
+    const { dialog } = await openTheFile();
+
+    await within(dialog).findByText('docs:default');
+    expect(within(dialog).queryByText(/sources in this corpus/)).not.toBeInTheDocument();
+  });
+
   it('says how much of the file is on screen, not merely that it stopped', async () => {
     // "truncated" states a problem and offers no way out of it. A book runs to two or
     // three million characters, so the old badge meant the first chapter or two and

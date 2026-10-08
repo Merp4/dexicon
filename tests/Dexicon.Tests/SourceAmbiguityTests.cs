@@ -61,7 +61,7 @@ public class SourceAmbiguityTests
     [Fact]
     public void TwoBooksWithOnePathGroupIntoTwoSources()
     {
-        // The property get_context relies on to notice the problem at all.
+        // The property every by-path read relies on to notice the problem at all.
         var chunks = new[]
         {
             Chunk("source-ai", 0, 1, "Propositional logic, as an AI text presents it."),
@@ -69,9 +69,10 @@ public class SourceAmbiguityTests
             Chunk("source-ai", 1, 11, "Predicate calculus follows."),
         };
 
-        var bySource = chunks.GroupBy(c => c.SourceId ?? "").ToList();
+        var file = FileSources.Choose(chunks);
 
-        bySource.Count.ShouldBe(2);
+        file.SourceCount.ShouldBe(2);
+        file.Ambiguous.ShouldBeTrue();
         // Interleaved by chunk index, which is how they used to be stitched.
         chunks.OrderBy(c => c.ChunkIndex).Select(c => c.SourceId).ShouldBe(
             ["source-ai", "source-philosophy", "source-ai"]);
@@ -90,13 +91,10 @@ public class SourceAmbiguityTests
             Chunk("source-ai", 1, 11, "Predicate calculus follows."),
         };
 
-        var chosen = chunks
-            .GroupBy(c => c.SourceId ?? "")
-            .OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal)
-            .First()
-            .OrderBy(c => c.ChunkIndex)
-            .ToList();
+        var file = FileSources.Choose(chunks);
+        var chosen = file.Chunks;
 
+        file.SourceId.ShouldBe("source-ai");
         chosen.Select(c => c.SourceId).Distinct().Count().ShouldBe(1);
         chosen.Count.ShouldBe(2);
         chosen[0].Content.ShouldContain("AI text");
@@ -110,13 +108,44 @@ public class SourceAmbiguityTests
         // a passage twice and gets two different books has no way to notice.
         var a = new[] { Chunk("source-b", 0, 1, "b"), Chunk("source-a", 0, 1, "a") };
 
-        string Pick(IEnumerable<SearchHit> hits) => hits
-            .GroupBy(c => c.SourceId ?? "")
-            .OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal)
-            .First().Key;
+        FileSources.Choose(a).SourceId.ShouldBe("source-a");
+        FileSources.Choose([.. a.Reverse()]).SourceId.ShouldBe("source-a");
+    }
 
-        Pick(a).ShouldBe("source-a");
-        Pick(a.Reverse()).ShouldBe("source-a");
+    [Fact]
+    public void APathOneSourceHoldsComesBackUnchangedWithNoWarning()
+    {
+        var chunks = new[] { Chunk("source-ai", 0, 1, "a"), Chunk("source-ai", 1, 11, "b") };
+
+        var file = FileSources.Choose(chunks);
+
+        file.Chunks.ShouldBe(chunks);
+        file.SourceCount.ShouldBe(1);
+        file.Ambiguous.ShouldBeFalse();
+        file.Warning.ShouldBeNull();
+    }
+
+    [Fact]
+    public void ANoChunkPathHasNoSourceAndNoWarning()
+    {
+        var file = FileSources.Choose([]);
+
+        file.Chunks.ShouldBeEmpty();
+        file.SourceId.ShouldBeNull();
+        file.SourceCount.ShouldBe(0);
+        file.Warning.ShouldBeNull();
+    }
+
+    [Fact]
+    public void TheWarningCountsTheSources()
+    {
+        var chunks = new[]
+        {
+            Chunk("source-a", 0, 1, "a"), Chunk("source-b", 0, 1, "b"), Chunk("source-c", 0, 1, "c"),
+        };
+
+        FileSources.Choose(chunks).Warning.ShouldNotBeNull()
+            .ShouldStartWith("3 sources in this corpus contain a file at that path.");
     }
 
     [Fact]

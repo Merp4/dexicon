@@ -165,10 +165,12 @@ a hole in it. Where no document is stored, which is a code file on a mount, it s
 chunks that cover the line.
 
 A file path is relative to its source root, so two sources of one corpus can hold the same
-path for different files. Then `get_context` reads the source with the most chunks and
-puts this line under the header: `! 2 sources in this corpus contain a file at that path. They are
-different files with the same name. This is one of them, the largest; the others are not
-shown and not mixed in.` (the count is the number of sources).
+path for different files. Then `get_context` reads the source with the most chunks (ties go
+to the lower source id) and puts this line under the header: `! 2 sources in this corpus
+contain a file at that path. They are different files with the same name. This is one of
+them, the largest; the others are not shown and not mixed in.` (the count is the number of
+sources). The file resource ([below](#resources)) and `GET /api/corpora/{name}/file` choose
+the source the same way and carry the same sentence.
 
 This is also how an agent **reads on**. Chunks overlap and tile the file, so calling it
 again further down the file walks forwards through a document: a search hit in a book,
@@ -393,12 +395,13 @@ become readable because it was reached by URI instead: what a key reaches is the
 model, and a second route into it is a second opportunity for error.
 
 File text comes from the index and the catalogue, not from disk. An uploaded PDF has no
-file to read, and the original would in any case differ from what was indexed. Where one
-source holds the path and an extracted document is stored, the document is returned whole.
+file to read, and the original would in any case differ from what was indexed. Where an
+extracted document is stored for the source read, the document is returned whole.
 Otherwise the chunks of the path are put back together: overlapping chunks are
 de-overlapped, and any gap is marked with `… lines N-M not indexed …`. Where two sources
-of the corpus hold the path, the chunks of both are joined without a warning;
-[`get_context`](#get_context) detects that case and reads one source.
+of the corpus hold the path, the resource reads the one with the most chunks, as
+[`get_context`](#get_context) does, and the line `! 2 sources in this corpus contain a
+file at that path. …` follows the header (the sentence is quoted under `get_context`).
 
 ## Prompts
 

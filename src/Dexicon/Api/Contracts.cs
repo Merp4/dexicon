@@ -429,6 +429,10 @@ public sealed record UpdateSourceRequest(
 /// when no document is stored and it was stitched back together. Said out loud
 /// because the three differ in whether they can have holes.
 /// </param>
+/// <param name="Warning">
+/// Present when more than one source of the corpus holds the path. The text is then one
+/// source's file, the one with the most chunks, and this says so. Omitted otherwise.
+/// </param>
 public sealed record IndexedFileText(
     string Corpus,
     string ChunkSet,
@@ -441,7 +445,8 @@ public sealed record IndexedFileText(
     int Offset = 0,
     int TotalChars = 0,
     int? NextOffset = null,
-    string Store = "chunks");
+    string Store = "chunks",
+    string? Warning = null);
 
 /// <summary>
 /// A source, and the job now reading it. The job is returned rather than left implicit so

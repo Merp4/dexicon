@@ -471,6 +471,26 @@ internal sealed class IndexingHarness : IAsyncDisposable
             return Task.FromResult<IReadOnlyDictionary<string, int>?>(counts);
         }
 
+        /// <summary>
+        /// A path's chunks in one set, across every source that holds it and in chunk order:
+        /// the same filter the Qdrant store scrolls with, which carries no source id.
+        /// </summary>
+        public Task<IReadOnlyList<SearchHit>> GetFileChunksAsync(string collection, string chunkSetId,
+            string filePath, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<SearchHit>>([.. _points
+                .Where(p => p.ChunkSetId == chunkSetId && p.FilePath == filePath)
+                .OrderBy(p => p.ChunkIndex)
+                .Select(p => new SearchHit
+                {
+                    CorpusId = p.CorpusId,
+                    SourceId = p.SourceId,
+                    FilePath = p.FilePath,
+                    StartLine = p.StartLine,
+                    EndLine = p.EndLine,
+                    ChunkIndex = p.ChunkIndex,
+                    Content = p.Content,
+                })]);
+
         public Task UpsertAsync(string collection, IReadOnlyList<Chunk> chunks,
             IReadOnlyList<float[]> vectors, CancellationToken ct = default)
         {
@@ -542,8 +562,6 @@ internal sealed class IndexingHarness : IAsyncDisposable
         // change that starts calling one of these is visible instead of silently passing.
         public Task<int> PurgeUnsetChunksAsync(CancellationToken ct = default) =>
             throw new NotSupportedException();
-        public Task<IReadOnlyList<SearchHit>> GetFileChunksAsync(string c, string s, string f,
-            CancellationToken ct = default) => throw new NotSupportedException();
         public Task<SearchResponse> SearchAsync(SearchQuery q, float[]? d, SparseVector s,
             CancellationToken ct = default) => throw new NotSupportedException();
         public Task<(long Points, int Dimensions)> GetStatsAsync(string c, CancellationToken ct = default) =>
