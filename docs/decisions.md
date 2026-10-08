@@ -62,7 +62,10 @@ for a workload that peaks at thousands of rows); LiteDB or files on disk (no mig
 story, no query story).
 
 **Amended by** [D-28](#d-28-an-admin-password-and-scoped-api-keys): there is no tenants table.
-The catalogue holds corpora, chunk sets, sources, files, jobs and keys.
+Among other things the catalogue holds corpora, chunk sets, sources, files, jobs and keys, and
+also the admin credential, each key's corpus mapping, stored blobs and their extracted text,
+per-set file states, model profiles and measurements, and removal proposals
+(`CatalogDbContext`).
 
 ---
 
