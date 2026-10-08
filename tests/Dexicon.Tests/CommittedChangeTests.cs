@@ -137,13 +137,13 @@ public sealed class CommittedChangeTests
         (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh)).ShouldBe(1, "the saved source has its job");
     }
 
-    /// <summary>A vector store whose collection setup fails, as Qdrant being down does, after the corpus is saved.</summary>
-    private sealed class EnsureThrows(IVectorStore inner) : IVectorStore
+    /// <summary>A vector store that passes everything to <paramref name="inner"/>, for a test to override one call.</summary>
+    private class ForwardingStore(IVectorStore inner) : IVectorStore
     {
         public string CollectionNameFor(EmbeddingTarget target, int dimensions) => inner.CollectionNameFor(target, dimensions);
 
-        public Task EnsureCollectionAsync(string collection, int dimensions, CancellationToken ct = default) =>
-            throw new InvalidOperationException("Qdrant is not answering");
+        public virtual Task EnsureCollectionAsync(string collection, int dimensions, CancellationToken ct = default) =>
+            inner.EnsureCollectionAsync(collection, dimensions, ct);
 
         public Task UpsertAsync(string collection, IReadOnlyList<Chunk> chunks, IReadOnlyList<float[]> vectors,
             CancellationToken ct = default) => inner.UpsertAsync(collection, chunks, vectors, ct);
@@ -172,6 +172,51 @@ public sealed class CommittedChangeTests
             inner.GetStatsAsync(collection, ct);
 
         public Task<bool> PingAsync(CancellationToken ct = default) => inner.PingAsync(ct);
+    }
+
+    /// <summary>A vector store whose collection setup fails, as Qdrant being down does, after the corpus is saved.</summary>
+    private sealed class EnsureThrows(IVectorStore inner) : ForwardingStore(inner)
+    {
+        public override Task EnsureCollectionAsync(string collection, int dimensions, CancellationToken ct = default) =>
+            throw new InvalidOperationException("Qdrant is not answering");
+    }
+
+    /// <summary>
+    /// A vector store whose collection setup is where the caller cancels, as a client leaving during the
+    /// call to Qdrant does. It then honours the token it was given, as a client library does.
+    /// </summary>
+    private sealed class EnsureCancels(IVectorStore inner, CancellationTokenSource cts) : ForwardingStore(inner)
+    {
+        public bool Called { get; private set; }
+
+        public override Task EnsureCollectionAsync(string collection, int dimensions, CancellationToken ct = default)
+        {
+            Called = true;
+            cts.Cancel();
+            ct.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task ANewCorpusWithAFolderIsQueuedWhenTheCallerIsCancelledDuringCollectionSetup()
+    {
+        // The corpus and its source are saved before the collection is prepared, and the full pass is
+        // queued after it. A cancel inside the call to the vector store threw before the job was queued.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        Directory.CreateDirectory(Path.Combine(harness.DataPath, "workspace", "extra"));
+        using var cts = new CancellationTokenSource();
+        await using var db = harness.NewContext();
+        var vectors = new EnsureCancels(harness.Vectors, cts);
+
+        var outcome = await harness.NewConfiguration(db, vectors).CreateCorpusAsync(
+            new CreateCorpusRequest("papers", WorkspacePath: "extra"), cts.Token);
+
+        vectors.Called.ShouldBeTrue("the window has to have been opened");
+        outcome.Refusal.ShouldBeNull();
+        var papers = await db.Corpora.AsNoTracking().SingleAsync(c => c.Name == "papers");
+        (await db.Jobs.CountAsync(j => j.CorpusId == papers.Id && j.Kind == JobKind.Full)).ShouldBe(1, "the new corpus has its job");
     }
 
     [Fact]

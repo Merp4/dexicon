@@ -246,7 +246,9 @@ public sealed class CorpusConfiguration(
 
         committed?.Invoke(corpus);
 
-        await vectors.EnsureCollectionAsync(corpus.ChunkSets[0].CollectionName, dims, ct);
+        // Not cancellable either: the corpus is saved, and a cancel in this call threw before the
+        // job below was queued.
+        await vectors.EnsureCollectionAsync(corpus.ChunkSets[0].CollectionName, dims, CancellationToken.None);
 
         // Naming a folder is asking for it to be indexed. Without this the corpus is
         // created EMPTY and reports itself ready, and the only sign is a file count of
