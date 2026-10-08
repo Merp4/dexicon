@@ -217,8 +217,8 @@ which is 2,098,200,576 bytes at the default and follows `DEXICON__UPLOAD__MAXFIL
 The web UI sends every dropped file in one request, so the bound allows a batch. A larger
 body is refused with `413` and a message that names the bound, before any of it is read
 when the client declares its `Content-Length`, and otherwise when the body reaches the bound.
-Files stored before the bound was reached stay stored, and the response lists the overrun
-under `failed` as `(request)`.
+Files stored before the bound was reached stay stored, and the answer is then `202` with the
+overrun listed under `failed` as `(request)`.
 
 A body that ends before its closing boundary, or whose headers are over the reader's limits, is
 treated the same way: files completed before it stay stored and are indexed, the response lists

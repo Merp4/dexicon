@@ -256,11 +256,28 @@ describe('uploading a batch', () => {
     await user.upload(input, [new File(['x'], 'notes.txt'), new File(['x'], 'huge.iso')]);
 
     expect(await screen.findByText('1 file stored.')).toBeInTheDocument();
-    expect(screen.getByText('2 files not stored:')).toBeInTheDocument();
+    // Two entries came back, one of them the request as a whole: one file was refused.
+    expect(screen.getByText('1 file not stored:')).toBeInTheDocument();
+    expect(screen.queryByText(/2 files not stored/)).not.toBeInTheDocument();
     expect(screen.getByText('huge.iso: huge.iso is over the 200 MB limit.')).toBeInTheDocument();
     // A failure of the request as a whole is not attributed to a file called "(request)".
     expect(screen.getByText('The request is over the 2.0 GB bound.')).toBeInTheDocument();
     expect(screen.queryByText(/\(request\)/)).not.toBeInTheDocument();
+  });
+
+  it('shows a failure of the whole request without counting a file', async () => {
+    uploadDocuments.mockResolvedValue({
+      corpus: 'library',
+      stored: [stored('notes.txt')],
+      failed: [{ file: '(request)', error: 'The request is over the 2.0 GB bound.' }],
+      job: {},
+    });
+    const { user, input } = await renderReady();
+
+    await user.upload(input, new File(['x'], 'notes.txt'));
+
+    expect(await screen.findByText('The request is over the 2.0 GB bound.')).toBeInTheDocument();
+    expect(screen.queryByText(/files? not stored/)).not.toBeInTheDocument();
   });
 
   it('says nothing about refused files when none were refused', async () => {

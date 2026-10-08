@@ -40,6 +40,8 @@ export function DocumentsView({
   const [dragging, setDragging] = useState(false);
   const [lastUpload, setLastUpload] = useState<string | null>(null);
   const [notStored, setNotStored] = useState<UploadFailure[]>([]);
+  const refusedFiles = notStored.filter((f) => f.file !== REQUEST_FAILURE);
+  const requestFailures = notStored.filter((f) => f.file === REQUEST_FAILURE);
   const fileInput = useRef<HTMLInputElement>(null);
 
   // Everything the signed-in admin can see is writable; there is no owner to test.
@@ -176,16 +178,21 @@ export function DocumentsView({
 
       {notStored.length > 0 && (
         <Notice tone="warn">
-          <p className="m-0 font-semibold">
-            {count(notStored.length, 'file')} not stored:
-          </p>
-          <ul className="m-0 mt-1 list-disc pl-5">
-            {notStored.map((f, i) => (
-              <li key={`${f.file}-${i}`}>
-                {f.file === REQUEST_FAILURE ? f.error : `${f.file}: ${f.error}`}
-              </li>
-            ))}
-          </ul>
+          {/* The files counted are the ones named. A failure of the whole request is not a file
+              and follows the list as a sentence of its own. */}
+          {refusedFiles.length > 0 && (
+            <>
+              <p className="m-0 font-semibold">{count(refusedFiles.length, 'file')} not stored:</p>
+              <ul className="m-0 mt-1 list-disc pl-5">
+                {refusedFiles.map((f, i) => (
+                  <li key={`${f.file}-${i}`}>{`${f.file}: ${f.error}`}</li>
+                ))}
+              </ul>
+            </>
+          )}
+          {requestFailures.map((f, i) => (
+            <p key={i} className={cn('m-0', refusedFiles.length > 0 && 'mt-1')}>{f.error}</p>
+          ))}
         </Notice>
       )}
 

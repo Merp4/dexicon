@@ -28,9 +28,12 @@ with no section here fails its release rather than publishing an undescribed one
   re-embeds, which is what saving the framing already said it would do. The migration cannot be
   undone.
 - A document upload is bounded as a request: ten files at `DEXICON__UPLOAD__MAXFILEBYTES` plus
-  1 MiB of multipart framing, which is 2,098,200,576 bytes at the default. A larger body answers
-  `413` "Upload too large" with a message that names the bound. Only the per-file cap applied
-  before. A script that posts a batch beyond the bound needs to split it.
+  1 MiB of multipart framing, which is 2,098,200,576 bytes at the default. A body that declares a
+  larger length, or that crosses the bound before any file is stored, answers `413` "Upload too
+  large" with a message that names the bound. When files were stored before the bound was
+  crossed they stay stored and the answer is `202`, with the overrun listed under `failed` as
+  `(request)`, so a script checks `failed` and does not treat every `202` as a full success. Only
+  the per-file cap applied before. A script that posts a batch beyond the bound needs to split it.
 - The skill changes (`dexicon-skill-version: 6`). Running `scripts/install-mcp.ps1` again
   upgrades installed copies. The hooks are unchanged.
 
