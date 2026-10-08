@@ -95,6 +95,10 @@ Each of these has been decided, with the reasoning recorded in
 
 - C# with `TreatWarningsAsErrors`. `dotnet format` before you commit. CI fails on
   `dotnet format --verify-no-changes`, and the pre-commit hook runs it once enabled.
+- Insert a C# member above the next member's `///` block, never between that block and its
+  signature. CI fails on a `/// <summary>` stacked under another `///` block
+  (`scripts/check-doc-comments.py`). It cannot see an inserted member with no `///` block of
+  its own, which takes the next member's summary and leaves nothing stacked.
 - Comments explain *why*; the code states what.
 - C# test methods are named as one PascalCase sentence with no underscores, giving the
   subject, the outcome and the condition: `AKeyWithoutConfigureIsRefusedByEveryConfigureTool`.

@@ -73,6 +73,13 @@ jobs:
       - name: Format
         run: dotnet format Dexicon.slnx --verify-no-changes --no-restore
 
+      # Fails on a `/// <summary>` whose previous non-blank line is also `///`: two doc
+      # blocks stacked on one member, left by inserting a member between another member's
+      # doc block and its signature. A documentation build reports no CS1587 for it. The
+      # script prints how many files it read and fails when that is zero.
+      - name: Doc comments are not stacked
+        run: python3 scripts/check-doc-comments.py
+
       - name: Test
         run: dotnet test --no-build --configuration Release --logger "console;verbosity=normal"
 

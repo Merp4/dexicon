@@ -489,9 +489,6 @@ public static class CodeChunker
         return Math.Max(first, previousStart + 1);
     }
 
-
-    /// <summary>Walk back from the split point until the overlap budget is spent.</summary>
-
     /// <summary>
     /// A fenced block opener or closer: ``` or ~~~, optionally indented up to three
     /// spaces, optionally followed by an info string.
