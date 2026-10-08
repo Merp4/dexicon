@@ -19,7 +19,7 @@ catalogue is authoritative and Qdrant is a derived view that can be rebuilt from
 | **Proposal** | A removal an agent asked for and a person has yet to decide, or the record of how it was decided. Holds no foreign keys, so it outlives what it names. |
 | **Corpus** | A named, searchable body of content. The unit of reindexing and of search scope. It has no owner: which keys reach it is a property of those keys. |
 | **Chunk set** | One way of cutting and embedding a corpus: a model, a vector space, a chunking strategy. A corpus carries one or more, over the same documents. Addressed as `corpus:set`. |
-| **Source** | Where a corpus gets its content: a `workspace` mount path, or `upload` (files pushed through the UI/API). A corpus has one or more. |
+| **Source** | Where a corpus gets its content: a `workspace` mount path, a `githistory` repository under a mount (its commits), or `upload` (files pushed through the UI/API). A corpus has one or more. |
 | **Blob** | An uploaded document's bytes, content-addressed by SHA-256. Carries no name. |
 | **File** | One *attachment* within a source: a path, plus (for uploads) the blob it points at. Several corpora may attach the same blob. |
 | **Chunk** | One embedded span of a file, produced by one chunk set. The unit stored in Qdrant and returned by search. |
@@ -51,6 +51,27 @@ status describe a file *as cut by a particular set*: the same document may be fr
 indexed in one set and still pending in another.
 
 ## SQLite schema
+
+The listing is logical. It follows the EF Core model (`CatalogDbContext` and
+`CatalogDbContextModelSnapshot`); the physical database differs in these ways:
+
+- Table names are as shown. Column names are the PascalCase property names, so
+  `created_utc` is `CreatedUtc` and `chunk_set_id` is `ChunkSetId`.
+- An enum column holds the member name in its original case (`Ready`, `Indexed`,
+  `GitHistory`, `Refresh`), so a query for `status = 'indexed'` matches nothing. The values
+  in the comments below are the stored ones. Columns that are free strings (`boundary_mode`,
+  `phase`, `scopes`) keep the lowercase values shown.
+- Dates are `TEXT`, booleans are `INTEGER`.
+- Only two columns carry a `DEFAULT` clause: `blob_texts.extractor_version` (0) and
+  `chunk_sets.embedding_provider` (`'ollama'`). The other defaults of the entity classes
+  are applied by the application and are not written in the listing.
+- Index names are `IX_<table>_<Columns>` (`IX_token_corpora_CorpusId`), primary keys are
+  `PK_<table>` and foreign keys `FK_<table>_<referenced table>_<Column>`. A `UNIQUE`
+  clause on a table is a unique index.
+
+The listing was compared with the `sqlite_master` of a catalogue created by the shipped
+migrations (through `GrantDestroyToIngestKeys`) for table, column, nullability, type,
+foreign-key action and index.
 
 ```sql
 -- Identity ------------------------------------------------------------------
@@ -91,10 +112,19 @@ CREATE TABLE corpora (
   id                   TEXT PRIMARY KEY,    -- ULID
   name                 TEXT NOT NULL,
   description          TEXT,
-  state                TEXT NOT NULL,       -- ready | degraded | unavailable: the last pass's outcome.
-                                            -- `indexing` is reported, never stored (D-37)
+  state                TEXT NOT NULL,       -- Ready | Degraded | Unavailable: the last pass's outcome.
+                                            -- `Indexing` is reported, never stored (D-37)
   created_utc          TEXT NOT NULL,
   last_indexed_utc     TEXT,
+  -- The lease (CorpusLeases): who is working this corpus and until when. Renewed while
+  -- the holder runs; a holder that stops renewing becomes reclaimable.
+  held_by              TEXT,
+  held_until_utc       TEXT,
+  -- Filters every source of the corpus inherits unless it sets its own (see sources).
+  default_include_globs TEXT,               -- json array
+  default_exclude_globs TEXT,               -- json array
+  default_use_gitignore INTEGER,
+  default_max_file_bytes INTEGER,
   -- Globally unique, because the name is what an agent passes to search_index and it
   -- has to resolve to one corpus.
   UNIQUE (name)
@@ -108,6 +138,9 @@ CREATE TABLE chunk_sets (
   corpus_id               TEXT NOT NULL REFERENCES corpora(id) ON DELETE CASCADE,
   name                    TEXT NOT NULL,       -- addressed as corpus:name; no colons
   description             TEXT,
+  -- Which configured backend embeds the set: ollama, openai, or an Azure deployment name.
+  -- A provider name resolved against configuration at use; credentials never reach the catalogue.
+  embedding_provider      TEXT NOT NULL DEFAULT 'ollama',
   -- The vector space. Pinned per set: changing a set's model in place would strand its
   -- vectors in a collection nothing addresses. Changing model means a NEW set.
   embedding_model         TEXT NOT NULL,
@@ -117,22 +150,23 @@ CREATE TABLE chunk_sets (
   chunk_overlap           INTEGER NOT NULL,
   boundary_mode           TEXT NOT NULL,       -- none | blank-line | language-aware | custom
   custom_boundary_pattern TEXT,                -- required when boundary_mode = custom
-  unit_aware              INTEGER NOT NULL DEFAULT 0,  -- page/chapter/slide forces a split
-  sentence_aware          INTEGER NOT NULL DEFAULT 0,  -- cut at a sentence, not a word
-  heading_context         INTEGER NOT NULL DEFAULT 0,  -- embed under the heading trail
+  unit_aware              INTEGER NOT NULL,    -- page/chapter/slide forces a split
+  sentence_aware          INTEGER NOT NULL,    -- cut at a sentence, not a word
+  heading_context         INTEGER NOT NULL,    -- embed under the heading trail
   -- Exactly one per corpus. It is what an unqualified corpus name resolves to, and
   -- promotion — flipping this flag — is the only moment search changes.
-  is_default              INTEGER NOT NULL DEFAULT 0,
-  state                   TEXT NOT NULL,
+  is_default              INTEGER NOT NULL,
+  state                   TEXT NOT NULL,       -- Ready | Degraded | Unavailable, as for corpora
   created_utc             TEXT NOT NULL,
   last_indexed_utc        TEXT,
   UNIQUE (corpus_id, name)
 );
+CREATE INDEX ix_chunk_sets_default ON chunk_sets(corpus_id, is_default);
 
 CREATE TABLE sources (
   id                TEXT PRIMARY KEY,
   corpus_id         TEXT NOT NULL REFERENCES corpora(id) ON DELETE CASCADE,
-  kind              TEXT NOT NULL,          -- workspace | upload | githistory
+  kind              TEXT NOT NULL,          -- Workspace | Upload | GitHistory
   root_path         TEXT,                   -- workspace, githistory: path under /workspaces
   -- The four filters are NULL to inherit: 04 lists the three layers they resolve through.
   include_globs     TEXT,                   -- json array
@@ -145,6 +179,7 @@ CREATE TABLE sources (
   git_tracking      TEXT,                   -- githistory: json, how current the followed ref was
   created_utc       TEXT NOT NULL
 );
+CREATE INDEX ix_sources_corpus ON sources(corpus_id);
 
 -- The ATTACHMENT. What the file is, shared by every chunk set that reads it. What each
 -- set MADE of it lives in file_chunk_states below.
@@ -154,13 +189,14 @@ CREATE TABLE files (
   relative_path   TEXT NOT NULL,            -- forward slashes, always
   -- Upload-sourced files only: the blob this is an attachment OF. Several corpora
   -- can point at one blob and chunk it differently — the point of the split.
-  blob_sha256     TEXT REFERENCES blobs(sha256),
+  blob_sha256     TEXT REFERENCES blobs(sha256) ON DELETE RESTRICT,
   size_bytes      INTEGER NOT NULL,
   media_type      TEXT,
   language        TEXT,
-  extracted_chars INTEGER NOT NULL DEFAULT 0,
+  extracted_chars INTEGER NOT NULL,
   UNIQUE (source_id, relative_path)
 );
+CREATE INDEX ix_files_blob ON files(blob_sha256);
 
 -- One file as ONE chunk set sees it. This is where indexing state lives, because a hash,
 -- a chunk count and a status are properties of a file *as cut by a particular set* — not
@@ -184,13 +220,14 @@ CREATE TABLE file_chunk_states (
   -- the same key does not open the file. NULL for uploads and commits, and cleared by every
   -- pass that touches the row. See 04-ingestion.md and D-38.
   settled_for   TEXT,
-  chunk_count   INTEGER NOT NULL DEFAULT 0,
-  status        TEXT NOT NULL,              -- pending | indexed | skipped | failed | empty
+  chunk_count   INTEGER NOT NULL,
+  status        TEXT NOT NULL,              -- Pending | Indexed | Skipped | Failed | Empty
   status_detail TEXT,                       -- why, in words, for skipped/failed/empty
   indexed_utc   TEXT,
   PRIMARY KEY (file_id, chunk_set_id)
 );
-CREATE INDEX ix_files_status ON files(source_id, status);
+-- The indexer's read of what a set still has to do.
+CREATE INDEX ix_file_chunk_states_status ON file_chunk_states(chunk_set_id, status);
 
 -- Blob store for uploads. Content lives at /data/blobs/<sha256[0:2]>/<sha256>.
 -- Carries no name: the same PDF can be attached to different corpora under
@@ -217,7 +254,7 @@ CREATE TABLE blob_texts (
   title             TEXT,                -- from the document's own metadata
   extracted_chars   INTEGER NOT NULL,
   extractor         TEXT NOT NULL,
-  extractor_version INTEGER NOT NULL,    -- so an extractor fix invalidates the cache
+  extractor_version INTEGER NOT NULL DEFAULT 0,   -- so an extractor fix invalidates the cache
   extracted_utc     TEXT NOT NULL,
   empty_reason      TEXT                 -- readable but yielded nothing: a scanned PDF
 );
@@ -246,23 +283,59 @@ CREATE TABLE file_texts (
   PRIMARY KEY (sha256, extractor)
 );
 
+-- Embedding models ----------------------------------------------------------
+-- Saved task framing for one embedding model. A choice: it wins over the built-in
+-- suggestion (04).
+CREATE TABLE model_profiles (
+  provider          TEXT NOT NULL,
+  model             TEXT NOT NULL,
+  document_template TEXT NOT NULL,          -- contains {text}
+  query_template    TEXT NOT NULL,          -- contains {text}
+  notes             TEXT,
+  created_utc       TEXT NOT NULL,
+  updated_utc       TEXT NOT NULL,
+  PRIMARY KEY (provider, model)
+);
+
+-- What a probe measured about a model: a fact, kept apart from the profile above.
+-- NULL means not measured, which is different from 0.
+CREATE TABLE model_measurements (
+  provider                 TEXT NOT NULL,
+  model                    TEXT NOT NULL,
+  dimensions               INTEGER NOT NULL,
+  max_input_chars          INTEGER,
+  truncates_silently       INTEGER NOT NULL,
+  recommended_chunk_chars  INTEGER NOT NULL,
+  recommended_chunk_tokens INTEGER NOT NULL,
+  chars_per_token          REAL,
+  context_tokens           INTEGER,
+  measured_utc             TEXT NOT NULL,
+  PRIMARY KEY (provider, model)
+);
+
 -- Operations ----------------------------------------------------------------
 CREATE TABLE jobs (
   id             TEXT PRIMARY KEY,
   corpus_id      TEXT NOT NULL REFERENCES corpora(id) ON DELETE CASCADE,
-  kind           TEXT NOT NULL,             -- full | refresh | rebuild | delete
-  state          TEXT NOT NULL,             -- queued | running | succeeded | failed | degraded | cancelled
+  -- The one set the job targets; NULL is every set of the corpus. Dropping a set after
+  -- promoting its replacement sets the column to NULL and keeps the record of the job
+  -- that built it.
+  chunk_set_id   TEXT REFERENCES chunk_sets(id) ON DELETE SET NULL,
+  kind           TEXT NOT NULL,             -- Full | Refresh | Rebuild
+  state          TEXT NOT NULL,             -- Queued | Running | Succeeded | Failed | Degraded | Cancelled
   phase          TEXT,                      -- discover | extract | embed | upsert | reconcile
-  files_total    INTEGER NOT NULL DEFAULT 0,
-  files_done     INTEGER NOT NULL DEFAULT 0,
-  files_skipped  INTEGER NOT NULL DEFAULT 0,
-  files_failed   INTEGER NOT NULL DEFAULT 0,
-  chunks_written INTEGER NOT NULL DEFAULT 0,
+  files_total    INTEGER NOT NULL,
+  files_done     INTEGER NOT NULL,
+  files_skipped  INTEGER NOT NULL,
+  files_failed   INTEGER NOT NULL,
+  chunks_written INTEGER NOT NULL,
   error          TEXT,
+  queued_utc     TEXT NOT NULL,             -- never NULL, unlike started_utc
   started_utc    TEXT,
   finished_utc   TEXT
 );
-CREATE INDEX ix_jobs_corpus ON jobs(corpus_id, started_utc DESC);
+CREATE INDEX ix_jobs_corpus ON jobs(corpus_id, started_utc);
+CREATE INDEX ix_jobs_chunk_set ON jobs(chunk_set_id);
 
 -- Removals an agent has asked for, and how each was decided (D-39). NO FOREIGN KEYS: it is
 -- a record of what was asked, and it outlives the key, the corpus and the thing it names,
@@ -274,11 +347,11 @@ CREATE TABLE proposals (
   token_name    TEXT NOT NULL,              --   shown to the person deciding, as it was named then
   corpus_id     TEXT NOT NULL,
   corpus_name   TEXT NOT NULL,
-  kind          TEXT NOT NULL,              -- source | chunk_set | document | corpus
+  kind          TEXT NOT NULL,              -- Source | ChunkSet | Document | Corpus
   target_id     TEXT NOT NULL,              -- the source, chunk set, file or corpus, by id
   target_label  TEXT NOT NULL,              -- what the target was called then
   reason        TEXT NOT NULL,              -- the agent's words, one line, at most 300 characters
-  status        TEXT NOT NULL,              -- pending | approved | rejected | failed. A concurrency token
+  status        TEXT NOT NULL,              -- Pending | Approved | Rejected | Failed. A concurrency token
   decided_utc   TEXT,
   error         TEXT                        -- why a proposal failed: what was gone when it was approved
 );
@@ -287,7 +360,7 @@ CREATE INDEX ix_proposals_token ON proposals(token_id, status);
 CREATE INDEX ix_proposals_target ON proposals(kind, target_id, status);
 ```
 
-`chunk_count` on `files` is written by the indexer **and read back** by the corpus detail
+`chunk_count` on `file_chunk_states` is written by the indexer **and read back** by the corpus detail
 screen and by `index_status`. Every column above has a named reader; a column nothing reads
 is a feature that does not exist.
 
@@ -371,12 +444,14 @@ points from that corpus when filtered to a different one.
 ```json
 { "field_name": "corpus_id",    "field_schema": { "type": "keyword", "is_tenant": true } }
 { "field_name": "chunk_set_id", "field_schema": "keyword" }
+{ "field_name": "source_id",    "field_schema": "keyword" }
 { "field_name": "file_path",    "field_schema": "keyword" }
-{ "field_name": "language",  "field_schema": "keyword" }
-{ "field_name": "kind",      "field_schema": "keyword" }
-{ "field_name": "symbols",   "field_schema": "keyword" }
-{ "field_name": "content",   "field_schema": "text"    }
+{ "field_name": "language",     "field_schema": "keyword" }
+{ "field_name": "kind",         "field_schema": "keyword" }
+{ "field_name": "symbols",      "field_schema": "keyword" }
 ```
+
+`content` has no payload index. Keyword search runs on the `sparse` vector.
 
 **`corpus_id` is the `is_tenant` field.** It is what every query filters on, so
 co-locating storage by corpus matches the access pattern exactly. Qdrant's name for the
@@ -389,15 +464,15 @@ someone to filter on it. Removed by
 **`chunk_set_id` is an ordinary filter, not a second tenant key.** It narrows *within* a
 corpus's partition, which `corpus_id` has already selected, so it needs no co-location of
 its own. Re-keying the tenant index onto the set would have been invasive and bought
-nothing. A point's **id** does derive from the set: `uuid(chunk_set_id, file_path,
-chunk_index)`. Keying it on the corpus would cause two sets holding the same file at the
-same index to overwrite each other, without error, and only for the paths they share.
+nothing. A point's **id** does derive from the set (see [Point payload](#point-payload)).
+Keying it on the corpus would cause two sets holding the same file at the same index to
+overwrite each other, without error, and only for the paths they share.
 
 ### Point payload
 
 ```jsonc
 {
-  "kind":        "chunk",            // chunk | file_marker
+  "kind":        "chunk",            // always chunk
   "corpus_id":    "01JD...",         // scope key — indexed, is_tenant
   "chunk_set_id": "01JD...",         // which chunking produced this — indexed, ordinary filter
   "source_id":   "01JD...",
@@ -407,8 +482,8 @@ same index to overwrite each other, without error, and only for the paths they s
   "language":    "csharp",
   "start_line":  120,                // text sources
   "end_line":    168,
-  "page":        null,               // PDF/PPTX sources; null for line-addressed content
-  "section":     "TokenService.Refresh",  // heading, chapter, or nearest symbol
+  "page":        3,                  // PDF/PPTX sources; omitted for line-addressed content
+  "section":     "Retry policy",     // Markdown heading, or the page, slide or chapter label
   "symbols":     ["TokenService", "Refresh"],
   "chunk_index": 7,
   "content":     "…the chunk text…",  // stored: results must be usable without a file read
@@ -416,13 +491,19 @@ same index to overwrite each other, without error, and only for the paths they s
 }
 ```
 
-Point id is a deterministic UUIDv5 over `chunk_set_id | file_path | chunk_index`, so a
-re-index of an unchanged file is idempotent and a changed file's stale chunks are
-addressable without a scroll.
+`media_type`, `language`, `page`, `section` and `symbols` are written only when the chunk
+has a value; the other fields are always present.
+
+Point id is a deterministic UUID derived from a SHA-256 of
+`chunk_set_id | source_id | file_path | chunk_index`: the first 16 bytes of the hash with
+the version-5 and RFC 4122 variant bits set (`QdrantVectorStore.DeterministicId`). It is
+not an RFC 4122 UUIDv5, which hashes a namespace with SHA-1. A re-index of an unchanged
+file is idempotent and a changed file's stale chunks are addressable without a scroll.
 
 Keyed on the **set**, not the corpus: two sets hold the same file at the same chunk index,
 and a corpus-keyed id would cause them to overwrite each other without error, and only
-for the file paths they share.
+for the file paths they share. `source_id` is part of it because `file_path` is relative
+to the source root, and two sources of one corpus can hold the same path.
 
 **Content is stored in the payload.** It costs storage and it is the right call: an agent
 that must open the file to see what it matched has gained nothing over grep, and a corpus
@@ -431,7 +512,7 @@ built from uploads may have no file to open.
 ## Identifier conventions
 
 - Corpus, source, file, job, token ids: **ULID** — sortable, URL-safe, no coordination.
-- Qdrant point ids: **UUIDv5**, derived as above. Never random.
+- Qdrant point ids: deterministic UUIDs, derived as above. Never random.
 - Paths: always forward slashes, always relative to the source root, never absolute. An
   absolute host path in a payload is a leak.
 
@@ -439,11 +520,10 @@ built from uploads may have no file to open.
 
 | Action | Effect |
 |---|---|
-| Delete file from disk | Next reconcile deletes its chunks (`chunk_set_id` + `file_path`) and its state row, per set. The `files` row survives until the LAST set has let go of it — removing it earlier would strand the other sets' vectors with nothing left to name them. |
-| Delete source | Chunks deleted by `source_id` filter; rows cascade. |
-| Delete chunk set | Chunks deleted by `chunk_set_id` filter; state rows cascade. Refused for the default set, and for the only set — a corpus with no sets is a corpus nothing can search. |
-| Delete corpus | Chunks deleted by `corpus_id` filter, once per distinct collection its sets occupy; rows cascade; grants cascade. |
-| Delete corpus | Cascades to its sources, files, chunk sets and the rows mapping keys to it. A key mapped only to that corpus is left mapped to nothing, which means every corpus; revoke it instead if that is not wanted. |
+| Delete file from disk | Next reconcile deletes its chunks (`chunk_set_id`, `source_id`, `file_path`) and its state row, per set. The `files` row survives until the LAST set has let go of it — removing it earlier would strand the other sets' vectors with nothing left to name them. |
+| Delete source | Chunks deleted per file, once per chunk set (`chunk_set_id`, `source_id`, `file_path`); the source's files and their state rows cascade. |
+| Delete chunk set | Chunks deleted by `chunk_set_id` filter; state rows cascade. Refused for the default set, for the only set (a corpus with no sets is a corpus nothing can search) and while a job is working on the set. |
+| Delete corpus | Chunks deleted by `corpus_id` filter, once per distinct collection its sets occupy. Cascades to its sources, files, chunk sets, jobs and the rows mapping keys to it. A key mapped only to that corpus is left mapped to nothing, which means every corpus; revoke it instead if that is not wanted. |
 | Change embedding model | Not an edit, and not a corpus-level act at all. Add a chunk set on the new model; it backfills while the live set keeps serving; promote when complete; drop the old set. See [D-21](decisions.md#d-21-chunk-sets-not-corpus-level-chunking). |
 
 ## Storage budget
