@@ -102,6 +102,22 @@ public sealed class DocumentReader(CatalogDbContext db)
         return state is null ? null : (state.Status, state.StatusDetail);
     }
 
+    /// <summary>
+    /// How many sources of the corpus have a file recorded at this path, whatever state it is in.
+    ///
+    /// The catalogue, not the index: a file that extracted to nothing (a scanned PDF) is
+    /// recorded with no chunks, so counting sources from chunks misses it, and the file list
+    /// shows it. Across the corpus rather than one chunk set, because a source belongs to every
+    /// set of its corpus and the list shows a file a set has not reached yet as pending.
+    /// </summary>
+    public async Task<int> SourceCountAtAsync(
+        string corpusId, string relativePath, CancellationToken ct = default) =>
+        await db.Files.AsNoTracking()
+            .Where(f => f.Source!.CorpusId == corpusId && f.RelativePath == relativePath)
+            .Select(f => f.SourceId)
+            .Distinct()
+            .CountAsync(ct);
+
     /// <summary>The one file a corpus has at this path, or null where that is not one file.</summary>
     private async Task<IndexedFile?> FileAtAsync(
         string corpusId, string relativePath, string? sourceId, CancellationToken ct)

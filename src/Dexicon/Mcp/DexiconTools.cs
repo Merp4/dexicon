@@ -272,30 +272,24 @@ public sealed class DexiconTools
             target.Set.CollectionName, target.Set.Id, filePath, ct);
 
         // A file_path is relative to its source root, so within a corpus it is not unique.
-        // A corpus with sources AI/ and Philosophy/ that both hold "Installation Guide.pdf"
-        // returns the chunks of both here, ordered by chunk index, which interleaves two
-        // different books and stitches them into one passage with line numbers on it. The
-        // result is plausible and quotable while being wrong.
-        var bySource = chunks
-            .GroupBy(c => c.SourceId ?? string.Empty)
-            .OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal)
-            .ToList();
-
-        var ambiguous = bySource.Count > 1;
-        if (ambiguous) chunks = [.. bySource[0].OrderBy(c => c.ChunkIndex)];
+        // Two sources that both hold "Installation Guide.pdf" return the chunks of both
+        // here, and stitching them interleaves two different books into one passage with
+        // line numbers on it. FileSources picks the one with the most chunks, and the
+        // header says that it did.
+        var file = await FileSources.ResolveAsync(chunks, documents, target.Corpus.Id, filePath, ct);
+        chunks = file.Chunks;
 
         var lo = Math.Max(1, aroundLine - before);
         var hi = aroundLine + after;
 
         // Out of the document where there is one, so the window is the caller's range and
         // not the span of whatever chunks happen to cover it, and so it cannot have a hole
-        // in it. Only where the path resolves to a single file: `ambiguous` means two
-        // sources hold it, and serving one book's text under the other's name is what the
-        // warning below exists for, so that case keeps the chunk path and the warning.
-        if (!ambiguous && chunks.Count > 0)
+        // in it. The document is the chosen source's: the read is by source id, so a path
+        // two sources hold resolves to the file whose chunks are being shown.
+        if (chunks.Count > 0)
         {
             var document = await documents.ForAsync(
-                target.Corpus.Id, target.Set.Id, filePath, chunks[0].SourceId, ct);
+                target.Corpus.Id, target.Set.Id, filePath, file.SourceId, ct);
 
             if (document is not null)
             {
@@ -306,7 +300,7 @@ public sealed class DexiconTools
                         $"'{filePath}' in corpus '{corpus}' has no line {aroundLine}; "
                         + $"it runs to line {document.Text.AsSpan().Count('\n') + 1}.");
 
-                return $"{filePath}:{gotLo}-{gotHi} (corpus: {corpus})\n\n"
+                return $"{filePath}:{gotLo}-{gotHi} (corpus: {corpus})\n{WarningLine(file)}\n"
                      + Passage.Stitch([(gotLo, gotHi, text)], lineNumbers);
             }
         }
@@ -328,14 +322,18 @@ public sealed class DexiconTools
         var shownLo = Math.Max(lo, pieces[0].StartLine);
         var shownHi = Math.Min(hi, pieces[^1].EndLine);
 
-        var header = $"{filePath}:{shownLo}-{shownHi} (corpus: {corpus})\n";
-        if (ambiguous)
-            header += $"! {bySource.Count} sources in this corpus contain a file at that path. " +
-                      "They are different files with the same name. This is one of them, the " +
-                      "largest; the others are not shown and not mixed in.\n";
+        var header = $"{filePath}:{shownLo}-{shownHi} (corpus: {corpus})\n{WarningLine(file)}";
         return header + "\n" +
                Passage.Stitch(pieces.Select(p => (p.StartLine, p.EndLine, p.Content)), lineNumbers, (lo, hi));
     }
+
+    /// <summary>
+    /// The line that tells a reader a path is held by several sources of the corpus, with its
+    /// newline, or nothing when it is held by one. Shared by every text read of a file by
+    /// path: <c>get_context</c> and the file resource.
+    /// </summary>
+    internal static string WarningLine(FileSource file) =>
+        file.Warning is { } warning ? $"! {warning}\n" : string.Empty;
 
     [McpServerTool(Name = "index_refresh")]
     [Description("Queue a reindex of a corpus and return immediately. Use when you know the files have changed and search looks stale.")]

@@ -91,18 +91,20 @@ public sealed class DexiconResources
                   $"{corpus.Name} for what the corpus contains.");
         }
 
+        // A path two sources of the corpus hold is two files. The one with the most chunks
+        // is read, and the header says there is another.
+        var file = await FileSources.ResolveAsync(chunks, documents, corpus.Id, path, ct);
+
         // The stored document where there is one. Stitching the chunks back together is
         // the fallback, and it is a reconstruction: it can only return the lines the
         // index happens to hold, and marks the ones it cannot account for.
-        var sources = chunks.Select(c => c.SourceId).Distinct(StringComparer.Ordinal).ToList();
-        var document = sources.Count == 1
-            ? await documents.ForAsync(corpus.Id, target.Set.Id, path, sources[0], ct)
-            : null;
+        var document = await documents.ForAsync(corpus.Id, target.Set.Id, path, file.SourceId, ct);
 
         var sb = new StringBuilder();
-        sb.Append(path).Append(" (corpus: ").Append(corpus.Name).Append(")\n\n");
+        sb.Append(path).Append(" (corpus: ").Append(corpus.Name).Append(")\n")
+          .Append(DexiconTools.WarningLine(file)).Append('\n');
         sb.Append(document?.Text
-            ?? Passage.Stitch(chunks.Select(h => (h.StartLine, h.EndLine, h.Content))));
+            ?? Passage.Stitch(file.Chunks.Select(h => (h.StartLine, h.EndLine, h.Content))));
         return sb.ToString();
     }
 

@@ -179,109 +179,119 @@ public static class CorpusEndpoints
         // A path rather than a file id, and a query parameter rather than a route segment:
         // the handle a caller already has is the path, because that is what search returns,
         // and a relative path contains slashes.
-        g.MapGet("/{nameOrId}/file", async (string nameOrId, string path, int? start, RequestContext rc,
-            ScopeResolver scopes, IVectorStore vectors, DocumentReader documents, CancellationToken ct) =>
+        g.MapGet("/{nameOrId}/file", FileAsync).Produces<IndexedFileText>();
+    }
+
+    /// <summary>
+    /// The handler of <c>GET /api/corpora/{name}/file</c>, a method so a test can call it
+    /// without a server.
+    /// </summary>
+    internal static async Task<IResult> FileAsync(string nameOrId, string path, int? start, RequestContext rc,
+        ScopeResolver scopes, IVectorStore vectors, DocumentReader documents, CancellationToken ct)
+    {
+        if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
+        if (string.IsNullOrWhiteSpace(path)) return Results.BadRequest(new { error = "path is required" });
+
+        var scope = await scopes.ResolveReadableAsync(rc.RequirePrincipal(), [nameOrId], ct);
+        var target = scope.Targets[0];
+
+        // By FILTER, not by search. An early version of the MCP resource used keyword
+        // search for the path, which let relevance decide which of a file's chunks came
+        // back, so a reader asking for a file got a plausible one with holes in it.
+        var chunks = await vectors.GetFileChunksAsync(
+            target.Set.CollectionName, target.Set.Id, path, ct);
+
+        if (chunks.Count == 0)
         {
-            if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
-            if (string.IsNullOrWhiteSpace(path)) return Results.BadRequest(new { error = "path is required" });
+            // A file with no chunks is not necessarily a file that is not there. A
+            // scanned PDF is indexed, known and empty, and telling the reader their
+            // path was wrong sends them to check a path that is right.
+            var state = await documents.StatusAtAsync(target.Corpus.Id, target.Set.Id, path, ct);
 
-            var scope = await scopes.ResolveReadableAsync(rc.RequirePrincipal(), [nameOrId], ct);
-            var target = scope.Targets[0];
+            return Results.NotFound(state is { Status: FileStatus.Empty } empty
+                ? new
+                {
+                    title = "No text",
+                    detail = $"'{path}' is indexed in '{target.Corpus.Name}:{target.Set.Name}' " +
+                             $"and has no text: {empty.Detail ?? "no extractable text content"}.",
+                }
+                : new
+                {
+                    title = "Not indexed",
+                    detail = $"No indexed file '{path}' in '{target.Corpus.Name}:{target.Set.Name}'. " +
+                             "Paths are exactly as search reports them.",
+                });
+        }
 
-            // By FILTER, not by search. An early version of the MCP resource used keyword
-            // search for the path, which let relevance decide which of a file's chunks came
-            // back, so a reader asking for a file got a plausible one with holes in it.
-            var chunks = await vectors.GetFileChunksAsync(
-                target.Set.CollectionName, target.Set.Id, path, ct);
+        // The document itself where it is stored, and the chunks put back together
+        // where it is not.
+        //
+        // Stitching was the only option while a chunk payload was the only copy of a
+        // workspace file's text: it reassembles the file from the pieces the index
+        // happens to hold and marks the lines it cannot account for. Reading the
+        // extracted text instead returns the document as extracted, which cannot have
+        // holes and does not depend on which chunk set is being looked at.
+        //
+        // Both are resolved before either is used, because the fallback needs the
+        // chunks anyway: they carry the file's first line number.
+        //
+        // A path two sources of the corpus hold is two files, and chunks of both would
+        // stitch into one text. FileSources picks the source with the most chunks, as
+        // get_context does, and the response carries the warning.
+        var file = await FileSources.ResolveAsync(chunks, documents, target.Corpus.Id, path, ct);
+        chunks = file.Chunks;
+        var document = await documents.ForAsync(target.Corpus.Id, target.Set.Id, path, file.SourceId, ct);
 
-            if (chunks.Count == 0)
-            {
-                // A file with no chunks is not necessarily a file that is not there. A
-                // scanned PDF is indexed, known and empty, and telling the reader their
-                // path was wrong sends them to check a path that is right.
-                var state = await documents.StatusAtAsync(target.Corpus.Id, target.Set.Id, path, ct);
+        var pieces = chunks.Select(c => (c.StartLine, c.EndLine, c.Content)).ToList();
+        var stitched = Passage.Stitch(pieces, lineNumbers: false);
 
-                return Results.NotFound(state is { Status: FileStatus.Empty } empty
-                    ? new
-                    {
-                        title = "No text",
-                        detail = $"'{path}' is indexed in '{target.Corpus.Name}:{target.Set.Name}' " +
-                                 $"and has no text: {empty.Detail ?? "no extractable text content"}.",
-                    }
-                    : new
-                    {
-                        title = "Not indexed",
-                        detail = $"No indexed file '{path}' in '{target.Corpus.Name}:{target.Set.Name}'. " +
-                                 "Paths are exactly as search reports them.",
-                    });
-            }
+        var text = document?.Text ?? stitched;
+        var store = document?.Store ?? "chunks";
 
-            // The document itself where it is stored, and the chunks put back together
-            // where it is not.
-            //
-            // Stitching was the only option while a chunk payload was the only copy of a
-            // workspace file's text: it reassembles the file from the pieces the index
-            // happens to hold and marks the lines it cannot account for. Reading the
-            // extracted text instead returns the document as extracted, which cannot have
-            // holes and does not depend on which chunk set is being looked at.
-            //
-            // Both are resolved before either is used, because the fallback needs the
-            // chunks anyway: they carry the file's first line number.
-            var sources = chunks.Select(c => c.SourceId).Distinct(StringComparer.Ordinal).ToList();
-            var document = sources.Count == 1
-                ? await documents.ForAsync(target.Corpus.Id, target.Set.Id, path, sources[0], ct)
-                : null;
+        // The marker Stitch writes where the index is missing lines. Counted here so a
+        // caller can say "3 gaps" without reading the text for it. A document read
+        // whole has none by construction.
+        var gaps = document is null ? stitched.Split("… lines").Length - 1 : 0;
 
-            var pieces = chunks.Select(c => (c.StartLine, c.EndLine, c.Content)).ToList();
-            var stitched = Passage.Stitch(pieces, lineNumbers: false);
+        // A WINDOW of the file, not the head of it.
+        //
+        // This used to return the first 400,000 characters with "…(truncated)" glued on
+        // the end and no way to ask for the rest. That is fine for a source file and
+        // useless for a book: a 700-page technical book runs to two or three million
+        // characters, so the viewer showed the first chapter or two and called the rest
+        // of the book an implementation detail. Worse, it reported the line range of the
+        // WHOLE file while showing a fraction of it, so the header said 1–40,521 over
+        // about five thousand lines of text.
+        const int WindowChars = 400_000;
+        var total = text.Length;
+        var offset = Math.Clamp(start ?? 0, 0, Math.Max(total - 1, 0));
+        var window = text.Substring(offset, Math.Min(WindowChars, total - offset));
+        var more = offset + window.Length < total;
 
-            var text = document?.Text ?? stitched;
-            var store = document?.Store ?? "chunks";
+        // Line numbers for THIS window. Counting newlines before it is exact and cheap;
+        // reporting the file's own first line here is what made the header lie.
+        //
+        // A document starts at line 1 whatever the index holds. The stitch starts at
+        // the first line any chunk covers, which is not the same number when the
+        // opening of the file was never chunked.
+        var firstLine = document is not null ? 1 : chunks.Min(c => c.StartLine);
+        var windowStart = firstLine + text.AsSpan(0, offset).Count('\n');
+        var windowEnd = windowStart + window.AsSpan().Count('\n');
 
-            // The marker Stitch writes where the index is missing lines. Counted here so a
-            // caller can say "3 gaps" without reading the text for it. A document read
-            // whole has none by construction.
-            var gaps = document is null ? stitched.Split("… lines").Length - 1 : 0;
-
-            // A WINDOW of the file, not the head of it.
-            //
-            // This used to return the first 400,000 characters with "…(truncated)" glued on
-            // the end and no way to ask for the rest. That is fine for a source file and
-            // useless for a book: a 700-page technical book runs to two or three million
-            // characters, so the viewer showed the first chapter or two and called the rest
-            // of the book an implementation detail. Worse, it reported the line range of the
-            // WHOLE file while showing a fraction of it, so the header said 1–40,521 over
-            // about five thousand lines of text.
-            const int WindowChars = 400_000;
-            var total = text.Length;
-            var offset = Math.Clamp(start ?? 0, 0, Math.Max(total - 1, 0));
-            var window = text.Substring(offset, Math.Min(WindowChars, total - offset));
-            var more = offset + window.Length < total;
-
-            // Line numbers for THIS window. Counting newlines before it is exact and cheap;
-            // reporting the file's own first line here is what made the header lie.
-            //
-            // A document starts at line 1 whatever the index holds. The stitch starts at
-            // the first line any chunk covers, which is not the same number when the
-            // opening of the file was never chunked.
-            var firstLine = document is not null ? 1 : chunks.Min(c => c.StartLine);
-            var windowStart = firstLine + text.AsSpan(0, offset).Count('\n');
-            var windowEnd = windowStart + window.AsSpan().Count('\n');
-
-            return Results.Ok(new IndexedFileText(
-                target.Corpus.Name,
-                target.Set.Name,
-                path,
-                windowStart,
-                windowEnd,
-                gaps,
-                more,
-                window,
-                offset,
-                total,
-                more ? offset + window.Length : null,
-                store));
-        }).Produces<IndexedFileText>();
+        return Results.Ok(new IndexedFileText(
+            target.Corpus.Name,
+            target.Set.Name,
+            path,
+            windowStart,
+            windowEnd,
+            gaps,
+            more,
+            window,
+            offset,
+            total,
+            more ? offset + window.Length : null,
+            store,
+            file.Warning));
     }
 
     /// <summary>One file, and what one chunk set made of it.</summary>

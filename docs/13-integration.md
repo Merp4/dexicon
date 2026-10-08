@@ -266,15 +266,22 @@ together from the chunk payloads, and it can then carry the gaps the chunker lef
 `get_context` and the file endpoint both disclose in the text as `… lines N-M not indexed …`.
 `POST /api/context` follows the same split for each hit.
 
-**A duplicate path is where the three diverge.** A file path is relative to its source
-root, so within a corpus it is not unique: two sources can each hold
+**A duplicate path is resolved the same way by the three lookups.** A file path is relative
+to its source root, so within a corpus it is not unique: two sources can each hold
 `Installation Guide.pdf`, and they are two different books. A lookup is given only the
-path. `get_context` detects the ambiguity, reads the source with the most chunks and
-warns, because serving one book's text under the other's name is plausible, quotable and
-wrong. The file endpoint and the `dexicon://.../file/` resource read the chunks of every
-source that holds the path and join them without a warning. `POST /api/context` is
-answering a search, and a hit carries the source it came from, so there is no ambiguity to
-resolve and it reads that source's document.
+path. `get_context`, the `dexicon://.../file/` resource and `GET /api/corpora/{name}/file`
+read the source with the most chunks (ties go to the lower source id) and warn, because
+serving one book's text under the other's name is plausible, quotable and wrong. The
+tool and the resource put the warning on the line under the header, starting `! `. The
+endpoint returns the same sentence, without the `! `, as the `warning` property of the
+JSON body on every window of the file, and omits the property when one source holds the
+path. The sentence is `2 sources in this corpus contain a file at that path. They are
+different files with the same name. This is one of them, the largest; the others are not
+shown and not mixed in.`, where the count is the number of sources of the corpus that have
+a file at the path, including one with no text (a scanned PDF) and so no chunks.
+
+`POST /api/context` is answering a search, and a hit carries the source it came from, so
+there is no ambiguity to resolve and it reads that source's document.
 
 ### Why the two reads are POST
 

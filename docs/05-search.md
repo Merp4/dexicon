@@ -245,9 +245,9 @@ Search returns windows onto chunks. Two ways to get more, and only one of them i
   extracted text of one indexed file, whole. It comes from
   `blob_texts` or `file_texts`; where neither holds it, which is a code file on a mount,
   the chunks are stitched back together and the gaps are marked. A path is relative to its
-  source root, so where two sources of the corpus hold the same path, the stitched chunks of
-  both are joined without a warning ([06](06-mcp-surface.md#resources)); `get_context` detects
-  that case and reads one source.
+  source root, so where two sources of the corpus hold the same path, the resource reads the
+  one with the most chunks, as `get_context` does, and prints the same warning under the
+  header ([06](06-mcp-surface.md#resources)).
 
 Whole-file retrieval is a resource rather than another tool. It is a read of a named
 thing, which is what resources are for, and D-11 treats the tool count as a budget every

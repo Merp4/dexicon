@@ -1879,6 +1879,10 @@ function FileViewer({
             <CopyButton text={file.text} label="Copy text" />
           </div>
 
+          {/* Present when another source of the corpus holds a file at this path. The text
+              below is one of them, and the list shows both. */}
+          {file.warning && <Notice tone="warn" className="mb-2.5 text-xs">{file.warning}</Notice>}
+
           <pre className="mono m-0 max-h-[62vh] overflow-auto rounded-md bg-muted p-3 text-xs whitespace-pre">
             {lines.map((line, i) => {
               const n = file.startLine + i;
