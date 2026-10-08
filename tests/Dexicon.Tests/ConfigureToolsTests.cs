@@ -144,7 +144,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ACorpusSFiltersAreMergedWithWhatItHasAndResetByName()
+    public async Task TheFiltersOfACorpusAreMergedWithWhatItHasAndResetByName()
     {
         await using var db = _harness.NewContext();
 
@@ -269,7 +269,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ALinkSTargetIsNotReturnedToTheKey()
+    public async Task ALinkTargetIsNotReturnedToTheKey()
     {
         // The resolver's message says where a link leads: host text, for a key that holds
         // configure and nothing else.
@@ -384,7 +384,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ACorpusNameWithALineBreakStaysOnTheFolderSLine()
+    public async Task ACorpusNameWithALineBreakStaysOnTheLineOfTheFolder()
     {
         // New names cannot hold one; a corpus created before that rule can.
         await using var db = _harness.NewContext();
@@ -615,7 +615,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ANameInAChangeSLogLineCanNeitherBreakItNorReachATerminal()
+    public async Task ANameInTheLogLineOfAChangeCanNeitherBreakItNorReachATerminal()
     {
         // A key's name and a corpus's are typed text. Raw, a line break forges a log line and
         // an escape sequence clears the screen of a terminal tailing the log.
