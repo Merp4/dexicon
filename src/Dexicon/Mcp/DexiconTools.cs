@@ -636,7 +636,7 @@ public sealed class DexiconTools
 
     /// <summary>
     /// The most characters of a caller's value that an error repeats: the length a corpus name may have
-    /// (<see cref="CorpusConfiguration.NameMax"/>, which <see cref="ScopeResolver.ShownMax"/> equals), so a
+    /// (<see cref="CorpusConfiguration.NameMax"/>, which is <see cref="ScopeResolver.ShownMax"/>), so a
     /// name that exists is never cut.
     /// </summary>
     internal const int EchoMax = ScopeResolver.ShownMax;

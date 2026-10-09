@@ -1,3 +1,4 @@
+using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
 using Dexicon.Core.Embedding;
@@ -61,8 +62,11 @@ public sealed class CorpusConfiguration(
         "The path is outside the workspace, or passes through a link, and links are not followed. "
         + "list_folders shows what is mounted.";
 
-    /// <summary>The length the model declares for a corpus name.</summary>
-    internal const int NameMax = 200;
+    /// <summary>
+    /// The length the model declares for a corpus name. It is <see cref="ScopeResolver.ShownMax"/>, the most that an
+    /// error repeats of a name, so a name that exists is never cut in an error.
+    /// </summary>
+    internal const int NameMax = ScopeResolver.ShownMax;
 
     /// <summary>
     /// Held from the last name check to the insert, which makes the two one step. The unique

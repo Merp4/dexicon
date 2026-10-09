@@ -1,3 +1,4 @@
+using Dexicon.Api;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Infrastructure;
@@ -127,6 +128,16 @@ public sealed class ScopeMessageTests : IAsyncLifetime
         DexiconTools.Echo(new string('a', 250)).ShouldBe(new string('a', 200) + "...");
         DexiconTools.Echo(new string('a', 200)).ShouldBe(new string('a', 200));
         DexiconTools.Echo(new string('a', 201)).ShouldBe(new string('a', 200) + "...");
+    }
+
+    [Fact]
+    public void TheLongestNameACorpusMayHaveIsTheLongestAnEchoRepeats()
+    {
+        CorpusConfiguration.NameMax.ShouldBe(200);
+        ScopeResolver.ShownMax.ShouldBe(CorpusConfiguration.NameMax);
+        var longest = new string('n', CorpusConfiguration.NameMax);
+
+        DexiconTools.Echo(longest).ShouldBe(longest);
     }
 
     [Fact]
