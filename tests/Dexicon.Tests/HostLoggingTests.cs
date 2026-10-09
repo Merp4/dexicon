@@ -1,4 +1,6 @@
+using Dexicon.Core.Configuration;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -7,7 +9,8 @@ namespace Dexicon.Tests;
 /// <summary>
 /// The application itself, started the way it is deployed, with its console captured: its logger writes
 /// through <see cref="Dexicon.Infrastructure.OneLineLogSink"/>, startup reports an unusable chunk default
-/// once, and a failure in startup is logged through the sink and not printed raw. Reverting
+/// once, and a failure in `Bootstrapper.InitialiseAsync` or while running is logged through the sink and not printed raw.
+/// A failure in `builder.Build()`, which runs before the `try` in Program.cs, is not covered. Reverting
 /// <c>Log.Logger = ...</c> or <c>UseSerilog()</c> in <c>Program.cs</c> fails these.
 /// </summary>
 [Collection(ConsoleOutputCollection.Name)]
@@ -42,7 +45,27 @@ public sealed class HostLoggingTests : IDisposable
         Console.SetOut(_console);
         Serilog.Log.CloseAndFlush();
         foreach (var (name, value) in _saved) Environment.SetEnvironmentVariable(name, value);
-        try { Directory.Delete(_data, recursive: true); } catch (IOException) { /* a file still held by the host */ }
+        // The host's catalogue connection is pooled and keeps catalog.db open after the host is disposed.
+        // The pool is keyed on the connection string, so this clears that pool and no other.
+        SqliteConnection.ClearPool(new SqliteConnection($"Data Source={new StorageOptions { DataPath = _data }.CatalogPath}"));
+        DeleteData();
+    }
+
+    /// <summary>Retries a few times, and fails the test when the folder is still there, so a leak is not silent.</summary>
+    private void DeleteData()
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                if (Directory.Exists(_data)) Directory.Delete(_data, recursive: true);
+                return;
+            }
+            catch (IOException) when (attempt < 5)
+            {
+                Thread.Sleep(100 * attempt);
+            }
+        }
     }
 
     [Fact]
