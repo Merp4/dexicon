@@ -111,19 +111,41 @@ refused only when a request sends it back, as `configure_corpus` does for a corp
 whenever it changes another filter.
 
 A history source's include list is read by git as pathspecs, so the walk's parser does not judge
-it. An element is refused when it is empty, holds a null character, has a `..` path segment
-(split on `/` and `\`; git answers `outside repository`), or starts with `//`. A corpus's default
-include list, which sources of both kinds inherit, is held to the walk's rule and to these. One
-leading `/` is accepted in both: a file source reads it as a pattern anchored at the root, and the
-history reader removes the slash before passing the pathspec, because git rejects `/build` as a
-path outside the repository. An element of only `/` compiles to no rule in the walk, so the
-history reader drops it as well, and a list of only such elements selects every path. A file
-source's include list may hold `..`: its patterns are matched against paths below the root, so
-such an element matches nothing. What else git rejects, such as malformed pathspec magic
-(`:(...)`), is not checked, and fails each pass of the history source with git's message as the
-reason. The check is of syntax: a pattern that compiles but is slow to match passes it, and the
-lines of a `.gitignore` or `.dexiconignore` in the tree are not checked.
+it. An element is refused when it is empty, holds a null character, or is a path git rejects:
 
+- a path that climbs out of the repository with `..`. Segments are split on `/` only and judged
+  lexically, as git resolves them: empty and `.` segments are skipped and each `..` removes one
+  level, so `a/../b` and `docs/..` are accepted and `..`, `../x` and `a/../..` are refused. A
+  backslash is an ordinary character in a name on Linux, which is what runs Dexicon.
+- a rooted path: one starting with `//`, or one whose path starts with `/` after pathspec magic,
+  such as `:(glob)/docs`.
+- an element starting with `/:`. Removing its slash would turn the name into pathspec magic
+  (`/:(exclude)docs` would exclude `docs`), so it is refused and is passed to git as written if
+  one was stored earlier.
+
+The path is the part after any magic: the long form `:(` up to the first `)` (an element with no
+closing `)` is left to git), or the short form, `:` followed by any of `!`, `^` and `/` and an
+optional second `:`. So `:!../x` and `:(glob)../x` climb out, and `:!/docs` does not, because its
+`/` is the short form's `top` magic. A corpus's default include list, which sources of both
+kinds inherit, is held to the walk's rule and to these. The refusal says why in the same words
+for both, because a caller adding a default may have no history source yet.
+
+One leading `/` is accepted in both: a file source reads it as a pattern anchored at the root,
+and the history reader removes the slash before passing the pathspec, because git rejects
+`/build` as a path outside the repository. The path is the same, matched by git's rules. An
+element of only `/` compiles to no rule in the walk, so the history reader drops it as well, and
+a list of only such elements selects every path. A file source's include list may hold a path
+that climbs out with `..`: its patterns are matched against paths below the root, so such an
+element matches nothing. What else git rejects, such as malformed pathspec magic (`:(bad)x`), is
+not checked, and fails each pass of the history source with git's message as the reason. The
+check is of syntax: a pattern that compiles but is slow to match passes it, and the lines of a
+`.gitignore` or `.dexiconignore` in the tree are not checked.
+
+Saving also sends lists back. The web UI's Save defaults form sends both default lists, its
+source edit forms send the lists they show (a field that follows the corpus default is not
+sent), and `configure_corpus` sends a corpus's defaults whole, so a stored list over the caps or
+holding a path that climbs out blocks that save, whichever field was edited, until the list is
+edited. The upgrade does not change a stored row.
 Worktrees are the case that prompted `2`. Reported against a checkout with four of them:
 22,004 files walked to 5,463 tracked ones, and search returning the same document at two
 older commits. That is worse than noise — a hit from a stale copy carries a real path and
@@ -315,7 +337,9 @@ half and it is what still answers "which files" without it.
 
 The source's include globs become git pathspecs, so they mean whose history and narrow the
 diff at the same time. A leading `/` is removed first, as described under the glob rules above.
-Excludes are not passed: git's exclude pathspec syntax is its own,
+The pathspecs are matched by git, not by the file walk: git's default matching lets `*` cross `/`,
+so `docs/*.md` and `/docs/*.md` select a commit touching `docs/sub/b.md`, which the walk's `*`
+does not match. The two readers are not translated into each other. Excludes are not passed: git's exclude pathspec syntax is its own,
 and mapping one glob language onto another quietly is how a filter comes to mean something
 else.
 

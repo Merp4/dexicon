@@ -333,15 +333,17 @@ A change that leaves every value as it was queues nothing and says so. A setting
 and named in `reset`, a file setting on a history source, a `since` that is not a
 `yyyy-MM-dd` date, an `include` or `exclude` list of more than 200 elements or with an element of
 more than 500 characters, a null element or a pattern that does not compile (such as `[z-a]`; a
-history source's `include` is held to null, empty, null-character, `..`-segment and `//`-leading
-elements instead, because git reads it as pathspecs, and a leading `/` is accepted and removed
-before git is asked), and a `folder` holding a null character are refused before anything
-changes. A corpus's default `include` list, which sources of both kinds inherit, is held to both
-sets of rules. `configure_corpus` sends a corpus's defaults whole whenever it changes a filter, so
-a list already stored with such a pattern, or past the caps, is refused again when only the other
-filter is changed; `reset` clears it. The message names the list and the position and does not
+history source's `include` is instead held to non-empty elements without a null character, and
+to paths git accepts: not one that climbs out of the repository with `..` (`a/../b` is inside it),
+not a rooted one such as `//docs` or `:(glob)/docs`, and not one starting with `/:`; a single
+leading `/` is accepted and removed before git is asked), and a `folder` holding a null character
+are refused before anything changes. A corpus's default `include` list, which sources of both
+kinds inherit, is held to both sets of rules. `configure_corpus` sends a corpus's defaults whole
+whenever it changes a filter, and the web UI's Save defaults form sends both default lists, so a
+list already stored with such a pattern, or past the caps, is refused again when only another
+filter is changed; `reset` clears it from the tools, and editing the list clears it from the UI.
+The message names the list and the position (the list alone for the count cap) and does not
 repeat the pattern.
-
 ### `propose_removal`
 
 Two more tools, listed only to a key holding `propose`
