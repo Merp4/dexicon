@@ -394,12 +394,13 @@ export const api = {
    * from the last.
    *
    * A request that fails is recorded in `failed` as a request-level entry (`file: null`)
-   * carrying the error's message. A 4xx answer, such as the 400 for a request in which every file
-   * was refused, does not stop the drop: the next request is still sent, as the files after the
-   * refused ones were stored when the whole drop was one request. Any other failure (5xx, no
-   * answer, an answer that is not an upload result) stops it, and each file not yet sent is added
-   * to `failed` by name with the reason `Not sent`. If nothing was stored and a request failed,
-   * the first failure is thrown, as for a single request.
+   * carrying the error's message. A 4xx answer other than 401 and 403, such as the 400 for a
+   * request in which every file was refused, does not stop the drop: the next request is still
+   * sent, as the files after the refused ones were stored when the whole drop was one request.
+   * Any other failure (401, 403, 5xx, no answer, an answer that is not an upload result) stops it,
+   * because an expired token or a missing scope answers every request the same way, and each file
+   * not yet sent is added to `failed` by name with the reason `Not sent`. If nothing was stored
+   * and a request failed, the first failure is thrown, as for a single request.
    */
   uploadDocuments: async (corpus: string, files: File[]): Promise<UploadResponse> => {
     if (files.length <= UPLOAD_BATCH_FILES) return postUploadBatch(corpus, files);
@@ -418,7 +419,7 @@ export const api = {
       } catch (e) {
         errors.push(e);
         failed.push({ file: null, error: e instanceof Error ? e.message : String(e) });
-        if (e instanceof ApiError && e.status >= 400 && e.status < 500) continue;
+        if (e instanceof ApiError && isRefusal(e.status)) continue;
         for (const f of files.slice(end)) failed.push({ file: f.name, error: UPLOAD_NOT_SENT });
         break;
       }
@@ -518,6 +519,11 @@ export const UPLOAD_BATCH_FILES = 10;
 
 /** The reason given for a file that a stopped upload never sent. */
 const UPLOAD_NOT_SENT = 'Not sent: an earlier request failed.';
+
+/** Whether a failed request's status says only that its own files were refused, so the next request may succeed. */
+function isRefusal(status: number): boolean {
+  return status >= 400 && status < 500 && status !== 401 && status !== 403;
+}
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;

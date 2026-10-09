@@ -304,6 +304,38 @@ describe('uploading many files', () => {
     expect(result.job).toEqual({ id: 'job-3' });
   });
 
+  it.each([409, 413, 415, 422])('sends the next request after a %i answer', async (status) => {
+    uploadFetch
+      .mockImplementationOnce(accepted(1))
+      .mockResolvedValueOnce(problem(status, 'Refused', 'nothing stored'))
+      .mockImplementationOnce(accepted(3));
+
+    const result = await api.uploadDocuments('library', files(21));
+
+    expect(uploadFetch).toHaveBeenCalledTimes(3);
+    expect(result.stored).toHaveLength(11);
+    expect(result.failed).toEqual([{ file: null, error: 'Refused: nothing stored' }]);
+  });
+
+  it.each([
+    [401, 'Missing credentials', 'Provide a token.'],
+    [403, 'Forbidden', 'The key lacks the ingest scope.'],
+  ])('stops at a %i answer, as every later request would get the same one', async (status, title, detail) => {
+    uploadFetch
+      .mockImplementationOnce(accepted(1))
+      .mockResolvedValueOnce(problem(status, title, detail))
+      .mockImplementationOnce(accepted(3));
+
+    const result = await api.uploadDocuments('library', files(25));
+
+    expect(uploadFetch).toHaveBeenCalledTimes(2);
+    expect(result.stored).toHaveLength(10);
+    expect(result.failed).toEqual([
+      { file: null, error: `${title}: ${detail}` },
+      ...files(25).slice(20).map((f) => ({ file: f.name, error: UNSENT })),
+    ]);
+  });
+
   it('returns the later batches when the first was refused outright', async () => {
     uploadFetch
       .mockResolvedValueOnce(problem(400, 'No files could be stored', 'f01.txt: empty'))
