@@ -9,8 +9,10 @@ namespace Dexicon.Tests;
 /// Two requests queuing a refresh of one corpus at the same moment queue one job.
 ///
 /// A queued job is looked for and, when none is there, added. The lookup and the save are one step under a
-/// lock, so two requests that arrive together cannot both find none and queue a job each.
+/// lock, so two requests that arrive together cannot both find none and queue a job each. It holds that
+/// lock for the patience of its gate, so it runs in the collection that runs alone.
 /// </summary>
+[Collection(nameof(AttachmentLockCollection))]
 public sealed class ConcurrentQueuingTests
 {
     /// <summary>
