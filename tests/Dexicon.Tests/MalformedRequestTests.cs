@@ -7,8 +7,8 @@ using Dexicon.Core.Search;
 using Dexicon.Infrastructure;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Dexicon.Tests;
@@ -55,6 +55,17 @@ public sealed class MalformedRequestTests
     }
 
     [Fact]
+    public async Task AMappingReplacementByAKeyWithoutAdminIsRefusedBeforeItsBodyIsRead()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await using var db = harness.NewContext();
+
+        var result = await SystemEndpoints.ReplaceCorporaAsync("any", new UpdateTokenCorporaRequest(null!), AsIngester(), db, default);
+
+        StatusOf(result).ShouldBe(403);
+    }
+
+    [Fact]
     public async Task AnEmptyCorpusListStillLiftsTheRestriction()
     {
         // The control for the test above: what an empty list means has not changed.
@@ -71,7 +82,7 @@ public sealed class MalformedRequestTests
     }
 
     [Theory]
-    [InlineData(SystemEndpoints.MaxExpiryDays + 1)]
+    [InlineData(36_501)]
     [InlineData(int.MaxValue)]
     [InlineData(-1)]
     [InlineData(int.MinValue)]
@@ -96,11 +107,12 @@ public sealed class MalformedRequestTests
         await using var db = harness.NewContext();
 
         var result = await SystemEndpoints.CreateTokenAsync(
-            new CreateTokenRequest("agent", ExpiresInDays: SystemEndpoints.MaxExpiryDays),
+            new CreateTokenRequest("agent", ExpiresInDays: 36_500),
             AsAdmin(), new TokenService(db, TimeProvider.System), db, default);
 
         var expires = result.ShouldBeOfType<Ok<CreatedTokenResponse>>().Value!.Token.ExpiresUtc.ShouldNotBeNull();
-        expires.ShouldBeGreaterThan(DateTime.UtcNow.AddDays(SystemEndpoints.MaxExpiryDays - 1));
+        expires.ShouldBeGreaterThan(DateTime.UtcNow.AddDays(36_499));
+        SystemEndpoints.MaxExpiryDays.ShouldBe(36_500, "the documents state 36,500");
     }
 
     [Fact]
@@ -158,6 +170,29 @@ public sealed class MalformedRequestTests
         await using var check = harness.NewContext();
         (await check.Files.ToDictionaryAsync(f => f.RelativePath, f => f.BlobSha256))
             .ShouldBe(new Dictionary<string, string?> { ["a.txt"] = a.Sha256, ["b.txt"] = b.Sha256 }, ignoreOrder: true);
+    }
+
+    [Fact]
+    public async Task AStoredDocumentIsStillRenamedToANameOnlyAnotherCorpusHolds()
+    {
+        // A path is unique within a source, and each corpus has its own upload source.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var corpus = await db.Corpora.SingleAsync();
+        var elsewhere = (await harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("papers"), default)).Value!;
+        var a = await documents.StoreAsync(new MemoryStream("the first document"u8.ToArray()), "a.txt");
+        var b = await documents.StoreAsync(new MemoryStream("the second document"u8.ToArray()), "b.txt");
+        await documents.AttachAsync(corpus, a.Sha256, "a.txt");
+        await documents.AttachAsync(elsewhere, b.Sha256, "b.txt");
+
+        await documents.AttachAsync(corpus, a.Sha256, "b.txt");
+
+        await using var check = harness.NewContext();
+        (await check.Files.Where(f => f.Source!.CorpusId == corpus.Id).Select(f => f.RelativePath).ToListAsync())
+            .ShouldBe(["b.txt"]);
+        (await check.Files.CountAsync(f => f.Source!.CorpusId == elsewhere.Id)).ShouldBe(1);
     }
 
     [Fact]
