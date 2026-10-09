@@ -133,6 +133,18 @@ describe('creating a corpus', () => {
     expect(createCorpus.mock.calls[0][0]).toMatchObject({ chunkSize: 8192, chunkOverlap: 1024 });
   });
 
+  it('shows the capped size in the hint and in the model list', async () => {
+    const { user, dialog } = await openCreate();
+
+    await user.click(within(dialog).getByLabelText('Embedding model'));
+    const option = await screen.findByRole('option', { name: /qwen3/ });
+    expect(option).toHaveTextContent('8,192 tokens');
+    expect(option).not.toHaveTextContent('29,491');
+    await user.click(option);
+
+    expect(within(dialog).getByText(/chunks of 8,192 tokens/)).toBeInTheDocument();
+  });
+
   it('sends no chunk size for a model nobody has measured', async () => {
     // A guess pinned into an uneditable setting is worse than the server's own default.
     const { user, dialog } = await openCreate();

@@ -57,6 +57,9 @@ public sealed class ChunkSettingRulesTests
     [Theory]
     [InlineData(3, -1, "x", null, "chunkSize must be between 64 and 8192 tokens")]
     [InlineData(3, 5, "none", null, "chunkSize must be between 64 and 8192 tokens")]
+    [InlineData(3, 5, "custom", null, "chunkSize must be between 64 and 8192 tokens")]
+    [InlineData(256, 300, "custom", null, "chunkOverlap must be smaller than chunkSize")]
+    [InlineData(256, 32, "zzz", "[z-a]", "Unknown boundary mode")]
     [InlineData(256, -1, "x", null, "chunkOverlap cannot be negative")]
     [InlineData(256, 300, "x", null, "chunkOverlap must be smaller than chunkSize")]
     [InlineData(256, 32, "x", null, "Unknown boundary mode")]
@@ -91,6 +94,16 @@ public sealed class ChunkSettingRulesTests
         problem.Detail.ShouldBeNull();
         problem.ToRefusal().Detail.ShouldBe(problem.Title);
         problem.ToRefusal().Status.ShouldBe(400);
+    }
+
+    [Fact]
+    public void ARefusalKeepsADetailThatOnlyStartsWithItsTitle()
+    {
+        var kept = new ConfigRefusal("Too long", "Too long, by 4 characters.", 400).ToResult();
+        var dropped = new ConfigRefusal("Too long", "Too long", 400).ToResult();
+
+        kept.ShouldBeOfType<ProblemHttpResult>().ProblemDetails.Detail.ShouldBe("Too long, by 4 characters.");
+        dropped.ShouldBeOfType<ProblemHttpResult>().ProblemDetails.Detail.ShouldBeNull();
     }
 
     [Fact]

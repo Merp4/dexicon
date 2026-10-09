@@ -110,6 +110,13 @@ public static class CodeChunker
     public const int MaxChunkTokens = 8192;
 
     /// <summary>
+    /// A recommended chunk size held to the range a chunk set accepts: never over <see cref="MaxChunkTokens"/>
+    /// and never under <see cref="MinChunkTokens"/>, so a model with a very small context is not recommended
+    /// a size the set would refuse.
+    /// </summary>
+    public static int WithinChunkRange(int tokens) => Math.Clamp(tokens, MinChunkTokens, MaxChunkTokens);
+
+    /// <summary>
     /// Bumped whenever chunking OUTPUT changes for the same input and settings. Part of
     /// the chunking fingerprint, so a corpus re-chunks itself after an algorithm change.
     ///

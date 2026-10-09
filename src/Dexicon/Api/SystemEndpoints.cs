@@ -348,6 +348,17 @@ public static class SystemEndpoints
     }
 
     /// <summary>
+    /// A stored measurement as the models list shows it. A row measured before the recommendation was held
+    /// to the range a set accepts can still hold more than 8192 tokens, and the dialogs offer it.
+    /// </summary>
+    internal static ModelMeasurement? MeasurementOf(EmbeddingModelMeasurement? facts) =>
+        facts is null
+            ? null
+            : new ModelMeasurement(
+                facts.MaxInputChars, facts.TruncatesSilently, CodeChunker.WithinChunkRange(facts.RecommendedChunkTokens),
+                facts.CharsPerToken, facts.MeasuredUtc);
+
+    /// <summary>
     /// The folders directly in <paramref name="full"/>, an already-resolved directory under
     /// the workspace, as the folder picker and <c>list_folders</c> both show them. Hidden
     /// folders are left out except <c>.github</c>. A child count stops at 500, so a folder
@@ -798,11 +809,7 @@ public static class SystemEndpoints
                     m.Dimensions ?? facts?.Dimensions,
                     inUse.Contains(ModelNames.Normalise(m.Name)),
                     templates.Document, templates.Query, templates.Origin.ToString().ToLowerInvariant(),
-                    facts is null ? null : new ModelMeasurement(
-                        facts.MaxInputChars, facts.TruncatesSilently,
-                        // A row measured before the recommendation was capped can hold more than a set accepts.
-                        Math.Min(facts.RecommendedChunkTokens, CodeChunker.MaxChunkTokens),
-                        facts.CharsPerToken, facts.MeasuredUtc)));
+                    MeasurementOf(facts)));
             }
 
             return Results.Ok(new EmbeddingModelList(

@@ -209,6 +209,27 @@ describe('the Add a chunk set form', () => {
       expect(within(dialog).getByLabelText('Chunk size (tokens)')).toHaveValue(665));
   });
 
+  it('suggests no more than a chunk set accepts for a model with a very long context', async () => {
+    // 0.9 of a 32k context is 29,491 tokens, and the server refuses a size over 8,192. The size, the
+    // overlap derived from it and the hint all go through the same limit.
+    listEmbeddingModels.mockResolvedValue({
+      provider: 'ollama', managed: true, configured: 'qwen3-embedding', note: null,
+      models: [model('qwen3-embedding:latest', {
+        measured: {
+          maxInputChars: 131_072, truncatesSilently: false, recommendedChunkTokens: 29_491,
+          charsPerToken: 4, measuredUtc: new Date().toISOString(),
+        },
+      })],
+    });
+
+    const { dialog } = await openAddModal([chunkSet({ embeddingModel: 'qwen3-embedding' })]);
+
+    await waitFor(() =>
+      expect(within(dialog).getByLabelText('Chunk size (tokens)')).toHaveValue(8192));
+    expect(within(dialog).getByLabelText('Overlap (tokens)')).toHaveValue(1024);
+    expect(within(dialog).getByText(/suggested 8,192$/)).toBeInTheDocument();
+  });
+
   it('leaves the size alone for a model that has never been probed', async () => {
     // No measurement is not a licence to guess. The set being copied stays the reference.
     const { dialog } = await openAddModal();
@@ -514,6 +535,19 @@ describe('measuring a model', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('suggests no more than a chunk set accepts after measuring a model with a very long context', async () => {
+    probeEmbeddingModel.mockResolvedValue({
+      model: 'nomic-embed-text:latest', dimensions: 1024, maxInputChars: 131_072, truncatesSilently: false,
+      recommendedChunkChars: 117_964, recommendedChunkTokens: 29_491, charsPerToken: 4, contextTokens: 32_768,
+      embedCalls: 24, tookMs: 1500, summary: 'accepts everything we tried',
+    });
+
+    const user = await openModels();
+    await user.click(testLimits());
+
+    expect(await screen.findByText(/suggested chunk size/)).toHaveTextContent('suggested chunk size 8,192 tokens');
   });
 
   it('can be stopped, and stopping is not reported as a failure', async () => {

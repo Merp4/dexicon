@@ -701,8 +701,10 @@ A chunk set's size is from 64 to 8,192 tokens and its overlap is not negative an
 The same rules judge the settings a corpus is created with, for its default set, and a set added
 or changed afterwards; the custom pattern is compiled when it is set, so a bad one is refused on
 that request. Creating a corpus carries no pattern, so mode `custom` is set afterwards on the
-default set. The size recommended for a model is cut at 8,192, so a model with a longer context
-is offered a size that can be used.
+default set. The size recommended for a model is held to between 64 and 8,192 tokens, so a model
+with a longer or a much shorter context is offered a size that can be used. A set stored before
+the rules, with a size over 8,192, can still have its description or any other setting edited: an
+edit is refused only for a setting it changes.
 
 ### No chunk exceeds the budget
 
@@ -920,7 +922,7 @@ calls, with no documentation to trust and nothing indexed.
 
 Measured on this stack, both `nomic-embed-text` and `embeddinggemma` accept about 11,776
 characters of English prose, or 2,048 tokens, and **truncate without error** beyond it. Where the provider reports tokens, the recommended chunk size is 90% of the
-measured context (`CodeChunker.UsableContext`); where it does not, it is two thirds of the
+measured context (`CodeChunker.UsableContext`), held to between 64 and 8,192 tokens, the range a chunk set accepts; where it does not, it is two thirds of the
 measured characters divided by the characters-per-token estimate. The measurement is in
 characters of prose and the model counts tokens: code, minified output and CJK reach the same
 token limit in far fewer characters, which the margin absorbs.

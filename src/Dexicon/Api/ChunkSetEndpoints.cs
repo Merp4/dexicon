@@ -119,6 +119,14 @@ public static class ChunkSetEndpoints
             CreatedUtc = DateTime.UtcNow,
         };
 
+        // A corpus with no set to inherit from takes the server's configured settings, and when one of those
+        // is what fails the answer names it.
+        if (template is null
+            && ChunkSettingRules.CheckNewSet(
+                body.ChunkSize, body.ChunkOverlap, body.BoundaryMode, body.CustomBoundaryPattern, indexing, out _)
+                is { } fromConfiguration)
+            return fromConfiguration.ToResult();
+
         if (Validate(set) is { } invalid) return invalid;
 
         if (set.IsDefault)
@@ -178,7 +186,14 @@ public static class ChunkSetEndpoints
         if (body.HeadingContext is { } hc) { rechunk |= hc != set.HeadingContext; set.HeadingContext = hc; }
         if (body.Description is not null) set.Description = body.Description;
 
-        if (Validate(set) is { } invalid) return invalid;
+        // Judged for what this request changes. A set stored before a rule existed, such as a size over 8192
+        // that the corpus dialog used to send for a model with a long context, can still have its description
+        // or any other setting edited, and is refused only for the settings the request touches.
+        var touched = (body.ChunkSize is not null ? ChunkSettingFields.Size : 0)
+                      | (body.ChunkOverlap is not null ? ChunkSettingFields.Overlap : 0)
+                      | (body.BoundaryMode is { Length: > 0 } ? ChunkSettingFields.Mode : 0)
+                      | (body.CustomBoundaryPattern is not null ? ChunkSettingFields.Pattern : 0);
+        if (Validate(set, touched) is { } invalid) return invalid;
 
         await db.SaveChangesAsync(ct);
 
@@ -273,7 +288,15 @@ public static class ChunkSetEndpoints
     /// Create and update both judge the set by <see cref="ChunkSettingRules"/>, which creating a corpus
     /// uses for its default set as well.
     /// </summary>
-    private static IResult? Validate(ChunkSet set) =>
-        ChunkSettingRules.Check(set.ChunkSize, set.ChunkOverlap, set.BoundaryMode, set.CustomBoundaryPattern)
-            ?.ToResult();
+    /// <param name="touched">
+    /// The settings a change is about. A failure in settings outside it belongs to the stored set and is let
+    /// through. Null judges everything, as a new set is.
+    /// </param>
+    private static IResult? Validate(ChunkSet set, ChunkSettingFields? touched = null)
+    {
+        var problem = ChunkSettingRules.Check(set.ChunkSize, set.ChunkOverlap, set.BoundaryMode, set.CustomBoundaryPattern);
+        if (problem is null) return null;
+
+        return touched is { } changed && (problem.Fields & changed) == ChunkSettingFields.None ? null : problem.ToResult();
+    }
 }

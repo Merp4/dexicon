@@ -1,3 +1,4 @@
+using Dexicon.Api;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Embedding;
 using Dexicon.Core.Indexing;
@@ -54,6 +55,47 @@ public sealed class ChunkRecommendationTests
     public void TheRecommendationIsNeverMoreThanAChunkSetAccepts(int context, int expected)
     {
         ModelProbe.RecommendedTokens(contextTokens: context, budgetChars: 7850, charsPerToken: 3.8).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData(1, 64)]
+    [InlineData(50, 64)]
+    [InlineData(71, 64)]
+    [InlineData(72, 64)]
+    [InlineData(73, 65)]
+    public void TheRecommendationIsNeverLessThanAChunkSetAccepts(int context, int expected)
+    {
+        // 0.9 of a context of 71 tokens is 63.9, which the set would refuse.
+        ModelProbe.RecommendedTokens(contextTokens: context, budgetChars: 7850, charsPerToken: 3.8).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void ARecommendationFromACharacterBudgetThatIsTinyIsRaisedToTheMinimum()
+    {
+        ModelProbe.RecommendedTokens(contextTokens: null, budgetChars: 100, charsPerToken: 4).ShouldBe(CodeChunker.MinChunkTokens);
+    }
+
+    [Theory]
+    [InlineData(29_491, 8_192)]
+    [InlineData(8_193, 8_192)]
+    [InlineData(8_191, 8_191)]
+    [InlineData(665, 665)]
+    [InlineData(10, 64)]
+    public void AStoredMeasurementIsShownWithinTheRangeASetAccepts(int stored, int shown)
+    {
+        var row = new EmbeddingModelMeasurement
+        {
+            Provider = "ollama",
+            Model = "m",
+            Dimensions = 768,
+            MaxInputChars = 1000,
+            CharsPerToken = 4,
+            RecommendedChunkTokens = stored,
+            MeasuredUtc = DateTime.UtcNow,
+        };
+
+        SystemEndpoints.MeasurementOf(row).ShouldNotBeNull().RecommendedChunkTokens.ShouldBe(shown);
+        SystemEndpoints.MeasurementOf(null).ShouldBeNull();
     }
 
     [Fact]

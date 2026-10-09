@@ -5,9 +5,15 @@
  */
 export const MAX_CHUNK_TOKENS = 8192;
 
-/** The size to send or suggest for a model's recommendation: the recommendation, but never over the limit. */
+/** The smallest size a chunk set accepts: ChunkSettingRules.MinChunkSize on the server. */
+export const MIN_CHUNK_TOKENS = 64;
+
+/**
+ * The size to send or suggest for a model's recommendation: the recommendation, held to the range a chunk
+ * set accepts, so a model with a context of a few dozen tokens is not offered a size the server refuses.
+ */
 export function usableChunkTokens(recommended: number): number {
-  return Math.min(recommended, MAX_CHUNK_TOKENS);
+  return Math.min(Math.max(recommended, MIN_CHUNK_TOKENS), MAX_CHUNK_TOKENS);
 }
 
 /** An eighth of the size, at least one token: the overlap the server's default keeps to the size. */

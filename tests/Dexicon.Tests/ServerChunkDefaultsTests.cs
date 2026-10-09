@@ -8,6 +8,7 @@ using Dexicon.Infrastructure;
 using Dexicon.Mcp;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol;
@@ -20,6 +21,7 @@ namespace Dexicon.Tests;
 /// request is answered in the request's words. A custom boundary cannot be set at creation, and the
 /// order in which the rules are applied is fixed.
 /// </summary>
+[Collection(ConsoleOutputCollection.Name)]
 public sealed class ServerChunkDefaultsTests : IAsyncLifetime
 {
     private IndexingHarness _harness = null!;
@@ -60,6 +62,8 @@ public sealed class ServerChunkDefaultsTests : IAsyncLifetime
     {
         (await db.Corpora.CountAsync()).ShouldBe(1, "only the seeded corpus");
         (await db.ChunkSets.CountAsync()).ShouldBe(1);
+        (await db.Sources.CountAsync()).ShouldBe(1);
+        (await db.Jobs.CountAsync()).ShouldBe(0);
     }
 
     [Fact]
@@ -74,7 +78,210 @@ public sealed class ServerChunkDefaultsTests : IAsyncLifetime
         refusal.Detail.ShouldContain("chunkSize must be between 64 and 8192 tokens.");
         refusal.Detail.ShouldContain("DEXICON__INDEXING__CHUNKSIZE=10");
         refusal.Detail.ShouldContain("not from the request");
+        refusal.Detail.ShouldNotContain("send chunkSize", Case.Insensitive, "an agent has no such argument");
+        refusal.AgentDetail.ShouldNotBeNull().ShouldContain("DEXICON__INDEXING__CHUNKSIZE=10");
+        refusal.AgentDetail.ShouldContain("Ask whoever runs Dexicon to correct them.");
+        refusal.AgentDetail.ShouldNotContain("send ", Case.Insensitive);
         await NothingWasCreatedAsync(db);
+    }
+
+    [Fact]
+    public async Task AnUnusableServerSettingRefusesBeforeTheEmbeddingServiceIsAsked()
+    {
+        var probes = new ProbeCounter();
+        _harness.Embedder = probes;
+        await using var db = _harness.NewContext();
+
+        var created = await ConfiguredWith(db, size: 10).CreateCorpusAsync(new CreateCorpusRequest("papers"), default);
+
+        created.Refusal.ShouldNotBeNull().Status.ShouldBe(503);
+        probes.Probes.ShouldBe(0);
+        await NothingWasCreatedAsync(db);
+    }
+
+    /// <summary>
+    /// The size in force is quoted, whether it is the server's or the request's, and the setting the request
+    /// did not send is named as the server's.
+    /// </summary>
+    [Theory]
+    [InlineData(1000, 1200, "Asked for overlap 1200 with size 1000.", "DEXICON__INDEXING__CHUNKSIZE=1000")]
+    [InlineData(200, 300, "Asked for overlap 300 with size 200.", "DEXICON__INDEXING__CHUNKSIZE=200")]
+    [InlineData(8192, 9000, "Asked for overlap 9000 with size 8192.", "DEXICON__INDEXING__CHUNKSIZE=8192")]
+    public async Task AnOverlapPastTheServersSizeQuotesTheSizeInForce(int serverSize, int overlap, string quoted, string named)
+    {
+        await using var db = _harness.NewContext();
+
+        var refusal = (await ConfiguredWith(db, size: serverSize, overlap: 0).CreateCorpusAsync(
+            new CreateCorpusRequest("papers", ChunkOverlap: overlap), default)).Refusal.ShouldNotBeNull();
+
+        refusal.Status.ShouldBe(400);
+        refusal.Detail.ShouldContain(quoted);
+        refusal.Detail.ShouldContain(named);
+        refusal.Detail.ShouldNotContain("size 256");
+        refusal.Detail.ShouldNotContain("CHUNKOVERLAP");
+    }
+
+    [Fact]
+    public async Task AnUnusableServerSizeIsTheCauseWhateverOverlapTheRequestSent()
+    {
+        await using var db = _harness.NewContext();
+
+        var refusal = (await ConfiguredWith(db, size: 10).CreateCorpusAsync(
+            new CreateCorpusRequest("papers", ChunkOverlap: 300), default)).Refusal.ShouldNotBeNull();
+
+        refusal.Status.ShouldBe(503);
+        refusal.Detail.ShouldContain("DEXICON__INDEXING__CHUNKSIZE=10");
+        refusal.Detail.ShouldNotContain("CHUNKOVERLAP");
+    }
+
+    [Fact]
+    public async Task OnlyTheServerSettingThatFailsIsNamed()
+    {
+        // The mode is the one that is wrong. The size of 64 is fine, and the request's overlap of 70 is fine
+        // until the mode is mended, so it is the mode that is named.
+        await using var db = _harness.NewContext();
+
+        var refusal = (await ConfiguredWith(db, size: 64, mode: "zzz").CreateCorpusAsync(
+            new CreateCorpusRequest("papers", ChunkOverlap: 70), default)).Refusal.ShouldNotBeNull();
+
+        refusal.Status.ShouldBe(503);
+        refusal.Detail.ShouldContain("DEXICON__INDEXING__BOUNDARYMODE=zzz");
+        refusal.Detail.ShouldNotContain("CHUNKSIZE");
+        refusal.Detail.ShouldNotContain("CHUNKOVERLAP");
+    }
+
+    [Fact]
+    public async Task ARequestSizeBesideAUsableServerOverlapNamesTheOverlapAndNotTheSize()
+    {
+        await using var db = _harness.NewContext();
+
+        var refusal = (await ConfiguredWith(db, overlap: 150).CreateCorpusAsync(
+            new CreateCorpusRequest("papers", ChunkSize: 100), default)).Refusal.ShouldNotBeNull();
+
+        refusal.Status.ShouldBe(400);
+        refusal.Detail.ShouldContain("Asked for overlap 150 with size 100.");
+        refusal.Detail.ShouldContain("DEXICON__INDEXING__CHUNKOVERLAP=150");
+        refusal.Detail.ShouldNotContain("CHUNKSIZE");
+    }
+
+    [Fact]
+    public async Task ACorpusIsMadeWithTheServersConfiguredValuesWhenTheyAreNotTheDefaults()
+    {
+        await using var db = _harness.NewContext();
+
+        var created = await ConfiguredWith(db, size: 512, overlap: 64, mode: "blank-line")
+            .CreateCorpusAsync(new CreateCorpusRequest("papers"), default);
+        var mixed = await ConfiguredWith(db, size: 512, overlap: 64, mode: "blank-line")
+            .CreateCorpusAsync(new CreateCorpusRequest("books", ChunkSize: 1024), default);
+
+        created.Refusal.ShouldBeNull();
+        mixed.Refusal.ShouldBeNull();
+        var papers = await db.ChunkSets.AsNoTracking().SingleAsync(s => s.CorpusId == created.Value!.Id);
+        var books = await db.ChunkSets.AsNoTracking().SingleAsync(s => s.CorpusId == mixed.Value!.Id);
+        (papers.ChunkSize, papers.ChunkOverlap, papers.BoundaryMode).ShouldBe((512, 64, "blank-line"));
+        (books.ChunkSize, books.ChunkOverlap, books.BoundaryMode).ShouldBe((1024, 64, "blank-line"));
+    }
+
+    [Fact]
+    public async Task ANullChunkSizeInTheJsonBodyIsTheServersConfiguredOne()
+    {
+        var body = System.Text.Json.JsonSerializer.Deserialize<CreateCorpusRequest>(
+            """{"name":"papers","chunkSize":null,"chunkOverlap":null,"boundaryMode":null}""",
+            JsonOptions.Web)!;
+        await using var db = _harness.NewContext();
+
+        var created = await ConfiguredWith(db, size: 512, overlap: 64, mode: "none").CreateCorpusAsync(body, default);
+
+        created.Refusal.ShouldBeNull();
+        var set = await db.ChunkSets.AsNoTracking().SingleAsync(s => s.CorpusId == created.Value!.Id);
+        (set.ChunkSize, set.ChunkOverlap, set.BoundaryMode).ShouldBe((512, 64, "none"));
+    }
+
+    [Fact]
+    public void TheSettingNamesInTheMessagesAreTheOnesTheEnvironmentBinds()
+    {
+        var names = new Dictionary<string, string>
+        {
+            ["DEXICON__INDEXING__CHUNKSIZE"] = "10",
+            ["DEXICON__INDEXING__CHUNKOVERLAP"] = "300",
+            ["DEXICON__INDEXING__BOUNDARYMODE"] = "zzz",
+        };
+        var saved = names.ToDictionary(n => n.Key, n => Environment.GetEnvironmentVariable(n.Key));
+        try
+        {
+            foreach (var (name, value) in names) Environment.SetEnvironmentVariable(name, value);
+            var options = new ConfigurationBuilder()
+                .AddEnvironmentVariables()
+                .Build()
+                .GetSection(DexiconOptions.SectionName)
+                .Get<DexiconOptions>()!;
+
+            (options.Indexing.ChunkSize, options.Indexing.ChunkOverlap, options.Indexing.BoundaryMode).ShouldBe((10, 300, "zzz"));
+            var refusal = ChunkSettingRules.CheckServerDefaults(options.Indexing).ShouldNotBeNull();
+            refusal.Detail.ShouldContain("DEXICON__INDEXING__CHUNKSIZE=10");
+        }
+        finally
+        {
+            foreach (var (name, value) in saved) Environment.SetEnvironmentVariable(name, value);
+        }
+    }
+
+    [Fact]
+    public async Task AChunkSetOnACorpusWithNoSetNamesTheServerSettingThatFails()
+    {
+        await using var db = _harness.NewContext();
+        await db.ChunkSets.ExecuteDeleteAsync();
+        var options = Options.Create(new DexiconOptions { Indexing = new IndexingOptions { ChunkSize = 10 } });
+
+        var result = await ChunkSetEndpoints.CreateAsync(
+            IndexingHarness.CorpusId, new CreateChunkSetRequest("first", EmbeddingModel: "m"), AsAdmin(), new ScopeResolver(db), db,
+            _harness.Vectors, _harness.Embedder,
+            new IndexJobQueue(db, new WorkScheduler(options), NullLogger<IndexJobQueue>.Instance), options, default);
+
+        var problem = result.ShouldBeOfType<ProblemHttpResult>().ProblemDetails;
+        problem.Status.ShouldBe(503);
+        problem.Detail.ShouldNotBeNull().ShouldContain("DEXICON__INDEXING__CHUNKSIZE=10");
+        (await db.ChunkSets.CountAsync()).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task AChunkSetThatInheritsFromASetIsJudgedInTheChunkSetWordsAsBefore()
+    {
+        await using var db = _harness.NewContext();
+
+        var result = await ChunkSetEndpoints.CreateAsync(
+            IndexingHarness.CorpusId, new CreateChunkSetRequest("second", ChunkSize: 10), AsAdmin(), new ScopeResolver(db), db,
+            _harness.Vectors, _harness.Embedder,
+            new IndexJobQueue(db, new WorkScheduler(_harness.Settings), NullLogger<IndexJobQueue>.Instance), _harness.Settings, default);
+
+        var problem = result.ShouldBeOfType<ProblemHttpResult>().ProblemDetails;
+        (problem.Status, problem.Title, problem.Detail).ShouldBe((400, "chunkSize must be between 64 and 8192 tokens", null));
+    }
+
+    [Fact]
+    public async Task ASetStoredWithAnOldSizeCanStillHaveItsDescriptionEditedButNotItsSizeSetToAnotherBadOne()
+    {
+        // The corpus dialog used to send 29,491 tokens for a model with a 32k context.
+        await using var db = _harness.NewContext();
+        await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.ChunkSize, 29_491));
+        var queue = new IndexJobQueue(db, new WorkScheduler(_harness.Settings), NullLogger<IndexJobQueue>.Instance);
+
+        var description = await ChunkSetEndpoints.UpdateAsync(IndexingHarness.CorpusId, "default",
+            new UpdateChunkSetRequest(Description: "edited"), AsAdmin(), new ScopeResolver(db), db, queue, default);
+        var overlap = await ChunkSetEndpoints.UpdateAsync(IndexingHarness.CorpusId, "default",
+            new UpdateChunkSetRequest(ChunkOverlap: 10), AsAdmin(), new ScopeResolver(db), db, queue, default);
+        var worse = await ChunkSetEndpoints.UpdateAsync(IndexingHarness.CorpusId, "default",
+            new UpdateChunkSetRequest(ChunkSize: 9_000), AsAdmin(), new ScopeResolver(db), db, queue, default);
+        var mended = await ChunkSetEndpoints.UpdateAsync(IndexingHarness.CorpusId, "default",
+            new UpdateChunkSetRequest(ChunkSize: 4_000), AsAdmin(), new ScopeResolver(db), db, queue, default);
+
+        description.ShouldBeOfType<Ok<ChunkSetUpdated>>().Value!.RechunkJob.ShouldBeNull("a description needs no re-chunk");
+        overlap.ShouldBeOfType<Ok<ChunkSetUpdated>>();
+        worse.ShouldBeOfType<ProblemHttpResult>().ProblemDetails.Title.ShouldBe("chunkSize must be between 64 and 8192 tokens");
+        mended.ShouldBeOfType<Ok<ChunkSetUpdated>>();
+        await using var fresh = _harness.NewContext();
+        var set = await fresh.ChunkSets.SingleAsync();
+        (set.Description, set.ChunkSize, set.ChunkOverlap).ShouldBe(("edited", 4_000, 10));
     }
 
     [Fact]
@@ -139,6 +346,7 @@ public sealed class ServerChunkDefaultsTests : IAsyncLifetime
         (refusal.Status, refusal.Title).ShouldBe((400, "chunkOverlap must be smaller than chunkSize"));
         refusal.Detail.ShouldContain("Asked for overlap 100 with size 64.");
         refusal.Detail.ShouldContain("DEXICON__INDEXING__CHUNKSIZE=64");
+        refusal.Detail.ShouldNotContain("CHUNKOVERLAP", Case.Sensitive, "the overlap is the request's");
     }
 
     [Fact]
@@ -210,7 +418,9 @@ public sealed class ServerChunkDefaultsTests : IAsyncLifetime
             rc, new ScopeResolver(db), db, ConfiguredWith(db, size: 10), new RecordingLoggerFactory(), "papers", create: true));
 
         thrown.Message.ShouldContain("DEXICON__INDEXING__CHUNKSIZE=10");
-        thrown.Message.ShouldContain("server setting");
+        thrown.Message.ShouldContain("Ask whoever runs Dexicon to correct them.");
+        thrown.Message.ShouldNotContain("send ", Case.Insensitive, "the tool takes no chunk arguments to send");
+        thrown.Message.ShouldNotContain("chunkSize", Case.Sensitive);
     }
 
     [Fact]
@@ -253,7 +463,13 @@ public sealed class ServerChunkDefaultsTests : IAsyncLifetime
             new CreateCorpusRequest("two\nlines", ChunkSize: 10), default)).Refusal.ShouldNotBeNull();
         var colon = (await config.CreateCorpusAsync(
             new CreateCorpusRequest("a:b", ChunkSize: 10), default)).Refusal.ShouldNotBeNull();
+        var blank = (await config.CreateCorpusAsync(
+            new CreateCorpusRequest("  ", ChunkSize: 10), default)).Refusal.ShouldNotBeNull();
+        var tooLong = (await config.CreateCorpusAsync(
+            new CreateCorpusRequest(new string('n', 201), ChunkSize: 10), default)).Refusal.ShouldNotBeNull();
 
+        blank.Title.ShouldBe("Name is required");
+        tooLong.Title.ShouldBe("A corpus name is too long");
         taken.Title.ShouldBe("chunkSize must be between 64 and 8192 tokens");
         control.Title.ShouldBe("A corpus name cannot contain a control character");
         colon.Title.ShouldBe("A corpus name cannot contain ':'");
