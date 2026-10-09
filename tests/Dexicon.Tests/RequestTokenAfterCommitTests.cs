@@ -339,6 +339,11 @@ public sealed class RequestTokenAfterCommitTests
             + "\n" + Overrides
         },
         {
+            "a framework method that an override in src writes in, called through the framework type",
+            Run("using var stream = new MemoryStream(); stream.Flush(); await Task.Delay(1, ct); await db.SaveChangesAsync();")
+            + "\n" + "private sealed class SavingStream : MemoryStream { public override void Flush() { new Db().SaveChanges(); } }"
+        },
+        {
             "a constructor that writes, made after the token's last use",
             Run("await Task.Delay(1, ct); _ = new Saver(db);") + "\n" + TakesThings
         },
