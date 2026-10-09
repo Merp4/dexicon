@@ -1,7 +1,10 @@
+using System.Security.Cryptography;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Documents;
+using Dexicon.Core.Extraction;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace Dexicon.Tests;
 
@@ -63,6 +66,10 @@ public sealed class ConcurrentStoreOfOneDocumentTests
         stored[1].Sha256.ShouldBe(stored[0].Sha256);
         stored.ShouldAllBe(s => s.ExtractedChars > 0, "the text of the blob that was kept is reported to both");
         stored.Select(s => s.ExtractedChars).Distinct().Count().ShouldBe(1);
+        stored.Select(s => s.SizeBytes).Distinct().Count().ShouldBe(1);
+        stored.Select(s => s.Title).Distinct().Count().ShouldBe(1);
+        stored.Select(s => s.EmptyReason).Distinct().Count().ShouldBe(1);
+        OnlyOneBlobFileIsLeft(firstDocuments, stored[0].Sha256);
 
         await using var check = harness.NewContext();
         (await check.Blobs.CountAsync()).ShouldBe(1, "one blob for one set of bytes");
@@ -70,6 +77,128 @@ public sealed class ConcurrentStoreOfOneDocumentTests
         foreach (var context in new[] { first, second })
             context.ChangeTracker.Entries().ShouldNotContain(
                 e => e.State != EntityState.Unchanged, "the loser's pending rows are dropped, not left to fail the next save");
+    }
+
+    private static void OnlyOneBlobFileIsLeft(DocumentService documents, string sha)
+    {
+        var root = Path.GetDirectoryName(Path.GetDirectoryName(documents.PathFor(sha)))!;
+        var files = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).Select(Path.GetFileName).ToList();
+
+        files.ShouldBe([sha], "one stored file, and no .incoming copy of an upload that lost");
+    }
+
+    [Fact]
+    public async Task BytesThatAreStoredAlreadyAreNotMovedOverTheStoredFile()
+    {
+        // The move does not replace a file, so an upload of stored bytes reaches the catch that drops its
+        // copy every time, and not only when two uploads are in the window together.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+
+        var first = await documents.StoreAsync(new MemoryStream(TheSameBytes), "one.txt");
+        var again = await documents.StoreAsync(new MemoryStream(TheSameBytes), "two.txt");
+
+        first.AlreadyExisted.ShouldBeFalse();
+        again.AlreadyExisted.ShouldBeTrue();
+        OnlyOneBlobFileIsLeft(documents, first.Sha256);
+    }
+
+    /// <summary>
+    /// Fails the next save that adds a blob, once armed, after running <see cref="Before"/>. It disarms
+    /// itself first, so what <see cref="Before"/> saves is not failed in turn.
+    /// </summary>
+    private sealed class FailTheNextBlobSave : SaveChangesInterceptor
+    {
+        public bool Armed { get; set; }
+        public Exception? Failure { get; set; }
+        public Func<Task>? Before { get; set; }
+
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (!Armed || !eventData.Context!.ChangeTracker.Entries<Blob>().Any(e => e.State == EntityState.Added))
+                return result;
+
+            Armed = false;
+            if (Before is not null) await Before();
+            throw Failure!;
+        }
+    }
+
+    private static DbUpdateException ADuplicateKey() =>
+        new("save failed", new SqliteException("UNIQUE constraint failed: blobs.Sha256", 19, 1555));
+
+    private static async Task SaveTheOtherUploadsBlobAsync(IndexingHarness harness)
+    {
+        await using var other = harness.NewContext();
+        var sha = Convert.ToHexStringLower(SHA256.HashData(TheSameBytes));
+        other.Blobs.Add(new Blob
+        {
+            Sha256 = sha, SizeBytes = TheSameBytes.Length, MediaType = "text/plain",
+            OriginalFileName = "winner.txt", CreatedUtc = DateTime.UtcNow,
+        });
+        other.BlobTexts.Add(new BlobText
+        {
+            Sha256 = sha, Text = "winner", ExtractedChars = 6, Extractor = "PlainText",
+            ExtractorVersion = ExtractorVersions.Current, ExtractedUtc = DateTime.UtcNow,
+        });
+        await other.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task AFailedSaveThatIsNotAKeyAlreadyTakenStaysAnErrorEvenWhenTheBlobIsThere()
+    {
+        // Only the kind of failure tells this from the race: the blob exists, and the save was refused
+        // for another reason, so reporting the blob as the other upload's would hide the fault.
+        var fail = new FailTheNextBlobSave
+        {
+            Failure = new DbUpdateException("save failed", new SqliteException("database is locked", 5, 5)),
+        };
+        await using var harness = await IndexingHarness.StartAsync(fail, "notes");
+        fail.Before = () => SaveTheOtherUploadsBlobAsync(harness);
+        await using var db = harness.NewContext();
+        fail.Armed = true;
+
+        var thrown = await Should.ThrowAsync<DbUpdateException>(
+            () => harness.NewDocumentService(db).StoreAsync(new MemoryStream(TheSameBytes), "one.txt"));
+
+        thrown.ShouldBeSameAs(fail.Failure);
+    }
+
+    [Fact]
+    public async Task AKeyAlreadyTakenWithNoBlobBehindItStaysAnError()
+    {
+        // The duplicate was something else: no blob with this hash is there to report.
+        var fail = new FailTheNextBlobSave { Failure = ADuplicateKey() };
+        await using var harness = await IndexingHarness.StartAsync(fail, "notes");
+        await using var db = harness.NewContext();
+        fail.Armed = true;
+
+        var thrown = await Should.ThrowAsync<DbUpdateException>(
+            () => harness.NewDocumentService(db).StoreAsync(new MemoryStream(TheSameBytes), "one.txt"));
+
+        thrown.ShouldBeSameAs(fail.Failure);
+    }
+
+    [Fact]
+    public async Task TheUploadThatLostAnswersEvenIfTheCallerLeftWhileItWasSaving()
+    {
+        // The other upload's blob is committed, so reading it back is not what the caller's token is for.
+        using var cts = new CancellationTokenSource();
+        var fail = new FailTheNextBlobSave { Failure = ADuplicateKey() };
+        await using var harness = await IndexingHarness.StartAsync(fail, "notes");
+        fail.Before = async () =>
+        {
+            await SaveTheOtherUploadsBlobAsync(harness);
+            await cts.CancelAsync();
+        };
+        await using var db = harness.NewContext();
+        fail.Armed = true;
+
+        var stored = await harness.NewDocumentService(db).StoreAsync(new MemoryStream(TheSameBytes), "one.txt", cts.Token);
+
+        stored.AlreadyExisted.ShouldBeTrue();
     }
 
     [Fact]

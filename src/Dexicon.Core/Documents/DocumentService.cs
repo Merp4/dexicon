@@ -92,19 +92,16 @@ public sealed class DocumentService(
             var final = PathFor(sha);
             Directory.CreateDirectory(Path.GetDirectoryName(final)!);
 
-            if (File.Exists(final)) File.Delete(temp);
-            else
+            // The move does not replace a file. Bytes that are stored already, from an earlier upload or one
+            // that finished between this one's hash and its move, are the file this upload would have
+            // written, so its copy is dropped. One path for both, so an upload of stored bytes reaches it.
+            try
             {
-                try
-                {
-                    File.Move(temp, final);
-                }
-                catch (IOException) when (File.Exists(final))
-                {
-                    // The same bytes were placed by another upload between the check and the move. The
-                    // file is the one this upload would have written, so its copy is dropped.
-                    File.Delete(temp);
-                }
+                File.Move(temp, final);
+            }
+            catch (IOException) when (File.Exists(final))
+            {
+                File.Delete(temp);
             }
         }
         catch
