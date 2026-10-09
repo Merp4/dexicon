@@ -153,10 +153,11 @@ public static class DocumentEndpoints
                 if (section.AsFileSection() is not { } part) continue;   // a form field, or a part with an empty filename
 
                 // The application reads nothing more from the body: only this part's headers have been
-                // read. Kestrel discards the unread rest after the handler returns, as it does after the
-                // 413 answers above, so the early answer saves the temp file, hash, save, extraction and
-                // lock work of the files left out and not the bandwidth of receiving them. Each file costs
-                // that work, so the count is bounded as well as the bytes.
+                // read. A probe found Kestrel reading and discarding the unread rest after the handler
+                // returns, with the body-size limit unset as it is above, so the early answer saves the
+                // temp file, hash, save, extraction and lock work of the files left out and not the
+                // bandwidth of receiving them. Each file costs that work, so the count is bounded as well
+                // as the bytes.
                 if (filesSeen == UploadOptions.BatchFiles)
                 {
                     failures.Add(new UploadFailure(null, TooManyFilesMessage));

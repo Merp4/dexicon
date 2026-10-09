@@ -242,14 +242,16 @@ A request is read for ten file parts and one hundred multipart sections, form fi
 together. The application reads nothing past the eleventh file part or the hundred and first
 section: `failed` lists a failure of the request (`file` is `null`) that says more than ten files
 (or one hundred parts) were sent and to send the rest in another request, and the files beyond the
-limit are in neither `stored` nor `failed`. The files before it stay stored and are indexed, and
-when none of them was stored the answer is `400` ("No files could be stored", or "No files in the
-request" when only form fields were read) with the same text as its detail. Kestrel discards the
-unread rest of the body once the handler returns, as it does after a `413`, so the early answer
-saves the temp file, hash, save, extraction and lock work for the files left out but not the
-bandwidth of receiving them. The web UI sends one `files` part per file. A part whose
-`Content-Disposition` has an empty `filename` is a form field: it counts as a section, is not
-stored, and is not a failure.
+limit are in neither `stored` nor `failed`. The files before it stay stored and are indexed. When
+none of them was stored the answer is `400`: "No files could be stored" when a file part was
+reached, with the failures as its detail, and "No files in the request" when only form fields were
+read, with the request-level text as its detail when the section limit was hit and no detail
+otherwise. A probe against Kestrel with the body-size limit unset, as the endpoint sets it, found
+that the server reads and discards the unread rest of the body after the handler returns (2,500 MB
+accepted, above the request bound), so the early answer saves the temp file, hash, save,
+extraction and lock work for the files left out and not the bandwidth of receiving them. The web
+UI sends one `files` part per file. A part whose `Content-Disposition` has an empty `filename` is a
+form field: it counts as a section, is not stored, and is not a failure.
 
 A file name is stored as the document's path, which a listing, a search hit and a log line show.
 An upload or an attach is refused for a name that holds a control character (a line break
@@ -264,15 +266,22 @@ stored name, so such a document is attached through the API with a `fileName`, o
 uploaded again.
 
 Extraction of an uploaded file is abandoned after `DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS`
-(300 s), under the clock described above for workspace files. A timeout says how busy the host
-was and not what the document holds, so it is not stored: the file is listed under `failed` with
-the setting's name, nothing is stored for it, the files beside it in the request are stored, and
-sending it again extracts it again. A workspace file that times out is recorded as failed and
-retried on a later refresh. A re-extraction of a stored document after an extractor change that
-times out keeps the previous text and is retried on a later pass. Any other extraction failure
-(an encrypted or corrupt file) is stored with its message as the document's empty reason.
+(300 s), under the clock described above for workspace files. A timeout, or an extraction failure
+that is an I/O error, a refused permission or a shortage of memory, says how the host was and not
+what the document holds, so no document record is created. The file is listed under `failed` (the
+timeout names the setting), the files beside it in the request are stored, the bytes stay in the
+blob store, and sending the file again extracts it again. When another upload of the same bytes saved
+its blob meanwhile, the file is reported as stored. An extraction failure that is a verdict on the
+bytes, an encrypted or corrupt file, is stored with its message as the document's empty reason.
+
+A workspace file that times out is recorded as failed with the timeout text and retried on a later
+refresh; one whose extractor caught the timeout and returned the text read so far is handled the same
+way, and that text is not cached. A stored document that is extracted again after an extractor change
+keeps its previous text when that fails for a timeout or such a reason, is tried again on a later
+pass, and is tried once per job and not once per chunk set.
+
 A body that ends before its closing boundary, or whose headers are over the reader's limits, is
-treated the same way: files completed before it stay stored and are indexed, the response lists
+handled as an overrun of the byte bound is: files completed before it stay stored and are indexed, the response lists
 the cause under `failed` with a `null` `file`, and when nothing was stored the answer is `400`
 "Malformed multipart upload". A client that disconnects after some files were stored is handled
 the same way: those files are attached and indexed, and the file being attached at that moment is
