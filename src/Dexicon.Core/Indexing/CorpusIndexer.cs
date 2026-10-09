@@ -670,22 +670,16 @@ public sealed class CorpusIndexer(
         return named.Count == 0 ? null : named;
     }
 
-    /// <summary>Stops tracking every file and chunk state of the given files.</summary>
+    /// <summary>
+    /// Stops tracking the given files. EF Core stops tracking the chunk states of a file with it, so none
+    /// of them is left to fail the next save (<c>EntityFrameworkDetachTests</c> pins that).
+    /// </summary>
     private void ForgetFiles(HashSet<string> fileIds)
     {
-        foreach (var entry in db.ChangeTracker.Entries().ToList())
-        {
-            var fileId = entry.Entity switch
-            {
-                FileChunkState state => state.FileId,
-                IndexedFile file => file.Id,
-                _ => null,
-            };
-
-            if (fileId is not null && fileIds.Contains(fileId)) entry.State = EntityState.Detached;
-        }
+        foreach (var entry in db.ChangeTracker.Entries<IndexedFile>().ToList())
+            if (fileIds.Contains(entry.Entity.Id))
+                entry.State = EntityState.Detached;
     }
-
     /// <summary>
     /// Embed and upsert a file's chunks in batches, reporting progress between them.
     ///
