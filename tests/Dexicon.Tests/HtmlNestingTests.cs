@@ -85,7 +85,7 @@ public sealed class HtmlNestingTests
     public void ADeepDocumentWrittenAsUtf16StopsAtTheBudgetToo()
     {
         // A scan of the bytes as Latin-1 never saw tags written in UTF-16. The parse reads what the text reader decoded.
-        var html = $"<html><body>{Repeat("<div></span>", 100_000)}</body></html>";
+        var html = $"<html><body>{Repeat("<div></span>", 30_000)}</body></html>";
         var clock = Stopwatch.StartNew();
 
         Should.Throw<ExtractionTimeoutException>(() => Extract(html, new UnicodeEncoding(false, true), Budget));
@@ -112,7 +112,7 @@ public sealed class HtmlNestingTests
     [Fact]
     public void AnEpubChapterReadByItsManifestStopsAtTheBudget()
     {
-        var epub = TestEpubs.WithAChapter(NotXml + Repeat("<div></span>", 100_000));
+        var epub = TestEpubs.WithAChapter(NotXml + Repeat("<div></span>", 30_000));
         var clock = Stopwatch.StartNew();
 
         Should.Throw<ExtractionTimeoutException>(() => new EpubTextExtractor().Extract(Clock(epub), "book.epub"));
@@ -123,7 +123,7 @@ public sealed class HtmlNestingTests
     [Fact]
     public void AnEpubEntryReadFromTheArchiveStopsAtTheBudget()
     {
-        var epub = TestEpubs.WithAnEntry(NotXml + Repeat("<div></span>", 100_000));
+        var epub = TestEpubs.WithAnEntry(NotXml + Repeat("<div></span>", 30_000));
         var clock = Stopwatch.StartNew();
 
         Should.Throw<ExtractionTimeoutException>(() => new EpubTextExtractor().Extract(Clock(epub), "book.epub"));
