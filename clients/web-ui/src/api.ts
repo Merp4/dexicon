@@ -388,31 +388,48 @@ export const api = {
    * so going through the generated path would mean fighting it to send what it already
    * knows how to send.
    *
-   * The files go in sequential requests of at most `UPLOAD_BATCH_FILES`, and the answers are
-   * merged into one `UploadResponse`: `stored` and `failed` in request order, `corpus` from the
-   * first, `job` from the last request that was answered. The first request failing rejects, as
-   * a single request does. A later one failing after files were stored returns what was stored,
-   * with the failure added to `failed` as a request-level entry (`file: null`), and sends no
-   * further requests.
+   * Up to `UPLOAD_BATCH_FILES` files are one request, as they always were. More are sent in
+   * sequential requests of that size, and the answers are merged into one `UploadResponse`:
+   * `stored` and `failed` in request order, `corpus` from the first answered request and `job`
+   * from the last.
+   *
+   * A request that fails is recorded in `failed` as a request-level entry (`file: null`)
+   * carrying the error's message. A 4xx answer, such as the 400 for a request in which every file
+   * was refused, does not stop the drop: the next request is still sent, as the files after the
+   * refused ones were stored when the whole drop was one request. Any other failure (5xx, no
+   * answer, an answer that is not an upload result) stops it, and each file not yet sent is added
+   * to `failed` by name with the reason `Not sent`. If nothing was stored and a request failed,
+   * the first failure is thrown, as for a single request.
    */
   uploadDocuments: async (corpus: string, files: File[]): Promise<UploadResponse> => {
-    const first = await postUploadBatch(corpus, files.slice(0, UPLOAD_BATCH_FILES));
-    if (files.length <= UPLOAD_BATCH_FILES) return first;
+    if (files.length <= UPLOAD_BATCH_FILES) return postUploadBatch(corpus, files);
 
-    const merged: UploadResponse = { ...first, stored: [...first.stored], failed: [...first.failed] };
-    for (let start = UPLOAD_BATCH_FILES; start < files.length; start += UPLOAD_BATCH_FILES) {
-      let next: UploadResponse;
+    const stored: UploadResponse['stored'] = [];
+    const failed: UploadResponse['failed'] = [];
+    const errors: unknown[] = [];
+    let first: UploadResponse | undefined;
+    let last: UploadResponse | undefined;
+
+    for (let start = 0; start < files.length; start += UPLOAD_BATCH_FILES) {
+      const end = start + UPLOAD_BATCH_FILES;
+      let answer: UploadResponse;
       try {
-        next = await postUploadBatch(corpus, files.slice(start, start + UPLOAD_BATCH_FILES));
+        answer = await postUploadBatch(corpus, files.slice(start, end));
       } catch (e) {
-        merged.failed.push({ file: null, error: e instanceof Error ? e.message : String(e) });
+        errors.push(e);
+        failed.push({ file: null, error: e instanceof Error ? e.message : String(e) });
+        if (e instanceof ApiError && e.status >= 400 && e.status < 500) continue;
+        for (const f of files.slice(end)) failed.push({ file: f.name, error: UPLOAD_NOT_SENT });
         break;
       }
-      merged.stored.push(...next.stored);
-      merged.failed.push(...next.failed);
-      merged.job = next.job;
+      first ??= answer;
+      last = answer;
+      stored.push(...answer.stored);
+      failed.push(...answer.failed);
     }
-    return merged;
+
+    if (!first || !last || (stored.length === 0 && errors.length > 0)) throw errors[0];
+    return { corpus: first.corpus, stored, failed, job: last.job };
   },
 
   // ── Access ────────────────────────────────────────────────────────────────
@@ -497,9 +514,33 @@ function authHeaders(): HeadersInit {
  * request and refuses the rest. The limit is a compile-time constant there and appears in
  * neither the OpenAPI document nor a settings endpoint, so it is repeated here.
  */
-const UPLOAD_BATCH_FILES = 10;
+export const UPLOAD_BATCH_FILES = 10;
 
-/** One multipart POST of `files` to a corpus. Rejects with an `ApiError` on a non-2xx answer. */
+/** The reason given for a file that a stopped upload never sent. */
+const UPLOAD_NOT_SENT = 'Not sent: an earlier request failed.';
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null;
+}
+
+/** The parsed JSON, or `undefined` when the text is empty or is not JSON (an HTML error page, say). */
+function parseJson(text: string): unknown {
+  try {
+    return text ? JSON.parse(text) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isUploadResponse(v: unknown): v is UploadResponse {
+  return isRecord(v) && Array.isArray(v.stored) && Array.isArray(v.failed);
+}
+
+/**
+ * One multipart POST of `files` to a corpus. Rejects with an `ApiError` on a non-2xx answer,
+ * built from the problem details when the body is JSON and from the status text when it is not,
+ * and on a 2xx answer whose body is not an upload result.
+ */
 async function postUploadBatch(corpus: string, files: File[]): Promise<UploadResponse> {
   const form = new FormData();
   for (const f of files) form.append('files', f, f.name);
@@ -510,9 +551,22 @@ async function postUploadBatch(corpus: string, files: File[]): Promise<UploadRes
     body: form,
   });
 
-  const text = await res.text();
-  const body = text ? JSON.parse(text) : undefined;
-  if (!res.ok) throw new ApiError(res.status, body?.title ?? res.statusText, body?.detail);
+  const body = parseJson(await res.text());
+  if (!res.ok) {
+    const problem = isRecord(body) ? body : {};
+    throw new ApiError(
+      res.status,
+      typeof problem.title === 'string' ? problem.title : res.statusText || 'Request failed',
+      typeof problem.detail === 'string' ? problem.detail : undefined,
+    );
+  }
+  if (!isUploadResponse(body)) {
+    throw new ApiError(
+      res.status,
+      'Unexpected response',
+      'The server answered the upload with something that is not an upload result.',
+    );
+  }
   return body;
 }
 

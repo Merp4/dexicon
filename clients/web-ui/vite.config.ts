@@ -29,9 +29,14 @@ export default defineConfig({
   server: {
     port: 5180,
     fs: {
-      // The default, plus the one server directory a test reads: terms.test.ts holds
-      // lib/terms.ts to SparseEncoder.cs, which lives outside this package.
-      allow: [searchForWorkspaceRoot(process.cwd()), '../../src/Dexicon.Core/Search'],
+      // The default, plus the server directories tests read: terms.test.ts holds lib/terms.ts
+      // to SparseEncoder.cs, and api.test.ts holds the upload batch size to DexiconOptions.cs.
+      // Both live outside this package.
+      allow: [
+        searchForWorkspaceRoot(process.cwd()),
+        '../../src/Dexicon.Core/Search',
+        '../../src/Dexicon.Core/Configuration',
+      ],
     },
     // `npm run dev` talks to the locally-running API (scripts/dev.ps1).
     proxy: {

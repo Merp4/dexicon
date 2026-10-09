@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DocumentsView } from './Documents';
@@ -318,6 +318,48 @@ describe('uploading a batch', () => {
     expect(screen.getByText('1 file not stored:')).toBeInTheDocument();
     expect(screen.getByText('The first request was refused.')).toBeInTheDocument();
     expect(screen.getByText('The second request was refused.')).toBeInTheDocument();
+  });
+
+  it('counts and names the files a stopped drop did not send', async () => {
+    // After a failed request the remaining files are not sent. Each is listed by name under the
+    // count, beside the sentence for the request that failed.
+    uploadDocuments.mockResolvedValue({
+      corpus: 'library',
+      stored: [stored('a.txt'), stored('b.txt')],
+      failed: [
+        { file: null, error: 'Service Unavailable: The catalogue is busy.' },
+        { file: 'c.txt', error: 'Not sent: an earlier request failed.' },
+        { file: 'd.txt', error: 'Not sent: an earlier request failed.' },
+      ],
+      job: {},
+    });
+    const { user, input } = await renderReady();
+
+    await user.upload(input, [new File(['x'], 'a.txt'), new File(['x'], 'b.txt')]);
+
+    expect(await screen.findByText('2 files stored.')).toBeInTheDocument();
+    expect(screen.getByText('2 files not stored:')).toBeInTheDocument();
+    expect(screen.getByText('c.txt: Not sent: an earlier request failed.')).toBeInTheDocument();
+    expect(screen.getByText('d.txt: Not sent: an earlier request failed.')).toBeInTheDocument();
+    expect(screen.getByText('Service Unavailable: The catalogue is busy.')).toBeInTheDocument();
+  });
+
+  it('ignores a drop made while an upload is still running', async () => {
+    // A second sequence of requests would overwrite the first one's result on screen.
+    let finish: (v: unknown) => void = () => {};
+    uploadDocuments.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    const { input } = await renderReady();
+    const zone = screen.getByText('Drop files here').parentElement as HTMLElement;
+
+    fireEvent.drop(zone, { dataTransfer: { files: [new File(['x'], 'a.txt')] } });
+    await screen.findByText(/Uploading/);
+    fireEvent.drop(zone, { dataTransfer: { files: [new File(['x'], 'b.txt')] } });
+    fireEvent.change(input, { target: { files: [new File(['x'], 'c.txt')] } });
+
+    expect(uploadDocuments).toHaveBeenCalledTimes(1);
+    finish({ corpus: 'library', stored: [stored('a.txt')], failed: [], job: {} });
+    expect(await screen.findByText('1 file stored.')).toBeInTheDocument();
+    expect(uploadDocuments).toHaveBeenCalledTimes(1);
   });
 
   it('says nothing about refused files when none were refused', async () => {
