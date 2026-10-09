@@ -470,12 +470,7 @@ public sealed class CorpusConfiguration(
             return new ConfigRefusal("Invalid size cap",
                 "maxFileBytes must be greater than zero. Name it in `clear` to inherit the corpus default.", 400);
 
-        if (CorpusEndpoints.UnknownClearName(body.Clear) is { } unknown)
-            return new ConfigRefusal(
-                "Unknown filter",
-                $"'{unknown}' is not a filter that can be cleared. "
-                + $"Name one of: {string.Join(", ", CorpusEndpoints.ClearableFilters)}.",
-                400);
+        if (CorpusEndpoints.UnknownClearName(body.Clear) is { } unknown) return unknown;
 
         if (CorpusEndpoints.FileOnlySettingsFor(source.Kind, body.UseGitignore, body.MaxFileBytes, body.ExcludeGlobs)
             is { } inapplicable)

@@ -1,5 +1,6 @@
 using Dexicon.Api;
 using Dexicon.Core.Catalog;
+using Dexicon.Core.Configuration;
 using Dexicon.Core.Indexing;
 using Microsoft.EntityFrameworkCore;
 
@@ -60,6 +61,133 @@ public sealed class UnusableGlobTests
         SourceFilters.FirstUnusable(["docs/", ""], SourceFilters.GlobReader.WalkAndGit).ShouldBe(1);
         SourceFilters.FirstUnusable(["docs/", "[z-a]"], SourceFilters.GlobReader.WalkAndGit).ShouldBe(1);
         SourceFilters.FirstUnusable(NullAmongPatterns, SourceFilters.GlobReader.WalkAndGit).ShouldBe(1);
+    }
+
+    public static TheoryData<SourceFilters.GlobReader> EveryReader => new()
+    {
+        SourceFilters.GlobReader.Walk,
+        SourceFilters.GlobReader.Git,
+        SourceFilters.GlobReader.WalkAndGit,
+    };
+
+    [Theory]
+    [MemberData(nameof(EveryReader))]
+    public void AListOfExactlyTheCapIsAcceptedAndOneMoreIsRefusedAtTheFirstElementPastIt(SourceFilters.GlobReader reader)
+    {
+        var atCap = Enumerable.Range(0, SourceFilters.MaxGlobsPerList).Select(i => $"d{i}/").ToList();
+        var over = atCap.Append("one-more/").ToList();
+
+        SourceFilters.Check(atCap, reader).ShouldBeNull();
+        SourceFilters.Check(over, reader).ShouldBe(
+            new SourceFilters.GlobProblem(SourceFilters.MaxGlobsPerList, SourceFilters.GlobProblemKind.TooMany));
+        SourceFilters.FirstUnusable(over, reader).ShouldBe(SourceFilters.MaxGlobsPerList);
+    }
+
+    [Theory]
+    [MemberData(nameof(EveryReader))]
+    public void TheCountIsJudgedBeforeAnyElementIsCompiled(SourceFilters.GlobReader reader)
+    {
+        // Every element is one the walk's parser refuses. A list judged element by element would stop at index 0
+        // with an unusable pattern; the count cap reports first, so none of the million was looked at.
+        var million = Enumerable.Repeat("[z-a]", 1_000_000).ToList();
+
+        var problem = SourceFilters.Check(million, reader).ShouldNotBeNull();
+
+        problem.Kind.ShouldBe(SourceFilters.GlobProblemKind.TooMany);
+        problem.Index.ShouldBe(SourceFilters.MaxGlobsPerList);
+    }
+
+    [Theory]
+    [MemberData(nameof(EveryReader))]
+    public void AnElementOfExactlyTheLengthCapIsAcceptedAndOneMoreCharacterIsRefused(SourceFilters.GlobReader reader)
+    {
+        var atCap = new string('a', SourceFilters.MaxGlobLength);
+
+        SourceFilters.Check(["docs/", atCap], reader).ShouldBeNull();
+        SourceFilters.Check(["docs/", atCap + "a"], reader).ShouldBe(
+            new SourceFilters.GlobProblem(1, SourceFilters.GlobProblemKind.TooLong));
+    }
+
+    [Fact]
+    public void AListAlreadyStoredPastTheCapsIsStillReadAsStored()
+    {
+        // The caps are judged where a list is saved. A list stored before them is read by the walk unchanged.
+        var stored = Enumerable.Range(0, SourceFilters.MaxGlobsPerList + 100).Select(i => $"d{i}/").ToList();
+        var corpus = new Corpus { Id = "c", Name = "c", DefaultIncludeGlobs = SourceFilters.Store(stored) };
+        var source = new Source { Id = "s", CorpusId = "c", Kind = SourceKind.Workspace, RootPath = "" };
+
+        SourceFilters.Resolve(corpus, source, new IndexingOptions()).IncludeGlobs
+            .Count.ShouldBe(SourceFilters.MaxGlobsPerList + 100);
+    }
+
+    [Theory]
+    [InlineData("..")]
+    [InlineData("../x")]
+    [InlineData("a/../b")]
+    [InlineData("a/..")]
+    [InlineData("/../x")]
+    [InlineData(@"a\..\b")]
+    [InlineData(@"..\x")]
+    public void AParentSegmentIsRefusedWhereGitReadsTheListAndLeftToTheWalk(string glob)
+    {
+        // git log -- ../x: "fatal: ../x: '../x' is outside repository". The walk compiles the element to a regular
+        // expression over paths below the root, so it is a pattern that matches nothing and not a failure.
+        foreach (var reader in new[] { SourceFilters.GlobReader.Git, SourceFilters.GlobReader.WalkAndGit })
+            SourceFilters.Check(["docs/", glob], reader).ShouldBe(
+                new SourceFilters.GlobProblem(1, SourceFilters.GlobProblemKind.ParentSegment), reader.ToString());
+
+        SourceFilters.Check(["docs/", glob], SourceFilters.GlobReader.Walk).ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("..x")]
+    [InlineData("x..")]
+    [InlineData("a..b")]
+    [InlineData("...")]
+    [InlineData("a/..b/c")]
+    [InlineData("a/.../c")]
+    public void ADoubleDotInsideAPathSegmentIsNotAParentSegment(string glob)
+    {
+        foreach (var reader in new[] { SourceFilters.GlobReader.Git, SourceFilters.GlobReader.WalkAndGit })
+            SourceFilters.Check([glob], reader).ShouldBeNull(reader.ToString());
+    }
+
+    [Fact]
+    public void OneLeadingSlashIsAcceptedAndTwoAreRefusedWhereGitReadsTheList()
+    {
+        foreach (var reader in new[] { SourceFilters.GlobReader.Git, SourceFilters.GlobReader.WalkAndGit })
+        {
+            SourceFilters.Check(["/docs", "/", "/*.md"], reader).ShouldBeNull(reader.ToString());
+            SourceFilters.Check(["docs/", "//docs"], reader).ShouldBe(
+                new SourceFilters.GlobProblem(1, SourceFilters.GlobProblemKind.DoubleSlash), reader.ToString());
+        }
+
+        SourceFilters.Check(["//docs"], SourceFilters.GlobReader.Walk).ShouldBeNull("the walk reads it as an anchored pattern");
+    }
+
+    [Fact]
+    public void TheRefusalNamesTheCapAndTheListAndDoesNotEchoTheElement()
+    {
+        var secret = "LEAKED" + new string('x', SourceFilters.MaxGlobLength);
+        var tooMany = Enumerable.Repeat("LEAKED/", SourceFilters.MaxGlobsPerList + 1).ToList();
+
+        var longOne = CorpusEndpoints.UnusableGlobs(["docs/", secret], null).ShouldNotBeNull();
+        var many = CorpusEndpoints.UnusableGlobs(null, tooMany).ShouldNotBeNull();
+        var parent = CorpusEndpoints.UnusableGlobs(["LEAKED/../x"], null, SourceFilters.GlobReader.Git).ShouldNotBeNull();
+
+        longOne.Status.ShouldBe(400);
+        longOne.Detail.ShouldContain("includeGlobs[1]");
+        longOne.Detail.ShouldContain($"longer than {SourceFilters.MaxGlobLength} characters");
+        many.Status.ShouldBe(400);
+        many.Detail.ShouldContain("excludeGlobs");
+        many.Detail.ShouldContain($"more than {SourceFilters.MaxGlobsPerList} patterns");
+        parent.Detail.ShouldContain("includeGlobs[0]");
+        parent.Detail.ShouldContain("'..'");
+        foreach (var refusal in new[] { longOne, many, parent })
+        {
+            refusal.Detail.ShouldNotContain("LEAKED");
+            refusal.Detail.ShouldEndWith("Nothing was saved.");
+        }
     }
 
     /// <summary>A harness with one workspace corpus, and a context on it.</summary>
@@ -289,5 +417,150 @@ public sealed class UnusableGlobTests
         outcome.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
         outcome.Refusal.Detail.ShouldContain($"{field}[1]");
         (await db.Corpora.AnyAsync(c => c.Name == "papers")).ShouldBeFalse();
+    }
+
+    private static string[] OverTheCap() =>
+        [.. Enumerable.Range(0, SourceFilters.MaxGlobsPerList + 1).Select(i => $"d{i}/")];
+
+    [Theory]
+    [InlineData("includeGlobs")]
+    [InlineData("excludeGlobs")]
+    public async Task AListPastTheCapIsRefusedAtEverySiteThatStoresOne(string field)
+    {
+        await using var s = await Seeded.StartAsync();
+        var id = IndexingHarness.SourceIdFor(0);
+        var sources = await s.Db.Sources.CountAsync();
+        var over = OverTheCap();
+
+        var added = await s.Config.AddSourceAsync(s.Corpus, field == "includeGlobs"
+            ? new AddSourceRequest("", IncludeGlobs: over)
+            : new AddSourceRequest("", ExcludeGlobs: over), default);
+        var updated = await s.Config.UpdateSourceAsync(s.Corpus, id, field == "includeGlobs"
+            ? new UpdateSourceRequest(IncludeGlobs: over)
+            : new UpdateSourceRequest(ExcludeGlobs: over), default);
+        var corpusUpdated = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith(field, over)), default);
+        var corpusCreated = await s.Config.CreateCorpusAsync(new CreateCorpusRequest("papers"), default, defaults: DefaultsWith(field, over));
+
+        foreach (var (site, outcome) in new[]
+                 {
+                     ("AddSource", added.Refusal), ("UpdateSource", updated.Refusal),
+                     ("UpdateCorpus", corpusUpdated.Refusal), ("CreateCorpus", corpusCreated.Refusal),
+                 })
+        {
+            outcome.ShouldNotBeNull(site).Status.ShouldBe(400, site);
+            outcome.Title.ShouldBe("Unusable glob", site);
+            outcome.Detail.ShouldContain(field, Case.Sensitive, site);
+            outcome.Detail.ShouldContain($"more than {SourceFilters.MaxGlobsPerList} patterns", Case.Sensitive, site);
+        }
+
+        (await s.Db.Sources.CountAsync()).ShouldBe(sources, "a refused source is not saved");
+        (await s.Db.Corpora.AnyAsync(c => c.Name == "papers")).ShouldBeFalse();
+        s.Db.ChangeTracker.Clear();
+        (await s.Db.Sources.AsNoTracking().FirstAsync(x => x.Id == id)).IncludeGlobs.ShouldBeNull();
+        (await s.Db.Corpora.AsNoTracking().SingleAsync()).DefaultIncludeGlobs.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AListAtTheCapIsAcceptedBySourceAndCorpus()
+    {
+        await using var s = await Seeded.StartAsync();
+        var atCap = OverTheCap()[..SourceFilters.MaxGlobsPerList];
+
+        var updated = await s.Config.UpdateSourceAsync(s.Corpus, IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(IncludeGlobs: atCap), default);
+        var corpus = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("excludeGlobs", atCap)), default);
+
+        updated.Refusal.ShouldBeNull();
+        corpus.Refusal.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AHistorySourceTakesALeadingSlashIncludeAndRefusesAParentSegment()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.GitHistory);
+        await using var db = harness.NewContext();
+        var corpus = await db.Corpora.SingleAsync();
+        var config = harness.NewConfiguration(db);
+        var id = IndexingHarness.SourceIdFor(0);
+
+        var rooted = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["/docs", "/"]), default);
+        var parent = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["docs/", "LEAKED/../x"]), default);
+        var doubled = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["//docs"]), default);
+
+        rooted.Refusal.ShouldBeNull();
+        parent.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
+        parent.Refusal.Detail.ShouldContain("includeGlobs[1]");
+        parent.Refusal.Detail.ShouldContain("'..'");
+        parent.Refusal.Detail.ShouldNotContain("LEAKED");
+        doubled.Refusal.ShouldNotBeNull().Detail.ShouldContain("'//'");
+        db.ChangeTracker.Clear();
+        SourceFilters.Globs((await db.Sources.AsNoTracking().FirstAsync(x => x.Id == id)).IncludeGlobs)
+            .ShouldBe(["/docs", "/"], "the refused lists are not saved over the accepted one");
+    }
+
+    [Fact]
+    public async Task AFileSourceKeepsAParentSegmentItsWalkMatchesNothingWith()
+    {
+        await using var s = await Seeded.StartAsync();
+
+        var outcome = await s.Config.UpdateSourceAsync(s.Corpus, IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(IncludeGlobs: ["../x"]), default);
+
+        outcome.Refusal.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ACorpusDefaultIncludeListIsHeldToGitsRulesBecauseAHistorySourceInheritsIt()
+    {
+        await using var s = await Seeded.StartAsync();
+
+        var parent = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("includeGlobs", "docs/", "../x")), default);
+        var created = await s.Config.CreateCorpusAsync(new CreateCorpusRequest("papers"), default, defaults: DefaultsWith("includeGlobs", "a/../b"));
+        var rooted = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("includeGlobs", "/build", "/docs")), default);
+
+        parent.Refusal.ShouldNotBeNull().Detail.ShouldContain("includeGlobs[1]");
+        parent.Refusal.Detail.ShouldContain("'..'");
+        created.Refusal.ShouldNotBeNull().Detail.ShouldContain("includeGlobs[0]");
+        (await s.Db.Corpora.AnyAsync(c => c.Name == "papers")).ShouldBeFalse();
+        rooted.Refusal.ShouldBeNull("a leading slash is valid in a default: the walk anchors it and the git boundary removes it");
+    }
+
+    [Fact]
+    public async Task ANullEntryInClearIsRefusedAndNothingIsChanged()
+    {
+        await using var s = await Seeded.StartAsync();
+        var id = IndexingHarness.SourceIdFor(0);
+        (await s.Config.UpdateSourceAsync(s.Corpus, id, new UpdateSourceRequest(MaxFileBytes: 4096), default)).Refusal.ShouldBeNull();
+
+        var alone = await s.Config.UpdateSourceAsync(s.Corpus, id, new UpdateSourceRequest(Clear: [null!]), default);
+        var beside = await s.Config.UpdateSourceAsync(s.Corpus, id, new UpdateSourceRequest(Clear: ["maxFileBytes", null!]), default);
+
+        foreach (var outcome in new[] { alone, beside })
+        {
+            outcome.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
+            outcome.Refusal.Title.ShouldBe("Unknown filter");
+            outcome.Refusal.Detail.ShouldContain("null entry");
+            outcome.Refusal.Detail.ShouldContain("clear takes field names");
+            outcome.Refusal.Detail.ShouldContain("includeGlobs");
+        }
+
+        s.Db.ChangeTracker.Clear();
+        (await s.Db.Sources.AsNoTracking().FirstAsync(x => x.Id == id)).MaxFileBytes.ShouldBe(4096, "a refused request clears nothing");
+    }
+
+    [Fact]
+    public async Task AnUnknownClearNameIsShownOnOneLineAndCutShort()
+    {
+        await using var s = await Seeded.StartAsync();
+        var name = "first\r\nsecond\u001b[2J" + new string('x', 500) + "TAILMARKER";
+
+        var outcome = await s.Config.UpdateSourceAsync(s.Corpus, IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(Clear: [name]), default);
+
+        var detail = outcome.Refusal.ShouldNotBeNull().Detail;
+        detail.ShouldContain("first");
+        detail.ShouldNotContain("\n");
+        detail.ShouldNotContain("\r");
+        detail.ShouldNotContain("\u001b");
+        detail.ShouldNotContain("TAILMARKER");
+        detail.Length.ShouldBeLessThan(250);
     }
 }

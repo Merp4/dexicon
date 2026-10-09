@@ -497,7 +497,9 @@ public static class CorpusEndpoints
     /// named and the pattern is not echoed, because the text is the caller's and the message is logged.
     /// <paramref name="includeReader"/> says what reads the include list (<see cref="SourceFilters.FirstUnusable"/>);
     /// the exclude list is only ever read by the file walk. The configure tools name the same lists
-    /// <c>include</c> and <c>exclude</c>, so the message gives both.
+    /// <c>include</c> and <c>exclude</c>, so the message gives both. The caps on a list's length and on an
+    /// element's length (<see cref="SourceFilters.MaxGlobsPerList"/>, <see cref="SourceFilters.MaxGlobLength"/>)
+    /// apply to both lists whichever reader they have.
     /// </summary>
     internal static ConfigRefusal? UnusableGlobs(
         IReadOnlyList<string>? include, IReadOnlyList<string>? exclude,
@@ -509,20 +511,35 @@ public static class CorpusEndpoints
                      ("excludeGlobs", "exclude", exclude, SourceFilters.GlobReader.Walk),
                  })
         {
-            if (SourceFilters.FirstUnusable(globs, reader) is not { } at) continue;
+            if (SourceFilters.Check(globs, reader) is not { } problem) continue;
 
-            var why = reader switch
+            var at = problem.Index;
+            var named = $"{field}[{at}] ({argument}[{at}] for the configure tools)";
+
+            // Numbers and fixed text only: the elements are the caller's, and the message is logged.
+            var detail = problem.Kind switch
             {
-                SourceFilters.GlobReader.Git => "null, empty or holding a null character, which git cannot take as a pathspec",
-                SourceFilters.GlobReader.WalkAndGit =>
-                    "null, empty, holding a null character (a history source passes the list to git as pathspecs), "
-                    + "or a pattern that does not compile, such as [z-a]",
-                _ => "null, or a pattern that does not compile, such as [z-a]",
+                SourceFilters.GlobProblemKind.TooMany =>
+                    $"{field} ({argument} for the configure tools) holds more than {SourceFilters.MaxGlobsPerList} patterns, "
+                    + "which is the most a list can hold.",
+                SourceFilters.GlobProblemKind.TooLong =>
+                    $"{named} is longer than {SourceFilters.MaxGlobLength} characters, which is the most a pattern can hold.",
+                SourceFilters.GlobProblemKind.ParentSegment =>
+                    $"{named} has a '..' path segment, which git rejects as a path outside the repository "
+                    + "(a history source passes the list to git as pathspecs).",
+                SourceFilters.GlobProblemKind.DoubleSlash =>
+                    $"{named} starts with '//'. One leading '/' is accepted and anchors the pattern at the root; "
+                    + "git rejects a path that is still rooted after it.",
+                _ => $"{named} is " + reader switch
+                {
+                    SourceFilters.GlobReader.Git => "null, empty or holding a null character, which git cannot take as a pathspec",
+                    SourceFilters.GlobReader.WalkAndGit =>
+                        "null, empty, holding a null character (a history source passes the list to git as pathspecs), "
+                        + "or a pattern that does not compile, such as [z-a]",
+                    _ => "null, or a pattern that does not compile, such as [z-a]",
+                } + ".",
             };
-            return new ConfigRefusal(
-                "Unusable glob",
-                $"{field}[{at}] ({argument}[{at}] for the configure tools) is {why}. Nothing was saved.",
-                400);
+            return new ConfigRefusal("Unusable glob", $"{detail} Nothing was saved.", 400);
         }
 
         return null;
@@ -557,10 +574,30 @@ public static class CorpusEndpoints
     internal static readonly string[] ClearableFilters =
         ["useGitignore", "maxFileBytes", "includeGlobs", "excludeGlobs"];
 
-    /// <summary>The first name <c>clear</c> does not understand, or null.</summary>
-    internal static string? UnknownClearName(IReadOnlyList<string>? clear) =>
-        clear?.FirstOrDefault(
-            name => !ClearableFilters.Contains(name, StringComparer.OrdinalIgnoreCase));
+    /// <summary>
+    /// The refusal for the first entry of <c>clear</c> that is not a name it understands, or null when all
+    /// are. A null entry (<c>"clear": [null]</c>) is unknown: it matched no name and was skipped, so the request
+    /// was accepted and cleared nothing. A non-null name is the caller's text, so it is shown on one line and
+    /// cut short; a null entry has no text to show.
+    /// </summary>
+    internal static ConfigRefusal? UnknownClearName(IReadOnlyList<string>? clear)
+    {
+        if (clear is null) return null;
+
+        foreach (var name in clear)
+        {
+            if (name is not null && ClearableFilters.Contains(name, StringComparer.OrdinalIgnoreCase)) continue;
+
+            var named = name is null ? "A null entry" : $"'{Mapping.Shown(name)}'";
+            return new ConfigRefusal(
+                "Unknown filter",
+                $"{named} is not a filter that can be cleared. clear takes field names: "
+                + $"{string.Join(", ", ClearableFilters)}.",
+                400);
+        }
+
+        return null;
+    }
 
     /// <summary>
     /// Apply a filter update to a source, returning whether anything actually moved.

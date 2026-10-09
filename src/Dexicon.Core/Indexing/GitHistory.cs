@@ -482,6 +482,29 @@ public static partial class GitHistory
                           || c is '/' or '_' or '-' or '.' or '~' or '^' or '@' or '{' or '}');
 
     /// <summary>
+    /// The include list as the arguments given to git after <c>--</c>. Git reads a pathspec relative to the
+    /// repository root and rejects a leading <c>/</c> as a path outside the repository (<c>fatal: '/docs' is
+    /// outside repository</c>), while an include pattern with a leading <c>/</c> is gitignore's anchor at the root
+    /// of the source. One leading slash is removed, which names the same path. An element that was only <c>/</c>
+    /// is dropped: the walk compiles it to no rule, so it filters nothing, and git would otherwise be handed an
+    /// empty pathspec, which it rejects. A list of only such elements gives no pathspec, which is every path.
+    /// Everything else, including pathspec magic, goes to git as written.
+    /// </summary>
+    internal static List<string> Pathspecs(IReadOnlyList<string>? includes)
+    {
+        var specs = new List<string>(includes?.Count ?? 0);
+
+        foreach (var include in includes ?? [])
+        {
+            if (include == "/") continue;
+
+            specs.Add(include.StartsWith('/') ? include[1..] : include);
+        }
+
+        return specs;
+    }
+
+    /// <summary>
     /// Every commit the settings select, newest first, as shas and dates. With
     /// <see cref="GitHistoryOptions.KeepIndexed"/> the commit limit is not applied here,
     /// and <see cref="Select"/> applies it.
@@ -526,10 +549,10 @@ public static partial class GitHistory
         args.Add(options.Ref);
 
         // And after it, so a pathspec cannot be read as a ref.
-        if (pathspecs is { Count: > 0 })
+        if (Pathspecs(pathspecs) is { Count: > 0 } specs)
         {
             args.Add("--");
-            args.AddRange(pathspecs);
+            args.AddRange(specs);
         }
 
         var (ok, stdout, stderr) = await RunAsync(repo, args, ct);
@@ -843,10 +866,10 @@ public static partial class GitHistory
         if (options.IncludeStat) args.Add("--stat=80");
         if (!options.IncludeDiff && !options.IncludeStat) args.Add("--no-patch");
 
-        if (pathspecs is { Count: > 0 })
+        if (Pathspecs(pathspecs) is { Count: > 0 } specs)
         {
             args.Add("--");
-            args.AddRange(pathspecs);
+            args.AddRange(specs);
         }
 
         var (ok, stdout, stderr) = await RunAsync(

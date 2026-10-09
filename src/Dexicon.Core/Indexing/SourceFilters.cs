@@ -96,29 +96,89 @@ public static class SourceFilters
         WalkAndGit,
     }
 
+    /// <summary>The most elements a stored glob list can hold. Each is compiled per walk and tested against every file.</summary>
+    public const int MaxGlobsPerList = 200;
+
+    /// <summary>The most characters one element of a glob list can hold.</summary>
+    public const int MaxGlobLength = 500;
+
+    /// <summary>Why <see cref="Check"/> refused a list.</summary>
+    public enum GlobProblemKind
+    {
+        /// <summary>Null, or not readable by the reader: empty or a null character for git, an uncompilable pattern for the walk.</summary>
+        Unusable,
+
+        /// <summary>The list holds more than <see cref="MaxGlobsPerList"/> elements.</summary>
+        TooMany,
+
+        /// <summary>An element is longer than <see cref="MaxGlobLength"/> characters.</summary>
+        TooLong,
+
+        /// <summary>An element for git has a <c>..</c> path segment, which git rejects or resolves outside the repository.</summary>
+        ParentSegment,
+
+        /// <summary>An element for git starts with two slashes, which stay a rooted path once the one leading slash is removed.</summary>
+        DoubleSlash,
+    }
+
+    /// <summary>The first element of a list that cannot be used, and why. For <see cref="GlobProblemKind.TooMany"/> it is the first element past the cap.</summary>
+    public readonly record struct GlobProblem(int Index, GlobProblemKind Kind);
+
     /// <summary>
-    /// The position of the first element of <paramref name="globs"/> that cannot be used, or null when all
-    /// can. A null element is never usable. For <see cref="GlobReader.Walk"/> an element that
-    /// <see cref="IgnoreRuleSet.AddPatterns"/> cannot compile, such as <c>[z-a]</c>, is refused by the same
-    /// parser. For <see cref="GlobReader.Git"/> an empty element or one holding a null character is refused,
-    /// because git rejects an empty pathspec and cannot be passed a null character, and anything else is left
-    /// to git. The check is of syntax: a pattern that compiles but is slow to match passes it.
+    /// The first problem with <paramref name="globs"/>, or null when it can be used. The count cap
+    /// (<see cref="MaxGlobsPerList"/>) is judged before any element is read, and the check stops at the first
+    /// problem, so a list far past the caps costs one comparison and not one regular expression per element. Lists
+    /// already stored are not passed through here.
+    ///
+    /// Every reader: a null element is never usable, and an element is at most <see cref="MaxGlobLength"/>
+    /// characters. For <see cref="GlobReader.Walk"/> an element that <see cref="IgnoreRuleSet.AddPatterns"/>
+    /// cannot compile, such as <c>[z-a]</c>, is refused by the same parser. A <c>..</c> segment is not refused
+    /// there: the walk matches against paths below the root, so it compiles and matches nothing.
+    ///
+    /// For <see cref="GlobReader.Git"/> and <see cref="GlobReader.WalkAndGit"/> an empty element or one holding a
+    /// null character is refused, because git rejects an empty pathspec and cannot be passed a null character; so is
+    /// an element with a <c>..</c> segment (split on <c>/</c> and <c>\</c>, as git on Windows does) and one that
+    /// starts with <c>//</c>. Git fails with a fatal error on each, and a history source then fails every pass.
+    /// A single leading <c>/</c> is accepted: <see cref="GitHistory.Pathspecs"/> removes it before git sees it.
+    /// Anything else, pathspec magic included, is left to git. The check is of syntax: a pattern that compiles
+    /// but is slow to match passes it.
     /// </summary>
-    public static int? FirstUnusable(IReadOnlyList<string>? globs, GlobReader reader = GlobReader.Walk)
+    public static GlobProblem? Check(IReadOnlyList<string>? globs, GlobReader reader = GlobReader.Walk)
     {
         if (globs is null) return null;
+        if (globs.Count > MaxGlobsPerList) return new GlobProblem(MaxGlobsPerList, GlobProblemKind.TooMany);
 
         for (var i = 0; i < globs.Count; i++)
         {
             var glob = globs[i];
-            if (glob is null) return i;
-            if (reader != GlobReader.Walk && (glob.Length == 0 || glob.Contains('\0'))) return i;
+            if (glob is null) return new GlobProblem(i, GlobProblemKind.Unusable);
+            if (glob.Length > MaxGlobLength) return new GlobProblem(i, GlobProblemKind.TooLong);
+
+            if (reader != GlobReader.Walk)
+            {
+                if (glob.Length == 0 || glob.Contains('\0')) return new GlobProblem(i, GlobProblemKind.Unusable);
+                if (HasParentSegment(glob)) return new GlobProblem(i, GlobProblemKind.ParentSegment);
+                if (glob.StartsWith("//", StringComparison.Ordinal)) return new GlobProblem(i, GlobProblemKind.DoubleSlash);
+            }
+
             if (reader == GlobReader.Git) continue;
 
             try { new IgnoreRuleSet().AddPatterns([glob], "check"); }
-            catch (ArgumentException) { return i; }
+            catch (ArgumentException) { return new GlobProblem(i, GlobProblemKind.Unusable); }
         }
 
         return null;
+    }
+
+    /// <summary>The position of the first element <see cref="Check"/> refuses, or null when all can be used.</summary>
+    public static int? FirstUnusable(IReadOnlyList<string>? globs, GlobReader reader = GlobReader.Walk) =>
+        Check(globs, reader)?.Index;
+
+    private static bool HasParentSegment(string glob)
+    {
+        foreach (var segment in glob.Split('/', '\\'))
+            if (segment == "..") return true;
+
+        return false;
     }
 }

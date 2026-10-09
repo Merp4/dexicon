@@ -888,6 +888,83 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
+    /// A leading slash anchors an include pattern at the root of the source, and git rejects it as a path
+    /// outside the repository (<c>fatal: '/src' is outside repository</c>), so a history source whose include
+    /// list held one failed every pass. The slash is removed before git is asked.
+    /// </summary>
+    [Fact]
+    public async Task AnIncludeWithALeadingSlashSelectsTheSameCommitsAsWithoutIt()
+    {
+        Commit("src/a.txt", "one", "touch src");
+        var touchedSrc = Head();
+        Commit("docs/b.txt", "two", "touch docs");
+        var touchedDocs = Head();
+
+        (await EnumerateAsync(paths: ["/src"])).ShouldHaveSingleItem().Sha.ShouldBe(touchedSrc);
+        (await EnumerateAsync(paths: ["/docs/", "/src/a.txt"])).Select(c => c.Sha)
+            .ShouldBe([touchedDocs, touchedSrc], ignoreOrder: true);
+
+        // The read path builds its own git arguments from the same list.
+        var read = await ReadAsync(new GitHistoryOptions(), await EnumerateAsync(paths: ["src"]), paths: ["/src"]);
+        read[touchedSrc].ShouldContain("src/a.txt");
+    }
+
+    /// <summary>
+    /// In an include list a lone slash compiles to no rule in the walk, so it filters nothing. For git it is
+    /// dropped, because the empty pathspec left by removing its slash is rejected by git.
+    /// </summary>
+    [Fact]
+    public async Task AnIncludeOfOnlyASlashSelectsEveryCommitAndBesideAnotherItIsIgnored()
+    {
+        Commit("src/a.txt", "one", "touch src");
+        var touchedSrc = Head();
+        Commit("docs/b.txt", "two", "touch docs");
+
+        (await EnumerateAsync(paths: ["/"])).Count.ShouldBe(2);
+        (await EnumerateAsync(paths: ["/", "src"])).ShouldHaveSingleItem().Sha.ShouldBe(touchedSrc);
+    }
+
+    [Theory]
+    [InlineData("/src", "src")]
+    [InlineData("src/", "src/")]
+    [InlineData("/*.md", "*.md")]
+    [InlineData("//src", "/src")]
+    [InlineData(":(glob)src/**", ":(glob)src/**")]
+    [InlineData("a/../b", "a/../b")]
+    public void OneLeadingSlashIsTheOnlyThingRemovedFromAPathspec(string given, string passed)
+    {
+        GitHistory.Pathspecs([given]).ShouldBe([passed]);
+    }
+
+    [Fact]
+    public void AnAbsentOrEmptyIncludeListGivesNoPathspecs()
+    {
+        GitHistory.Pathspecs(null).ShouldBeEmpty();
+        GitHistory.Pathspecs([]).ShouldBeEmpty();
+        GitHistory.Pathspecs(["/"]).ShouldBeEmpty();
+        GitHistory.Pathspecs(["/", "/"]).ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// What the validation refuses is what git fails on. A pathspec outside the repository is a fatal error from
+    /// git, which a history source reports as unavailable on every pass.
+    /// </summary>
+    [Theory]
+    [InlineData("../x")]
+    [InlineData("..")]
+    [InlineData("//src")]
+    public async Task APathspecGitRejectsStillFailsThePassWhichIsWhyTheListIsRefusedWhereItIsSaved(string pathspec)
+    {
+        Commit("src/a.txt", "one", "touch src");
+
+        var boom = await Should.ThrowAsync<GitHistoryException>(EnumerateAsync(paths: [pathspec]));
+
+        boom.Message.ShouldContain("git log failed");
+        boom.Message.ShouldContain("outside repository");
+        SourceFilters.FirstUnusable([pathspec], SourceFilters.GlobReader.Git).ShouldBe(0);
+    }
+
+    /// <summary>
     /// The ref decides which commits, and must not be able to become a git option: a
     /// value starting with a dash arrives after `--end-of-options`.
     /// </summary>
