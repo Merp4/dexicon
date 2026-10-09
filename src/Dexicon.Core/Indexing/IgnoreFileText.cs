@@ -12,7 +12,7 @@ namespace Dexicon.Core.Indexing;
 /// </summary>
 internal static class IgnoreFileText
 {
-    /// <summary>The largest ignore file read. 10,000 rules of 100 characters is a megabyte.</summary>
+    /// <summary>The largest ignore file read, in bytes. The rule limit (5,000 rules of 200 bytes) is a megabyte.</summary>
     internal const int MaxBytes = 1024 * 1024;
 
     /// <param name="strict">Bytes that are not valid UTF-8 are refused and not replaced.</param>
