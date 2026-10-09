@@ -71,6 +71,10 @@ public sealed class DexiconTools
         {
             throw new McpException(ex.Message);
         }
+        catch (UnknownSearchModeException ex)
+        {
+            throw new McpException(ex.Message);
+        }
         catch (EmbeddingDimensionMismatchException ex)
         {
             throw new McpException(ex.Message);

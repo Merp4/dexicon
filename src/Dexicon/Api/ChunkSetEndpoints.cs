@@ -137,7 +137,7 @@ public static class ChunkSetEndpoints
 
         // The reply as well: on the caller's token a cancel here threw from a handler whose set was saved.
         var activity = await IndexingActivity.ReadAsync(db, [corpus.Id], CancellationToken.None);
-        return Results.Accepted($"/api/corpora/{corpus.Name}/chunk-sets/{set.Name}",
+        return Results.Accepted(CorpusEndpoints.LocationOf(corpus.Name, set.Name),
             new ChunkSetCreated(set.ToSummary(0, 0, 0, 0, activity.Of(set)), job.ToSummary()));
     }
 

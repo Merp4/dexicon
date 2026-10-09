@@ -188,6 +188,10 @@ public static class WorkspaceDiscovery
     /// </summary>
     private static string Contained(string root, string workspaceRoot, string? relative)
     {
+        // GetFullPath throws ArgumentException on a null character, which no caller catches.
+        if (relative is not null && relative.Contains('\0'))
+            throw new UnauthorizedAccessException("Workspace path holds a null character and was refused.");
+
         var combined = Path.GetFullPath(Path.Combine(root, relative ?? string.Empty));
 
         if (!CorpusIndexer.IsInside(combined, root))

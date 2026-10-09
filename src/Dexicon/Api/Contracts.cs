@@ -671,6 +671,18 @@ public static class Mapping
         "semantic" => SearchMode.Semantic,
         "keyword" => SearchMode.Keyword,
         null or "" or "hybrid" => SearchMode.Hybrid,
-        _ => throw new ArgumentException($"Unknown search mode '{mode}'. Expected hybrid, semantic or keyword."),
+        _ => throw new UnknownSearchModeException(
+            $"Unknown search mode '{Shown(mode)}'. Expected hybrid, semantic or keyword."),
     };
+
+    /// <summary>
+    /// A caller's text in a message that is logged and returned: one line, and cut short. The exception
+    /// is written to the console log with its message, so a line break in it would begin a line that
+    /// reads as another entry.
+    /// </summary>
+    private static string Shown(string? text)
+    {
+        var line = (text ?? string.Empty).ReplaceLineEndings(" ");
+        return line.Length > 40 ? line[..40] + "..." : line;
+    }
 }

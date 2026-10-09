@@ -1,3 +1,4 @@
+using Dexicon.Api;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Embedding;
 using Dexicon.Core.Search;
@@ -26,6 +27,7 @@ public sealed class ScopeExceptionHandler(ILogger<ScopeExceptionHandler> log) : 
         var (status, title) = exception switch
         {
             ScopeResolutionException => (StatusCodes.Status400BadRequest, "Unknown or unreadable corpus"),
+            UnknownSearchModeException => (StatusCodes.Status400BadRequest, "Unknown search mode"),
             EmbeddingDimensionMismatchException => (StatusCodes.Status409Conflict, "Embedding dimension mismatch"),
             EmbeddingUnavailableException => (StatusCodes.Status503ServiceUnavailable, "Embedding service unavailable"),
             UnscopedQueryException => (StatusCodes.Status500InternalServerError, "Refused an unscoped query"),

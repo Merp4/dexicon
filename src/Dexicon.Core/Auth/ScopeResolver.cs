@@ -118,6 +118,11 @@ public sealed class ScopeResolver(CatalogDbContext db)
     {
         var visible = await VisibleAsync(principal, ct);
 
+        // A JSON null in the list binds as a null element, and Split would throw on it.
+        if (requestedNamesOrIds is not null && requestedNamesOrIds.Any(r => r is null))
+            throw new ScopeResolutionException(
+                "A corpus name or id cannot be null.", [.. visible.Select(c => c.Name).Order(StringComparer.Ordinal)]);
+
         if (requestedNamesOrIds is { Count: > 0 })
         {
             var selected = new List<ScopedCorpus>();

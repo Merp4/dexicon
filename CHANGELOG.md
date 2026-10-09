@@ -108,8 +108,9 @@ with no section here fails its release rather than publishing an undescribed one
   and a cancel between the saves left it unmapped. A key with no mapping reaches every corpus,
   and its secret had not been shown. The corpora are checked first and saved with the key.
 - **Requests that answered `500`, or were read as something else.** Each was found by sending every
-  JSON-body operation an empty object and `null`, and by reading the attach path for a taken name.
-  A refused request changes nothing.
+  JSON-body operation an empty object and `null`, by reading the attach path for a taken name, or by
+  an independent review of the request paths, and each was reproduced against a running build. A
+  refused request changes nothing.
   - `PUT /api/tokens/{id}/corpora` without `corpusIds` threw on the missing list. It answers `400`
     and keeps the mapping.
   - `POST /api/tokens` with `expiresInDays` of 2147483647 threw in `DateTime.AddDays`, and a
@@ -122,6 +123,16 @@ with no section here fails its release rather than publishing an undescribed one
     unique key. An upload lists the file under `failed` and stores the files beside it; an attach
     answers `409` "Name already used". Bytes that are not attached to the corpus yet, sent under a
     name it holds, still replace that document.
+  - `POST /api/search` and `/api/context`, and the MCP `search_index` tool, with a `mode` other than
+    `hybrid`, `semantic` or `keyword` threw an `ArgumentException` that nothing caught. REST answers
+    `400` "Unknown search mode". The value is shown on one line and cut at 40 characters, because the
+    exception is written to the console log with its message.
+  - A `null` among the names in `corpus` of those two requests threw on splitting it. It answers `400`.
+  - Creating a chunk set, or queuing a sweep, for a corpus or chunk set whose name holds a letter
+    outside ASCII saved the change and then answered `500`, because the name was written unescaped
+    into the `Location` header. Each name is escaped as a path segment.
+  - A `workspacePath` holding a null character threw in `Path.GetFullPath` when a source or a corpus
+    folder was added. It answers `400`.
 - **Attaching the first document to a corpus could leave an empty upload source.** The source
   was saved before the document, so a cancel between them left a source with no files. It is
   saved with the document.

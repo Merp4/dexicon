@@ -3,9 +3,11 @@ using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Documents;
 using Dexicon.Core.Indexing;
+using Dexicon.Core.Search;
 using Dexicon.Infrastructure;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -174,6 +176,79 @@ public sealed class MalformedRequestTests
 
         await using var check = harness.NewContext();
         (await check.Files.Select(f => f.RelativePath).ToListAsync()).ShouldBe(["renamed.txt"]);
+    }
+
+    [Fact]
+    public async Task AnUnknownSearchModeIsAnswered400AndItsMessageIsOneShortLine()
+    {
+        // The mode was echoed into an ArgumentException that nothing caught: a 500, and a message that
+        // reached the console log with the caller's line breaks in it.
+        var thrown = Should.Throw<UnknownSearchModeException>(
+            () => Mapping.ParseMode("fuzzy\n[10:00:00Z INF] Admin signed in" + new string('x', 200)));
+
+        thrown.Message.ShouldContain("Unknown search mode 'fuzzy [10:00:00Z INF]");
+        thrown.Message.ShouldNotContain("\n");
+        thrown.Message.Length.ShouldBeLessThan(120);
+
+        var http = new DefaultHttpContext { RequestServices = new ServiceCollection().AddLogging().AddOptions().BuildServiceProvider() };
+        http.Response.Body = new MemoryStream();
+        var handled = await new ScopeExceptionHandler(NullLogger<ScopeExceptionHandler>.Instance)
+            .TryHandleAsync(http, thrown, default);
+
+        handled.ShouldBeTrue();
+        http.Response.StatusCode.ShouldBe(400);
+    }
+
+    [Fact]
+    public void ThreeSearchModesAreStillAccepted()
+    {
+        Mapping.ParseMode(null).ShouldBe(SearchMode.Hybrid);
+        Mapping.ParseMode("Keyword").ShouldBe(SearchMode.Keyword);
+        Mapping.ParseMode("semantic").ShouldBe(SearchMode.Semantic);
+    }
+
+    [Fact]
+    public async Task ACorpusListWithANullInItIsRefusedAsAScopeError()
+    {
+        // A JSON null in the list is a null element. Split threw on it, which answered 500.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        await using var db = harness.NewContext();
+
+        var thrown = await Should.ThrowAsync<ScopeResolutionException>(() =>
+            new ScopeResolver(db).ResolveReadableAsync(AsIngester().RequirePrincipal(), [IndexingHarness.CorpusId, null!]));
+
+        thrown.Message.ShouldContain("cannot be null");
+    }
+
+    [Fact]
+    public async Task ASourceWithANullCharacterInItsPathIsRefusedAndNoSourceIsAdded()
+    {
+        // Path.GetFullPath throws ArgumentException on it, which nothing caught.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        await using var db = harness.NewContext();
+        var corpus = await db.Corpora.SingleAsync();
+        var before = await db.Sources.CountAsync();
+
+        var outcome = await harness.NewConfiguration(db).AddSourceAsync(corpus, new AddSourceRequest("a\0b"), default);
+
+        outcome.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
+        (await db.Sources.CountAsync()).ShouldBe(before);
+    }
+
+    [Theory]
+    [InlineData("Café", null, "/api/corpora/Caf%C3%A9")]
+    [InlineData("a b/c?d#e", null, "/api/corpora/a%20b%2Fc%3Fd%23e")]
+    [InlineData("books", "fine", "/api/corpora/books/chunk-sets/fine")]
+    [InlineData("books", "résumé set", "/api/corpora/books/chunk-sets/r%C3%A9sum%C3%A9%20set")]
+    public void ALocationHeaderHoldsOnlyAsciiAndEscapesEachNameAsASegment(string corpus, string? set, string expected)
+    {
+        // Kestrel throws on a header value outside ASCII, after the sweep or the chunk set was saved.
+        var location = CorpusEndpoints.LocationOf(corpus, set);
+
+        location.ShouldBe(expected);
+        location.ShouldAllBe(c => c < 128);
     }
 
     [Fact]
