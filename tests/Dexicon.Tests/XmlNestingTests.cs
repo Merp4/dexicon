@@ -244,9 +244,11 @@ public sealed class XmlNestingTests
         var clock = Stopwatch.StartNew();
 
         // 200 ms is not enough to read 200 MB of XML at any speed this reader has.
-        Should.Throw<ExtractionTimeoutException>(
+        var thrown = Should.Throw<ExtractionTimeoutException>(
             () => extractor.Extract(new DeadlineStream(new MemoryStream(bomb), TimeSpan.FromMilliseconds(200), name), name));
 
+        // Raised while the package was being scanned, not by a later parse that found the clock already out.
+        thrown.StackTrace.ShouldContain(nameof(XmlNesting));
         clock.Elapsed.ShouldBeLessThan(Margin);
     }
 
