@@ -192,8 +192,8 @@ public static class DocumentEndpoints
         // Anything else, with files attached already: the caller still gets the server error, and the
         // attached files are not left with no job until the next scheduled refresh. What the failed step
         // had added is dropped here, as for a cancel, or the save that queues the job would write it. The
-        // job is queued after the try and not in this block, where the request-token scan cannot see
-        // that it follows the commits above.
+        // job is queued after the try and not in this block, where the TokenAfterCommit scan
+        // (RequestTokenAfterCommitTests) cannot see that it follows the commits above.
         catch (Exception ex) when (stored.Count > 0)
         {
             documents.DiscardUnsavedChanges();

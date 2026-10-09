@@ -83,25 +83,39 @@ public static class SourceFilters
     public static string? Store(IReadOnlyList<string>? globs) =>
         globs is null ? null : JsonSerializer.Serialize(globs);
 
+    /// <summary>What reads a glob list, and so what makes an element of it unusable.</summary>
+    public enum GlobReader
+    {
+        /// <summary>The file walk: <see cref="IgnoreRuleSet.AddPatterns"/> compiles each element.</summary>
+        Walk,
+
+        /// <summary>A history source's include list, which git reads as pathspecs.</summary>
+        Git,
+
+        /// <summary>A corpus's default include list, which a file source reads as patterns and a history source as pathspecs.</summary>
+        WalkAndGit,
+    }
+
     /// <summary>
     /// The position of the first element of <paramref name="globs"/> that cannot be used, or null when all
-    /// can. A file source reads its lists with <see cref="IgnoreRuleSet.AddPatterns"/>, so a null element,
-    /// or a pattern that does not compile such as <c>[z-a]</c>, is refused here by the same parser. A
-    /// history source passes its include list to git as pathspecs, which that parser never reads; for
-    /// those (<paramref name="pathspecs"/>) only a null or blank element is refused, because git rejects
-    /// an empty pathspec, and anything else is left to git. The check is of syntax: a pattern that
-    /// compiles but backtracks without limit when matched passes it.
+    /// can. A null element is never usable. For <see cref="GlobReader.Walk"/> an element that
+    /// <see cref="IgnoreRuleSet.AddPatterns"/> cannot compile, such as <c>[z-a]</c>, is refused by the same
+    /// parser. For <see cref="GlobReader.Git"/> an empty element or one holding a null character is refused,
+    /// because git rejects an empty pathspec and cannot be passed a null character, and anything else is left
+    /// to git. The check is of syntax: a pattern that compiles but is slow to match passes it.
     /// </summary>
-    public static int? FirstUnusable(IReadOnlyList<string>? globs, bool pathspecs = false)
+    public static int? FirstUnusable(IReadOnlyList<string>? globs, GlobReader reader = GlobReader.Walk)
     {
         if (globs is null) return null;
 
         for (var i = 0; i < globs.Count; i++)
         {
-            if (globs[i] is null || (pathspecs && string.IsNullOrWhiteSpace(globs[i]))) return i;
-            if (pathspecs) continue;
+            var glob = globs[i];
+            if (glob is null) return i;
+            if (reader != GlobReader.Walk && (glob.Length == 0 || glob.Contains('\0'))) return i;
+            if (reader == GlobReader.Git) continue;
 
-            try { new IgnoreRuleSet().AddPatterns([globs[i]], "check"); }
+            try { new IgnoreRuleSet().AddPatterns([glob], "check"); }
             catch (ArgumentException) { return i; }
         }
 

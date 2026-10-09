@@ -99,11 +99,13 @@ excludes `data/` and keeps `data/sessions/` while the bulk of the tree is a sibl
 also what makes `!.vscode/launch.json` work against the always-exclude list.
 
 A glob list sent through the API or the configure tools is refused when it holds a null element or
-a pattern that does not compile, such as the bracket class `[z-a]`. The answer is `400`, naming the
-list and the position (`includeGlobs[1]`), and nothing is saved. That holds for a source's lists and
-for a corpus's defaults. A history source's include list is read by git as pathspecs, so only a null
-or blank element is refused there. The check is of syntax: a pattern that compiles but is slow to
-match passes it, and the lines of a `.gitignore` or `.dexiconignore` in the tree are not checked.
+a pattern that does not compile, such as the bracket class `[z-a]`. The API answers `400`, naming the
+list and the position (`includeGlobs[1]`); the configure tools return an error with the same text.
+Nothing is saved. That holds for a source's lists and for a corpus's defaults. A history source's
+include list is read by git as pathspecs, so only a null or empty element is refused there, and a
+corpus's default include list, which sources of both kinds inherit, must also be non-empty. The
+check is of syntax: a pattern that compiles but is slow to match passes it, and the lines of a
+`.gitignore` or `.dexiconignore` in the tree are not checked.
 
 Worktrees are the case that prompted `2`. Reported against a checkout with four of them:
 22,004 files walked to 5,463 tracked ones, and search returning the same document at two

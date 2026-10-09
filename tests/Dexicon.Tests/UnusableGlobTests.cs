@@ -41,16 +41,26 @@ public sealed class UnusableGlobTests
     }
 
     [Fact]
-    public void AHistorySourcesIncludeListIsOnlyHeldToNotBeingNullOrBlank()
+    public void AHistorySourcesIncludeListIsOnlyHeldToNotBeingNullOrEmpty()
     {
         // Git reads these as pathspecs, which the walk's parser never sees: a class it cannot compile is left to git,
-        // and an empty pathspec is one git rejects.
-        SourceFilters.FirstUnusable(["docs/", "[z-a]"], pathspecs: true).ShouldBeNull();
-        SourceFilters.FirstUnusable(["docs/", ""], pathspecs: true).ShouldBe(1);
-        SourceFilters.FirstUnusable(["docs/", "  "], pathspecs: true).ShouldBe(1);
-        SourceFilters.FirstUnusable(NullAmongPatterns, pathspecs: true).ShouldBe(1);
+        // an empty pathspec is one git rejects, and a pathspec of spaces is one git accepts.
+        SourceFilters.FirstUnusable(["docs/", "[z-a]"], SourceFilters.GlobReader.Git).ShouldBeNull();
+        SourceFilters.FirstUnusable(["docs/", "  "], SourceFilters.GlobReader.Git).ShouldBeNull();
+        SourceFilters.FirstUnusable(["docs/", ""], SourceFilters.GlobReader.Git).ShouldBe(1);
+        SourceFilters.FirstUnusable(["docs/", "a\0b"], SourceFilters.GlobReader.Git).ShouldBe(1);
+        SourceFilters.FirstUnusable(NullAmongPatterns, SourceFilters.GlobReader.Git).ShouldBe(1);
     }
 
+    [Fact]
+    public void ACorpusDefaultIncludeListIsHeldToBothReaders()
+    {
+        // Sources of both kinds inherit it: a file source compiles it, a history source hands it to git.
+        SourceFilters.FirstUnusable(["docs/", "**/*.md"], SourceFilters.GlobReader.WalkAndGit).ShouldBeNull();
+        SourceFilters.FirstUnusable(["docs/", ""], SourceFilters.GlobReader.WalkAndGit).ShouldBe(1);
+        SourceFilters.FirstUnusable(["docs/", "[z-a]"], SourceFilters.GlobReader.WalkAndGit).ShouldBe(1);
+        SourceFilters.FirstUnusable(NullAmongPatterns, SourceFilters.GlobReader.WalkAndGit).ShouldBe(1);
+    }
     /// <summary>A harness with one workspace corpus, and a context on it.</summary>
     private sealed class Seeded : IAsyncDisposable
     {
@@ -112,6 +122,61 @@ public sealed class UnusableGlobTests
         added.Value!.Source.IncludeGlobs.ShouldBe(["**/*.md", "[a-c]*.txt"]);
     }
 
+    [Fact]
+    public async Task AHistorySourceIsAddedWithTheGitRuleForItsIncludeList()
+    {
+        // The glob check comes before the check that the folder is a repository, so which refusal comes back says which rule ran.
+        await using var s = await Seeded.StartAsync();
+
+        var empty = await s.Config.AddSourceAsync(s.Corpus, new AddSourceRequest("", GitHistory: true, IncludeGlobs: [""]), default);
+        var oddClass = await s.Config.AddSourceAsync(s.Corpus, new AddSourceRequest("", GitHistory: true, IncludeGlobs: ["[z-a]"]), default);
+
+        empty.Refusal.ShouldNotBeNull().Title.ShouldBe("Unusable glob");
+        (oddClass.Refusal?.Title).ShouldNotBe("Unusable glob", "git reads the list as pathspecs, so the walk's parser does not judge it");
+    }
+
+    [Theory]
+    [InlineData("INCLUDEGLOBS")]
+    [InlineData("includeGlobs")]
+    public async Task AListIsClearedWhateverTheCaseOfItsName(string name)
+    {
+        await using var s = await Seeded.StartAsync();
+
+        var outcome = await s.Config.UpdateSourceAsync(s.Corpus, IndexingHarness.SourceIdFor(0),
+            new UpdateSourceRequest(IncludeGlobs: ["[z-a]"], Clear: [name]), default);
+
+        outcome.Refusal.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ClearingTheExcludeListLeavesTheIncludeListJudged()
+    {
+        // Each list is skipped for its own name only.
+        await using var s = await Seeded.StartAsync();
+        var id = IndexingHarness.SourceIdFor(0);
+
+        var excludeCleared = await s.Config.UpdateSourceAsync(s.Corpus, id,
+            new UpdateSourceRequest(ExcludeGlobs: ["[z-a]"], Clear: ["excludeGlobs"]), default);
+        var includeStillJudged = await s.Config.UpdateSourceAsync(s.Corpus, id,
+            new UpdateSourceRequest(IncludeGlobs: ["[z-a]"], Clear: ["excludeGlobs"]), default);
+
+        excludeCleared.Refusal.ShouldBeNull();
+        includeStillJudged.Refusal.ShouldNotBeNull().Detail.ShouldContain("includeGlobs[0]");
+    }
+
+    [Fact]
+    public async Task AnEmptyDefaultIncludePatternIsRefusedBecauseAHistorySourceWouldInheritIt()
+    {
+        await using var s = await Seeded.StartAsync();
+
+        var update = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("includeGlobs", "")), default);
+        var create = await s.Config.CreateCorpusAsync(new CreateCorpusRequest("papers"), default, defaults: DefaultsWith("includeGlobs", ""));
+
+        update.Refusal.ShouldNotBeNull().Detail.ShouldContain("includeGlobs[0]");
+        create.Refusal.ShouldNotBeNull().Detail.ShouldContain("includeGlobs[0]");
+        (await s.Db.Corpora.AnyAsync(c => c.Name == "papers")).ShouldBeFalse();
+    }
+
     private static CorpusDefaults DefaultsWith(string field, params string[] globs) => field == "includeGlobs"
         ? new CorpusDefaults(null, null, globs, null)
         : new CorpusDefaults(null, null, null, globs);
@@ -166,7 +231,7 @@ public sealed class UnusableGlobTests
 
         (await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["[z-a]"]), default))
             .Refusal.ShouldBeNull();
-        var blank = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["docs/", " "]), default);
+        var blank = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["docs/", ""]), default);
 
         blank.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
         blank.Refusal.Detail.ShouldContain("includeGlobs[1]");

@@ -29,14 +29,14 @@ with no section here fails its release rather than publishing an undescribed one
 
 - A glob list with a null element, or a pattern that does not compile such as the bracket class
   `[z-a]`, was stored as sent and failed every pass of every source that read it. Creating or
-  updating a corpus's defaults or a source now refuses it: `400` over the API, naming the list and
-  position (`includeGlobs[1]`), and an error from `configure_corpus` and `configure_source`. Nothing is
-  saved. A history source's include list is read by git as pathspecs, so only a null or blank element
-  is refused there. A list stored before this change still fails until it is replaced or cleared, and
-  `configure_corpus` re-sends a corpus's stored lists with each change, so it refuses an unrelated
-  change until the bad list is reset. Slow patterns and bad lines in a `.gitignore` or
-  `.dexiconignore` in the tree are not checked.
-- When a later file of an upload batch failed with an unexpected error, the earlier files were
+  updating a corpus's defaults or a source now refuses it, with `400` over the API naming the list and
+  position (`includeGlobs[1]`) and an error carrying the same text from `configure_corpus` and
+  `configure_source`. Nothing is saved. A history source's include list is read by git as pathspecs,
+  so only a null or empty element is refused there; a corpus's default include list is read both ways,
+  so it must be non-empty and compile. A list stored before this change still fails until it is
+  replaced or cleared, and a `configure_corpus` call that changes any filter re-sends the corpus's
+  stored lists, so it is refused until a bad stored list is reset. Patterns that compile but are slow
+  to match, and bad lines in a `.gitignore` or `.dexiconignore` in the tree, are not checked.- When a later file of an upload batch failed with an unexpected error, the earlier files were
   attached and had no indexing job until the next scheduled refresh. The job is now queued, and the
   caller still receives the error.
 - Detaching a document while the same document is being attached no longer fails the attachment's
@@ -45,6 +45,7 @@ with no section here fails its release rather than publishing an undescribed one
   character, in place of "An error occurred".
 - The unknown search mode echoed in an error is cut to 40 characters, with line breaks shown as a
   space and any other control character replaced by U+FFFD.
+
 ## 0.6.8 — 2026-10-09
 
 ### ⚠️ Upgrading

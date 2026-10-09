@@ -116,7 +116,10 @@ public sealed class CorpusConfiguration(
             return new ConfigRefusal("Invalid size cap",
                 "maxFileBytes must be greater than zero, or null to follow the server's setting.", 400);
 
-        if (defaults is not null && CorpusEndpoints.UnusableGlobs(defaults.IncludeGlobs, defaults.ExcludeGlobs) is { } badGlob)
+        // A default is inherited by file sources and history sources alike.
+        if (defaults is not null
+            && CorpusEndpoints.UnusableGlobs(defaults.IncludeGlobs, defaults.ExcludeGlobs, SourceFilters.GlobReader.WalkAndGit)
+                is { } badGlob)
             return badGlob;
 
         if (string.IsNullOrWhiteSpace(body.Name))
@@ -287,7 +290,9 @@ public sealed class CorpusConfiguration(
             return new ConfigRefusal("Invalid size cap",
                 "maxFileBytes must be greater than zero, or null to follow the server's setting.", 400);
 
-        if (body.Defaults is { } sent && CorpusEndpoints.UnusableGlobs(sent.IncludeGlobs, sent.ExcludeGlobs) is { } badGlob)
+        if (body.Defaults is { } sent
+            && CorpusEndpoints.UnusableGlobs(sent.IncludeGlobs, sent.ExcludeGlobs, SourceFilters.GlobReader.WalkAndGit)
+                is { } badGlob)
             return badGlob;
 
         // Chunk settings are NOT here any more. They belong to a chunk set, because a
@@ -369,7 +374,7 @@ public sealed class CorpusConfiguration(
             return new ConfigRefusal("Invalid size cap",
                 "maxFileBytes must be greater than zero, or omitted to follow the corpus.", 400);
 
-        if (CorpusEndpoints.UnusableGlobs(body.IncludeGlobs, body.ExcludeGlobs, includeIsPathspec: body.GitHistory)
+        if (CorpusEndpoints.UnusableGlobs(body.IncludeGlobs, body.ExcludeGlobs, body.GitHistory ? SourceFilters.GlobReader.Git : SourceFilters.GlobReader.Walk)
             is { } badGlob)
             return badGlob;
 
@@ -484,7 +489,7 @@ public sealed class CorpusConfiguration(
         bool Cleared(string field) => body.Clear?.Contains(field, StringComparer.OrdinalIgnoreCase) == true;
         if (CorpusEndpoints.UnusableGlobs(
                 Cleared("includeGlobs") ? null : body.IncludeGlobs, Cleared("excludeGlobs") ? null : body.ExcludeGlobs,
-                includeIsPathspec: source.Kind == SourceKind.GitHistory) is { } badGlob)
+                source.Kind == SourceKind.GitHistory ? SourceFilters.GlobReader.Git : SourceFilters.GlobReader.Walk) is { } badGlob)
             return badGlob;
 
         if (CorpusEndpoints.UnusableHistorySettings(body.Git) is { } refused) return refused;
