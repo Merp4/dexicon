@@ -412,13 +412,6 @@ public sealed class CorpusIndexer(
         {
             ct.ThrowIfCancellationRequested();
 
-            // Dropped by an earlier save, so there is nothing to index.
-            if (db.Entry(file).State == EntityState.Detached)
-            {
-                job.FilesSkipped++;
-                continue;
-            }
-
             try
             {
                 // Re-extracts first if this text came from an older extractor, so a fix
@@ -520,7 +513,7 @@ public sealed class CorpusIndexer(
                     EmbedText = p.EmbedText,
                 }).ToList();
 
-                var stored = await EmbedAndUpsertAsync(set, chunks, file.RelativePath, job, progress, sinceFlush, ct, onVanished);
+                var stored = await EmbedAndUpsertAsync(set, chunks, file.RelativePath, job, progress, sinceFlush, ct);
 
                 state.Status = FileStatus.Indexed;
                 state.StatusDetail = null;
@@ -704,7 +697,7 @@ public sealed class CorpusIndexer(
     /// <returns>Chunks actually written, which exceeds <paramref name="chunks"/> when a split occurred.</returns>
     private async Task<int> EmbedAndUpsertAsync(ChunkSet set, List<Chunk> chunks, string label,
         IndexJob job, IProgress<IndexProgress>? progress, System.Diagnostics.Stopwatch sinceFlush,
-        CancellationToken ct, Func<HashSet<string>, Task>? onVanished = null)
+        CancellationToken ct)
     {
         // Hand the provider MaxConcurrency batches at a time so it can run them in
         // parallel, while still reporting progress at that granularity.
@@ -736,7 +729,7 @@ public sealed class CorpusIndexer(
             // Throttled, because SaveChanges per batch is not free.
             if (sinceFlush.ElapsedMilliseconds >= 1000)
             {
-                await SaveWithoutVanishedFilesAsync(onVanished, ct);
+                await db.SaveChangesAsync(ct);
                 sinceFlush.Restart();
             }
         }
