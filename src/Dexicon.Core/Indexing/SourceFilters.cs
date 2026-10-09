@@ -101,7 +101,9 @@ public static class SourceFilters
     /// can. A null element is never usable. For <see cref="GlobReader.Walk"/> an element that
     /// <see cref="IgnoreRuleSet.AddPatterns"/> cannot compile is refused by the same parser: a class it cannot
     /// read such as <c>[z-a]</c> or <c>[]x</c>, and a glob longer than <see cref="IgnoreRuleSet.MaxPatternLength"/>
-    /// characters, and any entry from the <see cref="IgnoreRuleSet.MaxRulesPerSource"/>th on, which a walk would not read.
+    /// characters, and the first entry that takes the list past its limits (<see cref="IgnoreRuleSet.MaxRulesPerList"/>
+    /// rules or <see cref="IgnoreRuleSet.MaxWeightPerList"/> pattern parts), which a walk would fail on. The list is
+    /// counted against one budget here as it is in the walk, which gives each list its own.
     /// A class with a leading <c>]</c> such as <c>[]a]</c> compiles and passes. For
     /// <see cref="GlobReader.Git"/> an empty element or one holding a null character is refused,
     /// because git rejects an empty pathspec and cannot be passed a null character, and anything else is left
@@ -112,15 +114,17 @@ public static class SourceFilters
     {
         if (globs is null) return null;
 
+        var rules = new IgnoreRuleSet();
+        var budget = RuleBudget.ForList();
+
         for (var i = 0; i < globs.Count; i++)
         {
             var glob = globs[i];
             if (glob is null) return i;
-            if (reader != GlobReader.Git && i >= IgnoreRuleSet.MaxRulesPerSource) return i;
             if (reader != GlobReader.Walk && (glob.Length == 0 || glob.Contains('\0'))) return i;
             if (reader == GlobReader.Git) continue;
 
-            try { new IgnoreRuleSet().AddPatterns([glob], "check"); }
+            try { rules.AddPatterns([glob], "check", isList: true, budget: budget); }
             catch (ArgumentException) { return i; }
         }
 

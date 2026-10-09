@@ -34,7 +34,9 @@ public static class WorkspaceDiscovery
         IReadOnlyList<string> Warnings,
         int WarningsOmitted);
 
-    public static Result Walk(Corpus corpus, Source source, string root, IndexingOptions indexing)
+    /// <param name="ct">Stops the walk, which polls it for each directory and every 256 files.</param>
+    public static Result Walk(Corpus corpus, Source source, string root, IndexingOptions indexing,
+        CancellationToken ct = default)
     {
         // Through SourceFilters, not off the source: a null field there means the source
         // has no opinion and the corpus default applies. Reading the columns directly
@@ -43,9 +45,13 @@ public static class WorkspaceDiscovery
 
         var shadowed = SourceScope.ShadowedPrefixes(corpus.Sources, source);
 
+        // A list the source does not hold is the corpus's default, and a message about an entry of it says so.
         var walk = WorkspaceWalker.Walk(root, filters.UseGitignore,
             filters.IncludeGlobs, filters.ExcludeGlobs, filters.MaxFileBytes,
-            indexing.DocumentMaxBytes, shadowedPrefixes: shadowed);
+            indexing.DocumentMaxBytes, shadowedPrefixes: shadowed,
+            includeListName: ListName(WorkspaceWalker.IncludeListName, source.IncludeGlobs),
+            excludeListName: ListName(WorkspaceWalker.ExcludeListName, source.ExcludeGlobs),
+            ct: ct);
 
         // The inventory is made distinct ACROSS sources here. A source covers its whole
         // tree, so one added above another makes every file beneath reachable twice, and
@@ -65,6 +71,9 @@ public static class WorkspaceDiscovery
 
         return new Result(owned, skipped, walk.Files.Count - owned.Count, walk.Warnings, walk.WarningsOmitted);
     }
+
+    private static string ListName(string name, string? sourceValue) =>
+        SourceFilters.Globs(sourceValue) is null ? $"corpus default {name}" : name;
 
     /// <summary>
     /// A source's root on disk, refusing anything outside the workspace or reached through

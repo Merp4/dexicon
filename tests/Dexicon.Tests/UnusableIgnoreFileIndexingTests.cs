@@ -166,4 +166,121 @@ public sealed class UnusableIgnoreFileIndexingTests
         await using var db = harness.NewContext();
         (await db.Files.CountAsync()).ShouldBe(0);
     }
+
+    [Fact]
+    public async Task TheSameBadLineInTwoSourcesIsLoggedForEachAndAgainOnTheNextPass()
+    {
+        await using var harness = await IndexingHarness.StartAsync("one", "two");
+        await harness.WriteFileAsync(".gitignore", $"{Faulty}\n", source: 0);
+        await harness.WriteFileAsync(".gitignore", $"{Faulty}\n", source: 1);
+        await harness.WriteFileAsync("a.md", IndexingHarness.Prose("a"), source: 0);
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        var log = new RecordingLoggerFactory();
+
+        await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log));
+        log.Lines.Count(l => l.Contains(".gitignore line 1", StringComparison.Ordinal)).ShouldBe(2, "one for each source");
+        log.Lines.ShouldContain(l => l.StartsWith("Source one: ", StringComparison.Ordinal));
+        log.Lines.ShouldContain(l => l.StartsWith("Source two: ", StringComparison.Ordinal));
+
+        await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log));
+        log.Lines.Count(l => l.Contains(".gitignore line 1", StringComparison.Ordinal)).ShouldBe(4, "the next pass reports again");
+    }
+
+    [Fact]
+    public async Task AFailedIgnoreFileIsLoggedOnceHoweverManyChunkSetsWalkTheSource()
+    {
+        await using var harness = await IndexingHarness.StartAsync("faulty");
+        await harness.WriteFileAsync(".dexiconignore", $"{Faulty}\n");
+        await harness.WriteFileAsync("one.md", IndexingHarness.Prose("one"));
+        await harness.SeedCorpusAsync(SourceKind.Workspace, sets: 3);
+        var log = new RecordingLoggerFactory();
+
+        var job = await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log));
+
+        log.Lines.Count(l => l.Contains("was not indexed because", StringComparison.Ordinal)).ShouldBe(1);
+        job.Error.ShouldNotBeNull();
+        job.Error.Split("was not indexed because").Length.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task WhatTheWalkSkippedBeforeAFailureIsLoggedWithIt()
+    {
+        await using var harness = await IndexingHarness.StartAsync("faulty");
+        await harness.WriteFileAsync(".gitignore", $"{Faulty}\n");
+        await harness.WriteFileAsync(".dexiconignore", $"{Faulty}\n");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        var log = new RecordingLoggerFactory();
+
+        await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log));
+
+        log.Lines.ShouldContain(l => l.Contains(".gitignore line 1", StringComparison.Ordinal) && l.Contains("the line was skipped", StringComparison.Ordinal));
+        log.Lines.ShouldContain(l => l.Contains(".dexiconignore line 1", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("source", "excludeGlobs[0]")]
+    [InlineData("corpus", "corpus default excludeGlobs[0]")]
+    public async Task AnEntryOfAStoredListIsNamedByWhereItCameFrom(string holder, string expected)
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.WriteFileAsync("one.md", IndexingHarness.Prose("one"));
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        await using (var db = harness.NewContext())
+        {
+            if (holder == "source") (await db.Sources.SingleAsync()).ExcludeGlobs = SourceFilters.Store([Faulty]);
+            else (await db.Corpora.SingleAsync()).DefaultExcludeGlobs = SourceFilters.Store([Faulty]);
+            await db.SaveChangesAsync();
+        }
+
+        var job = await harness.RunIndexAsync();
+
+        job.Error.ShouldNotBeNull();
+        job.Error.ShouldContain($"Source 'notes' was not indexed because {expected} ('[z-a]') cannot be compiled");
+    }
+
+    [Fact]
+    public async Task ASweepLogsAFailedIgnoreFileOnceUntilTheReasonChanges()
+    {
+        await using var harness = await IndexingHarness.StartAsync("faulty");
+        await harness.WriteFileAsync(".dexiconignore", $"{Faulty}\n");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        var log = new RecordingLoggerFactory();
+        var sweeperLog = new Logger<CorpusSweeper>(log);
+
+        await harness.SweepAsync(sweeperLog);
+        await harness.SweepAsync(sweeperLog);
+        log.Lines.Count(l => l.Contains("was not walked because", StringComparison.Ordinal)).ShouldBe(1);
+
+        await harness.WriteFileAsync(".dexiconignore", "[y-b]\n");
+        await harness.SweepAsync(sweeperLog);
+        log.Lines.Count(l => l.Contains("was not walked because", StringComparison.Ordinal)).ShouldBe(2);
+
+        await harness.WriteFileAsync(".dexiconignore", "*.log\n");
+        await harness.SweepAsync(sweeperLog);
+        await harness.WriteFileAsync(".dexiconignore", "[y-b]\n");
+        await harness.SweepAsync(sweeperLog);
+        log.Lines.Count(l => l.Contains("was not walked because", StringComparison.Ordinal)).ShouldBe(3, "a source that came right and failed again is reported again");
+    }
+
+    [Fact]
+    public void TheDiscoveryWalkIsGivenTheTokenAndStopsOnIt()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"discovery-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "a.md"), "hello");
+            var source = new Source { Id = "s", CorpusId = "c", Kind = SourceKind.Workspace, RootPath = string.Empty };
+            var corpus = new Corpus { Id = "c", Name = "c", Sources = { source } };
+            using var cts = new CancellationTokenSource();
+            cts.Cancel();
+
+            Should.Throw<OperationCanceledException>(
+                () => WorkspaceDiscovery.Walk(corpus, source, root, new Dexicon.Core.Configuration.IndexingOptions(), cts.Token));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 }

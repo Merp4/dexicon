@@ -4,38 +4,30 @@ namespace Dexicon.Core.Indexing;
 
 /// <summary>
 /// Matches one ignore pattern against a path. The pattern is read once into tokens (a literal character, <c>?</c>, a
-/// bracket class, <c>*</c>, <c>**</c>, and <c>**/</c>) and a match runs them over the path, so the time to match is
-/// at most the number of tokens times the length of the path and the memory held per rule is its tokens.
+/// bracket class, <c>*</c>, <c>**</c>, and <c>**/</c>) and a match runs them over the path.
 ///
-/// The pattern means what the regular expression written for it meant, which the differential test keeps as an oracle
-/// (<c>GlobOracle</c> in the test project):
+/// Meaning. A pattern is anchored at the directory it was written in, and matches
 /// <code>
-/// ^ prefix/ [(?:.*/)?] tokens (?:/.*)?$
+/// prefix/ [any directories/] tokens [/ anything]
 /// </code>
-/// where a token is a literal, <c>[^/]</c>, a class that never matches <c>/</c>, <c>[^/]*</c>, <c>.*</c> or
-/// <c>(?:.*/)?</c>, and the optional group before the tokens is present for a pattern with no slash in it, which
-/// matches at any depth. The end of the tokens must fall at the end of the path or at a <c>/</c>, so a pattern that
-/// matches a directory matches everything beneath it.
+/// where the optional directories are present for a pattern with no slash in it, which matches at any depth. A token
+/// is a literal, one character that is not <c>/</c>, a class (which never matches <c>/</c>), a run of characters that
+/// are not <c>/</c> (<c>*</c>), a run of any characters (<c>**</c>), or any directories ending in <c>/</c>
+/// (<c>**/</c>). The tokens must end at the end of the path or at a <c>/</c>, so a pattern that matches a directory
+/// matches everything beneath it. The test project keeps the regular expression that spells this out
+/// (<c>GlobOracle</c>) and compares the two over random patterns and paths.
 ///
-/// Why this is not a regular expression. A backtracking engine takes time exponential in the number of wildcards
-/// (<c>*a*a*a*a*a*a*a*a*a*a*a*a*b</c>), and its 250 ms match timeout threw from the middle of a walk, and also
-/// fired for <c>*.so</c> when the host was starved of CPU. The engine that cannot backtrack
-/// (<c>RegexOptions.NonBacktracking</c>) costs about 390 KiB to build each matcher and holds it, which a
-/// <c>.gitignore</c> in an indexed tree can multiply into gigabytes. Here the work is bounded by the pattern and the
-/// path, so there is no timeout, and a rule is a few tens of bytes per character of the pattern.
-///
-/// How a match runs. The set of positions in the path the tokens so far can have reached is kept as a window over a
-/// byte array. A literal, <c>?</c> or class moves each position forward by one if the character fits; <c>*</c> extends
+/// Cost. The set of positions in the path that the tokens so far can have reached is kept as a window over a byte
+/// array. A literal, <c>?</c> or class moves each position forward by one if the character fits; <c>*</c> extends
 /// each position to the next <c>/</c>; <c>**</c> extends to the end; <c>**/</c> adds each position after a later
-/// <c>/</c>. Each token costs at most the length of the path, which is the bound. Most rules are rejected before
-/// that, by a search for the longest run of literal characters the pattern needs.
+/// <c>/</c>. A token looks at each position of the path at most twice, so a match takes at most
+/// 2 x (tokens + 1) x (length + 2) steps whatever the pattern, and there is no match timeout. A rule holds its tokens,
+/// 16 bytes each, and a class holds its ranges besides, which is what <see cref="Weight"/> counts. Most rules are
+/// rejected before a match runs, by a search for the longest run of literal characters the pattern needs.
 ///
-/// Case. Two characters are the same when their invariant lower cases are (<see cref="Fold"/>). That is the case
-/// equivalence of <c>RegexOptions.IgnoreCase</c>: <c>CaseFoldTests</c> compares the two over the 2,357 code points
-/// of the BMP that have a case and finds no pair they disagree on. It is not <c>StringComparison.OrdinalIgnoreCase</c>,
-/// which compares upper cases and so does not pair the Kelvin sign with <c>k</c>.
-///
-/// Characters are UTF-16 units, as in the regular expression, so <c>?</c> matches one unit and not a whole emoji.
+/// Case. Two characters are the same when their invariant lower cases are (<see cref="Fold"/>), which is the case
+/// equivalence of <c>RegexOptions.IgnoreCase</c>. Characters are UTF-16 units, so <c>?</c> matches one unit and not a
+/// whole emoji.
 /// </summary>
 internal sealed class GlobMatcher
 {
@@ -55,17 +47,43 @@ internal sealed class GlobMatcher
     /// <summary>The number of tokens, which with the length of a path bounds the steps of a match.</summary>
     internal int TokenCount => _tokens.Length;
 
-    private GlobMatcher(Token[] tokens, string prefix)
+    /// <summary>
+    /// What the pattern costs to hold and to run, which a walk adds up against a limit. A token counts one, and a class
+    /// one more for each range it holds. A pattern with a wildcard (a <c>*</c>, <c>**</c> or <c>**/</c> other than the
+    /// any-depth prefix) counts that in full: a wildcard widens the set of positions to the length of the path and every
+    /// token after it then looks at all of them. A pattern without one counts a <see cref="PlainDivisor"/>th of it
+    /// (at least one), because its tokens look at a few positions. Measured (IgnoreRuleCostTests), the worst wildcard
+    /// pattern costs about twenty times as much per token as the worst pattern without one.
+    /// </summary>
+    internal int Weight { get; }
+
+    /// <summary>How many tokens of a pattern without a wildcard weigh as one.</summary>
+    internal const int PlainDivisor = 20;
+
+    private GlobMatcher(Token[] tokens, string prefix, int weight)
     {
         _tokens = tokens;
         _prefix = prefix;
+        Weight = weight;
 
         (_required, _requiredFirst) = RequiredLiteral(tokens);
     }
 
     /// <exception cref="FormatException">A bracket class that cannot be read; see <see cref="ReadClass"/>.</exception>
-    internal static GlobMatcher Compile(string glob, string directoryPrefix)
+    internal static GlobMatcher Compile(string glob, string directoryPrefix) =>
+        TryCompile(glob, directoryPrefix, out var matcher, out var problem)
+            ? matcher!
+            : throw new FormatException(problem);
+
+    /// <summary>
+    /// As <see cref="Compile"/>, with the reason in <paramref name="problem"/> and no exception when a class cannot be
+    /// read, for the path a bad line takes thousands of times.
+    /// </summary>
+    internal static bool TryCompile(string glob, string directoryPrefix, out GlobMatcher? matcher, out string? problem)
     {
+        matcher = null;
+        problem = null;
+
         var anchored = glob.StartsWith('/');
         if (anchored) glob = glob[1..];
 
@@ -73,7 +91,9 @@ internal sealed class GlobMatcher
         var matchAtAnyDepth = !anchored && !glob.TrimEnd('/').Contains('/', StringComparison.Ordinal);
 
         var tokens = new List<Token>(glob.Length + 1);
-        if (matchAtAnyDepth) tokens.Add(new Token(Kind.SlashGlob));
+        var weight = 0;
+        var wildcard = false;
+        if (matchAtAnyDepth) { tokens.Add(new Token(Kind.SlashGlob)); weight++; }
 
         for (var i = 0; i < glob.Length; i++)
         {
@@ -88,25 +108,34 @@ internal sealed class GlobMatcher
                         else tokens.Add(new Token(Kind.Any));
                     }
                     else tokens.Add(new Token(Kind.Star));
+
+                    wildcard = true;
+                    weight++;
                     break;
                 case '?':
                     tokens.Add(new Token(Kind.One));
+                    weight++;
                     break;
                 case '[':
                     {
-                        if (ReadClass(glob, i) is not { } cls) { tokens.Add(new Token(Kind.Literal, '[')); break; }
+                        if (!TryReadClass(glob, i, out var cls, out problem)) return false;
+                        if (cls is null) { tokens.Add(new Token(Kind.Literal, '[')); weight++; break; }
 
                         tokens.Add(new Token(Kind.Class, Class: new CharClass(cls.Members, cls.Negated)));
+                        weight += 1 + cls.Members.Count;
                         i = cls.Close;
                         break;
                     }
                 default:
                     tokens.Add(new Token(Kind.Literal, c));
+                    weight++;
                     break;
             }
         }
 
-        return new GlobMatcher([.. tokens], directoryPrefix.Length > 0 ? directoryPrefix + "/" : string.Empty);
+        matcher = new GlobMatcher([.. tokens], directoryPrefix.Length > 0 ? directoryPrefix + "/" : string.Empty,
+            wildcard ? weight : (weight + PlainDivisor - 1) / PlainDivisor);
+        return true;
     }
 
     internal bool IsMatch(ReadOnlySpan<char> path)
@@ -115,8 +144,23 @@ internal sealed class GlobMatcher
         return IsMatch(path, ref steps);
     }
 
+    /// <summary>
+    /// Whether the pattern matches a directory that <paramref name="path"/> is inside: some match of the tokens ends at
+    /// a <c>/</c> that is not the end. What a directory-only pattern (<c>bin/</c>) asks of a file.
+    /// </summary>
+    internal bool IsMatchBeneath(ReadOnlySpan<char> path)
+    {
+        long steps = 0;
+        return Match(path, beneath: true, ref steps);
+    }
+
     /// <param name="steps">Incremented by the positions looked at, so a test can bound the work of a match.</param>
-    internal bool IsMatch(ReadOnlySpan<char> path, ref long steps)
+    internal bool IsMatch(ReadOnlySpan<char> path, ref long steps) => Match(path, beneath: false, ref steps);
+
+    /// <summary><see cref="IsMatchBeneath(ReadOnlySpan{char})"/>, counting steps.</summary>
+    internal bool IsMatchBeneath(ReadOnlySpan<char> path, ref long steps) => Match(path, beneath: true, ref steps);
+
+    private bool Match(ReadOnlySpan<char> path, bool beneath, ref long steps)
     {
         var start = 0;
         if (_prefix.Length > 0)
@@ -140,7 +184,7 @@ internal sealed class GlobMatcher
 
         try
         {
-            return Run(path, start, buffer[..size], buffer[size..], ref steps);
+            return Run(path, start, beneath, buffer[..size], buffer[size..], ref steps);
         }
         finally
         {
@@ -148,7 +192,7 @@ internal sealed class GlobMatcher
         }
     }
 
-    private bool Run(ReadOnlySpan<char> path, int start, Span<byte> cur, Span<byte> next, ref long steps)
+    private bool Run(ReadOnlySpan<char> path, int start, bool beneath, Span<byte> cur, Span<byte> next, ref long steps)
     {
         var n = path.Length;
         cur[start] = 1;
@@ -222,9 +266,9 @@ internal sealed class GlobMatcher
             hi = nextHi;
         }
 
-        // The tokens must end at the end of the path or at a slash.
+        // The tokens must end at a slash, or at the end of the path unless a directory is asked for.
         for (var i = lo; i <= hi; i++)
-            if (cur[i] != 0 && (i == n || path[i] == '/')) return true;
+            if (cur[i] != 0 && (i < n ? path[i] == '/' : !beneath)) return true;
 
         return false;
     }
@@ -257,8 +301,7 @@ internal sealed class GlobMatcher
         var folded = new char[bestLength];
         for (var k = 0; k < bestLength; k++) folded[k] = Fold.Of(tokens[bestStart + k].Char);
 
-        var first = Fold.Variants(folded[0]);
-        return (folded, first.Length > 1 ? SearchValues.Create(first) : null);
+        return (folded, Fold.TryVariants(folded[0], out var variants) ? SearchValues.Create(variants) : null);
     }
 
     private bool ContainsRequired(ReadOnlySpan<char> text)
@@ -288,22 +331,52 @@ internal sealed class GlobMatcher
     // ---- bracket classes ---------------------------------------------------------------
 
     /// <summary>The characters of one bracket class, which never includes <c>/</c>.</summary>
-    internal sealed class CharClass(IReadOnlyList<(char Low, char High)> members, bool negated)
+    internal sealed class CharClass
     {
-        private readonly (char Low, char High)[] _members = [.. members];
+        private readonly (char Low, char High)[] _members;
+        private readonly bool _negated;
+
+        // Which of the 128 ASCII characters the class matches, worked out once, since a match asks per character.
+        private readonly ulong _asciiLow;
+        private readonly ulong _asciiHigh;
+
+        public CharClass(IReadOnlyList<(char Low, char High)> members, bool negated)
+        {
+            _members = [.. members];
+            _negated = negated;
+
+            for (var c = 0; c < 128; c++)
+            {
+                if (!Compute((char)c)) continue;
+
+                if (c < 64) _asciiLow |= 1UL << c;
+                else _asciiHigh |= 1UL << (c - 64);
+            }
+        }
 
         public bool Matches(char c)
         {
+            if (c >= 128) return Compute(c);
+
+            return (c < 64 ? (_asciiLow >> c) & 1 : (_asciiHigh >> (c - 64)) & 1) != 0;
+        }
+
+        private bool Compute(char c)
+        {
             // A class holds a character if it holds any character that folds to the same one.
             var found = false;
-            foreach (var same in Fold.Variants(Fold.Of(c)))
+            if (Fold.TryVariants(Fold.Of(c), out var same))
             {
-                if (!In(same)) continue;
-                found = true;
-                break;
+                foreach (var variant in same)
+                {
+                    if (!In(variant)) continue;
+                    found = true;
+                    break;
+                }
             }
+            else found = In(c);
 
-            return found != negated;
+            return found != _negated;
         }
 
         private bool In(char c)
@@ -322,22 +395,33 @@ internal sealed class GlobMatcher
     /// </summary>
     internal sealed record ClassSpan(int Close, bool Negated, IReadOnlyList<(char Low, char High)> Members);
 
+    /// <exception cref="FormatException">The class cannot be read; see <see cref="TryReadClass"/>.</exception>
+    internal static ClassSpan? ReadClass(string glob, int open) =>
+        TryReadClass(glob, open, out var span, out var problem) ? span : throw new FormatException(problem);
+
     /// <summary>
-    /// Reads the bracket class that opens at <paramref name="open"/>, or null when nothing closes it, in which case
-    /// the <c>[</c> is a literal character.
+    /// Reads the bracket class that opens at <paramref name="open"/>. Returns false with the reason in
+    /// <paramref name="problem"/> when it cannot be read, and true with a null <paramref name="span"/> when nothing
+    /// closes it, in which case the <c>[</c> is a literal character.
     ///
     /// The members are read as git reads them (measured with git 2.31.1 on Windows and 2.54.0 on Linux): a
     /// <c>]</c> straight after <c>[</c>, <c>[!</c> or <c>[^</c> is a member; <c>[</c> is a member; a <c>-</c> after a
     /// finished range or at the end is a member; a backslash takes the next character literally, so <c>\]</c> does
     /// not close the class and <c>\d</c> is a <c>d</c>; and no class matches <c>/</c>, positive or negated.
     ///
-    /// Two shapes keep the reading they had. <c>[!]x</c>, with no <c>]</c> after the one following the <c>!</c>, is
-    /// the one-member class of <c>!</c>. <c>[]x</c> and <c>[^]x</c> are an empty class and throw
-    /// <see cref="FormatException"/>, as does a range whose end is before its start such as <c>[z-a]</c>. Git matches
-    /// only the start character for that range; here it is refused, so the typo shows.
+    /// Four shapes git reads in a way that is refused or kept here. <c>[!]x</c>, with no <c>]</c> after the one
+    /// following the <c>!</c>, is the one-member class of <c>!</c>. <c>[]x</c> and <c>[^]x</c> are an empty class,
+    /// a range whose end is before its start such as <c>[z-a]</c> is a reversed range, and a POSIX class such as
+    /// <c>[[:alpha:]]</c> is not supported: each cannot be read, and the line is unusable. Git matches only the start
+    /// character for the reversed range, nothing for the empty class, and the named characters for the POSIX class.
+    /// A POSIX class is refused and not read as the members <c>[:alph</c> because that would match nothing git
+    /// ignores.
     /// </summary>
-    internal static ClassSpan? ReadClass(string glob, int open)
+    internal static bool TryReadClass(string glob, int open, out ClassSpan? span, out string? problem)
     {
+        span = null;
+        problem = null;
+
         var start = open + 1;
         var negated = start < glob.Length && glob[start] is '!' or '^';
         if (negated) start++;
@@ -354,31 +438,55 @@ internal sealed class GlobMatcher
 
         if (close < 0)
         {
-            if (start >= glob.Length || glob[start] != ']') return null;
+            if (start >= glob.Length || glob[start] != ']') return true;
 
-            close = start;
             if (negated && glob[open + 1] == '!')
-                return new ClassSpan(close, Negated: false, [('!', '!')]);
+            {
+                span = new ClassSpan(start, Negated: false, [('!', '!')]);
+                return true;
+            }
 
-            throw new FormatException("empty character class");
+            problem = "empty character class";
+            return false;
         }
 
         var members = new List<(char, char)>();
         for (var p = start; p < close;)
         {
+            if (glob[p] == '[' && IsPosixClassAt(glob, p, close))
+            {
+                problem = "a POSIX character class such as [:alpha:] is not supported";
+                return false;
+            }
+
             var low = Member(glob, ref p);
             var high = low;
             if (p + 1 < close && glob[p] == '-')
             {
                 p++;
                 high = Member(glob, ref p);
-                if (high < low) throw new FormatException("reversed character range");
+                if (high < low)
+                {
+                    problem = "reversed character range";
+                    return false;
+                }
             }
 
             AddWithoutSlash(members, low, high);
         }
 
-        return new ClassSpan(close, negated, members);
+        span = new ClassSpan(close, negated, members);
+        return true;
+    }
+
+    // `[:name:` running to the end of the members, where the class ends at the `]` of `:]`.
+    private static bool IsPosixClassAt(string glob, int p, int close)
+    {
+        if (p + 1 >= close || glob[p + 1] != ':') return false;
+
+        var q = p + 2;
+        while (q < close && char.IsAsciiLetter(glob[q])) q++;
+        return q == close - 1 && q > p + 2 && glob[q] == ':';
     }
 
     private static char Member(string glob, ref int p)
@@ -409,6 +517,21 @@ internal static class Fold
 
     public static bool Equal(char a, char b) => a == b || Of(a) == Of(b);
 
+    /// <summary>Whether two strings of the same length are equal by <see cref="Equal"/>, character by character.</summary>
+    public static bool Equal(ReadOnlySpan<char> a, ReadOnlySpan<char> b)
+    {
+        if (a.Length != b.Length) return false;
+
+        for (var i = 0; i < a.Length; i++)
+            if (!Equal(a[i], b[i])) return false;
+
+        return true;
+    }
+
+    /// <summary>Whether <paramref name="text"/> starts with <paramref name="prefix"/> by <see cref="Equal"/>.</summary>
+    public static bool StartsWith(ReadOnlySpan<char> text, ReadOnlySpan<char> prefix) =>
+        text.Length >= prefix.Length && Equal(text[..prefix.Length], prefix);
+
     private static readonly Lazy<Dictionary<char, char[]>> ByFold = new(() =>
     {
         var groups = new Dictionary<char, List<char>>();
@@ -425,7 +548,19 @@ internal static class Fold
         return groups.Where(g => g.Value.Count > 1).ToDictionary(g => g.Key, g => g.Value.ToArray());
     });
 
-    /// <summary>Every character whose fold is <paramref name="folded"/>, itself included.</summary>
-    public static char[] Variants(char folded) =>
-        ByFold.Value.TryGetValue(folded, out var all) ? all : [folded];
+    /// <summary>
+    /// Every character whose fold is <paramref name="folded"/>, when there is more than one. A character with no
+    /// case variants has none to list, and nothing is allocated for it.
+    /// </summary>
+    public static bool TryVariants(char folded, out char[] variants)
+    {
+        if (ByFold.Value.TryGetValue(folded, out var all))
+        {
+            variants = all;
+            return true;
+        }
+
+        variants = [];
+        return false;
+    }
 }

@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+
 namespace Dexicon.Core.Indexing;
 
 /// <summary>
@@ -44,7 +46,9 @@ public static class SourceCoverage
     public static IReadOnlyList<Gap> Find(
         string workspaceRoot,
         IEnumerable<SourceRoot> sources,
-        long? documentMaxBytes = null)
+        long? documentMaxBytes = null,
+        ILogger? log = null,
+        CancellationToken ct = default)
     {
         var comparer = CorpusIndexer.PathComparison == StringComparison.Ordinal
             ? StringComparer.Ordinal
@@ -104,9 +108,13 @@ public static class SourceCoverage
             try
             {
                 walked = WorkspaceWalker.Walk(full, useGitignore: true, includeGlobs: null,
-                    excludeGlobs: null, maxFileBytes, documentMaxBytes, topLevelOnly: true);
+                    excludeGlobs: null, maxFileBytes, documentMaxBytes, topLevelOnly: true, ct: ct);
             }
-            catch (IgnorePatternException) { continue; }
+            catch (IgnorePatternException ex)
+            {
+                log?.LogInformation("Coverage of {Directory} was left out because {Reason}", parent, ex.Message);
+                continue;
+            }
 
             if (walked.Files.Count == 0) continue;
 

@@ -104,14 +104,14 @@ public static class CorpusEndpoints
         // filesystem, and the summary is drawn on every navigation. Read rather than
         // stored, so it reflects the disk now and not the last index run.
         g.MapGet("/{nameOrId}/coverage", async (string nameOrId, RequestContext rc, ScopeResolver scopes,
-            CatalogDbContext db, IOptions<DexiconOptions> opts, CancellationToken ct) =>
+            CatalogDbContext db, IOptions<DexiconOptions> opts, ILoggerFactory loggers, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
             var principal = rc.RequirePrincipal();
             var scope = await scopes.ResolveReadableAsync(principal, [nameOrId], ct);
             var corpus = scope.Corpora[0];
 
-            return Results.Ok(await CoverageAsync(db, opts.Value.Indexing, corpus, ct));
+            return Results.Ok(await CoverageAsync(db, opts.Value.Indexing, corpus, ct, loggers.CreateLogger("Dexicon.Coverage")));
         }).Produces<CoverageReport>();
 
         // Discovery on demand. Deliberately not a job: it takes the corpus lease, runs on
@@ -516,8 +516,8 @@ public static class CorpusEndpoints
                 SourceFilters.GlobReader.Git => "null, empty or holding a null character, which git cannot take as a pathspec",
                 SourceFilters.GlobReader.WalkAndGit =>
                     "null, empty, holding a null character (a history source passes the list to git as pathspecs), "
-                    + $"or a pattern that does not compile (such as [z-a]) or is longer than {IgnoreRuleSet.MaxPatternLength} characters, or the list holds more than {IgnoreRuleSet.MaxRulesPerSource:N0} entries",
-                _ => $"null, or a pattern that does not compile (such as [z-a]) or is longer than {IgnoreRuleSet.MaxPatternLength} characters, or the list holds more than {IgnoreRuleSet.MaxRulesPerSource:N0} entries",
+                    + $"or a pattern that does not compile (such as [z-a]) or is longer than {IgnoreRuleSet.MaxPatternLength} characters, or the list goes past {IgnoreRuleSet.MaxRulesPerList:N0} rules or {IgnoreRuleSet.MaxWeightPerList:N0} pattern parts",
+                _ => $"null, or a pattern that does not compile (such as [z-a]) or is longer than {IgnoreRuleSet.MaxPatternLength} characters, or the list goes past {IgnoreRuleSet.MaxRulesPerList:N0} rules or {IgnoreRuleSet.MaxWeightPerList:N0} pattern parts",
             };
             return new ConfigRefusal(
                 "Unusable glob",
@@ -603,7 +603,7 @@ public static class CorpusEndpoints
     /// entirely plausible.
     /// </summary>
     internal static async Task<CoverageReport> CoverageAsync(
-        CatalogDbContext db, IndexingOptions indexing, Corpus corpus, CancellationToken ct)
+        CatalogDbContext db, IndexingOptions indexing, Corpus corpus, CancellationToken ct, ILogger? log = null)
     {
         // Workspace sources only, because coverage is about FILES on a mount that no
         // source reads. A git-history source has a root and covers none of the files
@@ -617,7 +617,7 @@ public static class CorpusEndpoints
             indexing.WorkspaceRoot,
             sources.Select(s => new SourceCoverage.SourceRoot(
                 s.RootPath, SourceFilters.Resolve(corpus, s, indexing).MaxFileBytes)),
-            indexing.DocumentMaxBytes);
+            indexing.DocumentMaxBytes, log, ct);
 
         return new CoverageReport(
             gaps.Select(g => new CoverageGap(g.DirectoryRelativePath, g.Files)).ToList());

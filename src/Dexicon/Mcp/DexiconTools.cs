@@ -438,7 +438,7 @@ public sealed class DexiconTools
                     .Where(s => string.Equals(s.Kind, nameof(SourceKind.Workspace),
                                 StringComparison.OrdinalIgnoreCase))
                     .Select(s => new SourceCoverage.SourceRoot(s.RootPath, s.MaxFileBytes)),
-                opts.Value.Indexing.DocumentMaxBytes)));
+                opts.Value.Indexing.DocumentMaxBytes, ct: ct)));
 
             // The detail for one corpus asked about by name: what each source reads, and
             // which files it left out and why. It stopped at counts, so "why is this file

@@ -203,4 +203,19 @@ public sealed class UnusableIgnoreFileLineTests : IDisposable
         Should.Throw<ArgumentException>(() => new IgnoreRuleSet().AddPatterns(["a.txt", "[z-a]"], "list"))
             .ShouldBeOfType<IgnorePatternException>();
     }
+
+    [Fact]
+    public void TheCoverageAdvisoryLogsWhyItLeftADirectoryOut()
+    {
+        Write(WorkspaceWalker.IgnoreFileName, "[z-a]\n");
+        Write("a/x.md");
+        Write("b/y.md");
+        var recorded = new RecordingLoggerFactory();
+
+        SourceCoverage.Find(_root,
+            [new SourceCoverage.SourceRoot("a", 262_144), new SourceCoverage.SourceRoot("b", 262_144)],
+            log: recorded.CreateLogger("test"));
+
+        recorded.Lines.ShouldBe(["Coverage of  was left out because .dexiconignore line 1 ('[z-a]') cannot be compiled (reversed character range)"]);
+    }
 }

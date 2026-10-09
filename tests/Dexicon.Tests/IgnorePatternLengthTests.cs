@@ -1,3 +1,4 @@
+using Dexicon.Api;
 using Dexicon.Core.Indexing;
 using Shouldly;
 
@@ -5,9 +6,7 @@ namespace Dexicon.Tests;
 
 /// <summary>
 /// A line of an ignore file, or an entry of a glob list, is refused above <see cref="IgnoreRuleSet.MaxPatternLength"/>
-/// characters before anything is compiled. A compiled glob retains memory in proportion to its length (about 186 KB
-/// for 1,500 characters, measured by the review of the pull request that added the matcher), and a 10 MB line fed
-/// through <c>.gitignore</c> took 938 MB. For <c>.dexiconignore</c> and for the lists the source fails; for
+/// characters before it is read into tokens. For <c>.dexiconignore</c> and for the lists the source fails; for
 /// <c>.gitignore</c> and <c>.git/info/exclude</c> the line is skipped with a warning.
 /// </summary>
 public sealed class IgnorePatternLengthTests : IDisposable
@@ -31,7 +30,7 @@ public sealed class IgnorePatternLengthTests : IDisposable
     }
 
     [Fact]
-    public void ALineOfExactlyTheLimitIsCompiled()
+    public void ALineOfExactlyTheLimitIsRead()
     {
         var rules = new IgnoreRuleSet();
 
@@ -61,11 +60,10 @@ public sealed class IgnorePatternLengthTests : IDisposable
     }
 
     [Fact]
-    public void ALongLineIsRefusedBeforeAnythingIsCompiled()
+    public void ALongLineIsRefusedBeforeItIsReadIntoTokens()
     {
-        // A million characters of wildcards. Translated to a regular expression this allocates several
-        // megabytes on this thread, so the allocation measures whether the translation ran. The matcher
-        // cache is shared with tests running beside this one and cannot be read for the same purpose.
+        // A million characters of wildcards. Read into tokens this allocates tens of megabytes on this thread, so the
+        // allocation measures whether the line was read.
         var line = string.Concat(Enumerable.Repeat("*a", 500_000));
         var rules = new IgnoreRuleSet();
         var before = GC.GetAllocatedBytesForCurrentThread();
@@ -114,13 +112,21 @@ public sealed class IgnorePatternLengthTests : IDisposable
     }
 
     [Fact]
-    public void AStoredListIsCheckedAgainstTheRuleLimitToo()
+    public void TheApiRefusalOfAnOverlongEntryNamesTheLengthAndTheListLimits()
     {
-        var atLimit = Enumerable.Range(0, IgnoreRuleSet.MaxRulesPerSource).Select(i => $"x{i}").ToList();
-        var over = atLimit.Append("one-too-many").ToList();
+        var refusal = CorpusEndpoints.UnusableGlobs(["*.md", new string('a', 501)], null).ShouldNotBeNull();
 
-        SourceFilters.FirstUnusable(atLimit).ShouldBeNull();
-        SourceFilters.FirstUnusable(over).ShouldBe(IgnoreRuleSet.MaxRulesPerSource);
-        SourceFilters.FirstUnusable(over, SourceFilters.GlobReader.Git).ShouldBeNull("git reads a history source's list, not the walk");
+        refusal.Status.ShouldBe(400);
+        refusal.Detail.ShouldBe(
+            "includeGlobs[1] (include[1] for the configure tools) is null, or a pattern that does not compile (such as [z-a]) "
+            + "or is longer than 500 characters, or the list goes past 1,000 rules or 12,000 pattern parts. Nothing was saved.");
+    }
+
+    [Fact]
+    public void TheApiRefusalOfAListPastItsLimitsIsTheSameText()
+    {
+        var list = Enumerable.Range(0, 1_001).Select(i => $"x{i}").ToArray();
+
+        CorpusEndpoints.UnusableGlobs(null, list).ShouldNotBeNull().Detail.ShouldStartWith("excludeGlobs[1000] (exclude[1000] for the configure tools)");
     }
 }

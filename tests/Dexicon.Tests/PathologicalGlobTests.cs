@@ -4,11 +4,10 @@ using Shouldly;
 namespace Dexicon.Tests;
 
 /// <summary>
-/// A glob that compiles can still take exponential time to match. <c>*a*a*a*a*a*a*a*a*a*a*a*a*b</c> against
-/// a hundred-character name, and ten <c>**/</c> in a row against a path thirty directories deep, ran past the
-/// 250 ms match timeout, and <see cref="IgnoreRuleSet.IsIgnored"/> threw <see cref="System.Text.RegularExpressions.RegexMatchTimeoutException"/>
-/// from the middle of a walk, which nothing caught. The same timeout also fired for ordinary patterns when the
-/// host was starved of CPU.
+/// A glob with many wildcards takes the number of its tokens times the length of the path to match, and no more.
+/// <c>*a*a*a*a*a*a*a*a*a*a*a*a*b</c> against a hundred-character name, and ten <c>**</c> and a slash in a row against a
+/// path thirty directories deep, finish at once, in the walk as well as in <see cref="IgnoreRuleSet.IsIgnored"/>.
+/// <c>GlobMatcherTests</c> counts the steps.
 /// </summary>
 public sealed class PathologicalGlobTests : IDisposable
 {
@@ -24,8 +23,8 @@ public sealed class PathologicalGlobTests : IDisposable
 
     private static bool Ignored(string pattern, string path, bool isDirectory = false)
     {
-        // Neither engine has a match timeout, so a glob sent to the wrong one would run on rather than throw.
-        // The limit turns that into a failure.
+        // There is no match timeout, so a match that did not finish would run on and not throw. The limit turns that
+        // into a failure.
         var rules = new IgnoreRuleSet();
         rules.AddPatterns([pattern], "test");
         var ignored = false;

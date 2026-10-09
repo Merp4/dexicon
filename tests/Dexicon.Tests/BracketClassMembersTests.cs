@@ -113,4 +113,59 @@ public sealed class BracketClassMembersTests
         // Refused, so the line is seen: a .dexiconignore fails and a .gitignore line is skipped with a warning.
         Should.Throw<IgnorePatternException>(() => new IgnoreRuleSet().AddPatterns([pattern], "test"));
     }
+
+    [Theory]
+    // More rows from git (the same two versions).
+    [InlineData("[a-]x", "ax", true)]
+    [InlineData("[a-]x", "-x", true)]
+    [InlineData("[a-]x", "bx", false)]
+    [InlineData("[a-a]x", "ax", true)]
+    [InlineData("[a-a]x", "bx", false)]
+    [InlineData("[--/]x", ".x", true)]
+    [InlineData("[--/]x", "-x", true)]
+    [InlineData("[--/]x", "+x", false)]
+    [InlineData("[--/]x", "0x", false)]
+    [InlineData("[!-a]x", "-x", false)]
+    [InlineData("[!-a]x", "ax", false)]
+    [InlineData("[!-a]x", "bx", true)]
+    [InlineData("[!-a]x", "!x", true)]
+    [InlineData("[a-c-e]x", "ax", true)]
+    [InlineData("[a-c-e]x", "cx", true)]
+    [InlineData("[a-c-e]x", "-x", true)]
+    [InlineData("[a-c-e]x", "ex", true)]
+    [InlineData("[a-c-e]x", "dx", false)]
+    [InlineData("[:alpha:]x", "ax", true)]
+    [InlineData("[:alpha:]x", "lx", true)]
+    [InlineData("[:alpha:]x", "bx", false)]
+    public void MoreClassesAreReadAsGitReadsThem(string pattern, string path, bool expected)
+    {
+        Ignored(pattern, path).ShouldBe(expected);
+    }
+
+    [Theory]
+    // A POSIX class is read by git as the characters it names (`[[:alpha:]]x` ignores `ax` and `Ax`), and as the members
+    // `[:alph` and a literal `]` it would match nothing git ignores, which fails open. Refused, so the line is seen.
+    [InlineData("[[:alpha:]]x")]
+    [InlineData("[[:digit:]]x")]
+    [InlineData("[[:upper:]]x")]
+    [InlineData("[[:alnum:]_]x")]
+    [InlineData("[a[:digit:]]x")]
+    [InlineData("[[:foo:]]x")]
+    [InlineData("[![:space:]]x")]
+    public void APosixClassIsRefused(string pattern)
+    {
+        var thrown = Should.Throw<IgnorePatternException>(() => new IgnoreRuleSet().AddPatterns([pattern], "test"));
+
+        thrown.Message.ShouldBe($"test line 1 ('{pattern}') cannot be compiled (a POSIX character class such as [:alpha:] is not supported)");
+        SourceFilters.FirstUnusable([pattern]).ShouldBe(0);
+    }
+
+    [Fact]
+    public void ABracketColonWithNoClosingColonIsOrdinaryMembers()
+    {
+        // The colon check is for `[:name:` ending the class. `[[:]` holds `[` and `:`.
+        Ignored("a[[:]b", "a[b").ShouldBeTrue();
+        Ignored("a[[:]b", "a:b").ShouldBeTrue();
+        Ignored("a[[:]b", "axb").ShouldBeFalse();
+    }
 }

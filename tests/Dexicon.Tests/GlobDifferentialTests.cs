@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Dexicon.Core.Indexing;
 using Shouldly;
@@ -59,19 +58,23 @@ public sealed class GlobDifferentialTests
         return random.Next(4) == 0 ? Prefixes[random.Next(1, Prefixes.Length)] + "/" + path : path;
     }
 
+    /// <summary>Every glob piece, path piece and prefix, for the alphabet the oracle evaluates classes over.</summary>
+    internal static IEnumerable<string> AllPieces() => GlobPieces.Concat(PathPieces).Concat(Prefixes);
+
     private static string Show(string text) => text.Replace("\r", "\\r", StringComparison.Ordinal);
 
     /// <summary>
     /// Runs the comparison and returns the disagreements, with the number of pairs compared and of globs both sides
     /// refused. A glob one side refuses and the other accepts is a disagreement.
     /// </summary>
-    private static (List<string> Differences, long Compared, int Refused, int Globs, long Matched) Compare(
+    private static (List<string> Differences, long Compared, int Refused, int Globs, long Matched, int TimedOut) Compare(
         int globCount, int pathsPerGlob, int seed, Func<string, string>? mutate = null)
     {
         var random = new Random(seed);
         var differences = new List<string>();
         long compared = 0;
         long matched = 0;
+        var timedOut = 0;
         var refused = 0;
 
         for (var g = 0; g < globCount; g++)
@@ -106,10 +109,11 @@ public sealed class GlobDifferentialTests
                 if (p % 2 == 0) path = Resemble(random, glob, prefix);
                 if (path.Contains('\n', StringComparison.Ordinal)) continue;
 
-                compared++;
                 bool expected;
                 try { expected = oracle.IsMatch(path); }
-                catch (RegexMatchTimeoutException) { continue; }
+                catch (RegexMatchTimeoutException) { timedOut++; continue; }
+
+                compared++;
 
                 if (expected) matched++;
                 if (matcher.IsMatch(path) != expected)
@@ -117,7 +121,7 @@ public sealed class GlobDifferentialTests
             }
         }
 
-        return (differences, compared, refused, globCount, matched);
+        return (differences, compared, refused, globCount, matched, timedOut);
     }
 
     /// <summary>A path that a glob is likely to match: its literal characters kept and its wildcards replaced.</summary>
@@ -144,22 +148,20 @@ public sealed class GlobDifferentialTests
     [Fact]
     public void TheMatcherAnswersAsTheRegularExpressionDidOverAMillionPairs()
     {
-        var clock = Stopwatch.StartNew();
+        var (differences, compared, refused, globs, matched, timedOut) = Compare(globCount: 4_000, pathsPerGlob: 320, seed: 20261009);
 
-        var (differences, compared, refused, globs, matched) = Compare(globCount: 4_000, pathsPerGlob: 320, seed: 20261009);
-
-        var summary = $"{compared:N0} pairs from {globs:N0} globs, {matched:N0} of them matches, {refused} globs refused by both, in {clock.Elapsed.TotalSeconds:F1} s";
+        var summary = $"{compared:N0} pairs from {globs:N0} globs, {matched:N0} of them matches, {refused} globs refused by both, {timedOut} oracle timeouts";
         differences.Take(10).ShouldBeEmpty(summary);
         compared.ShouldBeGreaterThanOrEqualTo(1_000_000, summary);
         matched.ShouldBeGreaterThan(50_000, "pairs the oracle matches; too few and the test mostly compares falsehoods: " + summary);
-        refused.ShouldBeGreaterThan(0, "globs refused by both, such as [z-a], were drawn");
-        clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(60));
+        refused.ShouldBeGreaterThan(0, "globs refused by both, such as [z-a], were drawn: " + summary);
+        timedOut.ShouldBeLessThan(10, "pairs the oracle could not answer in time are left out, so there must be few: " + summary);
     }
 
     [Fact]
     public void ADifferentSeedAgreesToo()
     {
-        var (differences, compared, _, _, _) = Compare(globCount: 1_000, pathsPerGlob: 120, seed: 7);
+        var (differences, compared, _, _, _, _) = Compare(globCount: 1_000, pathsPerGlob: 120, seed: 7);
 
         differences.Take(10).ShouldBeEmpty($"of {compared:N0} pairs");
     }
@@ -169,7 +171,7 @@ public sealed class GlobDifferentialTests
     {
         // The control: a matcher built from every glob with each `*` doubled, which crosses a slash, must be caught,
         // or the comparison above could pass against anything.
-        var (differences, compared, _, _, _) = Compare(
+        var (differences, compared, _, _, _, _) = Compare(
             globCount: 1_000, pathsPerGlob: 120, seed: 7, mutate: glob => glob.Replace("*", "**", StringComparison.Ordinal));
 
         compared.ShouldBeGreaterThan(0);

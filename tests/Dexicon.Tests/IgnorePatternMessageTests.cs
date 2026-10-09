@@ -130,4 +130,67 @@ public sealed class IgnorePatternMessageTests : IDisposable
         IgnorePatternException.Clean($"{low}{high}").ShouldBe("??");
         IgnorePatternException.Clean($"a{high}{low}b").ShouldBe($"a{high}{low}b");
     }
+
+    /// <summary>Format characters outside the Basic Multilingual Plane, which a unit-by-unit check does not see.</summary>
+    public static TheoryData<string, int> SupplementaryFormatCharacters() => new()
+    {
+        { "language tag", 0xE0001 },
+        { "tag latin small letter a", 0xE0061 },
+        { "cancel tag", 0xE007F },
+        { "musical symbol begin beam", 0x1D173 },
+        { "shorthand format letter overlap", 0x1BCA0 },
+    };
+
+    [Theory]
+    [MemberData(nameof(SupplementaryFormatCharacters))]
+    public void AFormatCharacterBeyondTheBasicPlaneIsReplacedInThePatternText(string name, int codePoint)
+    {
+        var thrown = Should.Throw<IgnorePatternException>(
+            () => new IgnoreRuleSet().AddPatterns([$"[z-a]{char.ConvertFromUtf32(codePoint)}x"], ".gitignore"), name);
+
+        thrown.Message.ShouldBe(".gitignore line 1 ('[z-a]??x') cannot be compiled (reversed character range)");
+    }
+
+    [Theory]
+    [MemberData(nameof(SupplementaryFormatCharacters))]
+    public void AFormatCharacterBeyondTheBasicPlaneIsReplacedInThePathOfTheFile(string name, int codePoint)
+    {
+        IgnorePatternException.ForFile($"dir{char.ConvertFromUtf32(codePoint)}name/.dexiconignore", "cannot be read")
+            .Message.ShouldBe("dir??name/.dexiconignore cannot be read", name);
+    }
+
+    [Theory]
+    [MemberData(nameof(SupplementaryFormatCharacters))]
+    public void AFormatCharacterBeyondTheBasicPlaneIsReplacedInAWarning(string name, int codePoint)
+    {
+        File.WriteAllText(Path.Combine(_root, ".gitignore"), $"[z-a]{char.ConvertFromUtf32(codePoint)}x\n");
+
+        WorkspaceWalker.Walk(_root, true, null, null, 1_000_000).Warnings.ShouldBe(
+            [".gitignore line 1 ('[z-a]??x') cannot be compiled (reversed character range); the line was skipped"], name);
+    }
+
+    [Fact]
+    public void AnOrdinaryCharacterBeyondTheBasicPlaneIsKept()
+    {
+        var emoji = char.ConvertFromUtf32(0x1F600);
+
+        IgnorePatternException.Clean($"a{emoji}b").ShouldBe($"a{emoji}b");
+    }
+
+    [Fact]
+    public void AMessageThatBeginsWithAControlCharacterHasItReplaced()
+    {
+        IgnorePatternException.ForFile("\n.dexiconignore", "cannot be read").Message.ShouldBe("?.dexiconignore cannot be read");
+    }
+
+    [Fact]
+    public void AnEntryOfExactlyTheShownLengthHasNoEllipsisAndOneMoreHas()
+    {
+        var hundred = "[z-a]" + new string('x', 95);
+
+        Should.Throw<IgnorePatternException>(() => new IgnoreRuleSet().AddPatterns([hundred], "t"))
+            .Message.ShouldBe($"t line 1 ('{hundred}') cannot be compiled (reversed character range)");
+        Should.Throw<IgnorePatternException>(() => new IgnoreRuleSet().AddPatterns([hundred + "x"], "t"))
+            .Message.ShouldBe($"t line 1 ('{hundred}...') cannot be compiled (reversed character range)");
+    }
 }

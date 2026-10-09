@@ -97,55 +97,132 @@ public sealed class GlobMatcherTests
         string.Concat(Enumerable.Repeat("[ab]*", 100)),
         string.Concat(Enumerable.Repeat("**/a", 125)),
         "a/" + string.Concat(Enumerable.Repeat("**/", 100)) + "z",
+        "*" + new string('a', 498),
     ];
 
+    private static readonly string[] Endings = ["", "b", "x", "z"];
+
+    /// <summary>
+    /// Paths of about <paramref name="length"/> characters: one segment, deep, and segments of three and fifteen characters,
+    /// each ending in nothing and in each letter the globs above end in, so that the match reaches the end of the pattern
+    /// and is not turned away by a search for its last literal.
+    /// </summary>
     private static IEnumerable<string> LongPaths(int length)
     {
-        yield return new string('a', length);
-        yield return new string('a', length - 1) + "b";
-        yield return string.Concat(Enumerable.Repeat("a/", length / 2));
-        yield return string.Concat(Enumerable.Repeat("ab/", length / 3));
-        yield return string.Join('/', Enumerable.Repeat(new string('a', 15), length / 16));
+        foreach (var ending in Endings)
+        {
+            yield return new string('a', length) + ending;
+            yield return new string('a', length - 1) + "b" + ending;
+            yield return string.Concat(Enumerable.Repeat("a/", length / 2)) + ending;
+            yield return string.Concat(Enumerable.Repeat("ab/", length / 3)) + ending;
+            yield return string.Join('/', Enumerable.Repeat(new string('a', 15), length / 16)) + ending;
+        }
     }
 
-    private static long Steps(GlobMatcher matcher, string path)
+    private const int ShapeCount = 20;
+
+    private static long Steps(GlobMatcher matcher, string path, bool beneath = false)
     {
         long steps = 0;
-        matcher.IsMatch(path, ref steps);
+        if (beneath) matcher.IsMatchBeneath(path, ref steps);
+        else matcher.IsMatch(path, ref steps);
         return steps;
     }
 
+    /// <summary>A walk that does not finish cannot fail itself, so the loop is given a limit the test can fail on.</summary>
+    private static void Bounded(Action action) => Should.CompleteIn(action, TimeSpan.FromSeconds(60));
+
     [Theory]
     [MemberData(nameof(PathologicalGlobs))]
-    public void AMatchTakesNoMoreStepsThanTheTokensTimesThePath(string glob)
+    public void AMatchTakesNoMoreThanTwiceTheTokensPlusOneTimesThePathPlusTwoSteps(string glob)
     {
-        // The bound the design promises: a token costs at most two looks at each position of the path.
         var matcher = GlobMatcher.Compile(glob, "");
-        foreach (var path in LongPaths(4096))
+        var checkedShapes = 0;
+
+        Bounded(() =>
         {
-            var bound = 2L * (matcher.TokenCount + 1) * (path.Length + 2);
-            Steps(matcher, path).ShouldBeLessThanOrEqualTo(bound, $"path of {path.Length} characters");
-        }
+            foreach (var path in LongPaths(4096))
+            {
+                var bound = 2L * (matcher.TokenCount + 1) * (path.Length + 2);
+                Steps(matcher, path).ShouldBeLessThanOrEqualTo(bound, $"path of {path.Length} characters");
+                Steps(matcher, path, beneath: true).ShouldBeLessThanOrEqualTo(bound, $"path of {path.Length} characters, beneath");
+                checkedShapes++;
+            }
+        });
+
+        checkedShapes.ShouldBe(ShapeCount);
     }
 
     [Theory]
     [MemberData(nameof(PathologicalGlobs))]
     public void DoublingThePathAtMostDoublesTheSteps(string glob)
     {
-        // Steps are counted and not timed, so this holds on a loaded machine. A scan that restarted a star from the
-        // start of the pattern would square the count, and the ratio would be about 4.
+        // Steps are counted and not timed, so this holds on a loaded machine. A scan that squared the count would show
+        // as a ratio near 4. Shapes that cost under 200 steps are too small to give a ratio and are not counted;
+        // the test fails if fewer than four shapes of a glob were.
         var matcher = GlobMatcher.Compile(glob, "");
         var half = LongPaths(2048).ToList();
         var full = LongPaths(4096).ToList();
+        var ratios = new List<double>();
 
-        for (var i = 0; i < half.Count; i++)
+        Bounded(() =>
         {
-            var small = Steps(matcher, half[i]);
-            var large = Steps(matcher, full[i]);
-            if (small < 1_000) continue;
+            for (var i = 0; i < half.Count; i++)
+            {
+                var small = Steps(matcher, half[i]);
+                var large = Steps(matcher, full[i]);
+                if (small < 200) continue;
 
-            ((double)large / small).ShouldBeLessThan(2.6, $"shape {i}: {small} steps at 2,048 and {large} at 4,096");
-        }
+                ratios.Add((double)large / small);
+            }
+        });
+
+        ratios.Count.ShouldBeGreaterThanOrEqualTo(4, "shapes that were large enough to measure");
+        ratios.ShouldAllBe(r => r < 2.6, $"ratios: {string.Join(", ", ratios.Select(r => r.ToString("F2")))}");
+    }
+
+    [Fact]
+    public void AFileAgainstADirectoryOnlyRuleCostsOnePassAndNotOneForEachDirectoryAbove()
+    {
+        // A rule for directories is asked of a file by whether some match ends at a slash before the end of the
+        // path, in one pass. Asked once for each directory above the file, a path 2,040 directories deep cost 98 ms
+        // for one rule.
+        var rule = GlobMatcher.Compile(string.Concat(Enumerable.Repeat("*a", 248)) + "*b", "");
+        var deep = string.Concat(Enumerable.Repeat("a/", 2_040));
+        var deeper = string.Concat(Enumerable.Repeat("a/", 4_080));
+
+        var steps = 0L;
+        var more = 0L;
+        Bounded(() =>
+        {
+            steps = Steps(rule, deep, beneath: true);
+            more = Steps(rule, deeper, beneath: true);
+        });
+
+        steps.ShouldBeLessThanOrEqualTo(2L * (rule.TokenCount + 1) * (deep.Length + 2));
+        ((double)more / steps).ShouldBeLessThan(2.6);
+    }
+
+    [Theory]
+    // glob, path, beneath, matched, steps, tokens. The cost model, pinned: a literal looks at the positions it holds,
+    // a star at each position it reaches, and so on. A change to the count is a change to what a limit is worth.
+    [InlineData("*a*b", "aab", false, true, 22L)]
+    [InlineData("**/x", "a/b/x", false, true, 12L)]
+    [InlineData("a?c", "abc", false, true, 8L)]
+    [InlineData("bin", "src/bin/x.dll", true, true, 26L)]
+    [InlineData("bin", "src/bin", true, false, 16L)]
+    [InlineData("bin", "src/bin/x.dll", false, true, 26L)]
+    [InlineData("docs/*.md", "docs/a.md", false, true, 18L)]
+    [InlineData("[a-c]*x", "bcx", false, true, 13L)]
+    [InlineData("a*a*a*b", "aaaa", false, false, 31L)]
+    public void TheStepsOfASmallMatchAreWhatTheCostModelSays(string glob, string path, bool beneath, bool matched, long expected)
+    {
+        var matcher = GlobMatcher.Compile(glob, "");
+        long steps = 0;
+
+        (beneath ? matcher.IsMatchBeneath(path, ref steps) : matcher.IsMatch(path, ref steps)).ShouldBe(matched);
+
+        steps.ShouldBe(expected);
     }
 
     [Fact]
@@ -169,7 +246,7 @@ public sealed class GlobMatcherTests
     [Fact]
     public void ARuleHoldsOnlyItsTokens()
     {
-        // The memory the replaced engine could not keep small: a 500-character glob is 500 tokens at most.
+        // A rule holds its tokens: a 500-character glob is 501 tokens at most.
         GlobMatcher.Compile(new string('a', 500), "").TokenCount.ShouldBe(501);
         GlobMatcher.Compile(string.Concat(Enumerable.Repeat("*a", 250)), "").TokenCount.ShouldBeLessThanOrEqualTo(501);
     }
@@ -214,8 +291,11 @@ public sealed class CaseFoldTests
                     disagreements.Add($"U+{(int)a:X4} and U+{(int)b:X4}");
         }
 
+        // The number of code points with a case is the runtime's: 2,357 with ICU, 2,366 under the invariant globalization
+        // mode this repository's projects set. Either way there is no pair the two disagree on.
+        var invariant = AppContext.TryGetSwitch("System.Globalization.Invariant", out var on) && on;
         disagreements.Take(10).ShouldBeEmpty($"of {cased.Count} cased code points");
-        cased.Count.ShouldBeGreaterThan(2_000);
+        cased.Count.ShouldBe(invariant ? 2_366 : 2_357);
     }
 
     [Fact]

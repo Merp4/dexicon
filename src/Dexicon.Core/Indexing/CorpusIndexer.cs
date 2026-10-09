@@ -847,27 +847,19 @@ public sealed class CorpusIndexer(
         // The same walk the sweep uses, so the inventory it records and the files this
         // indexes are one answer rather than two that have to agree.
         WorkspaceDiscovery.Result walk;
-        try { walk = WorkspaceDiscovery.Walk(corpus, source, root, _indexing); }
+        try { walk = WorkspaceDiscovery.Walk(corpus, source, root, _indexing, ct); }
         catch (IgnorePatternException ex)
         {
-            // A .dexiconignore (a line of it, or the file as a whole), or an include or exclude list
-            // entry, that cannot be used. The source is not indexed from, because skipping it would
-            // index what it was written to keep out. Handled like an unreachable source: nothing already
-            // indexed is removed, the other sources are still indexed, and the job's error names the
-            // file and the line.
+            // An ignore file or list that cannot be used or is past a limit. The source is not indexed from,
+            // because skipping it would index what it was written to keep out. Handled like an unreachable
+            // source: nothing already indexed is removed, the other sources are still indexed, and the job's
+            // error names the file and the line. What the walk had skipped before it failed is logged too.
+            LogWalkWarnings(source, ex.Warnings, ex.WarningsOmitted);
             Unreachable(corpus, job, $"Source '{source.RootPath}' was not indexed because {ex.Message}");
             return;
         }
 
-        // What the walk skipped of the .gitignore and .git/info/exclude files. The walk has no logger,
-        // so it is written out here, once per pass: each chunk set walks the source again.
-        foreach (var warning in walk.Warnings)
-            if (_warned.Add($"{source.Id}\n{warning}"))
-                log.LogWarning("Source {Source}: {Warning}", source.RootPath, warning);
-
-        if (walk.WarningsOmitted > 0 && _warned.Add($"{source.Id}\n+{walk.WarningsOmitted}"))
-            log.LogWarning("Source {Source}: {Omitted} more ignore-file lines were skipped and are not listed",
-                source.RootPath, walk.WarningsOmitted);
+        LogWalkWarnings(source, walk.Warnings, walk.WarningsOmitted);
 
         if (walk.ShadowedCount > 0)
             log.LogInformation(
@@ -877,6 +869,21 @@ public sealed class CorpusIndexer(
         await IndexUnitsAsync(corpus, set, templates, chunking, source, job, progress, full,
             walk.Owned, walk.Skipped, reader.ReadAsync, alwaysProse: false,
             fingerprintOf: null, onEmbeddingFailure, ct);
+    }
+
+    /// <summary>
+    /// What the walk skipped of the .gitignore and .git/info/exclude files. The walk has no logger, so it is written
+    /// out here, once per pass: each chunk set walks the source again.
+    /// </summary>
+    private void LogWalkWarnings(Source source, IReadOnlyList<string> warnings, int omitted)
+    {
+        foreach (var warning in warnings)
+            if (_warned.Add($"{source.Id}\n{warning}"))
+                log.LogWarning("Source {Source}: {Warning}", source.RootPath, warning);
+
+        if (omitted > 0 && _warned.Add($"{source.Id}\n+{omitted}"))
+            log.LogWarning("Source {Source}: {Omitted} more ignore-file warnings were counted and are not listed",
+                source.RootPath, omitted);
     }
 
     /// <summary>
@@ -1590,8 +1597,9 @@ public sealed class CorpusIndexer(
     {
         _unreachable = true;
         corpus.State = CorpusState.Unavailable;
-        AddReason(job, reason);
-        log.LogWarning("{Reason}", reason);
+
+        // Once per pass: each chunk set finds the same source out of reach.
+        if (AddReason(job, reason)) log.LogWarning("{Reason}", reason);
     }
 
     /// <summary>
@@ -1605,14 +1613,15 @@ public sealed class CorpusIndexer(
     /// sources, so a missing source is found once per set, and a reason that merely
     /// appears inside another is still a different reason.
     /// </summary>
-    private void AddReason(IndexJob job, string reason)
+    private bool AddReason(IndexJob job, string reason)
     {
         var sentence = reason.Trim();
         if (!sentence.EndsWith('.')) sentence += ".";
-        if (_reasons.Contains(sentence)) return;
+        if (_reasons.Contains(sentence)) return false;
 
         _reasons.Add(sentence);
         job.Error = string.Join(' ', _reasons);
+        return true;
     }
 
 
