@@ -20,8 +20,9 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### ⚠️ Upgrading
 
-- The skill changes (`dexicon-skill-version: 7`): its wording only, with no change to what the
-  tools do. Running `scripts/install-mcp.ps1` again upgrades installed copies. The hooks are
+- The skill changes (`dexicon-skill-version: 7`). It is reworded, and now says which reasons for
+  an empty result `index_status` shows and which sources a `.dexiconignore` applies to. The tools
+  are unchanged. Running `scripts/install-mcp.ps1` again upgrades installed copies. The hooks are
   unchanged.
 
 ## 0.6.8 — 2026-10-09

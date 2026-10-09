@@ -138,7 +138,8 @@ Do not conclude the content is absent. There are five common reasons for an empt
   extract or held no text (a scanned PDF), or no source covers its folder. `index_status`
   with a corpus **named** lists each source with its filters, and the files skipped, failed
   or found empty with the reason for each. Files excluded by a filter or an ignore file are
-  not listed; the source's filters explain them.
+  not listed; to see why one was left out, read the filters and ignore settings shown for its
+  source.
 
 If you know files changed on disk and the index is behind, `index_refresh(corpus)` queues a
 reindex and returns immediately; it does not block, and results will not improve in this
@@ -169,9 +170,9 @@ starts indexing at once, which for a large tree takes a long time, so tell the u
 added. These tools cannot remove a corpus or a source, though narrowing a filter removes
 the files it no longer selects from the index at the next refresh, and widening it again
 indexes them again. `gitignore` can be set to true but not turned off. Use a `.dexiconignore`
-for files no corpus should index from a tree, since it is a file in the tree and every corpus
-that reads the tree applies it, and a source's filters for files that only this corpus leaves
-out.
+for files that no corpus should index from a tree, and a source's filters for files that only
+this corpus leaves out. A `.dexiconignore` applies to every file source rooted at or above its
+folder; a source rooted below that folder, or a history source, does not read it.
 
 If your key lists `propose_removal`, you can ask for something to be removed: a source, a
 chunk set, an uploaded document or a whole corpus. Nothing is removed by the call. It records
