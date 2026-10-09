@@ -25,6 +25,8 @@ public sealed class NegatedBracketClassTests
     [InlineData("[!a-c]x", "bx", false)]
     [InlineData("docs/[!_]*", "docs/index.md", true)]
     [InlineData("docs/[!_]*", "docs/_draft.md", false)]
+    [InlineData("v[!0-9]*", "vx", true)]
+    [InlineData("v[!0-9]*", "v1", false)]
     public void AClassStartingWithABangMatchesWhatIsNotInIt(string pattern, string path, bool expected)
     {
         Ignored(pattern, path).ShouldBe(expected);
@@ -35,16 +37,28 @@ public sealed class NegatedBracketClassTests
     [InlineData("[^a]*.md", "a.md", false)]
     [InlineData("[a-c]x", "bx", true)]
     [InlineData("[a-c]x", "dx", false)]
-    public void ACaretClassAndAPlainClassAreAsTheyWere(string pattern, string path, bool expected)
+    public void ACaretClassAndAPlainClassMatchAsTheyDid(string pattern, string path, bool expected)
     {
-        // The control for the theory above: only the bang changed.
+        // The control for the theory above: a caret class and a plain class pick the same files as before.
         Ignored(pattern, path).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("v[!0-9]*", "v/foo")]
+    [InlineData("v[^0-9]*", "v/foo")]
+    [InlineData("docs[!_]x", "docs/x")]
+    public void ANegatedClassDoesNotMatchAPathSeparator(string pattern, string path)
+    {
+        // In gitignore a class never matches /, so a pattern cannot reach across a directory boundary.
+        // Without it the negated class took the / and the pattern selected everything under a directory called v.
+        Ignored(pattern, path).ShouldBeFalse();
     }
 
     [Fact]
     public void ALoneBangInAClassIsStillAMember()
     {
-        // Nothing follows the bang, so there is nothing to negate; the class stays a class of one and still compiles.
+        // Git reads this as an unterminated class that matches nothing. Dexicon keeps the one-member class it has
+        // always had, which still compiles: nothing follows the bang, so there is nothing to negate.
         Ignored("[!]x", "!x").ShouldBeTrue();
         Ignored("[!]x", "ax").ShouldBeFalse();
     }

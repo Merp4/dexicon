@@ -24,11 +24,12 @@ with no section here fails its release rather than publishing an undescribed one
   shows three of the five common reasons for an empty result (still indexing, never indexed, left
   out). The tools are unchanged. Running `scripts/install-mcp.ps1` again upgrades installed
   copies. The hooks are unchanged.
-- A bracket class written with a leading `!`, such as `[!a]*.md`, now excludes the characters listed,
-  as gitignore defines it. It was read as a class that included `!` and those characters, so an
-  include list, an exclude list, a `.gitignore` or a `.dexiconignore` that holds one selected the
-  opposite files. On the first pass after the upgrade, a source that has such a pattern indexes
-  the files it now selects and drops the ones it no longer does. `[^a]` is unchanged.
+- A bracket class written with a leading `!`, such as `[!a]*.md`, now matches any character except
+  those listed, as gitignore defines it. It was read as a class that matched `!` or those characters,
+  so an include list, an exclude list, a `.gitignore` or a `.dexiconignore` that holds one selected the
+  wrong files. A negated class, written `[!…]` or `[^…]`, no longer matches `/`, so a pattern cannot
+  reach across a directory boundary. On the first pass after the upgrade, a source that has such a
+  pattern indexes the files it now selects and drops the ones it no longer does.
 
 ### Fixed
 
