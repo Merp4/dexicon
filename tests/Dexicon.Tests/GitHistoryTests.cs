@@ -929,12 +929,15 @@ public sealed class GitHistoryTests : IDisposable
     [InlineData("src/", "src/")]
     [InlineData("/*.md", "*.md")]
     [InlineData("//src", "//src")]
+    [InlineData("//", "//")]
     [InlineData("/:(exclude)src", "/:(exclude)src")]
     [InlineData("/:x", "/:x")]
     [InlineData(":(glob)src/**", ":(glob)src/**")]
     [InlineData(":(glob)/src", ":(glob)/src")]
     [InlineData("a/../b", "a/../b")]
     [InlineData(@"\src", @"\src")]
+    [InlineData("", "")]
+    [InlineData(" ", " ")]
     public void OneLeadingSlashIsTheOnlyThingRemovedFromAPathspecAndNeverWhereItWouldMakeMagic(string given, string passed)
     {
         GitHistory.Pathspecs([given]).ShouldBe([passed]);
@@ -953,15 +956,25 @@ public sealed class GitHistoryTests : IDisposable
     /// What the validation refuses is what git fails on. A pathspec git rejects makes the log fail, which a
     /// history source reports as unavailable on every pass. Only that git failed is asserted; its text varies.
     /// `/:(exclude)src` reaches git as written (removing the slash would make it exclude `src`) and fails there.
+    /// An empty segment is no level in git, so `a//../..` climbs out as `a/../..` does.
     /// </summary>
     [Theory]
     [InlineData("../x")]
     [InlineData("..")]
     [InlineData("a/../..")]
+    [InlineData("a//../..")]
+    [InlineData("a///../..")]
     [InlineData("//src")]
     [InlineData("/:(exclude)src")]
     [InlineData(":(glob)/src")]
+    [InlineData(":(glob)../x")]
     [InlineData(":!../x")]
+    [InlineData(":!a//../..")]
+    [InlineData(":(glob")]
+    [InlineData(":(bad)x")]
+    [InlineData(":(glob,literal)x")]
+    [InlineData(":-x")]
+    [InlineData(":(attr:)x")]
     public async Task APathspecGitRejectsStillFailsThePassWhichIsWhyTheListIsRefusedWhereItIsSaved(string pathspec)
     {
         Commit("src/a.txt", "one", "touch src");
@@ -976,12 +989,62 @@ public sealed class GitHistoryTests : IDisposable
     [InlineData("a/../src")]
     [InlineData("src/../src")]
     [InlineData("./src")]
+    [InlineData(":(glob,icase)SRC/*")]
     public async Task APathThatStaysInsideTheRepositoryIsAcceptedByTheValidatorAndByGit(string pathspec)
     {
         Commit("src/a.txt", "one", "touch src");
         Commit("docs/b.txt", "two", "touch docs");
 
         (await EnumerateAsync(paths: [pathspec])).Count.ShouldBe(1);
+        SourceFilters.FirstUnusable([pathspec], SourceFilters.GlobReader.Git).ShouldBeNull();
+    }
+
+    /// <summary>
+    /// These resolve to the repository root, which selects every commit, as docs/04 says git resolves them.
+    /// </summary>
+    [Theory]
+    [InlineData("docs/..")]
+    [InlineData("a/..")]
+    [InlineData("a//..")]
+    [InlineData("a/../b/..")]
+    public async Task APathThatResolvesToTheRepositoryRootSelectsEveryCommit(string pathspec)
+    {
+        Commit("src/a.txt", "one", "touch src");
+        Commit("docs/b.txt", "two", "touch docs");
+
+        (await EnumerateAsync(paths: [pathspec])).Count.ShouldBe(2);
+        SourceFilters.FirstUnusable([pathspec], SourceFilters.GlobReader.Git).ShouldBeNull();
+    }
+
+    /// <summary>`a/./b/..` resolves to `a`, the directory it started in, which is not the root.</summary>
+    [Fact]
+    public async Task APathWithADotAndAParentResolvesToTheDirectoryItStartedIn()
+    {
+        Commit("a/x.txt", "one", "touch a");
+        var touchedA = Head();
+        Commit("src/a.txt", "two", "touch src");
+
+        (await EnumerateAsync(paths: ["a/./b/.."])).ShouldHaveSingleItem().Sha.ShouldBe(touchedA);
+        SourceFilters.FirstUnusable(["a/./b/.."], SourceFilters.GlobReader.Git).ShouldBeNull();
+    }
+
+    /// <summary>
+    /// With top magic git reads the path from the repository root and does not reject a rooted path or one with
+    /// `..`: it selects nothing and does not fail, so the validator accepts these too.
+    /// </summary>
+    [Theory]
+    [InlineData(":(top)../x")]
+    [InlineData(":(top)/docs")]
+    [InlineData(":(glob,top)/x")]
+    [InlineData(":(top)docs/../..")]
+    [InlineData(":/..")]
+    [InlineData(":/../x")]
+    [InlineData(":/:/x")]
+    public async Task TopMagicIsNotHeldToTheRulesAboutWhereAPathGoes(string pathspec)
+    {
+        Commit("src/a.txt", "one", "touch src");
+
+        (await EnumerateAsync(paths: [pathspec])).ShouldBeEmpty();
         SourceFilters.FirstUnusable([pathspec], SourceFilters.GlobReader.Git).ShouldBeNull();
     }
 
@@ -1004,8 +1067,47 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
-    /// `/docs` and `docs` give git the same argument, so they are one filter. A fingerprint of the raw list made
-    /// editing one into the other re-read and re-embed the whole history.
+    /// An unglobbed name is anchored at the repository root in git, so `docs` selects the commit touching
+    /// `docs/a.txt` and not the one touching `a/docs/x.txt`. The file walk matches `docs` at any depth.
+    /// </summary>
+    [Fact]
+    public async Task AnUnglobbedNameIsAnchoredAtTheRootByGitAndMatchedAtAnyDepthByTheWalk()
+    {
+        Commit("docs/a.txt", "one", "touch top-level docs");
+        var topLevel = Head();
+        Commit("a/docs/x.txt", "two", "touch nested docs");
+
+        (await EnumerateAsync(paths: ["docs"])).ShouldHaveSingleItem().Sha.ShouldBe(topLevel);
+        (await EnumerateAsync(paths: ["/docs"])).ShouldHaveSingleItem().Sha.ShouldBe(topLevel);
+        var walk = new IgnoreRuleSet();
+        walk.AddPatterns(["docs"], "test");
+        walk.IsIgnored("docs/a.txt", false).ShouldBeTrue();
+        walk.IsIgnored("a/docs/x.txt", false).ShouldBeTrue("the walk's unanchored name matches at every depth");
+    }
+
+    /// <summary>
+    /// Without `:(glob)` a pattern is fnmatch without pathname semantics: `**/*.md` needs a `/` in the path, so it
+    /// does not select a commit touching a root-level `README.md`, where the walk's `**/*.md` matches that file.
+    /// With `:(glob)` the root file is selected.
+    /// </summary>
+    [Fact]
+    public async Task ADoubleStarPatternNeedsASlashInGitUnlessItIsGlobMagic()
+    {
+        Commit("README.md", "one", "touch root file");
+        var root = Head();
+        Commit("src/c.md", "two", "touch nested file");
+        var nested = Head();
+
+        (await EnumerateAsync(paths: ["**/*.md"])).ShouldHaveSingleItem().Sha.ShouldBe(nested);
+        (await EnumerateAsync(paths: [":(glob)**/*.md"])).Select(c => c.Sha).ShouldBe([nested, root], ignoreOrder: true);
+        var walk = new IgnoreRuleSet();
+        walk.AddPatterns(["**/*.md"], "test");
+        walk.IsIgnored("README.md", false).ShouldBeTrue("the walk's **/ also matches no directory at all");
+    }
+
+    /// <summary>
+    /// `/docs` and `docs` give git the same argument, so they are one filter and editing one into the other
+    /// changes no fingerprint. An element that reaches git as written is a different filter.
     /// </summary>
     [Fact]
     public void TheFingerprintIsOfWhatGitIsGivenSoALeadingSlashIsNotAChange()
@@ -1019,8 +1121,10 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
-    /// The values a plain list had before leading slashes were normalised. A source indexed under one is not
-    /// re-read by the upgrade, so these are literals and not computed from the code under test.
+    /// The fingerprints of lists without a leading slash, as literals. They are the values the unchanged
+    /// encoding gave before leading slashes were normalised (checked by compiling the previous
+    /// `GitHistoryOptions` and printing them), so a history source indexed under one is not re-read by the
+    /// upgrade. A change to the encoding fails this.
     /// </summary>
     [Fact]
     public void TheFingerprintOfAListWithoutALeadingSlashIsWhatItWasBefore()
