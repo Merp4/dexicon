@@ -464,17 +464,38 @@ internal sealed class IndexingHarness : IAsyncDisposable
         /// </summary>
         public Func<Task>? AfterFileDeleteAsync { get; set; }
 
-        public Task<IReadOnlyDictionary<string, int>?> CountByFileAsync(string collection,
+        private readonly List<CancellationToken> _deleteTokens = [];
+
+        /// <summary>The token each file delete was given, in the order they arrived.</summary>
+        public IReadOnlyList<CancellationToken> DeleteTokens
+        {
+            get { lock (_deleteTokens) return [.. _deleteTokens]; }
+        }
+
+        /// <summary>
+        /// Runs as a file delete reaches the store, given its token and the number of deletes so far
+        /// (this one included). A test waits on the token here, as a store that does not answer would.
+        /// </summary>
+        public Func<CancellationToken, int, Task>? OnFileDeleteTokenAsync { get; set; }
+
+        /// <summary>
+        /// Runs as a per-file count reaches the store, which is where a pass checks its points against the
+        /// catalogue before it writes anything.
+        /// </summary>
+        public Func<Task>? OnCountAsync { get; set; }
+
+        public async Task<IReadOnlyDictionary<string, int>?> CountByFileAsync(string collection,
             string chunkSetId, string sourceId, CancellationToken ct = default)
         {
+            if (OnCountAsync is not null) await OnCountAsync();
             if (CountsThrow) throw new InvalidOperationException("the vector store is unreachable");
-            if (CountsAreIncomplete) return Task.FromResult<IReadOnlyDictionary<string, int>?>(null);
+            if (CountsAreIncomplete) return null;
 
             var counts = _points
                 .Where(p => p.ChunkSetId == chunkSetId && p.SourceId == sourceId)
                 .GroupBy(p => p.FilePath, StringComparer.Ordinal)
                 .ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
-            return Task.FromResult<IReadOnlyDictionary<string, int>?>(counts);
+            return counts;
         }
 
         /// <summary>
@@ -507,6 +528,14 @@ internal sealed class IndexingHarness : IAsyncDisposable
         public async Task DeleteFileChunksAsync(string collection, string chunkSetId, string sourceId,
             string filePath, CancellationToken ct = default)
         {
+            int deletes;
+            lock (_deleteTokens)
+            {
+                _deleteTokens.Add(ct);
+                deletes = _deleteTokens.Count;
+            }
+
+            if (OnFileDeleteTokenAsync is not null) await OnFileDeleteTokenAsync(ct, deletes);
             if (OnDeleteAsync is not null) await OnDeleteAsync();
 
             if (AbandonNextDelete)
