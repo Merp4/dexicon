@@ -98,15 +98,31 @@ ancestor is excluded. Deliberate, and the case it came from is real: a repositor
 excludes `data/` and keeps `data/sessions/` while the bulk of the tree is a sibling. It is
 also what makes `!.vscode/launch.json` work against the always-exclude list.
 
-A glob list sent through the API or the configure tools is refused when it holds a null element or
-a pattern that does not compile, such as the bracket class `[z-a]`. The API answers `400`, naming the
-list and the position (`includeGlobs[1]`); the configure tools return an error with the same text.
-Nothing is saved. That holds for a source's lists and for a corpus's defaults. A history source's
-include list is read by git as pathspecs, so only a null, empty or null-character element is refused
-there, and a corpus's default include list, which sources of both kinds inherit, is held to both
-rules. What git itself rejects is not checked, so a default such as `/build`, which a file source
-reads as an anchored pattern, still fails in a history source that inherits it. The check is of syntax: a pattern that compiles but is slow to match passes it, and the lines of a
-`.gitignore` or `.dexiconignore` in the tree are not checked.
+A glob list sent through the API or the configure tools is refused when it holds more than 200
+elements, an element of more than 500 characters, a null element, or a pattern that does not
+compile, such as the bracket class `[z-a]`. The API answers `400`, naming the list and the
+position (`includeGlobs[1]`; for a list over the count cap, the list alone) and not repeating the
+pattern; the configure tools return an error with the same text. Nothing is saved. That holds for
+a source's lists and for a corpus's defaults. The caps (`SourceFilters.MaxGlobsPerList` and
+`MaxGlobLength`) apply to every include and exclude list whichever reader it has, and the count
+is judged before any pattern is compiled, so a request with a very long list costs one comparison
+and not one regular expression per element. A list stored before the caps is read as stored; it is
+refused only when a request sends it back, as `configure_corpus` does for a corpus's defaults
+whenever it changes another filter.
+
+A history source's include list is read by git as pathspecs, so the walk's parser does not judge
+it. An element is refused when it is empty, holds a null character, has a `..` path segment
+(split on `/` and `\`; git answers `outside repository`), or starts with `//`. A corpus's default
+include list, which sources of both kinds inherit, is held to the walk's rule and to these. One
+leading `/` is accepted in both: a file source reads it as a pattern anchored at the root, and the
+history reader removes the slash before passing the pathspec, because git rejects `/build` as a
+path outside the repository. An element of only `/` compiles to no rule in the walk, so the
+history reader drops it as well, and a list of only such elements selects every path. A file
+source's include list may hold `..`: its patterns are matched against paths below the root, so
+such an element matches nothing. What else git rejects, such as malformed pathspec magic
+(`:(...)`), is not checked, and fails each pass of the history source with git's message as the
+reason. The check is of syntax: a pattern that compiles but is slow to match passes it, and the
+lines of a `.gitignore` or `.dexiconignore` in the tree are not checked.
 
 Worktrees are the case that prompted `2`. Reported against a checkout with four of them:
 22,004 files walked to 5,463 tracked ones, and search returning the same document at two
@@ -174,7 +190,10 @@ PATCH /api/corpora/books/sources/{id}
 
 Clearing is named rather than inferred from a null, because JSON gives no way to tell an
 absent property from an explicit null; inferring it would make every partial update reset
-whatever it did not mention.
+whatever it did not mention. `clear` takes field names: `useGitignore`, `maxFileBytes`,
+`includeGlobs` and `excludeGlobs`, in any case. A name that is not one of them, and a null entry
+(`"clear": [null]`), are refused with `400` `Unknown filter` and nothing is changed. The message
+shows an unknown name on one line cut to 40 characters, and shows no text for a null entry.
 
 Changing a filter queues a refresh, and only when something actually moved. Narrowing one
 removes the files it now excludes through the ordinary reconcile: the walk stops seeing
@@ -295,7 +314,8 @@ alone, in UTF-8 bytes, and the stat is kept when the patch is dropped — it is 
 half and it is what still answers "which files" without it.
 
 The source's include globs become git pathspecs, so they mean whose history and narrow the
-diff at the same time. Excludes are not passed: git's exclude pathspec syntax is its own,
+diff at the same time. A leading `/` is removed first, as described under the glob rules above.
+Excludes are not passed: git's exclude pathspec syntax is its own,
 and mapping one glob language onto another quietly is how a filter comes to mean something
 else.
 

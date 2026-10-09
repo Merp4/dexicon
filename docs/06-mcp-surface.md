@@ -331,12 +331,16 @@ listed to it.
 
 A change that leaves every value as it was queues nothing and says so. A setting both sent
 and named in `reset`, a file setting on a history source, a `since` that is not a
-`yyyy-MM-dd` date, an `include` or `exclude` list with a null element or a pattern that does
-not compile (such as `[z-a]`; a history source's `include` is held only to null, empty or null-character elements, because
-git reads it as pathspecs), and a `folder` holding a null character are refused before anything
-changes. `configure_corpus` sends a corpus's defaults whole whenever it changes a filter, so a list
-already stored with such a pattern is refused again when only the other filter is changed; `reset`
-clears it.
+`yyyy-MM-dd` date, an `include` or `exclude` list of more than 200 elements or with an element of
+more than 500 characters, a null element or a pattern that does not compile (such as `[z-a]`; a
+history source's `include` is held to null, empty, null-character, `..`-segment and `//`-leading
+elements instead, because git reads it as pathspecs, and a leading `/` is accepted and removed
+before git is asked), and a `folder` holding a null character are refused before anything
+changes. A corpus's default `include` list, which sources of both kinds inherit, is held to both
+sets of rules. `configure_corpus` sends a corpus's defaults whole whenever it changes a filter, so
+a list already stored with such a pattern, or past the caps, is refused again when only the other
+filter is changed; `reset` clears it. The message names the list and the position and does not
+repeat the pattern.
 
 ### `propose_removal`
 
