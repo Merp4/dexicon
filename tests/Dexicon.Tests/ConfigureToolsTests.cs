@@ -699,6 +699,9 @@ internal sealed class RecordingLoggerFactory : ILoggerFactory
     /// <summary>The exception of each entry that carried one, which the formatted line does not show.</summary>
     public List<Exception> Exceptions { get; } = [];
 
+    /// <summary>The level of each entry, in the order of <see cref="Lines"/>.</summary>
+    public List<LogLevel> Levels { get; } = [];
+
     public ILogger CreateLogger(string categoryName) => new Logger(this);
 
     public void AddProvider(ILoggerProvider provider) { }
@@ -717,6 +720,7 @@ internal sealed class RecordingLoggerFactory : ILoggerFactory
             lock (owner.Lines)
             {
                 owner.Lines.Add(formatter(state, exception));
+                owner.Levels.Add(logLevel);
                 if (exception is not null) owner.Exceptions.Add(exception);
             }
         }

@@ -137,7 +137,7 @@ public class LogForgingTests
     }
 
     [Fact]
-    public void TheToolsLineHolderTakesEscapeSequencesAsWellAsLineBreaks()
+    public void TheToolsOneLineHelperTakesEscapeSequencesAsWellAsLineBreaks()
     {
         Dexicon.Mcp.DexiconTools.OneLine("a\r\nb\u001B[2Jc").ShouldBe("a b�[2Jc");
     }

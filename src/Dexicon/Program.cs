@@ -270,14 +270,6 @@ else
         "text/html"));
 }
 
-// Skipped when `dotnet build` is only reading the OpenAPI document out of this app;
-// see Bootstrapper.IsBuildTimeToolRun. A build must not migrate a database or mint a
-// token.
-if (!Bootstrapper.IsBuildTimeToolRun)
-{
-    await Bootstrapper.InitialiseAsync(app);
-}
-
 // Report the addresses the server ACTUALLY bound, after it has bound them. Logging
 // a guess beforehand is how "listening on 8477" ends up in the log of a process that
 // failed to bind 8477.
@@ -291,6 +283,16 @@ app.Lifetime.ApplicationStarted.Register(() =>
 
 try
 {
+    // Skipped when `dotnet build` is only reading the OpenAPI document out of this app;
+    // see Bootstrapper.IsBuildTimeToolRun. A build must not migrate a database or mint a
+    // token. Inside this try so that a failure here (an unusable DEXICON__BOOTSTRAP__TOKEN, a
+    // catalogue that cannot migrate) is logged through the sink like any other, and the runtime
+    // does not print it raw to stderr.
+    if (!Bootstrapper.IsBuildTimeToolRun)
+    {
+        await Bootstrapper.InitialiseAsync(app);
+    }
+
     await app.RunAsync();
     return 0;
 }

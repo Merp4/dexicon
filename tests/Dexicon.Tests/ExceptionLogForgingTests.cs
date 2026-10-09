@@ -212,26 +212,74 @@ public sealed class ExceptionLogForgingTests
             new KeyValuePair<ScalarValue, LogEventPropertyValue>(new ScalarValue("k" + hostile), new ScalarValue("v" + hostile)),
         ]);
 
-        foreach (var value in new LogEventPropertyValue[] { sequence, structure, dictionary })
+        var expected = new (LogEventPropertyValue Value, string Written)[]
+        {
+            (sequence, "a�"),
+            (structure, "b�"),
+            (dictionary, "k�"),
+        };
+        foreach (var (value, written) in expected)
         {
             var rendered = Render(EventFor(null, "Refused: {Title}", value));
 
             rendered.ShouldNotContain(hostile);
+            rendered.ShouldContain(written);
         }
     }
 
-    [Fact]
-    public void AValueNestedPastTheDepthLimitIsNotWritten()
+    /// <summary>The scalar sits at the depth of the sequences around it, and the limit is 8.</summary>
+    [Theory]
+    [InlineData(7, true)]
+    [InlineData(8, true)]
+    [InlineData(9, false)]
+    [InlineData(20, false)]
+    public void AValueNestedPastTheDepthLimitIsWrittenAsDots(int levels, bool written)
     {
         var hostile = ((char)0x2028).ToString();
         LogEventPropertyValue value = new ScalarValue("deep" + hostile);
-        for (var i = 0; i < 20; i++) value = new SequenceValue([value]);
+        for (var i = 0; i < levels; i++) value = new SequenceValue([value]);
 
         var rendered = Render(EventFor(null, "Refused: {Title}", value));
 
         rendered.ShouldNotContain(hostile);
-        rendered.ShouldContain("...");
+        rendered.Contains("deep�", StringComparison.Ordinal).ShouldBe(written);
+        rendered.Contains("\"...\"", StringComparison.Ordinal).ShouldBe(!written);
     }
+
+    /// <summary>The invisible characters: format characters, in the BMP and past it, and a lone surrogate.</summary>
+    [Theory]
+    [InlineData(0x200B)]
+    [InlineData(0x200D)]
+    [InlineData(0xFEFF)]
+    [InlineData(0x00AD)]
+    [InlineData(0x2062)]
+    [InlineData(0x180E)]
+    [InlineData(0xE0001)]
+    [InlineData(0xE0041)]
+    [InlineData(0xD800)]
+    [InlineData(0xDC00)]
+    public void AnInvisibleCharacterIsReplacedWithOneMarkerInAnArgumentAndInAnException(int codePoint)
+    {
+        var hostile = codePoint < 0x10000 ? ((char)codePoint).ToString() : char.ConvertFromUtf32(codePoint);
+        var marker = ((char)0xFFFD).ToString();
+
+        var argument = Render(EventFor(null, "Refused: {Title}", "a" + hostile + "b"));
+        var exception = Render(Thrown(() => new InvalidOperationException("a" + hostile + "b")));
+
+        argument.ShouldContain("a" + marker + "b");
+        argument.ShouldNotContain(hostile);
+        exception.ShouldContain("InvalidOperationException: a" + marker + "b");
+    }
+
+    [Fact]
+    public void ACharacterThatIsNotHostileIsKept()
+    {
+        // Letters, an accent, an emoji past the BMP and a CJK character.
+        var text = "caf" + (char)0xE9 + " " + char.ConvertFromUtf32(0x1F600) + " " + (char)0x4E2D;
+
+        Render(EventFor(null, "Refused: {Title}", text)).ShouldContain(text);
+    }
+
 
     [Fact]
     public void ATypeLoggedByItsToStringHasThatTextReplaced()
@@ -270,7 +318,7 @@ public sealed class ExceptionLogForgingTests
     }
 
     [Fact]
-    public void AStackFrameThatHoldsAForgedLineIsHeld()
+    public void AStackFrameThatHoldsAForgedLineAnEscapeAndABidiControlIsHeld()
     {
         var thrown = new HostileTextException();
 
@@ -278,14 +326,192 @@ public sealed class ExceptionLogForgingTests
 
         ShouldNotStartAnyLineWithTheForgedEntry(rendered);
         Lines(rendered).ShouldContain(l => l.StartsWith("    " + ForgedLine + " frame", StringComparison.Ordinal));
+        rendered.ShouldContain("   at A.B�[2J�()");
+        rendered.ShouldNotContain(((char)0x202E).ToString());
+    }
+
+    [Theory]
+    [InlineData(0x20)]
+    [InlineData(0x2003)]
+    [InlineData(0x3000)]
+    [InlineData(0x09)]
+    public void AContinuationLineThatStartsWithWhitespaceStillGetsAnIndent(int lead)
+    {
+        var rendered = Render(Thrown(() => new InvalidOperationException($"x\n{(char)lead}{ForgedLine}")));
+
+        ShouldNotStartAnyLineWithTheForgedEntry(rendered);
+        Lines(rendered).Single(l => l.Contains("forged", StringComparison.Ordinal)).ShouldStartWith("    ");
+    }
+    [Fact]
+    public void AFirstLineThatDoesNotStartWithTheTypeNameIsIndentedToo()
+    {
+        var rendered = Render(new ForgedFirstLineException());
+
+        ShouldNotStartAnyLineWithTheForgedEntry(rendered);
+        Lines(rendered).ShouldContain(l => l.StartsWith("    " + ForgedLine, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ABlankLineInAMessageIsFourSpaces()
+    {
+        var rendered = Render(Thrown(() => new InvalidOperationException("a\n\nb")));
+
+        Lines(rendered).ShouldContain("    ");
+        Lines(rendered).ShouldContain(l => l == "    b");
+    }
+
+    private sealed class ForgedFirstLineException : Exception
+    {
+        public override string ToString() => ForgedLine + " and then the rest";
     }
 
     /// <summary>An exception whose own text, including its stack trace, is the attacker's.</summary>
     private sealed class HostileTextException : Exception
     {
-        public override string? StackTrace => $"   at A.B()\n{ForgedLine} frame\n   at C.D()";
+        public override string? StackTrace =>
+            $"   at A.B{Esc}[2J{(char)0x202E}()\n{ForgedLine} frame\n   at C.D()";
 
         public override string ToString() => $"{GetType()}: ordinary\n{ForgedLine} extra {Esc}[2J{Environment.NewLine}{StackTrace}";
+    }
+
+    /// <summary>
+    /// A tree of 20 aggregates whose members are the same aggregate twice, so that 21 objects hold a message
+    /// that would be megabytes if written whole.
+    /// </summary>
+    private static AggregateException Diamond(int levels)
+    {
+        var node = new AggregateException(new string('m', 100), new InvalidOperationException("leaf"));
+        for (var i = 0; i < levels; i++) node = new AggregateException(new string('m', 100), node, node);
+        return node;
+    }
+
+    [Fact]
+    public void AnAggregateWhoseMessageHoldsEveryMessageUnderItIsCutAtFourThousandCharacters()
+    {
+        var diamond = Diamond(20);
+        diamond.Message.Length.ShouldBeGreaterThan(1_000_000, "the graph is what makes the message long");
+
+        var rendered = OneLineLogSink.Render(diamond);
+
+        rendered.ShouldContain("the exception chain was cut");
+        rendered.Length.ShouldBeLessThan(OneLineLogSink.MaxMessage + 400);
+        var sink = new CaptureSink();
+        new OneLineLogSink(sink).Emit(EventFor(diamond, "t"));
+        sink.Last!.Exception!.Message.Length.ShouldBeLessThanOrEqualTo(OneLineLogSink.MaxMessage + 3);
+    }
+
+    [Fact]
+    public void AMessageOfExactlyTheLimitIsWrittenWholeAndOneCharacterOverIsCut()
+    {
+        var whole = new string('q', OneLineLogSink.MaxMessage);
+        var over = whole + "q";
+
+        OneLineLogSink.Render(DeepWith(whole)).ShouldContain(whole + Environment.NewLine);
+        OneLineLogSink.Render(DeepWith(over)).ShouldContain(whole + "...");
+    }
+
+    /// <summary>A chain deep enough to be cut, with a message on its outermost exception.</summary>
+    private static InvalidOperationException DeepWith(string message)
+    {
+        Exception chain = new InvalidOperationException("root");
+        for (var i = 0; i < OneLineLogSink.MaxExceptionDepth + 1; i++) chain = new InvalidOperationException("x", chain);
+        return new InvalidOperationException(message, chain);
+    }
+
+    private sealed class ThrowingMessageException : Exception
+    {
+        public override string Message => throw new InvalidOperationException("no message");
+    }
+
+    private sealed class ThrowingToStringException : Exception
+    {
+        public override string ToString() => throw new InvalidOperationException("no text");
+    }
+
+    private sealed class ThrowingStackTraceException() : Exception("fine")
+    {
+        public override string? StackTrace => throw new InvalidOperationException("no trace");
+    }
+
+    private sealed class ThrowingText
+    {
+        public override string ToString() => throw new InvalidOperationException("no text");
+    }
+
+    [Fact]
+    public void AnExceptionWhoseTextCannotBeReadIsStillWrittenWithAnote()
+    {
+        foreach (Exception thrown in new Exception[] { new ThrowingMessageException(), new ThrowingToStringException(), new ThrowingStackTraceException() })
+        {
+            var rendered = Render(thrown);
+
+            rendered.ShouldStartWith("[00:00:00Z DBG] Refused:");
+            rendered.ShouldContain(thrown.GetType().ToString());
+        }
+    }
+
+    [Fact]
+    public void ADeepChainWhoseOutermostMessageCannotBeReadIsStillWritten()
+    {
+        Exception chain = new InvalidOperationException("root");
+        for (var i = 0; i < OneLineLogSink.MaxExceptionDepth + 1; i++) chain = new InvalidOperationException("x", chain);
+
+        var rendered = OneLineLogSink.Render(new WrappingThrowingMessage(chain));
+
+        rendered.ShouldContain("the exception chain was cut");
+        rendered.ShouldContain("(its message could not be read)");
+    }
+
+    private sealed class WrappingThrowingMessage(Exception inner) : Exception("x", inner)
+    {
+        public override string Message => throw new InvalidOperationException("no message");
+    }
+
+    [Fact]
+    public void APropertyWhoseTextCannotBeReadIsStillWrittenWithANote()
+    {
+        var rendered = Render(EventFor(null, "Refused: {Title}", new ThrowingText()));
+
+        rendered.ShouldContain("(a value of type " + typeof(ThrowingText) + " whose text could not be read)");
+    }
+
+    [Fact]
+    public void ADisposeOfTheSinkIsPassedOnToTheSinkItWraps()
+    {
+        var wrapped = new DisposableSink();
+
+        new OneLineLogSink(wrapped).Dispose();
+
+        wrapped.Disposed.ShouldBe(1);
+    }
+
+    private sealed class DisposableSink : ILogEventSink, IDisposable
+    {
+        public int Disposed { get; private set; }
+
+        public void Emit(LogEvent logEvent)
+        {
+        }
+
+        public void Dispose() => Disposed++;
+    }
+
+    [Fact]
+    public void AnEventKeepsItsTimestampLevelTemplateAndTypeTag()
+    {
+        var capture = new CaptureSink();
+        var when = new DateTimeOffset(2026, 10, 9, 12, 30, 15, TimeSpan.Zero);
+        var tagged = new StructureValue([new LogEventProperty("Name", new ScalarValue("n"))], "Corpus");
+        var source = new LogEvent(when, LogEventLevel.Warning, new InvalidOperationException("x"),
+            new MessageTemplateParser().Parse("Refused {Title}"), [new LogEventProperty("Title", tagged)],
+            ActivityTraceId.CreateRandom(), ActivitySpanId.CreateRandom());
+
+        new OneLineLogSink(capture).Emit(source);
+
+        capture.Last!.Timestamp.ShouldBe(when);
+        capture.Last.Level.ShouldBe(LogEventLevel.Warning);
+        capture.Last.MessageTemplate.Text.ShouldBe("Refused {Title}");
+        capture.Last.Properties["Title"].ShouldBeOfType<StructureValue>().TypeTag.ShouldBe("Corpus");
     }
 
     [Fact]
@@ -416,12 +642,34 @@ public sealed class ExceptionLogForgingTests
     }
 
     [Fact]
-    public void ProgramBuildsItsLoggerFromTheConfigurationTheTestsUse()
+    public void TheApplicationsConfigurationKeepsItsLevelItsFrameworkOverridesAndItsUtcTimestamp()
     {
-        var program = File.ReadAllText(SourceFiles.Find("src", "Dexicon", "Program.cs"));
+        var captured = new StringWriter();
+        var original = Console.Out;
+        Console.SetOut(captured);
+        try
+        {
+            using var logger = LogOutput.Configuration(LogEventLevel.Information).CreateLogger();
+            logger.Debug("debug-line");
+            logger.Information("info-line");
+            logger.ForContext("SourceContext", "Microsoft.AspNetCore.Hosting").Information("framework-info");
+            logger.ForContext("SourceContext", "Microsoft.AspNetCore.Hosting").Warning("framework-warning");
+            logger.ForContext("SourceContext", "Microsoft.EntityFrameworkCore.Query").Information("ef-info");
+            logger.ForContext("SourceContext", "Dexicon.Other").Information("other-info");
+        }
+        finally
+        {
+            Console.SetOut(original);
+        }
 
-        program.ShouldContain("Log.Logger = LogOutput.Configuration(");
-        program.ShouldNotContain("WriteTo.Console(");
-        program.ShouldNotContain("new LoggerConfiguration()");
+        var written = captured.ToString();
+        written.ShouldContain("info-line");
+        written.ShouldContain("framework-warning");
+        written.ShouldContain("other-info");
+        written.ShouldNotContain("debug-line");
+        written.ShouldNotContain("framework-info");
+        written.ShouldNotContain("ef-info");
+        System.Text.RegularExpressions.Regex.IsMatch(written, @"^\[\d\d:\d\d:\d\dZ INF\] info-line", System.Text.RegularExpressions.RegexOptions.Multiline)
+            .ShouldBeTrue("the timestamp is the UTC time the enricher adds");
     }
 }
