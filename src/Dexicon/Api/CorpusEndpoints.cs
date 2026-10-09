@@ -15,6 +15,15 @@ namespace Dexicon.Api;
 
 public static class CorpusEndpoints
 {
+    /// <summary>
+    /// The path of a corpus, or of one of its chunk sets, for a <c>Location</c> header. A name may hold
+    /// a space, a slash or a letter outside ASCII, so each is escaped as the path segment it is; a header
+    /// value outside ASCII makes Kestrel throw after the change it answers has been saved.
+    /// </summary>
+    internal static string LocationOf(string corpusName, string? chunkSetName = null) =>
+        $"/api/corpora/{Uri.EscapeDataString(corpusName)}"
+        + (chunkSetName is null ? string.Empty : $"/chunk-sets/{Uri.EscapeDataString(chunkSetName)}");
+
     public static void MapCorpusEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/corpora").WithTags("Corpora");
@@ -116,7 +125,7 @@ public static class CorpusEndpoints
             // False means one is already waiting, which is the same answer arriving from
             // the sweep already queued rather than a refusal.
             var queued = sweeps.Enqueue(corpus.Id);
-            return Results.Accepted($"/api/corpora/{corpus.Name}", new SweepQueued(corpus.Name, queued));
+            return Results.Accepted(LocationOf(corpus.Name), new SweepQueued(corpus.Name, queued));
         }).Produces<SweepQueued>(StatusCodes.Status202Accepted);
 
         g.MapPost("/{nameOrId}/reindex", async (string nameOrId, bool? full, RequestContext rc,

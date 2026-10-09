@@ -278,6 +278,10 @@ public sealed class DocumentService(
     /// of corpora; each chunks it with its own settings, producing independent chunk
     /// sets that never see each other.
     /// </summary>
+    /// <exception cref="NameTakenException">
+    /// The bytes are already attached to the corpus under another name, and the name asked for is another
+    /// document's.
+    /// </exception>
     public async Task<IndexedFile> AttachAsync(Corpus corpus, string sha256, string fileName,
         CancellationToken ct = default)
     {
@@ -311,6 +315,15 @@ public sealed class DocumentService(
         {
             if (!string.Equals(byBlob.RelativePath, fileName, StringComparison.Ordinal))
             {
+                // These bytes are attached here already, under another name. Moving them to a name another
+                // document holds would replace that document too, and a path is unique within a source, so
+                // the rename is refused. Bytes that are not attached yet replace the document of that name,
+                // below.
+                if (await db.Files.AnyAsync(f => f.SourceId == source.Id && f.RelativePath == fileName, ct))
+                    throw new NameTakenException(
+                        $"'{fileName}' is the name of another document in this corpus. These bytes are already "
+                        + $"attached to it as '{byBlob.RelativePath}'; use another name, or detach one of the two first.");
+
                 // Renaming invalidates the old chunks, which are keyed by file_path.
                 // Cleared here; the caller's reindex writes them back under the new name.
                 byBlob.RelativePath = fileName;

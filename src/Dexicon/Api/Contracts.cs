@@ -241,6 +241,10 @@ public sealed record SaveModelProfileRequest(
 /// <summary>A configured backend, and whether its models can be pulled and deleted.</summary>
 public sealed record EmbeddingProviderInfo(string Name, string Kind, bool Managed, bool Configured, string? Detail);
 
+/// <param name="WorkspacePath">
+/// The folder, relative to the workspace root. Required: an empty string is the root itself, and a
+/// request that leaves it out is refused.
+/// </param>
 /// <param name="GitHistory">
 /// Index this folder's commit history rather than its files. The folder must be a git
 /// repository. A repository whose files AND history are both wanted takes two sources
@@ -531,6 +535,10 @@ public sealed record ContextApiRequest(
     bool? LineNumbers = null,
     bool? DistinctTitles = null);
 
+/// <param name="ExpiresInDays">
+/// Days until the key stops working, up to 36,500 (about 100 years). Omitted or zero means it does
+/// not expire, and a negative number is refused.
+/// </param>
 /// <param name="CorpusIds">
 /// Corpus ids this key may reach. Omitted or empty means every corpus, which is what a
 /// single-user install wants. Editable afterwards, and read per request, so a change
@@ -542,7 +550,10 @@ public sealed record CreateTokenRequest(
     int? ExpiresInDays = null,
     IReadOnlyList<string>? CorpusIds = null);
 
-/// <summary>Replaces a key's corpus mapping outright. An empty list means every corpus.</summary>
+/// <summary>
+/// Replaces a key's corpus mapping outright. An empty list means every corpus, and the field is
+/// required: a request without it is refused.
+/// </summary>
 public sealed record UpdateTokenCorporaRequest(IReadOnlyList<string> CorpusIds);
 
 /// <summary>
@@ -660,6 +671,18 @@ public static class Mapping
         "semantic" => SearchMode.Semantic,
         "keyword" => SearchMode.Keyword,
         null or "" or "hybrid" => SearchMode.Hybrid,
-        _ => throw new ArgumentException($"Unknown search mode '{mode}'. Expected hybrid, semantic or keyword."),
+        _ => throw new UnknownSearchModeException(
+            $"Unknown search mode '{Shown(mode)}'. Expected hybrid, semantic or keyword."),
     };
+
+    /// <summary>
+    /// A caller's text in a message that is logged and returned: one line, and cut short. The exception
+    /// is written to the console log with its message, so a line break in it would begin a line that
+    /// reads as another entry.
+    /// </summary>
+    private static string Shown(string? text)
+    {
+        var line = (text ?? string.Empty).ReplaceLineEndings(" ");
+        return line.Length > 40 ? line[..40] + "..." : line;
+    }
 }

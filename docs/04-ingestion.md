@@ -213,7 +213,10 @@ off the wire. The endpoint reads the multipart body with a `MultipartReader` and
 file straight to the blob store, which copies it under a cap and stops one byte over, so
 nothing is spooled to `/tmp` (a tmpfs in the compose file) first. A file over the cap is
 listed in the response's `failed` array and the files beside it are stored; its remaining
-bytes are still read off the connection and discarded.
+bytes are still read off the connection and discarded. So is a file whose bytes are already
+attached to the corpus under another name, sent under the name of a third document there; the
+attach endpoint answers `409` "Name already used" for the same case. Bytes that are not attached
+to the corpus yet, sent under a name it holds, replace that document.
 
 The request as a whole is bounded at ten files at the cap plus 1 MiB of multipart framing,
 which is 2,098,200,576 bytes at the default and follows `DEXICON__UPLOAD__MAXFILEBYTES`.

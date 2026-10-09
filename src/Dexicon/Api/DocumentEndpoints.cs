@@ -231,7 +231,15 @@ public static class DocumentEndpoints
         // This is the point of the whole design: the same bytes, chunked this
         // corpus's way, without re-uploading or re-extracting anything.
         var name = body.FileName ?? blob.OriginalFileName ?? body.Sha256[..12];
-        var file = await documents.AttachAsync(corpus, body.Sha256, name, ct);
+        IndexedFile file;
+        try
+        {
+            file = await documents.AttachAsync(corpus, body.Sha256, name, ct);
+        }
+        catch (NameTakenException ex)
+        {
+            return Results.Problem(title: "Name already used", detail: ex.Message, statusCode: 409);
+        }
 
         // Not cancellable, as in UploadAsync: the attachment is saved and the job indexes it.
         var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: CancellationToken.None);

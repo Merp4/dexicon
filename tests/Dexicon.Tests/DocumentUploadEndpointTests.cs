@@ -92,6 +92,25 @@ public sealed class DocumentUploadEndpointTests
     }
 
     [Fact]
+    public async Task AFileUploadedAgainUnderAnotherDocumentsNameIsListedAndTheFilesBesideItAreStored()
+    {
+        // a.txt's bytes sent as "b.txt", which another document holds: the rename onto that path failed on
+        // the source's unique key and the whole request answered 500, losing c.txt beside it.
+        await using var harness = await StartAsync();
+        await PostAsync(harness, new MultipartBody().File("files", "a.txt", 200, 'a').File("files", "b.txt", 300, 'b'));
+        var again = new MultipartBody().File("files", "b.txt", 200, 'a').File("files", "c.txt", 100, 'c');
+
+        var posted = await PostAsync(harness, again);
+
+        var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
+        accepted.Stored.Select(s => s.FileName).ShouldBe(["c.txt"]);
+        accepted.Failed.Select(f => f.File).ShouldBe(["b.txt"]);
+        accepted.Failed[0].Error.ShouldContain("'a.txt'");
+        await using var db = harness.NewContext();
+        (await db.Files.Select(f => f.RelativePath).ToListAsync()).ShouldBe(["a.txt", "b.txt", "c.txt"], ignoreOrder: true);
+    }
+
+    [Fact]
     public async Task AnOverCapFileInABatchLeavesTheFilesBesideItStored()
     {
         await using var harness = await StartAsync();

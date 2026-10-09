@@ -36,6 +36,11 @@ with no section here fails its release rather than publishing an undescribed one
   `failed[].file` is `null` for any failure of the request as a whole and a file's name otherwise.
   Only the per-file cap applied before. A script that posts a batch beyond the bound needs to
   split it.
+- Three requests are refused that were accepted or answered `500`. `POST /api/corpora/{x}/sources`
+  without `workspacePath` is `400`: it was read as the workspace root, and an empty string still is
+  the root. `PUT /api/tokens/{id}/corpora` without `corpusIds` is `400`, and an empty list still
+  lifts the restriction. `POST /api/tokens` with an `expiresInDays` below 0 or above 36,500 is
+  `400`; a negative number made a key that never expired.
 - The skill changes (`dexicon-skill-version: 6`). Running `scripts/install-mcp.ps1` again
   upgrades installed copies. The hooks are unchanged.
 
@@ -102,6 +107,32 @@ with no section here fails its release rather than publishing an undescribed one
   corpora were two saves: an unknown corpus id was refused with `400` after the key was saved,
   and a cancel between the saves left it unmapped. A key with no mapping reaches every corpus,
   and its secret had not been shown. The corpora are checked first and saved with the key.
+- **Requests that answered `500`, or were read as something else.** Each was found by sending every
+  JSON-body operation an empty object and `null`, by reading the attach path for a taken name, or by
+  an independent review of the request paths, and each was reproduced against a running build. A
+  refused request changes nothing.
+  - `PUT /api/tokens/{id}/corpora` without `corpusIds` threw on the missing list. It answers `400`
+    and keeps the mapping.
+  - `POST /api/tokens` with `expiresInDays` of 2147483647 threw in `DateTime.AddDays`, and a
+    negative value made a key that never expires. Values below 0 or above 36,500 days answer `400`
+    "Invalid expiry".
+  - `POST /api/corpora/{x}/sources` without `workspacePath` added a source over the workspace root,
+    so a misspelt field indexed everything mounted. It answers `400`.
+  - Sending a document whose bytes are already attached to a corpus under the name of another
+    document in it renamed the first onto a path the source already held, and the save failed on the
+    unique key. An upload lists the file under `failed` and stores the files beside it; an attach
+    answers `409` "Name already used". Bytes that are not attached to the corpus yet, sent under a
+    name it holds, still replace that document.
+  - `POST /api/search` and `/api/context`, and the MCP `search_index` tool, with a `mode` other than
+    `hybrid`, `semantic` or `keyword` threw an `ArgumentException` that nothing caught. REST answers
+    `400` "Unknown search mode". The value is shown on one line and cut at 40 characters, because the
+    exception is written to the console log with its message.
+  - A `null` among the names in `corpus` of those two requests threw on splitting it. It answers `400`.
+  - Creating a chunk set, or queuing a sweep, for a corpus or chunk set whose name holds a letter
+    outside ASCII saved the change and then answered `500`, because the name was written unescaped
+    into the `Location` header. Each name is escaped as a path segment.
+  - A `workspacePath` holding a null character threw in `Path.GetFullPath` when a source or a corpus
+    folder was added. It answers `400`.
 - **Attaching the first document to a corpus could leave an empty upload source.** The source
   was saved before the document, so a cancel between them left a source with no files. It is
   saved with the document.

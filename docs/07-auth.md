@@ -81,8 +81,9 @@ belongs to the key.
 - Scopes can be changed after issue, on the Access page or with
   `PUT /api/tokens/{id}/scopes`, under the same rules. The change evicts cached principals,
   so a scope removed is refused from the agent's next call.
-- Optional expiry, set with `expiresInDays` on `POST /api/tokens`; the Access page does not
-  offer it. Optional revocation, effective immediately: the principal cache holds
+- Optional expiry, set with `expiresInDays` on `POST /api/tokens` (0 to 36,500, where 0 is none;
+  anything else is `400`); the Access page does not offer it. Optional revocation, effective
+  immediately: the principal cache holds
   entries for 60 s and revocation evicts rather than waiting. Each entry is filed under the
   cache's generation, which every eviction moves, so a request already verifying the key
   when it is revoked, or its scopes changed, is served on what it read and whatever it
