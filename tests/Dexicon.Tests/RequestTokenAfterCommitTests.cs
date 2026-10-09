@@ -12,8 +12,9 @@ namespace Dexicon.Tests;
 /// A write commits on its own, and what follows it in the same request (the job that applies it, its
 /// collection, the audit line, the reply) is what makes it take effect or says that it happened. On the
 /// caller's token a cancel between the two left a saved change with no job, a key mapped to nothing, or
-/// a saved change answered with an error. Review raised that fourteen times across PRs #174, #184, #195,
-/// #212 and #214, each fix was made at the site named, and the next new path missed it again.
+/// a saved change answered with an error. Review raised that in eight inline comments across PRs #174,
+/// #195, #212 and #214, and again in review summaries. Each fix was made at the site named, and the next
+/// new path missed it again.
 ///
 /// So this compiles <c>src/</c> and, in every method, local function and lambda, follows the control-flow
 /// graph from each write and reports any use of the caller's token the write can reach. A write is
@@ -38,18 +39,27 @@ namespace Dexicon.Tests;
 ///
 /// A function, type or member is exempt only through
 /// <c>[SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", Justification = "...")]</c>, with a
-/// reason, and a <c>MessageId</c> naming the one call it covers where the function has other uses that
-/// must stay reported. A loop that stops on the token is one: <c>DocumentEndpoints.UploadAsync</c> reads
-/// and stores the next file on it, and its queuing of the job after the loop is not exempt. A suppression
-/// that no longer suppresses anything fails, wherever it is written, as does one without a justification.
+/// reason that is not blank. A suppression on a type exempts every member of it, including one added later.
+/// A <c>MessageId</c> names the method called and limits the exemption to uses of the token in a call of that
+/// name; it cannot point at one call, so every call of that name in the function is covered. A loop that
+/// stops on the token is one: <c>DocumentEndpoints.UploadAsync</c> reads and stores the next file on it
+/// (<c>ReadNextSectionAsync</c>, <c>StoreAsync</c>, <c>AttachAsync</c>), and its queuing of the job after the
+/// loop is not exempt, but another call of those names with the token in it would be. A suppression that
+/// no longer suppresses anything fails, wherever it is written, as does one without a justification.
 ///
-/// Blind to: a token held in a field, a property, a collection, a tuple or an object it was passed into; a
-/// <c>catch</c> reached by an exception thrown after a write, since the graph has no edge for an exception
-/// and treats every catch as following a failed write; a callback passed to the writing call and run inside
-/// it, and a delegate held in a field or a parameter, whose body the scan cannot see; a token handed to an
-/// enclosing call by an expression that calls something, which cannot be told from a result read with it; writes to Qdrant and
+/// Blind to: a token held in a field, a property, a collection, a tuple, an object it was passed into, a
+/// struct, a primary constructor, a nullable local or an <c>out</c> argument; a <c>catch</c> reached by an
+/// exception thrown after a write, since the graph has no edge for an exception and treats every catch as
+/// following a failed write; a callback passed to the writing call and run inside it, a delegate held in a
+/// field or a parameter, a writing lambda passed to a call that runs it or returned by a factory, and a
+/// delegate a factory call builds from the token, whose bodies the scan cannot see; a token handed to an
+/// enclosing call by an expression that calls something, which cannot be told from a result read with it;
+/// a task started with the token before the write and awaited after it, and a loop whose header names it;
+/// a write made by a property accessor or from a field initializer, and one through a member declared
+/// outside <c>src/</c> that a type in <c>src/</c> implements; raw ADO.NET commands, and writes to Qdrant and
 /// the blob store, which are not catalogue writes; and the conditions on a path, so a branch taken only when
-/// nothing was written is followed too.
+/// nothing was written is followed too. Code under <c>#if</c> and a third project under <c>src/</c> are not
+/// read, and the first test fails if either appears.
 /// <c>TheScanReportsEveryWayTheTokenReachesWorkAfterAWrite</c> and its companions pin what is covered.
 /// </summary>
 public sealed class RequestTokenAfterCommitTests
@@ -62,6 +72,10 @@ public sealed class RequestTokenAfterCommitTests
         var source = Tree.Value;
         source.UnexpectedErrors.ShouldBeEmpty(
             "src/ did not compile as the scan builds it, so calls may have bound to nothing and been missed");
+        source.UnreadProjects.ShouldBeEmpty(
+            "a project under src/ that the scan does not read; add it to CommitScan.Source.Load");
+        source.ConditionalFiles.ShouldBeEmpty(
+            "the scan parses with no preprocessor symbols, so code under #if is not read as it is compiled");
 
         var scan = CommitScan.Run(source.Compilations);
 
@@ -419,6 +433,63 @@ public sealed class RequestTokenAfterCommitTests
         scan.UnjustifiedSuppressions.Count.ShouldBe(1);
     }
 
+    [Fact]
+    public void TheScanReportsASuppressionWhoseJustificationIsOnlyWhitespace()
+    {
+        var scan = CommitScan.Run([CommitScan.Source.FromSnippet(
+            "[SuppressMessage(\"Dexicon.Cancellation\", \"TokenAfterCommit\", Justification = \"  \")]\n"
+            + Run("await db.SaveChangesAsync(ct); await Task.Delay(1, ct);"))]);
+
+        scan.UnjustifiedSuppressions.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public void AMessageIdCoversEveryUseOfTheTokenInACallOfThatNameAndNoOtherCall()
+    {
+        // A suppression cannot point at one call, so MessageId names the method called. Both uses of the
+        // token in Delay calls are exempt, and the use in Run is reported: this is what the documentation
+        // says, pinned so that it cannot drift back to "the one call".
+        var scan = CommitScan.Run([CommitScan.Source.FromSnippet(
+            "[SuppressMessage(\"Dexicon.Cancellation\", \"TokenAfterCommit\", MessageId = \"Delay\", Justification = \"x\")]\n"
+            + Run("await db.SaveChangesAsync(); await Task.Delay(1, ct); await db.SaveChangesAsync(); await Task.Delay(2, ct); "
+                + "await Task.Run(() => 1, ct);"))]);
+
+        scan.Unsuppressed.Select(f => f.Target).ShouldBe(["Run"]);
+        scan.UnusedSuppressions.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void TheScanNamesAProjectUnderSrcThatItDoesNotRead()
+    {
+        var src = Directory.CreateTempSubdirectory("scan-src").FullName;
+        try
+        {
+            foreach (var project in new[] { "Dexicon", "Dexicon.Core", "Dexicon.Extra" })
+            {
+                Directory.CreateDirectory(Path.Combine(src, project));
+                File.WriteAllText(Path.Combine(src, project, project + ".csproj"), "<Project />");
+            }
+
+            CommitScan.Source.UnreadProjectsIn(src).ShouldBe(["Dexicon.Extra/Dexicon.Extra.csproj"]);
+
+            File.Delete(Path.Combine(src, "Dexicon.Core", "Dexicon.Core.csproj"));
+            Should.Throw<InvalidOperationException>(() => CommitScan.Source.UnreadProjectsIn(src))
+                .Message.ShouldContain("Dexicon.Core.csproj");
+        }
+        finally
+        {
+            Directory.Delete(src, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void TheScanNamesAFileThatHoldsAConditionalDirective()
+    {
+        CommitScan.Source.ConditionalFilesIn(CommitScan.Source.FromSnippet("#if DEBUG\npublic int Debug;\n#endif\npublic int Always;"))
+            .ShouldBe(["Snippet.cs"]);
+        CommitScan.Source.ConditionalFilesIn(CommitScan.Source.FromSnippet("public int Always;")).ShouldBeEmpty();
+    }
+
     /// <summary>
     /// The functions that pass <see cref="CancellationToken.None"/> after a write, as review found them and
     /// as this change fixed them. Each such argument is given the function's own token back here, and the
@@ -486,6 +557,12 @@ internal sealed class CommitScan
         /// generator writes and this compilation does not run.
         /// </summary>
         public required List<string> UnexpectedErrors { get; init; }
+
+        /// <summary>Projects under <c>src/</c> other than the two this compiles.</summary>
+        public required List<string> UnreadProjects { get; init; }
+
+        /// <summary>Files with an <c>#if</c>, which the scan reads with no symbols defined.</summary>
+        public required List<string> ConditionalFiles { get; init; }
 
         // The SDKs' implicit usings, which the projects enable and a bare compilation does not have.
         private static readonly string[] CoreUsings =
@@ -577,8 +654,33 @@ internal sealed class CommitScan
             {
                 Compilations = [core, web],
                 UnexpectedErrors = UnexpectedErrorsIn(core, web),
+                UnreadProjects = UnreadProjectsIn(src),
+                ConditionalFiles = ConditionalFilesIn(core, web),
             };
         }
+
+        private static readonly string[] ReadProjects = ["Dexicon/Dexicon.csproj", "Dexicon.Core/Dexicon.Core.csproj"];
+
+        /// <summary>
+        /// The project files under <paramref name="src"/> other than the two that are read. It throws when
+        /// either of those is missing, because a search that finds nothing reports no unread project too.
+        /// </summary>
+        public static List<string> UnreadProjectsIn(string src)
+        {
+            var found = Directory.EnumerateFiles(src, "*.csproj", SearchOption.AllDirectories)
+                .Select(f => Path.GetRelativePath(src, f).Replace('\\', '/'))
+                .ToList();
+            foreach (var project in ReadProjects)
+                if (!found.Contains(project))
+                    throw new InvalidOperationException($"{project} not found under {src}");
+            return [.. found.Where(f => !ReadProjects.Contains(f))];
+        }
+
+        /// <summary>The files in the compilations that hold an <c>#if</c> directive.</summary>
+        public static List<string> ConditionalFilesIn(params Compilation[] compilations) =>
+            [.. compilations.SelectMany(c => c.SyntaxTrees)
+                .Where(t => t.GetRoot().DescendantNodes(descendIntoTrivia: true).OfType<IfDirectiveTriviaSyntax>().Any())
+                .Select(t => t.FilePath)];
 
         private static List<SyntaxTree> Parse(string project, string[] usings, CSharpParseOptions options)
         {
@@ -1190,7 +1292,9 @@ internal sealed class CommitScan
         var justification = arguments.Find(a => a.NameEquals?.Name.Identifier.Text == "Justification");
         return new Suppression(
             SiteOf(attribute.GetLocation()),
-            justification is not null && model.GetConstantValue(justification.Expression).Value is string { Length: > 0 });
+            justification is not null
+            && model.GetConstantValue(justification.Expression).Value is string reason
+            && !string.IsNullOrWhiteSpace(reason));
     }
 
     /// <summary>The suppression on the function, or on anything that contains it, that covers this finding.</summary>
