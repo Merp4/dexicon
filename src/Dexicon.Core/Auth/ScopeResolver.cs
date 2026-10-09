@@ -57,6 +57,33 @@ public sealed class ScopeResolver(CatalogDbContext db)
     /// </summary>
     private const int ShownMax = 200;
 
+    /// <summary>The most characters of a list of names that an error writes.</summary>
+    internal const int ListedMax = 1_500;
+
+    /// <summary>
+    /// The names, comma separated, up to <see cref="ListedMax"/> characters and ending at a whole name,
+    /// then "(and N more)" for those left out. The names are the server's, so a long list is shortened
+    /// here and not by cutting the message, which would lose the end of it.
+    /// </summary>
+    internal static string Listed(IReadOnlyList<string> names)
+    {
+        var written = new System.Text.StringBuilder();
+        var shown = 0;
+
+        foreach (var name in names)
+        {
+            var next = (shown == 0 ? 0 : 2) + name.Length;
+            if (shown > 0 && written.Length + next > ListedMax) break;
+
+            if (shown > 0) written.Append(", ");
+            written.Append(name);
+            shown++;
+        }
+
+        if (shown < names.Count) written.Append(" (and ").Append(names.Count - shown).Append(" more)");
+        return written.ToString();
+    }
+
     /// <summary>What a caller sent, as an error repeats it: cut, so a very long one is not echoed whole.</summary>
     private static string Shown(string? text)
     {
@@ -123,7 +150,7 @@ public sealed class ScopeResolver(CatalogDbContext db)
                 $"No source at '{Shown(rootPath)}' in the corpora searched. " +
                 (roots.Count == 0
                     ? "They have no workspace sources at all; only uploaded documents, which have no path."
-                    : $"Sources: {string.Join(", ", roots)}. A parent matches everything beneath it."),
+                    : $"Sources: {Listed(roots)}. A parent matches everything beneath it."),
                 roots);
         }
 
@@ -170,7 +197,7 @@ public sealed class ScopeResolver(CatalogDbContext db)
                         $"Corpus '{match.Name}' has no chunk set named '{Shown(setPart)}'. " +
                         (sets.Count == 0
                             ? "It has no chunk sets at all, which means nothing is indexed."
-                            : $"Its sets: {string.Join(", ", sets)}."),
+                            : $"Its sets: {Listed(sets)}."),
                         visible.Select(c => c.Name).ToList());
                 }
 
@@ -184,7 +211,7 @@ public sealed class ScopeResolver(CatalogDbContext db)
                     $"Unknown corpus {string.Join(", ", unknown.Select(u => $"'{Shown(u)}'"))}. " +
                     (names.Count == 0
                         ? $"Key '{principal.Name}' can reach no corpora at all."
-                        : $"Corpora this key can reach: {string.Join(", ", names)}."),
+                        : $"Corpora this key can reach: {Listed(names)}."),
                     names);
             }
 
@@ -290,7 +317,7 @@ public sealed class ScopeResolver(CatalogDbContext db)
             $"No corpus named '{Shown(nameOrId)}' is reachable by key '{principal.Name}'. " +
             (names.Count == 0
                 ? "It is mapped to no corpora that exist."
-                : $"Corpora this key can reach: {string.Join(", ", names)}."),
+                : $"Corpora this key can reach: {Listed(names)}."),
             names);
     }
 }
