@@ -11,7 +11,12 @@ namespace Dexicon.Api;
 
 /// <summary>A change to a corpus or a source, refused, in the words every caller is shown.</summary>
 /// <param name="Status">The HTTP status the API answers with.</param>
-public sealed record ConfigRefusal(string Title, string Detail, int Status)
+/// <param name="KeptSetId">
+/// A chunk set a removal refused to delete after its vectors were deleted. The caller queues a refresh of it
+/// (<see cref="CorpusConfiguration.FollowUpAsync"/>) once the refusal is decided, and not before: queuing saves
+/// the context, which a proposal being approved shares with the removal.
+/// </param>
+public sealed record ConfigRefusal(string Title, string Detail, int Status, string? KeptSetId = null)
 {
     public IResult ToResult() => Results.Problem(title: Title, detail: Detail, statusCode: Status);
 }
@@ -601,18 +606,26 @@ public sealed class CorpusConfiguration(
                 return new ConfigRefusal("Unknown chunk set",
                     $"Corpus '{corpus.Name}' has no chunk set '{set.Name}': it was removed while this request waited.", 404);
 
+            // The set stays and its vectors are gone. A refresh of the set indexes it again, which the caller
+            // queues once it has decided the refusal.
             if (SetRemovalRefusal(corpus, set, now.Count, current.IsDefault) is { } changed)
-            {
-                // The set stays and its vectors are gone. A refresh of the set indexes it again.
-                await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, set.Id, CancellationToken.None);
-                return changed;
-            }
+                return changed with { KeptSetId = set.Id };
 
             db.ChunkSets.Remove(set);
             await db.SaveChangesAsync(ct);
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// What a caller does after it has decided a refusal: queues the refresh of a set that was kept without its
+    /// vectors. Not part of the removal, because queuing saves the context the removal ran on.
+    /// </summary>
+    public async Task FollowUpAsync(Corpus corpus, ConfigRefusal refusal)
+    {
+        if (refusal.KeptSetId is { } setId)
+            await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, setId, CancellationToken.None);
     }
 
     /// <summary>The refusal for removing the only set or the default set, or null when the set may go.</summary>
@@ -631,6 +644,7 @@ public sealed class CorpusConfiguration(
 
         return null;
     }
+
     /// <summary>
     /// Removes a corpus: its vectors in every collection it has sets in, then its rows, which
     /// take its sources, files, chunk states and jobs with them.
