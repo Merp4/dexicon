@@ -546,7 +546,7 @@ public sealed class UnusableGlobTests
     }
 
     [Fact]
-    public async Task AFileSourceKeepsAParentSegmentItsWalkMatchesNothingWith()
+    public async Task AFileSourceKeepsAPathThatClimbsOutBecauseItsWalkMatchesNothingWithIt()
     {
         await using var s = await Seeded.StartAsync();
 
