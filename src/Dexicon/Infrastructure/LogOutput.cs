@@ -1,6 +1,7 @@
 using Serilog;
 using Serilog.Configuration;
 using Serilog.Core;
+using Serilog.Events;
 
 namespace Dexicon.Infrastructure;
 
@@ -31,6 +32,20 @@ public static class LogOutput
     /// </summary>
     public const string ConsoleTemplate =
         "[{UtcTime:HH:mm:ss}Z {Level:u3}] {Message:j}{NewLine}{Exception}";
+
+    /// <summary>
+    /// The application's logger configuration: the minimum level, quieter framework categories, the UTC
+    /// timestamp, and <see cref="OneLineConsole"/> as the only sink. <c>Program.cs</c> builds its logger
+    /// from this, and a test builds the same one, so a change to the sink is seen by the test.
+    /// </summary>
+    public static LoggerConfiguration Configuration(LogEventLevel level) =>
+        new LoggerConfiguration()
+            .MinimumLevel.Is(level)
+            .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+            .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
+            .Enrich.FromLogContext()
+            .Enrich.With<UtcTimestampEnricher>()
+            .WriteTo.OneLineConsole();
 
     /// <summary>
     /// The console sink with <see cref="ConsoleTemplate"/>, behind <see cref="OneLineLogSink"/>.

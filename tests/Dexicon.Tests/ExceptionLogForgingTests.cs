@@ -394,17 +394,14 @@ public sealed class ExceptionLogForgingTests
     [Fact]
     public void TheConsoleSinkTheApplicationUsesPrintsAForgedMessageOnOneLine()
     {
-        // The real console sink behind the real wrapper, as Program.cs builds it, with Console.Out replaced.
+        // The real console sink behind the real wrapper, from the configuration Program.cs builds its logger
+        // from, with Console.Out replaced.
         var captured = new StringWriter();
         var original = Console.Out;
         Console.SetOut(captured);
         try
         {
-            using var logger = new LoggerConfiguration()
-                .MinimumLevel.Debug()
-                .Enrich.With<UtcTimestampEnricher>()
-                .WriteTo.OneLineConsole()
-                .CreateLogger();
+            using var logger = LogOutput.Configuration(LogEventLevel.Debug).CreateLogger();
             logger.Debug(Thrown(() => new InvalidOperationException($"bad\n{ForgedLine}")), "Refused: {Title}", "t");
         }
         finally
@@ -416,5 +413,27 @@ public sealed class ExceptionLogForgingTests
         lines.Length.ShouldBeGreaterThan(1);
         lines.ShouldNotContain(l => l.StartsWith(ForgedLine, StringComparison.Ordinal));
         lines.ShouldContain(l => l.Contains("forged", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ProgramBuildsItsLoggerFromTheConfigurationTheTestsUse()
+    {
+        var program = File.ReadAllText(SourceFile("src", "Dexicon", "Program.cs"));
+
+        program.ShouldContain("Log.Logger = LogOutput.Configuration(");
+        program.ShouldNotContain("WriteTo.Console(");
+        program.ShouldNotContain("new LoggerConfiguration()");
+    }
+
+    private static string SourceFile(params string[] parts)
+    {
+        // Walked up from the test binary, and asserted found, so a layout change fails here and not as an empty scan.
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var candidate = Path.Combine([dir.FullName, .. parts]);
+            if (File.Exists(candidate)) return candidate;
+        }
+
+        throw new FileNotFoundException($"{Path.Combine(parts)} was not found above {AppContext.BaseDirectory}.");
     }
 }

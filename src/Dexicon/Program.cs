@@ -43,14 +43,7 @@ var logLevel = options.Log.Level switch
     _ => LogEventLevel.Information,
 };
 
-Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Is(logLevel)
-    .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
-    .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
-    .Enrich.FromLogContext()
-    .Enrich.With<UtcTimestampEnricher>()
-    .WriteTo.OneLineConsole()
-    .CreateLogger();
+Log.Logger = LogOutput.Configuration(logLevel).CreateLogger();
 
 builder.Host.UseSerilog();
 

@@ -181,7 +181,7 @@ public sealed class ProposalService(
                     && !string.Equals(named, corpus.Name, StringComparison.OrdinalIgnoreCase)
                     && !string.Equals(named, corpus.Id, StringComparison.Ordinal))
                     return new ConfigRefusal("Not that corpus",
-                        $"To remove a corpus, name it in corpus and leave target out. target was '{Line(named)}' "
+                        $"To remove a corpus, name it in corpus and leave target out. target was '{DexiconTools.Echo(named)}' "
                         + $"and corpus is '{Line(corpus.Name)}'.", 400);
                 return (corpus.Id, corpus.Name);
 
@@ -192,7 +192,7 @@ public sealed class ProposalService(
                         string.Equals(s.Name, named, StringComparison.OrdinalIgnoreCase) || s.Id == named);
                     if (set is null)
                         return new ConfigRefusal("No such chunk set",
-                            $"Corpus '{Line(corpus.Name)}' has no chunk set '{Line(named)}'. Its sets: "
+                            $"Corpus '{Line(corpus.Name)}' has no chunk set '{DexiconTools.Echo(named)}'. Its sets: "
                             + $"{string.Join(", ", sets.Select(s => Line(s.Name)).Order(StringComparer.Ordinal))}.", 404);
 
                     // Refused now rather than left to fail when approved: an agent can act on it.
@@ -219,7 +219,7 @@ public sealed class ProposalService(
                     var held = await uploads.CountAsync(ct);
                     var first = await uploads.Select(f => f.RelativePath).OrderBy(p => p).Take(20).ToListAsync(ct);
                     return new ConfigRefusal("No such document",
-                        $"Corpus '{Line(corpus.Name)}' has no uploaded document '{Line(named)}'. Documents attached to it: "
+                        $"Corpus '{Line(corpus.Name)}' has no uploaded document '{DexiconTools.Echo(named)}'. Documents attached to it: "
                         + (held == 0
                             ? "none."
                             : string.Join(", ", first.Select(Line)) + (held > 20 ? $" and {held - 20} more." : ".")), 404);
@@ -251,7 +251,7 @@ public sealed class ProposalService(
                     catch (ArgumentException)
                     {
                         return new ConfigRefusal("Not a folder",
-                            $"'{Line(named)}' is not a folder path. The sources of '{Line(corpus.Name)}': {Listing()}.", 400);
+                            $"'{DexiconTools.Echo(named)}' is not a folder path. The sources of '{Line(corpus.Name)}': {Listing()}.", 400);
                     }
 
                     var matches = sources
@@ -264,7 +264,7 @@ public sealed class ProposalService(
                             $"Both its files and its commit history are sources of '{Line(corpus.Name)}'. Pass "
                             + $"files:{Line(canonical)} or history:{Line(canonical)}.", 409);
                     return new ConfigRefusal("No such source",
-                        $"Corpus '{Line(corpus.Name)}' has no source on '{Line(named)}'. Its sources: {Listing()}.", 404);
+                        $"Corpus '{Line(corpus.Name)}' has no source on '{DexiconTools.Echo(named)}'. Its sources: {Listing()}.", 404);
                 }
         }
     }
