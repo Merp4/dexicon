@@ -329,6 +329,16 @@ describe('uploading many files', () => {
     expect(uploadFetch).toHaveBeenCalledTimes(3);
   });
 
+  it('rejects with the first error when a request answered but nothing was stored anywhere', async () => {
+    uploadFetch
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        corpus: 'library', stored: [], failed: [{ file: 'f01.txt', error: 'f01.txt is empty.' }], job: {},
+      }), { status: 200 }))
+      .mockResolvedValueOnce(problem(503, 'Service Unavailable', 'The catalogue is busy.'));
+
+    await expect(api.uploadDocuments('library', files(15))).rejects.toMatchObject({ status: 503 });
+  });
+
   it('records a refused request, then stops at a server error and lists what it did not send', async () => {
     uploadFetch
       .mockImplementationOnce(accepted(1))
