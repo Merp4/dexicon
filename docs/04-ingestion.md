@@ -308,16 +308,22 @@ points at a fault in the extractor (a null reference, an invalid operation, an a
 upload with the same fault records the verdict. A set that chunked the older text is stamped with a
 fingerprint that names that text's extractor version, so it chunks the new text on the next pass.
 
-Nesting is bounded before a library sees a file, because the libraries recurse and a stack overflow
-ends the process. HTML is read only when its elements nest no deeper than 512, which is what browsers
-build. The nesting is counted from the markup before a tree exists: end tags that may be left out,
-and tags in comments, scripts, and quoted attribute values, are not counted. A deeper document, in
-an HTML file or in an EPUB chapter, is an unreadable document ("nests elements more than 512
-deep"). The XML parts of a DOCX, PPTX or EPUB (every part named `.xml`, `.rels`, `.opf`, `.ncx` or
-`.xhtml`) are read once with a streaming XML reader before the document is opened, and a package
-with a part nested more than 512 deep is an unreadable document ("nests XML elements more than 512
-deep"). A part that is not well formed is left to the reader that loads it. PDF is not bounded
-([10](10-security-secrets.md#input-handling) has the numbers).
+Nesting and size are bounded before a library loads a file, because the libraries recurse (a stack
+overflow ends the process) or take time that grows with the square of the depth. Each format has its
+own bound.
+
+- **DOCX, PPTX and EPUB.** Every entry of the package is tried as XML by a streaming reader, whatever
+  it is called, because a relationship or manifest can name a part anything. An entry that is not XML
+  fails at the first read. A package with a part nested more than 512 deep is an unreadable document
+  ("nests XML elements more than 512 deep"). The XML of one package may inflate to at most 256 MiB,
+  summed over the entries, and the reading is held to the extraction clock; past either it is an
+  unreadable document or a timeout. A part that is not well formed, and bytes that are not a zip, are
+  left to the reader that follows.
+- **HTML**, a file or an EPUB chapter, is bounded by time only. The parser runs under a cancellation
+  token that the extraction clock cancels, and the parse stops within about 50 ms of it: 100,000
+  nested divs with stray end tags took 319 s to parse unbounded, and stop at the budget. A deep
+  document that parses within the budget is extracted. The text walk keeps an explicit stack.
+- **PDF** is not bounded ([10](10-security-secrets.md#input-handling) has the numbers).
 A body that ends before its closing boundary, or whose headers are over the reader's limits, is
 handled as an overrun of the byte bound is: files completed before it stay stored and are indexed,
 the response lists the cause under `failed` with a `null` `file`, and when nothing was stored the answer is `400`

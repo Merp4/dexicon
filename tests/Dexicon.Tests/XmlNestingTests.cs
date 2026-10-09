@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text;
 using Dexicon.Core.Extraction;
 
 namespace Dexicon.Tests;
@@ -154,5 +156,135 @@ public sealed class XmlNestingTests
 
         Should.Throw<UnreadableDocumentException>(() => Extract(new EpubTextExtractor(), epub, "book.epub"))
             .Message.ShouldContain("too deep");
+    }
+
+    // The libraries load a part by the relationship or manifest that names it, so it can be called anything.
+    // Entries are tried as XML by what is in them.
+
+    [Theory]
+    [InlineData("word/document.dat")]
+    [InlineData("word/document.txt")]
+    [InlineData("word/DOCUMENT.XmL")]
+    [InlineData("word/document")]
+    public void ADocxPartCalledAnythingIsCheckedAtTheLimitAndPastIt(string partName)
+    {
+        Extract(new DocxTextExtractor(), TestEpubs.DocxNestedBy(DocxPairsAtTheLimit, partName), "a.docx").Text.ShouldBe("hello\n");
+
+        Should.Throw<UnreadableDocumentException>(
+                () => Extract(new DocxTextExtractor(), TestEpubs.DocxNestedBy(20_000, partName), "a.docx"))
+            .Message.ShouldContain($"a.docx ({partName}) nests XML elements more than");
+    }
+
+    [Theory]
+    [InlineData("ppt/slides/slide1.dat")]
+    [InlineData("ppt/slides/SLIDE1.Txt")]
+    public void APptxSlideCalledAnythingIsCheckedAtTheLimitAndPastIt(string slidePart)
+    {
+        Extract(new PptxTextExtractor(), TestEpubs.PptxNestedBy(PptxGroupsAtTheLimit, slidePart), "a.pptx").Text.ShouldContain("hello");
+
+        Should.Throw<UnreadableDocumentException>(
+                () => Extract(new PptxTextExtractor(), TestEpubs.PptxNestedBy(20_000, slidePart), "a.pptx"))
+            .Message.ShouldContain($"a.pptx ({slidePart}) nests XML elements more than");
+    }
+
+    [Fact]
+    public void AnEpubNavigationFileCalledDotTxtIsCheckedAtTheLimitAndPastIt()
+    {
+        Extract(new EpubTextExtractor(), TestEpubs.WithAChapter("<p>kept</p>", NavigationPointsAtTheLimit, "toc.txt"), "book.epub")
+            .Text.ShouldContain("kept");
+
+        Should.Throw<UnreadableDocumentException>(
+                () => Extract(new EpubTextExtractor(), TestEpubs.WithAChapter("<p>kept</p>", 20_000, "toc.txt"), "book.epub"))
+            .Message.ShouldContain("book.epub (toc.txt) nests XML elements more than");
+    }
+
+    public static TheoryData<string> Encodings() => new() { "utf-8-bom", "utf-16le-bom", "utf-16be-bom", "utf-16le" };
+
+    private static Encoding EncodingOf(string name) => name switch
+    {
+        "utf-8-bom" => new UTF8Encoding(true),
+        "utf-16le-bom" => new UnicodeEncoding(false, true),
+        "utf-16be-bom" => new UnicodeEncoding(true, true),
+        _ => new UnicodeEncoding(false, false),
+    };
+
+    [Theory]
+    [MemberData(nameof(Encodings))]
+    public void APartWithAByteOrderMarkOrWrittenInUtf16IsReadByWhatIsInIt(string encoding)
+    {
+        // The reader finds the encoding from the first bytes, as the SDK's does. Seen as Latin-1 or by an
+        // extension, these were never looked at.
+        Extract(new DocxTextExtractor(), TestEpubs.DocxNestedBy(DocxPairsAtTheLimit, "word/document.dat", EncodingOf(encoding)), "a.docx")
+            .Text.ShouldBe("hello\n");
+
+        Should.Throw<UnreadableDocumentException>(
+                () => Extract(new DocxTextExtractor(), TestEpubs.DocxNestedBy(20_000, "word/document.dat", EncodingOf(encoding)), "a.docx"))
+            .Message.ShouldContain("nests XML elements more than");
+    }
+
+    // The budgets. The reading of an entry nothing refers to is held to the time and the bytes of the whole package.
+
+    private static readonly TimeSpan Margin = TimeSpan.FromSeconds(30);
+
+    private const long TwoHundredMegabytes = 200L * 1024 * 1024;
+
+    [Theory]
+    [InlineData("docx")]
+    [InlineData("pptx")]
+    [InlineData("epub")]
+    public void AnEntryThatInflatesToHundredsOfMegabytesIsStoppedByTheExtractionClock(string format)
+    {
+        var (extractor, package, name) = format switch
+        {
+            "docx" => ((ITextExtractor)new DocxTextExtractor(), TestEpubs.DocxNestedBy(3), "a.docx"),
+            "pptx" => (new PptxTextExtractor(), TestEpubs.PptxNestedBy(3), "a.pptx"),
+            _ => (new EpubTextExtractor(), TestEpubs.WithAChapter("<p>kept</p>"), "book.epub"),
+        };
+        var bomb = TestEpubs.WithAnInflatingEntry(package, TwoHundredMegabytes);
+        var clock = Stopwatch.StartNew();
+
+        // 200 ms is not enough to read 200 MB of XML at any speed this reader has.
+        Should.Throw<ExtractionTimeoutException>(
+            () => extractor.Extract(new DeadlineStream(new MemoryStream(bomb), TimeSpan.FromMilliseconds(200), name), name));
+
+        clock.Elapsed.ShouldBeLessThan(Margin);
+    }
+
+    [Fact]
+    public void TheXmlOfAPackageIsHeldToATotalOfInflatedBytes()
+    {
+        var bomb = TestEpubs.WithAnInflatingEntry(TestEpubs.DocxNestedBy(3), 3L * 1024 * 1024);
+
+        var thrown = Should.Throw<UnreadableDocumentException>(
+            () => XmlNesting.RequireShallowParts(new MemoryStream(bomb), "a.docx", budgetBytes: 1024 * 1024));
+
+        thrown.Message.ShouldBe("a.docx holds XML that inflates to more than 1 MiB, which is too much to read.");
+    }
+
+    [Fact]
+    public void TheBudgetIsSharedByTheEntriesOfAPackageAndNotKeptPerEntry()
+    {
+        // Each of these inflates to under half the budget, so a budget kept per entry would let all three
+        // through.
+        var package = TestEpubs.WithAnInflatingEntry(
+            TestEpubs.WithAnInflatingEntry(TestEpubs.WithAnInflatingEntry(TestEpubs.DocxNestedBy(3), 400_000), 400_000), 400_000);
+
+        Should.Throw<UnreadableDocumentException>(
+            () => XmlNesting.RequireShallowParts(new MemoryStream(package), "a.docx", budgetBytes: 1_000_000));
+    }
+
+    [Fact]
+    public void AnEpubWhoseXmlInflatesPastTheFullBudgetIsRefusedWithoutBeingLoaded()
+    {
+        // The budget as extractors apply it: 256 MiB. The bytes of an EPUB are in memory by then, so the
+        // extraction clock does not see this reading, and the budget has to.
+        var bomb = TestEpubs.WithAnInflatingEntry(
+            TestEpubs.WithAChapter("<p>kept</p>"), XmlNesting.TotalBudgetBytes + 1024 * 1024);
+        var clock = Stopwatch.StartNew();
+
+        Should.Throw<UnreadableDocumentException>(() => new EpubTextExtractor().Extract(new MemoryStream(bomb), "book.epub"))
+            .Message.ShouldContain("inflates to more than 256 MiB");
+
+        clock.Elapsed.ShouldBeLessThan(Margin);
     }
 }

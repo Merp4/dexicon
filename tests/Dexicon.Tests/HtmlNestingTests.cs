@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using AngleSharp.Html.Parser;
 using Dexicon.Core.Extraction;
@@ -5,47 +6,34 @@ using Dexicon.Core.Extraction;
 namespace Dexicon.Tests;
 
 /// <summary>
-/// How deep an HTML document may nest. A document nested a few thousand deep overflowed the stack in
-/// the text walk, which ends the process and cannot be caught, and the parser's time grows with the
-/// square of the depth. Nesting is counted from the markup before a tree is built.
+/// Deeply nested HTML. The text walk used to recurse and overflowed the stack, and the parser's time
+/// grows with the square of the depth (100,000 nested divs took 319 s). The walk keeps its own stack, and
+/// the parse runs under the extraction clock, which cancels it. No count of tags taken beforehand is
+/// exact, so none is used: a deep document that parses within the budget is extracted.
 /// </summary>
 public sealed class HtmlNestingTests
 {
-    private static ExtractedText Extract(string html) =>
-        new HtmlTextExtractor().Extract(new MemoryStream(Encoding.UTF8.GetBytes(html)), "page.html");
+    private static readonly TimeSpan Budget = TimeSpan.FromSeconds(1);
 
-    private static string Divs(int depth) =>
-        $"<html><body>{string.Concat(Enumerable.Repeat("<div>", depth))}text{string.Concat(Enumerable.Repeat("</div>", depth))}</body></html>";
+    /// <summary>Longer than the budget by far, and still short of a test that stalls the run.</summary>
+    private static readonly TimeSpan Margin = TimeSpan.FromSeconds(20);
 
-    [Fact]
-    public void MarkupNestedAtTheLimitIsExtracted()
+    private static ExtractedText Extract(string html, Encoding? encoding = null, TimeSpan? budget = null)
     {
-        Extract(Divs(HtmlText.MaxNesting)).Text.ShouldBe("text");
+        encoding ??= new UTF8Encoding(false);
+        Stream content = new MemoryStream([.. encoding.GetPreamble(), .. encoding.GetBytes(html)]);
+        if (budget is { } clock) content = new DeadlineStream(content, clock, "page.html");
+
+        return new HtmlTextExtractor().Extract(content, "page.html");
     }
 
-    [Fact]
-    public void MarkupNestedOneDeeperThanTheLimitIsAnUnreadableDocument()
-    {
-        var thrown = Should.Throw<UnreadableDocumentException>(() => Extract(Divs(HtmlText.MaxNesting + 1)));
-
-        thrown.Message.ShouldBe($"page.html nests elements more than {HtmlText.MaxNesting} deep, which is too deep to read.");
-        thrown.Unexpected.ShouldBeFalse();
-    }
-
-    [Fact]
-    public void MarkupNestedAHundredThousandDeepIsRefusedBeforeAnyTreeIsBuilt()
-    {
-        // Parsing this took 150 s on the machine that measured it, and walking the tree overflowed the stack.
-        Should.Throw<UnreadableDocumentException>(() => Extract(Divs(100_000)))
-            .Message.ShouldContain("too deep");
-    }
+    private static string Repeat(string markup, int times) => string.Concat(Enumerable.Repeat(markup, times));
 
     [Fact]
     public void TheWalkOfADeepTreeDoesNotUseTheCallStack()
     {
-        // Past the limit the extractor refuses, so the walk is called on a tree built here. It recursed once
-        // per level and overflowed at about 3,100 levels.
-        using var document = new HtmlParser().ParseDocument(Divs(6_000));
+        // The walk recursed once per level and overflowed at about 3,100 levels.
+        using var document = new HtmlParser().ParseDocument($"<html><body>{Repeat("<div>", 6_000)}text</body></html>");
         var text = new StringBuilder();
 
         HtmlText.AppendBlocks(document.Body, text);
@@ -54,81 +42,108 @@ public sealed class HtmlNestingTests
     }
 
     [Fact]
-    public void UnclosedParagraphsAndTableCellsAreNotDeepNesting()
+    public void DeepMarkupThatParsesInTimeIsExtracted()
     {
-        // End tags may be left out of these, so the parser closes them and a long page of them is flat.
-        var html = "<html><body>" + string.Concat(Enumerable.Repeat("<p>line ", 3_000))
-                   + "<table><tr>" + string.Concat(Enumerable.Repeat("<td>cell", 3_000)) + "</table></body></html>";
+        Extract($"<html><body>{Repeat("<div>", 3_000)}text</body></html>", budget: TimeSpan.FromSeconds(60)).Text.ShouldBe("text");
+    }
 
-        Extract(html).Text.ShouldContain("line");
+    [Theory]
+    [InlineData("<a href=x>l", 600)]
+    [InlineData("<h1>l", 600)]
+    [InlineData("<p><b>l", 2_000)]
+    [InlineData("<form><div>l", 700)]
+    [InlineData("<div></span>l", 2_000)]
+    public void MarkupAHandWrittenCountOfTagsGotWrongIsExtracted(string unit, int times)
+    {
+        // Each of these made a scan of the tags either miss the depth or invent it. The parser decides.
+        Extract($"<html><body>{Repeat(unit, times)}</body></html>", budget: TimeSpan.FromSeconds(60)).Text.ShouldContain("l");
     }
 
     [Fact]
-    public void TagsInAScriptOrACommentAreNotCounted()
+    public void ADeepStrayEndTagDocumentStopsAtTheBudget()
     {
-        var html = "<html><body><script>" + string.Concat(Enumerable.Repeat("<div>", 2_000)) + "</script>"
-                   + "<!-- " + string.Concat(Enumerable.Repeat("<div>", 2_000)) + " --><p>kept</p></body></html>";
+        var html = $"<html><body>{Repeat("<div></span>", 100_000)}</body></html>";
+        var clock = Stopwatch.StartNew();
 
-        Extract(html).Text.ShouldBe("kept");
+        Should.Throw<ExtractionTimeoutException>(() => Extract(html, budget: Budget));
+
+        clock.Elapsed.ShouldBeLessThan(Margin, "the parse took longer than the budget allows, so the clock did not cancel it");
     }
 
     [Fact]
-    public void QuotedAttributeValuesThatHoldTagsAreNotCounted()
+    public void AMillionNestedDivsStopAtTheBudgetWithoutCrashing()
     {
-        var html = $"<html><body><a title=\"{string.Concat(Enumerable.Repeat("<div>", 2_000))}\">link</a></body></html>";
+        var html = $"<html><body>{Repeat("<div>", 1_000_000)}</body></html>";
+        var clock = Stopwatch.StartNew();
 
-        Extract(html).Text.ShouldBe("link");
+        Should.Throw<ExtractionTimeoutException>(() => Extract(html, budget: Budget));
+
+        clock.Elapsed.ShouldBeLessThan(Margin);
     }
 
     [Fact]
-    public void SelfClosingElementsInsideSvgAreNotNesting()
+    public void ADeepDocumentWrittenAsUtf16StopsAtTheBudgetToo()
     {
-        var html = "<html><body><svg>" + string.Concat(Enumerable.Repeat("<path d=\"M0 0\"/>", 2_000)) + "</svg><p>kept</p></body></html>";
+        // A scan of the bytes as Latin-1 never saw tags written in UTF-16. The parse reads what the text reader decoded.
+        var html = $"<html><body>{Repeat("<div></span>", 100_000)}</body></html>";
+        var clock = Stopwatch.StartNew();
 
-        Extract(html).Text.ShouldBe("kept");
+        Should.Throw<ExtractionTimeoutException>(() => Extract(html, new UnicodeEncoding(false, true), Budget));
+
+        clock.Elapsed.ShouldBeLessThan(Margin);
     }
 
     [Fact]
-    public void ASlashOnADivDoesNotCloseItSoSelfClosingDivsNest()
+    public void ATimeoutFromTheParseCarriesTheCancellationThatEndedIt()
     {
-        // The parser ignores the slash on an HTML element, so <div/> opens a div.
-        var html = "<html><body>" + string.Concat(Enumerable.Repeat("<div/>", HtmlText.MaxNesting + 1)) + "</body></html>";
+        var html = $"<html><body>{Repeat("<div>", 1_000_000)}</body></html>";
 
-        Should.Throw<UnreadableDocumentException>(() => Extract(html));
+        var thrown = Should.Throw<ExtractionTimeoutException>(() => Extract(html, budget: Budget));
+
+        thrown.InnerException.ShouldBeAssignableTo<OperationCanceledException>();
     }
 
     // An undefined entity makes the chapter XML that is not well formed, so the XML check of the package
-    // leaves it to the HTML check, as it does a chapter written as HTML.
+    // leaves it to the parse, as it does a chapter written as HTML.
     private const string NotXml = "<p>&nbsp;</p>";
 
+    private static DeadlineStream Clock(byte[] bytes) => new(new MemoryStream(bytes), Budget, "book.epub");
+
     [Fact]
-    public void AnEpubChapterReadByItsManifestIsRefusedWhenItNestsTooDeep()
+    public void AnEpubChapterReadByItsManifestStopsAtTheBudget()
     {
-        var epub = TestEpubs.WithAChapter(NotXml + string.Concat(Enumerable.Repeat("<div>", HtmlText.MaxNesting + 1)));
+        var epub = TestEpubs.WithAChapter(NotXml + Repeat("<div></span>", 100_000));
+        var clock = Stopwatch.StartNew();
 
-        var thrown = Should.Throw<UnreadableDocumentException>(
-            () => new EpubTextExtractor().Extract(new MemoryStream(epub), "book.epub"));
+        Should.Throw<ExtractionTimeoutException>(() => new EpubTextExtractor().Extract(Clock(epub), "book.epub"));
 
-        thrown.Message.ShouldContain("Chapter 1 nests elements more than");
+        clock.Elapsed.ShouldBeLessThan(Margin);
     }
 
     [Fact]
-    public void AnEpubChapterReadByItsManifestAtTheLimitIsExtracted()
+    public void AnEpubEntryReadFromTheArchiveStopsAtTheBudget()
     {
-        var epub = TestEpubs.WithAChapter(
-            NotXml + string.Concat(Enumerable.Repeat("<div>", HtmlText.MaxNesting - 1)) + "<p>kept</p>");
+        var epub = TestEpubs.WithAnEntry(NotXml + Repeat("<div></span>", 100_000));
+        var clock = Stopwatch.StartNew();
 
-        new EpubTextExtractor().Extract(new MemoryStream(epub), "book.epub").Text.ShouldContain("kept");
+        Should.Throw<ExtractionTimeoutException>(() => new EpubTextExtractor().Extract(Clock(epub), "book.epub"));
+
+        clock.Elapsed.ShouldBeLessThan(Margin);
     }
 
     [Fact]
-    public void AnEpubEntryReadFromTheArchiveIsRefusedWhenItNestsTooDeep()
+    public void AnEpubChapterThatParsesInTimeIsExtracted()
     {
-        var epub = TestEpubs.WithAnEntry(NotXml + string.Concat(Enumerable.Repeat("<div>", HtmlText.MaxNesting + 1)));
+        var epub = TestEpubs.WithAChapter(NotXml + Repeat("<div>", 600) + "<p>kept</p>");
 
-        var thrown = Should.Throw<UnreadableDocumentException>(
-            () => new EpubTextExtractor().Extract(new MemoryStream(epub), "book.epub"));
+        new EpubTextExtractor().Extract(Clock(epub), "book.epub").Text.ShouldContain("kept");
+    }
 
-        thrown.Message.ShouldContain("OEBPS/ch1.xhtml nests elements more than");
+    [Fact]
+    public void AnEpubEntryThatParsesInTimeIsExtracted()
+    {
+        var epub = TestEpubs.WithAnEntry(NotXml + Repeat("<div>", 600) + "<p>kept</p>");
+
+        new EpubTextExtractor().Extract(Clock(epub), "book.epub").Text.ShouldContain("kept");
     }
 }

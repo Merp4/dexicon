@@ -364,7 +364,9 @@ public sealed class DocumentService(
         // again, and the same bytes uploaded again would reuse it. It reaches the caller, which
         // leaves what it has. An extractor may wrap the exception in its own, or fail with another one
         // after the deadline passed, so the deadline's own flag is read as well as the type.
-        catch (Exception ex) when (ex is not OperationCanceledException
+        // A cancellation the caller asked for is theirs and passes. One raised after the budget ran out, by
+        // the parse that the clock cancelled, is the timeout.
+        catch (Exception ex) when ((ex is not OperationCanceledException || !ct.IsCancellationRequested)
                                    && (ex is ExtractionTimeoutException || deadline is { Expired: true }))
         {
             if (ex is ExtractionTimeoutException) throw;

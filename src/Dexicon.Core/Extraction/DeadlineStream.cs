@@ -35,7 +35,16 @@ public sealed class DeadlineStream(Stream inner, TimeSpan budget, string fileNam
     /// <summary>Set once the deadline is hit, so the caller can tell a timeout from a parse error.</summary>
     public bool Expired { get; private set; }
 
-    private void ThrowIfExpired()
+    /// <summary>Time left in the budget, zero once it has passed.</summary>
+    public TimeSpan Remaining =>
+        Expired ? TimeSpan.Zero : TimeSpan.FromSeconds(Math.Max(0, (double)(_deadline - Stopwatch.GetTimestamp()) / Stopwatch.Frequency));
+
+    /// <summary>
+    /// Throws <see cref="ExtractionTimeoutException"/> once the budget has passed. For code that reads
+    /// the file by some other route than this stream, such as a copy of it in memory, and checks the
+    /// clock itself.
+    /// </summary>
+    public void ThrowIfExpired()
     {
         if (!Expired && Stopwatch.GetTimestamp() < _deadline) return;
 
@@ -48,7 +57,13 @@ public sealed class DeadlineStream(Stream inner, TimeSpan budget, string fileNam
     /// after the extractor returned, because the extractor caught the exception and went on, throws
     /// it so the partial text is not kept.
     /// </summary>
-    public ExtractionTimeoutException TimedOut(Exception? cause = null) =>
+    public ExtractionTimeoutException TimedOut(Exception? cause = null)
+    {
+        Expired = true;
+        return Timeout(cause);
+    }
+
+    private ExtractionTimeoutException Timeout(Exception? cause) =>
         new($"'{fileName}' was still being read after {budget.TotalSeconds:N0}s and was "
             + "abandoned. A document this slow is usually structurally broken: a PDF with "
             + "no cross-reference table is searched byte by byte.", cause);

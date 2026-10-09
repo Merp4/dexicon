@@ -947,4 +947,44 @@ public sealed class DocumentExtractionTimeoutTests
         returned.ShouldNotBeNull().Text.ShouldBe(new string('g', Bytes.Length));
         returned.ExtractorVersion.ShouldBe(0);
     }
+
+    [Fact]
+    public async Task ACancellationRaisedAfterTheBudgetRanOutIsTheTimeout()
+    {
+        // The parse that the clock cancels reports it as a cancellation. Nobody asked for one, and the budget
+        // had passed, so it is a timeout and is worded as one.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await using var db = harness.NewContext();
+        var log = new RecordingLog();
+        var slow = new CancellingAfterTheBudgetExtractor();
+
+        var thrown = await Should.ThrowAsync<ExtractionTimeoutException>(
+            () => ServiceWith(harness, db, slow, log).StoreAsync(new MemoryStream(Bytes), "stuck.slow"));
+
+        thrown.ShouldNotBeNull();
+        var warning = log.Entries.Where(e => e.Level == LogLevel.Warning).ShouldHaveSingleItem();
+        warning.Message.ShouldContain("did not finish within 1 s");
+        (await db.Blobs.CountAsync()).ShouldBe(0);
+    }
+
+    /// <summary>Reads until the extraction clock has run out, then reports a cancellation as a library whose token was cancelled does.</summary>
+    private sealed class CancellingAfterTheBudgetExtractor : ITextExtractor
+    {
+        public bool CanHandle(string extension) => extension == ".slow";
+
+        public ExtractedText Extract(Stream content, string fileName)
+        {
+            try
+            {
+                var one = new byte[1];
+                while (content.Read(one, 0, 1) == 1) Thread.Sleep(20);
+            }
+            catch (ExtractionTimeoutException)
+            {
+                throw new OperationCanceledException("the parse was cancelled");
+            }
+
+            return new ExtractedText("done", []);
+        }
+    }
 }

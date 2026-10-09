@@ -35,7 +35,8 @@ internal static class TestEpubs
     /// so the extractor reads it by its manifest and not by the archive.
     /// </summary>
     /// <param name="navigationDepth">How many navigation points nest inside one another in the NCX.</param>
-    public static byte[] WithAChapter(string chapterBody, int navigationDepth = 1)
+    /// <param name="ncxName">The entry the NCX is stored under; the manifest names it with the NCX media type.</param>
+    public static byte[] WithAChapter(string chapterBody, int navigationDepth = 1, string ncxName = "toc.ncx")
     {
         using var buffer = new MemoryStream();
         using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
@@ -53,9 +54,9 @@ internal static class TestEpubs
             Add("content.opf",
                 "<?xml version=\"1.0\"?><package xmlns=\"http://www.idpf.org/2007/opf\" version=\"2.0\" unique-identifier=\"id\">"
                 + "<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>t</dc:title><dc:identifier id=\"id\">x</dc:identifier>"
-                + "<dc:language>en</dc:language></metadata><manifest><item id=\"ncx\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\"/>"
+                + "<dc:language>en</dc:language></metadata><manifest><item id=\"ncx\" href=\"" + ncxName + "\" media-type=\"application/x-dtbncx+xml\"/>"
                 + "<item id=\"c1\" href=\"c1.xhtml\" media-type=\"application/xhtml+xml\"/></manifest><spine toc=\"ncx\"><itemref idref=\"c1\"/></spine></package>");
-            Add("toc.ncx",
+            Add(ncxName,
                 "<?xml version=\"1.0\"?><ncx xmlns=\"http://www.daisy.org/z3986/2005/ncx/\" version=\"2005-1\"><head/><docTitle><text>t</text></docTitle>"
                 + "<navMap>"
                 + string.Concat(Enumerable.Range(1, navigationDepth).Select(i =>
@@ -87,32 +88,42 @@ internal static class TestEpubs
     /// A DOCX whose body holds one paragraph "hello" inside <paramref name="nesting"/> pairs of
     /// <c>sdt</c> and <c>sdtContent</c> elements, which nest to any depth.
     /// </summary>
-    public static byte[] DocxNestedBy(int nesting) =>
-        DocxWithDocumentXml(
-            $"<?xml version=\"1.0\"?><w:document xmlns:w=\"{WordNamespace}\"><w:body>"
-            + string.Concat(Enumerable.Repeat("<w:sdt><w:sdtContent>", nesting))
-            + "<w:p><w:r><w:t>hello</w:t></w:r></w:p>"
-            + string.Concat(Enumerable.Repeat("</w:sdtContent></w:sdt>", nesting))
-            + "</w:body></w:document>");
+    /// <param name="partName">What the main part is stored under. The relationship names it, so it can be anything.</param>
+    /// <param name="encoding">How the part is encoded, with its byte order mark if it has one.</param>
+    public static byte[] DocxNestedBy(int nesting, string partName = "word/document.xml", System.Text.Encoding? encoding = null) =>
+        DocxWithDocumentPart(
+            partName,
+            Encode(
+                $"<?xml version=\"1.0\"?><w:document xmlns:w=\"{WordNamespace}\"><w:body>"
+                + string.Concat(Enumerable.Repeat("<w:sdt><w:sdtContent>", nesting))
+                + "<w:p><w:r><w:t>hello</w:t></w:r></w:p>"
+                + string.Concat(Enumerable.Repeat("</w:sdtContent></w:sdt>", nesting))
+                + "</w:body></w:document>",
+                encoding));
 
     /// <summary>A DOCX package whose <c>word/document.xml</c> is <paramref name="documentXml"/>.</summary>
     public static byte[] DocxWithDocumentXml(string documentXml) =>
-        Package(
-            ("[Content_Types].xml",
+        DocxWithDocumentPart("word/document.xml", Encode(documentXml, null));
+
+    /// <summary>A DOCX package whose main document part is stored as <paramref name="partName"/>.</summary>
+    public static byte[] DocxWithDocumentPart(string partName, byte[] content) =>
+        PackageOfBytes(
+            ("[Content_Types].xml", Encode(
                 "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
                 + "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
                 + "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
-                + "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/></Types>"),
-            ("_rels/.rels",
+                + $"<Override PartName=\"/{partName}\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/></Types>", null)),
+            ("_rels/.rels", Encode(
                 "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
-                + "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/></Relationships>"),
-            ("word/document.xml", documentXml));
+                + $"<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"{partName}\"/></Relationships>", null)),
+            (partName, content));
 
     /// <summary>
     /// A PPTX with one slide holding the text "hello" in a shape inside <paramref name="nesting"/> nested
     /// group shapes.
     /// </summary>
-    public static byte[] PptxNestedBy(int nesting)
+    /// <param name="slidePart">What the slide is stored under, below <c>ppt/</c>. The relationship names it.</param>
+    public static byte[] PptxNestedBy(int nesting, string slidePart = "ppt/slides/slide1.xml")
     {
         var shapes = string.Concat(Enumerable.Repeat("<p:grpSp>", nesting))
                      + "<p:sp><p:txBody><a:p><a:r><a:t>hello</a:t></a:r></a:p></p:txBody></p:sp>"
@@ -124,7 +135,7 @@ internal static class TestEpubs
                 + "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
                 + "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
                 + "<Override PartName=\"/ppt/presentation.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml\"/>"
-                + "<Override PartName=\"/ppt/slides/slide1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.slide+xml\"/></Types>"),
+                + $"<Override PartName=\"/{slidePart}\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.slide+xml\"/></Types>"),
             ("_rels/.rels",
                 "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
                 + "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"ppt/presentation.xml\"/></Relationships>"),
@@ -133,29 +144,41 @@ internal static class TestEpubs
                 + "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><p:sldIdLst><p:sldId id=\"256\" r:id=\"rId1\"/></p:sldIdLst></p:presentation>"),
             ("ppt/_rels/presentation.xml.rels",
                 "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
-                + "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide\" Target=\"slides/slide1.xml\"/></Relationships>"),
-            ("ppt/slides/slide1.xml",
+                + $"<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide\" Target=\"{slidePart["ppt/".Length..]}\"/></Relationships>"),
+            (slidePart,
                 "<?xml version=\"1.0\"?><p:sld xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\" "
                 + "xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><p:cSld><p:spTree>"
                 + shapes + "</p:spTree></p:cSld></p:sld>"));
     }
 
-    /// <summary>A zip of the named text entries.</summary>
-    public static byte[] Package(params (string Name, string Content)[] entries)
+    /// <summary>
+    /// The package with one more entry, <c>junk/unreferenced.xml</c>, that nothing names and that inflates
+    /// to <paramref name="inflatedBytes"/> bytes of <c>&lt;r&gt;&lt;a&gt;x&lt;/a&gt;…&lt;/r&gt;</c> from a few
+    /// kilobytes per hundred megabytes.
+    /// </summary>
+    public static byte[] WithAnInflatingEntry(byte[] package, long inflatedBytes)
     {
         using var buffer = new MemoryStream();
-        using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+        buffer.Write(package);
+        using (var zip = new ZipArchive(buffer, ZipArchiveMode.Update, leaveOpen: true))
         {
-            foreach (var (name, content) in entries)
-            {
-                using var writer = new StreamWriter(zip.CreateEntry(name).Open());
-                writer.Write(content);
-            }
+            using var entry = zip.CreateEntry("junk/unreferenced.xml", CompressionLevel.Fastest).Open();
+            var chunk = System.Text.Encoding.ASCII.GetBytes("<r>" + string.Concat(Enumerable.Repeat("<a>x</a>", 2_000)) + "</r>");
+            var open = System.Text.Encoding.ASCII.GetBytes("<root>");
+            entry.Write(open);
+            for (long written = open.Length; written < inflatedBytes; written += chunk.Length) entry.Write(chunk);
+            entry.Write(System.Text.Encoding.ASCII.GetBytes("</root>"));
         }
 
         return buffer.ToArray();
     }
 
+    /// <summary>The text as bytes in <paramref name="encoding"/> (UTF-8 without a mark when null), with its byte order mark.</summary>
+    public static byte[] Encode(string text, System.Text.Encoding? encoding)
+    {
+        encoding ??= new System.Text.UTF8Encoding(false);
+        return [.. encoding.GetPreamble(), .. encoding.GetBytes(text)];
+    }
     /// <summary>
     /// An EPUB 3 whose navigation document holds <paramref name="depth"/> lists nested in one another, read
     /// by its manifest.
@@ -179,4 +202,24 @@ internal static class TestEpubs
                 + string.Concat(Enumerable.Repeat("</ol></li>", depth))
                 + "</ol></nav></body></html>"),
             ("c1.xhtml", "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body><p>hello</p></body></html>"));
+
+    /// <summary>A zip of the named text entries.</summary>
+    public static byte[] Package(params (string Name, string Content)[] entries) =>
+        PackageOfBytes([.. entries.Select(e => (e.Name, Encode(e.Content, null)))]);
+
+    /// <summary>A zip of the named entries.</summary>
+    public static byte[] PackageOfBytes(params (string Name, byte[] Content)[] entries)
+    {
+        using var buffer = new MemoryStream();
+        using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var (name, content) in entries)
+            {
+                using var entry = zip.CreateEntry(name).Open();
+                entry.Write(content);
+            }
+        }
+
+        return buffer.ToArray();
+    }
 }

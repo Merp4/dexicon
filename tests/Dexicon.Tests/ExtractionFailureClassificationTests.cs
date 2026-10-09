@@ -95,4 +95,43 @@ public sealed class ExtractionFailureClassificationTests
     public void AnExplicitVerdictAroundAFaultIsNotMarkedUnexpected() =>
         Classify(new UnreadableDocumentException("not a readable .docx", Activator.CreateInstance<NullReferenceException>()))
             .ShouldBeOfType<UnreadableDocumentException>().Unexpected.ShouldBeFalse();
+
+    [Fact]
+    public void AFaultCarriedByAReflectionWrapperIsStillAFault()
+    {
+        Classify(new System.Reflection.TargetInvocationException(new InvalidOperationException("bad state")))
+            .ShouldBeOfType<UnreadableDocumentException>().Unexpected.ShouldBeTrue();
+        Classify(new TypeInitializationException("Lib.Type", new InvalidOperationException("bad state")))
+            .ShouldBeOfType<UnreadableDocumentException>().Unexpected.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AnAggregateOfFaultsIsAFaultWhateverItsSize()
+    {
+        Classify(new AggregateException(new InvalidOperationException("one"))).ShouldBeOfType<UnreadableDocumentException>()
+            .Unexpected.ShouldBeTrue();
+        Classify(new AggregateException(new InvalidOperationException("one"), new ArgumentException("two")))
+            .ShouldBeOfType<UnreadableDocumentException>().Unexpected.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AnAggregateWithAFaultBesideAMalformedFileIsAFaultBecauseKeepingTheTextIsTheCheaperMistake()
+    {
+        Classify(new AggregateException(Corrupt, new InvalidOperationException("one")))
+            .ShouldBeOfType<UnreadableDocumentException>().Unexpected.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AnAggregateOfMalformedFileExceptionsIsNotAFault() =>
+        Classify(new AggregateException(Corrupt, new FormatException("bad")))
+            .ShouldBeOfType<UnreadableDocumentException>().Unexpected.ShouldBeFalse();
+
+    [Fact]
+    public void ACancellationIsEnvironmentalWhoeverCancelled()
+    {
+        // A library that gives up, or a caller that stops: neither is a verdict on the bytes.
+        ShouldBeEnvironmental(new OperationCanceledException("gave up"));
+        ShouldBeEnvironmental(new TaskCanceledException("gave up"));
+        ShouldBeEnvironmental(new InvalidDataException("failed to parse", new OperationCanceledException()));
+    }
 }

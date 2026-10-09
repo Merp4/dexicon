@@ -1,7 +1,9 @@
 using System.IO.Compression;
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using AngleSharp.Dom;
+using AngleSharp.Html.Dom;
 using AngleSharp.Html.Parser;
 using DocumentFormat.OpenXml.Packaging;
 using UglyToad.PdfPig;
@@ -136,6 +138,10 @@ internal static class ExtractionFailures
                     break;
                 case EndOfStreamException:
                     break;
+                case OperationCanceledException:
+                    // A cancellation says nothing about the bytes: a library gave up, or the caller did.
+                    environmental = true;
+                    break;
                 case IOException or UnauthorizedAccessException or OutOfMemoryException or ExtractionFailedException:
                     environmental = true;
                     break;
@@ -165,18 +171,39 @@ internal static class ExtractionFailures
     }
 
     /// <summary>
-    /// Whether what the code caught is a type that points at a fault in the code that read the file.
-    /// A parser's own exception for a malformed file (an invalid-data, format or parser-specific
-    /// type) is not one.
+    /// Whether what the code caught is a type that points at a fault in the code that read the file. A
+    /// parser's own exception for a malformed file (an invalid-data, format or parser-specific type) is
+    /// not one. A wrapper that only carries another exception (<see cref="TargetInvocationException"/>,
+    /// <see cref="TypeInitializationException"/>, <see cref="AggregateException"/>) is taken apart, and
+    /// any member that is a fault makes it one: keeping the text of a stored document is the cheaper
+    /// mistake.
     /// </summary>
     private static bool IsFault(Exception cause)
     {
-        var caught = cause is AggregateException aggregate ? aggregate.GetBaseException() : cause;
-        return caught is NullReferenceException or InvalidOperationException or ArgumentException
-            or IndexOutOfRangeException or KeyNotFoundException or InvalidCastException
-            or ArithmeticException or NotImplementedException or NotSupportedException;
+        var pending = new Stack<Exception>();
+        pending.Push(cause);
+        while (pending.Count > 0)
+        {
+            var caught = pending.Pop();
+            switch (caught)
+            {
+                case AggregateException aggregate:
+                    foreach (var inner in aggregate.InnerExceptions) pending.Push(inner);
+                    break;
+                case TargetInvocationException or TypeInitializationException when caught.InnerException is { } carried:
+                    pending.Push(carried);
+                    break;
+                case NullReferenceException or InvalidOperationException or ArgumentException
+                    or IndexOutOfRangeException or KeyNotFoundException or InvalidCastException
+                    or ArithmeticException or NotImplementedException or NotSupportedException:
+                    return true;
+            }
+        }
+
+        return false;
     }
 }
+
 /// <summary>
 /// Bytes to text, per media type. The seam that keeps OCR a future registration
 /// rather than a rewrite: nothing downstream assumes the text came from a text layer.
@@ -458,7 +485,7 @@ public sealed class DocxTextExtractor : ITextExtractor
     {
         try
         {
-            XmlNesting.RequireShallowParts(content, fileName);
+            XmlNesting.RequireShallowParts(content, fileName, content as DeadlineStream);
             using var doc = WordprocessingDocument.Open(content, false);
             var body = doc.MainDocumentPart?.Document?.Body;
             if (body is null) return ExtractedText.Empty;
@@ -487,7 +514,7 @@ public sealed class PptxTextExtractor : ITextExtractor
     {
         try
         {
-            XmlNesting.RequireShallowParts(content, fileName);
+            XmlNesting.RequireShallowParts(content, fileName, content as DeadlineStream);
             using var doc = PresentationDocument.Open(content, false);
             var parts = doc.PresentationPart?.SlideParts?.ToList();
             if (parts is null or { Count: 0 }) return ExtractedText.Empty;
@@ -531,12 +558,13 @@ public sealed class EpubTextExtractor : ITextExtractor
         // stream it is given on some failure paths, so reusing one means the fallback
         // reads a closed stream and reports ObjectDisposedException instead of the book.
         var bytes = buffer.ToArray();
-        XmlNesting.RequireShallowParts(new MemoryStream(bytes), fileName);
+        var deadline = content as DeadlineStream;
+        XmlNesting.RequireShallowParts(new MemoryStream(bytes), fileName, deadline);
 
         try
         {
             using var forManifest = new MemoryStream(bytes);
-            return ReadWithManifest(forManifest);
+            return ReadWithManifest(forManifest, deadline);
         }
         catch (Exception ex) when (ex is not ExtractionFailedException)
         {
@@ -545,12 +573,12 @@ public sealed class EpubTextExtractor : ITextExtractor
             // file that is not there. Falling back to the archive reads those, in a worse
             // order and without chapter titles, which is enormously better than not at all.
             using var forArchive = new MemoryStream(bytes);
-            return ReadFromArchive(forArchive, fileName, ex);
+            return ReadFromArchive(forArchive, fileName, ex, deadline);
         }
     }
 
     /// <summary>The good path: the manifest gives real reading order and a title.</summary>
-    private static ExtractedText ReadWithManifest(MemoryStream buffer)
+    private static ExtractedText ReadWithManifest(MemoryStream buffer, DeadlineStream? deadline)
     {
         var book = VersOne.Epub.EpubReader.ReadBook(buffer);
         var sb = new StringBuilder();
@@ -561,8 +589,7 @@ public sealed class EpubTextExtractor : ITextExtractor
         foreach (var file in book.ReadingOrder)
         {
             units.Add(new ExtractedUnit(number, sb.Length, $"Chapter {number}"));
-            HtmlText.RequireShallow(file.Content, $"Chapter {number}");
-            using var doc = parser.ParseDocument(file.Content);
+            using var doc = HtmlText.Parse(parser, file.Content, deadline);
             HtmlText.AppendBlocks(doc.Body, sb);
             number++;
         }
@@ -575,7 +602,8 @@ public sealed class EpubTextExtractor : ITextExtractor
     /// the manifest that failed to parse. Entry order stands in for reading order: it is
     /// usually the authoring order and is nearly always alphabetical by chapter.
     /// </summary>
-    private static ExtractedText ReadFromArchive(MemoryStream buffer, string fileName, Exception cause)
+    private static ExtractedText ReadFromArchive(
+        MemoryStream buffer, string fileName, Exception cause, DeadlineStream? deadline)
     {
         using var zip = OpenArchive(buffer, fileName, cause);
 
@@ -602,9 +630,8 @@ public sealed class EpubTextExtractor : ITextExtractor
             {
                 using var bytes = new MemoryStream();
                 using (var stream = entry.Open()) stream.CopyTo(bytes);
-                HtmlText.RequireShallow(Encoding.Latin1.GetString(bytes.GetBuffer(), 0, (int)bytes.Length), entry.FullName);
                 bytes.Position = 0;
-                using var doc = parser.ParseDocument(bytes);
+                using var doc = HtmlText.Parse(parser, bytes, deadline);
                 var before = sb.Length;
                 HtmlText.AppendBlocks(doc.Body, sb);
 
@@ -662,9 +689,7 @@ public sealed class HtmlTextExtractor : ITextExtractor
         {
             using var reader = new StreamReader(content, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
             var parser = new HtmlParser();
-            var markup = reader.ReadToEnd();
-            HtmlText.RequireShallow(markup, fileName);
-            using var doc = parser.ParseDocument(markup);
+            using var doc = HtmlText.Parse(parser, reader.ReadToEnd(), content as DeadlineStream);
 
             var sb = new StringBuilder();
             HtmlText.AppendBlocks(doc.Body, sb);
@@ -695,119 +720,39 @@ public sealed class HtmlTextExtractor : ITextExtractor
 internal static class HtmlText
 {
     /// <summary>
-    /// The deepest nesting of elements read. Browsers stop building the tree at 512. Deeper than that is
-    /// not a document: the parser takes time that grows with the square of the depth (100,000 nested
-    /// divs, about 500 KB, took 150 s to parse here) and the tree is a way to exhaust memory.
+    /// Parses under the extraction clock. AngleSharp builds the tree in time that grows with the square
+    /// of the nesting (100,000 nested divs took 319 s here), and no count of tags taken beforehand
+    /// matches what the parser makes of them: it closes elements an end tag does not name, ignores end
+    /// tags with nothing to close, and treats attribute values, raw text and SVG by rules of its own. So
+    /// the bound is the time. The parser stops within about 50 ms of the token being cancelled, which
+    /// was measured on 100,000 and 1,000,000 levels of nesting and on a 21 MB flat document.
     /// </summary>
-    public const int MaxNesting = 512;
+    /// <param name="deadline">
+    /// The clock of the stream the extractor was given. Without one, as when the budget is 0, the parse is
+    /// not bounded.
+    /// </param>
+    /// <exception cref="ExtractionTimeoutException">The budget passed before the tree was built.</exception>
+    public static IHtmlDocument Parse(HtmlParser parser, string markup, DeadlineStream? deadline) =>
+        Parsed(token => parser.ParseDocumentAsync(markup, token), deadline);
 
-    /// <summary>
-    /// Elements the nesting scan does not count: void elements, and elements whose end tag may be left
-    /// out, so that a page of unclosed paragraphs or table cells is not taken for a deep one.
-    /// </summary>
-    private static readonly HashSet<string> NotCounted = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
-        "track", "wbr", "p", "li", "dt", "dd", "tr", "td", "th", "thead", "tbody", "tfoot", "colgroup",
-        "option", "optgroup", "rt", "rp", "html", "head", "body",
-    };
+    /// <inheritdoc cref="Parse(HtmlParser, string, DeadlineStream?)"/>
+    public static IHtmlDocument Parse(HtmlParser parser, Stream markup, DeadlineStream? deadline) =>
+        Parsed(token => parser.ParseDocumentAsync(markup, token), deadline);
 
-    /// <summary>Elements whose content is text up to their end tag, so a tag in it opens nothing.</summary>
-    private static readonly HashSet<string> RawText = new(StringComparer.OrdinalIgnoreCase)
+    private static IHtmlDocument Parsed(Func<CancellationToken, Task<IHtmlDocument>> parse, DeadlineStream? deadline)
     {
-        "script", "style", "textarea", "title",
-    };
+        using var cancel = new CancellationTokenSource();
+        if (deadline is not null) cancel.CancelAfter(deadline.Remaining);
 
-    /// <summary>
-    /// Refuses markup that nests elements more than <see cref="MaxNesting"/> deep, before it is parsed.
-    /// A scan of the tags with a counter and no tree, linear in the markup. Comments and the content of
-    /// raw-text elements are skipped, as are quoted attribute values.
-    /// </summary>
-    /// <param name="what">The file or chapter the message names.</param>
-    /// <exception cref="UnreadableDocumentException">The markup nests deeper than the limit.</exception>
-    public static void RequireShallow(string markup, string what)
-    {
-        var depth = 0;
-        var foreign = 0;
-        var at = 0;
-        while ((at = markup.IndexOf('<', at)) >= 0 && at + 1 < markup.Length)
+        try
         {
-            var next = markup[at + 1];
-            if (next == '!')
-            {
-                at = markup.AsSpan(at).StartsWith("<!--", StringComparison.Ordinal) ? SkipPast(markup, "-->", at + 4) : SkipPast(markup, ">", at + 2);
-                continue;
-            }
-
-            if (next == '?')
-            {
-                at = SkipPast(markup, ">", at + 2);
-                continue;
-            }
-
-            var closing = next == '/';
-            var nameStart = at + (closing ? 2 : 1);
-            if (nameStart >= markup.Length || !char.IsAsciiLetter(markup[nameStart]))
-            {
-                at++;
-                continue;
-            }
-
-            var nameEnd = nameStart;
-            while (nameEnd < markup.Length && (char.IsAsciiLetterOrDigit(markup[nameEnd]) || markup[nameEnd] == '-'))
-                nameEnd++;
-
-            var close = EndOfTag(markup, nameEnd);
-            if (close < 0) return;
-
-            var name = markup[nameStart..nameEnd];
-            if (!NotCounted.Contains(name))
-            {
-                // A trailing slash closes an element only in SVG and MathML. Elsewhere the parser ignores
-                // it, so <div/> opens a div.
-                var foreignName = name.Equals("svg", StringComparison.OrdinalIgnoreCase)
-                                  || name.Equals("math", StringComparison.OrdinalIgnoreCase);
-                if (closing)
-                {
-                    depth = Math.Max(0, depth - 1);
-                    if (foreignName) foreign = Math.Max(0, foreign - 1);
-                }
-                else if (!(foreign > 0 && markup[close - 1] == '/'))
-                {
-                    if (foreignName) foreign++;
-                    if (++depth > MaxNesting)
-                        throw new UnreadableDocumentException(
-                            $"{what} nests elements more than {MaxNesting} deep, which is too deep to read.");
-                }
-            }
-
-            at = close + 1;
-            if (!closing && RawText.Contains(name))
-                at = markup.IndexOf("</" + name, at, StringComparison.OrdinalIgnoreCase) is var end and >= 0 ? end : markup.Length;
+            return parse(cancel.Token).GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException ex) when (deadline is not null && cancel.IsCancellationRequested)
+        {
+            throw deadline.TimedOut(ex);
         }
     }
-
-    private static int SkipPast(string markup, string terminator, int from)
-    {
-        var found = markup.IndexOf(terminator, from, StringComparison.Ordinal);
-        return found < 0 ? markup.Length : found + terminator.Length;
-    }
-
-    /// <summary>The index of the <c>&gt;</c> that ends the tag, outside quoted attribute values, or -1.</summary>
-    private static int EndOfTag(string markup, int from)
-    {
-        var quote = '\0';
-        for (var i = from; i < markup.Length; i++)
-        {
-            var c = markup[i];
-            if (quote != '\0') { if (c == quote) quote = '\0'; }
-            else if (c is '"' or '\'') quote = c;
-            else if (c == '>') return i;
-        }
-
-        return -1;
-    }
-
     /// <summary>Elements whose text is markup machinery, not content.</summary>
     private static readonly HashSet<string> Skipped =
         new(StringComparer.Ordinal) { "script", "style", "noscript", "template", "head" };
