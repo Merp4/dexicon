@@ -14,8 +14,8 @@ namespace Dexicon.Tests;
 /// <summary>
 /// Requests that answered 500, or were read as something else, because a field was missing or a value
 /// had nowhere to go. Found by sending every JSON-body operation an empty object and null, and by
-/// reading the upload path for a name that is already taken. Each is answered 4xx now, and changes
-/// nothing.
+/// reading the attach path for a name that is already taken. Each is refused with a 4xx now, or listed
+/// under <c>failed</c> by an upload, and changes nothing.
 /// </summary>
 public sealed class MalformedRequestTests
 {
@@ -71,9 +71,12 @@ public sealed class MalformedRequestTests
     [Theory]
     [InlineData(SystemEndpoints.MaxExpiryDays + 1)]
     [InlineData(int.MaxValue)]
-    public async Task AnExpiryBeyondTheCapIsRefusedAndNoKeyIsSaved(int days)
+    [InlineData(-1)]
+    [InlineData(int.MinValue)]
+    public async Task AnExpiryOutsideTheRangeIsRefusedAndNoKeyIsSaved(int days)
     {
-        // DateTime.AddDays threw for the larger values, after the request had been accepted.
+        // DateTime.AddDays threw for the largest values, after the request had been accepted, and a
+        // negative number made a key that never expires.
         await using var harness = await IndexingHarness.StartAsync("notes");
         await using var db = harness.NewContext();
 
@@ -149,6 +152,7 @@ public sealed class MalformedRequestTests
 
         thrown.Message.ShouldContain("'b.txt'");
         thrown.Message.ShouldContain("'a.txt'");
+        thrown.Message.ShouldNotContain("Parameter", Case.Sensitive, "the message goes to the caller, who cannot see an argument name");
         await using var check = harness.NewContext();
         (await check.Files.ToDictionaryAsync(f => f.RelativePath, f => f.BlobSha256))
             .ShouldBe(new Dictionary<string, string?> { ["a.txt"] = a.Sha256, ["b.txt"] = b.Sha256 }, ignoreOrder: true);

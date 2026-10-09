@@ -331,18 +331,18 @@ public sealed class CorpusConfiguration(
     public async Task<ConfigOutcome<SourceAdded>> AddSourceAsync(
         Corpus corpus, AddSourceRequest body, CancellationToken ct, Action<Source>? committed = null)
     {
+        // A path left out is refused, not read as the root: the root is the empty string, and a
+        // request that misspells the field would index everything mounted.
+        if (body.WorkspacePath is null)
+            return new ConfigRefusal(
+                "Workspace path is required",
+                "Send workspacePath, relative to the workspace root. An empty string is the root itself.",
+                400);
+
         // The shape of the request first, because judging it costs nothing and the
         // check below it starts a git process. A request carrying both a bad path
         // and a setting that cannot apply was answered with the path, so the caller
         // fixed that, resent, and only then learnt about the setting.
-        if (body.WorkspacePath is null)
-            return new ConfigRefusal(
-                "Workspace path is required",
-                "Send workspacePath, relative to the workspace root. An empty string is the root itself; a "
-                + "request that leaves it out is refused, since reading it as the root would index everything "
-                + "mounted.",
-                400);
-
         if (body.Git is not null && !body.GitHistory)
             return new ConfigRefusal(
                 "Not a git-history source",

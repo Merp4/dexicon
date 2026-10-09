@@ -536,7 +536,8 @@ public sealed record ContextApiRequest(
     bool? DistinctTitles = null);
 
 /// <param name="ExpiresInDays">
-/// Days until the key stops working, at most 36,500. Omitted or zero means it does not expire.
+/// Days until the key stops working, up to 36,500 (about 100 years). Omitted or zero means it does
+/// not expire, and a negative number is refused.
 /// </param>
 /// <param name="CorpusIds">
 /// Corpus ids this key may reach. Omitted or empty means every corpus, which is what a

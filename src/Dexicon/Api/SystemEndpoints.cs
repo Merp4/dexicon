@@ -512,7 +512,7 @@ public static class SystemEndpoints
         }).Produces<TokenSummary>();
     }
 
-    /// <summary>The longest expiry <c>POST /api/tokens</c> accepts. Past it the date is out of the calendar's range.</summary>
+    /// <summary>The longest expiry <c>POST /api/tokens</c> accepts, about 100 years.</summary>
     internal const int MaxExpiryDays = 36_500;
 
     /// <summary>The handler of <c>POST /api/tokens</c>, a method so a test can call it without a server.</summary>
@@ -524,10 +524,11 @@ public static class SystemEndpoints
         if (string.IsNullOrWhiteSpace(body.Name))
             return Results.Problem(title: "Name is required", statusCode: 400);
 
-        if (body.ExpiresInDays > MaxExpiryDays)
+        if (body.ExpiresInDays is < 0 or > MaxExpiryDays)
             return Results.Problem(
-                title: "Expiry too far",
-                detail: $"expiresInDays is at most {MaxExpiryDays:N0}, which is 100 years. The key was not created.",
+                title: "Invalid expiry",
+                detail: $"expiresInDays is from 0 to {MaxExpiryDays:N0}, about 100 years, and 0 or leaving it out means "
+                        + "the key does not expire. The key was not created.",
                 statusCode: 400);
 
         var requested = body.Scopes is { Count: > 0 } ? body.Scopes : [Scopes.Search];
