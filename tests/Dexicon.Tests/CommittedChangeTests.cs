@@ -376,16 +376,6 @@ public sealed class CommittedChangeTests
     private static IndexJobQueue QueueOn(IndexingHarness harness, CatalogDbContext db) =>
         new(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance);
 
-    /// <summary>
-    /// The handlers read their reply on the caller's token, and a caller that cancelled gets none, so the
-    /// call may throw. What these tests are about is what was saved and queued before that.
-    /// </summary>
-    private static async Task WithoutTheReplyAsync(Func<Task> call)
-    {
-        try { await call(); }
-        catch (OperationCanceledException) { /* the caller left */ }
-    }
-
     [Fact]
     public async Task AChunkSetThatIsSavedIsBuiltWhenTheCallerIsCancelledDuringCollectionSetup()
     {
@@ -397,13 +387,14 @@ public sealed class CommittedChangeTests
         await using var db = harness.NewContext();
         var vectors = new EnsureCancels(harness.Vectors, cts);
 
-        await WithoutTheReplyAsync(() => ChunkSetEndpoints.CreateAsync(
+        var result = await ChunkSetEndpoints.CreateAsync(
             IndexingHarness.CorpusId, new CreateChunkSetRequest("second"), AsAdmin(), new ScopeResolver(db), db, vectors,
-            harness.Embedder, QueueOn(harness, db), harness.Settings, cts.Token));
+            harness.Embedder, QueueOn(harness, db), harness.Settings, cts.Token);
 
         vectors.Called.ShouldBeTrue("the window has to have been opened");
         var second = await db.ChunkSets.AsNoTracking().SingleAsync(s => s.Name == "second");
         (await db.Jobs.CountAsync(j => j.Kind == JobKind.Rebuild && j.ChunkSetId == second.Id)).ShouldBe(1, "the saved set has its job");
+        result.ShouldBeOfType<Accepted<ChunkSetCreated>>().Value!.ChunkSet.Name.ShouldBe("second", "the reply reports the saved set");
     }
 
     [Fact]
@@ -417,13 +408,14 @@ public sealed class CommittedChangeTests
         await using var db = harness.NewContext();
         watcher.Armed = true;
 
-        await WithoutTheReplyAsync(() => ChunkSetEndpoints.CreateAsync(
+        var result = await ChunkSetEndpoints.CreateAsync(
             IndexingHarness.CorpusId, new CreateChunkSetRequest("second"), AsAdmin(), new ScopeResolver(db), db, harness.Vectors,
-            harness.Embedder, QueueOn(harness, db), harness.Settings, cts.Token));
+            harness.Embedder, QueueOn(harness, db), harness.Settings, cts.Token);
 
         watcher.Fired.ShouldBeTrue("the window has to have been opened");
         var second = await db.ChunkSets.AsNoTracking().SingleAsync(s => s.Name == "second");
         (await db.Jobs.CountAsync(j => j.Kind == JobKind.Rebuild && j.ChunkSetId == second.Id)).ShouldBe(1, "the saved set has its job");
+        result.ShouldBeOfType<Accepted<ChunkSetCreated>>().Value!.BackfillJob.Id.ShouldNotBeNullOrEmpty("the reply reports the job");
     }
 
     [Fact]
@@ -438,13 +430,14 @@ public sealed class CommittedChangeTests
         await using var db = harness.NewContext();
         watcher.Armed = true;
 
-        await WithoutTheReplyAsync(() => ChunkSetEndpoints.UpdateAsync(
+        var result = await ChunkSetEndpoints.UpdateAsync(
             IndexingHarness.CorpusId, "default", new UpdateChunkSetRequest(ChunkSize: 400), AsAdmin(),
-            new ScopeResolver(db), db, QueueOn(harness, db), cts.Token));
+            new ScopeResolver(db), db, QueueOn(harness, db), cts.Token);
 
         watcher.Fired.ShouldBeTrue("the window has to have been opened");
         (await db.ChunkSets.AsNoTracking().SingleAsync()).ChunkSize.ShouldBe(400, "the change is saved");
         (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh && j.ChunkSetId == "set-1")).ShouldBe(1, "the saved change has its job");
+        result.ShouldBeOfType<Ok<ChunkSetUpdated>>().Value!.RechunkJob.ShouldNotBeNull("the reply reports the job");
     }
 
     [Fact]
@@ -531,6 +524,140 @@ public sealed class CommittedChangeTests
 
         thrown.Message.ShouldContain("two lines");
         thrown.Message.ShouldNotContain("\n");
+    }
+
+    [Fact]
+    public async Task ACorpusThatIsCreatedIsReportedWhenTheCallerIsCancelledAfterwards()
+    {
+        // The summary in the reply was read on the caller's token after the corpus was saved, so a cancel
+        // there threw from a handler whose creation had happened. Watched on the chunk sets, the last rows
+        // the save writes.
+        var watcher = new CancelAfterWriteTo("chunk_sets");
+        await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        using var cts = new CancellationTokenSource();
+        watcher.Cts = cts;
+        await using var db = harness.NewContext();
+        watcher.Armed = true;
+
+        var result = await CorpusEndpoints.CreateAsync(new CreateCorpusRequest("papers"), AsAdmin(), db,
+            harness.NewConfiguration(db), harness.Settings, cts.Token);
+
+        watcher.Fired.ShouldBeTrue("the window has to have been opened");
+        result.ShouldBeOfType<Created<CorpusSummary>>().Value!.Name.ShouldBe("papers");
+    }
+
+    [Fact]
+    public async Task ACorpusChangeThatIsSavedIsReportedWhenTheCallerIsCancelledAfterwards()
+    {
+        var watcher = new CancelAfterWriteTo("corpora");
+        await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        using var cts = new CancellationTokenSource();
+        watcher.Cts = cts;
+        await using var db = harness.NewContext();
+        watcher.Armed = true;
+
+        var result = await CorpusEndpoints.UpdateAsync(IndexingHarness.CorpusId,
+            new UpdateCorpusRequest(Defaults: new CorpusDefaults(null, null, null, ["**/bin/**"])), AsAdmin(),
+            new ScopeResolver(db), db, harness.NewConfiguration(db), harness.Settings, cts.Token);
+
+        watcher.Fired.ShouldBeTrue("the window has to have been opened");
+        result.ShouldBeOfType<Ok<CorpusUpdated>>().Value!.Corpus.Name.ShouldBe("notes");
+        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh)).ShouldBe(1, "the saved change has its job");
+    }
+
+    [Fact]
+    public async Task AKeyIsNeverSavedWithoutTheCorporaItWasIssuedFor()
+    {
+        // The key and its corpora were two saves, and the second ran on the caller's token. A cancel between
+        // them left a key with no mapping, and no mapping means every corpus.
+        var watcher = new CancelAfterWriteTo("tokens");
+        await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        using var cts = new CancellationTokenSource();
+        watcher.Cts = cts;
+        await using var db = harness.NewContext();
+        watcher.Armed = true;
+
+        try
+        {
+            await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", CorpusIds: [IndexingHarness.CorpusId]),
+                AsAdmin(), new TokenService(db, TimeProvider.System), db, cts.Token);
+        }
+        catch (OperationCanceledException) { /* the caller left */ }
+
+        watcher.Fired.ShouldBeTrue("the window has to have been opened");
+        await using var check = harness.NewContext();
+        (await check.Tokens.Where(t => t.Name == "agent").Select(t => t.Corpora.Count).ToListAsync())
+            .ShouldAllBe(n => n == 1, "a key that is saved reaches only the corpus it was issued for");
+    }
+
+    [Fact]
+    public async Task AKeyIssuedForACorpusThatDoesNotExistIsRefusedAndNotSaved()
+    {
+        // The corpora were checked after the key was saved, so the refusal left a key behind that reached
+        // every corpus, with a secret nobody was shown.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        await using var db = harness.NewContext();
+
+        var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", CorpusIds: ["missing"]),
+            AsAdmin(), new TokenService(db, TimeProvider.System), db, default);
+
+        ((Microsoft.AspNetCore.Http.IStatusCodeHttpResult)result).StatusCode.ShouldBe(400);
+        (await db.Tokens.CountAsync(t => t.Name == "agent")).ShouldBe(0, "a refused key is not saved");
+    }
+
+    [Fact]
+    public async Task AReplacedMappingIsReportedAsSavedWithNothingReadAfterTheSave()
+    {
+        // The reply reloaded the key's corpora on the caller's token after the save. The collection was
+        // already loaded, so the reload read nothing; the reply comes from the tracked key, whose
+        // collection the save fixes up, including the corpus the replacement dropped.
+        var watcher = new CancelAfterWriteTo("token_corpora");
+        await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        await using var db = harness.NewContext();
+        var papers = (await harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("papers"), default)).Value!;
+        var (key, _) = await new TokenService(db, TimeProvider.System)
+            .CreateAsync("agent", [Scopes.Search], null, [IndexingHarness.CorpusId]);
+        db.ChangeTracker.Clear();
+        using var cts = new CancellationTokenSource();
+        watcher.Cts = cts;
+        watcher.Armed = true;
+
+        var result = await SystemEndpoints.ReplaceCorporaAsync(key.Id,
+            new UpdateTokenCorporaRequest([papers.Id]), AsAdmin(), db, cts.Token);
+
+        result.ShouldBeOfType<Ok<TokenSummary>>().Value!.CorpusIds.ShouldBe([papers.Id]);
+        watcher.Fired.ShouldBeFalse("nothing reads the catalogue after the mapping is saved");
+    }
+
+    [Fact]
+    public async Task AnUploadSourceIsSavedWithTheFirstDocumentAttachedToItOrNotAtAll()
+    {
+        // A corpus's upload source was saved on its own, and the attachment it was made for was then read
+        // and saved on the caller's token. A cancel between the two left a source with nothing in it.
+        var watcher = new CancelAfterWriteTo("sources");
+        await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        using var cts = new CancellationTokenSource();
+        watcher.Cts = cts;
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var stored = await documents.StoreAsync(new MemoryStream("some text to index"u8.ToArray()), "doc.txt");
+        var corpus = await db.Corpora.SingleAsync();
+        watcher.Armed = true;
+
+        try { await documents.AttachAsync(corpus, stored.Sha256, "doc.txt", cts.Token); }
+        catch (OperationCanceledException) { /* the caller left */ }
+
+        watcher.Fired.ShouldBeTrue("the window has to have been opened");
+        await using var check = harness.NewContext();
+        var uploads = await check.Sources.CountAsync(s => s.Kind == SourceKind.Upload);
+        var attached = await check.Files.CountAsync(f => f.BlobSha256 == stored.Sha256);
+        uploads.ShouldBe(attached, "an upload source exists only with the document it was made for");
     }
 
     private sealed class SameDefaults : IEqualityComparer<CorpusDefaults>

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Dexicon.Core.Catalog;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -22,6 +23,9 @@ namespace Dexicon.Core.Indexing;
 /// endpoint, the parser, the filesystem — is bounded by <see cref="IndexingLimits"/>,
 /// per resource rather than per job.
 /// </summary>
+[SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", Justification =
+    "Runs one work item after another until the host stops. The token is the host's, and the indexer "
+    + "and the sweeper are each safe to stop between their writes.")]
 public sealed class WorkerPool(
     IServiceScopeFactory scopes,
     WorkScheduler scheduler,

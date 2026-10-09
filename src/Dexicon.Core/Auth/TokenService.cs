@@ -88,8 +88,14 @@ public sealed class TokenService(CatalogDbContext db, TimeProvider clock)
     /// UI and the bootstrapper, and a request carrying it is asking for something the model
     /// no longer has rather than making an error worth failing over.
     /// </summary>
+    /// <param name="corpusIds">
+    /// The corpora the key may reach, saved with it. None means every corpus, so a mapping written
+    /// by a second save left a key that reached everything if anything stopped the request between
+    /// the two. The caller checks that they exist.
+    /// </param>
     public async Task<(ApiToken Row, IssuedToken Issued)> CreateAsync(
-        string name, IEnumerable<string> scopes, DateTime? expiresUtc, CancellationToken ct = default)
+        string name, IEnumerable<string> scopes, DateTime? expiresUtc,
+        IReadOnlyCollection<string>? corpusIds = null, CancellationToken ct = default)
     {
         var id = Ulid.NewUlid().ToString();
         var secret = Base64Url(RandomNumberGenerator.GetBytes(SecretBytes));
@@ -105,6 +111,9 @@ public sealed class TokenService(CatalogDbContext db, TimeProvider clock)
             CreatedUtc = clock.GetUtcNow().UtcDateTime,
             ExpiresUtc = expiresUtc,
         };
+
+        foreach (var corpusId in (corpusIds ?? []).Distinct(StringComparer.Ordinal))
+            row.Corpora.Add(new TokenCorpus { TokenId = id, CorpusId = corpusId });
 
         db.Tokens.Add(row);
         await db.SaveChangesAsync(ct);

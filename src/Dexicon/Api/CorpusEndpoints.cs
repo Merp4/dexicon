@@ -39,29 +39,9 @@ public static class CorpusEndpoints
             return Results.Ok(await Summarise(db, scope.Corpora[0], opts.Value.Indexing, ct));
         }).Produces<CorpusSummary>().WithGroupName(OpenApiDocuments.Integration);
 
-        g.MapPost("/", async (CreateCorpusRequest body, RequestContext rc, CatalogDbContext db,
-            CorpusConfiguration config, IOptions<DexiconOptions> opts, CancellationToken ct) =>
-        {
-            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+        g.MapPost("/", CreateAsync).Produces<CorpusSummary>(StatusCodes.Status201Created);
 
-            var created = await config.CreateCorpusAsync(body, ct);
-            if (created.Refusal is { } refused) return refused.ToResult();
-
-            var corpus = created.Value!;
-            return Results.Created($"/api/corpora/{corpus.Id}", await Summarise(db, corpus, opts.Value.Indexing, ct));
-        }).Produces<CorpusSummary>(StatusCodes.Status201Created);
-
-        g.MapPatch("/{nameOrId}", async (string nameOrId, UpdateCorpusRequest body, RequestContext rc,
-            ScopeResolver scopes, CatalogDbContext db, CorpusConfiguration config, IOptions<DexiconOptions> opts,
-            CancellationToken ct) =>
-        {
-            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
-
-            if ((await config.UpdateCorpusAsync(corpus, body, ct)).Refusal is { } refused) return refused.ToResult();
-
-            return Results.Ok(new CorpusUpdated(await Summarise(db, corpus, opts.Value.Indexing, ct)));
-        }).Produces<CorpusUpdated>();
+        g.MapPatch("/{nameOrId}", UpdateAsync).Produces<CorpusUpdated>();
 
         g.MapDelete("/{nameOrId}", async (string nameOrId, RequestContext rc, ScopeResolver scopes,
             CorpusConfiguration config, CancellationToken ct) =>
@@ -180,6 +160,36 @@ public static class CorpusEndpoints
         // the handle a caller already has is the path, because that is what search returns,
         // and a relative path contains slashes.
         g.MapGet("/{nameOrId}/file", FileAsync).Produces<IndexedFileText>();
+    }
+
+    /// <summary>The handler of <c>POST /api/corpora</c>, a method so a test can call it without a server.</summary>
+    internal static async Task<IResult> CreateAsync(CreateCorpusRequest body, RequestContext rc, CatalogDbContext db,
+        CorpusConfiguration config, IOptions<DexiconOptions> opts, CancellationToken ct)
+    {
+        if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+
+        var created = await config.CreateCorpusAsync(body, ct);
+        if (created.Refusal is { } refused) return refused.ToResult();
+
+        // The reply is read after the corpus is saved, so not on the caller's token: a cancel here threw
+        // from a handler whose creation had happened.
+        var corpus = created.Value!;
+        return Results.Created($"/api/corpora/{corpus.Id}",
+            await Summarise(db, corpus, opts.Value.Indexing, CancellationToken.None));
+    }
+
+    /// <summary>The handler of <c>PATCH /api/corpora/{name}</c>, a method so a test can call it without a server.</summary>
+    internal static async Task<IResult> UpdateAsync(string nameOrId, UpdateCorpusRequest body, RequestContext rc,
+        ScopeResolver scopes, CatalogDbContext db, CorpusConfiguration config, IOptions<DexiconOptions> opts,
+        CancellationToken ct)
+    {
+        if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+        var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
+
+        if ((await config.UpdateCorpusAsync(corpus, body, ct)).Refusal is { } refused) return refused.ToResult();
+
+        // Not the caller's token, as in CreateAsync: the change is saved.
+        return Results.Ok(new CorpusUpdated(await Summarise(db, corpus, opts.Value.Indexing, CancellationToken.None)));
     }
 
     /// <summary>

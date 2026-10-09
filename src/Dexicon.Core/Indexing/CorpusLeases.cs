@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Dexicon.Core.Catalog;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -168,6 +169,14 @@ public sealed class CorpusLeases
 
         private bool IsLost => _lost.IsCancellationRequested;
 
+        private const string StopsWhenDisposed =
+            "Renews the lease until the hold is disposed. The token is the hold's stop signal, and waiting on "
+            + "it for the next tick or renewing again is how the loop ends.";
+
+        [SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", MessageId = "WaitForNextTickAsync",
+            Justification = StopsWhenDisposed)]
+        [SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", MessageId = "RenewAsync",
+            Justification = StopsWhenDisposed)]
         private async Task RenewLoopAsync(CancellationToken ct)
         {
             using var timer = new PeriodicTimer(_renew);

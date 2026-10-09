@@ -479,30 +479,7 @@ public static class SystemEndpoints
             return Results.Ok(rows.Select(x => x.ToSummary()));
         }).Produces<IReadOnlyList<TokenSummary>>();
 
-        t.MapPost("/", async (CreateTokenRequest body, RequestContext rc, TokenService tokens,
-            CatalogDbContext db, IOptions<DexiconOptions> opts, CancellationToken ct) =>
-        {
-            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-
-            if (string.IsNullOrWhiteSpace(body.Name))
-                return Results.Problem(title: "Name is required", statusCode: 400);
-
-            var requested = body.Scopes is { Count: > 0 } ? body.Scopes : [Scopes.Search];
-            if (UnissuableScopes(requested) is { } unissuable) return unissuable;
-
-            var expires = body.ExpiresInDays is { } d and > 0 ? DateTime.UtcNow.AddDays(d) : (DateTime?)null;
-            var (row, issued) = await tokens.CreateAsync(body.Name.Trim(), requested, expires, ct);
-
-            if (body.CorpusIds is { Count: > 0 })
-            {
-                var denied2 = await MapCorporaAsync(db, row.Id, body.CorpusIds, ct);
-                if (denied2 is not null) return denied2;
-                await db.Entry(row).Collection(x => x.Corpora).LoadAsync(ct);
-            }
-
-            // The highest-value thing on the page: the step between installed and working.
-            return Results.Ok(new CreatedTokenResponse(row.ToSummary(), issued.Presented, McpAddCommand(issued.Presented)));
-        }).Produces<CreatedTokenResponse>();
+        t.MapPost("/", CreateTokenAsync).Produces<CreatedTokenResponse>();
 
         t.MapDelete("/{id}", async (string id, RequestContext rc, TokenService tokens, IMemoryCacheEvictor evictor,
             CancellationToken ct) =>
@@ -522,20 +499,7 @@ public static class SystemEndpoints
         //
         // No cache to evict: the mapping is read per request, never cached on the
         // principal, so the agent's next call already sees this.
-        t.MapPut("/{id}/corpora", async (string id, UpdateTokenCorporaRequest body, RequestContext rc,
-            CatalogDbContext db, CancellationToken ct) =>
-        {
-            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-
-            var token = await db.Tokens.Include(x => x.Corpora).FirstOrDefaultAsync(x => x.Id == id, ct);
-            if (token is null) return Results.NotFound();
-
-            var refused = await MapCorporaAsync(db, id, body.CorpusIds, ct);
-            if (refused is not null) return refused;
-
-            await db.Entry(token).Collection(x => x.Corpora).LoadAsync(ct);
-            return Results.Ok(token.ToSummary());
-        }).Produces<TokenSummary>();
+        t.MapPut("/{id}/corpora", ReplaceCorporaAsync).Produces<TokenSummary>();
 
         // Replaced outright, as the mapping is, so that granting configure to an agent that
         // already works does not mean issuing a key and editing its configuration.
@@ -546,6 +510,47 @@ public static class SystemEndpoints
             if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
             return await SetScopesAsync(id, body, tokens, db, evictor, logs.CreateLogger("Dexicon.Keys"), ct);
         }).Produces<TokenSummary>();
+    }
+
+    /// <summary>The handler of <c>POST /api/tokens</c>, a method so a test can call it without a server.</summary>
+    internal static async Task<IResult> CreateTokenAsync(CreateTokenRequest body, RequestContext rc, TokenService tokens,
+        CatalogDbContext db, CancellationToken ct)
+    {
+        if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+
+        if (string.IsNullOrWhiteSpace(body.Name))
+            return Results.Problem(title: "Name is required", statusCode: 400);
+
+        var requested = body.Scopes is { Count: > 0 } ? body.Scopes : [Scopes.Search];
+        if (UnissuableScopes(requested) is { } unissuable) return unissuable;
+
+        // Checked before the key exists and saved with it. Mapped by a second save, the key was saved
+        // first, so a refusal here, or a cancel between the two saves, left a key with no mapping, which
+        // reaches every corpus.
+        var corpusIds = (body.CorpusIds ?? []).Distinct(StringComparer.Ordinal).ToList();
+        if (await UnknownCorporaAsync(db, corpusIds, "The key was not created.", ct) is { } unknown) return unknown;
+
+        var expires = body.ExpiresInDays is { } d and > 0 ? DateTime.UtcNow.AddDays(d) : (DateTime?)null;
+        var (row, issued) = await tokens.CreateAsync(body.Name.Trim(), requested, expires, corpusIds, ct);
+
+        // The highest-value thing on the page: the step between installed and working.
+        return Results.Ok(new CreatedTokenResponse(row.ToSummary(), issued.Presented, McpAddCommand(issued.Presented)));
+    }
+
+    /// <summary>The handler of <c>PUT /api/tokens/{id}/corpora</c>, a method so a test can call it without a server.</summary>
+    internal static async Task<IResult> ReplaceCorporaAsync(string id, UpdateTokenCorporaRequest body, RequestContext rc,
+        CatalogDbContext db, CancellationToken ct)
+    {
+        if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+
+        var token = await db.Tokens.Include(x => x.Corpora).FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (token is null) return Results.NotFound();
+
+        var refused = await MapCorporaAsync(db, id, body.CorpusIds, ct);
+        if (refused is not null) return refused;
+
+        // The tracked key already holds the saved mapping: the save fixes up its collection.
+        return Results.Ok(token.ToSummary());
     }
 
     /// <summary>
@@ -623,14 +628,7 @@ public static class SystemEndpoints
         try
         {
             var wanted = corpusIds.Distinct(StringComparer.Ordinal).ToList();
-
-            var known = await db.Corpora.Where(c => wanted.Contains(c.Id)).Select(c => c.Id).ToListAsync(ct);
-            var unknown = wanted.Except(known, StringComparer.Ordinal).ToList();
-            if (unknown.Count > 0)
-                return Results.Problem(
-                    title: "Unknown corpus",
-                    detail: $"No corpus with id {string.Join(", ", unknown)}. The mapping was not changed.",
-                    statusCode: 400);
+            if (await UnknownCorporaAsync(db, wanted, "The mapping was not changed.", ct) is { } unknown) return unknown;
 
             var existing = await db.TokenCorpora.Where(tc => tc.TokenId == tokenId).ToListAsync(ct);
             db.TokenCorpora.RemoveRange(existing);
@@ -644,6 +642,22 @@ public static class SystemEndpoints
         {
             CorpusConfiguration.Naming.Release();
         }
+    }
+
+    /// <summary>A problem result naming each id that is not a corpus, or null when every one is.</summary>
+    private static async Task<IResult?> UnknownCorporaAsync(
+        CatalogDbContext db, List<string> wanted, string outcome, CancellationToken ct)
+    {
+        if (wanted.Count == 0) return null;
+
+        var known = await db.Corpora.Where(c => wanted.Contains(c.Id)).Select(c => c.Id).ToListAsync(ct);
+        var unknown = wanted.Except(known, StringComparer.Ordinal).ToList();
+        return unknown.Count == 0
+            ? null
+            : Results.Problem(
+                title: "Unknown corpus",
+                detail: $"No corpus with id {string.Join(", ", unknown)}. {outcome}",
+                statusCode: 400);
     }
 
     public static void MapHealthEndpoints(this IEndpointRouteBuilder app)

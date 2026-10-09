@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
@@ -37,6 +38,11 @@ public sealed record LibraryAttachment(
 
 public static class DocumentEndpoints
 {
+    private const string ReadsTheNextFileOnTheRequest =
+        "The loop reads, stores and attaches one file after another on the request's token. A cancel in it "
+        + "is caught below, which keeps the files already attached and queues their indexing without the "
+        + "token. The queuing is not covered by this.";
+
     /// <summary>The start of the text <see cref="MultipartReader"/> throws when the body ends early.</summary>
     private const string TruncatedBodyMessage = "Unexpected end of Stream";
 
@@ -67,6 +73,12 @@ public static class DocumentEndpoints
     /// file first, which on the container's tmpfs would be memory. The request as a whole is held
     /// to <see cref="UploadOptions.MaxRequestBytes"/>.
     /// </summary>
+    [SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", MessageId = "ReadNextSectionAsync",
+        Justification = ReadsTheNextFileOnTheRequest)]
+    [SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", MessageId = "StoreAsync",
+        Justification = ReadsTheNextFileOnTheRequest)]
+    [SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", MessageId = "AttachAsync",
+        Justification = ReadsTheNextFileOnTheRequest)]
     internal static async Task<IResult> UploadAsync(
         string nameOrId, HttpRequest http, RequestContext rc, ScopeResolver scopes,
         DocumentService documents, IndexJobQueue queue, IOptions<DexiconOptions> opts,

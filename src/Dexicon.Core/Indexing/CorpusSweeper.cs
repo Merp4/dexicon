@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
 using Microsoft.EntityFrameworkCore;
@@ -54,6 +55,9 @@ public sealed record SweepResult(int Swept, int Added, SweepOutcome Outcome, str
 /// is throttled, so a crash between them leaves a durable Pending beside vectors that
 /// exist. Indexing remains the only pass that removes anything.
 /// </summary>
+[SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", Justification =
+    "A sweep's token is the host's stop signal. It adds Pending rows in batches and never overwrites a "
+    + "status, so a stopped sweep keeps the batches it saved and the next sweep adds the rest.")]
 public sealed class CorpusSweeper(
     CatalogDbContext db,
     CorpusLeases leases,
