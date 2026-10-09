@@ -2,6 +2,8 @@ using Dexicon.Core.Catalog;
 using Dexicon.Core.Documents;
 using Dexicon.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Dexicon.Tests;
@@ -15,6 +17,7 @@ namespace Dexicon.Tests;
 /// had been detached until a later pass removed points for a path no row names. The cleanup now deletes
 /// the vectors again for the file the detach removed.
 /// </summary>
+[Collection(nameof(AttachmentLockCollection))]
 public sealed class VectorCleanupOfADetachTests
 {
     private static readonly byte[] TheBytes = "the document as it was first attached"u8.ToArray();
@@ -24,15 +27,16 @@ public sealed class VectorCleanupOfADetachTests
     /// cleanup has deleted the vectors it read the name for. Returns whether the cleanup detached it.
     /// </summary>
     private static async Task<bool> DetachWhileAsync(
-        IndexingHarness harness, Func<DocumentService, Corpus, Task> meanwhile)
+        IndexingHarness harness, Func<DocumentService, Corpus, Task> meanwhile,
+        CancellationToken caller = default)
     {
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
-        var corpus = await db.Corpora.SingleAsync();
-        var stored = await documents.StoreAsync(new MemoryStream(TheBytes), "a.txt");
-        var attached = await documents.AttachAsync(corpus, stored.Sha256, "a.txt");
-        await harness.RunIndexAsync();
+        var corpus = await db.Corpora.SingleAsync(CancellationToken.None);
+        var stored = await documents.StoreAsync(new MemoryStream(TheBytes), "a.txt", CancellationToken.None);
+        var attached = await documents.AttachAsync(corpus, stored.Sha256, "a.txt", CancellationToken.None);
+        await harness.RunIndexAsync(cancel: CancellationToken.None);
         harness.Vectors.CountFor("a.txt").ShouldBeGreaterThan(0, "there are vectors to clean up");
 
         var fired = 0;
@@ -47,7 +51,7 @@ public sealed class VectorCleanupOfADetachTests
         };
 
         var removed = await new VectorStoreCleanup(db, harness.Vectors, NullLogger<VectorStoreCleanup>.Instance)
-            .RemoveAttachmentAsync(corpus, attached.Id, documents, CancellationToken.None);
+            .RemoveAttachmentAsync(corpus, attached.Id, documents, caller);
 
         fired.ShouldBe(1, "the change has to have happened between the cleanup's two steps");
         return removed;
@@ -139,5 +143,98 @@ public sealed class VectorCleanupOfADetachTests
 
         removed.ShouldBeFalse();
         deletes.ShouldBe(0);
+    }
+
+    /// <summary>Cancels the caller's token once a save that deleted a file row has committed.</summary>
+    private sealed class CancelWhenAFileRowIsDeleted(CancellationTokenSource caller) : SaveChangesInterceptor
+    {
+        private int _deleting;
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (eventData.Context!.ChangeTracker.Entries<IndexedFile>().Any(e => e.State == EntityState.Deleted))
+                Volatile.Write(ref _deleting, 1);
+
+            return ValueTask.FromResult(result);
+        }
+
+        public override async ValueTask<int> SavedChangesAsync(
+            SaveChangesCompletedEventData eventData, int result, CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Exchange(ref _deleting, 0) == 1) await caller.CancelAsync();
+            return result;
+        }
+    }
+
+    [Fact]
+    public async Task TheDeleteAfterTheRowIsGoneRunsWhenTheCallerHasGoneAndDoesNotUseItsToken()
+    {
+        // The caller leaves once the row is deleted. The points written meanwhile are still deleted, with a
+        // token of the cleanup's own.
+        using var caller = new CancellationTokenSource();
+        var leaving = new CancelWhenAFileRowIsDeleted(caller);
+        await using var harness = await IndexingHarness.StartAsync(leaving, "notes");
+
+        var removed = await DetachWhileAsync(harness, (_, _) => Task.CompletedTask, caller.Token);
+
+        removed.ShouldBeTrue();
+        caller.IsCancellationRequested.ShouldBeTrue("the caller left after the row was deleted");
+        var tokens = harness.Vectors.DeleteTokens;
+        tokens.Count.ShouldBeGreaterThanOrEqualTo(2);
+        // The last delete is the cleanup's own, after the row. The ones before it include the passes' and the first.
+        tokens[^1].IsCancellationRequested.ShouldBeFalse("the delete after the row is not");
+        tokens[^1].ShouldNotBe(caller.Token);
+    }
+
+    [Fact]
+    public async Task ADeleteAfterTheRowIsGoneThatDoesNotAnswerIsGivenUpAndLogged()
+    {
+        var logs = new RecordingLoggerFactory();
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var corpus = await db.Corpora.SingleAsync();
+        var stored = await documents.StoreAsync(new MemoryStream(TheBytes), "a.txt");
+        var attached = await documents.AttachAsync(corpus, stored.Sha256, "a.txt");
+        harness.Vectors.OnFileDeleteTokenAsync = async (token, deletes) =>
+        {
+            if (deletes == 2) await Task.Delay(Timeout.Infinite, token);
+        };
+        var cleanup = new VectorStoreCleanup(db, harness.Vectors, logs.CreateLogger<VectorStoreCleanup>())
+        {
+            SecondDeleteTimeout = TimeSpan.FromMilliseconds(300),
+        };
+
+        var removed = await cleanup.RemoveAttachmentAsync(corpus, attached.Id, documents, CancellationToken.None)
+            .FinishesAsync("the cleanup with a vector store that does not answer");
+
+        removed.ShouldBeTrue("the row was deleted");
+        await using var check = harness.NewContext();
+        (await check.Files.CountAsync()).ShouldBe(0);
+        logs.Lines.ShouldContain(l => l.Contains("timed out", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TheNameOfADocumentIsLoggedOnOneLine()
+    {
+        var logs = new RecordingLoggerFactory();
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var corpus = await db.Corpora.SingleAsync();
+        var stored = await documents.StoreAsync(new MemoryStream(TheBytes), "two\nlines.txt");
+        var attached = await documents.AttachAsync(corpus, stored.Sha256, "two\nlines.txt");
+        harness.Vectors.OnFileDeleteTokenAsync = (_, deletes) =>
+            deletes == 2 ? throw new InvalidOperationException("the vector store is unreachable") : Task.CompletedTask;
+        var cleanup = new VectorStoreCleanup(db, harness.Vectors, logs.CreateLogger<VectorStoreCleanup>());
+
+        (await cleanup.RemoveAttachmentAsync(corpus, attached.Id, documents, CancellationToken.None)).ShouldBeTrue();
+
+        var line = logs.Lines.Single(l => l.Contains("lines.txt", StringComparison.Ordinal));
+        line.ShouldNotContain("\n");
+        line.ShouldNotContain("\r");
     }
 }
