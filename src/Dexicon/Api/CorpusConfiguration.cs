@@ -158,6 +158,16 @@ public sealed class CorpusConfiguration(
                 + "could not be addressed by its name.",
                 400);
 
+        // The settings the default set is stored with, request first and configuration after, judged by the
+        // rules a chunk set added later is. Before the name check and the model probe, which cost a query
+        // and a call to the embedding service for a request that is refused anyway. The request has no
+        // custom pattern, so boundary mode custom is refused here as it is for a set sent without one.
+        var chunkSize = body.ChunkSize ?? Indexing.ChunkSize;
+        var chunkOverlap = body.ChunkOverlap ?? Indexing.ChunkOverlap;
+        var boundaryMode = body.BoundaryMode ?? Indexing.BoundaryMode;
+        if (ChunkSettingRules.Check(chunkSize, chunkOverlap, boundaryMode, customPattern: null) is { } badChunking)
+            return badChunking.ToRefusal();
+
         if (await TakenAsync(name, ct) is { } early) return early;
 
         var model = string.IsNullOrWhiteSpace(body.EmbeddingModel)
@@ -218,9 +228,9 @@ public sealed class CorpusConfiguration(
             EmbeddingModel = model,
             EmbeddingDimensions = dims,
             CollectionName = vectors.CollectionNameFor(target, dims),
-            ChunkSize = body.ChunkSize ?? Indexing.ChunkSize,
-            ChunkOverlap = body.ChunkOverlap ?? Indexing.ChunkOverlap,
-            BoundaryMode = body.BoundaryMode ?? Indexing.BoundaryMode,
+            ChunkSize = chunkSize,
+            ChunkOverlap = chunkOverlap,
+            BoundaryMode = boundaryMode,
             IsDefault = true,
             State = CorpusState.Ready,
             CreatedUtc = DateTime.UtcNow,

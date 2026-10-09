@@ -270,53 +270,10 @@ public static class ChunkSetEndpoints
             statusCode: 404);
 
     /// <summary>
-    /// Validation in one place, because create and update both need all of it and a rule
-    /// enforced on one path only is not a rule.
+    /// Create and update both judge the set by <see cref="ChunkSettingRules"/>, which creating a corpus
+    /// uses for its default set as well.
     /// </summary>
-    private static IResult? Validate(ChunkSet set)
-    {
-        if (set.ChunkSize is < 64 or > 8192)
-            return Results.Problem(title: "chunkSize must be between 64 and 8192 tokens", statusCode: 400);
-
-        if (set.ChunkOverlap < 0)
-            return Results.Problem(title: "chunkOverlap cannot be negative", statusCode: 400);
-
-        if (set.ChunkOverlap >= set.ChunkSize)
-            return Results.Problem(
-                title: "chunkOverlap must be smaller than chunkSize",
-                detail: $"Asked for overlap {set.ChunkOverlap} with size {set.ChunkSize}.",
-                statusCode: 400);
-
-        if (set.BoundaryMode is not ("none" or "blank-line" or "language-aware" or "custom"))
-            return Results.Problem(
-                title: "Unknown boundary mode",
-                detail: $"'{set.BoundaryMode}'. Expected none, blank-line, language-aware or custom.",
-                statusCode: 400);
-
-        if (set.BoundaryMode == "custom")
-        {
-            if (string.IsNullOrWhiteSpace(set.CustomBoundaryPattern))
-                return Results.Problem(
-                    title: "customBoundaryPattern is required for boundary mode 'custom'",
-                    statusCode: 400);
-
-            try
-            {
-                // Compiled here so a bad pattern fails on the request that set it, rather
-                // than part-way through an indexing job an hour later.
-                _ = new System.Text.RegularExpressions.Regex(
-                    set.CustomBoundaryPattern, System.Text.RegularExpressions.RegexOptions.Multiline,
-                    TimeSpan.FromMilliseconds(500));
-            }
-            catch (ArgumentException ex)
-            {
-                return Results.Problem(
-                    title: "Invalid custom boundary pattern",
-                    detail: ex.Message,
-                    statusCode: 400);
-            }
-        }
-
-        return null;
-    }
+    private static IResult? Validate(ChunkSet set) =>
+        ChunkSettingRules.Check(set.ChunkSize, set.ChunkOverlap, set.BoundaryMode, set.CustomBoundaryPattern)
+            ?.ToResult();
 }

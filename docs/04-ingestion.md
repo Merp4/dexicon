@@ -697,6 +697,11 @@ Boundary modes: `none` | `blank-line` | `language-aware` | `custom` (operator re
 with a 500 ms timeout; an invalid or timing-out regex fails the job with a clear error and
 never falls back without reporting it).
 
+A chunk set's size is from 64 to 8,192 tokens and its overlap is not negative and below the size.
+The same rules judge the settings a corpus is created with, for its default set, and a set added
+or changed afterwards; the custom pattern is compiled when it is set, so a bad one is refused on
+that request.
+
 ### No chunk exceeds the budget
 
 The chunker avoids splitting within a line, so every chunk carries exact
