@@ -157,6 +157,13 @@ as `.gitignore`, including `!` to re-include, and is read after it, so a `!` lin
 back a file `.gitignore` excludes. It cannot bring back one that a source's exclude filter,
 include filter or size limit leaves out: those apply after it.
 
+Write it as UTF-8 text with lines under 500 characters, and a class such as `[a-z]` with its range the
+right way round. A `.dexiconignore` with a line that cannot be read (`[z-a]`), a line over 500 characters, more than
+10,000 rules, a UTF-16 or NUL-bearing file, or a link in place of the file stops that source from being indexed
+until it is fixed, so that nothing the file meant to exclude gets in. `index_status` shows the source as unavailable
+and gives the reason, naming the file and the line (lines count from 1). A `.gitignore` with a line
+like that is not held to the same rule: the line is skipped and logged, as git would not apply it either.
+
 If your key lists `configure_corpus` and `configure_source`, you can make the other changes
 yourself. `list_folders` shows what is mounted, which folders are git repositories, and
 which of your corpora read each one. `configure_source(corpus, folder, create: true)` adds a

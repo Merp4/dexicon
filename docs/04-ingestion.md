@@ -98,38 +98,78 @@ ancestor is excluded. Deliberate, and the case it came from is real: a repositor
 excludes `data/` and keeps `data/sessions/` while the bulk of the tree is a sibling. It is
 also what makes `!.vscode/launch.json` work against the always-exclude list.
 
-A `]` straight after `[`, `[!` or `[^` is a member of the class, as in gitignore: `[]a]` matches `]` or `a`,
-and `[!]a]` matches any one character but those two. A class never matches `/`.
+**Bracket classes.** Measured against `git check-ignore` on git 2.31.1 (Windows) and 2.54.0 (Linux), which agreed.
+A `]` straight after `[`, `[!` or `[^` is a member (`[]a]` matches `]` or `a`), `[` is a member (`[a-z-[b]]` is `a-z`, `-`, `[` and `b`,
+then a literal `]`), a `-` after a finished range or at the end is a member, a backslash takes the next character
+literally (`[\]]` is `]`, `[\d]` is `d`), and no class matches `/`, whether it is positive or negated. Four shapes
+git reads in a way that is not worth copying are handled differently:
 
-Every glob is matched by a linear-time engine (`RegexOptions.NonBacktracking`), so no pattern, such as
-`*a*a*a*a*a*a*a*a*a*a*a*a*b`, can run past a match timeout. The engine refuses a glob of a few thousand
-characters; that glob is unusable in the sense below. Its matchers are built the first time a rule is read
-(about 5 ms each) and kept for the life of the process.
+- `[z-a]` and `a[b-/]c`: a range that ends before it starts. Git matches only the start character. Here the line is
+  unusable, so the typo is seen.
+- `[]` and `[^]x`: an empty class. Git matches nothing. Here the line is unusable. `[!]x` is the one-member class of `!`.
+- `[abc`: no closing bracket. Git matches nothing, not even a file named `[abc`. Here the `[` is an ordinary character.
+- A backslash outside a class is an ordinary character here and an escape in git.
 
-A glob list sent through the API or the configure tools is refused when it holds a null element or
-a pattern that does not compile, such as the bracket class `[z-a]`. The API answers `400`, naming the
-list and the position (`includeGlobs[1]`); the configure tools return an error with the same text.
+Two more differences are in the wildcards. A `**` that is not followed by `/` and is not a whole path segment
+(`a**b`) crosses directories here, where git reads it as `*` (`a/b` is not matched by `a**b` in git). A line feed in
+a file name is an ordinary character, as in git.
+
+Case is ignored by comparing characters' invariant lower cases, which pairs the same characters as .NET's
+case-insensitive regular expressions did (the Kelvin sign with `k`, sharp s with capital sharp s) and leaves the long
+`s` apart from `s`, and final sigma from sigma. Characters are UTF-16 units, so `?` matches one unit and not a whole emoji.
+
+**How a pattern is matched.** A pattern is read into tokens (a character, `?`, a class, `*`, `**`, `**/`) and a match
+runs them over the path, so a match takes at most the number of tokens times the length of the path, whatever the
+pattern (`*a*a*a*a*a*a*a*a*a*a*a*a*b`, ten `**/` in a row). There is no match timeout. The 250 ms timeout the previous
+regular-expression matcher had threw from the middle of a walk for patterns like these, and also fired for `*.so` on a host starved of CPU; the engine
+that cannot backtrack was tried and costs about 390 KiB to build each matcher, so a `.gitignore` of ten thousand lines
+would hold gigabytes. A rule is a few hundred bytes. Measured here on rules of the form `foo123*.bar`: 469 rules build
+in 28 ms and hold 0.3 MB, 10,000 in 21 ms and 4.4 MB, 50,000 in 65 ms and 22 MB. Matching 469 rules against 20,000
+paths took 0.24 to 0.34 s, where the regular expressions took 5.2 s, and 3,000 rules against 30,000 paths took 2.0 s
+against 40 to 100 s. Rules a literal search cannot reject (`*a*b*c*.cs`, against paths that all end in `.cs`) cost
+about 200 ns each per path, and 469 of them against 20,000 paths took 2.2 s against 8.8 s.
+
+**Limits on what a walk reads.** A line of an ignore file or an entry of a glob list over 500 characters is not read.
+A walk reads at most 10,000 rules from ignore files and glob lists together, since every file the walk meets is tested
+against every rule in force: 10,000 rules cost about 30 ns per file when a literal search rejects them and about 200 ns
+when it does not, so a million files at the limit take 5 to 35 minutes of matching. An ignore file over 8 MiB is not read. The walk
+holds the first 20 warnings it raises and counts the rest, and the index pass logs those 20 and the count once.
+
+A glob list sent through the API or the configure tools is refused when it holds a null element, an entry over 500
+characters, more than 10,000 entries, or a pattern that cannot be read, such as `[z-a]`. The API answers `400`, naming the
+list and the entry's position counted from zero (`includeGlobs[1]`); the configure tools return an error with the same text.
 Nothing is saved. That holds for a source's lists and for a corpus's defaults. A history source's
 include list is read by git as pathspecs, so only a null, empty or null-character element is refused
 there, and a corpus's default include list, which sources of both kinds inherit, is held to both
 rules. What git itself rejects is not checked, so a default such as `/build`, which a file source
-reads as an anchored pattern, still fails in a history source that inherits it. The check is of syntax,
-made by the walk's own parser. The lines of a `.gitignore`, `.git/info/exclude` or `.dexiconignore` in the
-tree are not checked when a list is stored; the walk reads them, and a line it cannot compile is handled by
-whose file it is:
+reads as an anchored pattern, still fails in a history source that inherits it. The lines of a `.gitignore`,
+`.git/info/exclude` or `.dexiconignore` in the tree are not checked when a list is stored; the walk reads them,
+numbers their lines from 1, and handles what it cannot use by whose file it is:
 
-- `.gitignore` and `.git/info/exclude` are git's, and git applies no rule for a line it cannot read. The line is
-  skipped, the rest of the file applies, and the index pass logs a warning such as
+- `.gitignore` and `.git/info/exclude` belong to git, and the walk does not hold them to a stricter reading than git
+  does. A line it cannot read is skipped, the rest of the file applies to that directory and everything beneath it, and
+  the index pass logs a warning such as
   `Source docs: sub/.gitignore line 3 ('[z-a]') cannot be compiled (reversed character range); the line was skipped`.
-  The job still succeeds.
-- `.dexiconignore` is written to keep content out of the index, so skipping a line would index what it meant to
-  exclude. The walk of that source fails instead. The pass treats the source like one that could not be
-  reached: nothing already indexed is removed, the corpus's other sources are still indexed, the job finishes
-  `degraded`, the corpus reads `unavailable`, and the job's error (shown by `index_status`) reads
+  A file that cannot be opened, or is not UTF-8 text (it holds a NUL byte or starts with a UTF-16 or UTF-32 byte order
+  mark), is skipped whole with a warning; a link is not read, as git does not read it. Past the 10,000-rule limit the
+  rest of the file is skipped with one warning. The job still succeeds. Files above the source's root are never read, so
+  no ancestor's bad line can reach the walk. Directories another source owns are not read either, so a bad line there is
+  reported by the source that owns it.
+- `.dexiconignore` is written to keep content out of the index, so skipping any of it would index what it meant to
+  exclude. A line it cannot read, a line over 500 characters, a file past the limit, a link, a file that cannot be
+  opened, and a file that is not UTF-8 text each fail the walk of that source. The pass treats the source like one that
+  could not be reached: nothing already indexed is removed, the corpus's other sources are still indexed, the job
+  finishes `degraded`, the corpus reads `unavailable`, and the job's error (shown by `index_status`) reads, for
+  example,
   `Source 'docs' was not indexed because sub/.dexiconignore line 3 ('[z-a]') cannot be compiled (reversed character range).`
-  A sweep leaves that source's inventory as it is. Fixing or removing the line clears it on the next pass.
-- An entry of a stored include or exclude list that cannot be compiled, from before the list was checked on store,
-  fails the walk the same way and is named as `exclude_globs entry 2` or `include_globs entry 1`.
+  or `... because .dexiconignore is a link, and links are not followed.` A sweep leaves that source's inventory as it is.
+  Fixing or removing the cause clears it on the next pass.
+- An entry of a stored include or exclude list that cannot be used, from before the lists were checked on store, fails
+  the walk the same way and is named by its list and zero-based position, as `excludeGlobs[1]`.
+
+A message names the file by its path from the source's root, shows the first 100 characters of a line, and has
+every control, separator, bidirectional and unpaired-surrogate character replaced with `?`, because the text comes
+from the indexed tree and reaches logs and `index_status`.
 
 Worktrees are the case that prompted `2`. Reported against a checkout with four of them:
 22,004 files walked to 5,463 tracked ones, and search returning the same document at two
