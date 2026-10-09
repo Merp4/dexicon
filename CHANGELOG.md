@@ -109,7 +109,9 @@ with no section here fails its release rather than publishing an undescribed one
 - **A key issued for chosen corpora could be saved reaching every corpus.** The key and its
   corpora were two saves: an unknown corpus id was refused with `400` after the key was saved,
   and a cancel between the saves left it unmapped. A key with no mapping reaches every corpus,
-  and its secret had not been shown. The corpora are checked first and saved with the key.
+  and its secret had not been shown. The corpora are checked first and saved with the key. A key
+  an earlier version already left unmapped is not repaired: `GET /api/tokens` lists it with an
+  empty `corpusIds`, nobody holds its secret, and it can be revoked.
 - **Requests that answered `500`, or were read as something else.** Each was found by sending every
   JSON-body operation an empty object and `null`, by reading the attach path for a taken name, or by
   an independent review of the request paths, and each was reproduced against a running build. A
