@@ -59,8 +59,10 @@ public sealed class DocumentService(
     /// that deleted the source between an attachment's lookup and its save made the save fail on the
     /// foreign key. One lock for all corpora, because an attachment is a few queries and a save.
     ///
-    /// Not covered: the indexer's writes. A pass saves tracked rows read at its start, and a document
-    /// detached while it runs makes its next save fail.
+    /// Not taken by the indexer, whose pass saves rows it read at its start. A document detached while a
+    /// pass runs is dropped from the pass's next save (<c>CorpusIndexer.SaveUploadsAsync</c>), which
+    /// deletes the vectors the pass wrote for it. When that delete fails the pass still succeeds, and
+    /// the next pass of the source deletes points whose path no row names.
     ///
     /// Lock order: <c>ProposalService</c> holds its decision lock and then takes this one inside the
     /// removal it runs. Nothing holds this lock while waiting for another.

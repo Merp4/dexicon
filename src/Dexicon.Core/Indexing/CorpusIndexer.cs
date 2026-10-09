@@ -380,6 +380,7 @@ public sealed class CorpusIndexer(
         Report(progress, job, null);
 
         var sinceFlush = System.Diagnostics.Stopwatch.StartNew();
+        var attached = attachments.ToDictionary(f => f.Id, StringComparer.Ordinal);
 
         foreach (var file in attachments)
         {
@@ -446,7 +447,14 @@ public sealed class CorpusIndexer(
                 // describes vectors that are about to stop existing.
                 state.ContentHash = null;
                 state.Status = FileStatus.Pending;
-                await db.SaveChangesAsync(ct);
+                await SaveUploadsAsync(set, attached, states, ct);
+
+                // Detached since the pass read it, so the save above left it out. Nothing is embedded for it.
+                if (db.Entry(state).State == EntityState.Detached)
+                {
+                    job.FilesSkipped++;
+                    continue;
+                }
 
                 await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, file.SourceId, file.RelativePath, ct);
 
@@ -512,15 +520,84 @@ public sealed class CorpusIndexer(
 
             if (sinceFlush.ElapsedMilliseconds >= 1000)
             {
-                await db.SaveChangesAsync(ct);
+                await SaveUploadsAsync(set, attached, states, ct);
                 Report(progress, job, file.RelativePath);
                 sinceFlush.Restart();
             }
         }
 
-        await db.SaveChangesAsync(ct);
+        await SaveUploadsAsync(set, attached, states, ct);
         log.LogInformation("Upload source: {Indexed} indexed, {Skipped} skipped, {Failed} failed",
             job.FilesDone, job.FilesSkipped, job.FilesFailed);
+    }
+
+    /// <summary>
+    /// Save the pass's changes to an upload source, leaving out each attachment whose row was deleted since
+    /// the pass read it.
+    ///
+    /// The pass tracks the source's attachments and their chunk states for as long as embedding takes. A
+    /// document detached in that time has no row to update: the save fails on it, and fails again on every
+    /// retry of the save that records how the job ended, because the tracker still holds the change. The
+    /// job was left Running and the documents after the detached one were not indexed.
+    ///
+    /// A document whose row is gone is dropped from the tracker, and the vectors the pass wrote for it are
+    /// deleted. A failure to delete them is logged and left to the next pass, which removes points for a
+    /// path no row names (<see cref="ReconcileChunkCountsAsync"/>). A conflict on a row that still exists is
+    /// not this case and is thrown.
+    /// </summary>
+    private async Task SaveUploadsAsync(ChunkSet set, Dictionary<string, IndexedFile> attached,
+        Dictionary<string, FileChunkState> states, CancellationToken ct)
+    {
+        // Each round drops at least one attachment, which is not saved again, or throws.
+        while (true)
+        {
+            try
+            {
+                await db.SaveChangesAsync(ct);
+                return;
+            }
+            catch (DbUpdateConcurrencyException ex) when (ex.Entries.Count > 0)
+            {
+                var vanished = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var entry in ex.Entries)
+                {
+                    var fileId = entry.Entity switch
+                    {
+                        FileChunkState state => state.FileId,
+                        IndexedFile file => file.Id,
+                        _ => null,
+                    };
+
+                    if (fileId is null || !attached.ContainsKey(fileId)
+                        || await db.Files.AsNoTracking().AnyAsync(f => f.Id == fileId, ct))
+                        throw;
+
+                    vanished.Add(fileId);
+                }
+
+                foreach (var fileId in vanished)
+                {
+                    var file = attached[fileId];
+                    db.Entry(file).State = EntityState.Detached;
+                    if (states.TryGetValue(file.Id, out var state)) db.Entry(state).State = EntityState.Detached;
+
+                    log.LogInformation(
+                        "{Set}: {File} was detached while the pass was indexing it; its changes are dropped",
+                        set.Name, file.RelativePath);
+                    try
+                    {
+                        await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, file.SourceId,
+                            file.RelativePath, ct);
+                    }
+                    catch (Exception removal) when (removal is not OperationCanceledException)
+                    {
+                        log.LogWarning(removal,
+                            "{Set}: could not remove the points written for {File}, which was detached; "
+                            + "the next pass removes them", set.Name, file.RelativePath);
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>
