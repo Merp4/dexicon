@@ -16,7 +16,7 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
-## Unreleased
+## 0.6.8 — 2026-10-09
 
 ### ⚠️ Upgrading
 
@@ -55,6 +55,12 @@ with no section here fails its release rather than publishing an undescribed one
 - **The OpenAPI documents declare the status each operation returns.** Twelve operations answered
   201, 202 or 204 while declaring 200, so a generated client typed the wrong response. The
   committed documents and the typed web client are regenerated.
+- **The documentation was checked against the code and corrected.** About 220 statements were wrong
+  or out of date, most of them in the setup, install and upgrade procedures (`README.md`,
+  `docs/09-deployment.md`), the MCP, auth and integration references, the data model and the UI
+  guide. `docs/09-deployment.md` has an Upgrading section and a configuration table keyed by the
+  `.env` names. The README quickstart was followed step by step on a fresh clone, and the steps that
+  failed were corrected.
 - **The first-start log and the sign-in screen say how to read the admin password.** It is the
   quoted value on the third line after `admin password`, so the commands read
   `grep -A 2 "admin password"`. The banner no longer says the password can be changed in the UI;
@@ -103,9 +109,10 @@ with no section here fails its release rather than publishing an undescribed one
   refresh.** The job that indexes an upload, an attach to another corpus, a new corpus created
   with a folder, a new chunk set, or a chunk-set change that re-chunks was queued on the request's
   token, so a cancel between the save and the job left the saved change with nothing queued. A new
-  chunk set stayed marked as degraded, and a change was not re-applied by sending it again. The job is no longer cancellable once the change is
-  saved, and an upload cut off partway keeps and indexes the files completed before it. The file
-  being attached at the moment of the cut is discarded, not saved without being reported.
+  chunk set stayed marked as degraded, and a change was not re-applied by sending it again. The job
+  is no longer cancellable once the change is saved, and an upload cut off partway keeps and
+  indexes the files completed before it. The file being attached at the moment of the cut is
+  discarded, not saved without being reported.
 - **A key issued for chosen corpora could be saved reaching every corpus.** The key and its
   corpora were two saves: an unknown corpus id was refused with `400` after the key was saved,
   and a cancel between the saves left it unmapped. A key with no mapping reaches every corpus,
