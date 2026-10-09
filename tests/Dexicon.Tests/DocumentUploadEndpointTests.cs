@@ -444,6 +444,78 @@ public sealed class DocumentUploadEndpointTests
     }
 
     [Fact]
+    public async Task FilesAttachedBeforeAnUnexpectedFailureAreStillQueuedForIndexing()
+    {
+        // The second file's read fails for a reason that is the server's. The caller gets that error, and
+        // the first file, which is attached, has its job and does not wait for the next scheduled refresh.
+        await using var harness = await StartAsync();
+        var body = new MultipartBody().File("files", "first.txt", 100, 'a').File("files", "second.txt", 20_000, 'b');
+
+        var thrown = await Should.ThrowAsync<IOException>(
+            () => PostAsync(harness, body, wrap: s => new FailingAfter(s, 1_000)));
+
+        thrown.Message.ShouldBe("the disk is full");
+        await using var db = harness.NewContext();
+        (await db.Files.Select(f => f.RelativePath).ToListAsync()).ShouldBe(["first.txt"]);
+        (await db.Jobs.CountAsync()).ShouldBe(1, "the attached file has its job");
+    }
+
+    /// <summary>Fails the <paramref name="nth"/> INSERT into <paramref name="table"/> with an error that is not a cancel.</summary>
+    private sealed class FailOnInsert(string table, int nth) : DbCommandInterceptor
+    {
+        private int _seen;
+
+        public bool Fired { get; private set; }
+
+        private void Observe(DbCommand command)
+        {
+            if (!command.CommandText.StartsWith("INSERT", StringComparison.OrdinalIgnoreCase)
+                || !command.CommandText.Contains($"\"{table}\"", StringComparison.OrdinalIgnoreCase)
+                || ++_seen != nth)
+                return;
+
+            Fired = true;
+            throw new InvalidOperationException("the catalogue refused the write");
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Observe(command);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            Observe(command);
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
+    [Fact]
+    public async Task AFileWhoseAttachmentFailedIsNotSavedWithTheJobOfTheFilesBeforeIt()
+    {
+        // The second file's save fails and leaves its rows tracked on the context the job is queued
+        // through. The save that queues the job would write them: a file the caller was told failed, indexed.
+        var watcher = new FailOnInsert("files", 2);
+        await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        var body = new MultipartBody().File("files", "first.txt", 100, 'a').File("files", "second.txt", 100, 'b');
+
+        var thrown = await Should.ThrowAsync<DbUpdateException>(() => PostAsync(harness, body));
+
+        watcher.Fired.ShouldBeTrue("the window has to have been opened");
+        thrown.InnerException.ShouldNotBeNull().Message.ShouldBe("the catalogue refused the write");
+        await using var db = harness.NewContext();
+        (await db.Files.Select(f => f.RelativePath).ToListAsync()).ShouldBe(["first.txt"], "only the attached file is saved");
+        (await db.FileChunkStates.CountAsync()).ShouldBe(1);
+        (await db.Jobs.CountAsync()).ShouldBe(1);
+    }
+
+    [Fact]
     public async Task AnIoFailureThatIsNotTheEndOfTheBodyStaysAServerError()
     {
         // Control: only the reader's own "ended early" is the client's mistake. A read that fails

@@ -492,6 +492,24 @@ public static class CorpusEndpoints
             : null;
 
     /// <summary>
+    /// A glob list the walk cannot read, refused where it arrives. Stored as sent it failed every pass of
+    /// every source that read it, with the reason in a job and the request answered 200. The position is
+    /// named and the pattern is not echoed, because the text is the caller's and the message is logged.
+    /// </summary>
+    internal static ConfigRefusal? UnusableGlobs(IReadOnlyList<string>? include, IReadOnlyList<string>? exclude)
+    {
+        foreach (var (field, globs) in new[] { ("includeGlobs", include), ("excludeGlobs", exclude) })
+            if (SourceFilters.FirstUnusable(globs) is { } at)
+                return new ConfigRefusal(
+                    "Unusable glob",
+                    $"{field}[{at}] is not a pattern the walk can read: it is null, or has a character class "
+                    + "that does not compile, such as [z-a]. Nothing was saved.",
+                    400);
+
+        return null;
+    }
+
+    /// <summary>
     /// Stores a history source's settings when they differ from what it has, and says
     /// whether they did.
     ///

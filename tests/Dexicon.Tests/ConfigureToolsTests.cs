@@ -210,6 +210,26 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
         (await SourceAsync(db, Configurer, "..data", create: true)).ShouldStartWith("Added a source for the files under ..data");
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AFolderWithANullCharacterIsRefusedInPlainWords(bool create)
+    {
+        // Path.GetFullPath throws ArgumentException on it, and the SDK shows an agent only "An error occurred".
+        await using var db = _harness.NewContext();
+
+        var thrown = await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, "a\0b", create: create));
+
+        thrown.Message.ShouldContain("null character");
+    }
+
+    [Fact]
+    public void CanonicalRefusesANullCharacterAsResolveDoes()
+    {
+        Should.Throw<UnauthorizedAccessException>(() => WorkspaceDiscovery.Canonical(Workspace, "a\0b"));
+        Should.Throw<UnauthorizedAccessException>(() => WorkspaceDiscovery.Resolve(Workspace, "a\0b"));
+    }
+
     [Fact]
     public void ABackslashIsASeparatorOnlyWhereTheOperatingSystemSaysSo()
     {

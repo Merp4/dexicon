@@ -82,4 +82,25 @@ public static class SourceFilters
     /// </summary>
     public static string? Store(IReadOnlyList<string>? globs) =>
         globs is null ? null : JsonSerializer.Serialize(globs);
+
+    /// <summary>
+    /// The position of the first pattern in <paramref name="globs"/> that the walk cannot read, or null
+    /// when it can read them all. A null element, or a character class that does not compile such as
+    /// <c>[z-a]</c>, was stored as sent and threw from <see cref="IgnoreRuleSet.AddPatterns"/> on every
+    /// pass of every source that read the list. Read by the walk's own parser, so the two cannot differ.
+    /// </summary>
+    public static int? FirstUnusable(IReadOnlyList<string>? globs)
+    {
+        if (globs is null) return null;
+
+        for (var i = 0; i < globs.Count; i++)
+        {
+            if (globs[i] is null) return i;
+
+            try { new IgnoreRuleSet().AddPatterns([globs[i]], "check"); }
+            catch (ArgumentException) { return i; }
+        }
+
+        return null;
+    }
 }

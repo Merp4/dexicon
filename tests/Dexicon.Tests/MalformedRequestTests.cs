@@ -255,6 +255,16 @@ public sealed class MalformedRequestTests
     }
 
     [Fact]
+    public void AnUnknownSearchModeIsShownWithoutAnyControlCharacter()
+    {
+        // The message is logged, and an escape sequence in a log reaches a terminal that tails it.
+        var thrown = Should.Throw<UnknownSearchModeException>(() => Mapping.ParseMode("fuzzy\u001B[2J\0\tend"));
+
+        thrown.Message.ShouldStartWith("Unknown search mode 'fuzzy");
+        thrown.Message.ShouldAllBe(c => !char.IsControl(c));
+    }
+
+    [Fact]
     public void ThreeSearchModesAreStillAccepted()
     {
         Mapping.ParseMode(null).ShouldBe(SearchMode.Hybrid);

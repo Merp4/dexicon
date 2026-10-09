@@ -116,6 +116,9 @@ public sealed class CorpusConfiguration(
             return new ConfigRefusal("Invalid size cap",
                 "maxFileBytes must be greater than zero, or null to follow the server's setting.", 400);
 
+        if (defaults is not null && CorpusEndpoints.UnusableGlobs(defaults.IncludeGlobs, defaults.ExcludeGlobs) is { } badGlob)
+            return badGlob;
+
         if (string.IsNullOrWhiteSpace(body.Name))
             return new ConfigRefusal("Name is required", "A corpus needs a name.", 400);
 
@@ -284,6 +287,9 @@ public sealed class CorpusConfiguration(
             return new ConfigRefusal("Invalid size cap",
                 "maxFileBytes must be greater than zero, or null to follow the server's setting.", 400);
 
+        if (body.Defaults is { } sent && CorpusEndpoints.UnusableGlobs(sent.IncludeGlobs, sent.ExcludeGlobs) is { } badGlob)
+            return badGlob;
+
         // Chunk settings are NOT here any more. They belong to a chunk set, because a
         // corpus can carry several and "the corpus's chunk size" stopped meaning
         // anything the moment that became true. See /api/corpora/{id}/chunk-sets.
@@ -362,6 +368,8 @@ public sealed class CorpusConfiguration(
         if (body.MaxFileBytes is <= 0)
             return new ConfigRefusal("Invalid size cap",
                 "maxFileBytes must be greater than zero, or omitted to follow the corpus.", 400);
+
+        if (CorpusEndpoints.UnusableGlobs(body.IncludeGlobs, body.ExcludeGlobs) is { } badGlob) return badGlob;
 
         if (body.GitHistory && CorpusEndpoints.UnusableHistorySettings(body.Git) is { } refused) return refused;
 
@@ -469,6 +477,8 @@ public sealed class CorpusConfiguration(
                 $"Source '{sourceId}' indexes commits, so {inapplicable} would be stored "
                 + "and never read. Include globs work there, as pathspecs.",
                 400);
+
+        if (CorpusEndpoints.UnusableGlobs(body.IncludeGlobs, body.ExcludeGlobs) is { } badGlob) return badGlob;
 
         if (CorpusEndpoints.UnusableHistorySettings(body.Git) is { } refused) return refused;
 

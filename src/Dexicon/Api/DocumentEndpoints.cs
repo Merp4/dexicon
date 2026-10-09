@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.ExceptionServices;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
@@ -116,6 +117,7 @@ public static class DocumentEndpoints
         var filesSeen = 0;
         var overran = false;
         string? malformed = null;
+        ExceptionDispatchInfo? failure = null;
 
         // Counts what is read, so a body with no declared length (chunked) is refused at the
         // bound too, and so is a declared length that understates the body.
@@ -184,6 +186,22 @@ public static class DocumentEndpoints
         {
             malformed = "The body ended before its closing boundary.";
             failures.Add(new UploadFailure(null, $"The multipart body could not be read: {malformed}"));
+        }
+        // Anything else, with files attached already: the caller still gets the server error, and the
+        // attached files are not left with no job until the next scheduled refresh. What the failed step
+        // had added is dropped here, as for a cancel, or the save that queues the job would write it. The
+        // job is queued after the try and not in this block, where the request-token scan cannot see
+        // that it follows the commits above.
+        catch (Exception ex) when (stored.Count > 0)
+        {
+            documents.DiscardUnsavedChanges();
+            failure = ExceptionDispatchInfo.Capture(ex);
+        }
+
+        if (failure is not null)
+        {
+            await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: CancellationToken.None);
+            failure.Throw();
         }
 
         if (stored.Count == 0)
