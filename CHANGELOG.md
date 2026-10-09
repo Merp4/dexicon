@@ -36,6 +36,10 @@ with no section here fails its release rather than publishing an undescribed one
   `failed[].file` is `null` for any failure of the request as a whole and a file's name otherwise.
   Only the per-file cap applied before. A script that posts a batch beyond the bound needs to
   split it.
+- Three requests are refused that were accepted or answered `500`. `POST /api/corpora/{x}/sources`
+  without `workspacePath` is `400`: it was read as the workspace root, and an empty string still is
+  the root. `PUT /api/tokens/{id}/corpora` without `corpusIds` is `400`, and an empty list still
+  lifts the restriction. `POST /api/tokens` with an `expiresInDays` above 36,500 is `400`.
 - The skill changes (`dexicon-skill-version: 6`). Running `scripts/install-mcp.ps1` again
   upgrades installed copies. The hooks are unchanged.
 
@@ -102,6 +106,19 @@ with no section here fails its release rather than publishing an undescribed one
   corpora were two saves: an unknown corpus id was refused with `400` after the key was saved,
   and a cancel between the saves left it unmapped. A key with no mapping reaches every corpus,
   and its secret had not been shown. The corpora are checked first and saved with the key.
+- **Four requests answered `500`, or were read as something else.** Each was found by sending every
+  JSON-body operation an empty object and `null`, and by reading the attach path for a taken name,
+  and each changes nothing when refused.
+  - `PUT /api/tokens/{id}/corpora` without `corpusIds` threw on the missing list. It answers `400`
+    and keeps the mapping.
+  - `POST /api/tokens` with `expiresInDays` of 2147483647 threw in `DateTime.AddDays`. Values above
+    36,500 days answer `400` "Expiry too far".
+  - `POST /api/corpora/{x}/sources` without `workspacePath` added a source over the workspace root,
+    so a misspelt field indexed everything mounted. It answers `400`.
+  - Uploading or attaching a stored document under the name another document in the corpus holds
+    renamed it onto a path the source already had, and the save failed on the unique key. An upload
+    lists the file under `failed` and stores the files beside it; an attach answers `409` "Name
+    already used". The document stays attached under its own name.
 - **Attaching the first document to a corpus could leave an empty upload source.** The source
   was saved before the document, so a cancel between them left a source with no files. It is
   saved with the document.

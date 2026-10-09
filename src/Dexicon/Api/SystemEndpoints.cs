@@ -512,6 +512,9 @@ public static class SystemEndpoints
         }).Produces<TokenSummary>();
     }
 
+    /// <summary>The longest expiry <c>POST /api/tokens</c> accepts. Past it the date is out of the calendar's range.</summary>
+    internal const int MaxExpiryDays = 36_500;
+
     /// <summary>The handler of <c>POST /api/tokens</c>, a method so a test can call it without a server.</summary>
     internal static async Task<IResult> CreateTokenAsync(CreateTokenRequest body, RequestContext rc, TokenService tokens,
         CatalogDbContext db, CancellationToken ct)
@@ -520,6 +523,12 @@ public static class SystemEndpoints
 
         if (string.IsNullOrWhiteSpace(body.Name))
             return Results.Problem(title: "Name is required", statusCode: 400);
+
+        if (body.ExpiresInDays > MaxExpiryDays)
+            return Results.Problem(
+                title: "Expiry too far",
+                detail: $"expiresInDays is at most {MaxExpiryDays:N0}, which is 100 years. The key was not created.",
+                statusCode: 400);
 
         var requested = body.Scopes is { Count: > 0 } ? body.Scopes : [Scopes.Search];
         if (UnissuableScopes(requested) is { } unissuable) return unissuable;
@@ -542,6 +551,14 @@ public static class SystemEndpoints
         CatalogDbContext db, CancellationToken ct)
     {
         if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+
+        // An empty list lifts the restriction, so a request that leaves the field out is refused, not
+        // read as one.
+        if (body.CorpusIds is null)
+            return Results.Problem(
+                title: "Corpus ids are required",
+                detail: "Send corpusIds: an empty list lets the key reach every corpus. The mapping was not changed.",
+                statusCode: 400);
 
         var token = await db.Tokens.Include(x => x.Corpora).FirstOrDefaultAsync(x => x.Id == id, ct);
         if (token is null) return Results.NotFound();

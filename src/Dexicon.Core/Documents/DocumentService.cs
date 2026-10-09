@@ -311,6 +311,14 @@ public sealed class DocumentService(
         {
             if (!string.Equals(byBlob.RelativePath, fileName, StringComparison.Ordinal))
             {
+                // A path is unique within a source, so a name another document holds cannot be taken by
+                // renaming onto it: the save failed on the key and the request answered 500. Replacing
+                // that document is not what attaching these bytes asks for, so it is refused.
+                if (await db.Files.AnyAsync(f => f.SourceId == source.Id && f.RelativePath == fileName, ct))
+                    throw new NameTakenException(
+                        $"'{fileName}' is the name of another document in this corpus, and these bytes are already "
+                        + $"attached to it as '{byBlob.RelativePath}'.", nameof(fileName));
+
                 // Renaming invalidates the old chunks, which are keyed by file_path.
                 // Cleared here; the caller's reindex writes them back under the new name.
                 byBlob.RelativePath = fileName;

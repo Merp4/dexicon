@@ -241,6 +241,10 @@ public sealed record SaveModelProfileRequest(
 /// <summary>A configured backend, and whether its models can be pulled and deleted.</summary>
 public sealed record EmbeddingProviderInfo(string Name, string Kind, bool Managed, bool Configured, string? Detail);
 
+/// <param name="WorkspacePath">
+/// The folder, relative to the workspace root. Required: an empty string is the root itself, and a
+/// request that leaves it out is refused.
+/// </param>
 /// <param name="GitHistory">
 /// Index this folder's commit history rather than its files. The folder must be a git
 /// repository. A repository whose files AND history are both wanted takes two sources
@@ -531,6 +535,9 @@ public sealed record ContextApiRequest(
     bool? LineNumbers = null,
     bool? DistinctTitles = null);
 
+/// <param name="ExpiresInDays">
+/// Days until the key stops working, at most 36,500. Omitted or zero means it does not expire.
+/// </param>
 /// <param name="CorpusIds">
 /// Corpus ids this key may reach. Omitted or empty means every corpus, which is what a
 /// single-user install wants. Editable afterwards, and read per request, so a change
@@ -542,7 +549,10 @@ public sealed record CreateTokenRequest(
     int? ExpiresInDays = null,
     IReadOnlyList<string>? CorpusIds = null);
 
-/// <summary>Replaces a key's corpus mapping outright. An empty list means every corpus.</summary>
+/// <summary>
+/// Replaces a key's corpus mapping outright. An empty list means every corpus, and the field is
+/// required: a request without it is refused.
+/// </summary>
 public sealed record UpdateTokenCorporaRequest(IReadOnlyList<string> CorpusIds);
 
 /// <summary>
