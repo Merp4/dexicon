@@ -275,26 +275,48 @@ uploaded again.
 
 Extraction of an uploaded file is abandoned after `DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS`
 (300 s), under the clock described above for workspace files. A timeout, or an extraction failure
-that is an I/O error, a refused permission, a shortage of memory, a `TimeoutException` or an extraction
-failure that wraps one of those, says how the host was and not what the document holds, so no document record is created. The file is listed under `failed` (the
-timeout names the setting), the files beside it in the request are stored, the bytes stay in the
-blob store, and sending the file again extracts it again. When another upload of the same bytes saved
-its blob meanwhile, the file is reported as stored. An extraction failure that is a verdict on the
-bytes, an encrypted or corrupt file, is stored with its message as the document's empty reason. A
-`blob_texts` row that an earlier version wrote for an I/O error, a refused permission or a shortage of
-memory keeps that message as its empty reason: it is at the current extractor version, so no pass
-extracts it again, and uploading the same bytes returns it as already stored. Such rows are not
-repaired. The count on the maintainer's install is 0; other installs have not been measured.
+that is an I/O error, a refused permission, a shortage of memory, a `TimeoutException`, or an
+extraction failure that wraps one of those, says how the host was and not what the document holds,
+so no document record is created. So is a cancellation that the caller did not ask for, which is how
+a library reports a timeout of its own. The file is listed under `failed` (the timeout names the
+setting), the files beside it in the request are stored, the bytes stay in the blob store, and
+sending the file again extracts it again. When another upload of the same bytes saved its blob
+meanwhile, the file is reported as stored. An extraction failure that is a verdict on the bytes, an
+encrypted or corrupt file, is stored with its message as the document's empty reason.
+
+Because no row records a timeout, a file that times out every time does so for the full budget on
+every upload of it, and the response carries no `Retry-After`. A request in which every file failed
+for such a reason answers `503`. In the web UI a drop of more than ten files is sent as several
+requests, and a request that answers `503` ends the drop: the files not yet sent are listed as
+`Not sent`. That is intended. A server that cannot extract is not helped by more uploads, and
+dropping the rest again is the retry.
+
+A `blob_texts` row that an earlier version wrote for an I/O error, a refused permission, a shortage
+of memory, a `TimeoutException`, or an extraction failure that wraps one of those keeps that message
+as its empty reason: it is at the current extractor version, so no pass extracts it again, and
+uploading the same bytes returns it as already stored. Such rows are not repaired. On the
+0.6.7-era backup of the maintainer's catalogue taken on 2026-10-09 there were no uploads at all
+(`blobs` and `blob_texts` empty; the 1,997 `file_texts` rows are workspace files, a different
+table). Other installs, and the maintainer's catalogue since, have not been measured.
 
 A workspace file that times out is recorded as failed with the timeout text and retried on a later
-refresh; one whose extractor caught the timeout and returned the text read so far is handled the same
-way, and that text is not cached. A stored document that is extracted again after an extractor change
-keeps its previous text when that fails for a timeout or such a reason, is tried again on a later
-pass, and is tried once per job and not once per chunk set.
+refresh. One whose extractor caught the timeout and returned the text read so far is handled the
+same way, and that text is not cached. A stored document that is extracted again after an extractor
+change keeps its previous text, is tried again on a later pass, and is tried once per job and not
+once per chunk set, when the extraction fails for any of the reasons above or when the exception
+points at a fault in the extractor (a null reference, an invalid operation, an argument). A new
+upload with the same fault records the verdict. A set that chunked the older text is stamped with a
+fingerprint that names that text's extractor version, so it chunks the new text on the next pass.
 
+HTML is read only when its elements nest no deeper than 512, which is what browsers build. The
+nesting is counted from the markup before a tree exists: end tags that may be left out, and tags in
+comments, scripts, and quoted attribute values, are not counted. A deeper document, in an HTML file
+or in an EPUB chapter, is an unreadable document ("nests elements more than 512 deep"). A document
+nested 100,000 deep took 150 s to parse and, before the limit, a few thousand levels overflowed the
+stack of the text walk ([10](10-security-secrets.md#input-handling) lists the other formats).
 A body that ends before its closing boundary, or whose headers are over the reader's limits, is
-handled as an overrun of the byte bound is: files completed before it stay stored and are indexed, the response lists
-the cause under `failed` with a `null` `file`, and when nothing was stored the answer is `400`
+handled as an overrun of the byte bound is: files completed before it stay stored and are indexed,
+the response lists the cause under `failed` with a `null` `file`, and when nothing was stored the answer is `400`
 "Malformed multipart upload". A client that disconnects after some files were stored is handled
 the same way: those files are attached and indexed, and the file being attached at that moment is
 discarded rather than saved without being reported. The Documents screen names each file in
