@@ -32,11 +32,12 @@ with no section here fails its release rather than publishing an undescribed one
   updating a corpus's defaults or a source now refuses it, with `400` over the API naming the list and
   position (`includeGlobs[1]`) and an error carrying the same text from `configure_corpus` and
   `configure_source`. Nothing is saved. A history source's include list is read by git as pathspecs,
-  so only a null or empty element is refused there; a corpus's default include list is read both ways,
-  so it must be non-empty and compile. A list stored before this change still fails until it is
+  so only a null, empty or null-character element is refused there; a corpus's default include list
+  is read both ways, so it must have no such element and every pattern must compile. A list stored before this change still fails until it is
   replaced or cleared, and a `configure_corpus` call that changes any filter re-sends the corpus's
   stored lists, so it is refused until a bad stored list is reset. Patterns that compile but are slow
-  to match, and bad lines in a `.gitignore` or `.dexiconignore` in the tree, are not checked.- When a later file of an upload batch failed with an unexpected error, the earlier files were
+  to match, and bad lines in a `.gitignore` or `.dexiconignore` in the tree, are not checked.
+- When a later file of an upload batch failed with an unexpected error, the earlier files were
   attached and had no indexing job until the next scheduled refresh. The job is now queued, and the
   caller still receives the error.
 - Detaching a document while the same document is being attached no longer fails the attachment's

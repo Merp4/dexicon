@@ -61,6 +61,7 @@ public sealed class UnusableGlobTests
         SourceFilters.FirstUnusable(["docs/", "[z-a]"], SourceFilters.GlobReader.WalkAndGit).ShouldBe(1);
         SourceFilters.FirstUnusable(NullAmongPatterns, SourceFilters.GlobReader.WalkAndGit).ShouldBe(1);
     }
+
     /// <summary>A harness with one workspace corpus, and a context on it.</summary>
     private sealed class Seeded : IAsyncDisposable
     {
@@ -164,6 +165,23 @@ public sealed class UnusableGlobTests
         includeStillJudged.Refusal.ShouldNotBeNull().Detail.ShouldContain("includeGlobs[0]");
     }
 
+    [Theory]
+    [InlineData("[z-a]", "does not compile")]
+    [InlineData("a\0b", "null character")]
+    public async Task ACorpusCreatedWithADefaultIncludeBothReadersRefuseIsNotCreated(string pattern, string reason)
+    {
+        // The create site reads the default with the same two rules as the update site.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await using var db = harness.NewContext();
+
+        var outcome = await harness.NewConfiguration(db).CreateCorpusAsync(
+            new CreateCorpusRequest("papers"), default, defaults: DefaultsWith("includeGlobs", pattern));
+
+        outcome.Refusal.ShouldNotBeNull().Detail.ShouldContain("includeGlobs[0]");
+        outcome.Refusal.Detail.ShouldContain(reason);
+        (await db.Corpora.AnyAsync(c => c.Name == "papers")).ShouldBeFalse();
+    }
+
     [Fact]
     public async Task AnEmptyDefaultIncludePatternIsRefusedBecauseAHistorySourceWouldInheritIt()
     {
@@ -236,6 +254,7 @@ public sealed class UnusableGlobTests
         blank.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
         blank.Refusal.Detail.ShouldContain("includeGlobs[1]");
         blank.Refusal.Detail.ShouldContain("pathspec");
+        blank.Refusal.Detail.ShouldContain("null character");
     }
 
     [Theory]

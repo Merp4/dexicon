@@ -513,9 +513,10 @@ public static class CorpusEndpoints
 
             var why = reader switch
             {
-                SourceFilters.GlobReader.Git => "null or empty, which git rejects as a pathspec",
+                SourceFilters.GlobReader.Git => "null, empty or holding a null character, which git cannot take as a pathspec",
                 SourceFilters.GlobReader.WalkAndGit =>
-                    "null, empty (git rejects an empty pathspec), or a pattern that does not compile, such as [z-a]",
+                    "null, empty, holding a null character (a history source passes the list to git as pathspecs), "
+                    + "or a pattern that does not compile, such as [z-a]",
                 _ => "null, or a pattern that does not compile, such as [z-a]",
             };
             return new ConfigRefusal(
@@ -526,6 +527,7 @@ public static class CorpusEndpoints
 
         return null;
     }
+
     /// <summary>
     /// Stores a history source's settings when they differ from what it has, and says
     /// whether they did.

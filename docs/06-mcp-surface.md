@@ -332,7 +332,7 @@ listed to it.
 A change that leaves every value as it was queues nothing and says so. A setting both sent
 and named in `reset`, a file setting on a history source, a `since` that is not a
 `yyyy-MM-dd` date, an `include` or `exclude` list with a null element or a pattern that does
-not compile (such as `[z-a]`; a history source's `include` is held only to null or empty, because
+not compile (such as `[z-a]`; a history source's `include` is held only to null, empty or null-character elements, because
 git reads it as pathspecs), and a `folder` holding a null character are refused before anything
 changes. `configure_corpus` sends a corpus's defaults whole whenever it changes a filter, so a list
 already stored with such a pattern is refused again when only the other filter is changed; `reset`

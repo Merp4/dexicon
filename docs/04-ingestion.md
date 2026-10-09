@@ -102,9 +102,10 @@ A glob list sent through the API or the configure tools is refused when it holds
 a pattern that does not compile, such as the bracket class `[z-a]`. The API answers `400`, naming the
 list and the position (`includeGlobs[1]`); the configure tools return an error with the same text.
 Nothing is saved. That holds for a source's lists and for a corpus's defaults. A history source's
-include list is read by git as pathspecs, so only a null or empty element is refused there, and a
-corpus's default include list, which sources of both kinds inherit, must also be non-empty. The
-check is of syntax: a pattern that compiles but is slow to match passes it, and the lines of a
+include list is read by git as pathspecs, so only a null, empty or null-character element is refused
+there, and a corpus's default include list, which sources of both kinds inherit, is held to both
+rules. What git itself rejects is not checked, so a default such as `/build`, which a file source
+reads as an anchored pattern, still fails in a history source that inherits it. The check is of syntax: a pattern that compiles but is slow to match passes it, and the lines of a
 `.gitignore` or `.dexiconignore` in the tree are not checked.
 
 Worktrees are the case that prompted `2`. Reported against a checkout with four of them:
