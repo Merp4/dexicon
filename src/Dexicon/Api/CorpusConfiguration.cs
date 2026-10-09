@@ -572,16 +572,7 @@ public sealed class CorpusConfiguration(
             return new ConfigRefusal("Unknown chunk set",
                 $"Corpus '{corpus.Name}' has no chunk set named '{setName}'.", 404);
 
-        // A corpus with no sets is a corpus nothing can search. Refuse rather than
-        // leave it in a state whose only exit is creating a set by hand.
-        if (corpus.ChunkSets.Count == 1)
-            return new ConfigRefusal("Cannot delete the only chunk set",
-                $"'{set.Name}' is the only way '{corpus.Name}' is indexed. Delete the corpus instead, " +
-                "or add another set and promote it first.", 409);
-
-        if (set.IsDefault)
-            return new ConfigRefusal("Cannot delete the default chunk set",
-                "Promote another set first; search would otherwise have nothing to fall back to.", 409);
+        if (SetRemovalRefusal(corpus, set, corpus.ChunkSets.Count, set.IsDefault) is { } refusal) return refusal;
 
         // A job that names this set, or names none, is working on it. Deleting the row under
         // a job scoped to it nulls the job's ChunkSetId, which reads as every set of the
@@ -599,6 +590,24 @@ public sealed class CorpusConfiguration(
         // saves a chunk state for each, and the delete would remove the row one of them is saved against.
         using (await DocumentService.HoldAttachmentsAsync(ct))
         {
+            // Read again under the lock. Another request can have removed this set, or promoted it to the
+            // default, or removed the other sets, while the vectors were being deleted. A job that started
+            // meanwhile is not read again: its outcome is recorded whatever happens to the rows it holds.
+            var now = await db.ChunkSets.AsNoTracking().Where(s => s.CorpusId == corpus.Id)
+                .Select(s => new { s.Id, s.IsDefault }).ToListAsync(ct);
+            var current = now.Find(s => s.Id == set.Id);
+
+            if (current is null)
+                return new ConfigRefusal("Unknown chunk set",
+                    $"Corpus '{corpus.Name}' has no chunk set '{set.Name}': it was removed while this request waited.", 404);
+
+            if (SetRemovalRefusal(corpus, set, now.Count, current.IsDefault) is { } changed)
+            {
+                // The set stays and its vectors are gone. A refresh of the set indexes it again.
+                await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, set.Id, CancellationToken.None);
+                return changed;
+            }
+
             db.ChunkSets.Remove(set);
             await db.SaveChangesAsync(ct);
         }
@@ -606,6 +615,22 @@ public sealed class CorpusConfiguration(
         return true;
     }
 
+    /// <summary>The refusal for removing the only set or the default set, or null when the set may go.</summary>
+    private static ConfigRefusal? SetRemovalRefusal(Corpus corpus, ChunkSet set, int setCount, bool isDefault)
+    {
+        // A corpus with no sets is a corpus nothing can search. Refuse rather than
+        // leave it in a state whose only exit is creating a set by hand.
+        if (setCount == 1)
+            return new ConfigRefusal("Cannot delete the only chunk set",
+                $"'{set.Name}' is the only way '{corpus.Name}' is indexed. Delete the corpus instead, " +
+                "or add another set and promote it first.", 409);
+
+        if (isDefault)
+            return new ConfigRefusal("Cannot delete the default chunk set",
+                "Promote another set first; search would otherwise have nothing to fall back to.", 409);
+
+        return null;
+    }
     /// <summary>
     /// Removes a corpus: its vectors in every collection it has sets in, then its rows, which
     /// take its sources, files, chunk states and jobs with them.

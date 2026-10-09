@@ -40,14 +40,17 @@ public sealed class RemovingWhileAttachingTests
 
     private static int SetsFor(Removal what) => what == Removal.ChunkSet ? 2 : 1;
 
-    [Fact]
-    public async Task ARemovalIsNotHeldBackByAnAttachmentLookupThatNothingSerialises()
+    [Theory]
+    [InlineData(Removal.Source)]
+    [InlineData(Removal.ChunkSet)]
+    [InlineData(Removal.Corpus)]
+    public async Task ARemovalIsNotHeldBackByAnAttachmentLookupThatNothingSerialises(Removal what)
     {
         // The control for the tests below: a file lookup that is held outside the attachment lock does
         // not stop a removal, so a removal that waits in the tests below waits on the lock.
         var hold = new HoldOneLookup(IsAFileLookup);
         await using var harness = await IndexingHarness.StartAsync(hold, "notes");
-        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await harness.SeedCorpusAsync(SourceKind.Upload, sets: SetsFor(what));
         await using var looking = harness.NewContext();
         await using var removing = harness.NewContext();
         hold.Armed = true;
@@ -56,7 +59,7 @@ public sealed class RemovingWhileAttachingTests
         try
         {
             await Gates.ReachedAsync(hold.Reached, "the held file lookup");
-            var removal = RemoveAsync(harness.NewConfiguration(removing), await removing.Corpora.SingleAsync(), Removal.Source);
+            var removal = RemoveAsync(harness.NewConfiguration(removing), await removing.Corpora.SingleAsync(), what);
 
             (await removal.FinishesAsync("the removal beside a held lookup")).Refusal.ShouldBeNull();
         }
@@ -158,13 +161,14 @@ public sealed class RemovingWhileAttachingTests
 
     [Theory]
     [InlineData(Removal.Source)]
+    [InlineData(Removal.ChunkSet)]
     [InlineData(Removal.Corpus)]
     public async Task TwoRemovalsOfOneTargetAtTheSameTimeAnswerTheLaterAsGone(Removal what)
     {
         // Both have loaded the target and deleted its vectors before either has deleted its row. The one
         // that takes the lock second finds the row gone, and says so as a later request would.
         await using var harness = await IndexingHarness.StartAsync("notes");
-        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await harness.SeedCorpusAsync(SourceKind.Upload, sets: SetsFor(what));
         await using var first = harness.NewContext();
         await using var second = harness.NewContext();
         var documents = harness.NewDocumentService(first);
@@ -187,6 +191,16 @@ public sealed class RemovingWhileAttachingTests
 
         arrived.ShouldBe(2, "both removals have to have deleted vectors before either deleted its row");
         outcomes.Count(o => o.Refusal is null).ShouldBe(1, "one removal succeeds");
-        outcomes.Single(o => o.Refusal is not null).Refusal!.Status.ShouldBe(404);
+        var late = outcomes.Single(o => o.Refusal is not null).Refusal!;
+        late.Status.ShouldBe(404);
+        late.Detail.ShouldContain("removed while this request waited");
+
+        await using var check = harness.NewContext();
+        switch (what)
+        {
+            case Removal.Source: (await check.Sources.CountAsync()).ShouldBe(0); break;
+            case Removal.ChunkSet: (await check.ChunkSets.Select(s => s.Id).ToListAsync()).ShouldBe(["set-1"]); break;
+            default: (await check.Corpora.CountAsync()).ShouldBe(0); break;
+        }
     }
 }

@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
 using Dexicon.Core.Extraction;
@@ -336,6 +337,13 @@ public sealed class DocumentService(
     private async Task<IndexedFile> AttachHeldAsync(Corpus corpus, string sha256, string fileName,
         CancellationToken ct)
     {
+        // The request resolved the corpus before it waited for the lock, and a removal that held the lock
+        // meanwhile can have deleted it. The upload source and the file are looked up below, under the lock.
+        // The caller answers this as it answers a corpus that was not there to begin with.
+        if (!await db.Corpora.AsNoTracking().AnyAsync(c => c.Id == corpus.Id, ct))
+            throw new ScopeResolutionException(
+                $"Corpus '{corpus.Name}' was removed while this request waited.", []);
+
         var blob = await db.Blobs.FirstOrDefaultAsync(b => b.Sha256 == sha256, ct)
             ?? throw new InvalidOperationException($"No stored document with hash {sha256}.");
 
