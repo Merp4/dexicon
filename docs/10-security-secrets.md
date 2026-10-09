@@ -58,12 +58,22 @@ data/
 The one credential written to a log is the generated admin password, printed once on the
 first start (see the table above). A presented credential is not logged. The console
 template renders values as JSON (`LogOutput.ConsoleTemplate`), so a request path cannot
-start a new log line. `{Exception}` has no such rendering, so the console sink
-(`LogOutput.OneLineConsole`) writes each exception through `OneLineExceptionSink` first: the
-type, the message on one line (`DexiconAuthMiddleware.OneLine`), the inner exceptions and the
-stack trace, in the runtime's own layout. The scope errors quote the corpus name or path a
-caller sent, and `ScopeExceptionHandler` logs them at Debug. An exception's own `ToString`
-extras, such as the file name of a `FileNotFoundException`, are not written. A rejected request logs a 32-bit digest of the presented credential
+start a new log line. The template escapes U+0000 to U+001F in a logged string and nothing
+else, and writes `{Exception}` as `Exception.ToString` does, so the console sink
+(`LogOutput.OneLineConsole`, built into the logger by `LogOutput.Configuration`) is wrapped in
+`OneLineLogSink`. It replaces U+007F, the C1 controls (U+0080 to U+009F, which include NEL and
+CSI), U+2028, U+2029 and the bidirectional controls with U+FFFD in every string a log call
+passes, including those inside sequences, structures and dictionaries to a depth of eight. It
+renders an exception from its own `ToString`, a line at a time: every kind of line break ends a
+line, a line that would start at the first column gets four spaces, and the same characters are
+replaced, so a message, a stack frame or what a type adds to `ToString` (the file name of a
+`FileNotFoundException`) cannot begin a log line. Stack trace lines already start with spaces and
+are as the runtime wrote them. The chain is read first without recursion, and past 100 levels or
+1,000 exceptions only the outermost type and message are written, with a note. The scope errors
+quote the corpus name or path a caller sent, and `ScopeExceptionHandler` logs them at Debug.
+Call sites that hold a caller's value in a log argument still pass it through
+`DexiconAuthMiddleware.OneLine`, which writes U+FFFD for a line break (one marker for a CRLF)
+and for any other control character, a tab included. A rejected request logs a 32-bit digest of the presented credential
 (`CallerDigest`), which tells one caller from several. It is not a secret: whoever can read
 the logs can compute the digest of a candidate credential and compare, and a match is a
 1 in 2^32 coincidence for a wrong guess, so 32 bits limits what the digest reveals and does
@@ -87,7 +97,7 @@ as the rule it protects.
 | No secret in tracked config | `NoSecretValuesInTrackedConfiguration` scans `appsettings*.json` (excluding `.local`) for keys matching `password|secret|apikey|api_key|token|credential` with a non-empty value. Fails the build. |
 | No secret committed, ever | `gitleaks` as a pre-commit hook **and** a CI job over full history, with a custom rule for the `dex_` prefix. |
 | `.env.example` stays complete | `EnvExampleDocumentsEveryVariableComposeUses` asserts every variable `docker-compose.yml` references appears in `.env.example`, and `EveryDocumentedEnvironmentVariableBindsToARealOption` asserts every `DEXICON__` variable compose sets binds to an option. A variable newly forwarded by `docker-compose.yml` without an entry in `.env.example` fails CI, and so does one that binds to no option. An option never wired into compose is invisible to both tests. |
-| No credential in a derived key or digest, no forged log line | `PrincipalCacheKeyNeverContainsTheToken` asserts the principal cache key does not contain the token's secret; `CallerDigestNeverContainsTheCredential` asserts the caller digest holds neither the secret nor the id and is hex; `LogForgingTests` asserts a request path carrying a newline cannot start a log line; `ExceptionLogForgingTests` asserts the same for an exception message, through the console sink; `McpEchoTests` asserts a tool error repeats a hostile value on one line and cut. No test scans log calls for credentials. |
+| No credential in a derived key or digest, no forged log line | `PrincipalCacheKeyNeverContainsTheToken` asserts the principal cache key does not contain the token's secret; `CallerDigestNeverContainsTheCredential` asserts the caller digest holds neither the secret nor the id and is hex; `LogForgingTests` asserts a request path carrying a newline cannot start a log line; `ExceptionLogForgingTests` asserts the same for an exception (message, inner exception, aggregate member, stack frame, `ToString`) and for a logged value, through the console sink; `McpEchoTests` and `EchoSiteTests` assert a tool error repeats a hostile value on one line and cut, at each site they can drive, and `EchoSiteTests` reads the source of the tools to hold the rest. No test scans log calls for credentials. |
 | No unfiltered vector query | `VectorStoreRefusesAQueryWithNoCorpusFilter` asserts that `SearchAsync` throws on an empty scope. The other read methods take a chunk set and are reached after scope resolution. |
 | Key scoping | `KeyScopingTests` and `AdminPasswordTests` — see [07](07-auth.md). |
 
@@ -149,8 +159,10 @@ Audited 2026-09-17 by provoking each failure against the running stack.
 | Probe | What comes back |
 |---|---|
 | Unknown corpus | `Unknown corpus 'x'. Corpora this key can reach: books, docs.` — only what this key reaches |
-| Unknown file, `get_context` | The path and the corpus, nothing else. A value the caller sent is shown on one line (line breaks as spaces, other control characters as U+FFFD) and cut at 200 characters, with `...` after it. This holds for every `McpException` that repeats a parameter, in the configure tools, `get_context`, the file resource and the resolver's own messages. |
+| Unknown file, `get_context` | The path and the corpus, nothing else. A value the caller sent is shown on one line and cut at 200 characters, with `...` after it: line breaks become spaces and other control characters become U+FFFD. The cut is made first, so a long value is not read in full. |
+| Resolver errors (`Unknown corpus`, `No corpus named`, `has no chunk set`, `No source at`) | The caller's name is quoted up to 200 characters, as above. A list of corpora, sets or roots is written up to 1,500 characters and ends at a whole name with `(and N more)`. The tools then hold the whole message to one line and 4,000 characters, which the lists above leave nothing to cut. |
 | Failure after `configure_corpus` saved the corpus | `Corpus 'x' was created, but preparing its index failed. Dexicon's log has the cause. …` The exception is logged and not repeated, because its message is the client's or the database's own text (the Qdrant client's reads `Status(StatusCode="Unavailable", Detail="Error connecting to subchannel.", DebugException="System.Net.Sockets.SocketException: …")`). |
+| Embedding service down, `configure_corpus` creating a corpus | `The embedding service did not answer a probe of 'ollama/model'. The corpus was not created. Whoever runs Dexicon can see why in its log.` The provider's message goes to the log under the key's name. `POST /api/corpora` is an admin endpoint and returns it in full. The same goes for a path the workspace resolver refuses, which names where a link leads. |
 | Line outside the file | `…has no content around line -9999; it spans lines 1-197.` |
 | Unknown source filter | `No source at '../../etc' in the corpora searched.` |
 | **Vector store down** (`search_index`) | `An error occurred invoking 'search_index'.` — no message, no type, no host |

@@ -418,22 +418,10 @@ public sealed class ExceptionLogForgingTests
     [Fact]
     public void ProgramBuildsItsLoggerFromTheConfigurationTheTestsUse()
     {
-        var program = File.ReadAllText(SourceFile("src", "Dexicon", "Program.cs"));
+        var program = File.ReadAllText(SourceFiles.Find("src", "Dexicon", "Program.cs"));
 
         program.ShouldContain("Log.Logger = LogOutput.Configuration(");
         program.ShouldNotContain("WriteTo.Console(");
         program.ShouldNotContain("new LoggerConfiguration()");
-    }
-
-    private static string SourceFile(params string[] parts)
-    {
-        // Walked up from the test binary, and asserted found, so a layout change fails here and not as an empty scan.
-        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
-        {
-            var candidate = Path.Combine([dir.FullName, .. parts]);
-            if (File.Exists(candidate)) return candidate;
-        }
-
-        throw new FileNotFoundException($"{Path.Combine(parts)} was not found above {AppContext.BaseDirectory}.");
     }
 }

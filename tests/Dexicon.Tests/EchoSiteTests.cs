@@ -152,7 +152,7 @@ public sealed class EchoSiteTests : IAsyncLifetime
     [Fact]
     public void EverySiteThatThrowsARefusalShowsItThroughTheHolders()
     {
-        var files = Directory.GetFiles(Path.GetDirectoryName(SourceFile("src", "Dexicon", "Mcp", "ConfigureTools.cs"))!, "*.cs");
+        var files = Directory.GetFiles(Path.GetDirectoryName(SourceFiles.Find("src", "Dexicon", "Mcp", "ConfigureTools.cs"))!, "*.cs");
         files.Length.ShouldBeGreaterThanOrEqualTo(5, "the scan has to have found the tool files");
         var all = files.ToDictionary(f => Path.GetFileName(f)!, File.ReadAllText);
 
@@ -181,24 +181,12 @@ public sealed class EchoSiteTests : IAsyncLifetime
         all["ConfigureTools.cs"].ShouldContain("DexiconTools.Echo(root))}\";");
         all["ConfigureTools.cs"].ShouldContain("var what = ");
 
-        // The sites that call the holders: six that take a refusal, one resolver message in ConfigureTools,
-        // five in the read tools and the file resource.
+        // The sites that call the holders: four refusals and one resolver message in ConfigureTools, four
+        // resolver messages in DexiconTools, one in the file resource, and one refusal in ProposeTools.
         Regex.Count(all["ConfigureTools.cs"], @"throw Refused\(refused, logs, principal\)").ShouldBe(4);
         Regex.Count(all["DexiconTools.cs"], @"throw Refusal\(ex\.Message\)").ShouldBe(4);
         all["DexiconResources.cs"].ShouldContain("throw DexiconTools.Refusal(ex.Message)");
         all["ProposeTools.cs"].ShouldContain("throw DexiconTools.Refusal(refused.Detail)");
         all["ConfigureTools.cs"].ShouldContain("throw DexiconTools.Refusal($\"{ex.Message} {hint}\".TrimEnd())");
-    }
-
-    private static string SourceFile(params string[] parts)
-    {
-        // Walked up from the test binary, and asserted found, so a layout change fails here and not as an empty scan.
-        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
-        {
-            var candidate = Path.Combine([dir.FullName, .. parts]);
-            if (File.Exists(candidate)) return candidate;
-        }
-
-        throw new FileNotFoundException($"{Path.Combine(parts)} was not found above {AppContext.BaseDirectory}.");
     }
 }

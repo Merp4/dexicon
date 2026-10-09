@@ -227,6 +227,17 @@ public sealed class ServerChunkDefaultsTests : IAsyncLifetime
     }
 
     [Fact]
+    public void StartupRunsTheCheckOfTheConfiguredChunkSettings()
+    {
+        var bootstrapper = File.ReadAllText(SourceFiles.Find("src", "Dexicon", "Infrastructure", "Bootstrapper.cs"));
+        var initialise = bootstrapper[bootstrapper.IndexOf("public static async Task InitialiseAsync", StringComparison.Ordinal)..];
+
+        initialise.ShouldContain("CheckChunkDefaults(log, options);");
+        initialise.IndexOf("CheckChunkDefaults(log, options);", StringComparison.Ordinal)
+            .ShouldBeLessThan(initialise.IndexOf("VerifyDependenciesAsync(sp, log, options)", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ACreationIsJudgedAfterTheNameChecksAndBeforeTheTakenNameQueryAndTheProbe()
     {
         await using var db = _harness.NewContext();
