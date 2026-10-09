@@ -197,6 +197,34 @@ public sealed class IgnoreRuleLimitTests : IDisposable
     }
 
     [Fact]
+    public void IgnoreFilesInsideAnIgnoredDirectoryAreNotReadOrCharged()
+    {
+        // `!.gitkeep` applies at every depth, so the walk goes into node_modules to look for a re-included file. Git
+        // reads nothing in an ignored directory, and 700 packages of 10 rules would be 7,000 rules.
+        Write(".gitignore", "node_modules/\n!.gitkeep\n");
+        Write("app.txt", "x");
+        Write("node_modules/.gitkeep", "x");
+        for (var i = 0; i < 700; i++) Write($"node_modules/pkg{i:D4}/.gitignore", Rules(10, i * 10));
+        Write("node_modules/pkg0000/.dexiconignore", "[z-a]\n");
+
+        var files = Walk().Files.Select(f => f.RelativePath).OrderBy(p => p, StringComparer.Ordinal).ToList();
+
+        files.ShouldBe([".gitignore", "app.txt", "node_modules/.gitkeep"]);
+    }
+
+    [Fact]
+    public void AnIgnoreFileInsideADirectoryTheRulesIgnoreDoesNotApplyToAFileTheyReinclude()
+    {
+        // `lib/` is ignored and `!lib/keep/` re-includes one directory in it; `lib/.gitignore` is not read, so its
+        // `keep.txt` rule does not take effect.
+        Write(".gitignore", "lib/\n!lib/keep/\n");
+        Write("lib/.gitignore", "keep.txt\n");
+        Write("lib/keep/keep.txt", "x");
+
+        Walk().Files.Select(f => f.RelativePath).ShouldContain("lib/keep/keep.txt");
+    }
+
+    [Fact]
     public void ANestedGitignorePastTheLimitFailsInsteadOfIndexingWhatItExcludes()
     {
         Write(".gitignore", Rules(IgnoreRuleSet.MaxRulesPerSource));

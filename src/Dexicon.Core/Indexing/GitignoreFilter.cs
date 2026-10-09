@@ -654,13 +654,13 @@ public sealed class WorkspaceWalker
         IgnoreRuleSet excludeRules, List<Skipped> skipped, ReadState state, bool topLevelOnly,
         IReadOnlyList<string> shadowedPrefixes, CancellationToken ct)
     {
-        var stack = new Stack<(string Dir, string Prefix, Layer Layer)>();
-        stack.Push((root, string.Empty, rootLayer));
+        var stack = new Stack<(string Dir, string Prefix, Layer Layer, bool UnderIgnored)>();
+        stack.Push((root, string.Empty, rootLayer, false));
 
         while (stack.Count > 0)
         {
             ct.ThrowIfCancellationRequested();
-            var (dir, prefix, layer) = stack.Pop();
+            var (dir, prefix, layer, underIgnored) = stack.Pop();
 
             // Listed before the subdirectories, because an ignore file here governs them
             // and this is the listing that finds it. Probing for the two names instead
@@ -679,9 +679,12 @@ public sealed class WorkspaceWalker
             // file and inherits its parent's sets by reference; copying first and
             // discarding the copy is a rule list per directory rather than per file found.
             //
-            // Not looked for inside a directory another source owns: its files are dropped by the caller.
-            var shadowed = shadowedPrefixes.Count > 0
-                && SourceScope.IsShadowed(IgnoreRuleSet.Join(prefix, "x"), shadowedPrefixes);
+            // Not looked for inside a directory another source owns (its files are dropped by the caller), nor inside a
+            // directory the rules in force ignore, which the walk enters only because a negation could re-include a
+            // file there. Git reads no ignore file below an ignored directory, so a vendored tree's files neither
+            // apply nor use up the budget.
+            var shadowed = underIgnored || (shadowedPrefixes.Count > 0
+                && SourceScope.IsShadowed(IgnoreRuleSet.Join(prefix, "x"), shadowedPrefixes));
             var gitignore = useGitignore && !shadowed ? Named(entries, ".gitignore", prefix, state.Warnings) : null;
             var dexiconignore = shadowed ? null : Named(entries, IgnoreFileName, prefix, state.Warnings);
 
@@ -702,7 +705,7 @@ public sealed class WorkspaceWalker
             // In ordinal order, so that the directory a failure is reported in, and what a message names, is the
             // same on every pass and not whatever order the filesystem lists.
             Array.Sort(subdirs, StringComparer.Ordinal);
-            var descend = new List<(string Dir, string Prefix)>();
+            var descend = new List<(string Dir, string Prefix, bool UnderIgnored)>();
 
             foreach (var sub in subdirs)
             {
@@ -733,11 +736,12 @@ public sealed class WorkspaceWalker
                 // something that is indexed today.
                 if (ignored && !ignore.MayReincludeBeneath(relativeSub)) continue;
 
-                descend.Add((sub, relativeSub));
+                descend.Add((sub, relativeSub, underIgnored || ignored));
             }
 
             // The stack pops the last pushed, so the first in order goes on last.
-            for (var i = descend.Count - 1; i >= 0; i--) stack.Push((descend[i].Dir, descend[i].Prefix, layer));
+            for (var i = descend.Count - 1; i >= 0; i--)
+                stack.Push((descend[i].Dir, descend[i].Prefix, layer, descend[i].UnderIgnored));
 
             // A directory whose files could not be listed still had its subdirectories
             // walked before this change, and still does.
