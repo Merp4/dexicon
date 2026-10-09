@@ -5,9 +5,11 @@ namespace Dexicon.Tests;
 
 /// <summary>
 /// In gitignore a <c>]</c> straight after <c>[</c>, <c>[!</c> or <c>[^</c> is a member of the class, so
-/// <c>[]a]</c> matches <c>]</c> or <c>a</c>. The scan for the closing bracket took the first <c>]</c> it found,
-/// which split <c>[]a]</c> into <c>[]</c>, a class .NET refuses, and <c>[!]a]</c> into the one-member class
-/// <c>[!]</c> followed by the literal <c>a]</c>.
+/// <c>[]a]</c> matches <c>]</c> or <c>a</c>. The scan for the closing bracket took the first <c>]</c> it found.
+/// That split <c>[!]a]</c> into the one-member class <c>[!]</c> followed by the literal <c>a]</c>, and
+/// <c>[^]a]</c> into <c>[^]</c> followed by <c>a]</c>, which .NET happened to read as the right class but
+/// without excluding <c>/</c>. <c>[]a]</c> was split the same way and also came out right, because .NET reads
+/// a leading <c>]</c> as a member.
 /// </summary>
 public sealed class LeadingBracketClassTests
 {

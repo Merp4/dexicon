@@ -190,6 +190,31 @@ public sealed class UnusableIgnoreFileLineTests : IDisposable
         warning.ShouldContain("('[z-a]??[0m')");
     }
 
+    private IReadOnlyList<SourceCoverage.Gap> Coverage()
+    {
+        Write("a/x.md");
+        Write("b/y.md");
+        Write("loose.md");
+        return SourceCoverage.Find(_root, [new SourceCoverage.SourceRoot("a", 262_144), new SourceCoverage.SourceRoot("b", 262_144)]);
+    }
+
+    [Fact]
+    public void TheCoverageAdvisoryLeavesOutADirectoryWhoseDexiconignoreCannotBeRead()
+    {
+        Write(WorkspaceWalker.IgnoreFileName, "[z-a]\n");
+
+        Coverage().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void TheCoverageAdvisoryListsALooseFileWhenTheDexiconignoreIsUsable()
+    {
+        // The control for the test above.
+        Write(WorkspaceWalker.IgnoreFileName, "*.txt\n");
+
+        Coverage().Single().Files.ShouldContain("loose.md");
+    }
+
     [Fact]
     public void TheRuleSetSkipsAnUnusableLineAndKeepsTheOthersWhenGivenAPlaceToReportIt()
     {
