@@ -138,8 +138,9 @@ public sealed class IgnoreRuleSet
             from.Unusable.Add($"{problem.Message()}; the line was skipped");
             if (++skipped < from.MaxSkipped) continue;
 
-            from.Unusable.Add(IgnorePatternException.Clean(
-                $"{from.Source} has {skipped:N0} lines that cannot be used; the rest of the file was not read"));
+            // Held whatever else the sink has dropped: after this line, nothing in the file applies.
+            from.Unusable.AddNotice(IgnorePatternException.Clean(
+                $"{from.Source} has {skipped:N0} lines that cannot be used; the rest of the file was not read, so no rule after them applies"));
             break;
         }
     }

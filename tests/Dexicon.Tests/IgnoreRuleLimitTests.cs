@@ -276,9 +276,11 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         // The rule after the thousandth skipped line is not read, which is the one way a git-owned file can leave a
         // rule out without failing the walk. The warning says where reading stopped.
         walk.Files.Select(f => f.RelativePath).ShouldContain("secret.txt");
-        walk.Warnings.Count.ShouldBe(WarningSink.MaxKept);
-        walk.WarningsOmitted.ShouldBe(1_001 - WarningSink.MaxKept);
+        walk.Warnings.Count.ShouldBe(WarningSink.MaxKept + 1, "twenty descriptions and the notice");
+        walk.WarningsOmitted.ShouldBe(1_000 - WarningSink.MaxKept);
         walk.Warnings[0].ShouldBe(".gitignore line 1 ('[z-a]') cannot be compiled (reversed character range); the line was skipped");
+        walk.Warnings[^1].ShouldBe(
+            ".gitignore has 1,000 lines that cannot be used; the rest of the file was not read, so no rule after them applies");
     }
 
     [Fact]
@@ -292,14 +294,24 @@ public sealed class IgnoreRuleLimitTests : IDisposable
     [Fact]
     public void ManyBadLinesAreRejectedWithoutThrowingAnExceptionForEach()
     {
-        // 1.4 million bad lines took twenty seconds when each threw. A file is read to its first thousand now.
+        // A line is rejected as a value, and the file is read to its first thousand bad lines. The exceptions raised
+        // while the walk runs are counted: a throw per line would be 170,000, the 1,000 allowed leaves room for
+        // another test raising its own in the same process.
         Write(".gitignore", string.Concat(Enumerable.Repeat("[z-a]\n", 170_000)));
 
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-        var walk = WorkspaceWalker.Walk(_root, true, null, null, 1_000_000);
+        var thrown = 0;
+        void Count(object? sender, System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs e)
+        {
+            if (e.Exception is FormatException or IgnorePatternException) Interlocked.Increment(ref thrown);
+        }
 
-        walk.Warnings.Count.ShouldBe(WarningSink.MaxKept);
-        clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5));
+        WorkspaceWalker.WalkResult walk;
+        AppDomain.CurrentDomain.FirstChanceException += Count;
+        try { walk = WorkspaceWalker.Walk(_root, true, null, null, 1_000_000); }
+        finally { AppDomain.CurrentDomain.FirstChanceException -= Count; }
+
+        walk.Warnings.Count.ShouldBe(WarningSink.MaxKept + 1, "twenty descriptions and the notice");
+        thrown.ShouldBeLessThan(1_000);
     }
 
     [Fact]

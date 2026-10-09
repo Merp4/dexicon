@@ -115,6 +115,37 @@ public sealed class UnusableIgnoreFileIndexingTests
     }
 
     [Fact]
+    public async Task TheNoticeThatAFileStoppedBeingReadIsLoggedWhateverElseWasOmitted()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.WriteFileAsync(".gitignore", string.Concat(Enumerable.Repeat($"{Faulty}\n", 1_500)) + "secret.md\n");
+        await harness.WriteFileAsync("secret.md", IndexingHarness.Prose("secret"));
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        var log = new RecordingLoggerFactory();
+
+        await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log));
+
+        log.Lines.ShouldContain(
+            "Source notes: .gitignore has 1,000 lines that cannot be used; the rest of the file was not read, so no rule after them applies");
+        log.Lines.ShouldContain("Source notes: 980 more ignore-file warnings were counted and are not listed");
+    }
+
+    [Fact]
+    public async Task NoCountOfOmittedWarningsIsLoggedWhenNoneWereOmitted()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.WriteFileAsync(".gitignore", $"{Faulty}\n");
+        await harness.WriteFileAsync("kept.md", IndexingHarness.Prose("kept"));
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        var log = new RecordingLoggerFactory();
+
+        await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log));
+
+        log.Lines.ShouldContain(l => l.Contains(".gitignore line 1", StringComparison.Ordinal));
+        log.Lines.ShouldNotContain(l => l.Contains("more ignore-file warnings", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ABadGitignoreInADirectoryAMoreSpecificSourceOwnsIsReportedByThatSourceOnly()
     {
         await using var harness = await IndexingHarness.StartAsync("outer", "outer/inner");

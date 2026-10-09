@@ -37,17 +37,20 @@ public sealed class RuleBudget(int maxRules, int maxWeight)
 /// <summary>
 /// What a walk skipped of the files git owns, kept for the caller to write out. The first
 /// <see cref="MaxKept"/> descriptions are held and the rest are counted, because a <c>.gitignore</c> of fifty
-/// thousand bad lines is fifty thousand log lines otherwise, on every pass.
+/// thousand bad lines is fifty thousand log lines otherwise, on every pass. A notice (<see cref="AddNotice"/>) is
+/// always held and is not counted against that limit, for a fact the reader must see whatever else was skipped.
 /// </summary>
 public sealed class WarningSink
 {
     public const int MaxKept = 20;
 
     private readonly List<string> _kept = [];
+    private readonly List<string> _notices = [];
 
     public int Count { get; private set; }
 
-    public IReadOnlyList<string> Kept => _kept;
+    /// <summary>The descriptions held, in the order they were added, then the notices.</summary>
+    public IReadOnlyList<string> Kept => [.. _kept, .. _notices];
 
     /// <summary>How many descriptions were counted and not kept.</summary>
     public int Omitted => Count - _kept.Count;
@@ -57,4 +60,7 @@ public sealed class WarningSink
         Count++;
         if (_kept.Count < MaxKept) _kept.Add(description);
     }
+
+    /// <summary>Holds <paramref name="notice"/> whatever number of descriptions were added before it.</summary>
+    public void AddNotice(string notice) => _notices.Add(notice);
 }
