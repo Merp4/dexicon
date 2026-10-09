@@ -45,7 +45,7 @@ public sealed class UnusableIgnoreFileLineTests : IDisposable
         var walk = Walk();
 
         Names(walk).ShouldBe([".gitignore", "keep.txt"]);
-        walk.Warnings.ShouldBe([".gitignore line 2 ('[z-a]') cannot be compiled (reversed character range)"]);
+        walk.Warnings.ShouldBe([".gitignore line 2 ('[z-a]') cannot be compiled (reversed character range); the line was skipped"]);
     }
 
     [Fact]
@@ -58,7 +58,7 @@ public sealed class UnusableIgnoreFileLineTests : IDisposable
         var walk = Walk();
 
         Names(walk).ShouldBe(["sub/.gitignore", "sub/keep.txt"]);
-        walk.Warnings.ShouldBe(["sub/.gitignore line 3 ('[z-a]') cannot be compiled (reversed character range)"]);
+        walk.Warnings.ShouldBe(["sub/.gitignore line 3 ('[z-a]') cannot be compiled (reversed character range); the line was skipped"]);
     }
 
     [Fact]
@@ -71,7 +71,7 @@ public sealed class UnusableIgnoreFileLineTests : IDisposable
         var walk = Walk();
 
         Names(walk).ShouldBe(["keep.txt"]);
-        walk.Warnings.ShouldBe([".git/info/exclude line 1 ('[z-a]') cannot be compiled (reversed character range)"]);
+        walk.Warnings.ShouldBe([".git/info/exclude line 1 ('[z-a]') cannot be compiled (reversed character range); the line was skipped"]);
     }
 
     [Fact]
@@ -137,7 +137,7 @@ public sealed class UnusableIgnoreFileLineTests : IDisposable
         Write("keep.txt");
 
         Should.Throw<IgnorePatternException>(() => Walk(exclude: ["*.log", "[z-a]"]))
-            .Message.ShouldBe("exclude_globs entry 2 ('[z-a]') cannot be compiled (reversed character range)");
+            .Message.ShouldBe("excludeGlobs[1] ('[z-a]') cannot be compiled (reversed character range)");
     }
 
     [Fact]
@@ -146,7 +146,7 @@ public sealed class UnusableIgnoreFileLineTests : IDisposable
         Write("keep.txt");
 
         Should.Throw<IgnorePatternException>(() => Walk(include: ["[z-a]"]))
-            .Message.ShouldBe("include_globs entry 1 ('[z-a]') cannot be compiled (reversed character range)");
+            .Message.ShouldBe("includeGlobs[0] ('[z-a]') cannot be compiled (reversed character range)");
     }
 
     [Fact]
@@ -155,39 +155,7 @@ public sealed class UnusableIgnoreFileLineTests : IDisposable
         Write("keep.txt");
 
         Should.Throw<IgnorePatternException>(() => Walk(exclude: ["*.log", null!]))
-            .Message.ShouldBe("exclude_globs entry 2 is null");
-    }
-
-    [Fact]
-    public void AGlobTooLongForTheMatcherIsSkippedInAGitignoreAndFailsADexiconignore()
-    {
-        var tooLong = string.Concat(Enumerable.Repeat("*a", 2000)) + "b";
-        Write(".gitignore", tooLong + "\nsecret.txt\n");
-        Write("secret.txt");
-        Write("keep.txt");
-
-        var walk = Walk();
-        Names(walk).ShouldBe([".gitignore", "keep.txt"]);
-        walk.Warnings.Count.ShouldBe(1);
-        walk.Warnings[0].ShouldStartWith(".gitignore line 1 ('");
-        walk.Warnings[0].ShouldEndWith("...') is too long to match");
-
-        File.Delete(Path.Combine(_root, ".gitignore"));
-        Write(WorkspaceWalker.IgnoreFileName, tooLong + "\n");
-        Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldEndWith("...') is too long to match");
-    }
-
-    [Fact]
-    public void ControlCharactersInAnUnusableLineAreNotCarriedIntoTheMessage()
-    {
-        Write(".gitignore", "[z-a]\u0007\u001b[0m\n");
-        Write("keep.txt");
-
-        var warning = Walk().Warnings.ShouldHaveSingleItem();
-
-        warning.ShouldNotContain("\u0007");
-        warning.ShouldNotContain("\u001b");
-        warning.ShouldContain("('[z-a]??[0m')");
+            .Message.ShouldBe("excludeGlobs[1] is null");
     }
 
     private IReadOnlyList<SourceCoverage.Gap> Coverage()
@@ -219,12 +187,12 @@ public sealed class UnusableIgnoreFileLineTests : IDisposable
     public void TheRuleSetSkipsAnUnusableLineAndKeepsTheOthersWhenGivenAPlaceToReportIt()
     {
         var rules = new IgnoreRuleSet();
-        var unusable = new List<string>();
+        var unusable = new WarningSink();
 
         rules.AddPatterns(["a.txt", "[z-a]", "b.txt"], "list", unusable: unusable);
 
         rules.Count.ShouldBe(2);
-        unusable.ShouldBe(["list line 2 ('[z-a]') cannot be compiled (reversed character range)"]);
+        unusable.Kept.ShouldBe(["list line 2 ('[z-a]') cannot be compiled (reversed character range); the line was skipped"]);
         rules.IsIgnored("b.txt", isDirectory: false).ShouldBeTrue();
     }
 

@@ -56,14 +56,17 @@ public sealed class LeadingBracketClassTests
         Ignored(pattern, path).ShouldBeFalse();
     }
 
-    [Fact]
-    public void TheClassIsWrittenOutWithTheBracketEscapedAndTheSlashExcluded()
+    [Theory]
+    [InlineData("[]a]", false)]
+    [InlineData("[!]a]", true)]
+    [InlineData("[^]a]", true)]
+    public void TheClassIsReadWithTheLeadingBracketAsAMember(string glob, bool negated)
     {
-        // Pins what .NET is given. A leading ] is only literal as the first character of a class, so behind the
-        // ^/ that a negated class carries it has to be escaped, or .NET closes the class there.
-        IgnoreRuleSet.ToRegex("[]a]").ShouldBe(@"^(?:.*/)?[\]a](?:/.*)?$");
-        IgnoreRuleSet.ToRegex("[!]a]").ShouldBe(@"^(?:.*/)?[^/\]a](?:/.*)?$");
-        IgnoreRuleSet.ToRegex("[^]a]").ShouldBe(@"^(?:.*/)?[^/\]a](?:/.*)?$");
+        var cls = GlobMatcher.ReadClass(glob, 0).ShouldNotBeNull();
+
+        cls.Close.ShouldBe(glob.Length - 1);
+        cls.Negated.ShouldBe(negated);
+        cls.Members.ShouldBe([(']', ']'), ('a', 'a')]);
     }
 
     [Fact]

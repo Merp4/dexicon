@@ -67,6 +67,10 @@ public sealed class CorpusIndexer(
     // and how current the ref is has one answer per pass.
     private readonly HashSet<string> _tracked = new(StringComparer.Ordinal);
 
+    // Ignore-file warnings this pass has logged, by source and text. A workspace source is walked once
+    // per chunk set, and the same skipped line is one finding.
+    private readonly HashSet<string> _warned = new(StringComparer.Ordinal);
+
     /// <summary>How a history source's tracking is read. Replaced in tests, to make it fail.</summary>
     internal Func<GitRepository, string, DateTime, CancellationToken, Task<GitTracking>> ReadTracking { get; init; }
         = GitHistory.TrackingAsync;
@@ -90,6 +94,7 @@ public sealed class CorpusIndexer(
         _reasons.Clear();
         _unreachable = false;
         _tracked.Clear();
+        _warned.Clear();
 
         // A source this pass could not reach: a mount that is away, a folder with no
         // repository in it. Not a failure of the job and not a success either.
@@ -845,18 +850,24 @@ public sealed class CorpusIndexer(
         try { walk = WorkspaceDiscovery.Walk(corpus, source, root, _indexing); }
         catch (IgnorePatternException ex)
         {
-            // A .dexiconignore line, or an include or exclude list entry, that cannot be read. The
-            // source is not indexed from, because skipping the line would index what it was written to
-            // keep out. Handled like an unreachable source: nothing already indexed is removed, the
-            // other sources are still indexed, and the job's error names the file and the line.
+            // A .dexiconignore (a line of it, or the file as a whole), or an include or exclude list
+            // entry, that cannot be used. The source is not indexed from, because skipping it would
+            // index what it was written to keep out. Handled like an unreachable source: nothing already
+            // indexed is removed, the other sources are still indexed, and the job's error names the
+            // file and the line.
             Unreachable(corpus, job, $"Source '{source.RootPath}' was not indexed because {ex.Message}");
             return;
         }
 
-        // Lines of a .gitignore or .git/info/exclude that git would not have applied either. The
-        // walk has no logger, so they are written out here.
+        // What the walk skipped of the .gitignore and .git/info/exclude files. The walk has no logger,
+        // so it is written out here, once per pass: each chunk set walks the source again.
         foreach (var warning in walk.Warnings)
-            log.LogWarning("Source {Source}: {Warning}; the line was skipped", source.RootPath, warning);
+            if (_warned.Add($"{source.Id}\n{warning}"))
+                log.LogWarning("Source {Source}: {Warning}", source.RootPath, warning);
+
+        if (walk.WarningsOmitted > 0 && _warned.Add($"{source.Id}\n+{walk.WarningsOmitted}"))
+            log.LogWarning("Source {Source}: {Omitted} more ignore-file lines were skipped and are not listed",
+                source.RootPath, walk.WarningsOmitted);
 
         if (walk.ShadowedCount > 0)
             log.LogInformation(

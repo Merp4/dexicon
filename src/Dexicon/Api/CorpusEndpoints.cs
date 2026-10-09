@@ -516,8 +516,8 @@ public static class CorpusEndpoints
                 SourceFilters.GlobReader.Git => "null, empty or holding a null character, which git cannot take as a pathspec",
                 SourceFilters.GlobReader.WalkAndGit =>
                     "null, empty, holding a null character (a history source passes the list to git as pathspecs), "
-                    + "or a pattern that does not compile, such as [z-a]",
-                _ => "null, or a pattern that does not compile, such as [z-a]",
+                    + $"or a pattern that does not compile (such as [z-a]) or is longer than {IgnoreRuleSet.MaxPatternLength} characters, or the list holds more than {IgnoreRuleSet.MaxRulesPerSource:N0} entries",
+                _ => $"null, or a pattern that does not compile (such as [z-a]) or is longer than {IgnoreRuleSet.MaxPatternLength} characters, or the list holds more than {IgnoreRuleSet.MaxRulesPerSource:N0} entries",
             };
             return new ConfigRefusal(
                 "Unusable glob",

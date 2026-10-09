@@ -20,11 +20,25 @@ public sealed class PathologicalGlobTests : IDisposable
 
     public void Dispose() => Directory.Delete(_root, recursive: true);
 
+    private static readonly TimeSpan Limit = TimeSpan.FromSeconds(10);
+
     private static bool Ignored(string pattern, string path, bool isDirectory = false)
     {
+        // Neither engine has a match timeout, so a glob sent to the wrong one would run on rather than throw.
+        // The limit turns that into a failure.
         var rules = new IgnoreRuleSet();
         rules.AddPatterns([pattern], "test");
-        return rules.IsIgnored(path, isDirectory);
+        var ignored = false;
+        Should.CompleteIn(() => ignored = rules.IsIgnored(path, isDirectory), Limit);
+        return ignored;
+    }
+
+    private List<string> WalkNames(bool useGitignore, string[]? exclude = null)
+    {
+        List<string> names = [];
+        Should.CompleteIn(() => names = [.. WorkspaceWalker.Walk(_root, useGitignore, null, exclude, 1_000_000)
+            .Files.Select(f => f.RelativePath)], Limit);
+        return names;
     }
 
     private static string Deep(int levels, string last) =>
@@ -79,8 +93,7 @@ public sealed class PathologicalGlobTests : IDisposable
         File.WriteAllText(Path.Combine(_root, ".gitignore"), ManyStars + "\n");
         File.WriteAllText(Path.Combine(_root, name), "hello");
 
-        var files = WorkspaceWalker.Walk(_root, useGitignore: true, null, null, 1_000_000)
-            .Files.Select(f => f.RelativePath).ToList();
+        var files = WalkNames(useGitignore: true);
 
         files.ShouldContain(name);
     }
@@ -92,8 +105,7 @@ public sealed class PathologicalGlobTests : IDisposable
         File.WriteAllText(Path.Combine(_root, WorkspaceWalker.IgnoreFileName), ManyStars + "\n");
         File.WriteAllText(Path.Combine(_root, name), "hello");
 
-        var files = WorkspaceWalker.Walk(_root, useGitignore: false, null, null, 1_000_000)
-            .Files.Select(f => f.RelativePath).ToList();
+        var files = WalkNames(useGitignore: false);
 
         files.ShouldContain(name);
     }
@@ -105,9 +117,7 @@ public sealed class PathologicalGlobTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
         File.WriteAllText(file, "hello");
 
-        var files = WorkspaceWalker.Walk(_root, useGitignore: true, null,
-            [string.Concat(Enumerable.Repeat("**/", 10)) + "x"], 1_000_000)
-            .Files.Select(f => f.RelativePath).ToList();
+        var files = WalkNames(useGitignore: true, exclude: [string.Concat(Enumerable.Repeat("**/", 10)) + "x"]);
 
         files.ShouldContain(Deep(30, "leaf"));
     }

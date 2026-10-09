@@ -18,7 +18,7 @@ public sealed class UnusableIgnoreFileIndexingTests
     private const string Faulty = "[z-a]";
 
     [Fact]
-    public async Task AnUnusableDexiconignoreLineFailsOnlyItsSourceAndNamesTheLine()
+    public async Task AnUnusableDexiconignoreLeavesItsSourceUnindexedAndTheJobDegradedWithTheLineNamed()
     {
         await using var harness = await IndexingHarness.StartAsync("faulty", "fine");
         await harness.WriteFileAsync(".dexiconignore", $"*.log\n{Faulty}\n", source: 0);
@@ -98,5 +98,72 @@ public sealed class UnusableIgnoreFileIndexingTests
         var swept = await db.Files.AsNoTracking().ToListAsync();
         swept.ShouldAllBe(f => f.SourceId == IndexingHarness.SourceIdFor(1));
         swept.Select(f => f.RelativePath).ShouldContain("two.md");
+    }
+
+    [Fact]
+    public async Task ASkippedGitignoreLineIsLoggedOncePerPassHoweverManyChunkSetsWalkTheSource()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.WriteFileAsync(".gitignore", $"{Faulty}\n");
+        await harness.WriteFileAsync("kept.md", IndexingHarness.Prose("kept"));
+        await harness.SeedCorpusAsync(SourceKind.Workspace, sets: 3);
+        var log = new RecordingLoggerFactory();
+
+        await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log));
+
+        log.Lines.Count(l => l.Contains(".gitignore line 1", StringComparison.Ordinal)).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ABadGitignoreInADirectoryAMoreSpecificSourceOwnsIsReportedByThatSourceOnly()
+    {
+        await using var harness = await IndexingHarness.StartAsync("outer", "outer/inner");
+        await harness.WriteFileAsync("top.md", IndexingHarness.Prose("top"), source: 0);
+        await harness.WriteFileAsync(".gitignore", $"{Faulty}\n", source: 1);
+        await harness.WriteFileAsync("deep.md", IndexingHarness.Prose("deep"), source: 1);
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        var log = new RecordingLoggerFactory();
+
+        var job = await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log));
+
+        job.State.ShouldBe(JobState.Succeeded);
+        var reported = log.Lines.Where(l => l.Contains(".gitignore line 1", StringComparison.Ordinal)).ToList();
+        reported.ShouldHaveSingleItem().ShouldStartWith("Source outer/inner: ");
+    }
+
+    [Fact]
+    public async Task ABadDexiconignoreInADirectoryAMoreSpecificSourceOwnsFailsThatSourceAndNotTheOuterOne()
+    {
+        await using var harness = await IndexingHarness.StartAsync("outer", "outer/inner");
+        await harness.WriteFileAsync("top.md", IndexingHarness.Prose("top"), source: 0);
+        await harness.WriteFileAsync(".dexiconignore", $"{Faulty}\n", source: 1);
+        await harness.WriteFileAsync("deep.md", IndexingHarness.Prose("deep"), source: 1);
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+
+        var job = await harness.RunIndexAsync();
+
+        job.Error.ShouldNotBeNull();
+        job.Error.ShouldContain("Source 'outer/inner' was not indexed because .dexiconignore line 1");
+        job.Error.ShouldNotContain("Source 'outer' ");
+        (await harness.StateOfAsync("top.md", sourceId: IndexingHarness.SourceIdFor(0))).Status.ShouldBe(FileStatus.Indexed);
+    }
+
+    [Fact]
+    public async Task ALinkedDexiconignoreLeavesItsSourceUnindexedAndNamesTheLink()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.WriteFileAsync("one.md", IndexingHarness.Prose("one"));
+        var target = Path.Combine(harness.DataPath, "outside-rules");
+        await File.WriteAllTextAsync(target, "one.md\n");
+        File.CreateSymbolicLink(Path.Combine(harness.SourceDirectory, ".dexiconignore"), target);
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+
+        var job = await harness.RunIndexAsync();
+
+        job.State.ShouldBe(JobState.Degraded);
+        job.Error.ShouldNotBeNull();
+        job.Error.ShouldContain("Source 'notes' was not indexed because .dexiconignore is a link, and links are not followed");
+        await using var db = harness.NewContext();
+        (await db.Files.CountAsync()).ShouldBe(0);
     }
 }

@@ -1,6 +1,4 @@
-using System.Collections.Concurrent;
 using System.Text;
-using System.Text.RegularExpressions;
 
 namespace Dexicon.Core.Indexing;
 
@@ -13,7 +11,7 @@ namespace Dexicon.Core.Indexing;
 /// what it means relative to ITSELF, so its patterns are anchored to that directory as
 /// they go in; see the <c>directoryPrefix</c> argument to <see cref="AddPatterns"/>.
 /// </summary>
-public sealed partial class IgnoreRuleSet
+public sealed class IgnoreRuleSet
 {
     private readonly List<Rule> _rules = [];
 
@@ -25,8 +23,8 @@ public sealed partial class IgnoreRuleSet
     ///
     /// The walk needs this because a subdirectory's own ignore file applies to that subtree
     /// and to nothing beside it: its siblings keep the set their parent had. Copied rather
-    /// than chained because a rule carries a compiled Regex and the copy is a reference to
-    /// the same one, and because a directory holding an ignore file is rare enough that the
+    /// than chained because a rule holds its tokens and the copy is a reference to
+    /// the same ones, and because a directory holding an ignore file is rare enough that the
     /// list copy is not worth avoiding.
     /// </summary>
     public IgnoreRuleSet(IgnoreRuleSet other)
@@ -48,7 +46,7 @@ public sealed partial class IgnoreRuleSet
     /// beneath `sub` and no further, which is what LiteralPrefix then says.
     /// </param>
     private sealed record Rule(
-        Regex Pattern, bool Negated, bool DirectoryOnly, string Source,
+        GlobMatcher Pattern, bool Negated, bool DirectoryOnly, string Source,
         string LiteralPrefix, bool MatchesAnyDepth);
 
     public int Count => _rules.Count;
@@ -56,21 +54,39 @@ public sealed partial class IgnoreRuleSet
     /// <summary>Appends the rules <paramref name="other"/> holds, already compiled.</summary>
     internal void AddRules(IgnoreRuleSet other) => _rules.AddRange(other._rules);
 
+    /// <summary>The longest line of an ignore file, or entry of a glob list, that is read, in characters.</summary>
+    public const int MaxPatternLength = 500;
+
     /// <summary>
-    /// Compiles each line of <paramref name="patterns"/> and appends it. A line that cannot be used
-    /// (null, a class .NET cannot compile such as <c>[z-a]</c>, or a pattern too long for the matcher)
-    /// throws <see cref="IgnorePatternException"/> naming <paramref name="source"/> and the line's
-    /// position, unless <paramref name="unusable"/> is given: then the line is skipped, its description
-    /// is added to that collection, and the remaining lines are read.
+    /// The most rules one walk reads from ignore files and glob lists together. A rule is a few hundred bytes, so
+    /// the time to match is what this limits: every file the walk meets is tested against every rule in force, which costs
+    /// about 30 ns per rule and file when a literal search rejects the rule and about 200 ns when the whole pattern has
+    /// to be run (measured; docs/04-ingestion.md has the figures). The limit is twenty times the 469 rules in the
+    /// ignore files of grpc, the largest tree measured. A million files at the limit take 5 to 35 minutes of matching.
+    /// </summary>
+    public const int MaxRulesPerSource = 10_000;
+
+    /// <summary>
+    /// Reads each line of <paramref name="patterns"/> into a rule and appends it. A line that cannot be used (null,
+    /// longer than <see cref="MaxPatternLength"/>, a class that cannot be read such as <c>[z-a]</c>, or past the
+    /// <paramref name="budget"/>) throws <see cref="IgnorePatternException"/> naming <paramref name="source"/> and the
+    /// line's position, unless <paramref name="unusable"/> is given: then the line is skipped, its description (the
+    /// message, then <c>; the line was skipped</c>) is added there, and the remaining lines are read. Past the budget
+    /// the remaining lines are not read, and one description says so.
     /// </summary>
     /// <param name="directoryPrefix">
     /// Where the patterns were written, as a forward-slash path relative to the scan root,
     /// or empty for the root itself. Every rule is anchored beneath it, so `secret.txt` in
     /// `sub/.gitignore` is `sub/**/secret.txt` and cannot reach a sibling of `sub`.
     /// </param>
-    /// <param name="positionNoun">What a position is called in a message: a line of a file, an entry of a list.</param>
+    /// <param name="isList">
+    /// The patterns are the entries of a glob list, which a message gives a zero-based position
+    /// (<c>excludeGlobs[1]</c>, as the API names it). Otherwise they are the lines of a file, numbered
+    /// from 1 as an editor and git number them.
+    /// </param>
+    /// <param name="budget">The rules still allowed in this walk, shared by every call that adds to it.</param>
     public void AddPatterns(IEnumerable<string> patterns, string source, string directoryPrefix = "",
-        ICollection<string>? unusable = null, string positionNoun = "line")
+        WarningSink? unusable = null, bool isList = false, RuleBudget? budget = null)
     {
         ArgumentNullException.ThrowIfNull(patterns);
         ArgumentNullException.ThrowIfNull(directoryPrefix);
@@ -79,18 +95,31 @@ public sealed partial class IgnoreRuleSet
         foreach (var raw in patterns)
         {
             position++;
+            var where = isList ? $"{source}[{position - 1}]" : $"{source} line {position}";
 
-            try { AddPattern(raw, source, directoryPrefix, position, positionNoun); }
-            catch (IgnorePatternException ex) when (unusable is not null) { unusable.Add(ex.Message); }
+            try { AddPattern(raw, where, directoryPrefix, budget); }
+            catch (IgnorePatternException ex) when (unusable is not null)
+            {
+                unusable.Add(ex.BudgetExhausted
+                    ? $"{ex.Message}; this line and the lines after it were skipped"
+                    : $"{ex.Message}; the line was skipped");
+                if (ex.BudgetExhausted) break;
+            }
         }
     }
 
-    private void AddPattern(string? raw, string source, string directoryPrefix, int position, string positionNoun)
+    private void AddPattern(string? raw, string where, string directoryPrefix, RuleBudget? budget)
     {
-        if (raw is null) throw IgnorePatternException.For(source, positionNoun, position, null, "is null");
+        if (raw is null) throw IgnorePatternException.For(where, null, "is null");
 
         var line = raw.Trim();
         if (line.Length == 0 || line.StartsWith('#')) return;
+
+        if (line.Length > MaxPatternLength)
+            throw IgnorePatternException.For(where, line, $"is longer than {MaxPatternLength} characters");
+
+        if (budget is { Exhausted: true })
+            throw IgnorePatternException.ForBudget(where, line, $"is past the limit of {budget.Limit:N0} rules for one source");
 
         var negated = line.StartsWith('!');
         if (negated) line = line[1..];
@@ -109,63 +138,19 @@ public sealed partial class IgnoreRuleSet
         // `sub/deep` be pruned and the file it re-includes never be reached.
         var anyDepth = !anchored && !bare.Contains('/', StringComparison.Ordinal);
 
+        GlobMatcher matcher;
+        try { matcher = GlobMatcher.Compile(line, directoryPrefix); }
+        catch (FormatException ex)
+        {
+            throw IgnorePatternException.For(where, line, $"cannot be compiled ({ex.Message})", ex);
+        }
+
+        budget?.Take();
         _rules.Add(new Rule(
-            Compile(line, directoryPrefix, source, positionNoun, position),
-            negated, directoryOnly, source,
+            matcher, negated, directoryOnly, where,
             LiteralPrefix: anyDepth ? directoryPrefix : Join(directoryPrefix, LiteralPrefixOf(bare)),
             MatchesAnyDepth: anyDepth && directoryPrefix.Length == 0));
     }
-
-    /// <summary>
-    /// The regular expression for one glob, built with <see cref="RegexOptions.NonBacktracking"/>.
-    ///
-    /// A backtracking engine takes time exponential in the input for a glob such as
-    /// <c>*a*a*a*a*a*a*a*a*a*a*a*a*b</c> or ten <c>**/</c> in a row, and the 250 ms match timeout
-    /// that was set against that threw from <see cref="IsIgnored"/> in the middle of a walk. The
-    /// same timeout also fired for <c>*.so</c> when the host was starved of CPU. This engine
-    /// matches in time linear in the path, so there is no timeout to fire. It gives the same answer as
-    /// the backtracking one for everything <see cref="ToRegex(string, string)"/> emits
-    /// (IgnorePatternEquivalenceTests compares them), and refuses a pattern whose automaton would
-    /// pass its node limit, which here means a glob of a few thousand characters.
-    /// </summary>
-    private static Regex Compile(string line, string directoryPrefix, string source, string positionNoun, int position)
-    {
-        try
-        {
-            var pattern = ToRegex(line, directoryPrefix);
-            if (CompiledByPattern.TryGetValue(pattern, out var compiled)) return compiled;
-
-            compiled = new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.NonBacktracking);
-            if (CompiledByPattern.Count >= MaxCompiledPatterns) CompiledByPattern.Clear();
-            CompiledByPattern[pattern] = compiled;
-            return compiled;
-        }
-        catch (RegexParseException ex)
-        {
-            throw IgnorePatternException.For(source, positionNoun, position, line, $"cannot be compiled ({Words(ex.Error)})", ex);
-        }
-        catch (NotSupportedException ex)
-        {
-            throw IgnorePatternException.For(source, positionNoun, position, line, "is too long to match", ex);
-        }
-    }
-
-    /// <summary>
-    /// Matchers already built, by the regular expression text. Building one for this engine costs about
-    /// 5 ms (measured: 469 rules from grpc's ignore files took 2.0 to 3.1 s, against 0.06 to 0.35 s for the
-    /// backtracking engine), and every index pass and sweep walks its source again, rebuilding the same rules
-    /// from the same files. A <see cref="Regex"/> is safe to share between threads. Emptied when it reaches
-    /// <see cref="MaxCompiledPatterns"/>, which is several times the rules of the largest tree measured.
-    /// </summary>
-    private static readonly ConcurrentDictionary<string, Regex> CompiledByPattern = new(StringComparer.Ordinal);
-
-    private const int MaxCompiledPatterns = 2048;
-
-    private static string Words(RegexParseError error) =>
-        PascalCaseBoundary().Replace(error.ToString(), " ").ToLowerInvariant();
-
-    [GeneratedRegex("(?<=[a-z])(?=[A-Z])")]
-    private static partial Regex PascalCaseBoundary();
 
     internal static string Join(string prefix, string rest) =>
         prefix.Length == 0 ? rest
@@ -179,7 +164,7 @@ public sealed partial class IgnoreRuleSet
         foreach (var rule in _rules)
         {
             if (rule.DirectoryOnly && !isDirectory && !ContainsDirectorySegmentMatch(rule, relativePath)) continue;
-            if (!rule.Pattern.IsMatch(relativePath)) continue;
+            if (!rule.Pattern.IsMatch(relativePath.AsSpan())) continue;
             ignored = !rule.Negated;
         }
         return ignored;
@@ -243,107 +228,9 @@ public sealed partial class IgnoreRuleSet
         {
             var next = relativePath.IndexOf('/', idx);
             if (next < 0) return false;
-            if (rule.Pattern.IsMatch(relativePath[..next])) return true;
+            if (rule.Pattern.IsMatch(relativePath.AsSpan(0, next))) return true;
             idx = next + 1;
         }
-    }
-
-    /// <summary>
-    /// The index of the <c>]</c> that closes the class opened at <paramref name="open"/>, or -1 when none
-    /// does. In gitignore a <c>]</c> straight after <c>[</c>, <c>[!</c> or <c>[^</c> is a member, so
-    /// <c>[]a]</c> holds <c>]</c> and <c>a</c> and closes at the second one.
-    /// <paramref name="leadingBracket"/> says the first member is such a <c>]</c>.
-    ///
-    /// With no later <c>]</c> the scan falls back to the first one from <paramref name="open"/>, which for
-    /// <c>[!]x</c> leaves the one-member class of <c>!</c> and for <c>[]x</c> leaves <c>[]</c>, a class .NET
-    /// refuses.
-    /// </summary>
-    private static int ClassEnd(string glob, int open, out bool leadingBracket)
-    {
-        var first = open + 1;
-        if (first < glob.Length && glob[first] is '!' or '^') first++;
-
-        leadingBracket = false;
-        if (first < glob.Length && glob[first] == ']')
-        {
-            var later = glob.IndexOf(']', first + 1);
-            if (later >= 0)
-            {
-                leadingBracket = true;
-                return later;
-            }
-        }
-
-        return glob.IndexOf(']', open);
-    }
-
-    internal static string ToRegex(string glob) => ToRegex(glob, string.Empty);
-
-    /// <param name="directoryPrefix">
-    /// The directory the pattern was written in, relative to the scan root. Everything the
-    /// glob would otherwise match at the root is matched beneath this instead, including
-    /// the any-depth case: `secret.txt` in `sub/` is `sub/**/secret.txt`, never
-    /// `other/secret.txt`.
-    /// </param>
-    internal static string ToRegex(string glob, string directoryPrefix)
-    {
-        var anchored = glob.StartsWith('/');
-        if (anchored) glob = glob[1..];
-
-        // A pattern with no interior slash matches at any depth: `*.dll`, `node_modules`.
-        var matchAtAnyDepth = !anchored && !glob.TrimEnd('/').Contains('/', StringComparison.Ordinal);
-
-        var sb = new StringBuilder("^");
-        if (directoryPrefix.Length > 0) sb.Append(Regex.Escape(directoryPrefix)).Append('/');
-        if (matchAtAnyDepth) sb.Append("(?:.*/)?");
-
-        for (var i = 0; i < glob.Length; i++)
-        {
-            var c = glob[i];
-            switch (c)
-            {
-                case '*':
-                    if (i + 1 < glob.Length && glob[i + 1] == '*')
-                    {
-                        i++;
-                        if (i + 1 < glob.Length && glob[i + 1] == '/') { i++; sb.Append("(?:.*/)?"); }
-                        else sb.Append(".*");
-                    }
-                    else sb.Append("[^/]*");
-                    break;
-                case '?': sb.Append("[^/]"); break;
-                case '[':
-                    {
-                        var close = ClassEnd(glob, i, out var leadingBracket);
-                        if (close < 0) { sb.Append("\\["); break; }
-
-                        var negated = glob[i + 1] is '!' or '^';
-
-                        // gitignore negates a class with a leading ! (git also takes ^), and a class never matches a
-                        // path separator. .NET reads ! as a member and lets a negated class match /, so both are
-                        // written out. A bang with nothing after it stays a one-member class.
-                        if (leadingBracket)
-                        {
-                            // A ] right after [ or [! is a member. It is escaped, because behind the ^/ that is
-                            // written for a negated class it would no longer be first and .NET would close there.
-                            var members = i + (negated ? 3 : 2);
-                            sb.Append(negated ? "[^/\\]" : "[\\]").Append(glob, members, close - members + 1);
-                        }
-                        else if (i + 2 < close && negated) sb.Append("[^/").Append(glob, i + 2, close - i - 1);
-                        else sb.Append(glob, i, close - i + 1);
-
-                        i = close;
-                        break;
-                    }
-                default:
-                    sb.Append(Regex.Escape(c.ToString()));
-                    break;
-            }
-        }
-
-        // Matching a directory implies matching everything beneath it.
-        sb.Append("(?:/.*)?$");
-        return sb.ToString();
     }
 }
 
@@ -403,27 +290,37 @@ public sealed class WorkspaceWalker
     public sealed record Skipped(string RelativePath, string Reason, long SizeBytes);
 
     /// <param name="Warnings">
-    /// Lines of <c>.gitignore</c> and <c>.git/info/exclude</c> files that could not be used and were
-    /// skipped, each naming the file, the line number and the line. The walk has no logger, so the
-    /// caller writes these out. A <c>.dexiconignore</c> line that cannot be used is not here: it fails
-    /// the walk with <see cref="IgnorePatternException"/>.
+    /// Lines of <c>.gitignore</c> and <c>.git/info/exclude</c> that could not be used and were skipped,
+    /// each naming the file, the line number (from 1) and the line, and files of those names that were
+    /// skipped whole. The walk has no logger, so the caller writes these out. Anything of a
+    /// <c>.dexiconignore</c> that cannot be used is not here: it fails the walk with
+    /// <see cref="IgnorePatternException"/>. Only the first <see cref="WarningSink.MaxKept"/> are held, and
+    /// <paramref name="WarningsOmitted"/> counts the rest.
     /// </param>
     public sealed record WalkResult(
-        IReadOnlyList<Candidate> Files, IReadOnlyList<Skipped> SkippedFiles, IReadOnlyList<string> Warnings);
+        IReadOnlyList<Candidate> Files, IReadOnlyList<Skipped> SkippedFiles, IReadOnlyList<string> Warnings,
+        int WarningsOmitted = 0);
 
     /// <param name="topLevelOnly">
     /// Files directly in <paramref name="rootPath"/> and no deeper. Used by
     /// <see cref="SourceCoverage"/>, which asks what is in a directory without descending
     /// into the subdirectories that already have sources of their own.
     /// </param>
+    /// <param name="shadowedPrefixes">
+    /// Directories, relative to <paramref name="rootPath"/>, that a more specific source owns
+    /// (<see cref="SourceScope.ShadowedPrefixes"/>). Their files are dropped by the caller whatever
+    /// they hold, so the ignore files inside them are not read: a bad line there is the owning
+    /// source's to report, and it cannot fail this walk.
+    /// </param>
     public static WalkResult Walk(string rootPath, bool useGitignore, IReadOnlyList<string>? includeGlobs,
         IReadOnlyList<string>? excludeGlobs, long maxFileBytes, long? documentMaxBytes = null,
-        bool topLevelOnly = false)
+        bool topLevelOnly = false, IReadOnlyList<string>? shadowedPrefixes = null)
     {
         var root = Path.GetFullPath(rootPath);
         var files = new List<Candidate>();
         var skipped = new List<Skipped>();
-        var warnings = new List<string>();
+        var warnings = new WarningSink();
+        var budget = new RuleBudget(IgnoreRuleSet.MaxRulesPerSource);
 
         // The tree's own rules, which a subdirectory's ignore file appends to as the walk
         // reaches it. The source's exclude globs are held back and put on the end of
@@ -431,7 +328,7 @@ public sealed class WorkspaceWalker
         // about itself — including a nested file, which the operator has never seen.
         var treeRules = new IgnoreRuleSet();
         treeRules.AddPatterns(AlwaysExclude, "always-exclude");
-        if (useGitignore) AddLocalGitExcludes(treeRules, root, warnings);
+        if (useGitignore) AddLocalGitExcludes(treeRules, root, warnings, budget);
         // The root's own `.gitignore` and `.dexiconignore` are read by the walk, which
         // reaches the root before anything else and treats it like any other directory.
 
@@ -439,17 +336,18 @@ public sealed class WorkspaceWalker
         // file, and a rule costs a construction of its automaton.
         var excludeRules = new IgnoreRuleSet();
         if (excludeGlobs is { Count: > 0 })
-            excludeRules.AddPatterns(excludeGlobs, ExcludeListName, positionNoun: ListPositionNoun);
+            excludeRules.AddPatterns(excludeGlobs, ExcludeListName, isList: true, budget: budget);
 
         var layer = Layer.Of(treeRules, excludeRules);
 
         var include = new IgnoreRuleSet();
         if (includeGlobs is { Count: > 0 })
-            include.AddPatterns(includeGlobs, IncludeListName, positionNoun: ListPositionNoun);
+            include.AddPatterns(includeGlobs, IncludeListName, isList: true, budget: budget);
         var hasInclude = include.Count > 0;
 
         foreach (var (full, ignore) in EnumerateFilesSafely(
-                     root, layer, useGitignore, excludeRules, skipped, warnings, topLevelOnly))
+                     root, layer, useGitignore, excludeRules, skipped, warnings, budget, topLevelOnly,
+                     shadowedPrefixes ?? []))
         {
             var relative = Path.GetRelativePath(root, full).Replace('\\', '/');
 
@@ -518,19 +416,18 @@ public sealed class WorkspaceWalker
             files.Add(new Candidate(full, relative, info.Length, info.LastWriteTimeUtc.Ticks));
         }
 
-        return new WalkResult(files, skipped, warnings);
+        return new WalkResult(files, skipped, warnings.Kept, warnings.Omitted);
     }
 
     /// <summary>
-    /// How an unusable entry of an include or exclude list is named in a message. The lists are the
-    /// resolved ones, so an entry inherited from the corpus's defaults is named the same way.
+    /// How an unusable entry of an include or exclude list is named in a message: the API's field name and
+    /// the entry's zero-based position, as <c>excludeGlobs[1]</c>. The lists are the resolved ones, so an entry
+    /// inherited from the corpus's defaults is named the same way.
     /// </summary>
-    internal const string IncludeListName = "include_globs";
+    internal const string IncludeListName = "includeGlobs";
 
     /// <inheritdoc cref="IncludeListName"/>
-    internal const string ExcludeListName = "exclude_globs";
-
-    private const string ListPositionNoun = "entry";
+    internal const string ExcludeListName = "excludeGlobs";
 
     /// <summary>
     /// Adds <c>.git/info/exclude</c>, git's per-clone ignore file. It holds what a working
@@ -568,7 +465,7 @@ public sealed class WorkspaceWalker
     /// <c>core.excludesFile</c>, git's third layer, is per-user and outside the workspace
     /// entirely; it is not read at all.
     /// </summary>
-    private static void AddLocalGitExcludes(IgnoreRuleSet ignore, string root, List<string> warnings)
+    private static void AddLocalGitExcludes(IgnoreRuleSet ignore, string root, WarningSink warnings, RuleBudget budget)
     {
         var gitDir = Path.Combine(root, ".git");
         if (!Directory.Exists(gitDir) || IsLink(new DirectoryInfo(gitDir))) return;
@@ -579,10 +476,8 @@ public sealed class WorkspaceWalker
         var exclude = Path.Combine(info, "exclude");
         if (!File.Exists(exclude) || IsLink(new FileInfo(exclude))) return;
 
-        // A line that cannot be used is skipped and reported, as for `.gitignore` (AddIgnoreFile).
-        try { ignore.AddPatterns(File.ReadAllLines(exclude), ".git/info/exclude", unusable: warnings); }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        // Read as `.gitignore` is: what it cannot use is skipped and reported (AddIgnoreFile).
+        AddIgnoreFile(ignore, exclude, ".git/info/exclude", string.Empty, warnings, budget);
     }
 
     /// <summary>
@@ -660,7 +555,8 @@ public sealed class WorkspaceWalker
     /// </summary>
     private static IEnumerable<(string FilePath, IgnoreRuleSet Ignore)> EnumerateFilesSafely(
         string root, Layer rootLayer, bool useGitignore,
-        IgnoreRuleSet excludeRules, List<Skipped> skipped, List<string> warnings, bool topLevelOnly = false)
+        IgnoreRuleSet excludeRules, List<Skipped> skipped, WarningSink warnings, RuleBudget budget, bool topLevelOnly,
+        IReadOnlyList<string> shadowedPrefixes)
     {
         var stack = new Stack<(string Dir, string Prefix, Layer Layer)>();
         stack.Push((root, string.Empty, rootLayer));
@@ -685,14 +581,18 @@ public sealed class WorkspaceWalker
             // Looked for before anything is copied. Almost every directory has neither
             // file and inherits its parent's sets by reference; copying first and
             // discarding the copy is a rule list per directory rather than per file found.
-            var gitignore = useGitignore ? Named(entries, ".gitignore") : null;
-            var dexiconignore = Named(entries, IgnoreFileName);
+            //
+            // Not looked for inside a directory another source owns: its files are dropped by the caller.
+            var shadowed = shadowedPrefixes.Count > 0
+                && SourceScope.IsShadowed(IgnoreRuleSet.Join(prefix, "x"), shadowedPrefixes);
+            var gitignore = useGitignore && !shadowed ? Named(entries, ".gitignore") : null;
+            var dexiconignore = shadowed ? null : Named(entries, IgnoreFileName);
 
             if (gitignore is not null || dexiconignore is not null)
             {
                 var tree = new IgnoreRuleSet(layer.Tree);
-                var added = AddIgnoreFile(tree, gitignore, ".gitignore", prefix, warnings);
-                added |= AddIgnoreFile(tree, dexiconignore, IgnoreFileName, prefix, warnings);
+                var added = AddIgnoreFile(tree, gitignore, ".gitignore", prefix, warnings, budget);
+                added |= AddIgnoreFile(tree, dexiconignore, IgnoreFileName, prefix, warnings, budget);
                 if (added) layer = Layer.Of(tree, excludeRules);
             }
 
@@ -761,34 +661,89 @@ public sealed class WorkspaceWalker
     }
 
     /// <summary>
-    /// Adds one ignore file's lines. A line that cannot be used is handled by whose file it is.
+    /// Adds one ignore file's lines. What happens to a file or line that cannot be used depends on whose
+    /// file it is.
     ///
-    /// <c>.gitignore</c> is git's: git applies no rule for a line it cannot read, so the line is
-    /// skipped here and added to <paramref name="warnings"/> with the file and the line number, and
-    /// the file's other lines still apply.
+    /// <c>.gitignore</c> belongs to git, and Dexicon does not hold the tree to a stricter reading than git
+    /// does. A line that cannot be compiled or is longer than <see cref="IgnoreRuleSet.MaxPatternLength"/>
+    /// is skipped and added to <paramref name="warnings"/> with the file and the line number, and the file's
+    /// other lines still apply. A file that cannot be read, or is not UTF-8 text, is skipped whole with a
+    /// warning. A link is not read (<see cref="IsLink"/>), as git does not read it.
     ///
     /// <c>.dexiconignore</c> is Dexicon's own and is written to keep content out of the index. Skipping
-    /// a line there indexes what the line was meant to exclude, so the walk fails with
-    /// <see cref="IgnorePatternException"/> instead, and nothing is indexed from the source until the line
-    /// is fixed.
+    /// anything of it indexes what it was meant to exclude, so a line, a link, a read failure or a file that
+    /// is not UTF-8 text each fail the walk with <see cref="IgnorePatternException"/>, and nothing is indexed
+    /// from the source until it is fixed.
     ///
-    /// Either file is named in the message by its path from the scan root.
+    /// Either file is named in a message by its path from the scan root.
     /// </summary>
     private static bool AddIgnoreFile(
-        IgnoreRuleSet rules, string? path, string name, string directoryPrefix, List<string> warnings)
+        IgnoreRuleSet rules, string? path, string name, string directoryPrefix, WarningSink warnings, RuleBudget budget)
     {
-        if (path is null || IsLink(new FileInfo(path))) return false;
+        if (path is null) return false;
 
         var label = IgnoreRuleSet.Join(directoryPrefix, name);
         var ownFile = name == IgnoreFileName;
 
-        try
+        if (IsLink(new FileInfo(path)))
         {
-            rules.AddPatterns(File.ReadAllLines(path), label, directoryPrefix, unusable: ownFile ? null : warnings);
-            return true;
+            if (ownFile) throw IgnorePatternException.ForFile(label, "is a link, and links are not followed");
+            return false;
         }
-        catch (IOException) { return false; }
-        catch (UnauthorizedAccessException) { return false; }
+
+        string text;
+        try { text = ReadUtf8Text(path); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            // The exception's own text is not used: it carries the absolute path on the host.
+            var reason = ex switch
+            {
+                UnauthorizedAccessException => "cannot be read (permission denied)",
+                InvalidDataException => $"cannot be used as patterns because it {ex.Message}",
+                _ => "cannot be read",
+            };
+
+            if (ownFile) throw IgnorePatternException.ForFile(label, reason, ex);
+
+            warnings.Add(IgnorePatternException.ForFile(label, reason + "; the file was skipped", ex).Message);
+            return false;
+        }
+
+        rules.AddPatterns(Lines(text), label, directoryPrefix, unusable: ownFile ? null : warnings, budget: budget);
+        return true;
+    }
+
+    /// <summary>
+    /// The text of an ignore file. A byte order mark for UTF-16 or UTF-32, or a NUL byte, means the file
+    /// is not UTF-8 text: read as such it yields patterns made of garbage, so it is refused with an
+    /// <see cref="InvalidDataException"/> whose message says why. A UTF-8 byte order mark is dropped.
+    /// </summary>
+    private const long MaxIgnoreFileBytes = 8L * 1024 * 1024;
+
+    private static string ReadUtf8Text(string path)
+    {
+        if (new FileInfo(path).Length > MaxIgnoreFileBytes)
+            throw new InvalidDataException($"is larger than {MaxIgnoreFileBytes / (1024 * 1024)} MiB");
+
+        var bytes = File.ReadAllBytes(path);
+
+        if (bytes.Length >= 2 && (bytes[0], bytes[1]) is (0xFF, 0xFE) or (0xFE, 0xFF))
+            throw new InvalidDataException("starts with a UTF-16 or UTF-32 byte order mark and is not UTF-8");
+
+        if (Array.IndexOf(bytes, (byte)0) >= 0)
+            throw new InvalidDataException("contains a NUL character and is not UTF-8 text");
+
+        var skip = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF ? 3 : 0;
+        return Encoding.UTF8.GetString(bytes, skip, bytes.Length - skip);
+    }
+
+    /// <summary>The lines of <paramref name="text"/>, split on LF, CR and CRLF as <see cref="File.ReadAllLines(string)"/> does.</summary>
+    private static List<string> Lines(string text)
+    {
+        var lines = new List<string>();
+        using var reader = new StringReader(text);
+        while (reader.ReadLine() is { } line) lines.Add(line);
+        return lines;
     }
 
     internal static bool LooksBinary(string path)

@@ -99,9 +99,10 @@ public static class SourceFilters
     /// <summary>
     /// The position of the first element of <paramref name="globs"/> that cannot be used, or null when all
     /// can. A null element is never usable. For <see cref="GlobReader.Walk"/> an element that
-    /// <see cref="IgnoreRuleSet.AddPatterns"/> cannot compile is refused by the same parser: a class .NET
-    /// rejects such as <c>[z-a]</c> or <c>[]x</c>, and a glob of a few thousand characters, which is too long
-    /// for the matcher. A class with a leading <c>]</c> such as <c>[]a]</c> compiles and passes. For
+    /// <see cref="IgnoreRuleSet.AddPatterns"/> cannot compile is refused by the same parser: a class it cannot
+    /// read such as <c>[z-a]</c> or <c>[]x</c>, and a glob longer than <see cref="IgnoreRuleSet.MaxPatternLength"/>
+    /// characters, and any entry from the <see cref="IgnoreRuleSet.MaxRulesPerSource"/>th on, which a walk would not read.
+    /// A class with a leading <c>]</c> such as <c>[]a]</c> compiles and passes. For
     /// <see cref="GlobReader.Git"/> an empty element or one holding a null character is refused,
     /// because git rejects an empty pathspec and cannot be passed a null character, and anything else is left
     /// to git. The lines of a <c>.gitignore</c> or <c>.dexiconignore</c> in the tree are not checked here; the
@@ -115,6 +116,7 @@ public static class SourceFilters
         {
             var glob = globs[i];
             if (glob is null) return i;
+            if (reader != GlobReader.Git && i >= IgnoreRuleSet.MaxRulesPerSource) return i;
             if (reader != GlobReader.Walk && (glob.Length == 0 || glob.Contains('\0'))) return i;
             if (reader == GlobReader.Git) continue;
 
