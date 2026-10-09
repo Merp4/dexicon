@@ -217,6 +217,9 @@ So:
 
 A corpus gets at most one upload source, created on first attachment. Detaching removes
 that corpus's chunks only; the blob survives, because another corpus may still hold it.
+Removing the upload source itself (`DELETE /api/corpora/{name}/sources/{id}`, or the Remove
+button beside it in the corpus's source list) detaches every document attached to the corpus in
+the same way, and the next attachment creates the source again.
 
 Limits: 200 MB per file (`DEXICON__UPLOAD__MAXFILEBYTES`), applied while the file is read
 off the wire. The endpoint reads the multipart body with a `MultipartReader` and hands each

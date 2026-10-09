@@ -1,5 +1,6 @@
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
+using Dexicon.Core.Documents;
 using Dexicon.Core.Embedding;
 using Dexicon.Core.Indexing;
 using Dexicon.Core.Vectors;
@@ -537,8 +538,15 @@ public sealed class CorpusConfiguration(
 
         // The file rows and their per-set chunk states go with it: both cascade from
         // Source, so removing it is the whole of the catalogue side.
-        db.Sources.Remove(source);
-        await db.SaveChangesAsync(ct);
+        //
+        // Under the attachment lock, for the delete only: an attachment that had found this source and was
+        // about to add a file to it saved against a row the delete had removed. It is a file attached
+        // before the delete that goes with the source, and its vectors do not exist yet.
+        using (await DocumentService.HoldAttachmentsAsync(ct))
+        {
+            db.Sources.Remove(source);
+            await db.SaveChangesAsync(ct);
+        }
 
         return true;
     }
@@ -599,8 +607,12 @@ public sealed class CorpusConfiguration(
         foreach (var collection in collections)
             await vectors.DeleteCorpusAsync(collection, corpus.Id, ct);
 
-        db.Corpora.Remove(corpus);
-        await db.SaveChangesAsync(ct);
+        // Under the attachment lock for the delete only, as RemoveSourceAsync does.
+        using (await DocumentService.HoldAttachmentsAsync(ct))
+        {
+            db.Corpora.Remove(corpus);
+            await db.SaveChangesAsync(ct);
+        }
 
         return true;
     }

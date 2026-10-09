@@ -47,16 +47,46 @@ public sealed class DocumentService(
 
     /// <summary>
     /// Held from looking for a corpus's upload source and for the document's existing attachment to the
-    /// save that adds them, so two attachments cannot both find none, and by a detach for its lookup and
-    /// delete, so an attachment does not save against a row a detach has removed. A corpus has one upload source and
+    /// save that adds them, so two attachments cannot both find none. A corpus has one upload source and
     /// holds a blob once (the same blob may be attached to any number of corpora), and no unique index
     /// says so: both were checks made before the insert, and two requests could pass them together and
     /// each add one. Dexicon is one process owning its catalogue (D-01), so one lock is enough, and a
-    /// second process writing the file is not covered, as for <c>CorpusConfiguration.Naming</c>, and neither
-    /// are the writers of file rows that do not take it: removing a source or a corpus, and the indexer's
-    /// reconcile. One lock for all corpora, because an attachment is a few queries and a save.
+    /// second process writing the file is not covered, as for <c>CorpusConfiguration.Naming</c>.
+    ///
+    /// Also held by the writers that delete rows an attachment reads and then saves against, each for its
+    /// catalogue delete and not across a call to the vector store: a detach (<see cref="DetachAsync"/>),
+    /// and the removal of a source or a corpus (<see cref="HoldAttachmentsAsync"/>). Without it a removal
+    /// that deleted the source between an attachment's lookup and its save made the save fail on the
+    /// foreign key. One lock for all corpora, because an attachment is a few queries and a save.
+    ///
+    /// Not covered: the indexer's writes. A pass saves tracked rows read at its start, and a document
+    /// detached while it runs makes its next save fail.
+    ///
+    /// Lock order: <c>ProposalService</c> holds its decision lock and then takes this one inside the
+    /// removal it runs. Nothing holds this lock while waiting for another.
     /// </summary>
     private static readonly SemaphoreSlim Attaching = new(1, 1);
+
+    /// <summary>
+    /// Takes the lock attachments hold, for a writer that deletes a source or a corpus. Dispose it as soon
+    /// as the catalogue delete is saved, and call nothing slow, such as the vector store, while holding it:
+    /// every attachment and detach in the process waits for it.
+    /// </summary>
+    public static async Task<IDisposable> HoldAttachmentsAsync(CancellationToken ct = default)
+    {
+        await Attaching.WaitAsync(ct);
+        return new AttachmentsHold();
+    }
+
+    private sealed class AttachmentsHold : IDisposable
+    {
+        private int _released;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _released, 1) == 0) Attaching.Release();
+        }
+    }
 
     /// <summary>Where a blob's bytes live: /data/blobs/ab/abcdef…, with two hex chars of fan-out.</summary>
     public string PathFor(string sha256) =>
