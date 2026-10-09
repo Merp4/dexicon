@@ -1950,7 +1950,13 @@ function RemoveSourceModal({ corpus, source, onClose, onRemoved }: {
             setBusy(true);
             setError(null);
             try { await api.removeSource(corpus.name, source.id); await onRemoved(); }
-            catch (e) { setError(e); setBusy(false); }
+            catch (e) {
+              // Gone already, removed by another request. The list is read again, which is what the
+              // person wanted to see.
+              if (e instanceof ApiError && e.status === 404) { await onRemoved(); return; }
+              setError(e);
+              setBusy(false);
+            }
           }}
         >
           <Trash2 />

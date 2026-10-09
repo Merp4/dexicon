@@ -873,6 +873,22 @@ describe('removing a source', () => {
     expect(await within(dialog).findByRole('alert')).toHaveTextContent(/being indexed/);
     expect(props.onError).not.toHaveBeenCalled();
   });
+
+  it('closes and reads the list again when the source was already removed', async () => {
+    const user = userEvent.setup();
+    removeSource.mockRejectedValue(new ApiError(404, 'No such source', 'it was removed while this request waited.'));
+    getCorpus.mockResolvedValue(corpus({ sources: [source({ id: 's9', rootPath: 'manuals/AI' })] }));
+    render(<CorpusDetail {...props} />);
+
+    await user.click(await screen.findByRole('button', { name: /Remove source manuals\/AI/ }));
+    const dialog = await screen.findByRole('dialog');
+    const reads = getCorpus.mock.calls.length;
+    await user.click(within(dialog).getByRole('button', { name: /^Remove source$/ }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(getCorpus.mock.calls.length).toBeGreaterThan(reads));
+    expect(props.onError).not.toHaveBeenCalled();
+  });
 });
 
 /**
