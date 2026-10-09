@@ -123,43 +123,95 @@ public sealed class UnusableGlobTests
     private static readonly SourceFilters.GlobReader[] GitReaders = [SourceFilters.GlobReader.Git, SourceFilters.GlobReader.WalkAndGit];
 
     /// <summary>
-    /// Each element as the readers that pass it to git judge it, and the problem it has or null. The cases are
-    /// the measured behaviour of git on Linux, where a backslash is an ordinary character, and are judged by the
-    /// validator alone: the element is not given to git here.
+    /// Each element as the readers that pass it to git judge it, and the problem it has or null. Null means git
+    /// 2.54.0 on Linux (the shipped image) accepts the pathspec: it exits 0 and prints the commits it selects, or
+    /// nothing. A kind means git exits 128 with a fatal error. The cases were measured by giving each element to
+    /// `git log -- <element>` in a scratch repository, and are judged here by the validator alone: the element
+    /// is not given to git by this test, and a backslash is an ordinary character on Linux.
     /// </summary>
     public static TheoryData<string, SourceFilters.GlobProblemKind?> GitElements => new()
     {
         // Inside the repository, whatever the shape.
         { "docs", null }, { "docs/", null }, { "/docs", null }, { "/", null }, { "/*.md", null }, { "*.md", null },
-        { "docs/*.md", null }, { " ", null }, { "a/../b", null }, { "a/..", null }, { "docs/..", null },
-        { "x/../docs", null }, { "a/./b/..", null }, { "a//..", null }, { "..x", null }, { "x..", null },
+        { "docs/*.md", null }, { "**/*.md", null }, { " ", null }, { "a/../b", null }, { "a/..", null }, { "docs/..", null },
+        { "x/../docs", null }, { "a/./b/..", null }, { "a//..", null }, { "a/../b/..", null }, { "..x", null }, { "x..", null },
         { "a..b", null }, { "...", null }, { "a/..b/c", null }, { "a/.../c", null },
 
         // A backslash is part of a name, so nothing around it is a segment.
         { @"docs\", null }, { @"\docs", null }, { @"x\..\docs", null }, { @"..\x", null }, { @"a\..\b", null },
 
-        // Pathspec magic is left to git, and judged by its path.
-        { ":(glob)*.md", null }, { ":(glob)docs/*.md", null }, { ":(exclude)docs", null }, { ":!docs", null },
-        { ":^docs", null }, { ":/docs", null }, { ":!/docs", null }, { ":!//docs", null }, { ":!:docs", null }, { ":(glob)a/../b", null }, { ":(bad)x", null },
-        { ":(glob../x", null }, { ":", null },
-
-        // Paths that climb out of the repository.
+        // Paths that climb out of the repository. An empty segment is no level: git folds a doubled slash.
         { "..", SourceFilters.GlobProblemKind.ClimbsOut }, { "../x", SourceFilters.GlobProblemKind.ClimbsOut },
         { "/../x", SourceFilters.GlobProblemKind.ClimbsOut }, { "a/../..", SourceFilters.GlobProblemKind.ClimbsOut },
+        { "a//../..", SourceFilters.GlobProblemKind.ClimbsOut }, { "a///../..", SourceFilters.GlobProblemKind.ClimbsOut },
+        { "a/./../..", SourceFilters.GlobProblemKind.ClimbsOut }, { "./a/../..", SourceFilters.GlobProblemKind.ClimbsOut },
         { "a/../../b", SourceFilters.GlobProblemKind.ClimbsOut }, { "./..", SourceFilters.GlobProblemKind.ClimbsOut },
-        { "docs/../../x", SourceFilters.GlobProblemKind.ClimbsOut }, { ":!../x", SourceFilters.GlobProblemKind.ClimbsOut },
-        { ":^../x", SourceFilters.GlobProblemKind.ClimbsOut }, { ":(glob)../x", SourceFilters.GlobProblemKind.ClimbsOut },
-        { ":(exclude)../x", SourceFilters.GlobProblemKind.ClimbsOut }, { ":/../x", SourceFilters.GlobProblemKind.ClimbsOut },
-        { ":(glob)a/../..", SourceFilters.GlobProblemKind.ClimbsOut },
+        { "docs/../../x", SourceFilters.GlobProblemKind.ClimbsOut },
 
-        // Still rooted after the one slash git's argument may lose, or after magic.
+        // The path after magic is judged the same way, unless the magic is top.
+        { ":!../x", SourceFilters.GlobProblemKind.ClimbsOut }, { ":^../x", SourceFilters.GlobProblemKind.ClimbsOut },
+        { "::../x", SourceFilters.GlobProblemKind.ClimbsOut }, { ":!:../x", SourceFilters.GlobProblemKind.ClimbsOut },
+        { ":!a//../..", SourceFilters.GlobProblemKind.ClimbsOut },
+        { ":(glob)../x", SourceFilters.GlobProblemKind.ClimbsOut }, { ":(exclude)../x", SourceFilters.GlobProblemKind.ClimbsOut },
+        { ":(literal)../x", SourceFilters.GlobProblemKind.ClimbsOut }, { ":(icase)../x", SourceFilters.GlobProblemKind.ClimbsOut },
+        { ":(attr:foo)../x", SourceFilters.GlobProblemKind.ClimbsOut }, { ":(glob)a/../..", SourceFilters.GlobProblemKind.ClimbsOut },
+        { ":(glob)a/../b", null },
+
+        // Top: git reads the path from the root and does not reject a rooted path or one with "..".
+        { ":(top)../x", null }, { ":(top)..", null }, { ":(top)/docs", null }, { ":(glob,top)/x", null },
+        { ":(top,glob)../x", null }, { ":(top)docs/../..", null }, { ":(top)a//../..", null }, { ":(top,exclude)../x", null },
+        { ":(top,top)../x", null }, { ":/..", null }, { ":/../x", null }, { ":/a/../..", null }, { ":!/../x", null },
+        { ":!/docs", null }, { ":!//docs", null }, { ":/:/x", null }, { ":/docs", null },
+
+        // Rooted: still a rooted path after the one slash git's argument may lose, or after magic that is not top.
         { "//docs", SourceFilters.GlobProblemKind.RootedPath }, { "//", SourceFilters.GlobProblemKind.RootedPath },
         { ":(glob)/docs", SourceFilters.GlobProblemKind.RootedPath }, { ":(exclude)/docs", SourceFilters.GlobProblemKind.RootedPath },
-        { ":(literal)/docs", SourceFilters.GlobProblemKind.RootedPath }, { "::/docs", SourceFilters.GlobProblemKind.RootedPath },
+        { ":(literal)/docs", SourceFilters.GlobProblemKind.RootedPath }, { ":(icase)/docs", SourceFilters.GlobProblemKind.RootedPath },
+        { ":(attr:foo)/docs", SourceFilters.GlobProblemKind.RootedPath }, { "::/docs", SourceFilters.GlobProblemKind.RootedPath },
 
         // Removing the slash would make a name into magic.
         { "/:(bad)x", SourceFilters.GlobProblemKind.SlashThenMagic }, { "/:(exclude)docs", SourceFilters.GlobProblemKind.SlashThenMagic },
         { "/:x", SourceFilters.GlobProblemKind.SlashThenMagic }, { "/:", SourceFilters.GlobProblemKind.SlashThenMagic },
+
+        // Long magic git accepts, including empty words, repeated words and every flag together.
+        { ":()x", null }, { ":(,glob)x", null }, { ":(glob,)x", null }, { ":(glob,glob)x", null },
+        { ":(literal,literal)x", null }, { ":(glob,icase)docs/*.md", null }, { ":(icase,glob)docs/*.md", null },
+        { ":(glob,icase,top)docs/*.md", null }, { ":(literal,icase)docs", null }, { ":(literal,exclude)docs", null },
+        { ":(exclude,glob)docs/*.md", null }, { ":(exclude)docs", null }, { ":(glob)*.md", null }, { ":(glob)docs/*.md", null },
+        { ":(attr:foo)x", null }, { ":(attr:foo=bar)x", null }, { ":(attr:foo=bar)", null }, { ":(attr:-foo)x", null },
+        { ":(attr:!foo)x", null }, { ":(attr:foo bar)x", null }, { @":(attr:a=\,b)x", null }, { ":(attr:a=)x", null },
+        { ":(attr:foo,glob)x", null }, { ":(glob,attr:foo)x", null },
+
+        // Long magic git rejects: no closing parenthesis, an unknown word (matched exactly), glob with literal,
+        // an empty attr: or one holding \) or \\, and a word after an attr: that git reads as its own.
+        { ":(glob", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(bad)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(GLOB)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":( glob)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(glob )x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(from-file)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(glob,literal)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(literal,glob)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:)x", SourceFilters.GlobProblemKind.MalformedMagic }, { @":(attr:a=\))x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { @":(attr:a=\)x", SourceFilters.GlobProblemKind.MalformedMagic }, { @":(attr:a=b\)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { @":(attr:a=\\)x", SourceFilters.GlobProblemKind.MalformedMagic }, { @":(attr:foo=bar\))docs", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:foo=bar,baz)x", SourceFilters.GlobProblemKind.MalformedMagic },
+
+        // Left to git: an attribute name it finds invalid (git: "invalid attribute name").
+        { ":(attr:=)x", null },
+
+        // Short magic: only ! ^ / are implemented, and a character outside git's magic set starts the path.
+        { ":!x", null }, { ":^x", null }, { ":/x", null }, { "::x", null }, { ":!:x", null }, { ":x", null }, { ":docs", null },
+        { ":a:x", null }, { ":1x", null }, { ": x", null }, { ":.x", null }, { ":*x", null }, { ":?x", null }, { ":$x", null },
+        { ":)x", null }, { ":+x", null }, { ":[x", null }, { ":]x", null }, { ":{x", null }, { ":|x", null }, { ":}x", null },
+        { @":\x", null }, { ":!!x", null }, { ":^^x", null }, { ":!^x", null }, { ":!/^x", null }, { ":!:-x", null },
+        { ":::x", null }, { ":!(glob)x", null }, { ":!(x", null }, { ":", null }, { ":!", null }, { ":/", null }, { "::", null },
+        { ":-x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":,x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":;x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":#x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":@x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":%x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":&x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":'x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":\"x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":=x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":<x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":>x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":~x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":`x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":_x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":!-x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":!,x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":/-x", SourceFilters.GlobProblemKind.MalformedMagic },
     };
 
     [Theory]
@@ -175,27 +227,39 @@ public sealed class UnusableGlobTests
     }
 
     [Theory]
-    [InlineData("docs", "docs")]
-    [InlineData("/docs", "/docs")]
-    [InlineData(":(glob)docs/*.md", "docs/*.md")]
-    [InlineData(":(exclude)a)b", "a)b")]
-    [InlineData(":!docs", "docs")]
-    [InlineData(":^docs", "docs")]
-    [InlineData(":/docs", "docs")]
-    [InlineData(":!/^docs", "docs")]
-    [InlineData(":!:docs", "docs")]
-    [InlineData(":docs", "docs")]
-    [InlineData(":", "")]
-    public void ThePathAfterPathspecMagicIsWhatFollowsIt(string pathspec, string path)
+    [InlineData("", "", false, false)]
+    [InlineData("docs", "docs", false, false)]
+    [InlineData("/docs", "/docs", false, false)]
+    [InlineData(":(glob)docs/*.md", "docs/*.md", false, false)]
+    [InlineData(":(exclude)a)b", "a)b", false, false)]
+    [InlineData(":(top)docs", "docs", true, false)]
+    [InlineData(":(glob,top)docs", "docs", true, false)]
+    [InlineData(":!docs", "docs", false, false)]
+    [InlineData(":^docs", "docs", false, false)]
+    [InlineData(":/docs", "docs", true, false)]
+    [InlineData(":!/^docs", "docs", true, false)]
+    [InlineData(":!:docs", "docs", false, false)]
+    [InlineData(":docs", "docs", false, false)]
+    [InlineData(":", "", false, false)]
+    [InlineData(":-x", "x", false, true)]
+    [InlineData(":/-x", "x", true, true)]
+    [InlineData(":(glob,literal)x", "x", false, true)]
+    [InlineData(":(bad)x", "x", false, true)]
+    [InlineData(@":(attr:a=\,b)x", "x", false, false)]
+    [InlineData(@":(attr:a=\))x", "x", false, true)]
+    public void PathspecMagicIsSplitFromItsPathAsGitDoes(string pathspec, string path, bool top, bool malformed)
     {
-        SourceFilters.PathAfterMagic(pathspec).ShouldBe(path);
+        SourceFilters.ParseMagic(pathspec).ShouldBe(new SourceFilters.PathspecMagic(path, top, malformed));
     }
 
-    [Fact]
-    public void ALongMagicWithNoClosingParenthesisHasNoPathToJudge()
+    [Theory]
+    [InlineData(":(glob")]
+    [InlineData(":(")]
+    [InlineData(":(glob../x")]
+    [InlineData(@":(attr:a=\)x")]
+    public void ALongMagicWithNoClosingParenthesisIsMalformedAndHasNoPath(string pathspec)
     {
-        SourceFilters.PathAfterMagic(":(glob").ShouldBeNull();
-        SourceFilters.PathAfterMagic(":(glob../x").ShouldBeNull();
+        SourceFilters.ParseMagic(pathspec).ShouldBe(new SourceFilters.PathspecMagic(null, false, true));
     }
     [Fact]
     public void TheRefusalNamesTheCapAndTheListAndDoesNotEchoTheElement()
@@ -208,6 +272,7 @@ public sealed class UnusableGlobTests
         var parent = CorpusEndpoints.UnusableGlobs(["LEAKED/../../x"], null, SourceFilters.GlobReader.Git).ShouldNotBeNull();
         var rooted = CorpusEndpoints.UnusableGlobs([":(glob)/LEAKED"], null, SourceFilters.GlobReader.WalkAndGit).ShouldNotBeNull();
         var magic = CorpusEndpoints.UnusableGlobs(["/:(exclude)LEAKED"], null, SourceFilters.GlobReader.Git).ShouldNotBeNull();
+        var malformed = CorpusEndpoints.UnusableGlobs([":(LEAKED)x"], null, SourceFilters.GlobReader.Git).ShouldNotBeNull();
 
         longOne.Status.ShouldBe(400);
         longOne.Detail.ShouldContain("includeGlobs[1]");
@@ -220,10 +285,11 @@ public sealed class UnusableGlobTests
         parent.Detail.ShouldContain("'..'");
         rooted.Detail.ShouldContain("'//'");
         magic.Detail.ShouldContain("'/:'");
-        foreach (var refusal in new[] { parent, rooted, magic })
+        malformed.Detail.ShouldContain("pathspec magic that git rejects");
+        foreach (var refusal in new[] { parent, rooted, magic, malformed })
             refusal.Detail.ShouldContain("inherited by history sources", Case.Sensitive, "the reason is given to a caller with no history source");
 
-        foreach (var refusal in new[] { longOne, many, parent, rooted, magic })
+        foreach (var refusal in new[] { longOne, many, parent, rooted, magic, malformed })
         {
             refusal.Detail.ShouldNotContain("LEAKED");
             refusal.Detail.ShouldEndWith("Nothing was saved.");
@@ -384,6 +450,7 @@ public sealed class UnusableGlobTests
 
         outcome.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
         outcome.Refusal.Detail.ShouldContain($"{field}[0]");
+        outcome.Refusal.Detail.ShouldContain("does not compile", Case.Sensitive, "a file source's list is read by the walk's parser");
         s.Db.ChangeTracker.Clear();
         var saved = await s.Db.Sources.AsNoTracking().FirstAsync(x => x.Id == id);
         SourceFilters.Globs(field == "includeGlobs" ? saved.IncludeGlobs : saved.ExcludeGlobs)
@@ -572,6 +639,53 @@ public sealed class UnusableGlobTests
     }
 
     [Fact]
+    public async Task TheExcludeListOfACorpusDefaultIsReadByTheWalkAloneSoAnEmptyOrGitRejectedElementIsAccepted()
+    {
+        // The exclude list is never given to git, so it is not held to git's rules: the walk takes these.
+        await using var s = await Seeded.StartAsync();
+        string[] excludes = ["", "../x", "//x", "/:x", ":(bad)x"];
+
+        var updated = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("excludeGlobs", excludes)), default);
+        var created = await s.Config.CreateCorpusAsync(new CreateCorpusRequest("papers"), default, defaults: DefaultsWith("excludeGlobs", excludes));
+        var source = await s.Config.UpdateSourceAsync(s.Corpus, IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(ExcludeGlobs: excludes), default);
+
+        updated.Refusal.ShouldBeNull();
+        created.Refusal.ShouldBeNull();
+        source.Refusal.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData(":(glob")]
+    [InlineData(":(bad)x")]
+    [InlineData(":(glob,literal)x")]
+    [InlineData(":-x")]
+    [InlineData(":(attr:)x")]
+    public async Task MalformedMagicIsRefusedAtEverySiteThatStoresAnIncludeListGitReads(string element)
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.GitHistory);
+        await using var db = harness.NewContext();
+        var corpus = await db.Corpora.SingleAsync();
+        var config = harness.NewConfiguration(db);
+
+        var source = await config.UpdateSourceAsync(corpus, IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(IncludeGlobs: [element]), default);
+        var added = await config.AddSourceAsync(corpus, new AddSourceRequest("", GitHistory: true, IncludeGlobs: [element]), default);
+        var updated = await config.UpdateCorpusAsync(corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("includeGlobs", element)), default);
+        var created = await config.CreateCorpusAsync(new CreateCorpusRequest("papers"), default, defaults: DefaultsWith("includeGlobs", element));
+
+        foreach (var (site, refusal) in new[]
+                 {
+                     ("UpdateSource", source.Refusal), ("AddSource", added.Refusal),
+                     ("UpdateCorpus", updated.Refusal), ("CreateCorpus", created.Refusal),
+                 })
+        {
+            refusal.ShouldNotBeNull(site).Title.ShouldBe("Unusable glob", site);
+            refusal.Detail.ShouldContain("pathspec magic that git rejects", Case.Sensitive, site);
+            refusal.Detail.ShouldNotContain(element, Case.Sensitive, site);
+        }
+    }
+
+    [Fact]
     public async Task ANullEntryInClearIsRefusedAndNothingIsChanged()
     {
         await using var s = await Seeded.StartAsync();
@@ -588,6 +702,7 @@ public sealed class UnusableGlobTests
             outcome.Refusal.Detail.ShouldContain("null entry");
             outcome.Refusal.Detail.ShouldContain("clear takes field names");
             outcome.Refusal.Detail.ShouldContain("includeGlobs");
+            outcome.Refusal.Detail.ShouldNotContain("Name one of");
         }
 
         s.Db.ChangeTracker.Clear();
@@ -603,6 +718,7 @@ public sealed class UnusableGlobTests
         var outcome = await s.Config.UpdateSourceAsync(s.Corpus, IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(Clear: [name]), default);
 
         var detail = outcome.Refusal.ShouldNotBeNull().Detail;
+        detail.ShouldContain("Name one of: useGitignore, maxFileBytes, includeGlobs, excludeGlobs", Case.Sensitive, "the wording a named filter has always had");
         detail.ShouldContain("first");
         detail.ShouldNotContain("\n");
         detail.ShouldNotContain("\r");

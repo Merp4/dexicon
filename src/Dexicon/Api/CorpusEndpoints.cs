@@ -534,6 +534,10 @@ public static class CorpusEndpoints
                     $"{named} starts with '//', or with '/' after pathspec magic such as :(glob). Git rejects it as a "
                     + "path outside the repository: write the path with at most one leading '/' and none after magic. "
                     + GitReads,
+                SourceFilters.GlobProblemKind.MalformedMagic =>
+                    $"{named} has pathspec magic that git rejects: a ':(' with no closing ')', a word other than top, literal, "
+                    + "icase, glob, exclude and attr:, glob together with literal, an empty attr:, or a character after "
+                    + "':' that is not one of !, ^ and / (the magic git implements). " + GitReads,
                 SourceFilters.GlobProblemKind.SlashThenMagic =>
                     $"{named} starts with '/:'. Without its slash it would read as pathspec magic, so it is refused: "
                     + "write the path without the leading '/', or put the magic first. " + GitReads,
@@ -596,11 +600,14 @@ public static class CorpusEndpoints
         {
             if (name is not null && ClearableFilters.Contains(name, StringComparer.OrdinalIgnoreCase)) continue;
 
-            var named = name is null ? "A null entry" : $"'{Mapping.Shown(name)}'";
+            // The wording a named filter has always had; a null entry has no name to show.
             return new ConfigRefusal(
                 "Unknown filter",
-                $"{named} is not a filter that can be cleared. clear takes field names: "
-                + $"{string.Join(", ", ClearableFilters)}.",
+                name is null
+                    ? "A null entry is not a filter that can be cleared. clear takes field names: "
+                      + $"{string.Join(", ", ClearableFilters)}."
+                    : $"'{Mapping.Shown(name)}' is not a filter that can be cleared. "
+                      + $"Name one of: {string.Join(", ", ClearableFilters)}.",
                 400);
         }
 
