@@ -380,7 +380,7 @@ public sealed class UnusableGlobTests
         parent.Detail.ShouldContain("'..'");
         rooted.Detail.ShouldContain("is a rooted path", Case.Sensitive);
         rooted.Detail.ShouldContain("'//'");
-        rooted.Detail.ShouldNotContain("Git rejects", Case.Sensitive, "git accepts a rooted path that names a place inside the repository");
+        rooted.Detail.ShouldNotContain("rejects", Case.Insensitive, "git accepts a rooted path that names a place inside the repository");
         magic.Detail.ShouldContain("'/:'");
         malformed.Detail.ShouldContain("pathspec magic that git rejects");
         foreach (var reason in new[]

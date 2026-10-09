@@ -42,6 +42,8 @@ describe('globList', () => {
   it('groups only after the first character that is not a blank', () => {
     expect(globList('  :(glob,icase)x , b')).toEqual([':(glob,icase)x', 'b']);
     expect(globList('a :(b,c)')).toEqual(['a :(b', 'c)']);
+    expect(globList(':a(b,c)')).toEqual([':a(b', 'c)']);
+    expect(globList(': (b,c)')).toEqual([': (b', 'c)']);
   });
 
   it('reads a long text in one pass', () => {
