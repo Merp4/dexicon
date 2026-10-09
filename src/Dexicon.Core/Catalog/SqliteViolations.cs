@@ -12,9 +12,10 @@ internal static class SqliteViolations
 
     /// <summary>
     /// Whether a failed save was refused for a key already taken: a primary-key or unique violation.
-    /// It does not say which key, so a caller that acts on the other writer having won confirms that
-    /// the row is there. A busy or full database, or a broken connection, is not a duplicate key and
-    /// stays an error.
+    /// It does not say which key, so a caller that needs the other writer's row confirms that it is
+    /// there (<c>DocumentService</c> does; <c>ExtractedTextCache</c> does not, because its table has
+    /// one key and a lost race changes nothing). A busy or full database, or a broken connection, is
+    /// not a duplicate key and stays an error.
     /// </summary>
     public static bool IsDuplicateKey(this DbUpdateException ex) =>
         ex.InnerException is SqliteException { SqliteErrorCode: Constraint } inner

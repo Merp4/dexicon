@@ -29,7 +29,7 @@ things, deliberately:
 
 ```
   blobs              the bytes            content-addressed, stored once
-  blob_texts         the extracted text   cached per blob, extracted once ever
+  blob_texts         the extracted text   cached per blob, redone only when the extractor changes
   file_texts         the extracted text   the same, for files on a mount
   files              an attachment        one per (corpus, document)
   chunk_sets         the chunk settings   what actually varies

@@ -84,9 +84,8 @@ public sealed class TokenService(CatalogDbContext db, TimeProvider clock)
     private const int SecretBytes = 32;
 
     /// <summary>
-    /// Issue a key. <c>admin</c> is stripped rather than rejected: a request carrying it is asking
-    /// for something the model no longer has, and is not an error worth failing over. The caller is
-    /// <c>POST /api/tokens</c>.
+    /// Issue a key. A key never carries <c>admin</c>: it is stripped here, as a backstop. The caller,
+    /// <c>POST /api/tokens</c>, refuses a request that names it before it reaches this method.
     /// </summary>
     /// <param name="corpusIds">
     /// The corpora the key may reach, saved with it in one save. None means every corpus. The caller
