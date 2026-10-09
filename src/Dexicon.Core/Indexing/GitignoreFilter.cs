@@ -682,8 +682,8 @@ public sealed class WorkspaceWalker
             // Not looked for inside a directory another source owns: its files are dropped by the caller.
             var shadowed = shadowedPrefixes.Count > 0
                 && SourceScope.IsShadowed(IgnoreRuleSet.Join(prefix, "x"), shadowedPrefixes);
-            var gitignore = useGitignore && !shadowed ? Named(entries, ".gitignore") : null;
-            var dexiconignore = shadowed ? null : Named(entries, IgnoreFileName);
+            var gitignore = useGitignore && !shadowed ? Named(entries, ".gitignore", prefix, state.Warnings) : null;
+            var dexiconignore = shadowed ? null : Named(entries, IgnoreFileName, prefix, state.Warnings);
 
             if (gitignore is not null || dexiconignore is not null)
             {
@@ -756,14 +756,30 @@ public sealed class WorkspaceWalker
     /// Names are compared without regard to case on every platform, because a case-insensitive mount (Docker
     /// Desktop, a share written from Windows) resolves `.DexiconIgnore` to the file git or the operator meant.
     /// Neither is read when it is a link, which git does not read either (<see cref="IsLink"/>).
+    ///
+    /// Where a directory of a case-sensitive filesystem holds more than one name that matches, the file with the
+    /// exact name is read and otherwise the first in ordinal order, so the answer does not depend on the order the
+    /// filesystem lists. The others are not read: for a <c>.gitignore</c> that is a warning, and for a
+    /// <c>.dexiconignore</c> it fails the walk, because the rules in the one that is not read would not apply.
     /// </summary>
-    private static string? Named(IReadOnlyList<string> entries, string name)
+    internal static string? Named(IReadOnlyList<string> entries, string name, string directoryPrefix, WarningSink warnings)
     {
-        foreach (var entry in entries)
-            if (string.Equals(Path.GetFileName(entry), name, StringComparison.OrdinalIgnoreCase))
-                return entry;
+        var matches = entries
+            .Where(entry => string.Equals(Path.GetFileName(entry), name, StringComparison.OrdinalIgnoreCase))
+            .Order(StringComparer.Ordinal)
+            .ToList();
+        if (matches.Count < 2) return matches.Count == 0 ? null : matches[0];
 
-        return null;
+        var label = IgnoreRuleSet.Join(directoryPrefix, name);
+        var names = string.Join(", ", matches.Select(Path.GetFileName));
+        if (name == IgnoreFileName)
+            throw IgnorePatternException.ForFile(label,
+                $"cannot be used because the directory holds {matches.Count} files whose names differ only in case ({names}); keep one");
+
+        var chosen = matches.FirstOrDefault(entry => Path.GetFileName(entry) == name) ?? matches[0];
+        warnings.Add(IgnorePatternException.ForFile(label,
+            $"has {matches.Count - 1} other file whose name differs only in case ({names}); only {Path.GetFileName(chosen)} was read").Message);
+        return chosen;
     }
 
     /// <summary>

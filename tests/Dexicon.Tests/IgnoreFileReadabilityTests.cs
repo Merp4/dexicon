@@ -342,6 +342,44 @@ public sealed class IgnoreFileReadabilityTests : IDisposable
     }
 
     [Fact]
+    public void WhenTwoGitignoreNamesDifferOnlyInCaseTheExactOneIsReadWhateverOrderTheyAreListed()
+    {
+        // A case-sensitive filesystem can hold both; the test lists them, since a Windows directory cannot.
+        var warnings = new WarningSink();
+        foreach (var listing in new[] { new[] { "/r/.gitignore", "/r/.GitIgnore" }, new[] { "/r/.GitIgnore", "/r/.gitignore" } })
+            WorkspaceWalker.Named(listing, ".gitignore", "sub", warnings).ShouldBe("/r/.gitignore");
+
+        warnings.Kept.ShouldBe(Enumerable.Repeat(
+            "sub/.gitignore has 1 other file whose name differs only in case (.GitIgnore, .gitignore); only .gitignore was read", 2));
+    }
+
+    [Fact]
+    public void WhenNoGitignoreNameIsExactTheFirstInOrdinalOrderIsReadWhateverOrderTheyAreListed()
+    {
+        var warnings = new WarningSink();
+        foreach (var listing in new[] { new[] { "/r/.GitIgnore", "/r/.GITIGNORE" }, new[] { "/r/.GITIGNORE", "/r/.GitIgnore" } })
+            WorkspaceWalker.Named(listing, ".gitignore", "", warnings).ShouldBe("/r/.GITIGNORE");
+
+        warnings.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public void TwoDexiconignoreNamesThatDifferOnlyInCaseFailTheWalk()
+    {
+        var thrown = Should.Throw<IgnorePatternException>(
+            () => WorkspaceWalker.Named(["/r/.DexiconIgnore", "/r/.dexiconignore"], ".dexiconignore", "a", new WarningSink()));
+
+        thrown.Message.ShouldBe(
+            "a/.dexiconignore cannot be used because the directory holds 2 files whose names differ only in case (.DexiconIgnore, .dexiconignore); keep one");
+    }
+
+    [Fact]
+    public void ANameThatNoEntryMatchesIsNotFound()
+    {
+        WorkspaceWalker.Named(["/r/readme.md"], ".gitignore", "", new WarningSink()).ShouldBeNull();
+    }
+
+    [Fact]
     public void ALineEndsAtALineFeedAndNotAtTheOtherCharactersThatBreakALine()
     {
         // Git splits on LF. U+0085 or U+2028 inside a line is part of the pattern, which then matches no file of the
