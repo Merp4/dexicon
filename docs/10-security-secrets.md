@@ -69,15 +69,25 @@ covers the rest. `OneLineLogSink` is what an operator sees:
   U+FFFD: DEL, the C1 controls (which include NEL and CSI), the line and paragraph separators
   U+2028 and U+2029, the bidirectional controls, and the other format characters (zero-width
   characters, the byte order mark, the soft hyphen, the tag characters), and a lone surrogate.
-  A zero-width joiner inside an emoji sequence is one of them.
-  A value nested deeper than eight levels is written as `"..."`.
+  A string is cut at 8,000 characters, with `...` after it. The same replacement applies to the
+  text of the message template, which is the code's and not a caller's: a call that interpolates a
+  caller's value into the template fails the build (CA2254 is an error here), and the sink repeats
+  that protection for the console. A template line after the first that does not start with a space
+  gets four spaces in front of it. A value nested deeper than eight levels is written as `"..."`.
+  Known effect: a zero-width joiner or non-joiner is replaced like the rest, so a family emoji or
+  a Persian word written with a ZWNJ appears with U+FFFD in the console log and in a caller's value
+  echoed in a tool error (`OneLine` shares the rule). The stored value is unchanged.
 - An exception is written from its own `ToString`, a line at a time. Every kind of line break ends
-  a line. A line that does not start the way the runtime starts its own (the type name for the
-  first line, `   at ` for a frame, `   --- ` for the end of an inner trace, ` ---> ` for an inner
-  exception) gets four spaces in front of it, a blank line becoming four spaces. Tab and every
-  other control or format character in it, and a separator, becomes U+FFFD. So a message, a stack
-  frame or what a type adds to `ToString` (the file name of a `FileNotFoundException`) cannot
-  begin a log line. A message is cut at 4,000 characters.
+  a line, and a line is cut at 4,000 characters, `...` after it. A line is left as it is only when
+  the runtime wrote it: the first line starts with the type name, a frame or the `   --- ` line of
+  an inner trace is a line of the `StackTrace` of an exception in the chain, the end of an inner
+  trace is that exact line, and an inner exception starts with ` ---> ` and the type of an
+  exception in the chain. Any other line gets four spaces in front of it, a blank line becoming
+  four spaces. Tab and every other control or format character in it, and a separator, becomes
+  U+FFFD. So a message, a stack frame or what a type adds to `ToString` (the file name of a
+  `FileNotFoundException`) cannot begin a log line, including by imitating a frame. A message that
+  repeats a frame of the exception's own stack, or names the type of a real inner exception after
+  ` ---> `, is not told apart. The whole exception is cut at 64,000 characters, with a note.
 - The chain is read first without recursion. Past 100 levels or 1,000 exceptions only the outermost
   type and message are written, with a note. An exception whose text cannot be read, or a
   property whose `ToString` throws, is written as a note naming its type.

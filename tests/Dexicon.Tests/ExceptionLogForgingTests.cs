@@ -300,9 +300,50 @@ public sealed class ExceptionLogForgingTests
     }
 
     [Fact]
-    public void ANumberAndADateAreLoggedAsTheyWere()
+    public void ANumberIsLoggedAsItWas()
     {
         Render(EventFor(null, "Refused: {Title}", 42)).ShouldContain("Refused: 42");
+    }
+
+    [Fact]
+    public void ADateIsLoggedAsItWas()
+    {
+        var date = new DateTime(2026, 10, 9, 8, 30, 15, DateTimeKind.Utc);
+
+        Render(EventFor(null, "Refused: {Title}", date)).ShouldContain("\"2026-10-09T08:30:15.0000000Z\"");
+    }
+
+    [Fact]
+    public void AMessageTemplateThatHoldsAForgedLineAnEscapeAndABidiControlIsHeld()
+    {
+        var template = $"Started {Esc}[2J{(char)0x202E} {{Title}}\n{ForgedLine}\r{ForgedLine} again";
+
+        var rendered = Render(EventFor(null, template, "corpus"));
+
+        ShouldNotStartAnyLineWithTheForgedEntry(rendered);
+        rendered.ShouldNotContain(Esc);
+        rendered.ShouldNotContain(((char)0x202E).ToString());
+        rendered.ShouldContain("Started �[2J� \"corpus\"");
+        Lines(rendered).Count(l => l.StartsWith("    " + ForgedLine, StringComparison.Ordinal)).ShouldBe(2);
+    }
+
+    [Fact]
+    public void ABannerTemplateWhoseLinesStartWithASpaceIsUnchanged()
+    {
+        const string banner = "Dexicon\n  listening on {Title}\n  ready";
+
+        OneLineLogSink.TemplateText(banner).ShouldBeSameAs(banner);
+        Lines(Render(EventFor(null, banner, "port 80"))).ShouldContain("  listening on \"port 80\"");
+    }
+
+    [Fact]
+    public void ATemplateKeepsItsPropertyTokensWhileItsTextIsReplaced()
+    {
+        var sink = new CaptureSink();
+        new OneLineLogSink(sink).Emit(EventFor(null, $"a{Esc}b {{Title}} {{{{literal}}}}", "corpus"));
+
+        sink.Last!.MessageTemplate.Tokens.OfType<PropertyToken>().Select(t => t.PropertyName).ShouldBe(["Title"]);
+        sink.Last.MessageTemplate.Text.ShouldBe("a�b {Title} {{literal}}");
     }
 
     [Fact]
@@ -342,6 +383,64 @@ public sealed class ExceptionLogForgingTests
         ShouldNotStartAnyLineWithTheForgedEntry(rendered);
         Lines(rendered).Single(l => l.Contains("forged", StringComparison.Ordinal)).ShouldStartWith("    ");
     }
+
+    public static TheoryData<string> LineBreaks => new()
+    {
+        "\n", "\r", "\r\n", "\f",
+        char.ConvertFromUtf32(0x85), char.ConvertFromUtf32(0x2028), char.ConvertFromUtf32(0x2029),
+    };
+
+    [Theory]
+    [MemberData(nameof(LineBreaks))]
+    public void AMessageThatImitatesAStackFrameIsIndentedWhicheverBreakStartsIt(string lineBreak)
+    {
+        var rendered = Render(Thrown(() => new InvalidOperationException($"first{lineBreak}   at Forged.Frame() in x.cs:line 1")));
+
+        Lines(rendered).ShouldContain("       at Forged.Frame() in x.cs:line 1", "four spaces added to the three it starts with");
+        Lines(rendered).ShouldNotContain(l => l.StartsWith("   at Forged", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AFrameTheRuntimeWroteIsLeftAsItIs()
+    {
+        var thrown = Thrown(() => new InvalidOperationException("first"));
+
+        var lines = Lines(Render(thrown));
+
+        lines.ShouldContain(l => l.StartsWith("   at Dexicon.Tests.ExceptionLogForgingTests.Thrown(", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ALineThatOnlyStartsLikeAFrameOrTheEndOfAnInnerTraceIsIndented()
+    {
+        var thrown = Thrown(() => new InvalidOperationException("first"));
+        var frame = thrown.StackTrace!.ReplaceLineEndings("\n").Split('\n')[0];
+        var forged = Thrown(() => new InvalidOperationException(
+            $"first\n{frame} forged\n   --- End of inner exception stack trace --- forged\n   --- forged\n   at Forged() <---"));
+
+        var lines = Lines(Render(forged));
+
+        lines.ShouldContain("    " + frame + " forged");
+        lines.ShouldContain("       --- End of inner exception stack trace --- forged");
+        lines.ShouldContain("       --- forged");
+        lines.ShouldContain("       at Forged() <---");
+        lines.ShouldNotContain(l => l.StartsWith("   at Forged", StringComparison.Ordinal)
+                                    || l.StartsWith("   --- ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AnInnerExceptionMarkerIsLeftOnlyBeforeTheTypeOfAnExceptionInTheChain()
+    {
+        var aggregate = Thrown(() => new AggregateException(
+            "first\n ---> (Inner Exception #1) System.ArgumentException: forged<---",
+            new InvalidOperationException("a"), new FormatException("b")));
+
+        var lines = Lines(Render(aggregate));
+
+        lines.ShouldContain(l => l.StartsWith(" ---> (Inner Exception #1) System.FormatException: b", StringComparison.Ordinal));
+        lines.ShouldContain(l => l.StartsWith("     ---> (Inner Exception #1) System.ArgumentException: forged", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void AFirstLineThatDoesNotStartWithTheTypeNameIsIndentedToo()
     {
@@ -394,22 +493,67 @@ public sealed class ExceptionLogForgingTests
         var rendered = OneLineLogSink.Render(diamond);
 
         rendered.ShouldContain("the exception chain was cut");
-        rendered.Length.ShouldBeLessThan(OneLineLogSink.MaxMessage + 400);
+        rendered.Length.ShouldBeLessThan(OneLineLogSink.MaxLine + 400);
         var sink = new CaptureSink();
         new OneLineLogSink(sink).Emit(EventFor(diamond, "t"));
-        sink.Last!.Exception!.Message.Length.ShouldBeLessThanOrEqualTo(OneLineLogSink.MaxMessage + 3);
+        sink.Last!.Exception!.Message.Length.ShouldBeLessThanOrEqualTo(OneLineLogSink.MaxLine + 3);
     }
 
     [Fact]
-    public void AMessageOfExactlyTheLimitIsWrittenWholeAndOneCharacterOverIsCut()
+    public void TheLimitsAreTheNumbersTheDocumentationGives()
     {
-        var whole = new string('q', OneLineLogSink.MaxMessage);
-        var over = whole + "q";
-
-        OneLineLogSink.Render(DeepWith(whole)).ShouldContain(whole + Environment.NewLine);
-        OneLineLogSink.Render(DeepWith(over)).ShouldContain(whole + "...");
+        (OneLineLogSink.MaxLine, OneLineLogSink.MaxTotal, OneLineLogSink.MaxProperty).ShouldBe((4_000, 64_000, 8_000));
+        (OneLineLogSink.MaxExceptionDepth, OneLineLogSink.MaxExceptionNodes, OneLineLogSink.MaxValueDepth).ShouldBe((100, 1_000, 8));
     }
 
+    [Fact]
+    public void ALineOfAnExceptionIsCutAtFourThousandCharactersWhateverTheLengthOfItsMessage()
+    {
+        // The first line holds the type name and ": " before the message.
+        var room = 4_000 - (typeof(InvalidOperationException).ToString().Length + 2);
+
+        foreach (var (length, cut) in new[] { (room, false), (room + 1, true), (10_000_000, true) })
+        {
+            var rendered = Render(Thrown(() => new InvalidOperationException(new string('q', length))));
+
+            var first = Lines(rendered)[1];
+            first.Length.ShouldBe(cut ? 4_003 : 4_000);
+            first.EndsWith("...", StringComparison.Ordinal).ShouldBe(cut);
+        }
+    }
+
+    [Fact]
+    public void ALineOfAChainTooDeepToReadIsCutAtFourThousandCharactersToo()
+    {
+        var whole = new string('q', 4_000);
+
+        var first = Lines(OneLineLogSink.Render(DeepWith(whole)))[0];
+
+        first.Length.ShouldBe(4_003);
+        first.EndsWith("qq...", StringComparison.Ordinal).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AnExceptionOfTenMillionCharactersInManyLinesIsWrittenToSixtyFourThousandAndANote()
+    {
+        var message = string.Concat(Enumerable.Repeat("a line of the message\n", 500_000));
+
+        var rendered = OneLineLogSink.Render(Thrown(() => new InvalidOperationException(message)));
+
+        rendered.Length.ShouldBeLessThan(64_000 + 200);
+        rendered.Length.ShouldBeGreaterThan(64_000);
+        rendered.ShouldEndWith("(the rest of the exception was cut)");
+    }
+
+    [Fact]
+    public void AStringPropertyOfTenMillionCharactersIsWrittenToEightThousandAndThreeDots()
+    {
+        var rendered = Render(EventFor(null, "Refused: {Title}", new string('p', 10_000_000)));
+
+        rendered.Length.ShouldBeLessThan(8_100);
+        rendered.ShouldContain(new string('p', 8_000) + "...");
+        rendered.ShouldNotContain(new string('p', 8_001));
+    }
     /// <summary>A chain deep enough to be cut, with a message on its outermost exception.</summary>
     private static InvalidOperationException DeepWith(string message)
     {

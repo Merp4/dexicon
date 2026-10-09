@@ -1,23 +1,31 @@
 using System.Text;
 using Serilog.Core;
 using Serilog.Events;
+using Serilog.Parsing;
 
 namespace Dexicon.Infrastructure;
 
 /// <summary>
-/// Passes each event to the sink it wraps with its text made safe to print, so that nothing a caller sent
-/// can begin a line of the console log.
+/// Passes each event to the sink it wraps with its text made safe to print, so that text a caller sent
+/// cannot begin a line of the console log or reach the terminal as a control sequence.
 ///
 /// <c>{Message:j}</c> quotes a logged string and escapes U+0000 to U+001F, <c>"</c> and <c>\</c>, and leaves
 /// the rest, so U+007F, the C1 controls (U+0080 to U+009F, including NEL and CSI), U+2028, U+2029, the
 /// bidirectional controls and the other format characters reach the console as they were sent.
 /// <c>{Exception}</c> writes <see cref="Exception.ToString"/> as it is, and the scope errors quote the corpus
 /// name or path a caller sent. This sink replaces those characters (see <see cref="LogText.IsHostile"/>) in
-/// every string a property holds, and renders the exception with <see cref="Render"/>.
+/// every string a property holds, renders the exception with <see cref="Render"/>, and does the same to the
+/// text of the message template (see <see cref="TemplateText"/>).
+///
+/// The template is the code's. A caller's text reaches it only when a call interpolates a value into the
+/// template instead of passing it as an argument, which the build refuses (CA2254 is an error here), so the
+/// work on the template is a second guard and not the first.
 ///
 /// The event is rebuilt for the wrapped sink. Its trace and span ids are carried over when it has them.
 /// Text that cannot be read (a property whose <c>ToString</c> throws, an exception whose message does) is
-/// replaced by a note, so that one such value does not drop the whole entry.
+/// replaced by a note, so that one such value does not drop the whole entry. A string is cut at
+/// <see cref="MaxProperty"/> characters, a line of an exception at <see cref="MaxLine"/>, and the whole
+/// exception at <see cref="MaxTotal"/>.
 /// </summary>
 internal sealed class OneLineLogSink(ILogEventSink inner) : ILogEventSink, IDisposable
 {
@@ -27,8 +35,14 @@ internal sealed class OneLineLogSink(ILogEventSink inner) : ILogEventSink, IDisp
     /// <summary>How many exceptions <see cref="Render"/> reads across a chain and its aggregates.</summary>
     internal const int MaxExceptionNodes = 1_000;
 
-    /// <summary>The most characters of an exception's message that are written.</summary>
-    internal const int MaxMessage = 4_000;
+    /// <summary>The most characters of a line of an exception that are written, and of an exception's message.</summary>
+    internal const int MaxLine = 4_000;
+
+    /// <summary>The most characters of an exception that are written.</summary>
+    internal const int MaxTotal = 64_000;
+
+    /// <summary>The most characters of a string property that are written.</summary>
+    internal const int MaxProperty = 8_000;
 
     /// <summary>How deep a logged sequence, structure or dictionary is sanitised.</summary>
     internal const int MaxValueDepth = 8;
@@ -36,41 +50,82 @@ internal sealed class OneLineLogSink(ILogEventSink inner) : ILogEventSink, IDisp
     /// <summary>Put before a line of an exception that would otherwise start at the first column.</summary>
     private const string Indent = "    ";
 
+    private const string EndOfInnerTrace = "   --- End of inner exception stack trace ---";
+
     public void Emit(LogEvent logEvent)
     {
         ArgumentNullException.ThrowIfNull(logEvent);
 
         Exception? exception = logEvent.Exception is null ? null : new RenderedException(logEvent.Exception);
         var properties = logEvent.Properties.Select(p => new LogEventProperty(p.Key, Safe(p.Value, 0))).ToList();
+        var template = SafeTemplate(logEvent.MessageTemplate);
 
         inner.Emit(logEvent.TraceId is { } trace && logEvent.SpanId is { } span
-            ? new LogEvent(logEvent.Timestamp, logEvent.Level, exception, logEvent.MessageTemplate, properties, trace, span)
-            : new LogEvent(logEvent.Timestamp, logEvent.Level, exception, logEvent.MessageTemplate, properties));
+            ? new LogEvent(logEvent.Timestamp, logEvent.Level, exception, template, properties, trace, span)
+            : new LogEvent(logEvent.Timestamp, logEvent.Level, exception, template, properties));
     }
 
     public void Dispose() => (inner as IDisposable)?.Dispose();
+
+    private static MessageTemplate SafeTemplate(MessageTemplate template)
+    {
+        var safe = TemplateText(template.Text);
+        return ReferenceEquals(safe, template.Text) ? template : new MessageTemplateParser().Parse(safe);
+    }
+
+    /// <summary>
+    /// The text of a message template with the characters of <see cref="LogText.IsHostile"/> replaced, every
+    /// kind of line break treated as one, and a line after the first that does not start with a space given
+    /// four, so text after a line break cannot begin a line. A line that starts with a space is left, which
+    /// keeps a banner written over several lines as it is. The same instance when nothing changes.
+    /// </summary>
+    internal static string TemplateText(string text)
+    {
+        var lines = text.ReplaceLineEndings("\n").Split('\n');
+        for (var i = 1; i < lines.Length; i++)
+            if (lines[i].Length > 0 && lines[i][0] != ' ')
+                lines[i] = Indent + lines[i];
+
+        var rebuilt = LogText.Neutralise(string.Join('\n', lines), includeC0: false);
+        // The line breaks were kept, and the other control characters are replaced with the rest.
+        rebuilt = ReplaceControls(rebuilt);
+        return string.Equals(rebuilt, text, StringComparison.Ordinal) ? text : rebuilt;
+    }
+
+    private static string ReplaceControls(string text)
+    {
+        if (!text.Any(c => c < 0x20 && c != '\n')) return text;
+
+        return string.Concat(text.Select(c => c < 0x20 && c != '\n' ? LogText.Marker : c));
+    }
 
     /// <summary>
     /// <see cref="Exception.ToString"/>, one line at a time. Every kind of line break ends a line, a line
     /// that would start at the first column is indented, and the control, format and separator characters in
     /// it are replaced, so text in a message, a stack frame or an override of <c>ToString</c> cannot begin a
-    /// line of its own. A line is left as it is only when it starts the way the runtime starts its own:
-    /// the first line with the exception's type name, a stack frame with <c>   at </c>, the end of an inner
-    /// exception's trace with <c>   --- </c>, and an inner exception with <c> ---&gt; </c>.
+    /// line of its own.
+    ///
+    /// A line is left as it is only when it is one the runtime wrote, and that is decided by comparing it with
+    /// what the runtime would write for this chain: the first line starts with the exception's type name; a
+    /// stack frame is a line of an exception's own <see cref="Exception.StackTrace"/> that starts with
+    /// <c>   at </c> or <c>   --- </c>, with the <c>&lt;---</c> that ends a member of an aggregate; the end
+    /// of an inner trace is that exact line; and an inner exception starts with <c> ---&gt; </c> and the type
+    /// of an exception in the chain. A message that imitates one of these with the type of a real inner
+    /// exception is not told apart.
     ///
     /// The chain is read first, without recursion, up to <see cref="MaxExceptionDepth"/> levels and
     /// <see cref="MaxExceptionNodes"/> exceptions, because <see cref="Exception.ToString"/> recurses once per
     /// inner exception and a chain a hundred thousand deep overflows the stack. Past either limit only the
-    /// outermost type and message are written, with a note. A message is cut at <see cref="MaxMessage"/>
-    /// characters, since an aggregate's message holds those of everything under it.
+    /// outermost type and message are written, with a note. A line is cut at <see cref="MaxLine"/> characters
+    /// and the whole at <see cref="MaxTotal"/>; <see cref="Exception.ToString"/> still builds the text first.
     /// </summary>
     internal static string Render(Exception exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
 
         var type = exception.GetType().ToString();
-        if (!WithinBudget(exception))
-            return Lines($"{type}: {SafeMessage(exception)}", type)
+        if (!Walk(exception, out var runtime))
+            return Lines($"{type}: {SafeMessage(exception)}", type, new Runtime())
                    + Environment.NewLine + Indent
                    + $"(the exception chain was cut: it nests more than {MaxExceptionDepth} levels or holds more than "
                    + $"{MaxExceptionNodes} exceptions)";
@@ -86,14 +141,14 @@ internal sealed class OneLineLogSink(ILogEventSink inner) : ILogEventSink, IDisp
             return $"{type}: (its text could not be read)";
         }
 
-        return Lines(text, type);
+        return Lines(text, type, runtime);
     }
 
     private static string SafeMessage(Exception exception)
     {
         try
         {
-            return LogText.Cut(exception.Message ?? string.Empty, MaxMessage);
+            return LogText.Cut(exception.Message ?? string.Empty, MaxLine);
         }
         catch (Exception)
         {
@@ -101,54 +156,101 @@ internal sealed class OneLineLogSink(ILogEventSink inner) : ILogEventSink, IDisp
         }
     }
 
-    private static bool WithinBudget(Exception root)
+    /// <summary>What the runtime would write for a chain, to tell a line it wrote from one a message holds.</summary>
+    private sealed class Runtime
     {
-        var pending = new Stack<(Exception Exception, int Depth)>();
-        pending.Push((root, 1));
+        public HashSet<string> StackLines { get; } = new(StringComparer.Ordinal);
+
+        public List<string> InnerPrefixes { get; } = [];
+    }
+
+    /// <summary>
+    /// Reads the chain without recursion. False when it is deeper or larger than the limits, and then
+    /// <paramref name="runtime"/> is incomplete.
+    /// </summary>
+    private static bool Walk(Exception root, out Runtime runtime)
+    {
+        runtime = new Runtime();
+        var pending = new Stack<(Exception Exception, int Depth, string? Prefix)>();
+        pending.Push((root, 1, null));
         var nodes = 0;
 
         while (pending.TryPop(out var item))
         {
             if (++nodes > MaxExceptionNodes || item.Depth > MaxExceptionDepth) return false;
 
+            if (item.Prefix is not null) runtime.InnerPrefixes.Add(item.Prefix + item.Exception.GetType());
+            foreach (var line in StackLinesOf(item.Exception)) runtime.StackLines.Add(line);
+
             if (item.Exception is AggregateException aggregate)
             {
                 // Without this a million members are pushed before the node limit is seen. The result is the
                 // same with it removed, only slower.
                 if (aggregate.InnerExceptions.Count > MaxExceptionNodes) return false;
-                foreach (var member in aggregate.InnerExceptions) pending.Push((member, item.Depth + 1));
+                for (var i = 0; i < aggregate.InnerExceptions.Count; i++)
+                    pending.Push((aggregate.InnerExceptions[i], item.Depth + 1,
+                        ReferenceEquals(aggregate.InnerExceptions[i], aggregate.InnerException)
+                            ? " ---> "
+                            : $" ---> (Inner Exception #{i}) "));
             }
             else if (item.Exception.InnerException is { } next)
             {
-                pending.Push((next, item.Depth + 1));
+                pending.Push((next, item.Depth + 1, " ---> "));
             }
         }
 
         return true;
     }
 
-    private static string Lines(string text, string type)
+    private static string[] StackLinesOf(Exception exception)
+    {
+        string? trace;
+        try
+        {
+            trace = exception.StackTrace;
+        }
+        catch (Exception)
+        {
+            return [];
+        }
+
+        return trace is null ? [] : trace.ReplaceLineEndings("\n").Split('\n');
+    }
+
+    private static string Lines(string text, string type, Runtime runtime)
     {
         var lines = text.ReplaceLineEndings("\n").Split('\n');
-        var rendered = new StringBuilder(text.Length + Indent.Length * lines.Length);
+        var rendered = new StringBuilder(Math.Min(text.Length, MaxTotal) + Indent.Length * lines.Length);
 
         for (var i = 0; i < lines.Length; i++)
         {
-            var line = LogText.Neutralise(lines[i], includeC0: true);
+            var original = LogText.Cut(lines[i], MaxLine);
+            var line = LogText.Neutralise(original, includeC0: true);
             if (i > 0) rendered.Append(Environment.NewLine);
-            if (NeedsIndent(line, i == 0, type)) rendered.Append(Indent);
+            if (NeedsIndent(original, i == 0, type, runtime)) rendered.Append(Indent);
 
             rendered.Append(line);
+            if (rendered.Length <= MaxTotal) continue;
+
+            rendered.Append(Environment.NewLine).Append(Indent).Append("(the rest of the exception was cut)");
+            break;
         }
 
         return rendered.ToString();
     }
 
-    private static bool NeedsIndent(string line, bool first, string type) => first
-        ? !line.StartsWith(type, StringComparison.Ordinal)
-        : !(line.StartsWith("   at ", StringComparison.Ordinal)
-            || line.StartsWith("   --- ", StringComparison.Ordinal)
-            || line.StartsWith(" ---> ", StringComparison.Ordinal));
+    private static bool NeedsIndent(string line, bool first, string type, Runtime runtime)
+    {
+        if (first) return !line.StartsWith(type, StringComparison.Ordinal);
+        if (line == EndOfInnerTrace) return false;
+
+        var frame = line.EndsWith("<---", StringComparison.Ordinal) ? line[..^4] : line;
+        if ((frame.StartsWith("   at ", StringComparison.Ordinal) || frame.StartsWith("   --- ", StringComparison.Ordinal))
+            && runtime.StackLines.Contains(frame))
+            return false;
+
+        return !runtime.InnerPrefixes.Any(p => line.StartsWith(p, StringComparison.Ordinal));
+    }
 
     private static LogEventPropertyValue Safe(LogEventPropertyValue value, int depth)
     {
@@ -157,7 +259,7 @@ internal sealed class OneLineLogSink(ILogEventSink inner) : ILogEventSink, IDisp
         switch (value)
         {
             case ScalarValue { Value: string text }:
-                var held = LogText.Neutralise(text, includeC0: false);
+                var held = LogText.Neutralise(LogText.Cut(text, MaxProperty), includeC0: false);
                 return ReferenceEquals(held, text) ? value : new ScalarValue(held);
 
             case ScalarValue { Value: var other } when IsPlain(other):
@@ -165,7 +267,7 @@ internal sealed class OneLineLogSink(ILogEventSink inner) : ILogEventSink, IDisp
 
             case ScalarValue { Value: var other }:
                 // A type Serilog formats with ToString, whose text is the type's to write.
-                return new ScalarValue(LogText.Neutralise(TextOf(other), includeC0: false));
+                return new ScalarValue(LogText.Neutralise(LogText.Cut(TextOf(other), MaxProperty), includeC0: false));
 
             case SequenceValue sequence:
                 return new SequenceValue(sequence.Elements.Select(e => Safe(e, depth + 1)).ToList());
