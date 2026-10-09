@@ -675,6 +675,7 @@ public sealed class CorpusIndexer(
             if (entry.Entity.Id == fileId)
                 entry.State = EntityState.Detached;
     }
+
     /// <summary>
     /// Embed and upsert a file's chunks in batches, reporting progress between them.
     ///

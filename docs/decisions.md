@@ -2143,7 +2143,7 @@ something granted on purpose. Sources, chunk sets and corpora stay out of every 
 - Only an uploaded document is detached. The endpoint takes a file id, and a key that can search is
   listed the ids of every file in a corpus, including those a source read from a folder or a commit.
   Those answer 404 and keep their row and vectors; they go when their source does. The same filter sits
-  in `VectorStoreCleanup` and `DocumentService.DetachAsync`, so the approved removal of a document uses it too.
+  in `VectorStoreCleanup` and `DocumentService.DetachFileAsync`, so the approved removal of a document uses it too.
 
 **Rejected.** A scope that also removes sources, chunk sets and corpora, which reverses D-28's choice
 that these are for a person; an agent asks with `propose`. Leaving detach under `ingest`, so adding a

@@ -223,29 +223,43 @@ the corpus, in every chunk set, and the source takes its file rows with it. The 
 the next attachment creates the source again.
 
 One lock in the process orders the writes to a corpus's attachment rows. An attachment holds it
-from the lookup of the upload source and the file to the save. A detach holds it for the lookup
-and the delete of the row. Removing a source, a chunk set or a corpus holds it for the delete of
-the row. None of them holds it across a vector-store call, and a removal that finds its target
-already deleted by another request answers 404. An indexing pass does not take the lock.
-Dexicon is one process owning its catalogue file (D-01), so a second process writing the file is
-not covered.
+from its entry to its save, and a detach for the lookup and the delete of the row. Removing a
+source, a chunk set or a corpus holds it for the delete of the row, after its vector calls, and
+reads its target again under it. None of them holds it across a vector-store call. An indexing
+pass does not take it. Adding a source or a chunk set and creating a corpus do not take it
+either: their rows name a corpus, and the removal of that corpus at the same moment fails their
+save with a foreign-key error. Dexicon is one process owning its catalogue file (D-01); a second
+process writing the file is not covered.
+
+The second of two simultaneous removals of one source, chunk set or corpus answers 404. A chunk
+set that became the default or the only set while its vectors were being deleted is kept, the
+removal answers the 409 it would have answered at the start, and a refresh of the set is queued,
+because its vectors are gone. An attachment that waited for the lock behind the removal of its
+corpus is answered as an unknown corpus (400).
 
 A detach deletes the document's vectors, then its row, then the vectors again for the file the
 row held, because an attachment can have renamed or replaced the file, and a pass can have
 written vectors for it, since the first delete. The second delete does not use the caller's
 token, so it runs when the caller has gone. It has a limit of 30 s of its own, and a failure is
-logged and does not undo the detach.
+logged and does not undo the detach. Points that a running pass writes after the vector deletes
+of a source removal, or that a failed second delete leaves, are not reconciled for a source that
+no longer exists.
 
 A document detached while a pass is indexing the corpus is left out of the pass's saves, so the
 pass does not fail on its row. The saves that insert chunk states, claim a document, flush after
 a document and end the source also delete the vectors the pass wrote for the document and count
-it as skipped. The count reconcile at the start, the save that ends the pass and the save that
-records how the job ended only leave the document out, and a later pass of the same chunk set
-deletes any points it has, provided the vector store answers its per-file count. If the vector
-delete fails the pass still succeeds and the later pass removes the points. The flush while one
-file embeds holds no changes for another document and is saved without this handling. A chunk
-state deleted on its own, with the document still attached, fails the pass: the job is recorded
-as failed with the error, and the document and its vectors are left as they are.
+it as skipped. The count reconcile at the start and the save that records how the job ended only
+leave the document out, and a later pass of the same chunk set deletes any points it has,
+provided the vector store answers its per-file count. If the vector delete fails the pass still
+succeeds and the later pass removes the points. The flush while one file embeds holds no changes
+for another document and is saved without this handling.
+
+A chunk state deleted on its own, or a chunk set or source deleted while a pass holds it, fails
+the pass. The save that records the job's outcome stops tracking the rows the pass held for
+them, so the job is recorded as failed with the error, and the document and its vectors are left
+as they are. When the job's own row is gone there is nowhere to record the outcome, and the
+failure goes to the worker.
+
 Limits: 200 MB per file (`DEXICON__UPLOAD__MAXFILEBYTES`), applied while the file is read
 off the wire. The endpoint reads the multipart body with a `MultipartReader` and hands each
 file straight to the blob store, which copies it under a cap and stops one byte over, so

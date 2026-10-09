@@ -1,7 +1,5 @@
 using Dexicon.Core.Catalog;
-using Dexicon.Core.Indexing;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
 
 namespace Dexicon.Tests;
 
