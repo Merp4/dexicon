@@ -40,11 +40,18 @@ public sealed class DeadlineStream(Stream inner, TimeSpan budget, string fileNam
         if (!Expired && Stopwatch.GetTimestamp() < _deadline) return;
 
         Expired = true;
-        throw new ExtractionTimeoutException(
-            $"'{fileName}' was still being read after {budget.TotalSeconds:N0}s and was "
-            + "abandoned. A document this slow is usually structurally broken: a PDF with "
-            + "no cross-reference table is searched byte by byte.");
+        throw TimedOut();
     }
+
+    /// <summary>
+    /// The exception for this deadline having passed. A caller that finds <see cref="Expired"/> set
+    /// after the extractor returned, because the extractor caught the exception and went on, throws
+    /// it so the partial text is not kept.
+    /// </summary>
+    public ExtractionTimeoutException TimedOut(Exception? cause = null) =>
+        new($"'{fileName}' was still being read after {budget.TotalSeconds:N0}s and was "
+            + "abandoned. A document this slow is usually structurally broken: a PDF with "
+            + "no cross-reference table is searched byte by byte.", cause);
 
     public override int Read(byte[] buffer, int offset, int count)
     {
