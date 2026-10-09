@@ -84,14 +84,13 @@ public sealed class TokenService(CatalogDbContext db, TimeProvider clock)
     private const int SecretBytes = 32;
 
     /// <summary>
-    /// Issue a key. <c>admin</c> is stripped rather than rejected: the only callers are the
-    /// UI and the bootstrapper, and a request carrying it is asking for something the model
-    /// no longer has rather than making an error worth failing over.
+    /// Issue a key. <c>admin</c> is stripped rather than rejected: a request carrying it is asking
+    /// for something the model no longer has, and is not an error worth failing over. The caller is
+    /// <c>POST /api/tokens</c>.
     /// </summary>
     /// <param name="corpusIds">
-    /// The corpora the key may reach, saved with it. None means every corpus, so a mapping written
-    /// by a second save left a key that reached everything if anything stopped the request between
-    /// the two. The caller checks that they exist.
+    /// The corpora the key may reach, saved with it in one save. None means every corpus. The caller
+    /// checks that they exist.
     /// </param>
     public async Task<(ApiToken Row, IssuedToken Issued)> CreateAsync(
         string name, IEnumerable<string> scopes, DateTime? expiresUtc,

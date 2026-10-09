@@ -594,6 +594,27 @@ public sealed class CommittedChangeTests
     }
 
     [Fact]
+    public async Task AKeyIssuedForTwoCorporaIsSavedMappedToBothAndSaysSo()
+    {
+        // The test above cancels the save, which rolls the key back, so it cannot tell a key saved with
+        // its corpora from no key at all. This is the save that completes.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        await using var db = harness.NewContext();
+        var papers = (await harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("papers"), default)).Value!;
+
+        var result = await SystemEndpoints.CreateTokenAsync(
+            new CreateTokenRequest("agent", CorpusIds: [IndexingHarness.CorpusId, papers.Id]),
+            AsAdmin(), new TokenService(db, TimeProvider.System), db, default);
+
+        var created = result.ShouldBeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<CreatedTokenResponse>>().Value!;
+        created.Token.CorpusIds.ShouldBe([IndexingHarness.CorpusId, papers.Id], ignoreOrder: true);
+        await using var check = harness.NewContext();
+        (await check.TokenCorpora.Where(tc => tc.TokenId == created.Token.Id).Select(tc => tc.CorpusId).ToListAsync())
+            .ShouldBe([IndexingHarness.CorpusId, papers.Id], ignoreOrder: true);
+    }
+
+    [Fact]
     public async Task AKeyIssuedForACorpusThatDoesNotExistIsRefusedAndNotSaved()
     {
         // The corpora were checked after the key was saved, so the refusal left a key behind that reached
@@ -612,8 +633,9 @@ public sealed class CommittedChangeTests
     [Fact]
     public async Task AReplacedMappingIsReportedAsSavedWithNothingReadAfterTheSave()
     {
-        // The reply reloaded the key's corpora on the caller's token after the save. The collection was
-        // already loaded, so the reload read nothing; the reply comes from the tracked key, whose
+        // The reply once reloaded the key's corpora on the caller's token after the save. The collection was
+        // already loaded, so that reload read nothing and this test passes on the old code too; it guards
+        // against a read being added after the save. The reply comes from the tracked key, whose
         // collection the save fixes up, including the corpus the replacement dropped.
         var watcher = new CancelAfterWriteTo("token_corpora");
         await using var harness = await IndexingHarness.StartAsync(watcher, "notes");

@@ -70,9 +70,12 @@ with no section here fails its release rather than publishing an undescribed one
 - **A test rejects the request's token after a catalogue write.** `RequestTokenAfterCommitTests`
   compiles `src/` and fails on a use of the request's `CancellationToken` that a catalogue write can
   reach, whether named, copied, linked, captured by a lambda or local function, or read from
-  `HttpContext.RequestAborted`, so the job, audit line or reply that follows a save is not
-  cancellable. Catching `OperationCanceledException` around the use does not clear it, and a
-  function exempted by a justified `[SuppressMessage]` is skipped (`CONTRIBUTING.md`).
+  `HttpContext.RequestAborted`, so a job, audit line or reply that follows a save on that token
+  is found where it is written. Catching `OperationCanceledException` around the use does not clear
+  it. A function or type exempted by a `[SuppressMessage]` with a non-blank justification is skipped,
+  and a `MessageId` limits that to calls of one method name. The test's summary lists what it does
+  not see, among them a token held in a field and a `catch` reached after a write, and the test
+  fails when `src/` gains a project it does not read or code under `#if` (`CONTRIBUTING.md`).
 - **Stacked doc comments fail CI.** `scripts/check-doc-comments.py`, a step of the required
   `Build and test` job, fails on a `/// <summary>` line whose previous non-blank line is also
   `///`. Inserting a member between another member's doc block and its signature leaves that
@@ -106,7 +109,9 @@ with no section here fails its release rather than publishing an undescribed one
 - **A key issued for chosen corpora could be saved reaching every corpus.** The key and its
   corpora were two saves: an unknown corpus id was refused with `400` after the key was saved,
   and a cancel between the saves left it unmapped. A key with no mapping reaches every corpus,
-  and its secret had not been shown. The corpora are checked first and saved with the key.
+  and its secret had not been shown. The corpora are checked first and saved with the key. A key
+  an earlier version already left unmapped is not repaired: `GET /api/tokens` lists it with an
+  empty `corpusIds`, nobody holds its secret, and it can be revoked.
 - **Requests that answered `500`, or were read as something else.** Each was found by sending every
   JSON-body operation an empty object and `null`, by reading the attach path for a taken name, or by
   an independent review of the request paths, and each was reproduced against a running build. A
