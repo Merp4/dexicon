@@ -278,7 +278,7 @@ public sealed class CorpusIndexer(
             // Files that failed to embed before the failure were recorded as such, and the
             // reason is otherwise only added once the pass completes.
             if (embeddingFailed) AddReason(job, EmbeddingFailedReason);
-            AddReason(job, ex.Message);
+            AddReason(job, ReasonFor(ex));
 
             // Only while this job still owns the corpus. A job that never got the lease,
             // or lost it, would otherwise mark a corpus someone else is working as
@@ -602,23 +602,25 @@ public sealed class CorpusIndexer(
     /// Save, and when the save fails because the row of a file that was loaded from the catalogue is gone,
     /// stop tracking that file and save again.
     ///
-    /// A document detached while a pass runs has no row for the pass's pending update or insert. The
+    /// A document detached while a pass runs has no row for the pass's pending update, insert or delete. The
     /// entries stay in the tracker after a failed save, so each later save fails on them too, and so does
     /// the one that records how the job ended. SQLite stops at the first command that fails, so a failed
-    /// save names one file (three files whose rows were all deleted gave one entry), and the loop drops the
-    /// next file on the next round. A failure that names no such file is thrown.
+    /// save names one file (<c>SqliteSaveFailureTests</c>), and the loop drops the next file on the next
+    /// round. A failure that names no such file is thrown.
     /// </summary>
     /// <param name="afterDropping">Runs once the file has left the tracker, with its id.</param>
     /// <param name="recordingOutcome">
-    /// Also stops tracking every entry of a conflict that does not name the job's own row, such as a chunk set
-    /// or a chunk state deleted while the pass held it. The save that records how a job ended has to succeed
-    /// whatever the pass left in the tracker, and the next pass redoes what the dropped entries described.
+    /// Also stops tracking what the pass held for rows that are gone when the save is the one that records
+    /// how the job ended, which has to succeed whatever the pass left in the tracker: every entry of a
+    /// conflict that does not name the job's own row, and the files and chunk states the pass added when
+    /// their parent is missing. The next pass redoes what the dropped entries described.
     /// </param>
     private async Task SaveWithoutVanishedFilesAsync(
         Func<string, Task>? afterDropping, CancellationToken ct, bool recordingOutcome = false)
     {
-        // Each round stops tracking at least one entry that failed, or throws.
-        while (true)
+        // Each round stops tracking at least one entry that failed, so the tracker bounds the rounds.
+        var rounds = db.ChangeTracker.Entries().Count() + 1;
+        for (var round = 0; round < rounds; round++)
         {
             try
             {
@@ -634,18 +636,41 @@ public sealed class CorpusIndexer(
                     continue;
                 }
 
-                if (!recordingOutcome || ex is not DbUpdateConcurrencyException
-                    || ex.Entries.Any(e => e.Entity is IndexJob))
-                    throw;
+                if (!recordingOutcome || !StopTrackingWhatTheOutcomeCannotSave(ex)) throw;
 
-                foreach (var entry in ex.Entries) entry.State = EntityState.Detached;
                 log.LogWarning(ex,
-                    "{Count} rows changed while the pass ran and are not saved; the next pass redoes them",
+                    "{Count} rows changed or went missing while the pass ran and are not saved; the next pass redoes them",
                     ex.Entries.Count);
             }
         }
+
+        throw new InvalidOperationException(
+            $"The save still failed after {rounds - 1} rounds of dropping the files whose rows are gone.");
     }
 
+    /// <summary>
+    /// For the save that records the outcome: stops tracking the entries that cannot be saved because the rows
+    /// they describe are gone, and says whether there were any. A conflict that names the job's own row is
+    /// not one of them, since the job is what is being recorded.
+    /// </summary>
+    private bool StopTrackingWhatTheOutcomeCannotSave(DbUpdateException ex)
+    {
+        if (ex is DbUpdateConcurrencyException)
+        {
+            if (ex.Entries.Any(e => e.Entity is IndexJob)) return false;
+
+            foreach (var entry in ex.Entries) entry.State = EntityState.Detached;
+            return true;
+        }
+
+        if (!ex.IsForeignKeyViolation()) return false;
+
+        // Rows the pass added under a source or a chunk set that has been deleted.
+        var added = db.ChangeTracker.Entries()
+            .Where(e => e.State == EntityState.Added && e.Entity is FileChunkState or IndexedFile).ToList();
+        foreach (var entry in added) entry.State = EntityState.Detached;
+        return added.Count > 0;
+    }
     /// <summary>
     /// The id of a file named by a failed save whose catalogue row is gone, or null when there is none. A file
     /// the pass added is not in the catalogue yet, so it has not vanished from it.
@@ -666,16 +691,19 @@ public sealed class CorpusIndexer(
     }
 
     /// <summary>
-    /// Stops tracking a file. EF Core stops tracking the chunk states of a file with it, so none of them is
-    /// left to fail the next save (<c>EntityFrameworkDetachTests</c> pins that for the states a pass holds).
+    /// Stops tracking a file and every chunk state of it, whatever state they are in. EF Core stops tracking
+    /// the chunk states of a file with it only for states that are Added, Unchanged or Modified
+    /// (<c>EntityFrameworkDetachTests</c>); one that is Deleted, as the reconcile of a folder leaves for a file it
+    /// no longer sees, stays tracked and fails every save after it.
     /// </summary>
     private void ForgetFile(string fileId)
     {
-        foreach (var entry in db.ChangeTracker.Entries<IndexedFile>().ToList())
-            if (entry.Entity.Id == fileId)
-                entry.State = EntityState.Detached;
+        foreach (var entry in db.ChangeTracker.Entries().ToList())
+        {
+            var owner = entry.Entity switch { IndexedFile file => file.Id, FileChunkState state => state.FileId, _ => null };
+            if (owner == fileId) entry.State = EntityState.Detached;
+        }
     }
-
     /// <summary>
     /// Embed and upsert a file's chunks in batches, reporting progress between them.
     ///
@@ -1722,6 +1750,15 @@ public sealed class CorpusIndexer(
     }
 
     /// <summary>
+    /// What the job's error says of a failure. A save that fails because a row it held is gone says so in
+    /// words, and the exception, with the details of the save, is in the log.
+    /// </summary>
+    private static string ReasonFor(Exception ex) =>
+        ex is DbUpdateConcurrencyException || ex is DbUpdateException update && update.IsForeignKeyViolation()
+            ? "A chunk set, source or document was removed while the pass ran."
+            : ex.Message;
+
+    /// <summary>
     /// Adds a reason to the job's error rather than replacing what is there. One string
     /// serves the whole job, and each reason used to overwrite the last: two unreachable
     /// sources reported only the second, and an embedding failure at the end of the pass
@@ -1826,6 +1863,13 @@ public sealed class CorpusIndexer(
             }
             catch (Exception ex) when (attempt < SaveAttempts && !stop.IsCancellationRequested)
             {
+                // A job whose row was deleted is not saved by waiting for it.
+                if (ex is DbUpdateConcurrencyException && await JobRowIsGoneAsync(job))
+                {
+                    await GaveUpAsync(job, attempt, ex);
+                    throw;
+                }
+
                 log.LogWarning(ex,
                     "Could not record the outcome of job {JobId} (attempt {Attempt} of {Attempts}); "
                     + "trying again in {Delay}", job.Id, attempt, SaveAttempts, delay);
@@ -1841,6 +1885,12 @@ public sealed class CorpusIndexer(
 
             delay *= 2;
         }
+    }
+
+    private async Task<bool> JobRowIsGoneAsync(IndexJob job)
+    {
+        try { return !await db.Jobs.AsNoTracking().AnyAsync(j => j.Id == job.Id, CancellationToken.None); }
+        catch (Exception) { return false; }
     }
 
     /// <summary>

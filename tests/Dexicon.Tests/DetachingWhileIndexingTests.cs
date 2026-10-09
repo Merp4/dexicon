@@ -1,6 +1,8 @@
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Embedding;
+using Dexicon.Core.Indexing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Dexicon.Tests;
 
@@ -342,7 +344,8 @@ public sealed class DetachingWhileIndexingTests
         var read = await ReadBackAsync(harness, job);
         read.Recorded.State.ShouldBe(JobState.Failed);
         read.Recorded.FinishedUtc.ShouldNotBeNull();
-        read.Recorded.Error.ShouldNotBeNull().ShouldContain("affect 1 row");
+        read.Recorded.Error.ShouldNotBeNull().ShouldContain("removed while the pass ran");
+        read.Recorded.Error.ShouldNotContain("fwlink", Case.Insensitive, "the details of the save are in the log");
         read.Files.ShouldBe([PathOfTheFirst], "the document is still attached");
         harness.Vectors.CountFor(PathOfTheFirst).ShouldBeGreaterThan(0, "its vectors are kept");
     }
@@ -484,15 +487,16 @@ public sealed class DetachingWhileIndexingTests
         var read = await ReadBackAsync(harness, job);
         read.Recorded.State.ShouldBe(JobState.Failed);
         read.Recorded.FinishedUtc.ShouldNotBeNull();
-        read.Recorded.Error.ShouldNotBeNull();
+        read.Recorded.Error.ShouldNotBeNull().ShouldContain("removed while the pass ran");
         read.Files.ShouldBe([PathOfTheFirst]);
     }
 
     [Fact]
-    public async Task AJobWhoseOwnRowWasDeletedIsNotRecordedAndTheFailureIsThrown()
+    public async Task AJobWhoseOwnRowWasDeletedIsNotRecordedAndIsNotRetried()
     {
         // Dropping stale entries is for the rows a pass held. The job's own row is what the outcome is saved
-        // to, and when it is gone there is nowhere to record it.
+        // to, and when it is gone there is nowhere to record it and nothing to wait for.
+        var logs = new RecordingLoggerFactory();
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await AttachAsync(harness, two: false);
@@ -503,7 +507,36 @@ public sealed class DetachingWhileIndexingTests
             using var other = harness.NewContext();
             other.Jobs.ExecuteDelete();
         };
+        var started = System.Diagnostics.Stopwatch.StartNew();
 
-        await Should.ThrowAsync<DbUpdateConcurrencyException>(() => harness.RunIndexAsync());
+        await Should.ThrowAsync<DbUpdateConcurrencyException>(() => harness.RunIndexAsync(
+            log: logs.CreateLogger<CorpusIndexer>(), saveRetryDelay: TimeSpan.FromSeconds(1)));
+
+        started.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(8), "the retries wait 1, 2, 4 and 8 s");
+        logs.Lines.ShouldNotContain(l => l.Contains("trying again", StringComparison.Ordinal));
+        logs.Lines.ShouldContain(l => l.Contains("Gave up recording", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AnUploadSourceDeletedUnderAPassDropsItsDocumentsAndTheJobSucceeds()
+    {
+        // The rows of the source's documents go with it, and the pass leaves them out as detached documents.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await AttachAsync(harness, two: true);
+        var fired = 0;
+        harness.Vectors.OnDeleteAsync = async () =>
+        {
+            if (Interlocked.Exchange(ref fired, 1) != 0) return;
+            await using var other = harness.NewContext();
+            await other.Sources.ExecuteDeleteAsync();
+        };
+
+        var job = await harness.RunIndexAsync();
+
+        var read = await ReadBackAsync(harness, job);
+        read.Recorded.State.ShouldBe(JobState.Succeeded);
+        read.Files.ShouldBeEmpty();
+        (read.Recorded.FilesDone, read.Recorded.FilesFailed).ShouldBe((0, 0));
     }
 }
