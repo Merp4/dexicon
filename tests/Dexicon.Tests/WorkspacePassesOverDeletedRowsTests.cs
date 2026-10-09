@@ -57,7 +57,7 @@ public sealed class WorkspacePassesOverDeletedRowsTests
 
         await using var db = harness.NewContext();
         var row = await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == job.Id);
-        row.State.ShouldNotBe(JobState.Running, "the outcome is recorded");
+        row.State.ShouldBe(JobState.Failed, "the outcome is recorded");
         row.FinishedUtc.ShouldNotBeNull();
         fired.ShouldBe(1, "the source has to have been deleted during the reconcile");
     }

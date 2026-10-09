@@ -236,6 +236,7 @@ public static class ChunkSetEndpoints
         await config.FollowUpAsync(corpus, refused);
         return refused.ToResult();
     }
+
     /// <summary>
     /// Makes a set the default. A method of its own, and the one the route is mapped to, so a test calls the
     /// handler that runs.
@@ -280,6 +281,7 @@ public static class ChunkSetEndpoints
             return Results.Ok(new ChunkSetPromoted(set.Name, corpus.Name));
         }
     }
+
     private static Task<ChunkSet?> FindSet(CatalogDbContext db, Corpus corpus, string setName, CancellationToken ct) =>
         db.ChunkSets.FirstOrDefaultAsync(
             s => s.CorpusId == corpus.Id && (s.Name == setName || s.Id == setName), ct);

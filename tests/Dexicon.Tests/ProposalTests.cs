@@ -633,6 +633,7 @@ public sealed class ProposalTests : IAsyncLifetime
         var queued = await check.Jobs.SingleAsync();
         (queued.Kind, queued.ChunkSetId).ShouldBe((JobKind.Refresh, "set-2"));
     }
+
     [Fact]
     public async Task ADocumentIsDetachedOnApprovalAndItsBlobStays()
     {

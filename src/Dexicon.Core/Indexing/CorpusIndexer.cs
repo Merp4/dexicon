@@ -671,6 +671,7 @@ public sealed class CorpusIndexer(
         foreach (var entry in added) entry.State = EntityState.Detached;
         return added.Count > 0;
     }
+
     /// <summary>
     /// The id of a file named by a failed save whose catalogue row is gone, or null when there is none. A file
     /// the pass added is not in the catalogue yet, so it has not vanished from it.
@@ -704,6 +705,7 @@ public sealed class CorpusIndexer(
             if (owner == fileId) entry.State = EntityState.Detached;
         }
     }
+
     /// <summary>
     /// Embed and upsert a file's chunks in batches, reporting progress between them.
     ///

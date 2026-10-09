@@ -53,17 +53,20 @@ public sealed class DocumentService(
     /// Orders the writes to a corpus's attachment rows, which an attachment reads and then saves against.
     /// Held by:
     /// <list type="bullet">
-    /// <item>an attachment, from its entry to its save: it checks that the corpus is still there, loads the
+    /// <item>an attachment, from its entry to its save: it checks that the corpus is still there, reads the
     /// corpus's sets, and looks for the upload source and the document's existing attachment, so two
     /// attachments cannot both find none (a corpus has one upload source and holds a blob once, and no
     /// unique index says so);</item>
     /// <item>a detach, for the lookup and the delete of the row (<see cref="DetachFileAsync"/>);</item>
     /// <item>the removal of a source, a chunk set or a corpus, for the delete of its row
     /// (<see cref="HoldAttachmentsAsync"/>), because an attachment saves a file row that names a source and
-    /// a chunk state that names each set, and a removal checks its target again under the lock.</item>
+    /// a chunk state that names each set, and a removal checks its target again under the lock;</item>
+    /// <item>the promotion of a chunk set to the default, which reads the sets and writes the flag, so that a
+    /// removal cannot delete a set that has just become the default.</item>
     /// </list>
-    /// Adding a source or a chunk set and creating a corpus do not take it: their rows name a corpus, and a
-    /// removal of that corpus at the same moment fails their save.
+    /// Adding a source or a chunk set does not take it: their rows name a corpus, and the removal of that
+    /// corpus at the same moment fails their save with a foreign-key error.
+    ///
     /// Nothing holds it across a call to the vector store. One lock for all corpora, because each of these
     /// is a few queries and a save. Dexicon is one process owning its catalogue (D-01), so one lock is
     /// enough, and a second process writing the file is not covered, as for
@@ -76,7 +79,9 @@ public sealed class DocumentService(
     /// chunk set deletes its points.
     ///
     /// Lock order: <c>ProposalService</c> holds its decision lock and then takes this one inside the removal
-    /// it runs. Nothing holds this lock while waiting for another.
+    /// it runs. Nothing waits for another lock while holding this one: the refresh that a refused chunk set
+    /// removal asks for is queued after the lock is released, and the queue's own lock is always the last one
+    /// taken.
     /// </summary>
     private static readonly SemaphoreSlim Attaching = new(1, 1);
 

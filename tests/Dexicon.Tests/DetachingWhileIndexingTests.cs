@@ -466,6 +466,7 @@ public sealed class DetachingWhileIndexingTests
         read.Files.ShouldBe(["two.txt"]);
         (read.Recorded.FilesDone, read.Recorded.FilesSkipped, read.Recorded.FilesFailed).ShouldBe((1, 1, 0));
     }
+
     [Fact]
     public async Task AChunkSetRemovedUnderAPassStillRecordsTheJobAsFailed()
     {
