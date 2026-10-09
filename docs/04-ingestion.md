@@ -236,24 +236,39 @@ Files stored before the bound was reached stay stored, and the answer is then `2
 overrun listed under `failed`. A failure of the request as a whole has a `null` `file`; a failure
 of one file carries its name, whatever that name is.
 
-A request is read for ten file parts. The reader stops at the eleventh without reading its
-body, and `failed` lists a failure of the request that says more than ten files were sent, the
-rest were not read, and to send them in another request. The ten before it stay stored and are
-indexed, and when none of them was stored the answer is `400` "No files could be stored". Form
-fields do not count towards the ten.
+A request is read for ten file parts and one hundred multipart sections, form fields and files
+together. The application reads nothing past the eleventh file part or the hundred and first
+section: `failed` lists a failure of the request (`file` is `null`) that says more than ten files
+(or one hundred parts) were sent and to send the rest in another request, and the files beyond the
+limit are in neither `stored` nor `failed`. The files before it stay stored and are indexed, and
+when none of them was stored the answer is `400` ("No files could be stored", or "No files in the
+request" when only form fields were read) with the same text as its detail. Kestrel discards the
+unread rest of the body once the handler returns, as it does after a `413`, so the early answer
+saves the temp file, hash, save, extraction and lock work for the files left out but not the
+bandwidth of receiving them. The web UI sends one `files` part per file. A part whose
+`Content-Disposition` has an empty `filename` is a form field: it counts as a section, is not
+stored, and is not a failure.
 
 A file name is stored as the document's path, which a listing, a search hit and a log line show.
 An upload or an attach is refused for a name that holds a control character (a line break
-among them, including U+2028 and U+2029) or is longer than 260 characters. The upload lists
-that file under `failed` with the reason, which does not repeat the name, and stores the files
-beside it; the attach endpoint answers `400` "Invalid file name". The same check applies to the
-name the document was uploaded under when an attach leaves `fileName` out.
+among them, including U+2028 and U+2029) or a bidirectional override or isolate (U+202A to
+U+202E, U+2066 to U+2069), or that is longer than 260 UTF-16 characters. Other format characters,
+such as U+200C and U+200D, are allowed. The upload lists that file under `failed` with the
+reason, which does not repeat the name, and stores the files beside it; the attach endpoint
+answers `400` "Invalid file name". The same check applies to the name the document was uploaded
+under when an attach leaves `fileName` out. A document stored before this rule under a name that
+breaks it cannot be attached without a `fileName` (`400`), and the web UI's Attach button sends the
+stored name, so such a document is attached through the API with a `fileName`, or detached and
+uploaded again.
 
 Extraction of an uploaded file is abandoned after `DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS`
-(300 s), under the clock described above for workspace files. The file is still stored and
-attached, with the timeout as its empty reason (`warning` in the response, `emptyReason` in the
-library), and the files beside it in the request are unaffected.
-
+(300 s), under the clock described above for workspace files. A timeout says how busy the host
+was and not what the document holds, so it is not stored: the file is listed under `failed` with
+the setting's name, nothing is stored for it, the files beside it in the request are stored, and
+sending it again extracts it again. A workspace file that times out is recorded as failed and
+retried on a later refresh. A re-extraction of a stored document after an extractor change that
+times out keeps the previous text and is retried on a later pass. Any other extraction failure
+(an encrypted or corrupt file) is stored with its message as the document's empty reason.
 A body that ends before its closing boundary, or whose headers are over the reader's limits, is
 treated the same way: files completed before it stay stored and are indexed, the response lists
 the cause under `failed` with a `null` `file`, and when nothing was stored the answer is `400`
