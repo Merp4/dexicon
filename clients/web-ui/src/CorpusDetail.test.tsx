@@ -1221,6 +1221,25 @@ describe('editing a source filter', () => {
     expect(limit).toBeDisabled();
   });
 
+  /**
+   * Lists are shown on one line and read back from it. Splitting `:(glob,icase)docs/*.md` at its comma would send
+   * two patterns the server refuses, and the form re-sends a list it was not asked to change.
+   */
+  it('sends lists holding pathspec magic with a comma back as they were stored', async () => {
+    const include = [':(glob,icase)docs/*.md', 'src/**'];
+    const exclude = [':(top,exclude)vendor', '**/*.min.js'];
+    const { user, dialog } = await openEdit(owning({
+      ownIncludeGlobs: include, includeGlobs: include, ownExcludeGlobs: exclude, excludeGlobs: exclude,
+    }));
+
+    expect(within(dialog).getByPlaceholderText('src/**, docs/**')).toHaveValue(include.join(', '));
+    await user.click(within(dialog).getByRole('button', { name: /^Save changes$/ }));
+
+    await waitFor(() => expect(updateSource).toHaveBeenCalled());
+    const body = updateSource.mock.calls[0][2];
+    expect(body.includeGlobs).toEqual(include);
+    expect(body.excludeGlobs).toEqual(exclude);
+  });
   it('clears every field the source still inherits', async () => {
     const { user, dialog } = await openEdit(owning());
 
@@ -1396,6 +1415,158 @@ describe('editing a history source', () => {
     expect(within(dialog).getByText(/Saving re-reads every commit/)).toBeInTheDocument();
   });
 
+  /**
+   * The server fingerprints the paths as git is given them, so `docs` and `/docs` are one filter. Warning of a
+   * re-read when one is edited into the other would put someone off a harmless save.
+   */
+  it('does not call a leading slash on a path a re-read, and does call a different path one', async () => {
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          source({
+            id: 's2', kind: 'githistory', rootPath: 'api-repo', fileCount: 174,
+            includeGlobs: ['docs'], ownIncludeGlobs: ['docs'],
+            git: { ref: 'HEAD', includeMessage: true, includeStat: true, includeDiff: false, maxDiffBytes: 65536, includeMerges: false, maxCommits: null, since: null },
+          }),
+        ],
+      }),
+    );
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: 'Edit source api-repo' }));
+    const dialog = await screen.findByRole('dialog');
+
+    const paths = within(dialog).getByLabelText('Paths');
+    await user.clear(paths);
+    await user.type(paths, '/docs');
+    expect(within(dialog).getByText(/documents already indexed\s+are kept/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Saving re-reads every commit/)).not.toBeInTheDocument();
+
+    await user.clear(paths);
+    await user.type(paths, 'src');
+    expect(within(dialog).getByText(/Saving re-reads every commit/)).toBeInTheDocument();
+  });
+
+  /**
+   * A comma inside pathspec magic is part of the pattern. The list is shown on one line and read back
+   * from it, so splitting at that comma rewrote a stored `:(glob,icase)docs/*.md` as two patterns git rejects.
+   */
+  it('sends a stored list holding magic with a comma back as it was stored', async () => {
+    updateSource.mockResolvedValue({});
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          source({
+            id: 's2', kind: 'githistory', rootPath: 'api-repo', fileCount: 174,
+            includeGlobs: [':(glob,icase)docs/*.md', 'src/**'], ownIncludeGlobs: [':(glob,icase)docs/*.md', 'src/**'],
+            git: { ref: 'HEAD', includeMessage: true, includeStat: true, includeDiff: false, maxDiffBytes: 65536, includeMerges: false, maxCommits: null, since: null },
+          }),
+        ],
+      }),
+    );
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: 'Edit source api-repo' }));
+    const dialog = await screen.findByRole('dialog');
+
+    const paths = within(dialog).getByLabelText('Paths');
+    expect(paths).toHaveValue(':(glob,icase)docs/*.md, src/**');
+    await user.type(paths, ', tests/**');
+    await user.click(within(dialog).getByRole('button', { name: /^Save changes$/ }));
+
+    await waitFor(() => expect(updateSource).toHaveBeenCalled());
+    expect(updateSource.mock.calls[0][2].includeGlobs).toEqual([':(glob,icase)docs/*.md', 'src/**', 'tests/**']);
+  });
+
+  /**
+   * The paths are read back from the one-line field to judge a change. Reading `:(glob,icase)docs/*.md` as two
+   * patterns made the same paths in another order a different set, and the editor called a harmless save a re-read.
+   */
+  it('compares paths holding magic with a comma as the paths they are', async () => {
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          source({
+            id: 's2', kind: 'githistory', rootPath: 'api-repo', fileCount: 174,
+            includeGlobs: [':(glob,icase)docs/*.md', 'src'], ownIncludeGlobs: [':(glob,icase)docs/*.md', 'src'],
+            git: { ref: 'HEAD', includeMessage: true, includeStat: true, includeDiff: false, maxDiffBytes: 65536, includeMerges: false, maxCommits: null, since: null },
+          }),
+        ],
+      }),
+    );
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: 'Edit source api-repo' }));
+    const dialog = await screen.findByRole('dialog');
+
+    const paths = within(dialog).getByLabelText('Paths');
+    await user.clear(paths);
+    await user.type(paths, 'src, :(glob,icase)docs/*.md');
+    expect(within(dialog).queryByText(/Saving re-reads every commit/)).not.toBeInTheDocument();
+
+    await user.type(paths, ', tests');
+    expect(within(dialog).getByText(/Saving re-reads every commit/)).toBeInTheDocument();
+  });
+
+  /**
+   * An element with a comma outside magic is shown on one line and would be read back as two. An untouched
+   * field is not read back: it sends no paths, and the editor does not call the save a re-read.
+   */
+  it('sends no paths and warns of nothing when the paths field is left alone', async () => {
+    updateSource.mockResolvedValue({});
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          source({
+            id: 's2', kind: 'githistory', rootPath: 'api-repo', fileCount: 174,
+            includeGlobs: ['a,b.txt'], ownIncludeGlobs: ['a,b.txt'],
+            git: { ref: 'HEAD', includeMessage: true, includeStat: true, includeDiff: false, maxDiffBytes: 65536, includeMerges: false, maxCommits: null, since: null },
+          }),
+        ],
+      }),
+    );
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: 'Edit source api-repo' }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(within(dialog).getByLabelText('Paths')).toHaveValue('a,b.txt');
+    expect(within(dialog).queryByText(/Saving re-reads every commit/)).not.toBeInTheDocument();
+    await pickBranch(user, dialog, /^origin\/main · last commit/);
+    await user.click(within(dialog).getByRole('button', { name: /^Save changes$/ }));
+
+    await waitFor(() => expect(updateSource).toHaveBeenCalled());
+    const body = updateSource.mock.calls[0][2];
+    expect(body.includeGlobs).toBeUndefined();
+    expect(body.clear).toEqual([]);
+  });
+
+  it('sends the paths once the field is edited', async () => {
+    updateSource.mockResolvedValue({});
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          source({
+            id: 's2', kind: 'githistory', rootPath: 'api-repo', fileCount: 174,
+            includeGlobs: ['docs'], ownIncludeGlobs: ['docs'],
+            git: { ref: 'HEAD', includeMessage: true, includeStat: true, includeDiff: false, maxDiffBytes: 65536, includeMerges: false, maxCommits: null, since: null },
+          }),
+        ],
+      }),
+    );
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: 'Edit source api-repo' }));
+    const dialog = await screen.findByRole('dialog');
+
+    const paths = within(dialog).getByLabelText('Paths');
+    await user.clear(paths);
+    await user.type(paths, 'docs, src');
+    await user.click(within(dialog).getByRole('button', { name: /^Save changes$/ }));
+
+    await waitFor(() => expect(updateSource).toHaveBeenCalled());
+    expect(updateSource.mock.calls[0][2].includeGlobs).toEqual(['docs', 'src']);
+  });
   /**
    * Keeping is a property of a limit: without one every commit is indexed already, and the
    * server refuses the setting there. Offered only beside a limit, and cleared with it.
@@ -1766,6 +1937,20 @@ describe('the corpus default filters', () => {
     expect(updateCorpus.mock.calls[0][1].defaults).toMatchObject({ excludeGlobs: ['**/*.test.ts'] });
   });
 
+  it('sends default lists holding pathspec magic with a comma back as they were stored', async () => {
+    const include = [':(glob,icase)docs/*.md', 'src/**'];
+    const exclude = [':(top,exclude)vendor', '**/*.min.js'];
+    const { user, dialog } = await openDefaults(corpus({
+      defaults: { useGitignore: null, maxFileBytes: null, includeGlobs: include, excludeGlobs: exclude },
+    }));
+
+    await user.click(within(dialog).getByRole('button', { name: /^Save defaults$/ }));
+
+    await waitFor(() => expect(updateCorpus).toHaveBeenCalled());
+    expect(updateCorpus.mock.calls[0][1].defaults).toEqual({
+      useGitignore: null, maxFileBytes: null, includeGlobs: include, excludeGlobs: exclude,
+    });
+  });
   it('sends null for a default left unset rather than a value nobody chose', async () => {
     // Null means the server's setting applies. Sending 0 or false here would quietly
     // impose a cap or a gitignore rule on every source in the corpus.
