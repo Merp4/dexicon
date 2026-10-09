@@ -124,8 +124,8 @@ best-matching chunks.
 
 ## When search comes back empty
 
-Do not conclude the content is absent. `index_status(corpus?)` says why the search found
-nothing, and there are five common reasons:
+Do not conclude the content is absent. There are five common reasons for an empty result, and
+`index_status(corpus?)` shows three of them (still indexing, never indexed, left out):
 
 - **Still indexing.** A large corpus takes a while; counts climb as it goes.
 - **Never indexed.** The corpus exists, the files were never walked.
@@ -169,8 +169,9 @@ starts indexing at once, which for a large tree takes a long time, so tell the u
 added. These tools cannot remove a corpus or a source, though narrowing a filter removes
 the files it no longer selects from the index at the next refresh, and widening it again
 indexes them again. `gitignore` can be set to true but not turned off. Use a `.dexiconignore`
-for files no corpus should index from that repository, since it is committed with the
-repository, and a source's filters for files that only this corpus leaves out.
+for files no corpus should index from a tree, since it is a file in the tree and every corpus
+that reads the tree applies it, and a source's filters for files that only this corpus leaves
+out.
 
 If your key lists `propose_removal`, you can ask for something to be removed: a source, a
 chunk set, an uploaded document or a whole corpus. Nothing is removed by the call. It records
