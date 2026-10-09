@@ -19,16 +19,16 @@ namespace Dexicon.Tests;
 /// graph from each write and reports any use of the caller's token the write can reach. A write is
 /// <c>SaveChanges</c>, <c>ExecuteUpdate</c>, <c>ExecuteDelete</c> or <c>ExecuteSql</c> on the catalogue, or a
 /// call to a method in <c>src/</c> that makes one, followed through calls and interfaces declared in
-/// <c>src/</c> until nothing new is found. A lambda or method group that writes makes a write of the call
-/// to a local that holds it or a copy of it, and of a call to a lambda that calls one.
+/// <c>src/</c> until nothing new is found, and a constructor that does. A lambda or method group that writes
+/// makes a write of the call to a local that holds it or a copy of it, and of a call to a lambda that calls one.
 ///
 /// The caller's token is a <see cref="CancellationToken"/> parameter of the function or of one around it
 /// (a lambda or local function can capture it), a local of type <see cref="CancellationToken"/> or
 /// <see cref="CancellationTokenSource"/> that was given it (a copy, or a source linked to it), and
 /// <c>HttpContext.RequestAborted</c>. A use after a write is the token named there, a local function or
 /// lambda that captures it called or passed on there, such a lambda or local function held in a local made
-/// before it, or the token or such a delegate handed to a call that encloses the write, since the call runs
-/// after the write whichever argument it was written in.
+/// before it, or the token or such a delegate handed to a call or constructor that encloses the write, since
+/// it runs after the write whichever argument it was written in.
 ///
 /// After a write a function passes <see cref="CancellationToken.None"/>, records what it did through a
 /// callback at the write (<c>committed:</c> on <c>CorpusConfiguration</c>), or saves the follow-up in the
@@ -93,7 +93,10 @@ public sealed class RequestTokenAfterCommitTests
     private const string TakesThings =
         "private static Task UseToken(CancellationToken token, int saved) => Task.Delay(1, token);\n"
         + "private static Task RunWork(Func<Task> work, int saved) => work();\n"
-        + "private static Task Keep(int read, int saved) => Task.CompletedTask;";
+        + "private static Task Keep(int read, int saved) => Task.CompletedTask;\n"
+        + "private sealed class FollowUp(CancellationToken token, int saved);\n"
+        + "private sealed class Plain(int read, int saved);\n"
+        + "private sealed class Saver { public Saver(Db db) { db.SaveChanges(); } }";
 
     /// <summary>
     /// Ways the caller's token reaches work after a write other than naming its parameter there. Each is
@@ -212,6 +215,14 @@ public sealed class RequestTokenAfterCommitTests
             Run("await RunWork(() => Task.Delay(1, ct), await db.SaveChangesAsync());") + "\n" + TakesThings
         },
         {
+            "the token passed first to a constructor that has an argument that writes",
+            Run("_ = new FollowUp(ct, await db.SaveChangesAsync());") + "\n" + TakesThings
+        },
+        {
+            "a constructor that writes",
+            Run("_ = new Saver(db); await Task.Delay(1, ct);") + "\n" + TakesThings
+        },
+        {
             "the request's own token on the HttpContext",
             "public async Task Run(Db db, HttpContext http) { await db.SaveChangesAsync(); await Task.Delay(1, http.RequestAborted); }"
         },
@@ -285,6 +296,18 @@ public sealed class RequestTokenAfterCommitTests
         {
             "a different token passed first to a call that has an argument that writes",
             Run("await UseToken(CancellationToken.None, await db.SaveChangesAsync());") + "\n" + TakesThings
+        },
+        {
+            "a different token passed first to a constructor that has an argument that writes",
+            Run("_ = new FollowUp(CancellationToken.None, await db.SaveChangesAsync());") + "\n" + TakesThings
+        },
+        {
+            "a result read with the token, passed first to a constructor that has an argument that writes",
+            Run("_ = new Plain(await Task.FromResult(1).WaitAsync(ct), await db.SaveChangesAsync());") + "\n" + TakesThings
+        },
+        {
+            "a constructor that writes, made after the token's last use",
+            Run("await Task.Delay(1, ct); _ = new Saver(db);") + "\n" + TakesThings
         },
         {
             "a copy of a lambda that captures nothing",
@@ -806,7 +829,7 @@ internal sealed class CommitScan
             grew = false;
             foreach (var (method, operations) in bodies)
                 if (!committing.Contains(method) && operations.Any(o => o.DescendantsAndSelf()
-                        .OfType<IInvocationOperation>().Any(i => Writes(i, committing, writingLocals))))
+                        .Any(op => IsWriteCall(op, committing, writingLocals))))
                     grew |= committing.Add(method);
 
             foreach (var (local, value) in givings)
@@ -849,6 +872,24 @@ internal sealed class CommitScan
             _ => false,
         };
 
+    /// <summary>A call that writes, or a constructor that does.</summary>
+    private static bool IsWriteCall(IOperation op, HashSet<IMethodSymbol> committing, HashSet<ILocalSymbol> writingLocals) =>
+        op switch
+        {
+            IInvocationOperation call => Writes(call, committing, writingLocals),
+            IObjectCreationOperation creation => creation.Constructor is { } constructor
+                                                 && committing.Contains(constructor.OriginalDefinition),
+            _ => false,
+        };
+
+    /// <summary>What a call is called in a message: the method, or the type a constructor makes.</summary>
+    private static string CallName(IOperation call) => call switch
+    {
+        IInvocationOperation invocation => invocation.TargetMethod.Name,
+        IObjectCreationOperation creation => creation.Constructor?.ContainingType.Name ?? "new",
+        _ => call.Kind.ToString(),
+    };
+
     /// <summary>A call that writes: to a method that does, or through a delegate that holds one.</summary>
     private static bool Writes(IInvocationOperation call, HashSet<IMethodSymbol> committing, HashSet<ILocalSymbol> writingLocals) =>
         Writes(call.TargetMethod, committing)
@@ -880,8 +921,8 @@ internal sealed class CommitScan
                 // write among them ends earlier in the source than the call that takes them; the first in
                 // tree order is that outer call, which runs last, and taking it left the token passed to it
                 // after an inner save unreported.
-                var write = operations[i].DescendantsAndSelf().OfType<IInvocationOperation>()
-                    .Where(c => Writes(c, committing, writingLocals))
+                var write = operations[i].DescendantsAndSelf()
+                    .Where(c => IsWriteCall(c, committing, writingLocals))
                     .OrderBy(c => c.Syntax.Span.End)
                     .FirstOrDefault();
                 if (write is null) continue;
@@ -897,7 +938,7 @@ internal sealed class CommitScan
                     .Concat(EnclosingCalls(write))
                     .ToList();
 
-                var afterWrite = $"{write.TargetMethod.Name} at line {write.Syntax.GetLocation().GetLineSpan().StartLinePosition.Line + 1}";
+                var afterWrite = $"{CallName(write)} at line {write.Syntax.GetLocation().GetLineSpan().StartLinePosition.Line + 1}";
                 foreach (var op in after)
                 {
                     // Where the token is named, and what it is called on; null when this is not a use.
@@ -941,18 +982,33 @@ internal sealed class CommitScan
 
         for (var parent = write.Parent; parent is not null; parent = parent.Parent)
         {
-            if (parent is not IInvocationOperation call) continue;
+            // A constructor is a call too: it runs after its arguments, with what it was handed.
+            IEnumerable<IOperation> given;
+            switch (parent)
+            {
+                case IInvocationOperation call:
+                    yield return call;
+                    if (call.TargetMethod.MethodKind == MethodKind.DelegateInvoke && call.Instance is { } instance)
+                        foreach (var part in instance.DescendantsAndSelf())
+                            yield return part;
 
-            yield return call;
-            if (call.TargetMethod.MethodKind == MethodKind.DelegateInvoke && call.Instance is { } instance)
-                foreach (var part in instance.DescendantsAndSelf())
-                    yield return part;
+                    given = call.Arguments.Where(a => !path.Contains(a)).Select(a => a.Value)
+                        .Concat(call.Instance is { } receiver && !path.Contains(receiver) ? [receiver] : []);
+                    break;
+
+                case IObjectCreationOperation creation:
+                    yield return creation;
+                    given = creation.Arguments.Where(a => !path.Contains(a)).Select(a => a.Value);
+                    break;
+
+                default:
+                    continue;
+            }
 
             // Each argument and the receiver that the write is not in. Only a value that is itself the token
             // or a delegate: one that calls something is its result, such as a corpus read with the token,
             // which the call is handed and not the means of cancelling.
-            foreach (var handed in call.Arguments.Where(a => !path.Contains(a)).Select(a => a.Value)
-                         .Concat(call.Instance is { } receiver && !path.Contains(receiver) ? [receiver] : []))
+            foreach (var handed in given)
                 if (!handed.DescendantsAndSelf().Any(o => o is IInvocationOperation or IAwaitOperation or IObjectCreationOperation))
                     foreach (var part in handed.DescendantsAndSelf())
                         yield return part;
