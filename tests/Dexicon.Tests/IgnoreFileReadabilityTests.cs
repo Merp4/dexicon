@@ -344,9 +344,9 @@ public sealed class IgnoreFileReadabilityTests : IDisposable
     [Fact]
     public void ALineEndsAtALineFeedAndNotAtTheOtherCharactersThatBreakALine()
     {
-        // Git splits on LF. A CR, U+0085 or U+2028 inside a line is part of the pattern, which then matches no
-        // file of the names below, so both are indexed.
-        var separators = new[] { "\r", ((char)0x85).ToString(), ((char)0x2028).ToString() };
+        // Git splits on LF. U+0085 or U+2028 inside a line is part of the pattern, which then matches no file of the
+        // names below, so both are indexed.
+        var separators = new[] { ((char)0x85).ToString(), ((char)0x2028).ToString() };
         foreach (var separator in separators)
         {
             WriteBytes(".dexiconignore", Encoding.UTF8.GetBytes($"one.txt{separator}two.txt\n"));
@@ -356,6 +356,27 @@ public sealed class IgnoreFileReadabilityTests : IDisposable
             Names(Walk()).ShouldContain("one.txt");
             Names(Walk()).ShouldContain("two.txt");
         }
+    }
+
+    [Fact]
+    public void ACarriageReturnInsideALineOfAGitignoreStaysInThePatternAsGitReadsIt()
+    {
+        WriteBytes(".gitignore", Encoding.UTF8.GetBytes("one.txt\rtwo.txt\n"));
+        Write("one.txt");
+        Write("two.txt");
+
+        Names(Walk()).ShouldContain("one.txt");
+        Names(Walk()).ShouldContain("two.txt");
+    }
+
+    [Fact]
+    public void ADexiconignoreWithOldMacLineEndingsFailsTheWalkInsteadOfApplyingNoRule()
+    {
+        WriteBytes(".dexiconignore", Encoding.UTF8.GetBytes("secret.txt\rother.txt\r"));
+        Write("secret.txt");
+
+        Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldBe(
+            ".dexiconignore line 1 ('secret.txt?other.txt') has a carriage return that does not end the line; end the lines with LF or CRLF");
     }
 
     [Fact]

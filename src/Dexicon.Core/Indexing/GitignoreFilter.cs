@@ -797,15 +797,15 @@ public sealed class WorkspaceWalker
         var label = IgnoreRuleSet.Join(directoryPrefix, name);
         var ownFile = name == IgnoreFileName;
 
-        if (IsLink(new FileInfo(path)))
-        {
-            if (ownFile) throw IgnorePatternException.ForFile(label, "is a link, and links are not followed");
-            return false;
-        }
-
         string text;
         try
         {
+            if (IsLink(new FileInfo(path)))
+            {
+                if (ownFile) throw IgnorePatternException.ForFile(label, "is a link, and links are not followed");
+                return false;
+            }
+
             text = IgnoreFileText.Read(path, strict: ownFile, ref state.BytesRead);
         }
         catch (IgnoreFileTooLargeException ex)
@@ -834,7 +834,8 @@ public sealed class WorkspaceWalker
         ThrowIfPastWalkBytes(label, state);
 
         var lines = SplitLines(text);
-        if (!ownFile) SkipUndecodedLines(lines, label, state.Warnings);
+        if (ownFile) RejectEmbeddedCarriageReturns(lines, label);
+        else SkipUndecodedLines(lines, label, state.Warnings);
 
         rules.Add(lines, new IgnoreRuleSet.PatternSource(
             label, directoryPrefix, Unusable: ownFile ? null : state.Warnings, Budget: state.Budget,
@@ -874,6 +875,22 @@ public sealed class WorkspaceWalker
         // A final newline ends the last line and does not begin another.
         if (text.EndsWith('\n')) lines.RemoveAt(lines.Count - 1);
         return lines;
+    }
+
+    /// <summary>
+    /// Fails on a line of a <c>.dexiconignore</c> that has a carriage return inside it. Lines end at a line feed, so a
+    /// file with old Mac line endings is one line holding a pattern that matches nothing; a file that was meant to
+    /// exclude its names would exclude none of them.
+    /// </summary>
+    private static void RejectEmbeddedCarriageReturns(List<string?> lines, string label)
+    {
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var line = lines[i]!.Trim();
+            if (line.Contains('\r', StringComparison.Ordinal))
+                throw IgnorePatternException.For($"{label} line {i + 1}", line,
+                    "has a carriage return that does not end the line; end the lines with LF or CRLF");
+        }
     }
 
     /// <summary>
