@@ -135,13 +135,20 @@ public sealed class ConcurrentStoreOfOneDocumentTests
         var sha = Convert.ToHexStringLower(SHA256.HashData(TheSameBytes));
         other.Blobs.Add(new Blob
         {
-            Sha256 = sha, SizeBytes = TheSameBytes.Length, MediaType = "text/plain",
-            OriginalFileName = "winner.txt", CreatedUtc = DateTime.UtcNow,
+            Sha256 = sha,
+            SizeBytes = TheSameBytes.Length,
+            MediaType = "text/plain",
+            OriginalFileName = "winner.txt",
+            CreatedUtc = DateTime.UtcNow,
         });
         other.BlobTexts.Add(new BlobText
         {
-            Sha256 = sha, Text = "winner", ExtractedChars = 6, Extractor = "PlainText",
-            ExtractorVersion = ExtractorVersions.Current, ExtractedUtc = DateTime.UtcNow,
+            Sha256 = sha,
+            Text = "winner",
+            ExtractedChars = 6,
+            Extractor = "PlainText",
+            ExtractorVersion = ExtractorVersions.Current,
+            ExtractedUtc = DateTime.UtcNow,
         });
         await other.SaveChangesAsync();
     }
