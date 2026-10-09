@@ -9,8 +9,10 @@ namespace Dexicon.Tests;
 ///
 /// The pass reads the corpus's attachments when it starts and tracks them for as long as embedding takes.
 /// A detach in that time deletes a file row, and its per-set chunk state with it, that the pass still
-/// holds changes for. Every save of the pass leaves out a document whose row has gone, including the one
-/// that records how the job ended, and deletes the vectors the pass wrote for it.
+/// holds changes for. The saves that insert chunk states, claim a document, flush after a document and end
+/// the source leave the document out, delete the vectors the pass wrote for it and count it as skipped. The
+/// count reconcile at the start and the save that records how the job ended only leave it out, and a later
+/// pass removes its points.
 /// </summary>
 [Collection(nameof(AttachmentLockCollection))]
 public sealed class DetachingWhileIndexingTests
@@ -346,11 +348,11 @@ public sealed class DetachingWhileIndexingTests
     }
 
     [Fact]
-    public async Task TwoDocumentsLeftOutOfOneSaveAreBothDroppedWhenTheCleanupOfTheFirstIsCancelled()
+    public async Task ACancelWhileTheVectorsOfADroppedDocumentAreDeletedStillRecordsHowTheJobEnded()
     {
-        // Both are detached before the save that finds them. The cleanup of the first one's points is
-        // cancelled, so the pass ends there. Neither document may stay tracked, or the outcome of the job
-        // cannot be saved.
+        // Both documents are detached. The save that claims the second finds the first one gone, and the
+        // cleanup of the first one's points is cancelled, which ends the pass. The second document is still
+        // tracked with a pending change for a row that is gone, and the outcome save drops it.
         using var stop = new CancellationTokenSource();
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Upload);
@@ -379,5 +381,148 @@ public sealed class DetachingWhileIndexingTests
         read.Recorded.State.ShouldBe(JobState.Cancelled);
         read.Recorded.FinishedUtc.ShouldNotBeNull();
         read.Files.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ADetachedDocumentWhoseTextIsMissingIsCountedAsSkippedAndNotFailed()
+    {
+        // The document is left out by the insert of chunk states, and the pass then goes through it. With no
+        // text stored for it, indexing it would count it as failed.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        var library = await AttachAsync(harness, two: false);
+        await using (var db = harness.NewContext())
+        {
+            await db.FileChunkStates.ExecuteDeleteAsync();
+            await db.BlobTexts.ExecuteDeleteAsync();
+        }
+
+        var fired = 0;
+        harness.Vectors.OnCountAsync = async () =>
+        {
+            if (Interlocked.Exchange(ref fired, 1) == 0) await DetachNowAsync(harness, library.First);
+        };
+
+        var job = await harness.RunIndexAsync();
+
+        var read = await ReadBackAsync(harness, job);
+        read.Recorded.State.ShouldBe(JobState.Succeeded);
+        (read.Recorded.FilesSkipped, read.Recorded.FilesFailed).ShouldBe((1, 0));
+    }
+
+    [Fact]
+    public async Task TwoDocumentsDetachedBeforeTheInsertOfTheirStatesAreBothDropped()
+    {
+        // A failed save names one file, so the second is dropped by the round after the first.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        var library = await AttachAsync(harness, two: true);
+        await harness.RunIndexAsync();
+        harness.Vectors.CountFor(PathOfTheFirst).ShouldBeGreaterThan(0);
+        harness.Vectors.CountFor("two.txt").ShouldBeGreaterThan(0);
+        await using (var db = harness.NewContext())
+            await db.FileChunkStates.ExecuteDeleteAsync();
+        var fired = 0;
+        harness.Vectors.OnCountAsync = async () =>
+        {
+            if (Interlocked.Exchange(ref fired, 1) != 0) return;
+            await DetachNowAsync(harness, library.First);
+            await DetachNowAsync(harness, library.Second!);
+        };
+
+        var job = await harness.RunIndexAsync();
+
+        var read = await ReadBackAsync(harness, job);
+        read.Recorded.State.ShouldBe(JobState.Succeeded);
+        read.Files.ShouldBeEmpty();
+        harness.Vectors.CountFor(PathOfTheFirst).ShouldBe(0);
+        harness.Vectors.CountFor("two.txt").ShouldBe(0);
+        (read.Recorded.FilesDone, read.Recorded.FilesSkipped, read.Recorded.FilesFailed, read.Recorded.FilesTotal)
+            .ShouldBe((0, 2, 0, 2));
+    }
+
+    [Fact]
+    public async Task ADocumentDetachedWhileItEmbedsIsDroppedByTheFlushAfterIt()
+    {
+        // Embedding takes longer than the interval between flushes, so the changes the pass holds for the
+        // document are saved right after it, before the end of the source.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        var library = await AttachAsync(harness, two: false);
+        harness.Embedder = new EmbedderThatActsOnce(async () =>
+        {
+            await DetachNowAsync(harness, library.First);
+            await Task.Delay(TimeSpan.FromMilliseconds(1200));
+        });
+
+        var job = await harness.RunIndexAsync();
+
+        var read = await ReadBackAsync(harness, job);
+        read.Recorded.State.ShouldBe(JobState.Succeeded);
+        (read.Recorded.FilesDone, read.Recorded.FilesSkipped).ShouldBe((0, 1));
+        harness.Vectors.CountFor(PathOfTheFirst).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ADocumentThatFailedToEmbedAndWasDetachedIsCountedAsSkippedAndNotFailed()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        var library = await AttachAsync(harness, two: true);
+        harness.Embedder = new EmbedderThatActsOnce(async () =>
+        {
+            await DetachNowAsync(harness, library.First);
+            throw new EmbeddingUnavailableException("the provider is away");
+        });
+
+        var job = await harness.RunIndexAsync();
+
+        var read = await ReadBackAsync(harness, job);
+        read.Files.ShouldBe(["two.txt"]);
+        (read.Recorded.FilesDone, read.Recorded.FilesSkipped, read.Recorded.FilesFailed).ShouldBe((1, 1, 0));
+    }
+
+    [Fact]
+    public async Task AChunkSetRemovedUnderAPassStillRecordsTheJobAsFailed()
+    {
+        // The pass holds the set and changes its state. The set is deleted before the pass reaches it, so
+        // the save names a chunk set and not a file, and the outcome of the job is still recorded.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload, sets: 2);
+        await AttachAsync(harness, two: false);
+        var ensured = 0;
+        harness.Vectors.OnEnsureCollection = () =>
+        {
+            if (Interlocked.Increment(ref ensured) != 2) return;
+            using var other = harness.NewContext();
+            other.ChunkSets.Where(s => s.Id == "set-2").ExecuteDelete();
+        };
+
+        var job = await harness.RunIndexAsync();
+
+        var read = await ReadBackAsync(harness, job);
+        read.Recorded.State.ShouldBe(JobState.Failed);
+        read.Recorded.FinishedUtc.ShouldNotBeNull();
+        read.Recorded.Error.ShouldNotBeNull();
+        read.Files.ShouldBe([PathOfTheFirst]);
+    }
+
+    [Fact]
+    public async Task AJobWhoseOwnRowWasDeletedIsNotRecordedAndTheFailureIsThrown()
+    {
+        // Dropping stale entries is for the rows a pass held. The job's own row is what the outcome is saved
+        // to, and when it is gone there is nowhere to record it.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await AttachAsync(harness, two: false);
+        var fired = 0;
+        harness.Vectors.OnEnsureCollection = () =>
+        {
+            if (Interlocked.Exchange(ref fired, 1) != 0) return;
+            using var other = harness.NewContext();
+            other.Jobs.ExecuteDelete();
+        };
+
+        await Should.ThrowAsync<DbUpdateConcurrencyException>(() => harness.RunIndexAsync());
     }
 }
