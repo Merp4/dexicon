@@ -641,9 +641,15 @@ export function EditHistorySourceModal({ corpus, source, onClose, onSaved }: {
   const fallback = sourceFallbacks(corpus);
   const initial = gitSettingsOf(source.git);
   const [git, setGit] = useState<GitSettings>(initial);
-  const [paths, setPaths] = useState(() => historyPathsOf(source, fallback));
+  const [initialPaths] = useState(() => historyPathsOf(source, fallback));
+  const [paths, setPaths] = useState(initialPaths);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+
+  // The field is sent and judged only once it has been edited. A list is shown on one line and read back from
+  // it, and an element with a comma outside pathspec magic (`a,b.txt`) reads back as two, so an untouched
+  // field would otherwise store a list nobody wrote and warn of a re-read nobody asked for.
+  const pathsEdited = paths.followPaths !== initialPaths.followPaths || paths.paths !== initialPaths.paths;
 
   // The paths as they would be applied, so following what is already in force is not a
   // change. Compared as the content fingerprint compares them: as the server gives them to
@@ -651,7 +657,7 @@ export function EditHistorySourceModal({ corpus, source, onClose, onSaved }: {
   // documents. The notice below would otherwise warn of a re-read that does not happen.
   const applied = paths.followPaths ? (fallback.includeGlobs?.value ?? []) : globList(paths.paths);
   const sorted = (list: string[]) => gitPathspecs(list).sort().join('\n');
-  const pathsChanged = sorted(applied) !== sorted(source.includeGlobs ?? []);
+  const pathsChanged = pathsEdited && sorted(applied) !== sorted(source.includeGlobs ?? []);
 
   // Which of the two kinds of change this is, because they cost different amounts:
   // docs/04 has the rule. What a document holds decides every document, so changing it
@@ -675,7 +681,7 @@ export function EditHistorySourceModal({ corpus, source, onClose, onSaved }: {
       await api.updateSource(corpus.name, source.id, {
         git,
         clear: paths.followPaths ? ['includeGlobs'] : [],
-        includeGlobs: pathsRequest(paths),
+        includeGlobs: pathsEdited ? pathsRequest(paths) : undefined,
       });
       await onSaved();
     } catch (err) {
