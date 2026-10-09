@@ -365,6 +365,30 @@ public sealed class ServerChunkDefaultsTests : IAsyncLifetime
         withMode.Refusal.ShouldBeNull();
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("[z-a]")]
+    public void AServerModeOfCustomBesideARequestPatternThatFailsIsA400ThatNamesTheServersMode(string? pattern)
+    {
+        var server = new IndexingOptions { BoundaryMode = "custom" };
+
+        var refusal = ChunkSettingRules.CheckNewSet(null, null, null, pattern, server, out _).ShouldNotBeNull();
+
+        refusal.Status.ShouldBe(400);
+        refusal.Detail.ShouldContain("DEXICON__INDEXING__BOUNDARYMODE=custom");
+        refusal.Detail.ShouldContain("the server's setting, and the request did not send its own");
+    }
+
+    [Fact]
+    public void ARequestModeOfCustomWithAPatternThatFailsIsA400ThatNamesNoServerSetting()
+    {
+        var refusal = ChunkSettingRules.CheckNewSet(null, null, "custom", "[z-a]", new IndexingOptions(), out _).ShouldNotBeNull();
+
+        refusal.Status.ShouldBe(400);
+        refusal.Title.ShouldBe("Invalid custom boundary pattern");
+        refusal.Detail.ShouldNotContain("DEXICON__");
+    }
+
     [Fact]
     public async Task ACustomBoundaryAtCreationPointsToTheRouteThatCanSetOne()
     {

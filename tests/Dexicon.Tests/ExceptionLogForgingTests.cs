@@ -304,6 +304,36 @@ public sealed class ExceptionLogForgingTests
         Render(EventFor(null, "Refused: {Title}", 42)).ShouldContain("Refused: 42");
     }
 
+    public static TheoryData<object> PlainValues => new()
+    {
+        Guid.Parse("3f2504e0-4f89-11d3-9a0c-0305e82c3301"), LogEventLevel.Warning, 42, 4_000_000_000L, 1.5, 2.5m, true,
+        TimeSpan.FromSeconds(90), new DateTimeOffset(2026, 10, 9, 8, 30, 0, TimeSpan.Zero), new DateOnly(2026, 10, 9),
+        new TimeOnly(8, 30),
+    };
+
+    [Theory]
+    [MemberData(nameof(PlainValues))]
+    public void ANumberADateAGuidAndAnEnumReachTheWrappedSinkAsTheTypeTheyAre(object value)
+    {
+        var sink = new CaptureSink();
+
+        new OneLineLogSink(sink).Emit(EventFor(null, "t {Title}", value));
+
+        var scalar = sink.Last!.Properties["Title"].ShouldBeOfType<ScalarValue>();
+        scalar.Value.ShouldBe(value);
+        scalar.Value!.GetType().ShouldBe(value.GetType());
+    }
+
+    [Fact]
+    public void TheMessageOfTheExceptionTheSinkPassesOnIsOnOneLine()
+    {
+        var sink = new CaptureSink();
+
+        new OneLineLogSink(sink).Emit(EventFor(Thrown(() => new InvalidOperationException($"a\n{ForgedLine}")), "t"));
+
+        sink.Last!.Exception!.Message.ShouldBe("a " + ForgedLine);
+    }
+
     [Fact]
     public void ADateIsLoggedAsItWas()
     {

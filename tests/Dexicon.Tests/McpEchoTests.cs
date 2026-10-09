@@ -114,6 +114,28 @@ public sealed class McpEchoTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TheSourcesListedForAFolderWithNoSourceStopAtAWholeNameAndCountTheRest()
+    {
+        await using var db = _harness.NewContext();
+        for (var i = 0; i < 40; i++)
+            db.Sources.Add(new Source
+            {
+                Id = $"many-{i}",
+                CorpusId = IndexingHarness.CorpusId,
+                Kind = SourceKind.Workspace,
+                RootPath = $"folder-{i:00}-" + new string('x', 150),
+                CreatedUtc = DateTime.UtcNow,
+            });
+        await db.SaveChangesAsync();
+
+        var thrown = await Should.ThrowAsync<McpException>(() => SourceAsync(db, "nothing-here"));
+
+        thrown.Message.ShouldContain("Its sources: ");
+        thrown.Message.ShouldMatch(@"\(and \d+ more\)\. Pass create: true to add it\.$");
+        thrown.Message.Length.ShouldBeLessThan(ScopeResolver.ListedMax + 300, "40 sources of 150 characters are not all listed");
+    }
+
+    [Fact]
     public async Task TwoSourcesOnOneFolderAreRepeatedOnOneLineAndCutWhenTheSourceIsToBeChanged()
     {
         await using var db = _harness.NewContext();
