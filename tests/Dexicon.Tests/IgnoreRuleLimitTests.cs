@@ -336,7 +336,42 @@ public sealed class IgnoreRuleLimitTests : IDisposable
 
         File.WriteAllBytes(Path.Combine(_root, WorkspaceWalker.IgnoreFileName), [.. comment, (byte)'#']);
         Should.Throw<IgnorePatternException>(() => Walk())
-            .Message.ShouldBe(".dexiconignore cannot be used as patterns because it is larger than 1 MiB");
+            .Message.ShouldBe(".dexiconignore cannot be used as patterns because it is larger than 1 MiB; reduce the file");
+    }
+
+    [Theory]
+    [InlineData(".gitignore")]
+    [InlineData(".git/info/exclude")]
+    public void AGitOwnedIgnoreFileOverOneMebibyteFailsTheWalkInsteadOfBeingSkipped(string file)
+    {
+        // `.env` first and 200,000 comments after it: skipping the file whole would index `.env`.
+        Write(file, ".env\n" + string.Concat(Enumerable.Repeat("# a comment line of some length\n", 40_000)));
+        Write(".env", "secret");
+
+        var thrown = Should.Throw<IgnorePatternException>(() => Walk());
+
+        thrown.Message.ShouldBe($"{file} cannot be used as patterns because it is larger than 1 MiB; reduce the file, or turn off use_gitignore for the source");
+        thrown.Warnings.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void FilesThatAreRefusedStillCountTowardTheBytesAWalkMayRead()
+    {
+        // Seventeen of 1 MiB with a NUL at the end: each is skipped whole with a warning, and the seventeenth is past 16 MiB.
+        var content = new byte[IgnoreFileText.MaxBytes];
+        Array.Fill(content, (byte)'#');
+        content[^1] = 0;
+        for (var i = 0; i < 17; i++)
+        {
+            var dir = Path.Combine(_root, $"d{i:D2}");
+            Directory.CreateDirectory(dir);
+            File.WriteAllBytes(Path.Combine(dir, ".gitignore"), content);
+        }
+
+        var thrown = Should.Throw<IgnorePatternException>(() => Walk());
+
+        thrown.Message.ShouldBe("d16/.gitignore takes the walk past the 16 MiB of ignore files it may read; reduce the files");
+        thrown.Warnings.Count.ShouldBe(16);
     }
 
     [Fact]

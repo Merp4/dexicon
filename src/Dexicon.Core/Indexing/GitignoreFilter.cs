@@ -520,7 +520,8 @@ public sealed class WorkspaceWalker
 
         public RuleBudget Budget => budget;
 
-        public long BytesRead { get; set; }
+        // A field, since the reader adds to it by reference.
+        public long BytesRead;
     }
 
     /// <summary>
@@ -780,9 +781,10 @@ public sealed class WorkspaceWalker
     /// not decodable text each fail the walk with <see cref="IgnorePatternException"/>, and nothing is indexed
     /// from the source until it is fixed.
     ///
-    /// Past a limit (the rules or weight of the walk's budget, a file over 1 MiB, or 16 MiB of ignore files) the
-    /// walk fails for every file, because the rules after the limit are the ones the operator wrote last and a walk
-    /// that dropped them would index what they excluded. The message says what to do.
+    /// Past a limit (the rules or weight of the walk's budget, a file over 1 MiB, or 16 MiB of ignore files read, the
+    /// bytes of a refused file included) the walk fails for every file, because the rules after the limit are the
+    /// ones the operator wrote last and a walk that dropped them would index what they excluded. The message says
+    /// what to do.
     ///
     /// Either file is named in a message by its path from the scan root. A hard link to a file elsewhere is read
     /// as the file it is, and its text can appear in a message; this is not detected.
@@ -804,11 +806,17 @@ public sealed class WorkspaceWalker
         string text;
         try
         {
-            text = IgnoreFileText.Read(path, strict: ownFile, out var bytes);
-            state.BytesRead += bytes;
+            text = IgnoreFileText.Read(path, strict: ownFile, ref state.BytesRead);
+        }
+        catch (IgnoreFileTooLargeException ex)
+        {
+            throw IgnorePatternException.ForFile(label, $"cannot be used as patterns because it {ex.Message}; {FileRemedy(ownFile)}", ex);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {
+            // A file that is refused has still been read.
+            ThrowIfPastWalkBytes(label, state);
+
             // The exception's own text is not used for an I/O failure: it carries the absolute path on the host.
             var reason = ex switch
             {
@@ -823,17 +831,25 @@ public sealed class WorkspaceWalker
             return false;
         }
 
-        if (state.BytesRead > MaxBytesPerWalk)
-            throw IgnorePatternException.ForFile(label,
-                $"takes the walk past the {MaxBytesPerWalk / (1024 * 1024)} MiB of ignore files it may read; reduce the files");
+        ThrowIfPastWalkBytes(label, state);
 
         var lines = SplitLines(text);
         if (!ownFile) SkipUndecodedLines(lines, label, state.Warnings);
 
         rules.Add(lines, new IgnoreRuleSet.PatternSource(
             label, directoryPrefix, Unusable: ownFile ? null : state.Warnings, Budget: state.Budget,
-            Remedy: ownFile ? "reduce the file" : "reduce the file, or turn off use_gitignore for the source"));
+            Remedy: FileRemedy(ownFile)));
         return true;
+    }
+
+    private static string FileRemedy(bool ownFile) =>
+        ownFile ? "reduce the file" : "reduce the file, or turn off use_gitignore for the source";
+
+    private static void ThrowIfPastWalkBytes(string label, ReadState state)
+    {
+        if (state.BytesRead > MaxBytesPerWalk)
+            throw IgnorePatternException.ForFile(label,
+                $"takes the walk past the {MaxBytesPerWalk / (1024 * 1024)} MiB of ignore files it may read; reduce the files");
     }
 
     /// <summary>

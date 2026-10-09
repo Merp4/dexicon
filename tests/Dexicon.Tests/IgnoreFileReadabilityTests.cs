@@ -238,6 +238,47 @@ public sealed class IgnoreFileReadabilityTests : IDisposable
             ".dexiconignore cannot be used as patterns because it is not valid UTF-8");
     }
 
+    [Theory]
+    [InlineData("utf16le")]
+    [InlineData("utf16be")]
+    [InlineData("utf32le")]
+    public void ADexiconignoreWithABrokenSurrogateOrUnitInItsEncodingFailsTheWalk(string encoding)
+    {
+        // The encoders replace a lone surrogate, so the bytes of one are written by hand. Decoded leniently it is U+FFFD,
+        // a line that matches nothing.
+        var little = encoding != "utf16be";
+        byte[] Unit(ushort unit) => encoding == "utf32le" ? [(byte)unit, (byte)(unit >> 8), 0, 0]
+            : little ? [(byte)unit, (byte)(unit >> 8)] : [(byte)(unit >> 8), (byte)unit];
+        var encoder = encoding == "utf16be" ? new UnicodeEncoding(true, false)
+            : encoding == "utf16le" ? new UnicodeEncoding(false, false)
+            : (Encoding)new UTF32Encoding(false, false);
+        var preamble = encoding == "utf16be" ? new byte[] { 0xFE, 0xFF }
+            : encoding == "utf16le" ? [0xFF, 0xFE]
+            : [0xFF, 0xFE, 0, 0];
+        WriteBytes(".dexiconignore", [.. preamble, .. encoder.GetBytes("secret.txt\n"), .. Unit(0xD800), .. encoder.GetBytes("other.txt\n")]);
+        Write("secret.txt");
+
+        Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldStartWith(
+            ".dexiconignore cannot be used as patterns because it is not valid UTF-");
+    }
+
+    [Fact]
+    public void AGitignoreInUtf16WithABrokenSurrogateSkipsOnlyThatLine()
+    {
+        var text = "secret.txt\n" + (char)0xD800 + "x\nother.txt\n";
+        WriteBytes(".gitignore", [.. Encoding.Unicode.GetPreamble(), .. new UnicodeEncoding(false, false).GetBytes(text)]);
+        Write("secret.txt");
+        Write("other.txt");
+        Write("keep.txt");
+
+        var walk = Walk();
+
+        Names(walk).ShouldContain("keep.txt");
+        Names(walk).ShouldNotContain("secret.txt");
+        Names(walk).ShouldNotContain("other.txt");
+        walk.Warnings.ShouldBe([".gitignore has 1 lines with bytes that are not valid UTF-8; those lines were skipped"]);
+    }
+
     [Fact]
     public void AGitignoreThatIsNotValidUtf8SkipsOnlyTheLinesItCannotDecodeAndCountsThem()
     {

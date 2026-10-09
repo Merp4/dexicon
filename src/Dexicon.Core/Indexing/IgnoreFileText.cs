@@ -5,19 +5,23 @@ using Microsoft.Win32.SafeHandles;
 namespace Dexicon.Core.Indexing;
 
 /// <summary>
-/// Reads the text of an ignore file. It opens only a regular file, reads at most <see cref="MaxBytes"/> of it, and
-/// decodes it as <c>File.ReadAllLines</c> does: UTF-8 unless a byte order mark says UTF-16 or UTF-32. A NUL in the text
-/// is refused, and for a file that must be exact (<c>.dexiconignore</c>) so are bytes that are not valid UTF-8.
-/// A reason is an <see cref="InvalidDataException"/> whose message completes "the file ...".
+/// Reads the text of an ignore file. It opens only a file that can seek, reads at most <see cref="MaxBytes"/> of it,
+/// and decodes it as <c>File.ReadAllLines</c> does: UTF-8 unless a byte order mark says UTF-16 or UTF-32. A NUL in
+/// the text is refused, and for a file that must be exact (<c>.dexiconignore</c>) so are bytes that are not valid in
+/// the encoding, in every encoding. A reason is an <see cref="InvalidDataException"/> whose message completes "the
+/// file ...".
 /// </summary>
 internal static class IgnoreFileText
 {
-    /// <summary>The largest ignore file read, in bytes. The rule limit (5,000 rules of 200 bytes) is a megabyte.</summary>
+    /// <summary>The largest ignore file read, in bytes.</summary>
     internal const int MaxBytes = 1024 * 1024;
 
-    /// <param name="strict">Bytes that are not valid UTF-8 are refused and not replaced.</param>
-    /// <param name="byteCount">How many bytes the file held.</param>
-    internal static string Read(string path, bool strict, out int byteCount)
+    /// <param name="strict">Bytes that are not valid in the file's encoding are refused and not replaced.</param>
+    /// <param name="bytesRead">
+    /// Increased by the bytes read, including those of a file that is then refused, so a walk can bound what it reads.
+    /// </param>
+    /// <exception cref="IgnoreFileTooLargeException">The file is larger than <see cref="MaxBytes"/>.</exception>
+    internal static string Read(string path, bool strict, ref long bytesRead)
     {
         byte[] bytes;
         using (var stream = OpenRegularFile(path))
@@ -30,22 +34,23 @@ internal static class IgnoreFileText
             while ((read = stream.Read(chunk, 0, (int)Math.Min(chunk.Length, MaxBytes + 1 - held.Length))) > 0)
                 held.Write(chunk, 0, read);
 
-            if (held.Length > MaxBytes) throw new InvalidDataException($"is larger than {MaxBytes / (1024 * 1024)} MiB");
+            bytesRead += held.Length;
+            if (held.Length > MaxBytes)
+                throw new IgnoreFileTooLargeException($"is larger than {MaxBytes / (1024 * 1024)} MiB");
 
             bytes = held.ToArray();
         }
 
-        byteCount = bytes.Length;
+        var (encoding, label, skip) = EncodingOf(bytes, strict);
 
         string text;
         try
         {
-            using var reader = new StreamReader(new MemoryStream(bytes), new UTF8Encoding(false, strict), detectEncodingFromByteOrderMarks: true);
-            text = reader.ReadToEnd();
+            text = encoding.GetString(bytes, skip, bytes.Length - skip);
         }
         catch (DecoderFallbackException ex)
         {
-            throw new InvalidDataException("is not valid UTF-8", ex);
+            throw new InvalidDataException($"is not valid {label}", ex);
         }
 
         if (text.Contains('\0', StringComparison.Ordinal)) throw new InvalidDataException("contains a NUL character");
@@ -53,10 +58,22 @@ internal static class IgnoreFileText
         return text;
     }
 
+    /// <summary>The encoding a byte order mark names, the way <see cref="StreamReader"/> detects it, and the mark's length.</summary>
+    private static (Encoding Encoding, string Label, int Skip) EncodingOf(byte[] bytes, bool strict) =>
+        bytes switch
+        {
+            [0xFF, 0xFE, 0, 0, ..] => (new UTF32Encoding(false, false, strict), "UTF-32", 4),
+            [0xFF, 0xFE, ..] => (new UnicodeEncoding(false, false, strict), "UTF-16", 2),
+            [0xFE, 0xFF, ..] => (new UnicodeEncoding(true, false, strict), "UTF-16", 2),
+            [0, 0, 0xFE, 0xFF, ..] => (new UTF32Encoding(true, false, strict), "UTF-32", 4),
+            [0xEF, 0xBB, 0xBF, ..] => (new UTF8Encoding(false, strict), "UTF-8", 3),
+            _ => (new UTF8Encoding(false, strict), "UTF-8", 0),
+        };
+
     /// <summary>
-    /// Opens <paramref name="path"/> for reading if it is a regular file. A named pipe opened the usual way blocks until
-    /// something writes to it, so on Linux and macOS the open asks not to block, and a handle that cannot seek is
-    /// refused. Windows has no such files in a directory listing.
+    /// Opens <paramref name="path"/> for reading if the handle can seek. On Linux and macOS the open is made
+    /// non-blocking (<c>O_NONBLOCK</c>), because a named pipe opened the usual way blocks until something writes to
+    /// it, and a handle that cannot seek is refused. Windows has no such files in a directory listing.
     /// </summary>
     private static FileStream OpenRegularFile(string path)
     {
@@ -86,3 +103,6 @@ internal static class IgnoreFileText
     [DllImport("libc", EntryPoint = "open", SetLastError = true)]
     private static extern int Open([MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags);
 }
+
+/// <summary>An ignore file past <see cref="IgnoreFileText.MaxBytes"/>, which fails a walk for every kind of file.</summary>
+internal sealed class IgnoreFileTooLargeException(string message) : IOException(message);
