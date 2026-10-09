@@ -211,10 +211,13 @@ media type should accept both.
 |---|---|---|
 | 400 | `Unknown or unreadable corpus` | The message, for example `Unknown corpus 'x'. Corpora this key can reach: a, b.` |
 | 400 | `Query is required` | None. `POST /api/search` and `POST /api/context` with a blank `query`. |
+| 400 | `Unknown search mode` | `Unknown search mode 'fuzzy'. Expected hybrid, semantic or keyword.` The value is shown on one line and cut at 40 characters. `POST /api/search` and `POST /api/context`. |
+| 400 | `Invalid expiry` | `expiresInDays is from 0 to 36,500, about 100 years, and 0 or leaving it out means the key does not expire. The key was not created.` `POST /api/tokens`. |
 | 401 | `Missing credentials` | `Provide a key: Authorization: Bearer dex_…, or sign in at / for the UI.` |
 | 401 | `Invalid credentials` | `The credential was not recognised, or it has been revoked or has expired.` |
 | 403 | `Insufficient scope` | `This key has [search] and needs 'ingest'. Whoever runs Dexicon can grant it on the Access page.` |
 | 404 | `Not Found` | None. `GET /api/jobs/{id}` for an unknown job, or one in a corpus the key cannot reach. The handler returns an empty 404 and the status-code middleware fills the body with problem details (`title`, `status`, `traceId`). |
+| 409 | `Name already used` | The message says which name is taken. `POST /api/corpora/{x}/documents/attach` with bytes the corpus already holds under another name, sent under a name that a different one of its documents holds. An upload lists that file under `failed` instead. |
 | 409 | `Embedding dimension mismatch` | `Collection '<collection>' was indexed with 768-dimension vectors but the configured model produces 1024. Rebuild the corpus with the current model, or restore the original one.` |
 
 The server maps an unhandled embedding failure to 503 `Embedding service unavailable`.

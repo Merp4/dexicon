@@ -21,8 +21,9 @@ with no section here fails its release rather than publishing an undescribed one
 ### ⚠️ Upgrading
 
 - One migration, `FoldTaggedModelNames`, applied at startup. Data only: it renames a saved framing
-  or a measurement stored under `Model:latest` (the tag in any letter case) to `model`, the
-  lower-case name the indexer reads. Where several spellings of one model have a row it keeps the
+  or a measurement whose model is spelled with a `:latest` tag (in any letter case) or with capital
+  letters to the lower-case name without the tag, which is the name the indexer reads. Where several
+  spellings of one model have a row it keeps the
   newest (`UpdatedUtc` for a framing, `MeasuredUtc` for a measurement) and drops the others. A
   chunk set whose framing was saved from the tagged Models row picks it up on its next pass and
   re-embeds, which is what saving the framing already said it would do. The migration cannot be
@@ -47,9 +48,10 @@ with no section here fails its release rather than publishing an undescribed one
 ### Changed
 
 - **An upload is streamed into the blob store.** The endpoint read the whole multipart form into
-  `/tmp`, a tmpfs in the compose file, before the per-file cap applied: a 400 MB file held
-  400 MiB for about 8 seconds. Each file now goes from the connection into the store under the
-  cap, and the peak in `/tmp` measured 0 for a 400 MB file, a 50 MB file and a mixed batch. A file
+  `/tmp`, a tmpfs in the compose file, before the per-file cap applied: a 400 MB file, sent with
+  `DEXICON__UPLOAD__MAXFILEBYTES` raised above the default 200 MB, held 400 MiB for about
+  8 seconds. Each file now goes from the connection into the store under the cap, and the peak in
+  `/tmp` measured in the container was 0 for that file, a 50 MB file and a mixed batch. A file
   over the cap or an empty one is listed in the response's `failed` array and the files beside
   it are stored.
 - **The OpenAPI documents declare the status each operation returns.** Twelve operations answered
@@ -65,7 +67,7 @@ with no section here fails its release rather than publishing an undescribed one
   quoted value on the third line after `admin password`, so the commands read
   `grep -A 2 "admin password"`. The banner no longer says the password can be changed in the UI;
   a value set in `DEXICON_ADMIN_PASSWORD` is applied on every start and nothing else changes it.
-  The warning for an embedding provider that cannot embed names the provider and model it tried.
+  The error logged when an embedding provider cannot embed names the provider and model it tried.
 - **`scripts/backup.sh` stops Qdrant as well as Dexicon during the backup,** restarts what it
   stopped even when the archive fails, exits nonzero if that restart fails, and takes the Compose
   project name from `.env`. It had archived an empty volume under a project name set there.
@@ -79,7 +81,7 @@ with no section here fails its release rather than publishing an undescribed one
   `HttpContext.RequestAborted`, so a job, audit line or reply that follows a save on that token
   is found where it is written. Catching `OperationCanceledException` around the use does not clear
   it. A function or type exempted by a `[SuppressMessage]` with a non-blank justification is skipped,
-  and a `MessageId` limits that to calls of one method name. The test's summary lists what it does
+  and a `MessageId` limits it to findings with that target. The test's summary lists what it does
   not see, among them a token held in a field and a `catch` reached after a write, and the test
   fails when `src/` gains a project it does not read or code under `#if` (`CONTRIBUTING.md`).
 - **Stacked doc comments fail CI.** `scripts/check-doc-comments.py`, a step of the required
@@ -136,9 +138,10 @@ with no section here fails its release rather than publishing an undescribed one
     answers `409` "Name already used". Bytes that are not attached to the corpus yet, sent under a
     name it holds, still replace that document.
   - `POST /api/search` and `/api/context`, and the MCP `search_index` tool, with a `mode` other than
-    `hybrid`, `semantic` or `keyword` threw an `ArgumentException` that nothing caught. REST answers
-    `400` "Unknown search mode". The value is shown on one line and cut at 40 characters, because the
-    exception is written to the console log with its message.
+    `hybrid`, `semantic` or `keyword` (in any letter case; an empty one is `hybrid`) threw an
+    `ArgumentException` that nothing caught. REST answers `400` "Unknown search mode". The value is
+    shown on one line and cut at 40 characters, because the exception is written to the console log
+    with its message when the log level is Debug.
   - A `null` among the names in `corpus` of those two requests threw on splitting it. It answers `400`.
   - Creating a chunk set, or queuing a sweep, for a corpus or chunk set whose name holds a letter
     outside ASCII saved the change and then answered `500`, because the name was written unescaped
@@ -160,11 +163,13 @@ with no section here fails its release rather than publishing an undescribed one
   file's hash, found none, extracted the text and saved. The second save failed on the blob's primary
   key (`UNIQUE constraint failed: blobs.Sha256`), or its move onto the file the first had stored
   failed before that, so the request ended in `500` with the file in no corpus and no job queued.
-  Six rounds of four uploads of one file at once, each to its own corpus, answered `500` to 17 of 24
-  requests on 0.6.7 and 18 of 24 on main before this change, and to none after it. The upload that
-  loses now reports the stored file with `deduplicated: true`, as one that arrived later does, and
-  its own extraction is dropped. Only a key already taken on the blob, or a stored file already
-  present, is treated as the other upload having won; any other failure still answers `500`.
+  In a probe of six rounds of four simultaneous uploads of one file, each to its own corpus, 17 of 24
+  requests answered `500` on 0.6.7 and 18 of 24 on main at `f691e4b`, and none did with this change.
+  The probe is not in the repository; `ConcurrentStoreOfOneDocumentTests` reproduces the failure on
+  the old code. The upload that loses now reports the stored file with `deduplicated: true`, as one
+  that arrived later does, and its own extraction is dropped. Only a duplicate key on the blob (with
+  its row found), or a failed move onto a file that is already there, is treated as the other
+  upload having won; any other failure still answers `500`.
 - **A refused empty file read `(Parameter 'content')`.** The empty-file and blank-file-name refusals of
   an upload passed the argument name to `ArgumentException`, so `failed[].error` and the Documents
   screen that lists it ended in a name the sender did not pass. They read `'x.txt' is empty.` and
