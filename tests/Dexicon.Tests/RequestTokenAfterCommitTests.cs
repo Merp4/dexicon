@@ -26,8 +26,9 @@ namespace Dexicon.Tests;
 /// (a lambda or local function can capture it), a local of type <see cref="CancellationToken"/> or
 /// <see cref="CancellationTokenSource"/> that was given it (a copy, or a source linked to it), and
 /// <c>HttpContext.RequestAborted</c>. A use after a write is the token named there, a local function or
-/// lambda that captures it called or passed on there, or such a lambda or local function held in a local
-/// made before it.
+/// lambda that captures it called or passed on there, such a lambda or local function held in a local made
+/// before it, or the token or such a delegate handed to a call that encloses the write, since the call runs
+/// after the write whichever argument it was written in.
 ///
 /// After a write a function passes <see cref="CancellationToken.None"/>, records what it did through a
 /// callback at the write (<c>committed:</c> on <c>CorpusConfiguration</c>), or saves the follow-up in the
@@ -44,7 +45,8 @@ namespace Dexicon.Tests;
 /// Blind to: a token held in a field, a property, a collection, a tuple or an object it was passed into; a
 /// <c>catch</c> reached by an exception thrown after a write, since the graph has no edge for an exception
 /// and treats every catch as following a failed write; a callback passed to the writing call and run inside
-/// it, and a delegate held in a field or a parameter, whose body the scan cannot see; writes to Qdrant and
+/// it, and a delegate held in a field or a parameter, whose body the scan cannot see; a token handed to an
+/// enclosing call by an expression that calls something, which cannot be told from a result read with it; writes to Qdrant and
 /// the blob store, which are not catalogue writes; and the conditions on a path, so a branch taken only when
 /// nothing was written is followed too.
 /// <c>TheScanReportsEveryWayTheTokenReachesWorkAfterAWrite</c> and its companions pin what is covered.
@@ -86,6 +88,12 @@ public sealed class RequestTokenAfterCommitTests
     /// <summary>A method that writes and takes the token, for a call to be made beside a write.</summary>
     private const string SaveAgain =
         "private static async Task SaveAgain(Db db, int saved, CancellationToken token) { await db.SaveChangesAsync(); }";
+
+    /// <summary>Methods that are handed a token, a delegate or a plain value, for a call to be made beside a write.</summary>
+    private const string TakesThings =
+        "private static Task UseToken(CancellationToken token, int saved) => Task.Delay(1, token);\n"
+        + "private static Task RunWork(Func<Task> work, int saved) => work();\n"
+        + "private static Task Keep(int read, int saved) => Task.CompletedTask;";
 
     /// <summary>
     /// Ways the caller's token reaches work after a write other than naming its parameter there. Each is
@@ -187,6 +195,23 @@ public sealed class RequestTokenAfterCommitTests
             Run("await ((Func<int, Task>)(saved => Task.Delay(1, ct)))(await db.SaveChangesAsync());")
         },
         {
+            "the token passed first to a call that has an argument that writes",
+            Run("await UseToken(ct, await db.SaveChangesAsync());") + "\n" + TakesThings
+        },
+        {
+            "a copy of the token passed first to a call that has an argument that writes",
+            Run("var later = ct; await UseToken(later, await db.SaveChangesAsync());") + "\n" + TakesThings
+        },
+        {
+            "a source linked to the token passed first to a call that has an argument that writes",
+            Run("using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct); "
+                + "await UseToken(linked.Token, await db.SaveChangesAsync());") + "\n" + TakesThings
+        },
+        {
+            "a lambda that captures it passed first to a call that has an argument that writes",
+            Run("await RunWork(() => Task.Delay(1, ct), await db.SaveChangesAsync());") + "\n" + TakesThings
+        },
+        {
             "the request's own token on the HttpContext",
             "public async Task Run(Db db, HttpContext http) { await db.SaveChangesAsync(); await Task.Delay(1, http.RequestAborted); }"
         },
@@ -252,6 +277,14 @@ public sealed class RequestTokenAfterCommitTests
         {
             "a local function that captures it, called with an argument and the write after it",
             Run("Task Follow(int saved) => Task.Delay(1, ct); await Follow(1); await db.SaveChangesAsync();")
+        },
+        {
+            "a result read with the token, passed first to a call that has an argument that writes",
+            Run("await Keep(await Task.FromResult(1).WaitAsync(ct), await db.SaveChangesAsync());") + "\n" + TakesThings
+        },
+        {
+            "a different token passed first to a call that has an argument that writes",
+            Run("await UseToken(CancellationToken.None, await db.SaveChangesAsync());") + "\n" + TakesThings
         },
         {
             "a copy of a lambda that captures nothing",
@@ -896,11 +929,16 @@ internal sealed class CommitScan
     }
 
     /// <summary>
-    /// The calls that enclose the operation, which run after it, and for a call through a delegate the
-    /// delegate it calls, which is where a captured token is named.
+    /// The calls that enclose the operation, which run after it; for a call through a delegate the delegate
+    /// it calls, which is where a captured token is named; and what each call is handed beside the write,
+    /// wherever it is written. In <c>UseToken(ct, await db.SaveChangesAsync())</c> the token is read before
+    /// the save and so is not after it by position, but the call it was handed to runs after the save with it.
     /// </summary>
     private static IEnumerable<IOperation> EnclosingCalls(IOperation write)
     {
+        var path = new HashSet<IOperation>();
+        for (var above = write; above is not null; above = above.Parent) path.Add(above);
+
         for (var parent = write.Parent; parent is not null; parent = parent.Parent)
         {
             if (parent is not IInvocationOperation call) continue;
@@ -909,6 +947,15 @@ internal sealed class CommitScan
             if (call.TargetMethod.MethodKind == MethodKind.DelegateInvoke && call.Instance is { } instance)
                 foreach (var part in instance.DescendantsAndSelf())
                     yield return part;
+
+            // Each argument and the receiver that the write is not in. Only a value that is itself the token
+            // or a delegate: one that calls something is its result, such as a corpus read with the token,
+            // which the call is handed and not the means of cancelling.
+            foreach (var handed in call.Arguments.Where(a => !path.Contains(a)).Select(a => a.Value)
+                         .Concat(call.Instance is { } receiver && !path.Contains(receiver) ? [receiver] : []))
+                if (!handed.DescendantsAndSelf().Any(o => o is IInvocationOperation or IAwaitOperation or IObjectCreationOperation))
+                    foreach (var part in handed.DescendantsAndSelf())
+                        yield return part;
         }
     }
 
