@@ -491,9 +491,9 @@ public static partial class GitHistory
     /// anchored at the root (<c>docs</c> does not select <c>a/docs/x.txt</c>), <c>*</c> crosses <c>/</c>
     /// (<c>/docs/*.md</c> selects commits touching <c>docs/sub/b.md</c>), and without <c>:(glob)</c> a
     /// <c>**/*.md</c> needs a <c>/</c> in the path, so it does not select a root-level <c>README.md</c>. The
-    /// slash is kept when an element starts with <c>//</c> or <c>/:</c>, so that no literal name becomes pathspec magic (<c>/:(exclude)docs</c> would otherwise exclude
-    /// <c>docs</c>); such elements are refused where a list is saved and reach git as written if one was stored
-    /// earlier. An element that was only <c>/</c> is dropped: the walk compiles it to no rule, so it filters
+    /// slash is kept when an element starts with <c>//</c> or <c>/:</c>, so that no literal name becomes
+    /// pathspec magic (<c>/:(exclude)docs</c> would otherwise exclude <c>docs</c>); such elements are refused
+    /// where a list is saved and reach git as written if one was stored earlier. An element that was only <c>/</c> is dropped: the walk compiles it to no rule, so it filters
     /// nothing, and git would otherwise be handed an empty pathspec, which it rejects. A list of only such
     /// elements gives no pathspec, which is every path. Everything else, including pathspec magic, goes to git
     /// as written.
@@ -1132,10 +1132,6 @@ public static partial class GitHistory
         return text.ToString();
     }
 
-    /// <summary>The variables through which the environment sets how git reads a pathspec.</summary>
-    internal static readonly string[] PathspecEnvironment =
-        ["GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS"];
-
     /// <summary>
     /// How every git call here is started: the repository, the argument list, and the
     /// configuration pinned around it. Its own method so the pins can be read by a test
@@ -1261,16 +1257,20 @@ public static partial class GitHistory
         // which the first proves only that the probe missed. A NON-builtin subcommand
         // added here later would be expandable, and would need the alias disabled.
         info.ArgumentList.Insert(0, "--no-pager");
+        // No variable of the service's own reaches git. Git reads GIT_* variables from the environment, and
+        // several of them change what a call returns or whether it works at all, none of which the pins
+        // above or the fingerprint cover. Measured on git 2.54.0: GIT_DIFF_OPTS=--unified=9 made a one-line
+        // change print 25 lines of patch where `-c diff.context=3` gave 13, GIT_DIR=/nonexistent made every
+        // call fail, GIT_LITERAL_PATHSPECS=1 made `:(glob)docs` match nothing, GIT_NOGLOB_PATHSPECS=1 made
+        // `docs/*.md` match nothing, and GIT_ICASE_PATHSPECS=1 made `DOCS` match `docs`. GIT_CONFIG_COUNT
+        // with GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n sets any key that `-c` does not pin. All are removed,
+        // whatever their case, and none needs to survive: HOME and the other variables that locate global
+        // configuration do not start with GIT_.
+        foreach (var name in info.Environment.Keys.Where(k => k.StartsWith("GIT_", StringComparison.OrdinalIgnoreCase)).ToList())
+            info.Environment.Remove(name);
+
         info.Environment["GIT_TERMINAL_PROMPT"] = "0";
         info.Environment["GIT_OPTIONAL_LOCKS"] = "0";
-
-        // The pathspec settings, so an include means what its text says. Each is read by git from the
-        // environment of the service and changes every pathspec: measured on git 2.54.0,
-        // GIT_LITERAL_PATHSPECS=1 makes `:(glob)docs` match nothing and GIT_NOGLOB_PATHSPECS=1 makes
-        // `docs/*.md` match nothing, where without them both match, and GIT_ICASE_PATHSPECS=1 makes
-        // `DOCS` match `docs`.
-        foreach (var variable in PathspecEnvironment) info.Environment.Remove(variable);
-
         // The C locale, so what git prints does not depend on the process's language.
         // The stat's summary line (" 1 file changed") is translated where git has
         // translations, and it goes into a commit's document, which the fingerprint does

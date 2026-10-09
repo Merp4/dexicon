@@ -975,6 +975,16 @@ public sealed class GitHistoryTests : IDisposable
     [InlineData(":(glob,literal)x")]
     [InlineData(":-x")]
     [InlineData(":(attr:)x")]
+    [InlineData(":(attr:a=b,attr:c=d)x")]
+    [InlineData(":(attr:-)x")]
+    [InlineData(":(attr:--a)x")]
+    [InlineData(":(attr:a=b=c)x")]
+    [InlineData(":(attr:a=b.c)x")]
+    [InlineData(":(attr:a=é)x")]
+    [InlineData(":(prefix:abc)x")]
+    [InlineData(":(prefix:2)x")]
+    [InlineData(":(prefix:99)x")]
+    [InlineData(":(prefix:-1)../x")]
     public async Task APathspecGitRejectsStillFailsThePassWhichIsWhyTheListIsRefusedWhereItIsSaved(string pathspec)
     {
         Commit("src/a.txt", "one", "touch src");
@@ -1029,8 +1039,8 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
-    /// With top magic git reads the path from the repository root and does not reject a rooted path or one with
-    /// `..`: it selects nothing and does not fail, so the validator accepts these too.
+    /// With top magic, or prefix:N of zero or more, git does not look at where the path goes and does not reject a
+    /// rooted path or one with `..`: it selects nothing and does not fail, so the validator accepts these too.
     /// </summary>
     [Theory]
     [InlineData(":(top)../x")]
@@ -1040,11 +1050,39 @@ public sealed class GitHistoryTests : IDisposable
     [InlineData(":/..")]
     [InlineData(":/../x")]
     [InlineData(":/:/x")]
+    [InlineData(":(prefix:0)../x")]
+    [InlineData(":(prefix:0)/x")]
+    [InlineData(":(prefix:1)../x")]
+    [InlineData(":(prefix:3,glob)../x")]
     public async Task TopMagicIsNotHeldToTheRulesAboutWhereAPathGoes(string pathspec)
     {
         Commit("src/a.txt", "one", "touch src");
 
         (await EnumerateAsync(paths: [pathspec])).ShouldBeEmpty();
+        SourceFilters.FirstUnusable([pathspec], SourceFilters.GlobReader.Git).ShouldBeNull();
+    }
+
+    /// <summary>
+    /// Magic git accepts that the validator accepts as well: a bare attr word, an attr: git can use, and a prefix: no
+    /// longer than the path. The number is how many of the two commits in the repository the pathspec selects. A
+    /// number out of the range of a C long is not here: git for Windows has a 32-bit long and reads it differently.
+    /// </summary>
+    [Theory]
+    [InlineData(":(attr)x", 0)]
+    [InlineData(":(attr,glob)x", 0)]
+    [InlineData(":(attr:a=b c)x", 0)]
+    [InlineData(":(attr:-a !b c=d)x", 0)]
+    [InlineData(":(prefix:)x", 0)]
+    [InlineData(":(prefix:1)docs", 1)]
+    [InlineData(":(prefix:0)docs", 1)]
+    [InlineData(":(prefix:-1)docs", 1)]
+    [InlineData(":(prefix:0,glob)docs", 1)]
+    public async Task MagicGitAcceptsIsAccepted(string pathspec, int commits)
+    {
+        Commit("src/a.txt", "one", "touch src");
+        Commit("docs/b.txt", "two", "touch docs");
+
+        (await EnumerateAsync(paths: [pathspec])).Count.ShouldBe(commits);
         SourceFilters.FirstUnusable([pathspec], SourceFilters.GlobReader.Git).ShouldBeNull();
     }
 
@@ -1121,10 +1159,9 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
-    /// The fingerprints of lists without a leading slash, as literals. They are the values the unchanged
-    /// encoding gave before leading slashes were normalised (checked by compiling the previous
-    /// `GitHistoryOptions` and printing them), so a history source indexed under one is not re-read by the
-    /// upgrade. A change to the encoding fails this.
+    /// The fingerprints of lists without a leading slash, as literals. A history source already indexed under one
+    /// of them is not re-read after an upgrade, so a change to the encoding or to what a plain list is
+    /// fingerprinted as fails this.
     /// </summary>
     [Fact]
     public void TheFingerprintOfAListWithoutALeadingSlashIsWhatItWasBefore()
