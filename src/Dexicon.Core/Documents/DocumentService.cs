@@ -44,6 +44,7 @@ public sealed class DocumentService(
 {
     private readonly StorageOptions _storage = options.Value.Storage;
     private readonly UploadOptions _upload = options.Value.Upload;
+    private readonly IndexingOptions _indexing = options.Value.Indexing;
 
     /// <summary>
     /// Held from looking for a corpus's upload source and for the document's existing attachment to the
@@ -58,6 +59,27 @@ public sealed class DocumentService(
     /// </summary>
     private static readonly SemaphoreSlim Attaching = new(1, 1);
 
+    /// <summary>The longest file name stored, in UTF-16 characters.</summary>
+    public const int MaxFileNameLength = 260;
+
+    /// <summary>
+    /// Why <paramref name="fileName"/> cannot be stored as a file's path, or null when it can: it is
+    /// blank, longer than <see cref="MaxFileNameLength"/>, or holds a control character (a line break
+    /// among them, including U+2028 and U+2029). A listing, a search hit and a log line show the name.
+    /// The text does not repeat the name, because the upload endpoint reports it to whoever sent the
+    /// file and the attach endpoint puts it in a problem detail.
+    /// </summary>
+    public static string? FileNameProblem(string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName)) return "A file name is required.";
+        if (fileName.Length > MaxFileNameLength)
+            return $"A file name is limited to {MaxFileNameLength} characters.";
+        if (fileName.Any(c => char.IsControl(c) || c is '\u2028' or '\u2029'))
+            return "A file name cannot hold a control character, such as a line break.";
+
+        return null;
+    }
+
     /// <summary>Where a blob's bytes live: /data/blobs/ab/abcdef…, with two hex chars of fan-out.</summary>
     public string PathFor(string sha256) =>
         Path.Combine(_storage.BlobRoot, sha256[..2], sha256);
@@ -68,8 +90,8 @@ public sealed class DocumentService(
     /// </summary>
     public async Task<StoredDocument> StoreAsync(Stream content, string fileName, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(fileName))
-            throw new ArgumentException("A file name is required.");
+        // Before the bytes are read: a refused name costs the upload nothing. No paramName, as below.
+        if (FileNameProblem(fileName) is { } problem) throw new ArgumentException(problem);
 
         // Buffer to a temp file rather than memory: a 200 MB upload should not be a
         // 200 MB allocation, and the hash is only known after the whole stream is read.
@@ -212,9 +234,15 @@ public sealed class DocumentService(
         }
     }
 
+    /// <summary>
+    /// The extractor for a file name, <see cref="ExtractorRegistry.For"/> unless a test replaces it:
+    /// the registered extractors read a file in a few milliseconds and cannot be made slow.
+    /// </summary>
+    internal Func<string, ITextExtractor?> ExtractorFor { get; init; } = ExtractorRegistry.For;
+
     private async Task<BlobText> ExtractAsync(string sha, string fileName, CancellationToken ct)
     {
-        var extractor = ExtractorRegistry.For(fileName);
+        var extractor = ExtractorFor(fileName);
         var path = PathFor(sha);
 
         try
@@ -229,7 +257,17 @@ public sealed class DocumentService(
             else
             {
                 await using var stream = File.OpenRead(path);
-                extracted = extractor.Extract(stream, fileName);
+
+                // The deadline the indexing path puts on a workspace file (ExtractedTextCache.ParseAsync):
+                // without it a file that keeps reading holds the request, and the files after it in an
+                // upload, for as long as it takes. A timeout is an ExtractionFailedException and is
+                // recorded below as the blob's reason. 0 disables it, as there.
+                var timeoutSeconds = _indexing.ExtractionTimeoutSeconds;
+                extracted = extractor.Extract(
+                    timeoutSeconds > 0
+                        ? new DeadlineStream(stream, TimeSpan.FromSeconds(timeoutSeconds), fileName)
+                        : stream,
+                    fileName);
             }
 
             // Whatever produced it. A repair that wrote the same NUL-bearing text back would
@@ -289,7 +327,7 @@ public sealed class DocumentService(
         CancellationToken ct = default)
     {
         // As StoreAsync: no paramName, so the message reads the same to whoever is told it.
-        if (string.IsNullOrWhiteSpace(fileName)) throw new ArgumentException("A file name is required.");
+        if (FileNameProblem(fileName) is { } problem) throw new ArgumentException(problem);
 
         await Attaching.WaitAsync(ct);
         try { return await AttachHeldAsync(corpus, sha256, fileName, ct); }

@@ -74,7 +74,8 @@ public static class DocumentEndpoints
     /// wire into <see cref="DocumentService.StoreAsync"/>, which holds it to
     /// <see cref="UploadOptions.MaxFileBytes"/> as the bytes arrive. Nothing is spooled to a temp
     /// file first, which on the container's tmpfs would be memory. The request as a whole is held
-    /// to <see cref="UploadOptions.MaxRequestBytes"/>.
+    /// to <see cref="UploadOptions.MaxRequestBytes"/>, and to <see cref="UploadOptions.BatchFiles"/>
+    /// file parts: the next one is reported as a failure of the request and not read.
     /// </summary>
     [SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", MessageId = "ReadNextSectionAsync",
         Justification = ReadsTheNextFileOnTheRequest)]
@@ -139,6 +140,15 @@ public static class DocumentEndpoints
             while (await reader.ReadNextSectionAsync(ct) is { } section)
             {
                 if (section.AsFileSection() is not { } part) continue;   // a form field
+
+                // The part is not read. Only its headers have been, and the body after this file is left
+                // on the wire as it is when the bound is passed. Each file costs a temp file, a hash, a
+                // save and a turn at the attach lock, so the count is bounded as well as the bytes.
+                if (filesSeen == UploadOptions.BatchFiles)
+                {
+                    failures.Add(new UploadFailure(null, TooManyFilesMessage));
+                    break;
+                }
 
                 filesSeen++;
                 var fileName = part.FileName ?? "";
@@ -260,12 +270,24 @@ public static class DocumentEndpoints
                 detail: "Leave fileName out to keep the name the document was uploaded under.",
                 statusCode: 400);
 
+        if (body.FileName is not null && DocumentService.FileNameProblem(body.FileName) is { } invalid)
+            return Results.Problem(title: "Invalid file name", detail: invalid, statusCode: 400);
+
         var blob = await db.Blobs.FirstOrDefaultAsync(b => b.Sha256 == body.Sha256, ct);
         if (blob is null) return Results.Problem(title: "No such document", statusCode: 404);
 
         // This is the point of the whole design: the same bytes, chunked this
         // corpus's way, without re-uploading or re-extracting anything.
         var name = body.FileName ?? blob.OriginalFileName ?? body.Sha256[..12];
+
+        // The name a document was uploaded under before names were checked. Taken as the path when
+        // fileName is left out, so it is held to the same rule.
+        if (DocumentService.FileNameProblem(name) is { } storedName)
+            return Results.Problem(
+                title: "Invalid file name",
+                detail: $"{storedName} The name this document was uploaded under breaks that rule, so send a fileName.",
+                statusCode: 400);
+
         IndexedFile file;
         try
         {
@@ -307,6 +329,10 @@ public static class DocumentEndpoints
         $"The upload is over the {upload.MaxRequestBytes:N0} byte request limit: {UploadOptions.BatchFiles} files " +
         $"at the {upload.MaxFileBytes:N0} byte per-file limit (DEXICON__UPLOAD__MAXFILEBYTES) plus form framing. " +
         "Send fewer files in each request.";
+
+    private static readonly string TooManyFilesMessage =
+        $"The request holds more than {UploadOptions.BatchFiles} files. The first {UploadOptions.BatchFiles} " +
+        "were read and the rest were not. Send them in another request.";
 
     private static IResult TooLarge(UploadOptions upload) =>
         Results.Problem(title: "Upload too large", detail: TooLargeMessage(upload), statusCode: 413);

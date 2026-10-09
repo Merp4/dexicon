@@ -259,8 +259,8 @@ public sealed class IndexingOptions
 public sealed class UploadOptions
 {
     /// <summary>
-    /// Files at <see cref="MaxFileBytes"/> that one upload request may carry. The web UI sends
-    /// every dropped file in a single request, so the request bound has to allow a batch.
+    /// The most files one upload request is read for, and the number of files at
+    /// <see cref="MaxFileBytes"/> its byte bound allows. A file part past that count is not read.
     /// </summary>
     public const int BatchFiles = 10;
 
