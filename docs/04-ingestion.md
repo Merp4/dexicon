@@ -204,9 +204,11 @@ that cannot be opened is not read. What the walk cannot use is handled by whose 
   or `... because .dexiconignore is a link, and links are not followed.` A sweep leaves that source's inventory as it is.
   Fixing or removing the cause clears it on the next pass. A hard link to a file elsewhere is read as the file it is,
   and its text can appear in the message.
-- An entry of a stored include or exclude list that cannot be used, from before the lists were checked on store, fails
-  the walk the same way and is named by its list and zero-based position, as `excludeGlobs[1]`, or `corpus default
-  excludeGlobs[1]` when the source takes its list from the corpus.
+- An entry of a stored include or exclude list that cannot be used fails the walk the same way and is named by its
+  list and zero-based position, as `excludeGlobs[1]`, or `corpus default excludeGlobs[1]` when the source takes its
+  list from the corpus. Lists stored before the limits and the check of classes existed are read as they are stored,
+  so a list with an entry over 500 characters, a POSIX class, or more than its budget makes the source unavailable on
+  the first pass after an upgrade, until the list is edited. The API refuses the same lists on store.
 
 A message names the file by its path from the source's root, shows the first 100 characters of a line, and has every
 control, separator, bidirectional, format (including the Unicode tag characters) and unpaired-surrogate character
