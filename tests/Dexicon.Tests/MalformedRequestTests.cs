@@ -414,4 +414,61 @@ public sealed class MalformedRequestTests
         problem.ProblemDetails.Detail.ShouldNotBeNull().ShouldContain("'b.txt'");
         (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh)).ShouldBe(0, "a refused attach queues nothing");
     }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task AttachingUnderABlankNameIsAnswered400AndChangesNothing(string name)
+    {
+        // Only a left-out name falls back to the one the document was uploaded under; a blank one was stored as the path.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), "a.txt");
+        var queue = new IndexJobQueue(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance);
+
+        var result = await DocumentEndpoints.AttachAsync(
+            IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256, name), AsIngester(), new ScopeResolver(db),
+            documents, db, queue, default);
+
+        result.ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(400);
+        (await db.Files.CountAsync()).ShouldBe(0);
+        (await db.Jobs.CountAsync()).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task AttachingWithNoNameKeepsTheNameTheDocumentWasUploadedUnder()
+    {
+        // The control for the theory above.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), "a.txt");
+        var queue = new IndexJobQueue(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance);
+
+        var result = await DocumentEndpoints.AttachAsync(
+            IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256), AsIngester(), new ScopeResolver(db),
+            documents, db, queue, default);
+
+        result.ShouldBeOfType<Accepted<DocumentAttached>>().Value!.FileName.ShouldBe("a.txt");
+    }
+
+    [Fact]
+    public async Task TheServiceRefusesABlankNameToo()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), "a.txt");
+
+        var corpus = await db.Corpora.SingleAsync();
+
+        var thrown = await Should.ThrowAsync<ArgumentException>(() => documents.AttachAsync(corpus, stored.Sha256, " "));
+
+        thrown.Message.ShouldBe("A file name is required.");
+        (await db.Files.CountAsync()).ShouldBe(0);
+    }
 }

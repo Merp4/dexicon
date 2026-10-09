@@ -212,7 +212,13 @@ public sealed partial class IgnoreRuleSet
                     {
                         var close = glob.IndexOf(']', i);
                         if (close < 0) { sb.Append("\\["); break; }
-                        sb.Append(glob, i, close - i + 1);
+
+                        // gitignore negates a class with a leading ! (git also takes ^), and a class never matches a
+                        // path separator. .NET reads ! as a member and lets a negated class match /, so both are
+                        // written out. A bang with nothing after it stays a one-member class.
+                        if (i + 2 < close && glob[i + 1] is '!' or '^') sb.Append("[^/").Append(glob, i + 2, close - i - 1);
+                        else sb.Append(glob, i, close - i + 1);
+
                         i = close;
                         break;
                     }
