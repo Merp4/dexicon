@@ -248,7 +248,7 @@ public sealed class XmlNestingTests
             () => extractor.Extract(new DeadlineStream(new MemoryStream(bomb), TimeSpan.FromMilliseconds(200), name), name));
 
         // Raised while the package was being scanned, not by a later parse that found the clock already out.
-        thrown.StackTrace.ShouldContain(nameof(XmlNesting));
+        thrown.StackTrace.ShouldNotBeNull().ShouldContain(nameof(XmlNesting));
         clock.Elapsed.ShouldBeLessThan(Margin);
     }
 
