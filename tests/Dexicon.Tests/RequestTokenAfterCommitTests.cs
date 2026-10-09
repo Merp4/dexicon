@@ -19,7 +19,8 @@ namespace Dexicon.Tests;
 /// graph from each write and reports any use of the caller's token the write can reach. A write is
 /// <c>SaveChanges</c>, <c>ExecuteUpdate</c>, <c>ExecuteDelete</c> or <c>ExecuteSql</c> on the catalogue, or a
 /// call to a method in <c>src/</c> that makes one, followed through calls and interfaces declared in
-/// <c>src/</c> until nothing new is found, and a constructor that does. A lambda or method group that writes
+/// <c>src/</c> until nothing new is found, a constructor that does, and the abstract or virtual method that an
+/// override writes in, which is the one a call names. A lambda or method group that writes
 /// makes a write of the call to a local that holds it or a copy of it, and of a call to a lambda that calls one.
 ///
 /// The caller's token is a <see cref="CancellationToken"/> parameter of the function or of one around it
@@ -96,7 +97,17 @@ public sealed class RequestTokenAfterCommitTests
         + "private static Task Keep(int read, int saved) => Task.CompletedTask;\n"
         + "private sealed class FollowUp(CancellationToken token, int saved);\n"
         + "private sealed class Plain(int read, int saved);\n"
-        + "private sealed class Saver { public Saver(Db db) { db.SaveChanges(); } }";
+        + "private sealed class Saver { public CancellationToken Token { get; set; } public Saver(Db db) { db.SaveChanges(); } }";
+
+    /// <summary>A method reached through a base declaration, which only the override writes.</summary>
+    private const string Overrides =
+        "private abstract class Writer { public abstract Task RunAsync(Db db); }\n"
+        + "private sealed class RealWriter : Writer { public override async Task RunAsync(Db db) { await db.SaveChangesAsync(); } }\n"
+        + "private class VirtualWriter { public virtual Task RunAsync(Db db) => Task.CompletedTask; }\n"
+        + "private sealed class RealVirtualWriter : VirtualWriter "
+        + "{ public override async Task RunAsync(Db db) { await db.SaveChangesAsync(); } }\n"
+        + "private abstract class Idle { public abstract Task RunAsync(); }\n"
+        + "private sealed class Quiet : Idle { public override Task RunAsync() => Task.CompletedTask; }";
 
     /// <summary>
     /// Ways the caller's token reaches work after a write other than naming its parameter there. Each is
@@ -223,6 +234,19 @@ public sealed class RequestTokenAfterCommitTests
             Run("_ = new Saver(db); await Task.Delay(1, ct);") + "\n" + TakesThings
         },
         {
+            "a constructor that writes, with an initializer that uses the token",
+            Run("_ = new Saver(db) { Token = ct };") + "\n" + TakesThings
+        },
+        {
+            "an abstract method that an override writes in, called through the base",
+            Run("Writer writer = new RealWriter(); await writer.RunAsync(db); await Task.Delay(1, ct);") + "\n" + Overrides
+        },
+        {
+            "a virtual method that an override writes in, called through the base",
+            Run("VirtualWriter writer = new RealVirtualWriter(); await writer.RunAsync(db); await Task.Delay(1, ct);")
+            + "\n" + Overrides
+        },
+        {
             "the request's own token on the HttpContext",
             "public async Task Run(Db db, HttpContext http) { await db.SaveChangesAsync(); await Task.Delay(1, http.RequestAborted); }"
         },
@@ -304,6 +328,15 @@ public sealed class RequestTokenAfterCommitTests
         {
             "a result read with the token, passed first to a constructor that has an argument that writes",
             Run("_ = new Plain(await Task.FromResult(1).WaitAsync(ct), await db.SaveChangesAsync());") + "\n" + TakesThings
+        },
+        {
+            "a constructor that writes, with an initializer that uses a different token",
+            Run("_ = new Saver(db) { Token = CancellationToken.None };") + "\n" + TakesThings
+        },
+        {
+            "an abstract method that no override writes in, called through the base",
+            Run("Idle idle = new Quiet(); await idle.RunAsync(); await Task.Delay(1, ct); await db.SaveChangesAsync();")
+            + "\n" + Overrides
         },
         {
             "a constructor that writes, made after the token's last use",
@@ -843,6 +876,14 @@ internal sealed class CommitScan
                         if (type.FindImplementationForInterfaceMember(member) is IMethodSymbol implementation
                             && committing.Contains(implementation.OriginalDefinition))
                             grew |= committing.Add(member.OriginalDefinition);
+
+            // A call names the base's abstract or virtual method, and only an override writes. Each method an
+            // override overrides, as for an interface, and only those declared in src: an override of a
+            // framework method would make every call to it a write.
+            foreach (var method in committing.ToList())
+                for (var overridden = method.OverriddenMethod; overridden is not null; overridden = overridden.OverriddenMethod)
+                    if (overridden.Locations.Any(l => l.IsInSource))
+                        grew |= committing.Add(overridden.OriginalDefinition);
         } while (grew);
 
         return (committing, writingLocals);
