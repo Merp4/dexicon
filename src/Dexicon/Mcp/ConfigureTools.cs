@@ -275,6 +275,8 @@ public sealed class ConfigureTools
         // signature says, and a null folder canonicalises to the workspace root: a source over
         // everything mounted, which nothing here can remove.
         if (folder is null) throw new McpException("folder is required: a folder relative to the workspace root, or \"\" for the root itself.");
+        // Path.GetFullPath throws an ArgumentException on it, and the SDK shows an agent only "An error occurred".
+        if (folder.Contains('\0')) throw new McpException("folder holds a null character, which no folder name does. list_folders shows what is mounted.");
         if (gitignore == false) throw new McpException(GitignoreStaysOn);
 
         var isHistory = kind?.Trim().ToLowerInvariant() switch

@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.ExceptionServices;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
@@ -8,6 +9,8 @@ using Dexicon.Infrastructure;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Net.Http.Headers;
@@ -39,9 +42,9 @@ public sealed record LibraryAttachment(
 public static class DocumentEndpoints
 {
     private const string ReadsTheNextFileOnTheRequest =
-        "The loop reads, stores and attaches one file after another on the request's token. A cancel in it "
-        + "is caught below, which keeps the files already attached and queues their indexing without the "
-        + "token. The queuing is not covered by this.";
+        "The loop reads, stores and attaches one file after another on the request's token. A cancel in it, "
+        + "or any other failure once a file is attached, is caught below, which keeps the files already "
+        + "attached and queues their indexing without the token. The queuing is not covered by this.";
 
     /// <summary>The start of the text <see cref="MultipartReader"/> throws when the body ends early.</summary>
     private const string TruncatedBodyMessage = "Unexpected end of Stream";
@@ -116,6 +119,7 @@ public static class DocumentEndpoints
         var filesSeen = 0;
         var overran = false;
         string? malformed = null;
+        ExceptionDispatchInfo? failure = null;
 
         // Counts what is read, so a body with no declared length (chunked) is refused at the
         // bound too, and so is a declared length that understates the body.
@@ -184,6 +188,29 @@ public static class DocumentEndpoints
         {
             malformed = "The body ended before its closing boundary.";
             failures.Add(new UploadFailure(null, $"The multipart body could not be read: {malformed}"));
+        }
+        // Anything else, with files attached already: the caller still gets the server error, and the
+        // attached files are not left with no job until the next scheduled refresh. What the failed step
+        // had added is dropped here, as for a cancel, or the save that queues the job would write it. The
+        // job is queued after the try and not in this block, where the TokenAfterCommit scan
+        // (RequestTokenAfterCommitTests) cannot see that it follows the commits above.
+        catch (Exception ex) when (stored.Count > 0)
+        {
+            documents.DiscardUnsavedChanges();
+            failure = ExceptionDispatchInfo.Capture(ex);
+        }
+
+        if (failure is not null)
+        {
+            try { await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: CancellationToken.None); }
+            catch (Exception queuing)
+            {
+                // The caller is told the first failure. The files wait for the next refresh.
+                http.HttpContext.RequestServices?.GetService<ILoggerFactory>()?.CreateLogger("Dexicon.Upload")
+                    .LogError(queuing, "Queuing the refresh of corpus {Corpus} after a failed upload batch failed too", corpus.Id);
+            }
+
+            failure.Throw();
         }
 
         if (stored.Count == 0)

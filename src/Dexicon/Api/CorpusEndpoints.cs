@@ -492,6 +492,43 @@ public static class CorpusEndpoints
             : null;
 
     /// <summary>
+    /// A glob list that cannot be used, refused where it arrives. Stored as sent it failed every pass of
+    /// every source that read it, with the reason in a job and the request answered 200. The position is
+    /// named and the pattern is not echoed, because the text is the caller's and the message is logged.
+    /// <paramref name="includeReader"/> says what reads the include list (<see cref="SourceFilters.FirstUnusable"/>);
+    /// the exclude list is only ever read by the file walk. The configure tools name the same lists
+    /// <c>include</c> and <c>exclude</c>, so the message gives both.
+    /// </summary>
+    internal static ConfigRefusal? UnusableGlobs(
+        IReadOnlyList<string>? include, IReadOnlyList<string>? exclude,
+        SourceFilters.GlobReader includeReader = SourceFilters.GlobReader.Walk)
+    {
+        foreach (var (field, argument, globs, reader) in new (string, string, IReadOnlyList<string>?, SourceFilters.GlobReader)[]
+                 {
+                     ("includeGlobs", "include", include, includeReader),
+                     ("excludeGlobs", "exclude", exclude, SourceFilters.GlobReader.Walk),
+                 })
+        {
+            if (SourceFilters.FirstUnusable(globs, reader) is not { } at) continue;
+
+            var why = reader switch
+            {
+                SourceFilters.GlobReader.Git => "null, empty or holding a null character, which git cannot take as a pathspec",
+                SourceFilters.GlobReader.WalkAndGit =>
+                    "null, empty, holding a null character (a history source passes the list to git as pathspecs), "
+                    + "or a pattern that does not compile, such as [z-a]",
+                _ => "null, or a pattern that does not compile, such as [z-a]",
+            };
+            return new ConfigRefusal(
+                "Unusable glob",
+                $"{field}[{at}] ({argument}[{at}] for the configure tools) is {why}. Nothing was saved.",
+                400);
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Stores a history source's settings when they differ from what it has, and says
     /// whether they did.
     ///

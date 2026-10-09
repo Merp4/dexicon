@@ -47,12 +47,14 @@ public sealed class DocumentService(
 
     /// <summary>
     /// Held from looking for a corpus's upload source and for the document's existing attachment to the
-    /// save that adds them, so two attachments cannot both find none. A corpus has one upload source and
+    /// save that adds them, so two attachments cannot both find none, and by a detach for its lookup and
+    /// delete, so an attachment does not save against a row a detach has removed. A corpus has one upload source and
     /// holds a blob once (the same blob may be attached to any number of corpora), and no unique index
     /// says so: both were checks made before the insert, and two requests could pass them together and
     /// each add one. Dexicon is one process owning its catalogue (D-01), so one lock is enough, and a
-    /// second process writing the file is not covered, as for <c>CorpusConfiguration.Naming</c>. One lock
-    /// for all corpora, because an attachment is a few queries and a save.
+    /// second process writing the file is not covered, as for <c>CorpusConfiguration.Naming</c>, and neither
+    /// are the writers of file rows that do not take it: removing a source or a corpus, and the indexer's
+    /// reconcile. One lock for all corpora, because an attachment is a few queries and a save.
     /// </summary>
     private static readonly SemaphoreSlim Attaching = new(1, 1);
 
@@ -378,9 +380,9 @@ public sealed class DocumentService(
     }
 
     /// <summary>
-    /// Stop tracking changes that were not saved. After a save that was cancelled the context still
-    /// holds what that save was going to write, and the next save, from anything sharing the
-    /// context, would write it. Called when the caller means to carry on without the failed step.
+    /// Stop tracking changes that were not saved. After a save that was cancelled or failed the context
+    /// still holds what that save was going to write, and the next save, from anything sharing the
+    /// context, would write it. Called when the caller goes on to a save of its own after the failed step.
     /// </summary>
     public void DiscardUnsavedChanges() => db.ChangeTracker.Clear();
 
@@ -431,14 +433,21 @@ public sealed class DocumentService(
     /// </summary>
     public async Task<bool> DetachAsync(string corpusId, string fileId, CancellationToken ct = default)
     {
-        var file = await db.Files.Include(f => f.Source)
-            .FirstOrDefaultAsync(f => f.Id == fileId && f.Source!.CorpusId == corpusId
-                                      && f.Source.Kind == SourceKind.Upload, ct);
+        // Under the lock attaching holds: an attachment that found this file and was about to rename or
+        // replace it saved against a row the detach had deleted, and the save failed on it.
+        await Attaching.WaitAsync(ct);
+        try
+        {
+            var file = await db.Files.Include(f => f.Source)
+                .FirstOrDefaultAsync(f => f.Id == fileId && f.Source!.CorpusId == corpusId
+                                          && f.Source.Kind == SourceKind.Upload, ct);
 
-        if (file is null) return false;
-        db.Files.Remove(file);
-        await db.SaveChangesAsync(ct);
-        return true;
+            if (file is null) return false;
+            db.Files.Remove(file);
+            await db.SaveChangesAsync(ct);
+            return true;
+        }
+        finally { Attaching.Release(); }
     }
 
     public Task<BlobText?> TextFor(string sha256, CancellationToken ct = default) =>

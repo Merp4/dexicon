@@ -171,6 +171,21 @@ public sealed class ProposeToolsTests : IAsyncLifetime
         (await db.Proposals.AnyAsync()).ShouldBeFalse();
     }
 
+    [Theory]
+    [InlineData("a\0b")]
+    [InlineData("files:a\0b")]
+    public async Task ASourceTargetWithANullCharacterIsRefusedAsNotAFolder(string target)
+    {
+        // Path.GetFullPath throws on it; the service turns that into a refusal and lists the corpus's sources.
+        await using var db = _harness.NewContext();
+
+        var refused = await Should.ThrowAsync<McpException>(() => ProposeAsync(db, Proposer(), "source", target: target));
+
+        refused.Message.ShouldContain("is not a folder path");
+        refused.Message.ShouldContain("files:docs, files:notes");
+        (await db.Proposals.AnyAsync()).ShouldBeFalse();
+    }
+
     [Fact]
     public async Task AKeyMappedToOtherCorporaCannotAskAboutOneItDoesNotReach()
     {

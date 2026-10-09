@@ -3,6 +3,7 @@ using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
 using Dexicon.Core.Indexing;
 using Dexicon.Core.Search;
+using Dexicon.Infrastructure;
 
 namespace Dexicon.Api;
 
@@ -678,11 +679,13 @@ public static class Mapping
     /// <summary>
     /// A caller's text in a message that is logged and returned: one line, and cut short. The exception
     /// is written to the console log with its message, so a line break in it would begin a line that
-    /// reads as another entry.
+    /// reads as another entry. Line breaks become a space so the text still reads as it was sent; the
+    /// rest of the control range, such as the escape that starts <c>\u001B[2J</c>, goes through the log
+    /// sanitiser's replacement.
     /// </summary>
     private static string Shown(string? text)
     {
-        var line = (text ?? string.Empty).ReplaceLineEndings(" ");
+        var line = DexiconAuthMiddleware.OneLine((text ?? string.Empty).ReplaceLineEndings(" "));
         return line.Length > 40 ? line[..40] + "..." : line;
     }
 }
