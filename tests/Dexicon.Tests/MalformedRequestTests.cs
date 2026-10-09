@@ -5,11 +5,14 @@ using Dexicon.Core.Documents;
 using Dexicon.Core.Indexing;
 using Dexicon.Core.Search;
 using Dexicon.Infrastructure;
+using Dexicon.Mcp;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using ModelContextProtocol;
 
 namespace Dexicon.Tests;
 
@@ -113,6 +116,23 @@ public sealed class MalformedRequestTests
         var expires = result.ShouldBeOfType<Ok<CreatedTokenResponse>>().Value!.Token.ExpiresUtc.ShouldNotBeNull();
         expires.ShouldBeGreaterThan(DateTime.UtcNow.AddDays(36_499));
         SystemEndpoints.MaxExpiryDays.ShouldBe(36_500, "the documents state 36,500");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(0)]
+    public async Task ZeroDaysAndNoExpiryBothMakeAKeyThatDoesNotExpire(int? days)
+    {
+        // The refusal of a negative number leaves 0 as it was: the documents say 0 or leaving it out means
+        // the key does not expire.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await using var db = harness.NewContext();
+
+        var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", ExpiresInDays: days),
+            AsAdmin(), new TokenService(db, TimeProvider.System), db, default);
+
+        result.ShouldBeOfType<Ok<CreatedTokenResponse>>().Value!.Token.ExpiresUtc.ShouldBeNull();
+        (await db.Tokens.CountAsync(t => t.Name == "agent")).ShouldBe(1);
     }
 
     [Fact]
@@ -240,6 +260,81 @@ public sealed class MalformedRequestTests
         Mapping.ParseMode(null).ShouldBe(SearchMode.Hybrid);
         Mapping.ParseMode("Keyword").ShouldBe(SearchMode.Keyword);
         Mapping.ParseMode("semantic").ShouldBe(SearchMode.Semantic);
+    }
+
+    private static SearchService SearchOn(IndexingHarness harness, CatalogDbContext db) =>
+        new(new ScopeResolver(db), harness.Vectors, harness.Embedder, new MemoryCache(new MemoryCacheOptions()),
+            NullLogger<SearchService>.Instance);
+
+    [Fact]
+    public async Task AnUnknownSearchModeReachesAnMcpCallerAsAnErrorThatNamesIt()
+    {
+        // The SDK shows a caller the message of an McpException and nothing of any other exception.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        await using var db = harness.NewContext();
+
+        var thrown = await Should.ThrowAsync<McpException>(
+            () => DexiconTools.SearchIndexAsync(AsIngester(), SearchOn(harness, db), "anything", mode: "fuzzy"));
+
+        thrown.Message.ShouldContain("Unknown search mode 'fuzzy'");
+    }
+
+    [Fact]
+    public async Task AKnownSearchModeGetsPastTheModeCheckToTheVectorStore()
+    {
+        // The control for the test above: the same call with a mode that exists is not stopped at the mode.
+        // The harness's vector store throws NotSupportedException from a search, so reaching it is the proof.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        await using var db = harness.NewContext();
+
+        await Should.ThrowAsync<NotSupportedException>(
+            () => DexiconTools.SearchIndexAsync(AsIngester(), SearchOn(harness, db), "anything", mode: "keyword"));
+    }
+
+    private static IndexJobQueue QueueOn(IndexingHarness harness, CatalogDbContext db) =>
+        new(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance);
+
+    private static async Task RenameTheCorpusAsync(IndexingHarness harness, string name)
+    {
+        await using var db = harness.NewContext();
+        (await db.Corpora.SingleAsync()).Name = name;
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task TheSweepAnswersWithALocationThatHoldsOnlyAscii()
+    {
+        // Kestrel throws on a header value outside ASCII, after the sweep was queued.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        await RenameTheCorpusAsync(harness, "Café notes");
+        await using var db = harness.NewContext();
+
+        var result = await CorpusEndpoints.SweepAsync(IndexingHarness.CorpusId, AsIngester(), new ScopeResolver(db),
+            new SweepQueue(new WorkScheduler(harness.Settings)), default);
+
+        var location = result.ShouldBeOfType<Accepted<SweepQueued>>().Location.ShouldNotBeNull();
+        location.ShouldBe("/api/corpora/Caf%C3%A9%20notes");
+        location.ShouldAllBe(c => c < 128);
+    }
+
+    [Fact]
+    public async Task ANewChunkSetAnswersWithALocationThatHoldsOnlyAscii()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        await RenameTheCorpusAsync(harness, "Café notes");
+        await using var db = harness.NewContext();
+
+        var result = await ChunkSetEndpoints.CreateAsync(
+            IndexingHarness.CorpusId, new CreateChunkSetRequest("résumé set"), AsAdmin(), new ScopeResolver(db), db,
+            harness.Vectors, harness.Embedder, QueueOn(harness, db), harness.Settings, default);
+
+        var location = result.ShouldBeOfType<Accepted<ChunkSetCreated>>().Location.ShouldNotBeNull();
+        location.ShouldBe("/api/corpora/Caf%C3%A9%20notes/chunk-sets/r%C3%A9sum%C3%A9%20set");
+        location.ShouldAllBe(c => c < 128);
     }
 
     [Fact]

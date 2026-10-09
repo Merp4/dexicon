@@ -116,17 +116,7 @@ public static class CorpusEndpoints
 
         // Discovery on demand. Deliberately not a job: it takes the corpus lease, runs on
         // the discovery lane and answers in seconds, so there is nothing to poll.
-        g.MapPost("/{nameOrId}/sweep", async (string nameOrId, RequestContext rc,
-            ScopeResolver scopes, SweepQueue sweeps, CancellationToken ct) =>
-        {
-            if (rc.RequireScope(Scopes.Ingest) is { } denied) return denied;
-            var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
-
-            // False means one is already waiting, which is the same answer arriving from
-            // the sweep already queued rather than a refusal.
-            var queued = sweeps.Enqueue(corpus.Id);
-            return Results.Accepted(LocationOf(corpus.Name), new SweepQueued(corpus.Name, queued));
-        }).Produces<SweepQueued>(StatusCodes.Status202Accepted);
+        g.MapPost("/{nameOrId}/sweep", SweepAsync).Produces<SweepQueued>(StatusCodes.Status202Accepted);
 
         g.MapPost("/{nameOrId}/reindex", async (string nameOrId, bool? full, RequestContext rc,
             ScopeResolver scopes, IndexJobQueue queue, CancellationToken ct) =>
@@ -199,6 +189,19 @@ public static class CorpusEndpoints
 
         // Not the caller's token, as in CreateAsync: the change is saved.
         return Results.Ok(new CorpusUpdated(await Summarise(db, corpus, opts.Value.Indexing, CancellationToken.None)));
+    }
+
+    /// <summary>The handler of <c>POST /api/corpora/{name}/sweep</c>, a method so a test can call it without a server.</summary>
+    internal static async Task<IResult> SweepAsync(string nameOrId, RequestContext rc, ScopeResolver scopes,
+        SweepQueue sweeps, CancellationToken ct)
+    {
+        if (rc.RequireScope(Scopes.Ingest) is { } denied) return denied;
+        var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
+
+        // False means one is already waiting, which is the same answer arriving from
+        // the sweep already queued rather than a refusal.
+        var queued = sweeps.Enqueue(corpus.Id);
+        return Results.Accepted(LocationOf(corpus.Name), new SweepQueued(corpus.Name, queued));
     }
 
     /// <summary>

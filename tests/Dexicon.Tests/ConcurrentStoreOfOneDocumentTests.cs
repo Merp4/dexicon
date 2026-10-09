@@ -104,6 +104,31 @@ public sealed class ConcurrentStoreOfOneDocumentTests
         OnlyOneBlobFileIsLeft(documents, first.Sha256);
     }
 
+    [Fact]
+    public async Task AMoveThatFailsWithNoStoredFileAtTheDestinationIsAnErrorAndLeavesNothingBehind()
+    {
+        // Only a stored file at the destination makes a failed move the race. With a directory in its
+        // place the bytes are not stored, so dropping the upload's copy would answer a file that is not
+        // there.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var sha = Convert.ToHexStringLower(SHA256.HashData(TheSameBytes));
+        Directory.CreateDirectory(documents.PathFor(sha));
+
+        var thrown = await Should.ThrowAsync<Exception>(() => documents.StoreAsync(new MemoryStream(TheSameBytes), "one.txt"));
+
+        // Whichever step failed, the upload fails, so the origin is what tells a refused move from one that
+        // was swallowed: the later read of the missing file throws too, with a message about the read.
+        thrown.StackTrace.ShouldNotBeNull().ShouldContain("Move", Case.Sensitive, "the move is what failed");
+        thrown.StackTrace.ShouldNotContain("ExtractAsync", Case.Sensitive, "and no later step reached the missing file");
+
+        var root = Path.GetDirectoryName(Path.GetDirectoryName(documents.PathFor(sha)))!;
+        Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+            .ShouldBeEmpty("the upload's temp copy is removed");
+        (await db.Blobs.CountAsync()).ShouldBe(0, "no blob is recorded for bytes that were not stored");
+    }
+
     /// <summary>
     /// Fails the next save that adds a blob, once armed, after running <see cref="Before"/>. It disarms
     /// itself first, so what <see cref="Before"/> saves is not failed in turn.
