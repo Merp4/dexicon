@@ -230,11 +230,13 @@ to the corpus yet, sent under a name it holds, replace that document.
 
 The request as a whole is bounded at ten files at the cap plus 1 MiB of multipart framing,
 which is 2,098,200,576 bytes at the default and follows `DEXICON__UPLOAD__MAXFILEBYTES`.
-A larger body is refused with `413` and a message that names the bound, before any of it is read
-when the client declares its `Content-Length`, and otherwise when the body reaches the bound.
-Files stored before the bound was reached stay stored, and the answer is then `202` with the
-overrun listed under `failed`. A failure of the request as a whole has a `null` `file`; a failure
-of one file carries its name, whatever that name is.
+The web UI sends a drop of more than ten files as several requests of at most ten, one after
+another, so the bound allows a full request. A larger body is refused with `413` and a message
+that names the bound, before any of it is read when the client declares its `Content-Length`,
+and otherwise when the body reaches the bound. Files stored before the bound was reached stay
+stored, and the answer is then `202` with the overrun listed under `failed`. A failure of the
+request as a whole has a `null` `file`; a failure of one file carries its name, whatever that
+name is.
 
 A request is read for ten file parts and one hundred multipart sections, form fields and files
 together. The application reads nothing past the eleventh file part or the hundred and first
@@ -916,6 +918,10 @@ rather than discovered.
 { "dimensions": 768, "maxInputChars": 11776, "truncatesSilently": true,
   "charsPerToken": 2.82, "recommendedChunkTokens": 2783, "embedCalls": 27 }
 ```
+
+The probe needs the `admin` scope: it makes two dozen calls to the provider, which for a hosted one
+use the server's own credentials, and it saves the result as the model's measurement, which sets
+the chunk budget of every chunk set on that model.
 
 `charsPerToken` is measured with **the model's own tokenizer**, not estimated. Ollama
 returns `prompt_eval_count` on an embed call, so the probe embeds three samples (prose,

@@ -835,6 +835,52 @@ describe('removing a source', () => {
     expect(removeSource).not.toHaveBeenCalled();
   });
 
+  it('says what removing the upload source does, not what removing a folder does', async () => {
+    // Removing it detaches every uploaded document of the corpus and deletes their chunks in every
+    // chunk set. The documents stay stored, and the next attachment creates the source again.
+    // There is no folder and nothing to index again from scratch.
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(corpus({
+      sources: [source({ id: 's2', kind: 'upload', rootPath: null, useGitignore: false, maxFileBytes: 2_147_483_647, fileCount: 3 })],
+    }));
+    render(<CorpusDetail {...props} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Remove source uploaded documents' }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(within(dialog).getByText(/3 documents leave the index immediately, in every chunk set of docs/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/uploaded documents stay stored and can be attached again from the Documents page/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/folder/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/from scratch/)).not.toBeInTheDocument();
+  });
+
+  it('says it removes one uploaded document in the singular', async () => {
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(corpus({
+      sources: [source({ id: 's2', kind: 'upload', rootPath: null, useGitignore: false, fileCount: 1 })],
+    }));
+    render(<CorpusDetail {...props} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Remove source uploaded documents' }));
+
+    expect(within(await screen.findByRole('dialog')).getByText(/Its 1 document leaves the index immediately/)).toBeInTheDocument();
+  });
+
+  it('keeps the folder wording for a history source', async () => {
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(corpus({
+      sources: [source({ id: 's3', kind: 'githistory', rootPath: 'api-repo', fileCount: 174 })],
+    }));
+    render(<CorpusDetail {...props} />);
+
+    await user.click(await screen.findByRole('button', { name: /Remove source api-repo/ }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(within(dialog).getByText(/174 commits leave the index/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/folder on disk is untouched/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Documents page/)).not.toBeInTheDocument();
+  });
+
   it('removes it only once confirmed', async () => {
     const user = userEvent.setup();
     removeSource.mockResolvedValue(undefined);

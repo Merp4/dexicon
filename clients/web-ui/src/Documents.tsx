@@ -39,6 +39,9 @@ export function DocumentsView({
   const refusedFiles = notStored.filter((f) => f.file != null);
   const requestFailures = notStored.filter((f) => f.file == null);
   const fileInput = useRef<HTMLInputElement>(null);
+  // Set the moment an upload starts, before `busy` has rendered, so a second drop in the same
+  // tick is refused too. The drop zone stays live while an upload runs; only the button is disabled.
+  const uploading = useRef(false);
 
   // Everything the signed-in admin can see is writable; there is no owner to test.
   const writable = corpora;
@@ -64,10 +67,13 @@ export function DocumentsView({
   const upload = useCallback(
     async (files: File[]) => {
       if (files.length === 0) return;
+      // A second sequence of requests would overwrite the first one's result on screen.
+      if (uploading.current) return;
       if (!uploadTo) {
         onError(new Error('Choose a corpus to upload into first.'));
         return;
       }
+      uploading.current = true;
       setBusy(true);
       setLastUpload(null);
       setNotStored([]);
@@ -92,6 +98,7 @@ export function DocumentsView({
       } catch (e) {
         onError(e);
       } finally {
+        uploading.current = false;
         setBusy(false);
       }
     },
