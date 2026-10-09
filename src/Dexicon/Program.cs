@@ -49,7 +49,7 @@ Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .Enrich.With<UtcTimestampEnricher>()
-    .WriteTo.Console(outputTemplate: LogOutput.ConsoleTemplate)
+    .WriteTo.OneLineConsole()
     .CreateLogger();
 
 builder.Host.UseSerilog();

@@ -172,7 +172,7 @@ public sealed class ConfigureTools
                         Audit("created", c, setAtCreation.Count == 0 ? "none" : string.Join(", ", setAtCreation));
                     },
                     defaults: filtersGiven ? new CorpusDefaults(gitignore, maxBytes, include, exclude) : null);
-                if (created.Refusal is { } refused) throw new McpException(refused.Detail);
+                if (created.Refusal is { } refused) throw DexiconTools.Refusal(refused.Detail);
                 target = created.Value!;
             }
             catch (Exception ex) when (saved is not null && ex is not McpException)
@@ -181,9 +181,18 @@ public sealed class ConfigureTools
                 // index, which indexing does again. Said as that, because the generic error an
                 // agent would otherwise get reads as "nothing happened", and a retry of create
                 // is then refused as taken.
+                //
+                // The cause is logged and not repeated to the agent. It can be any exception from the
+                // vector store or the catalogue, such as the Qdrant client's RpcException, whose message
+                // carries the gRPC status and the socket error text. docs/10-security-secrets.md says a
+                // message an agent reads is one written here.
+                logs.CreateLogger("Dexicon.Configure").Log(
+                    ex is OperationCanceledException ? LogLevel.Warning : LogLevel.Error, ex,
+                    "Key {Key} created corpus {Corpus}, but preparing its index failed",
+                    DexiconAuthMiddleware.OneLine(principal.Name), DexiconAuthMiddleware.OneLine(saved.Name));
                 throw new McpException(
-                    $"Corpus '{DexiconTools.OneLine(saved.Name)}' was created, but preparing its index failed "
-                    + $"({DexiconTools.OneLine(ex.Message)}). Add a folder to it with configure_source: indexing prepares "
+                    $"Corpus '{DexiconTools.Echo(saved.Name)}' was created, but preparing its index failed. "
+                    + "Dexicon's log has the cause. Add a folder to it with configure_source: indexing prepares "
                     + "the index again.");
             }
 
@@ -220,7 +229,7 @@ public sealed class ConfigureTools
                     c.Description ? "description" : null,
                     c.Filters ? "the filters its sources inherit" : null,
                 }.OfType<string>())));
-            if (update.Refusal is { } refused) throw new McpException(refused.Detail);
+            if (update.Refusal is { } refused) throw DexiconTools.Refusal(refused.Detail);
 
             // The service queues a refresh for moved filters only when there are sources to read.
             if (update.Value)
@@ -283,7 +292,7 @@ public sealed class ConfigureTools
         {
             "files" => false,
             "history" => true,
-            _ => throw new McpException($"kind is files or history, not '{kind}'."),
+            _ => throw new McpException($"kind is files or history, not '{DexiconTools.Echo(kind)}'."),
         };
 
         var fileOnly = new[] { exclude is null ? null : "exclude", gitignore is null ? null : "gitignore", maxFileKb is null ? null : "maxFileKb" }
@@ -320,7 +329,7 @@ public sealed class ConfigureTools
         var root = WorkspaceDiscovery.Canonical(workspace, folder);
         // A segment of "..", not any name starting with two dots: "..data" is a folder.
         if (root == ".." || root.StartsWith("../", StringComparison.Ordinal))
-            throw new McpException($"'{folder}' is outside the workspace. list_folders shows what is mounted.");
+            throw new McpException($"'{DexiconTools.Echo(folder)}' is outside the workspace. list_folders shows what is mounted.");
         var wanted = isHistory ? SourceKind.GitHistory : SourceKind.Workspace;
         var what = $"{(isHistory ? "commit history of" : "files under")} {(root.Length == 0 ? "the workspace root" : DexiconTools.OneLine(root))}";
 
@@ -361,7 +370,7 @@ public sealed class ConfigureTools
                     GitHistory: isHistory,
                     Git: isHistory && history is not null ? Merge(new GitHistoryOptions(), history, []) : null), ct,
                     committed: _ => AuditSource("added"));
-                if (added.Refusal is { } refused) throw new McpException(refused.Detail);
+                if (added.Refusal is { } refused) throw DexiconTools.Refusal(refused.Detail);
 
                 action = "added";
                 jobId = added.Value!.IndexJob.Id;
@@ -400,7 +409,7 @@ public sealed class ConfigureTools
                 gitignore, maxBytes, include, exclude,
                 Clear: resets.Where(FilterNames.ContainsKey).Select(r => FilterNames[r]).ToList(),
                 Git: git), ct, committed: _ => AuditSource("changed"));
-            if (updated.Refusal is { } refused) throw new McpException(refused.Detail);
+            if (updated.Refusal is { } refused) throw DexiconTools.Refusal(refused.Detail);
 
             action = updated.Value!.IndexJob is null ? "left unchanged" : "changed";
             jobId = updated.Value.IndexJob?.Id;
@@ -450,13 +459,13 @@ public sealed class ConfigureTools
         catch (UnauthorizedAccessException)
         {
             throw new McpException(
-                $"'{path}' is outside the workspace, or passes through a link, and links are not followed. "
+                $"'{DexiconTools.Echo(path)}' is outside the workspace, or passes through a link, and links are not followed. "
                 + "list_folders shows what is mounted.");
         }
 
         return Directory.Exists(full)
             ? full
-            : throw new McpException($"There is no folder '{path}' under the workspace. list_folders shows what is mounted.");
+            : throw new McpException($"There is no folder '{DexiconTools.Echo(path)}' under the workspace. list_folders shows what is mounted.");
     }
 
     internal static async Task<Corpus> WritableAsync(
@@ -467,7 +476,7 @@ public sealed class ConfigureTools
         {
             // The message names the key and every corpus it reaches, typed text that an older
             // catalogue's can hold a line break in.
-            throw new McpException(DexiconTools.OneLine($"{ex.Message} {hint}".TrimEnd()));
+            throw DexiconTools.Refusal($"{ex.Message} {hint}".TrimEnd());
         }
     }
 
@@ -565,10 +574,13 @@ public sealed class ConfigureTools
     {
         var valid = allowed.ToList();
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // JSON can send null for an entry whatever the signature says.
         foreach (var name in reset ?? [])
         {
-            var known = valid.Find(v => string.Equals(v, name.Trim(), StringComparison.OrdinalIgnoreCase))
-                ?? throw new McpException($"reset takes {string.Join(", ", valid)}; '{name}' is not one of them here.");
+            var known = name is null
+                ? throw new McpException($"reset takes {string.Join(", ", valid)}; a null entry is not one of them.")
+                : valid.Find(v => string.Equals(v, name.Trim(), StringComparison.OrdinalIgnoreCase))
+                    ?? throw new McpException($"reset takes {string.Join(", ", valid)}; '{DexiconTools.Echo(name)}' is not one of them here.");
             names.Add(known);
         }
         return names;
@@ -606,7 +618,7 @@ public sealed class ConfigureTools
         {
             since = DateOnly.TryParseExact(text.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)
                 ? parsed
-                : throw new McpException($"since is a date written yyyy-MM-dd, not '{text}'.");
+                : throw new McpException($"since is a date written yyyy-MM-dd, not '{DexiconTools.Echo(text)}'.");
         }
 
         return current with

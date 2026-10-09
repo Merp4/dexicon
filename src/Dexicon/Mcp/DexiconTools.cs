@@ -69,7 +69,7 @@ public sealed class DexiconTools
         }
         catch (ScopeResolutionException ex)
         {
-            throw new McpException(ex.Message);
+            throw Refusal(ex.Message);
         }
         catch (UnknownSearchModeException ex)
         {
@@ -262,7 +262,7 @@ public sealed class DexiconTools
             var scope = await scopes.ResolveReadableAsync(rc.RequirePrincipal(), [corpus], ct);
             target = scope.Targets[0];
         }
-        catch (ScopeResolutionException ex) { throw new McpException(ex.Message); }
+        catch (ScopeResolutionException ex) { throw Refusal(ex.Message); }
 
         // Read from the index rather than from disk, so this works for uploads, which have
         // no file to read, and by filter rather than by search.
@@ -301,7 +301,7 @@ public sealed class DexiconTools
 
                 if (gotHi < gotLo)
                     throw new McpException(
-                        $"'{filePath}' in corpus '{corpus}' has no line {aroundLine}; "
+                        $"'{Echo(filePath)}' in corpus '{Echo(corpus)}' has no line {aroundLine}; "
                         + $"it runs to line {document.Text.AsSpan().Count('\n') + 1}.");
 
                 return $"{filePath}:{gotLo}-{gotHi} (corpus: {corpus})\n{WarningLine(file)}\n"
@@ -315,9 +315,9 @@ public sealed class DexiconTools
 
         if (pieces.Count == 0)
             throw new McpException(chunks.Count == 0
-                ? $"No indexed file '{filePath}' in corpus '{corpus}'. " +
+                ? $"No indexed file '{Echo(filePath)}' in corpus '{Echo(corpus)}'. " +
                   "Check the path is exactly as search_index returned it."
-                : $"'{filePath}' is indexed in corpus '{corpus}' but has no content around line " +
+                : $"'{Echo(filePath)}' is indexed in corpus '{Echo(corpus)}' but has no content around line " +
                   $"{aroundLine}; it spans lines {chunks.Min(c => c.StartLine)}-{chunks.Max(c => c.EndLine)}.");
 
         // The window, not the span of the chunks overlapping it. `before` and `after` are
@@ -353,7 +353,7 @@ public sealed class DexiconTools
 
         Corpus target;
         try { target = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), corpus, ct); }
-        catch (ScopeResolutionException ex) { throw new McpException(ex.Message); }
+        catch (ScopeResolutionException ex) { throw Refusal(ex.Message); }
 
         var job = await queue.EnqueueAsync(target.Id, full ? JobKind.Full : JobKind.Refresh, ct: ct);
 
@@ -383,7 +383,7 @@ public sealed class DexiconTools
         else
         {
             try { targets = (await scopes.ResolveReadableAsync(principal, [corpus], ct)).Corpora.ToList(); }
-            catch (ScopeResolutionException ex) { throw new McpException(ex.Message); }
+            catch (ScopeResolutionException ex) { throw Refusal(ex.Message); }
         }
 
         if (targets.Count == 0) return $"Key '{principal.Name}' can reach no corpora.";
@@ -635,6 +635,42 @@ public sealed class DexiconTools
     /// status or reason. A glob is stored as it was typed, so it can hold one too.
     /// </summary>
     internal static string OneLine(string path) => path.ReplaceLineEndings(" ");
+
+    /// <summary>
+    /// The most characters of a caller's value that an error repeats: the length a corpus name may have
+    /// (<see cref="CorpusConfiguration.NameMax"/>), so a name that exists is never cut.
+    /// </summary>
+    internal const int EchoMax = CorpusConfiguration.NameMax;
+
+    /// <summary>
+    /// The most characters of a whole error, which is written here but can hold a caller's value (the
+    /// resolver's messages quote the corpus name as sent).
+    /// </summary>
+    internal const int MessageMax = 4_000;
+
+    /// <summary>
+    /// A caller's value as an error repeats it: one line, no control characters, cut at
+    /// <paramref name="max"/>. The SDK returns the message of an <see cref="McpException"/> to the caller and
+    /// a log can carry it, so a line break in the value could begin a line that reads as another entry.
+    /// Line breaks become spaces, as <see cref="OneLine"/> makes them, and
+    /// <see cref="DexiconAuthMiddleware.OneLine"/> then replaces the control characters that remain, such as
+    /// an escape sequence.
+    /// </summary>
+    internal static string Echo(string? value, int max = EchoMax)
+    {
+        var line = DexiconAuthMiddleware.OneLine(OneLine(value ?? string.Empty));
+        if (line.Length <= max) return line;
+
+        // Not between the halves of a surrogate pair.
+        var cut = char.IsHighSurrogate(line[max - 1]) ? max - 1 : max;
+        return line[..cut] + "...";
+    }
+
+    /// <summary>
+    /// A refusal whose message was composed elsewhere (a resolver or <see cref="CorpusConfiguration"/>),
+    /// which can quote what the caller sent, so it is held to one line and to <see cref="MessageMax"/>.
+    /// </summary>
+    internal static McpException Refusal(string message) => new(Echo(message, MessageMax));
 
     /// <summary>
     /// A name as a JSON string, for a call an agent will be told to make: <c>"a\"b"</c> and not

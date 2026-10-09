@@ -58,7 +58,12 @@ data/
 The one credential written to a log is the generated admin password, printed once on the
 first start (see the table above). A presented credential is not logged. The console
 template renders values as JSON (`LogOutput.ConsoleTemplate`), so a request path cannot
-start a new log line. A rejected request logs a 32-bit digest of the presented credential
+start a new log line. `{Exception}` has no such rendering, so the console sink
+(`LogOutput.OneLineConsole`) writes each exception through `OneLineExceptionSink` first: the
+type, the message on one line (`DexiconAuthMiddleware.OneLine`), the inner exceptions and the
+stack trace, in the runtime's own layout. The scope errors quote the corpus name or path a
+caller sent, and `ScopeExceptionHandler` logs them at Debug. An exception's own `ToString`
+extras, such as the file name of a `FileNotFoundException`, are not written. A rejected request logs a 32-bit digest of the presented credential
 (`CallerDigest`), which tells one caller from several. It is not a secret: whoever can read
 the logs can compute the digest of a candidate credential and compare, and a match is a
 1 in 2^32 coincidence for a wrong guess, so 32 bits limits what the digest reveals and does
@@ -82,7 +87,7 @@ as the rule it protects.
 | No secret in tracked config | `NoSecretValuesInTrackedConfiguration` scans `appsettings*.json` (excluding `.local`) for keys matching `password|secret|apikey|api_key|token|credential` with a non-empty value. Fails the build. |
 | No secret committed, ever | `gitleaks` as a pre-commit hook **and** a CI job over full history, with a custom rule for the `dex_` prefix. |
 | `.env.example` stays complete | `EnvExampleDocumentsEveryVariableComposeUses` asserts every variable `docker-compose.yml` references appears in `.env.example`, and `EveryDocumentedEnvironmentVariableBindsToARealOption` asserts every `DEXICON__` variable compose sets binds to an option. A variable newly forwarded by `docker-compose.yml` without an entry in `.env.example` fails CI, and so does one that binds to no option. An option never wired into compose is invisible to both tests. |
-| No credential in a derived key or digest, no forged log line | `PrincipalCacheKeyNeverContainsTheToken` asserts the principal cache key does not contain the token's secret; `CallerDigestNeverContainsTheCredential` asserts the caller digest holds neither the secret nor the id and is hex; `LogForgingTests` asserts a request path carrying a newline cannot start a log line. No test scans log calls for credentials. |
+| No credential in a derived key or digest, no forged log line | `PrincipalCacheKeyNeverContainsTheToken` asserts the principal cache key does not contain the token's secret; `CallerDigestNeverContainsTheCredential` asserts the caller digest holds neither the secret nor the id and is hex; `LogForgingTests` asserts a request path carrying a newline cannot start a log line; `ExceptionLogForgingTests` asserts the same for an exception message, through the console sink; `McpEchoTests` asserts a tool error repeats a hostile value on one line and cut. No test scans log calls for credentials. |
 | No unfiltered vector query | `VectorStoreRefusesAQueryWithNoCorpusFilter` asserts that `SearchAsync` throws on an empty scope. The other read methods take a chunk set and are reached after scope resolution. |
 | Key scoping | `KeyScopingTests` and `AdminPasswordTests` — see [07](07-auth.md). |
 
@@ -144,7 +149,8 @@ Audited 2026-09-17 by provoking each failure against the running stack.
 | Probe | What comes back |
 |---|---|
 | Unknown corpus | `Unknown corpus 'x'. Corpora this key can reach: books, docs.` — only what this key reaches |
-| Unknown file, `get_context` | The path and the corpus, nothing else |
+| Unknown file, `get_context` | The path and the corpus, nothing else. A value the caller sent is shown on one line (line breaks as spaces, other control characters as U+FFFD) and cut at 200 characters, with `...` after it. This holds for every `McpException` that repeats a parameter, in the configure tools, `get_context`, the file resource and the resolver's own messages. |
+| Failure after `configure_corpus` saved the corpus | `Corpus 'x' was created, but preparing its index failed. Dexicon's log has the cause. …` The exception is logged and not repeated, because its message is the client's or the database's own text (the Qdrant client's reads `Status(StatusCode="Unavailable", Detail="Error connecting to subchannel.", DebugException="System.Net.Sockets.SocketException: …")`). |
 | Line outside the file | `…has no content around line -9999; it spans lines 1-197.` |
 | Unknown source filter | `No source at '../../etc' in the corpora searched.` |
 | **Vector store down** (`search_index`) | `An error occurred invoking 'search_index'.` — no message, no type, no host |

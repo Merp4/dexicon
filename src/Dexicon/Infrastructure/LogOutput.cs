@@ -1,3 +1,7 @@
+using Serilog;
+using Serilog.Configuration;
+using Serilog.Core;
+
 namespace Dexicon.Infrastructure;
 
 /// <summary>
@@ -19,7 +23,19 @@ public static class LogOutput
     /// Without <c>l</c> the values are rendered as JSON, which quotes them and escapes the
     /// newline. The quotes are the cost, and they also make the boundaries of a logged
     /// value explicit. See <c>LogForgingTests</c>.
+    ///
+    /// <c>{Exception}</c> has no such specifier and writes each message as it is, so the sink
+    /// is <see cref="OneLineConsole"/>, which renders the exception first. See
+    /// <c>ExceptionLogForgingTests</c>.
     /// </summary>
     public const string ConsoleTemplate =
         "[{UtcTime:HH:mm:ss}Z {Level:u3}] {Message:j}{NewLine}{Exception}";
+
+    /// <summary>
+    /// The console sink with <see cref="ConsoleTemplate"/>, behind <see cref="OneLineExceptionSink"/>.
+    /// </summary>
+    public static LoggerConfiguration OneLineConsole(this LoggerSinkConfiguration sinks) =>
+        sinks.Sink(LoggerSinkConfiguration.Wrap(
+            (ILogEventSink inner) => new OneLineExceptionSink(inner),
+            (LoggerSinkConfiguration wrapped) => wrapped.Console(outputTemplate: ConsoleTemplate)));
 }
