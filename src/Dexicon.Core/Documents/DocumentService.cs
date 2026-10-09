@@ -92,7 +92,19 @@ public sealed class DocumentService(
             Directory.CreateDirectory(Path.GetDirectoryName(final)!);
 
             if (File.Exists(final)) File.Delete(temp);
-            else File.Move(temp, final);
+            else
+            {
+                try
+                {
+                    File.Move(temp, final);
+                }
+                catch (IOException) when (File.Exists(final))
+                {
+                    // The same bytes were placed by another upload between the check and the move. The
+                    // file is the one this upload would have written, so its copy is dropped.
+                    File.Delete(temp);
+                }
+            }
         }
         catch
         {
@@ -100,14 +112,7 @@ public sealed class DocumentService(
             throw;
         }
 
-        var existing = await db.Blobs.Include(b => b.Text).FirstOrDefaultAsync(b => b.Sha256 == sha, ct);
-        if (existing is not null)
-        {
-            log.LogInformation("Upload '{File}' is an existing blob {Sha}; stored once, extraction reused",
-                fileName, sha[..12]);
-            return new StoredDocument(sha, existing.SizeBytes, fileName, existing.Text?.Title,
-                existing.Text?.ExtractedChars ?? 0, AlreadyExisted: true, existing.Text?.EmptyReason);
-        }
+        if (await ExistingAsync(sha, fileName, ct) is { } existing) return existing;
 
         var blob = new Blob
         {
@@ -121,13 +126,42 @@ public sealed class DocumentService(
 
         var text = await ExtractAsync(sha, fileName, ct);
         db.BlobTexts.Add(text);
-        await db.SaveChangesAsync(ct);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (ex.IsDuplicateKey())
+        {
+            // The same bytes were uploaded at the same moment, and the other upload saved its blob
+            // while this one was extracting: both had looked, found none, and gone on. The blob is
+            // there and holds the same bytes, so this upload reports it as it would one that
+            // arrived later, and the extraction it did is dropped. Anything else the save failed
+            // on, or a duplicate that is not this blob, is not this case and stays an error.
+            db.Entry(blob).State = EntityState.Detached;
+            db.Entry(text).State = EntityState.Detached;
+
+            // Not cancellable: the other upload's blob is committed, and this read only decides the reply.
+            if (await ExistingAsync(sha, fileName, CancellationToken.None) is not { } winner) throw;
+            return winner;
+        }
 
         log.LogInformation("Stored '{File}' as {Sha} ({Size:N0} bytes, {Chars:N0} chars extracted)",
             fileName, sha[..12], size, text.ExtractedChars);
 
         return new StoredDocument(sha, size, fileName, text.Title, text.ExtractedChars,
             AlreadyExisted: false, text.EmptyReason);
+    }
+
+    /// <summary>The stored document for bytes already in the library, or null when they are not.</summary>
+    private async Task<StoredDocument?> ExistingAsync(string sha, string fileName, CancellationToken ct)
+    {
+        var existing = await db.Blobs.Include(b => b.Text).FirstOrDefaultAsync(b => b.Sha256 == sha, ct);
+        if (existing is null) return null;
+
+        log.LogInformation("Upload '{File}' is an existing blob {Sha}; stored once, extraction reused",
+            fileName, sha[..12]);
+        return new StoredDocument(sha, existing.SizeBytes, fileName, existing.Text?.Title,
+            existing.Text?.ExtractedChars ?? 0, AlreadyExisted: true, existing.Text?.EmptyReason);
     }
 
     /// <summary>

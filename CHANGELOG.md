@@ -113,6 +113,13 @@ with no section here fails its release rather than publishing an undescribed one
   returned twice. Attaching is now serialised in the process, as the corpus name and the proposal
   decisions are. A catalogue that already holds two upload sources for one corpus is not repaired,
   and a second process writing the same catalogue is not covered.
+- **Uploading the same new file twice at the same moment answered 500.** Each upload looked for the
+  file's hash, found none, extracted the text and saved. The second save failed on the blob's primary
+  key (`UNIQUE constraint failed: blobs.Sha256`), or its move onto the file the first had stored
+  failed before that, so the request ended in `500` with the file in no corpus and no job queued.
+  Four uploads of one file at once to four corpora answered `500` to 17 of 24 requests on 0.6.7. The
+  upload that loses now reports the stored file with `deduplicated: true`, as one that arrived later
+  does, and its own extraction is dropped.
 - **Stale developer scripts.** `scripts/screenshot.mjs` signs in with an admin session instead of
   an API key, which never carries `admin`; `scripts/retrieval-bench.py` queries files and content
   that exist; `scripts/bench/sweep.py` signs in as admin; `scripts/dev.ps1 password` returns the
