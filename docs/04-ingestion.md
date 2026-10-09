@@ -703,8 +703,12 @@ or changed afterwards; the custom pattern is compiled when it is set, so a bad o
 that request. Creating a corpus carries no pattern, so mode `custom` is set afterwards on the
 default set. The size recommended for a model is held to between 64 and 8,192 tokens, so a model
 with a longer or a much shorter context is offered a size that can be used. A set stored before
-the rules, with a size over 8,192, can still have its description or any other setting edited: an
-edit is refused only for a setting it changes.
+the rules, with a size over 8,192, can still have its description or any other setting edited. A
+setting sent with the value the set already has is not a change, and each setting that is changed is
+judged on its own: a size against the range, an overlap for being negative, a mode and a custom
+pattern as such, and the size and overlap together (an overlap not below the size) when either
+changes. A new set that inherits from another is judged for what the request sent. The chunk-set
+edit dialog sends only the settings that were edited.
 
 ### No chunk exceeds the budget
 

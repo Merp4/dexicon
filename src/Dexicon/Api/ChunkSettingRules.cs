@@ -58,12 +58,7 @@ internal static class ChunkSettingRules
         if (overlap < 0)
             return new ChunkSettingProblem("chunkOverlap cannot be negative", null, 400, ChunkSettingFields.Overlap);
 
-        if (overlap >= size)
-            return new ChunkSettingProblem(
-                "chunkOverlap must be smaller than chunkSize",
-                $"Asked for overlap {overlap} with size {size}.",
-                400,
-                ChunkSettingFields.Overlap | ChunkSettingFields.Size);
+        if (overlap >= size) return OverlapPastSize(size, overlap);
 
         if (boundaryMode is not ("none" or "blank-line" or "language-aware" or "custom"))
             return new ChunkSettingProblem(
@@ -91,6 +86,46 @@ internal static class ChunkSettingRules
                     "Invalid custom boundary pattern", ex.Message, 400, ChunkSettingFields.Mode | ChunkSettingFields.Pattern);
             }
         }
+
+        return null;
+    }
+
+    private static ChunkSettingProblem OverlapPastSize(int size, int overlap) => new(
+        "chunkOverlap must be smaller than chunkSize",
+        $"Asked for overlap {overlap} with size {size}.",
+        400,
+        ChunkSettingFields.Overlap | ChunkSettingFields.Size);
+
+    /// <summary>
+    /// The refusal for a change to a set that already exists, judging each setting the change touches on its
+    /// own. A set stored before a rule existed can hold a value the rules now refuse, and a change to
+    /// another setting must not be refused for it, nor must a refusal for it hide a real failure in what
+    /// the change touches, so <see cref="Check"/>, which reports only the first failure, is not used on the
+    /// whole set:
+    /// <list type="bullet">
+    /// <item>a size is judged against the range;</item>
+    /// <item>an overlap is judged for being negative;</item>
+    /// <item>when either is touched, the pair is judged too, with the other as stored: an overlap not below
+    /// the size is refused whichever of the two was changed;</item>
+    /// <item>a mode is judged as a mode, and <c>custom</c> with the pattern in force (stored or sent);</item>
+    /// <item>a pattern is judged only when the mode in force is <c>custom</c>, since it is ignored otherwise.</item>
+    /// </list>
+    /// A setting that is not touched is never judged, except as the other half of the pair.
+    /// </summary>
+    internal static ChunkSettingProblem? CheckChange(
+        int size, int overlap, string? boundaryMode, string? customPattern, ChunkSettingFields touched)
+    {
+        if (touched.HasFlag(ChunkSettingFields.Size) && Check(size, 0, "none", null) is { } badSize) return badSize;
+
+        if (touched.HasFlag(ChunkSettingFields.Overlap) && overlap < 0)
+            return Check(MaxChunkSize, overlap, "none", null);
+
+        if ((touched & (ChunkSettingFields.Size | ChunkSettingFields.Overlap)) != ChunkSettingFields.None && overlap >= size)
+            return OverlapPastSize(size, overlap);
+
+        if (touched.HasFlag(ChunkSettingFields.Mode)
+            || (touched.HasFlag(ChunkSettingFields.Pattern) && boundaryMode == "custom"))
+            return Check(MinChunkSize, 0, boundaryMode, customPattern);
 
         return null;
     }

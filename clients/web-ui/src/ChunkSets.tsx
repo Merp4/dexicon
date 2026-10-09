@@ -385,15 +385,19 @@ function ChunkSetModal({
     setError(null);
     try {
       if (existing) {
+        // Only what was changed. A set stored before a rule existed (a size over 8,192) can then be saved
+        // after editing its description, and a save that changes nothing re-chunks nothing.
+        const changed = <T,>(next: T, was: T): T | undefined => (next === was ? undefined : next);
         await api.updateChunkSet(corpus.name, existing.name, {
-          description,
-          chunkSize,
-          chunkOverlap,
-          boundaryMode,
-          customBoundaryPattern: boundaryMode === 'custom' ? pattern : null,
-          unitAware,
-          sentenceAware,
-          headingContext,
+          description: changed(description, existing.description ?? ''),
+          chunkSize: changed(chunkSize, existing.chunkSize),
+          chunkOverlap: changed(chunkOverlap, existing.chunkOverlap),
+          boundaryMode: changed(boundaryMode, existing.boundaryMode),
+          customBoundaryPattern:
+            boundaryMode === 'custom' ? changed(pattern, existing.customBoundaryPattern ?? '') : undefined,
+          unitAware: changed(unitAware, existing.unitAware),
+          sentenceAware: changed(sentenceAware, existing.sentenceAware),
+          headingContext: changed(headingContext, existing.headingContext),
         });
       } else {
         await api.createChunkSet(corpus.name, {

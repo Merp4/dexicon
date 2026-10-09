@@ -114,4 +114,51 @@ public sealed class ChunkSettingRulesTests
         var details = result.ShouldBeOfType<ProblemHttpResult>().ProblemDetails;
         (details.Status, details.Title, details.Detail).ShouldBe((400, "chunkSize must be between 64 and 8192 tokens", null));
     }
+
+    // The values of ChunkSettingFields, which is internal and so cannot be a parameter of a test.
+    private const int None = 0;
+    private const int Size = 1;
+    private const int Overlap = 2;
+    private const int Mode = 4;
+    private const int Pattern = 8;
+
+    /// <summary>
+    /// The settings in force after a change to a set stored with an old size (29,491), and which of them the
+    /// change touched. Only what is touched is judged, the pair of size and overlap when either is, and a
+    /// failure in what is not touched never hides one in what is.
+    /// </summary>
+    [Theory]
+    [InlineData(29_491, 3_686, "blank-line", null, None, null)]
+    [InlineData(29_491, 3_686, "bogus", null, None, null)]
+    [InlineData(29_491, 3_686, "blank-line", null, Overlap, null)]
+    [InlineData(29_491, -5, "blank-line", null, Overlap, "chunkOverlap cannot be negative")]
+    [InlineData(29_491, 40_000, "blank-line", null, Overlap, "chunkOverlap must be smaller than chunkSize")]
+    [InlineData(29_491, 3_686, "bogus", null, Overlap, null)]
+    [InlineData(9_000, 3_686, "blank-line", null, Size, "chunkSize must be between 64 and 8192 tokens")]
+    [InlineData(10, 0, "blank-line", null, Size, "chunkSize must be between 64 and 8192 tokens")]
+    [InlineData(1_000, 3_686, "blank-line", null, Size, "chunkOverlap must be smaller than chunkSize")]
+    [InlineData(8_192, 3_686, "blank-line", null, Size, null)]
+    [InlineData(29_491, 3_686, "bogus", null, Mode, "Unknown boundary mode")]
+    [InlineData(29_491, 3_686, "custom", null, Mode, "customBoundaryPattern is required for boundary mode 'custom'")]
+    [InlineData(29_491, 3_686, "custom", "[z-a]", Mode, "Invalid custom boundary pattern")]
+    [InlineData(29_491, 3_686, "custom", "^#", Mode, null)]
+    [InlineData(29_491, 3_686, "none", null, Mode, null)]
+    [InlineData(29_491, 3_686, "custom", "[z-a]", Pattern, "Invalid custom boundary pattern")]
+    [InlineData(29_491, 3_686, "custom", null, Pattern, "customBoundaryPattern is required for boundary mode 'custom'")]
+    [InlineData(29_491, 3_686, "blank-line", "[z-a]", Pattern, null)]
+    [InlineData(29_491, 3_686, "custom", "[z-a]", None, null)]
+    [InlineData(100, 500, "bogus", null, Mode, "Unknown boundary mode")]
+    [InlineData(100, 500, "blank-line", null, Mode, null)]
+    [InlineData(100, 500, "blank-line", null, Pattern, null)]
+    [InlineData(100, 500, "blank-line", null, Overlap, "chunkOverlap must be smaller than chunkSize")]
+    public void OnlyTheSettingsAChangeTouchesAreJudgedAndOneThatIsNotTouchedNeverHidesOneThatIs(
+        int size, int overlap, string mode, string? pattern, int touched, string? title) =>
+        ChunkSettingRules.CheckChange(size, overlap, mode, pattern, (ChunkSettingFields)touched)?.Title.ShouldBe(title);
+
+    [Fact]
+    public void ASettingThatPassesLeavesNoProblemEvenWhenTheWholeSetWouldFail()
+    {
+        ChunkSettingRules.Check(29_491, 3_686, "bogus", null).ShouldNotBeNull();
+        ChunkSettingRules.CheckChange(29_491, 3_686, "bogus", null, ChunkSettingFields.None).ShouldBeNull();
+    }
 }

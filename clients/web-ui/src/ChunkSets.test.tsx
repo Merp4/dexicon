@@ -23,6 +23,7 @@ const listEmbeddingModels = vi.fn();
 const probeEmbeddingModel = vi.fn();
 const listEmbeddingProviders = vi.fn();
 const promoteChunkSet = vi.fn();
+const updateChunkSet = vi.fn();
 
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
@@ -31,6 +32,7 @@ vi.mock('./api', async (importOriginal) => ({
     probeEmbeddingModel: (...args: unknown[]) => probeEmbeddingModel(...args),
     listEmbeddingProviders: (...args: unknown[]) => listEmbeddingProviders(...args),
     promoteChunkSet: (...args: unknown[]) => promoteChunkSet(...args),
+    updateChunkSet: (...args: unknown[]) => updateChunkSet(...args),
   },
 }));
 
@@ -230,6 +232,33 @@ describe('the Add a chunk set form', () => {
     expect(within(dialog).getByText(/suggested 8,192$/)).toBeInTheDocument();
   });
 
+  it('sends only what was changed, so a set stored with an old size can still be edited', async () => {
+    // The corpus dialog used to send 29,491 tokens for a 32k model, and the server now refuses a size over
+    // 8,192. Sending the stored size back with every save made every edit of such a set a 400.
+    updateChunkSet.mockResolvedValue({});
+    const user = userEvent.setup();
+    const onChanged = vi.fn();
+    render(
+      <ChunkSetsPanel
+        corpus={corpus([chunkSet({ chunkSize: 29_491, chunkOverlap: 3_686, description: 'old' })])}
+        onChanged={onChanged}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    const dialog = await screen.findByRole('dialog');
+    const description = within(dialog).getByLabelText('Description');
+    await user.clear(description);
+    await user.type(description, 'read for the fine search');
+    await user.click(within(dialog).getByRole('button', { name: 'Save and re-chunk' }));
+
+    await waitFor(() => expect(updateChunkSet).toHaveBeenCalled());
+    const sent = updateChunkSet.mock.calls[0][2];
+    expect(sent).toEqual({ description: 'read for the fine search' });
+    expect(Object.keys(sent).filter((k) => sent[k] !== undefined)).toEqual(['description']);
+  });
   it('leaves the size alone for a model that has never been probed', async () => {
     // No measurement is not a licence to guess. The set being copied stays the reference.
     const { dialog } = await openAddModal();
