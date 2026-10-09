@@ -215,6 +215,7 @@ media type should accept both.
 | 400 | `Invalid expiry` | `expiresInDays is from 0 to 36,500, about 100 years, and 0 or leaving it out means the key does not expire. The key was not created.` `POST /api/tokens`. |
 | 400 | `Unusable glob` | `includeGlobs[1] (include[1] for the configure tools) is null, or a pattern that does not compile, such as [z-a]. Nothing was saved.` Creating or updating a corpus's defaults, or adding or updating a source. The text differs for a history source's include list and a corpus's default include list ([04](04-ingestion.md)). |
 | 400 | `fileName is blank` | `Leave fileName out to keep the name the document was uploaded under.` `POST /api/corpora/{x}/documents/attach` with a `fileName` that is empty or only whitespace. |
+| 400 | `Invalid file name` | `A file name cannot hold a control character, such as a line break.` or `A file name is limited to 260 characters.` `POST /api/corpora/{x}/documents/attach` with a `fileName` that breaks the rule, or with `fileName` left out for a document whose uploaded name does (the detail then asks for a `fileName`). An upload lists such a file under `failed` with the same text. |
 | 401 | `Missing credentials` | `Provide a key: Authorization: Bearer dex_…, or sign in at / for the UI.` |
 | 401 | `Invalid credentials` | `The credential was not recognised, or it has been revoked or has expired.` |
 | 403 | `Insufficient scope` | `This key has [search] and needs 'ingest'. Whoever runs Dexicon can grant it on the Access page.` |

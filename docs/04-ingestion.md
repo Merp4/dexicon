@@ -230,12 +230,29 @@ to the corpus yet, sent under a name it holds, replace that document.
 
 The request as a whole is bounded at ten files at the cap plus 1 MiB of multipart framing,
 which is 2,098,200,576 bytes at the default and follows `DEXICON__UPLOAD__MAXFILEBYTES`.
-The web UI sends every dropped file in one request, so the bound allows a batch. A larger
-body is refused with `413` and a message that names the bound, before any of it is read
+A larger body is refused with `413` and a message that names the bound, before any of it is read
 when the client declares its `Content-Length`, and otherwise when the body reaches the bound.
 Files stored before the bound was reached stay stored, and the answer is then `202` with the
 overrun listed under `failed`. A failure of the request as a whole has a `null` `file`; a failure
 of one file carries its name, whatever that name is.
+
+A request is read for ten file parts. The reader stops at the eleventh without reading its
+body, and `failed` lists a failure of the request that says more than ten files were sent, the
+rest were not read, and to send them in another request. The ten before it stay stored and are
+indexed, and when none of them was stored the answer is `400` "No files could be stored". Form
+fields do not count towards the ten.
+
+A file name is stored as the document's path, which a listing, a search hit and a log line show.
+An upload or an attach is refused for a name that holds a control character (a line break
+among them, including U+2028 and U+2029) or is longer than 260 characters. The upload lists
+that file under `failed` with the reason, which does not repeat the name, and stores the files
+beside it; the attach endpoint answers `400` "Invalid file name". The same check applies to the
+name the document was uploaded under when an attach leaves `fileName` out.
+
+Extraction of an uploaded file is abandoned after `DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS`
+(300 s), under the clock described above for workspace files. The file is still stored and
+attached, with the timeout as its empty reason (`warning` in the response, `emptyReason` in the
+library), and the files beside it in the request are unaffected.
 
 A body that ends before its closing boundary, or whose headers are over the reader's limits, is
 treated the same way: files completed before it stay stored and are indexed, the response lists
