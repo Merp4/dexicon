@@ -442,46 +442,27 @@ public sealed class DetachingWhileIndexingTests
     }
 
     [Fact]
-    public async Task ADocumentDetachedWhileItEmbedsIsDroppedByTheFlushAfterIt()
+    public async Task ADocumentThatFailedToEmbedAndWasDetachedIsDroppedByTheFlushAfterItAndCountedAsSkipped()
     {
-        // Embedding takes longer than the interval between flushes, so the changes the pass holds for the
-        // document are saved right after it, before the end of the source.
-        await using var harness = await IndexingHarness.StartAsync("notes");
-        await harness.SeedCorpusAsync(SourceKind.Upload);
-        var library = await AttachAsync(harness, two: false);
-        harness.Embedder = new EmbedderThatActsOnce(async () =>
-        {
-            await DetachNowAsync(harness, library.First);
-            await Task.Delay(TimeSpan.FromMilliseconds(1200));
-        });
-
-        var job = await harness.RunIndexAsync();
-
-        var read = await ReadBackAsync(harness, job);
-        read.Recorded.State.ShouldBe(JobState.Succeeded);
-        (read.Recorded.FilesDone, read.Recorded.FilesSkipped).ShouldBe((0, 1));
-        harness.Vectors.CountFor(PathOfTheFirst).ShouldBe(0);
-    }
-
-    [Fact]
-    public async Task ADocumentThatFailedToEmbedAndWasDetachedIsCountedAsSkippedAndNotFailed()
-    {
+        // The pass spends over a second on the document before it fails, so the flush after the document
+        // saves the failure the pass holds for a row that is gone. The embedding failure of the job stays.
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Upload);
         var library = await AttachAsync(harness, two: true);
         harness.Embedder = new EmbedderThatActsOnce(async () =>
         {
             await DetachNowAsync(harness, library.First);
+            await Task.Delay(TimeSpan.FromMilliseconds(1200));
             throw new EmbeddingUnavailableException("the provider is away");
         });
 
         var job = await harness.RunIndexAsync();
 
         var read = await ReadBackAsync(harness, job);
+        read.Recorded.State.ShouldBe(JobState.Degraded, "the embedding failure is the job's, and the pass went on");
         read.Files.ShouldBe(["two.txt"]);
         (read.Recorded.FilesDone, read.Recorded.FilesSkipped, read.Recorded.FilesFailed).ShouldBe((1, 1, 0));
     }
-
     [Fact]
     public async Task AChunkSetRemovedUnderAPassStillRecordsTheJobAsFailed()
     {
