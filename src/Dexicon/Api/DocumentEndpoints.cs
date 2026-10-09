@@ -202,12 +202,16 @@ public static class DocumentEndpoints
 
         if (failure is not null)
         {
-            try { await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: CancellationToken.None); }
-            catch (Exception queuing)
+            // A corpus removed while the batch waited has no files left to index, and no job to queue for it.
+            if (failure.SourceException is not ScopeResolutionException)
             {
-                // The caller is told the first failure. The files wait for the next refresh.
-                http.HttpContext.RequestServices?.GetService<ILoggerFactory>()?.CreateLogger("Dexicon.Upload")
-                    .LogError(queuing, "Queuing the refresh of corpus {Corpus} after a failed upload batch failed too", corpus.Id);
+                try { await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: CancellationToken.None); }
+                catch (Exception queuing)
+                {
+                    // The caller is told the first failure. The files wait for the next refresh.
+                    http.HttpContext.RequestServices?.GetService<ILoggerFactory>()?.CreateLogger("Dexicon.Upload")
+                        .LogError(queuing, "Queuing the refresh of corpus {Corpus} after a failed upload batch failed too", corpus.Id);
+                }
             }
 
             failure.Throw();
