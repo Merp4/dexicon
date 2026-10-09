@@ -1039,6 +1039,7 @@ public static class SystemEndpoints
                 statusCode: 504);
         }
     }
+
     /// <summary>
     /// <c>PUT /api/embedding-models/profile</c>: saves the task framing for one model and queues a
     /// rebuild of every chunk set on it. A method of its own so a test calls the handler that is
