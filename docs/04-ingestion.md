@@ -104,48 +104,67 @@ compile, such as the bracket class `[z-a]`. The API answers `400`, naming the li
 position (`includeGlobs[1]`; for a list over the count cap, the list alone) and not repeating the
 pattern; the configure tools return an error with the same text. Nothing is saved. That holds for
 a source's lists and for a corpus's defaults. The caps (`SourceFilters.MaxGlobsPerList` and
-`MaxGlobLength`) apply to every include and exclude list whichever reader it has, and the count
-is judged before any pattern is compiled, so a request with a very long list costs one comparison
-and not one regular expression per element. A list stored before the caps is read as stored; it is
-refused only when a request sends it back, as `configure_corpus` does for a corpus's defaults
-whenever it changes another filter.
+`MaxGlobLength`) apply to every include and exclude list whichever reader it has. The count is
+judged first, so a list over it is refused without an element examined; past it each element's
+length is judged before the element is compiled or parsed, and the first problem ends the check,
+so the work is bounded by 200 elements of 500 characters. The request body has been read by then.
+A list stored before the caps is read as stored; it is refused only when a request sends it back.
 
 A history source's include list is read by git as pathspecs, so the walk's parser does not judge
-it. An element is refused when it is empty, holds a null character, or is a path git rejects:
+it. An element is refused when it is empty, holds a null character, or is a pathspec git rejects:
 
+- pathspec magic git rejects whatever the path. The long form is `:(`, comma-separated words and
+  `)`, and git accepts the words `top`, `literal`, `icase`, `glob`, `exclude` and `attr:` followed
+  by a specification, matched exactly (`:(GLOB)x` and `:( glob)x` are rejected), with empty words
+  allowed. It is refused when there is no closing `)`, a word is anything else, `glob` and
+  `literal` are both named, or an `attr:` is empty or uses `\)` or `\\`. The short form is `:`
+  followed by characters from git's magic set (`!"#%&',-/;<=>@_` and the backtick, `~` and `^`),
+  and an optional `:` that ends it; of these git implements `!`, `^` and `/` only, so `:-x` is
+  refused. A character outside the set starts the path: `:.x` and `:*x` are paths. What else is
+  wrong with an `attr:` specification, such as an invalid attribute name, is not checked, and
+  fails each pass with git's message as the reason.
 - a path that climbs out of the repository with `..`. Segments are split on `/` only and judged
-  lexically, as git resolves them: empty and `.` segments are skipped and each `..` removes one
-  level, so `a/../b` and `docs/..` are accepted and `..`, `../x` and `a/../..` are refused. A
-  backslash is an ordinary character in a name on Linux, which is what runs Dexicon.
+  lexically, as git resolves them: empty and `.` segments are skipped, so a doubled slash is one
+  separator, and each `..` removes one level. `a/../b`, `docs/..` and `a//..` are accepted;
+  `..`, `../x`, `a/../..` and `a//../..` are refused. A backslash is an ordinary character in a
+  name on Linux.
 - a rooted path: one starting with `//`, or one whose path starts with `/` after pathspec magic,
   such as `:(glob)/docs`.
 - an element starting with `/:`. Removing its slash would turn the name into pathspec magic
   (`/:(exclude)docs` would exclude `docs`), so it is refused and is passed to git as written if
   one was stored earlier.
 
-The path is the part after any magic: the long form `:(` up to the first `)` (an element with no
-closing `)` is left to git), or the short form, `:` followed by any of `!`, `^` and `/` and an
-optional second `:`. So `:!../x` and `:(glob)../x` climb out, and `:!/docs` does not, because its
-`/` is the short form's `top` magic. A corpus's default include list, which sources of both
-kinds inherit, is held to the walk's rule and to these. The refusal says why in the same words
-for both, because a caller adding a default may have no history source yet.
+The path is the part after the magic. With `top` magic (`:(top)`, or a `/` in the short form such
+as `:/` and `:!/`) git reads the path from the repository root and does not reject a rooted path
+or one with `..`, so the last two path rules do not apply: `:(top)../x` and `:/..` select
+nothing and are accepted. A corpus's default include list, which sources of both kinds inherit,
+is held to the walk's rule and to all of these. The refusal says why in the same words for both,
+because a caller adding a default may have no history source yet.
 
 One leading `/` is accepted in both: a file source reads it as a pattern anchored at the root,
 and the history reader removes the slash before passing the pathspec, because git rejects
-`/build` as a path outside the repository. The path is the same, matched by git's rules. An
-element of only `/` compiles to no rule in the walk, so the history reader drops it as well, and
-a list of only such elements selects every path. A file source's include list may hold a path
-that climbs out with `..`: its patterns are matched against paths below the root, so such an
-element matches nothing. What else git rejects, such as malformed pathspec magic (`:(bad)x`), is
-not checked, and fails each pass of the history source with git's message as the reason. The
-check is of syntax: a pattern that compiles but is slow to match passes it, and the lines of a
-`.gitignore` or `.dexiconignore` in the tree are not checked.
+`/build` as a path outside the repository. The path is the same, matched by git's rules (see the
+history section for how they differ from the walk's). An element of only `/` compiles to no rule
+in the walk, so the history reader drops it as well, and a list of only such elements selects
+every path. A file source's include list may hold a path that climbs out with `..`: its patterns
+are matched against paths below the root, so such an element matches nothing. The check is of
+syntax: a pattern that compiles but is slow to match passes it, and the lines of a `.gitignore`
+or `.dexiconignore` in the tree are not checked.
+
+These rules are those of git on Linux, measured on git 2.54.0, the version in the image. Git for
+Windows 2.31.1 agrees on the cases measured except that it also treats a backslash as a separator,
+so it refuses `..\x`, which is accepted here. A list of 200 elements of 500 characters is
+accepted, and on Windows its command line is longer than the system allows: git cannot be started
+(`filename or extension too long`) and the source reports it as unavailable.
 
 Saving also sends lists back. The web UI's Save defaults form sends both default lists, its
 source edit forms send the lists they show (a field that follows the corpus default is not
-sent), and `configure_corpus` sends a corpus's defaults whole, so a stored list over the caps or
-holding a path that climbs out blocks that save, whichever field was edited, until the list is
-edited. The upgrade does not change a stored row.
+sent), and `configure_corpus` sends a corpus's defaults whole. A stored list that fails any rule
+above therefore blocks that save, whichever field was edited, until the list is edited. That
+includes lists over the caps, and a corpus default stored earlier with an empty element, `//x`,
+`/:x`, a path that climbs out, a rooted path or malformed magic: a file source read these without
+error, and a history source that inherits one could not run. The upgrade does not change a stored
+row.
 Worktrees are the case that prompted `2`. Reported against a checkout with four of them:
 22,004 files walked to 5,463 tracked ones, and search returning the same document at two
 older commits. That is worse than noise — a hit from a stale copy carries a real path and
@@ -337,9 +356,21 @@ half and it is what still answers "which files" without it.
 
 The source's include globs become git pathspecs, so they mean whose history and narrow the
 diff at the same time. A leading `/` is removed first, as described under the glob rules above.
-The pathspecs are matched by git, not by the file walk: git's default matching lets `*` cross `/`,
-so `docs/*.md` and `/docs/*.md` select a commit touching `docs/sub/b.md`, which the walk's `*`
-does not match. The two readers are not translated into each other. Excludes are not passed: git's exclude pathspec syntax is its own,
+Git, not the file walk, matches them, and its default pathspec matching differs from the walk's
+in three ways, which are not translated into each other:
+
+- An unglobbed name is anchored at the repository root. `docs` selects commits touching
+  `docs/a.md` and not `a/docs/x.txt`, where the walk matches `docs` at any depth.
+- `*` crosses `/`. `docs/*.md` and `/docs/*.md` select a commit touching `docs/sub/b.md`, which
+  the walk's `*` does not match.
+- `**/*.md` without `:(glob)` is an ordinary fnmatch pattern and needs a `/` in the path, so it
+  does not select a commit touching a root-level `README.md`, where the walk's `**/*.md` matches
+  that file. `:(glob)**/*.md` selects it.
+
+Git reads pathspecs by their own text: the pathspec variables of the service's environment
+(`GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` and `GIT_ICASE_PATHSPECS`)
+are removed from the environment of every git call, since each changes what every pathspec means.
+Excludes are not passed: git's exclude pathspec syntax is its own,
 and mapping one glob language onto another quietly is how a filter comes to mean something
 else.
 
@@ -356,7 +387,8 @@ every document really is different. Changing `ref`, `maxCommits`, `keepIndexed`,
 or `includeMerges` does not: those decide which commits are indexed, not what any one of
 them holds, and turning merges on adds documents without altering a single existing one.
 The include globs DO, because they are passed to git and decide which files the stat
-lists and which hunks the patch holds.
+lists and which hunks the patch holds. The fingerprint holds the list as git is given it, sorted,
+so reordering the paths, or writing `docs` as `/docs`, is not a change and re-reads nothing.
 
 **A commit limit is a window unless the source keeps what it indexed.** With `maxCommits`
 alone, the source holds the newest that many commits, and each new commit pushes the
