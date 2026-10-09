@@ -44,6 +44,17 @@ public sealed class DocumentService(
     private readonly StorageOptions _storage = options.Value.Storage;
     private readonly UploadOptions _upload = options.Value.Upload;
 
+    /// <summary>
+    /// Held from looking for a corpus's upload source and for the document's existing attachment to the
+    /// save that adds them, so two attachments cannot both find none. A corpus has one upload source and
+    /// holds a blob once (the same blob may be attached to any number of corpora), and no unique index
+    /// says so: both were checks made before the insert, and two requests could pass them together and
+    /// each add one. Dexicon is one process owning its catalogue (D-01), so one lock is enough, and a
+    /// second process writing the file is not covered, as for <c>CorpusConfiguration.Naming</c>. One lock
+    /// for all corpora, because an attachment is a few queries and a save.
+    /// </summary>
+    private static readonly SemaphoreSlim Attaching = new(1, 1);
+
     /// <summary>Where a blob's bytes live: /data/blobs/ab/abcdef…, with two hex chars of fan-out.</summary>
     public string PathFor(string sha256) =>
         Path.Combine(_storage.BlobRoot, sha256[..2], sha256);
@@ -232,6 +243,14 @@ public sealed class DocumentService(
     /// </summary>
     public async Task<IndexedFile> AttachAsync(Corpus corpus, string sha256, string fileName,
         CancellationToken ct = default)
+    {
+        await Attaching.WaitAsync(ct);
+        try { return await AttachHeldAsync(corpus, sha256, fileName, ct); }
+        finally { Attaching.Release(); }
+    }
+
+    private async Task<IndexedFile> AttachHeldAsync(Corpus corpus, string sha256, string fileName,
+        CancellationToken ct)
     {
         var blob = await db.Blobs.FirstOrDefaultAsync(b => b.Sha256 == sha256, ct)
             ?? throw new InvalidOperationException($"No stored document with hash {sha256}.");
