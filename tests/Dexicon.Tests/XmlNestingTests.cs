@@ -71,9 +71,9 @@ public sealed class XmlNestingTests
     }
 
     [Fact]
-    public void ADocxIsReadFromTheStartAfterTheCheck()
+    public void ADocxIsStillReadAfterTheCheckHasReadThePackage()
     {
-        // The check reads the whole package. The reader that follows starts from where the stream began.
+        // The check reads every XML part. The reader that follows opens the package as a zip.
         var stream = new MemoryStream(TestEpubs.DocxNestedBy(3));
 
         new DocxTextExtractor().Extract(stream, "a.docx").Text.ShouldBe("hello\n");

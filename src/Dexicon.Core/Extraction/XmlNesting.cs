@@ -29,7 +29,8 @@ internal static class XmlNesting
     /// <summary>
     /// Refuses a package any of whose XML parts nests deeper than <see cref="MaxDepth"/>. Every XML part
     /// is read, not only the ones the extractor is known to load, so a part the library reaches by a
-    /// relationship cannot be the one that was not checked. The stream is left where it was.
+    /// relationship cannot be the one that was not checked. The readers that follow open the package
+    /// with a zip reader, which seeks to the offsets it needs, so the position is not restored.
     /// </summary>
     /// <remarks>
     /// A stream that is not a zip archive, an entry that cannot be inflated and a part that is not well
@@ -38,45 +39,38 @@ internal static class XmlNesting
     /// <exception cref="UnreadableDocumentException">A part nests deeper than the limit.</exception>
     public static void RequireShallowParts(Stream package, string fileName)
     {
+        // A zip reader over a stream that cannot seek reads all of it into memory, which would leave
+        // nothing for the reader that follows.
         if (!package.CanSeek) return;
 
-        var start = package.Position;
+        ZipArchive archive;
         try
         {
-            ZipArchive archive;
-            try
-            {
-                archive = new ZipArchive(package, ZipArchiveMode.Read, leaveOpen: true);
-            }
-            catch (InvalidDataException)
-            {
-                return;
-            }
+            archive = new ZipArchive(package, ZipArchiveMode.Read, leaveOpen: true);
+        }
+        catch (InvalidDataException)
+        {
+            return;
+        }
 
-            using (archive)
+        using (archive)
+        {
+            foreach (var entry in archive.Entries)
             {
-                foreach (var entry in archive.Entries)
+                if (!XmlExtensions.Contains(Path.GetExtension(entry.FullName))) continue;
+
+                try
                 {
-                    if (!XmlExtensions.Contains(Path.GetExtension(entry.FullName))) continue;
-
-                    try
-                    {
-                        using var part = entry.Open();
-                        RequireShallow(part, $"{fileName} ({entry.FullName})");
-                    }
-                    catch (InvalidDataException)
-                    {
-                        // Data that does not inflate: the reader of the package says so.
-                    }
+                    using var part = entry.Open();
+                    RequireShallow(part, $"{fileName} ({entry.FullName})");
+                }
+                catch (InvalidDataException)
+                {
+                    // Data that does not inflate: the reader of the package says so.
                 }
             }
         }
-        finally
-        {
-            package.Position = start;
-        }
     }
-
     /// <summary>Reads the part to its end, or to the first element deeper than the limit.</summary>
     /// <param name="what">The part the message names.</param>
     public static void RequireShallow(Stream part, string what)
