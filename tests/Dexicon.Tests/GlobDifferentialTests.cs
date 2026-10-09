@@ -146,7 +146,7 @@ public sealed class GlobDifferentialTests
     {
         var clock = Stopwatch.StartNew();
 
-        var (differences, compared, refused, globs, matched) = Compare(globCount: 4_000, pathsPerGlob: 280, seed: 20261009);
+        var (differences, compared, refused, globs, matched) = Compare(globCount: 4_000, pathsPerGlob: 320, seed: 20261009);
 
         var summary = $"{compared:N0} pairs from {globs:N0} globs, {matched:N0} of them matches, {refused} globs refused by both, in {clock.Elapsed.TotalSeconds:F1} s";
         differences.Take(10).ShouldBeEmpty(summary);
