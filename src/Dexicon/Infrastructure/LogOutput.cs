@@ -24,18 +24,19 @@ public static class LogOutput
     /// newline. The quotes are the cost, and they also make the boundaries of a logged
     /// value explicit. See <c>LogForgingTests</c>.
     ///
-    /// <c>{Exception}</c> has no such specifier and writes each message as it is, so the sink
-    /// is <see cref="OneLineConsole"/>, which renders the exception first. See
-    /// <c>ExceptionLogForgingTests</c>.
+    /// <c>:j</c> escapes U+0000 to U+001F and leaves U+007F, the C1 controls, U+2028, U+2029 and the
+    /// bidirectional controls, and <c>{Exception}</c> writes <see cref="Exception.ToString"/> as it is.
+    /// The sink is therefore <see cref="OneLineConsole"/>, which replaces those characters in every
+    /// logged string and renders the exception line by line. See <c>ExceptionLogForgingTests</c>.
     /// </summary>
     public const string ConsoleTemplate =
         "[{UtcTime:HH:mm:ss}Z {Level:u3}] {Message:j}{NewLine}{Exception}";
 
     /// <summary>
-    /// The console sink with <see cref="ConsoleTemplate"/>, behind <see cref="OneLineExceptionSink"/>.
+    /// The console sink with <see cref="ConsoleTemplate"/>, behind <see cref="OneLineLogSink"/>.
     /// </summary>
     public static LoggerConfiguration OneLineConsole(this LoggerSinkConfiguration sinks) =>
         sinks.Sink(LoggerSinkConfiguration.Wrap(
-            (ILogEventSink inner) => new OneLineExceptionSink(inner),
+            (ILogEventSink inner) => new OneLineLogSink(inner),
             (LoggerSinkConfiguration wrapped) => wrapped.Console(outputTemplate: ConsoleTemplate)));
 }
