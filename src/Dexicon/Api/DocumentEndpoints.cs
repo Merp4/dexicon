@@ -252,6 +252,14 @@ public static class DocumentEndpoints
         if (rc.RequireScope(Scopes.Ingest) is { } denied) return denied;
         var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
 
+        // Left out, the name is the one the document was uploaded under. Sent blank it would be stored as
+        // the path, and a path is what a listing, a search hit and a detach name the document by.
+        if (body.FileName is not null && string.IsNullOrWhiteSpace(body.FileName))
+            return Results.Problem(
+                title: "fileName is blank",
+                detail: "Leave fileName out to keep the name the document was uploaded under.",
+                statusCode: 400);
+
         var blob = await db.Blobs.FirstOrDefaultAsync(b => b.Sha256 == body.Sha256, ct);
         if (blob is null) return Results.Problem(title: "No such document", statusCode: 404);
 

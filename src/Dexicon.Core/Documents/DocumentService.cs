@@ -288,6 +288,9 @@ public sealed class DocumentService(
     public async Task<IndexedFile> AttachAsync(Corpus corpus, string sha256, string fileName,
         CancellationToken ct = default)
     {
+        // As StoreAsync: no paramName, so the message reads the same to whoever is told it.
+        if (string.IsNullOrWhiteSpace(fileName)) throw new ArgumentException("A file name is required.");
+
         await Attaching.WaitAsync(ct);
         try { return await AttachHeldAsync(corpus, sha256, fileName, ct); }
         finally { Attaching.Release(); }

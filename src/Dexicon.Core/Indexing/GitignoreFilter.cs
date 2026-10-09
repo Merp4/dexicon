@@ -212,7 +212,12 @@ public sealed partial class IgnoreRuleSet
                     {
                         var close = glob.IndexOf(']', i);
                         if (close < 0) { sb.Append("\\["); break; }
-                        sb.Append(glob, i, close - i + 1);
+
+                        // gitignore negates a class with a leading !, which .NET reads as a member.
+                        // A bang with nothing after it stays a one-member class.
+                        if (i + 2 < close && glob[i + 1] == '!') sb.Append("[^").Append(glob, i + 2, close - i - 1);
+                        else sb.Append(glob, i, close - i + 1);
+
                         i = close;
                         break;
                     }
