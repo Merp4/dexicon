@@ -1,7 +1,5 @@
-using System.Data.Common;
 using Dexicon.Core.Catalog;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace Dexicon.Tests;
 
@@ -15,46 +13,10 @@ namespace Dexicon.Tests;
 /// </summary>
 public sealed class UploadSourceUniquenessTests
 {
-    /// <summary>
-    /// Holds the lookup of a corpus's upload source until two have asked, or until it has waited
-    /// <c>patience</c>. That puts two requests inside the window between looking and adding, which is
-    /// otherwise a matter of luck. Opening the window and asserting that both reached it, because a race
-    /// test whose gate stopped matching would pass for ever.
-    ///
-    /// When the second never comes, as when it is queued behind a lock the first holds, the first goes on
-    /// after <c>patience</c> and the second then finds what the first added.
-    /// </summary>
-    internal sealed class HoldTheSourceLookup(TimeSpan patience) : DbCommandInterceptor
-    {
-        private readonly TaskCompletionSource _both = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private int _arrivals;
-
-        public bool Armed { get; set; }
-
-        /// <summary>How many lookups reached the gate.</summary>
-        public int Arrivals => Volatile.Read(ref _arrivals);
-
-        /// <summary>Whether two lookups were held at once.</summary>
-        public bool Met => _both.Task.IsCompletedSuccessfully;
-
-        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
-            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
-            CancellationToken cancellationToken = default)
-        {
-            if (Armed && IsTheLookup(command))
-            {
-                if (Interlocked.Increment(ref _arrivals) >= 2) _both.TrySetResult();
-                await Task.WhenAny(_both.Task, Task.Delay(patience, cancellationToken));
-            }
-
-            return result;
-        }
-
-        private static bool IsTheLookup(DbCommand command) =>
-            command.CommandText.Contains("FROM \"sources\"", StringComparison.Ordinal)
-            && command.CommandText.Contains("\"Kind\"", StringComparison.Ordinal)
-            && command.CommandText.Contains("LIMIT 1", StringComparison.Ordinal);
-    }
+    private static bool IsTheSourceLookup(string sql) =>
+        sql.Contains("FROM \"sources\"", StringComparison.Ordinal)
+        && sql.Contains("\"Kind\"", StringComparison.Ordinal)
+        && sql.Contains("LIMIT 1", StringComparison.Ordinal);
 
     private static Task<Source?> LookUpTheUploadSourceAsync(CatalogDbContext db) =>
         db.Sources.FirstOrDefaultAsync(s => s.CorpusId == IndexingHarness.CorpusId && s.Kind == SourceKind.Upload);
@@ -64,7 +26,7 @@ public sealed class UploadSourceUniquenessTests
     {
         // The control for the test below: with nothing in the way, the gate does put two lookups inside
         // the window, and both find no source.
-        var gate = new HoldTheSourceLookup(TimeSpan.FromSeconds(10));
+        var gate = new HoldTheLookup(TimeSpan.FromSeconds(10), IsTheSourceLookup);
         await using var harness = await IndexingHarness.StartAsync(gate, "notes");
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await using var first = harness.NewContext();
@@ -80,7 +42,7 @@ public sealed class UploadSourceUniquenessTests
     [Fact]
     public async Task TwoFirstAttachmentsToOneCorpusAtTheSameTimeCreateOneUploadSource()
     {
-        var gate = new HoldTheSourceLookup(TimeSpan.FromMilliseconds(750));
+        var gate = new HoldTheLookup(TimeSpan.FromMilliseconds(750), IsTheSourceLookup);
         await using var harness = await IndexingHarness.StartAsync(gate, "notes");
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await using var first = harness.NewContext();
@@ -109,7 +71,7 @@ public sealed class UploadSourceUniquenessTests
     {
         // The same lookup-then-add held for the document: "one blob, one attachment per corpus" is a
         // check made before the insert, and two requests could both pass it.
-        var gate = new HoldTheSourceLookup(TimeSpan.FromMilliseconds(750));
+        var gate = new HoldTheLookup(TimeSpan.FromMilliseconds(750), IsTheSourceLookup);
         await using var harness = await IndexingHarness.StartAsync(gate, "notes");
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using var first = harness.NewContext();
