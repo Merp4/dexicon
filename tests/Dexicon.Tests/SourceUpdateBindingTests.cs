@@ -14,9 +14,11 @@ namespace Dexicon.Tests;
 
 /// <summary>
 /// A JSON body reaches <see cref="CorpusConfiguration.UpdateSourceAsync"/> through minimal-API binding, which the
-/// tests that call the method with a built request do not exercise. The route here is the PATCH route's handler
-/// body on a test server with the JSON options Program.cs sets, so it covers binding and the refusal's status,
-/// and not the route's authentication, scope check or corpus lookup.
+/// tests that call the method with a built request do not exercise. The route here is a copy of the PATCH
+/// route's handler body on a test server, with a copy of the JSON options Program.cs sets. It covers that a JSON
+/// null in an array binds to a null element and that the refusal answers `400`. It does not run Program.cs, so
+/// it would pass if that file's JSON options changed, and it does not cover the route's authentication, scope
+/// check or corpus lookup.
 /// </summary>
 public sealed class SourceUpdateBindingTests
 {

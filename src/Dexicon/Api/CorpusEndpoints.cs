@@ -531,13 +531,16 @@ public static class CorpusEndpoints
                 SourceFilters.GlobProblemKind.ClimbsOut =>
                     $"{named} is a path that climbs out of the repository with '..', which git rejects. " + GitReads,
                 SourceFilters.GlobProblemKind.RootedPath =>
-                    $"{named} starts with '//', or with '/' after pathspec magic such as :(glob). Git rejects it as a "
-                    + "path outside the repository: write the path with at most one leading '/' and none after magic. "
+                    $"{named} is a rooted path: it starts with '//', or with '/' after pathspec magic such as :(glob). "
+                    + "Write the path with at most one leading '/' and none after magic. A rooted path to a place inside "
+                    + "the repository is refused as well, since it cannot be told from one outside it when the list is saved. "
                     + GitReads,
                 SourceFilters.GlobProblemKind.MalformedMagic =>
-                    $"{named} has pathspec magic that git rejects: a ':(' with no closing ')', a word other than top, literal, "
-                    + "icase, glob, exclude and attr:, glob together with literal, an empty attr:, or a character after "
-                    + "':' that is not one of !, ^ and / (the magic git implements). " + GitReads,
+                    $"{named} has pathspec magic that git rejects: a ':(' with no closing ')'; a word other than top, "
+                    + "literal, icase, glob, exclude, attr, attr:<specification> and prefix:<number>; glob together with "
+                    + "literal; more than one attr:; an attr: with a name or value git cannot use; a prefix: that is not a "
+                    + "number or is longer than the path; or, right after ':', one of - , ; # % & ' \" = < > @ _ ~ and the "
+                    + "backtick, which git does not implement as magic. " + GitReads,
                 SourceFilters.GlobProblemKind.SlashThenMagic =>
                     $"{named} starts with '/:'. Without its slash it would read as pathspec magic, so it is refused: "
                     + "write the path without the leading '/', or put the magic first. " + GitReads,
@@ -600,7 +603,7 @@ public static class CorpusEndpoints
         {
             if (name is not null && ClearableFilters.Contains(name, StringComparer.OrdinalIgnoreCase)) continue;
 
-            // The wording a named filter has always had; a null entry has no name to show.
+            // A named entry is shown on one line and cut short; a null entry has no name to show.
             return new ConfigRefusal(
                 "Unknown filter",
                 name is null

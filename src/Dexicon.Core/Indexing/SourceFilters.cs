@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
@@ -128,7 +127,7 @@ public static class SourceFilters
         /// <summary>An element for git starts with <c>/:</c>, so removing the slash would turn a literal name into pathspec magic.</summary>
         SlashThenMagic,
 
-        /// <summary>An element for git has pathspec magic git rejects whatever the path, see <see cref="ParseMagic"/>.</summary>
+        /// <summary>An element for git has pathspec magic git rejects whatever the path, see <see cref="PathspecSyntax"/>.</summary>
         MalformedMagic,
     }
 
@@ -151,15 +150,15 @@ public static class SourceFilters
     /// For <see cref="GlobReader.Git"/> and <see cref="GlobReader.WalkAndGit"/> an empty element or one holding a
     /// null character is refused, because git rejects an empty pathspec and cannot be passed a null character.
     /// Git also fails with a fatal error, and a history source then fails every pass, on four other shapes, which
-    /// are refused: pathspec magic git rejects (<see cref="GlobProblemKind.MalformedMagic"/>); a path that climbs
+    /// are refused: pathspec magic git rejects (<see cref="GlobProblemKind.MalformedMagic"/>, see <see cref="PathspecSyntax"/>); a path that climbs
     /// out of the repository (<see cref="GlobProblemKind.ClimbsOut"/>, judged lexically on the part after any
     /// pathspec magic, with segments split on <c>/</c> only, so <c>a/../b</c> is accepted); a rooted path
     /// (<see cref="GlobProblemKind.RootedPath"/>); and <c>/:</c> at the start
-    /// (<see cref="GlobProblemKind.SlashThenMagic"/>). The two path checks are skipped for magic with <c>top</c>
-    /// (<c>:(top)</c>, or <c>/</c> in the short form), where git does not look at the path. A single leading
+    /// (<see cref="GlobProblemKind.SlashThenMagic"/>). The two path checks are skipped where git does not look at
+    /// the path, see <see cref="PathspecMagic.PathUnchecked"/>. A single leading
     /// <c>/</c> is accepted: <see cref="GitHistory.Pathspecs"/> removes it before git sees it. The rules are those of
-    /// git on Linux, measured on git 2.54.0. Anything else is left to git, such as an invalid attribute name. The
-    /// check is of syntax: a pattern that compiles but is slow to match passes it.
+    /// git on Linux, measured on git 2.54.0. Anything else is left to git. A rooted path is refused whether or
+    /// not it names a place inside the repository, which the check cannot know. The check is of syntax: a pattern that compiles but is slow to match passes it.
     /// </summary>
     public static GlobProblem? Check(IReadOnlyList<string>? globs, GlobReader reader = GlobReader.Walk)
     {
@@ -191,130 +190,16 @@ public static class SourceFilters
     public static int? FirstUnusable(IReadOnlyList<string>? globs, GlobReader reader = GlobReader.Walk) =>
         Check(globs, reader)?.Index;
 
-    /// <summary>
-    /// A pathspec split into its magic and its path, with what git's parser does to each.
-    /// </summary>
-    /// <param name="Path">What follows the magic, or the whole element when it has none. Null when <paramref name="Malformed"/> is set and the magic never closes.</param>
-    /// <param name="Top">
-    /// The magic names <c>top</c> (<c>:(top)</c>, or <c>/</c> in the short form). Git then reads the path from
-    /// the repository root and does not reject a rooted path or one with <c>..</c>.
-    /// </param>
-    /// <param name="Malformed">The magic is one git rejects whatever the path: git fails with a fatal error.</param>
-    public readonly record struct PathspecMagic(string? Path, bool Top, bool Malformed);
-
-    /// <summary>
-    /// Splits a pathspec as git parses it, measured on git 2.54.0 on Linux (Git for Windows 2.31.1 agrees).
-    /// An element not starting with <c>:</c> has no magic. The long form is <c>:(</c>, comma-separated words and
-    /// <c>)</c>; the words git accepts are <c>top</c>, <c>literal</c>, <c>icase</c>, <c>glob</c>, <c>exclude</c>
-    /// and <c>attr:</c> followed by a specification, matched exactly, with empty words allowed. It is malformed
-    /// when it has no closing <c>)</c>, has any other word, names both <c>glob</c> and <c>literal</c>, or holds
-    /// an <c>attr:</c> that is empty or uses <c>\)</c> or <c>\\</c> (a backslash escapes the next character
-    /// in an <c>attr:</c> word). The short form is <c>:</c> followed by characters of git's magic set
-    /// (<c>!"#%&amp;',-/;&lt;=&gt;@_`~^</c>) and an optional <c>:</c> that ends it; of those only <c>!</c>, <c>^</c>
-    /// and <c>/</c> are implemented, so any other makes it malformed. A character outside the set, such as a
-    /// letter, <c>.</c> or <c>*</c>, ends the magic and starts the path. What else is wrong with an <c>attr:</c>
-    /// specification, such as an invalid attribute name, is left to git.
-    /// </summary>
-    public static PathspecMagic ParseMagic(string pathspec)
-    {
-        if (pathspec.Length == 0 || pathspec[0] != ':') return new PathspecMagic(pathspec, false, false);
-
-        return pathspec.Length > 1 && pathspec[1] == '(' ? ParseLongMagic(pathspec) : ParseShortMagic(pathspec);
-    }
-
-    private const string ShortMagicCharacters = "!\"#%&',-/;<=>@_`~^";
-
-    private static PathspecMagic ParseShortMagic(string pathspec)
-    {
-        var at = 1;
-        var top = false;
-        var malformed = false;
-
-        while (at < pathspec.Length && ShortMagicCharacters.Contains(pathspec[at]))
-        {
-            if (pathspec[at] == '/') top = true;
-            else if (pathspec[at] is not ('!' or '^')) malformed = true;
-
-            at++;
-        }
-
-        if (at < pathspec.Length && pathspec[at] == ':') at++;
-
-        return new PathspecMagic(pathspec[at..], top, malformed);
-    }
-
-    private static PathspecMagic ParseLongMagic(string pathspec)
-    {
-        var words = new List<string>();
-        var word = new StringBuilder();
-        var malformed = false;
-        var closed = false;
-        var at = 2;
-
-        for (; at < pathspec.Length; at++)
-        {
-            var c = pathspec[at];
-
-            if (c == '\\' && word.ToString().StartsWith("attr:", StringComparison.Ordinal) && at + 1 < pathspec.Length)
-            {
-                // An escaped character belongs to the word, and git cannot match a value holding ) or \.
-                if (pathspec[at + 1] is ')' or '\\') malformed = true;
-
-                word.Append(c).Append(pathspec[++at]);
-                continue;
-            }
-
-            if (c is ',' or ')')
-            {
-                words.Add(word.ToString());
-                word.Clear();
-
-                if (c == ')')
-                {
-                    closed = true;
-                    break;
-                }
-
-                continue;
-            }
-
-            word.Append(c);
-        }
-
-        if (!closed) return new PathspecMagic(null, false, true);
-
-        var top = false;
-        var glob = false;
-        var literal = false;
-
-        foreach (var w in words)
-        {
-            switch (w)
-            {
-                case "": case "icase": case "exclude": break;
-                case "top": top = true; break;
-                case "glob": glob = true; break;
-                case "literal": literal = true; break;
-                default:
-                    // Anything after "attr:" is for git to judge, bar an empty specification.
-                    if (!w.StartsWith("attr:", StringComparison.Ordinal) || w.Length == "attr:".Length) malformed = true;
-                    break;
-            }
-        }
-
-        return new PathspecMagic(pathspec[(at + 1)..], top, malformed || (glob && literal));
-    }
-
     private static GlobProblemKind? GitPathProblem(string glob)
     {
         // Removing this slash would read what follows as magic, and Pathspecs does not remove it then.
         if (glob.StartsWith("/:", StringComparison.Ordinal)) return GlobProblemKind.SlashThenMagic;
 
-        var magic = ParseMagic(glob);
+        var magic = PathspecSyntax.Parse(glob);
         if (magic.Malformed) return GlobProblemKind.MalformedMagic;
 
-        // With top, git reads the path from the repository root and does not look at where it goes.
-        if (magic.Top || magic.Path is not { } path) return null;
+        // With top or prefix:N, git does not look at where the path goes.
+        if (magic.PathUnchecked || magic.Path is not { } path) return null;
 
         if (glob.StartsWith(':') ? path.StartsWith('/') : glob.StartsWith("//", StringComparison.Ordinal))
             return GlobProblemKind.RootedPath;

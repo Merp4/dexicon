@@ -123,11 +123,13 @@ public sealed class UnusableGlobTests
     private static readonly SourceFilters.GlobReader[] GitReaders = [SourceFilters.GlobReader.Git, SourceFilters.GlobReader.WalkAndGit];
 
     /// <summary>
-    /// Each element as the readers that pass it to git judge it, and the problem it has or null. Null means git
-    /// 2.54.0 on Linux (the shipped image) accepts the pathspec: it exits 0 and prints the commits it selects, or
-    /// nothing. A kind means git exits 128 with a fatal error. The cases were measured by giving each element to
-    /// `git log -- <element>` in a scratch repository, and are judged here by the validator alone: the element
-    /// is not given to git by this test, and a backslash is an ordinary character on Linux.
+    /// Each element as the readers that pass it to git judge it, and the problem it has or null. A kind is a
+    /// pathspec on which git 2.54.0 on Linux (the shipped image) exits 128 or aborts when it is given to
+    /// `git log -- <element>` in a scratch repository. Null is an element the validator accepts: git exits 0 for
+    /// it, except where a row says otherwise, which are `/docs`, `/` and `/*.md`, whose single leading slash
+    /// `GitHistory.Pathspecs` removes before git sees them. The cases were measured one by one, and the
+    /// validator was compared with git on 20,000 generated elements. Elements are judged by the validator alone
+    /// here and are not given to git, and a backslash is an ordinary character on Linux.
     /// </summary>
     public static TheoryData<string, SourceFilters.GlobProblemKind?> GitElements => new()
     {
@@ -194,9 +196,6 @@ public sealed class UnusableGlobTests
         { @":(attr:a=\\)x", SourceFilters.GlobProblemKind.MalformedMagic }, { @":(attr:foo=bar\))docs", SourceFilters.GlobProblemKind.MalformedMagic },
         { ":(attr:foo=bar,baz)x", SourceFilters.GlobProblemKind.MalformedMagic },
 
-        // Left to git: an attribute name it finds invalid (git: "invalid attribute name").
-        { ":(attr:=)x", null },
-
         // Short magic: only ! ^ / are implemented, and a character outside git's magic set starts the path.
         { ":!x", null }, { ":^x", null }, { ":/x", null }, { "::x", null }, { ":!:x", null }, { ":x", null }, { ":docs", null },
         { ":a:x", null }, { ":1x", null }, { ": x", null }, { ":.x", null }, { ":*x", null }, { ":?x", null }, { ":$x", null },
@@ -212,7 +211,97 @@ public sealed class UnusableGlobTests
         { ":~x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":`x", SourceFilters.GlobProblemKind.MalformedMagic },
         { ":_x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":!-x", SourceFilters.GlobProblemKind.MalformedMagic },
         { ":!,x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":/-x", SourceFilters.GlobProblemKind.MalformedMagic },
-    };
+        // The attr word alone is accepted, with or without prefix:. Only one attr: specification is allowed.
+        { ":(attr)x", null }, { ":(attr,glob)x", null }, { ":(attr)", null }, { ":(attr,attr)x", null },
+        { ":(attr,attr:a)x", null }, { ":(attr:a,attr)x", null },
+        { ":(attr:a=b,attr:c=d)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:a,attr:b)x", SourceFilters.GlobProblemKind.MalformedMagic },
+
+        // attr: names are ASCII letters, digits, - . _ and do not start with -, after an optional - or ! prefix.
+        { ":(attr:A)x", null }, { ":(attr:1)x", null }, { ":(attr:a-b)x", null }, { ":(attr:a.b)x", null },
+        { ":(attr:a_b)x", null }, { ":(attr:-a)x", null }, { ":(attr:!a)x", null }, { ":(attr:a.)x", null },
+        { ":(attr:.a)x", null }, { ":(attr:_a)x", null },
+        { ":(attr:-)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:!)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:=a)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:=)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:--a)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:!!a)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:-!a)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:!-a)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:-a=b)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:!a=b)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:a =b)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:a\tb)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:a\t)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:a/b)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:a:b)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:aé)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:a+b)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:a*b)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:a[b)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:a(b)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:é=1)x", SourceFilters.GlobProblemKind.MalformedMagic },
+
+        // attr: items are split at spaces, and a specification of spaces alone is accepted where an empty one is not.
+        { ":(attr:a b)x", null }, { ":(attr:a  b)x", null }, { ":(attr: a)x", null }, { ":(attr:a )x", null },
+        { ":(attr:a b c)x", null }, { ":(attr:a=b c=d)x", null }, { ":(attr:a=b  c)x", null }, { ":(attr:a=b c)x", null },
+        { ":(attr: )x", null }, { ":(attr:  )x", null }, { ":(attr:-a b=\\,c)x", null }, { ":(attr:!a  -b)x", null },
+        { ":(attr:,)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:a=b=c d)x", SourceFilters.GlobProblemKind.MalformedMagic },
+
+        // attr: values are ASCII letters, digits, - _ and a comma written \, and a backslash escapes the next character.
+        { ":(attr:a=B)x", null }, { ":(attr:a=1)x", null }, { ":(attr:a=b-c)x", null }, { ":(attr:a=b_c)x", null },
+        { ":(attr:a=\\a)x", null }, { ":(attr:a=b\\a)x", null }, { ":(attr:a=\\-)x", null },
+        { ":(attr:a=b.c)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:a=b=c)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:a=é)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:a=b/c)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:a=b:c)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:a=b+c)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:a=b*c)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:a=b!c)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:a=b@c)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:a=b~c)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:a=b[c)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:a=b(c)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:a=b%c)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:a=b#c)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:a=b$c)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:a=b&c)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:a=b;c)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:a=b<c)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:a=b\"c)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:a=b'c)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:a=b`c)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:a=b^c)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:a=b|c)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:a=b?c)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:a=b{c)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:a=b}c)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:a=b]c)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(attr:a=b,c)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { @":(attr:a\,b)x", SourceFilters.GlobProblemKind.MalformedMagic }, { @":(attr:\,)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { @":(attr:\a)x", SourceFilters.GlobProblemKind.MalformedMagic }, { @":(attr:a=\\b)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { @":(attr:a=\ b)x", SourceFilters.GlobProblemKind.MalformedMagic }, { @":(attr:a\)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { @":(attr:a\", SourceFilters.GlobProblemKind.MalformedMagic }, { @":(attr:a=\", SourceFilters.GlobProblemKind.MalformedMagic },
+        { @":(attr:a=é\)x", SourceFilters.GlobProblemKind.MalformedMagic },
+
+        // prefix:N is a number read as C's strtol (spaces, a sign, digits; empty is zero) and then stored in 32 bits.
+        // With N of zero or more git does not look at the path, so a rooted one or one with .. is accepted. N may not
+        // be more than the bytes of the path (git aborts), and the last prefix: is the one that counts.
+        { ":(prefix:0)x", null }, { ":(prefix:)x", null }, { ":(prefix:1)x", null }, { ":(prefix:1)docs", null },
+        { ":(prefix:4)docs", null }, { ":(prefix:-1)x", null }, { ":(prefix:-2)x", null }, { ":(prefix: 0)x", null },
+        { ":(prefix:+0)x", null }, { ":(prefix:00)x", null }, { ":(prefix:+1)x", null }, { ":(prefix:0,glob)x", null },
+        { ":(prefix:0)docs", null }, { ":(prefix:2)docs/a", null }, { ":(prefix:5)docs/", null }, { ":(prefix:6)a/../b", null },
+        { ":(prefix:3)./x", null }, { ":(prefix:4)a//b", null }, { ":(prefix:1) ", null }, { ":(prefix:1,glob)ab", null },
+        { ":(prefix:1)é", null }, { ":(prefix:2)é", null }, { ":(prefix:0)", null }, { ":(prefix:-5)", null },
+        { ":(prefix:0,prefix:0)x", null }, { ":(prefix:3,prefix:0)", null }, { ":(prefix:5,prefix:2)docs", null },
+        { ":(prefix:0)::x", null }, { ":(prefix:1)::x", null }, { ":(prefix:0)x:", null },
+        { ":(prefix:99999999999999999999)x", null }, { ":(prefix:-99999999999999999999)x", null },
+        { ":(prefix:0000000000000000000001)x", null }, { ":(prefix:\t\t1)x", null },
+        { ":(prefix:0)../x", null }, { ":(prefix:0)/x", null }, { ":(prefix:1)../x", null }, { ":(prefix:3)../x", null },
+        { ":(prefix:1)/x", null }, { ":(prefix:2)/x", null }, { ":(prefix:0,top)../x", null },
+        { ":(prefix:4294967296)../x", null }, { ":(prefix:-99999999999999999999)a/../..", null },
+        { ":(prefix:-1)../x", SourceFilters.GlobProblemKind.ClimbsOut }, { ":(prefix:99999999999999999999)../x", SourceFilters.GlobProblemKind.ClimbsOut },
+        { ":(prefix:+1,prefix:99999999999999999999)../x", SourceFilters.GlobProblemKind.ClimbsOut },
+        { ":(prefix:4294967297,prefix:-99999999999999999999,prefix:-1)/x", SourceFilters.GlobProblemKind.RootedPath },
+        { ":(prefix:2)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(prefix:5)docs", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(prefix:99)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(prefix:abc)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(prefix:0 )x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(prefix:0x1)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(prefix:1x)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(prefix:- 1)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(prefix:-)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(prefix:+)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(prefix)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(prefix:1)", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(prefix:2)", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(prefix:9)docs/a/b", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(prefix:7)a/../b", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(prefix:6)docs/", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(prefix:4)./x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(prefix:5)a//b", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(prefix:2) ", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(prefix:3,glob)ab", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(prefix:3)é", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(prefix:0,glob,literal)x", SourceFilters.GlobProblemKind.MalformedMagic },
+
+        // Words that look like known ones are not: matched exactly.
+        { ":(topx)../x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(icx)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(ATTR:foo)x", SourceFilters.GlobProblemKind.MalformedMagic }, { ":(glob,literal,exclude)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(exclude,glob,literal)x", SourceFilters.GlobProblemKind.MalformedMagic },
+        { ":(attr:foo,glob,literal)x", SourceFilters.GlobProblemKind.MalformedMagic },
+
+        // Colons: git ends short magic at the first one and reads the rest as the path.
+        { ":::../x", null },    };
 
     [Theory]
     [MemberData(nameof(GitElements))]
@@ -247,9 +336,15 @@ public sealed class UnusableGlobTests
     [InlineData(":(bad)x", "x", false, true)]
     [InlineData(@":(attr:a=\,b)x", "x", false, false)]
     [InlineData(@":(attr:a=\))x", "x", false, true)]
-    public void PathspecMagicIsSplitFromItsPathAsGitDoes(string pathspec, string path, bool top, bool malformed)
+    [InlineData(":(prefix:0)../x", "../x", true, false)]
+    [InlineData(":(prefix:-1)../x", "../x", false, false)]
+    [InlineData(":(prefix:2)x", "x", false, true)]
+    [InlineData(":(prefix:3,prefix:0)", "", true, false)]
+    [InlineData(":(attr)x", "x", false, false)]
+    [InlineData(":(attr:a=b,attr:c=d)x", "x", false, true)]
+    public void PathspecMagicIsSplitFromItsPathAsGitDoes(string pathspec, string path, bool pathUnchecked, bool malformed)
     {
-        SourceFilters.ParseMagic(pathspec).ShouldBe(new SourceFilters.PathspecMagic(path, top, malformed));
+        PathspecSyntax.Parse(pathspec).ShouldBe(new PathspecMagic(path, pathUnchecked, malformed));
     }
 
     [Theory]
@@ -259,7 +354,7 @@ public sealed class UnusableGlobTests
     [InlineData(@":(attr:a=\)x")]
     public void ALongMagicWithNoClosingParenthesisIsMalformedAndHasNoPath(string pathspec)
     {
-        SourceFilters.ParseMagic(pathspec).ShouldBe(new SourceFilters.PathspecMagic(null, false, true));
+        PathspecSyntax.Parse(pathspec).ShouldBe(new PathspecMagic(null, false, true));
     }
     [Fact]
     public void TheRefusalNamesTheCapAndTheListAndDoesNotEchoTheElement()
@@ -283,9 +378,20 @@ public sealed class UnusableGlobTests
         parent.Detail.ShouldContain("includeGlobs[0]");
         parent.Detail.ShouldContain("climbs out of the repository");
         parent.Detail.ShouldContain("'..'");
+        rooted.Detail.ShouldContain("is a rooted path", Case.Sensitive);
         rooted.Detail.ShouldContain("'//'");
+        rooted.Detail.ShouldNotContain("Git rejects", Case.Sensitive, "git accepts a rooted path that names a place inside the repository");
         magic.Detail.ShouldContain("'/:'");
         malformed.Detail.ShouldContain("pathspec magic that git rejects");
+        foreach (var reason in new[]
+                 {
+                     "a ':(' with no closing ')'", "a word other than top, literal, icase, glob, exclude, attr, attr:<specification> and prefix:<number>",
+                     "glob together with literal", "more than one attr:", "an attr: with a name or value git cannot use",
+                     "a prefix: that is not a number or is longer than the path",
+                     "right after ':', one of - , ; # % & ' \" = < > @ _ ~ and the backtick, which git does not implement as magic",
+                 })
+            malformed.Detail.ShouldContain(reason, Case.Sensitive, reason);
+        malformed.Detail.ShouldNotContain("!, ^ and /", Case.Sensitive, "a character outside git's magic set starts the path and is accepted");
         foreach (var refusal in new[] { parent, rooted, magic, malformed })
             refusal.Detail.ShouldContain("inherited by history sources", Case.Sensitive, "the reason is given to a caller with no history source");
 
@@ -718,7 +824,7 @@ public sealed class UnusableGlobTests
         var outcome = await s.Config.UpdateSourceAsync(s.Corpus, IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(Clear: [name]), default);
 
         var detail = outcome.Refusal.ShouldNotBeNull().Detail;
-        detail.ShouldContain("Name one of: useGitignore, maxFileBytes, includeGlobs, excludeGlobs", Case.Sensitive, "the wording a named filter has always had");
+        detail.ShouldContain("Name one of: useGitignore, maxFileBytes, includeGlobs, excludeGlobs", Case.Sensitive, "an unknown name is answered with the names it could have been");
         detail.ShouldContain("first");
         detail.ShouldNotContain("\n");
         detail.ShouldNotContain("\r");
