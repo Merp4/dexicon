@@ -5,6 +5,7 @@ import {
   Button, CheckField, Checkbox, ErrorBanner, Field, Input, Modal, Notice, Section, Segmented, Spinner, formatBytes,
 } from './ui';
 import { sourceName } from './lib/sources';
+import { gitPathspecs, globList } from './lib/globs';
 import { WorkspacePicker } from './WorkspacePicker';
 import { GitRefPicker } from './GitRefPicker';
 
@@ -22,11 +23,6 @@ type Source = Corpus['sources'][number];
 type Kind = 'workspace' | 'githistory';
 
 const MB = 1024 * 1024;
-
-/** A comma or newline separated list, with the blanks dropped. */
-function globList(raw: string): string[] {
-  return raw.split(/[\n,]/).map((g) => g.trim()).filter(Boolean);
-}
 
 // ── Defaults ────────────────────────────────────────────────────────────────
 
@@ -650,11 +646,11 @@ export function EditHistorySourceModal({ corpus, source, onClose, onSaved }: {
   const [error, setError] = useState<unknown>(null);
 
   // The paths as they would be applied, so following what is already in force is not a
-  // change. Compared sorted, as the content fingerprint compares them: the same paths in
-  // another order make the same documents, and the notice below would otherwise warn of a
-  // re-read that does not happen.
+  // change. Compared as the content fingerprint compares them: as the server gives them to
+  // git (`/docs` is `docs`), and sorted, since the same paths in another order make the same
+  // documents. The notice below would otherwise warn of a re-read that does not happen.
   const applied = paths.followPaths ? (fallback.includeGlobs?.value ?? []) : globList(paths.paths);
-  const sorted = (list: string[]) => [...list].sort().join('\n');
+  const sorted = (list: string[]) => gitPathspecs(list).sort().join('\n');
   const pathsChanged = sorted(applied) !== sorted(source.includeGlobs ?? []);
 
   // Which of the two kinds of change this is, because they cost different amounts:

@@ -1351,6 +1351,67 @@ describe('editing a history source', () => {
   });
 
   /**
+   * The server fingerprints the paths as git is given them, so `docs` and `/docs` are one filter. Warning of a
+   * re-read when one is edited into the other would put someone off a harmless save.
+   */
+  it('does not call a leading slash on a path a re-read, and does call a different path one', async () => {
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          source({
+            id: 's2', kind: 'githistory', rootPath: 'api-repo', fileCount: 174,
+            includeGlobs: ['docs'], ownIncludeGlobs: ['docs'],
+            git: { ref: 'HEAD', includeMessage: true, includeStat: true, includeDiff: false, maxDiffBytes: 65536, includeMerges: false, maxCommits: null, since: null },
+          }),
+        ],
+      }),
+    );
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: 'Edit source api-repo' }));
+    const dialog = await screen.findByRole('dialog');
+
+    const paths = within(dialog).getByLabelText('Paths');
+    await user.clear(paths);
+    await user.type(paths, '/docs');
+    expect(within(dialog).getByText(/documents already indexed\s+are kept/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Saving re-reads every commit/)).not.toBeInTheDocument();
+
+    await user.clear(paths);
+    await user.type(paths, 'src');
+    expect(within(dialog).getByText(/Saving re-reads every commit/)).toBeInTheDocument();
+  });
+
+  /**
+   * A comma inside pathspec magic is part of the pattern. The list is shown on one line and read back
+   * from it, so splitting at that comma rewrote a stored `:(glob,icase)docs/*.md` as two patterns git rejects.
+   */
+  it('sends a stored list holding magic with a comma back as it was stored', async () => {
+    updateSource.mockResolvedValue({});
+    const user = userEvent.setup();
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          source({
+            id: 's2', kind: 'githistory', rootPath: 'api-repo', fileCount: 174,
+            includeGlobs: [':(glob,icase)docs/*.md', 'src/**'], ownIncludeGlobs: [':(glob,icase)docs/*.md', 'src/**'],
+            git: { ref: 'HEAD', includeMessage: true, includeStat: true, includeDiff: false, maxDiffBytes: 65536, includeMerges: false, maxCommits: null, since: null },
+          }),
+        ],
+      }),
+    );
+    render(<CorpusDetail {...props} />);
+    await user.click(await screen.findByRole('button', { name: 'Edit source api-repo' }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(within(dialog).getByLabelText('Paths')).toHaveValue(':(glob,icase)docs/*.md, src/**');
+    await user.click(within(dialog).getByRole('checkbox', { name: /^The diff/ }));
+    await user.click(within(dialog).getByRole('button', { name: /^Save changes$/ }));
+
+    await waitFor(() => expect(updateSource).toHaveBeenCalled());
+    expect(updateSource.mock.calls[0][2].includeGlobs).toEqual([':(glob,icase)docs/*.md', 'src/**']);
+  });
+  /**
    * Keeping is a property of a limit: without one every commit is indexed already, and the
    * server refuses the setting there. Offered only beside a limit, and cleared with it.
    */
