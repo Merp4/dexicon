@@ -491,6 +491,10 @@ public static class CorpusEndpoints
             ? new ConfigRefusal("Unusable history settings", problem, 400)
             : null;
 
+    /// <summary>The sentence that says why a refusal about git applies to a caller who may have no history source.</summary>
+    private const string GitReads =
+        "A history source passes its include list to git as pathspecs, and a corpus's default include list is inherited by history sources.";
+
     /// <summary>
     /// A glob list that cannot be used, refused where it arrives. Stored as sent it failed every pass of
     /// every source that read it, with the reason in a job and the request answered 200. The position is
@@ -524,12 +528,15 @@ public static class CorpusEndpoints
                     + "which is the most a list can hold.",
                 SourceFilters.GlobProblemKind.TooLong =>
                     $"{named} is longer than {SourceFilters.MaxGlobLength} characters, which is the most a pattern can hold.",
-                SourceFilters.GlobProblemKind.ParentSegment =>
-                    $"{named} has a '..' path segment, which git rejects as a path outside the repository "
-                    + "(a history source passes the list to git as pathspecs).",
-                SourceFilters.GlobProblemKind.DoubleSlash =>
-                    $"{named} starts with '//'. One leading '/' is accepted and anchors the pattern at the root; "
-                    + "git rejects a path that is still rooted after it.",
+                SourceFilters.GlobProblemKind.ClimbsOut =>
+                    $"{named} is a path that climbs out of the repository with '..', which git rejects. " + GitReads,
+                SourceFilters.GlobProblemKind.RootedPath =>
+                    $"{named} starts with '//', or with '/' after pathspec magic such as :(glob). Git rejects it as a "
+                    + "path outside the repository: write the path with at most one leading '/' and none after magic. "
+                    + GitReads,
+                SourceFilters.GlobProblemKind.SlashThenMagic =>
+                    $"{named} starts with '/:'. Without its slash it would read as pathspec magic, so it is refused: "
+                    + "write the path without the leading '/', or put the magic first. " + GitReads,
                 _ => $"{named} is " + reader switch
                 {
                     SourceFilters.GlobReader.Git => "null, empty or holding a null character, which git cannot take as a pathspec",
@@ -566,10 +573,11 @@ public static class CorpusEndpoints
     /// <summary>
     /// The names <c>clear</c> understands. Anything else is a typo the caller wants to
     /// know about: unknown names were dropped on the floor and the request answered 200,
-    /// so `clear: ["maxfilebytes"]` — or a field renamed one day — left the setting in
-    /// place and reported success.
+    /// so `clear: ["maxFileKb"]` (the configure tools' name for the setting) or a field
+    /// renamed one day left the setting in place and reported success.
     ///
-    /// Case-insensitive, because that is how <see cref="ApplyFilters"/> compares them.
+    /// Case-insensitive, because that is how <see cref="ApplyFilters"/> compares them, so
+    /// `maxfilebytes` is accepted.
     /// </summary>
     internal static readonly string[] ClearableFilters =
         ["useGitignore", "maxFileBytes", "includeGlobs", "excludeGlobs"];

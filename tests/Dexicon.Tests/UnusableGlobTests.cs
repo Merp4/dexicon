@@ -120,51 +120,83 @@ public sealed class UnusableGlobTests
             .Count.ShouldBe(SourceFilters.MaxGlobsPerList + 100);
     }
 
-    [Theory]
-    [InlineData("..")]
-    [InlineData("../x")]
-    [InlineData("a/../b")]
-    [InlineData("a/..")]
-    [InlineData("/../x")]
-    [InlineData(@"a\..\b")]
-    [InlineData(@"..\x")]
-    public void AParentSegmentIsRefusedWhereGitReadsTheListAndLeftToTheWalk(string glob)
-    {
-        // git log -- ../x: "fatal: ../x: '../x' is outside repository". The walk compiles the element to a regular
-        // expression over paths below the root, so it is a pattern that matches nothing and not a failure.
-        foreach (var reader in new[] { SourceFilters.GlobReader.Git, SourceFilters.GlobReader.WalkAndGit })
-            SourceFilters.Check(["docs/", glob], reader).ShouldBe(
-                new SourceFilters.GlobProblem(1, SourceFilters.GlobProblemKind.ParentSegment), reader.ToString());
+    private static readonly SourceFilters.GlobReader[] GitReaders = [SourceFilters.GlobReader.Git, SourceFilters.GlobReader.WalkAndGit];
 
-        SourceFilters.Check(["docs/", glob], SourceFilters.GlobReader.Walk).ShouldBeNull();
+    /// <summary>
+    /// Each element as the readers that pass it to git judge it, and the problem it has or null. The cases are
+    /// the measured behaviour of git on Linux, where a backslash is an ordinary character, and are judged by the
+    /// validator alone: the element is not given to git here.
+    /// </summary>
+    public static TheoryData<string, SourceFilters.GlobProblemKind?> GitElements => new()
+    {
+        // Inside the repository, whatever the shape.
+        { "docs", null }, { "docs/", null }, { "/docs", null }, { "/", null }, { "/*.md", null }, { "*.md", null },
+        { "docs/*.md", null }, { " ", null }, { "a/../b", null }, { "a/..", null }, { "docs/..", null },
+        { "x/../docs", null }, { "a/./b/..", null }, { "a//..", null }, { "..x", null }, { "x..", null },
+        { "a..b", null }, { "...", null }, { "a/..b/c", null }, { "a/.../c", null },
+
+        // A backslash is part of a name, so nothing around it is a segment.
+        { @"docs\", null }, { @"\docs", null }, { @"x\..\docs", null }, { @"..\x", null }, { @"a\..\b", null },
+
+        // Pathspec magic is left to git, and judged by its path.
+        { ":(glob)*.md", null }, { ":(glob)docs/*.md", null }, { ":(exclude)docs", null }, { ":!docs", null },
+        { ":^docs", null }, { ":/docs", null }, { ":!/docs", null }, { ":!//docs", null }, { ":!:docs", null }, { ":(glob)a/../b", null }, { ":(bad)x", null },
+        { ":(glob../x", null }, { ":", null },
+
+        // Paths that climb out of the repository.
+        { "..", SourceFilters.GlobProblemKind.ClimbsOut }, { "../x", SourceFilters.GlobProblemKind.ClimbsOut },
+        { "/../x", SourceFilters.GlobProblemKind.ClimbsOut }, { "a/../..", SourceFilters.GlobProblemKind.ClimbsOut },
+        { "a/../../b", SourceFilters.GlobProblemKind.ClimbsOut }, { "./..", SourceFilters.GlobProblemKind.ClimbsOut },
+        { "docs/../../x", SourceFilters.GlobProblemKind.ClimbsOut }, { ":!../x", SourceFilters.GlobProblemKind.ClimbsOut },
+        { ":^../x", SourceFilters.GlobProblemKind.ClimbsOut }, { ":(glob)../x", SourceFilters.GlobProblemKind.ClimbsOut },
+        { ":(exclude)../x", SourceFilters.GlobProblemKind.ClimbsOut }, { ":/../x", SourceFilters.GlobProblemKind.ClimbsOut },
+        { ":(glob)a/../..", SourceFilters.GlobProblemKind.ClimbsOut },
+
+        // Still rooted after the one slash git's argument may lose, or after magic.
+        { "//docs", SourceFilters.GlobProblemKind.RootedPath }, { "//", SourceFilters.GlobProblemKind.RootedPath },
+        { ":(glob)/docs", SourceFilters.GlobProblemKind.RootedPath }, { ":(exclude)/docs", SourceFilters.GlobProblemKind.RootedPath },
+        { ":(literal)/docs", SourceFilters.GlobProblemKind.RootedPath }, { "::/docs", SourceFilters.GlobProblemKind.RootedPath },
+
+        // Removing the slash would make a name into magic.
+        { "/:(bad)x", SourceFilters.GlobProblemKind.SlashThenMagic }, { "/:(exclude)docs", SourceFilters.GlobProblemKind.SlashThenMagic },
+        { "/:x", SourceFilters.GlobProblemKind.SlashThenMagic }, { "/:", SourceFilters.GlobProblemKind.SlashThenMagic },
+    };
+
+    [Theory]
+    [MemberData(nameof(GitElements))]
+    public void AnIncludeElementIsJudgedAsGitWillReadItAndTheWalkLeavesItAlone(string glob, SourceFilters.GlobProblemKind? kind)
+    {
+        foreach (var reader in GitReaders)
+            SourceFilters.Check(["docs/", glob], reader).ShouldBe(
+                kind is { } k ? new SourceFilters.GlobProblem(1, k) : null, $"{reader}: {glob}");
+
+        // The walk matches against paths below its root: such an element compiles and matches nothing, or matches as a pattern.
+        SourceFilters.Check(["docs/", glob], SourceFilters.GlobReader.Walk).ShouldBeNull(glob);
     }
 
     [Theory]
-    [InlineData("..x")]
-    [InlineData("x..")]
-    [InlineData("a..b")]
-    [InlineData("...")]
-    [InlineData("a/..b/c")]
-    [InlineData("a/.../c")]
-    public void ADoubleDotInsideAPathSegmentIsNotAParentSegment(string glob)
+    [InlineData("docs", "docs")]
+    [InlineData("/docs", "/docs")]
+    [InlineData(":(glob)docs/*.md", "docs/*.md")]
+    [InlineData(":(exclude)a)b", "a)b")]
+    [InlineData(":!docs", "docs")]
+    [InlineData(":^docs", "docs")]
+    [InlineData(":/docs", "docs")]
+    [InlineData(":!/^docs", "docs")]
+    [InlineData(":!:docs", "docs")]
+    [InlineData(":docs", "docs")]
+    [InlineData(":", "")]
+    public void ThePathAfterPathspecMagicIsWhatFollowsIt(string pathspec, string path)
     {
-        foreach (var reader in new[] { SourceFilters.GlobReader.Git, SourceFilters.GlobReader.WalkAndGit })
-            SourceFilters.Check([glob], reader).ShouldBeNull(reader.ToString());
+        SourceFilters.PathAfterMagic(pathspec).ShouldBe(path);
     }
 
     [Fact]
-    public void OneLeadingSlashIsAcceptedAndTwoAreRefusedWhereGitReadsTheList()
+    public void ALongMagicWithNoClosingParenthesisHasNoPathToJudge()
     {
-        foreach (var reader in new[] { SourceFilters.GlobReader.Git, SourceFilters.GlobReader.WalkAndGit })
-        {
-            SourceFilters.Check(["/docs", "/", "/*.md"], reader).ShouldBeNull(reader.ToString());
-            SourceFilters.Check(["docs/", "//docs"], reader).ShouldBe(
-                new SourceFilters.GlobProblem(1, SourceFilters.GlobProblemKind.DoubleSlash), reader.ToString());
-        }
-
-        SourceFilters.Check(["//docs"], SourceFilters.GlobReader.Walk).ShouldBeNull("the walk reads it as an anchored pattern");
+        SourceFilters.PathAfterMagic(":(glob").ShouldBeNull();
+        SourceFilters.PathAfterMagic(":(glob../x").ShouldBeNull();
     }
-
     [Fact]
     public void TheRefusalNamesTheCapAndTheListAndDoesNotEchoTheElement()
     {
@@ -173,7 +205,9 @@ public sealed class UnusableGlobTests
 
         var longOne = CorpusEndpoints.UnusableGlobs(["docs/", secret], null).ShouldNotBeNull();
         var many = CorpusEndpoints.UnusableGlobs(null, tooMany).ShouldNotBeNull();
-        var parent = CorpusEndpoints.UnusableGlobs(["LEAKED/../x"], null, SourceFilters.GlobReader.Git).ShouldNotBeNull();
+        var parent = CorpusEndpoints.UnusableGlobs(["LEAKED/../../x"], null, SourceFilters.GlobReader.Git).ShouldNotBeNull();
+        var rooted = CorpusEndpoints.UnusableGlobs([":(glob)/LEAKED"], null, SourceFilters.GlobReader.WalkAndGit).ShouldNotBeNull();
+        var magic = CorpusEndpoints.UnusableGlobs(["/:(exclude)LEAKED"], null, SourceFilters.GlobReader.Git).ShouldNotBeNull();
 
         longOne.Status.ShouldBe(400);
         longOne.Detail.ShouldContain("includeGlobs[1]");
@@ -182,8 +216,14 @@ public sealed class UnusableGlobTests
         many.Detail.ShouldContain("excludeGlobs");
         many.Detail.ShouldContain($"more than {SourceFilters.MaxGlobsPerList} patterns");
         parent.Detail.ShouldContain("includeGlobs[0]");
+        parent.Detail.ShouldContain("climbs out of the repository");
         parent.Detail.ShouldContain("'..'");
-        foreach (var refusal in new[] { longOne, many, parent })
+        rooted.Detail.ShouldContain("'//'");
+        magic.Detail.ShouldContain("'/:'");
+        foreach (var refusal in new[] { parent, rooted, magic })
+            refusal.Detail.ShouldContain("inherited by history sources", Case.Sensitive, "the reason is given to a caller with no history source");
+
+        foreach (var refusal in new[] { longOne, many, parent, rooted, magic })
         {
             refusal.Detail.ShouldNotContain("LEAKED");
             refusal.Detail.ShouldEndWith("Nothing was saved.");
@@ -474,7 +514,7 @@ public sealed class UnusableGlobTests
     }
 
     [Fact]
-    public async Task AHistorySourceTakesALeadingSlashIncludeAndRefusesAParentSegment()
+    public async Task AHistorySourceTakesALeadingSlashIncludeAndRefusesWhatGitRejects()
     {
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.GitHistory);
@@ -484,18 +524,25 @@ public sealed class UnusableGlobTests
         var id = IndexingHarness.SourceIdFor(0);
 
         var rooted = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["/docs", "/"]), default);
-        var parent = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["docs/", "LEAKED/../x"]), default);
+        var inside = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["/docs", "/", "a/../b", "docs/.."]), default);
+        var parent = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["docs/", "LEAKED/../../x"]), default);
         var doubled = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["//docs"]), default);
+        var magicRooted = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: [":(glob)/docs"]), default);
+        var slashMagic = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["/:(exclude)docs"]), default);
 
         rooted.Refusal.ShouldBeNull();
+        inside.Refusal.ShouldBeNull("git resolves a/../b inside the repository, so a list holding it must still save");
         parent.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
         parent.Refusal.Detail.ShouldContain("includeGlobs[1]");
         parent.Refusal.Detail.ShouldContain("'..'");
         parent.Refusal.Detail.ShouldNotContain("LEAKED");
         doubled.Refusal.ShouldNotBeNull().Detail.ShouldContain("'//'");
+        magicRooted.Refusal.ShouldNotBeNull().Detail.ShouldContain("includeGlobs[0]");
+        magicRooted.Refusal.Detail.ShouldContain("pathspec magic");
+        slashMagic.Refusal.ShouldNotBeNull().Detail.ShouldContain("'/:'");
         db.ChangeTracker.Clear();
         SourceFilters.Globs((await db.Sources.AsNoTracking().FirstAsync(x => x.Id == id)).IncludeGlobs)
-            .ShouldBe(["/docs", "/"], "the refused lists are not saved over the accepted one");
+            .ShouldBe(["/docs", "/", "a/../b", "docs/.."], "the refused lists are not saved over the accepted one");
     }
 
     [Fact]
@@ -513,9 +560,9 @@ public sealed class UnusableGlobTests
     {
         await using var s = await Seeded.StartAsync();
 
-        var parent = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("includeGlobs", "docs/", "../x")), default);
-        var created = await s.Config.CreateCorpusAsync(new CreateCorpusRequest("papers"), default, defaults: DefaultsWith("includeGlobs", "a/../b"));
-        var rooted = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("includeGlobs", "/build", "/docs")), default);
+        var parent = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("includeGlobs", "docs/", "a/../../x")), default);
+        var created = await s.Config.CreateCorpusAsync(new CreateCorpusRequest("papers"), default, defaults: DefaultsWith("includeGlobs", ":!../b"));
+        var rooted = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("includeGlobs", "/build", "/docs", "a/../b")), default);
 
         parent.Refusal.ShouldNotBeNull().Detail.ShouldContain("includeGlobs[1]");
         parent.Refusal.Detail.ShouldContain("'..'");

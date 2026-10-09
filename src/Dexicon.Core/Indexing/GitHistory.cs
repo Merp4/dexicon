@@ -107,14 +107,16 @@ public sealed record GitHistoryOptions
     /// The resolved include filters. They are passed to git, so they decide which files
     /// the stat lists and which hunks the patch holds: the same commit under a narrower
     /// filter is a different document, and leaving them out left old commits skipped
-    /// with a stat cut to paths nobody had selected any more.
+    /// with a stat cut to paths nobody had selected any more. Fingerprinted as
+    /// <see cref="GitHistory.Pathspecs"/> gives them to git, so <c>/docs</c> and <c>docs</c>, which select the
+    /// same commits, are one filter; a list without a leading slash is fingerprinted as it always was.
     /// </param>
     public string ContentFingerprint(IReadOnlyList<string>? pathspecs = null) => string.Join(
         '|',
         IncludeMessage ? "m" : "-",
         IncludeStat ? "s" : "-",
         IncludeDiff ? "d" + MaxDiffBytes.ToString(CultureInfo.InvariantCulture) : "-",
-        Encode(pathspecs));
+        Encode(GitHistory.Pathspecs(pathspecs)));
 
     /// <summary>
     /// The pathspecs as one string that only one list can produce.
@@ -483,12 +485,17 @@ public static partial class GitHistory
 
     /// <summary>
     /// The include list as the arguments given to git after <c>--</c>. Git reads a pathspec relative to the
-    /// repository root and rejects a leading <c>/</c> as a path outside the repository (<c>fatal: '/docs' is
-    /// outside repository</c>), while an include pattern with a leading <c>/</c> is gitignore's anchor at the root
-    /// of the source. One leading slash is removed, which names the same path. An element that was only <c>/</c>
-    /// is dropped: the walk compiles it to no rule, so it filters nothing, and git would otherwise be handed an
-    /// empty pathspec, which it rejects. A list of only such elements gives no pathspec, which is every path.
-    /// Everything else, including pathspec magic, goes to git as written.
+    /// repository root and rejects a leading <c>/</c> as a path outside the repository, while an include pattern
+    /// with a leading <c>/</c> is gitignore's anchor at the root of the source. One leading slash is removed,
+    /// which gives the same path, matched by git's rules: in git's default pathspec matching <c>*</c> crosses
+    /// <c>/</c>, so <c>/docs/*.md</c> selects commits touching <c>docs/sub/b.md</c>, where the file walk's
+    /// <c>*</c> does not match that file. The slash is kept when an element starts with <c>//</c> or <c>/:</c>,
+    /// so that no literal name becomes pathspec magic (<c>/:(exclude)docs</c> would otherwise exclude
+    /// <c>docs</c>); such elements are refused where a list is saved and reach git as written if one was stored
+    /// earlier. An element that was only <c>/</c> is dropped: the walk compiles it to no rule, so it filters
+    /// nothing, and git would otherwise be handed an empty pathspec, which it rejects. A list of only such
+    /// elements gives no pathspec, which is every path. Everything else, including pathspec magic, goes to git
+    /// as written.
     /// </summary>
     internal static List<string> Pathspecs(IReadOnlyList<string>? includes)
     {
@@ -498,7 +505,10 @@ public static partial class GitHistory
         {
             if (include == "/") continue;
 
-            specs.Add(include.StartsWith('/') ? include[1..] : include);
+            var rooted = include.StartsWith('/')
+                && !include.StartsWith("//", StringComparison.Ordinal)
+                && !include.StartsWith("/:", StringComparison.Ordinal);
+            specs.Add(rooted ? include[1..] : include);
         }
 
         return specs;

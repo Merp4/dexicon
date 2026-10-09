@@ -114,11 +114,17 @@ public static class SourceFilters
         /// <summary>An element is longer than <see cref="MaxGlobLength"/> characters.</summary>
         TooLong,
 
-        /// <summary>An element for git has a <c>..</c> path segment, which git rejects or resolves outside the repository.</summary>
-        ParentSegment,
+        /// <summary>An element for git is a path whose <c>..</c> segments climb out of the repository, which git rejects.</summary>
+        ClimbsOut,
 
-        /// <summary>An element for git starts with two slashes, which stay a rooted path once the one leading slash is removed.</summary>
-        DoubleSlash,
+        /// <summary>
+        /// An element for git is still a rooted path after the one leading slash is removed: it starts with
+        /// <c>//</c>, or its path starts with <c>/</c> after pathspec magic such as <c>:(glob)</c>.
+        /// </summary>
+        RootedPath,
+
+        /// <summary>An element for git starts with <c>/:</c>, so removing the slash would turn a literal name into pathspec magic.</summary>
+        SlashThenMagic,
     }
 
     /// <summary>The first element of a list that cannot be used, and why. For <see cref="GlobProblemKind.TooMany"/> it is the first element past the cap.</summary>
@@ -132,16 +138,18 @@ public static class SourceFilters
     ///
     /// Every reader: a null element is never usable, and an element is at most <see cref="MaxGlobLength"/>
     /// characters. For <see cref="GlobReader.Walk"/> an element that <see cref="IgnoreRuleSet.AddPatterns"/>
-    /// cannot compile, such as <c>[z-a]</c>, is refused by the same parser. A <c>..</c> segment is not refused
-    /// there: the walk matches against paths below the root, so it compiles and matches nothing.
+    /// cannot compile, such as <c>[z-a]</c>, is refused by the same parser. A path that climbs out with <c>..</c>
+    /// is not refused there: the walk matches against paths below the root, so it compiles and matches nothing.
     ///
     /// For <see cref="GlobReader.Git"/> and <see cref="GlobReader.WalkAndGit"/> an empty element or one holding a
-    /// null character is refused, because git rejects an empty pathspec and cannot be passed a null character; so is
-    /// an element with a <c>..</c> segment (split on <c>/</c> and <c>\</c>, as git on Windows does) and one that
-    /// starts with <c>//</c>. Git fails with a fatal error on each, and a history source then fails every pass.
-    /// A single leading <c>/</c> is accepted: <see cref="GitHistory.Pathspecs"/> removes it before git sees it.
-    /// Anything else, pathspec magic included, is left to git. The check is of syntax: a pattern that compiles
-    /// but is slow to match passes it.
+    /// null character is refused, because git rejects an empty pathspec and cannot be passed a null character.
+    /// Git also fails with a fatal error, and a history source then fails every pass, on three other shapes, which
+    /// are refused: a path that climbs out of the repository (<see cref="GlobProblemKind.ClimbsOut"/>, judged
+    /// lexically on the part after any pathspec magic, with segments split on <c>/</c> only, so <c>a/../b</c> is
+    /// accepted); a rooted path (<see cref="GlobProblemKind.RootedPath"/>); and <c>/:</c> at the start
+    /// (<see cref="GlobProblemKind.SlashThenMagic"/>). A single leading <c>/</c> is accepted:
+    /// <see cref="GitHistory.Pathspecs"/> removes it before git sees it. Anything else, pathspec magic included,
+    /// is left to git. The check is of syntax: a pattern that compiles but is slow to match passes it.
     /// </summary>
     public static GlobProblem? Check(IReadOnlyList<string>? globs, GlobReader reader = GlobReader.Walk)
     {
@@ -157,8 +165,7 @@ public static class SourceFilters
             if (reader != GlobReader.Walk)
             {
                 if (glob.Length == 0 || glob.Contains('\0')) return new GlobProblem(i, GlobProblemKind.Unusable);
-                if (HasParentSegment(glob)) return new GlobProblem(i, GlobProblemKind.ParentSegment);
-                if (glob.StartsWith("//", StringComparison.Ordinal)) return new GlobProblem(i, GlobProblemKind.DoubleSlash);
+                if (GitPathProblem(glob) is { } kind) return new GlobProblem(i, kind);
             }
 
             if (reader == GlobReader.Git) continue;
@@ -174,10 +181,60 @@ public static class SourceFilters
     public static int? FirstUnusable(IReadOnlyList<string>? globs, GlobReader reader = GlobReader.Walk) =>
         Check(globs, reader)?.Index;
 
-    private static bool HasParentSegment(string glob)
+    /// <summary>
+    /// The path part of a pathspec: the element without its leading magic. The long form is <c>:(</c> up to the
+    /// first <c>)</c>; the short form is <c>:</c> followed by any of <c>!</c>, <c>^</c> and <c>/</c> and an
+    /// optional second <c>:</c>. An element not starting with <c>:</c> has no magic and is returned whole. Null
+    /// when a long form has no closing parenthesis, which is left to git.
+    /// </summary>
+    public static string? PathAfterMagic(string pathspec)
     {
-        foreach (var segment in glob.Split('/', '\\'))
-            if (segment == "..") return true;
+        if (pathspec.Length == 0 || pathspec[0] != ':') return pathspec;
+
+        if (pathspec.Length > 1 && pathspec[1] == '(')
+        {
+            var close = pathspec.IndexOf(')');
+            return close < 0 ? null : pathspec[(close + 1)..];
+        }
+
+        var at = 1;
+        while (at < pathspec.Length && pathspec[at] is '!' or '^' or '/') at++;
+        if (at < pathspec.Length && pathspec[at] == ':') at++;
+
+        return pathspec[at..];
+    }
+
+    private static GlobProblemKind? GitPathProblem(string glob)
+    {
+        // Removing this slash would read what follows as magic, and Pathspecs does not remove it then.
+        if (glob.StartsWith("/:", StringComparison.Ordinal)) return GlobProblemKind.SlashThenMagic;
+
+        if (PathAfterMagic(glob) is not { } path) return null;
+
+        var magic = glob.StartsWith(':');
+        if (magic ? path.StartsWith('/') : glob.StartsWith("//", StringComparison.Ordinal)) return GlobProblemKind.RootedPath;
+
+        // Pathspecs removes one leading slash from an element without magic.
+        return ClimbsOut(!magic && path.StartsWith('/') ? path[1..] : path) ? GlobProblemKind.ClimbsOut : null;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="path"/> goes above its root. Lexical, as git resolves it: empty and <c>.</c>
+    /// segments are skipped and each <c>..</c> removes one level, so <c>a/../b</c> stays inside and <c>a/../..</c>
+    /// does not.
+    /// </summary>
+    private static bool ClimbsOut(string path)
+    {
+        var depth = 0;
+
+        foreach (var segment in path.Split('/'))
+        {
+            if (segment.Length == 0 || segment == ".") continue;
+
+            if (segment != "..") depth++;
+            else if (depth == 0) return true;
+            else depth--;
+        }
 
         return false;
     }

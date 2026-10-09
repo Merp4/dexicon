@@ -889,8 +889,8 @@ public sealed class GitHistoryTests : IDisposable
 
     /// <summary>
     /// A leading slash anchors an include pattern at the root of the source, and git rejects it as a path
-    /// outside the repository (<c>fatal: '/src' is outside repository</c>), so a history source whose include
-    /// list held one failed every pass. The slash is removed before git is asked.
+    /// outside the repository, so a history source whose include list held one failed every pass. The slash is
+    /// removed before git is asked.
     /// </summary>
     [Fact]
     public async Task AnIncludeWithALeadingSlashSelectsTheSameCommitsAsWithoutIt()
@@ -928,10 +928,14 @@ public sealed class GitHistoryTests : IDisposable
     [InlineData("/src", "src")]
     [InlineData("src/", "src/")]
     [InlineData("/*.md", "*.md")]
-    [InlineData("//src", "/src")]
+    [InlineData("//src", "//src")]
+    [InlineData("/:(exclude)src", "/:(exclude)src")]
+    [InlineData("/:x", "/:x")]
     [InlineData(":(glob)src/**", ":(glob)src/**")]
+    [InlineData(":(glob)/src", ":(glob)/src")]
     [InlineData("a/../b", "a/../b")]
-    public void OneLeadingSlashIsTheOnlyThingRemovedFromAPathspec(string given, string passed)
+    [InlineData(@"\src", @"\src")]
+    public void OneLeadingSlashIsTheOnlyThingRemovedFromAPathspecAndNeverWhereItWouldMakeMagic(string given, string passed)
     {
         GitHistory.Pathspecs([given]).ShouldBe([passed]);
     }
@@ -946,24 +950,88 @@ public sealed class GitHistoryTests : IDisposable
     }
 
     /// <summary>
-    /// What the validation refuses is what git fails on. A pathspec outside the repository is a fatal error from
-    /// git, which a history source reports as unavailable on every pass.
+    /// What the validation refuses is what git fails on. A pathspec git rejects makes the log fail, which a
+    /// history source reports as unavailable on every pass. Only that git failed is asserted; its text varies.
+    /// `/:(exclude)src` reaches git as written (removing the slash would make it exclude `src`) and fails there.
     /// </summary>
     [Theory]
     [InlineData("../x")]
     [InlineData("..")]
+    [InlineData("a/../..")]
     [InlineData("//src")]
+    [InlineData("/:(exclude)src")]
+    [InlineData(":(glob)/src")]
+    [InlineData(":!../x")]
     public async Task APathspecGitRejectsStillFailsThePassWhichIsWhyTheListIsRefusedWhereItIsSaved(string pathspec)
     {
         Commit("src/a.txt", "one", "touch src");
 
-        var boom = await Should.ThrowAsync<GitHistoryException>(EnumerateAsync(paths: [pathspec]));
+        await Should.ThrowAsync<GitHistoryException>(EnumerateAsync(paths: [pathspec]));
 
-        boom.Message.ShouldContain("git log failed");
-        boom.Message.ShouldContain("outside repository");
         SourceFilters.FirstUnusable([pathspec], SourceFilters.GlobReader.Git).ShouldBe(0);
     }
 
+    /// <summary>A path that stays inside the repository is accepted by the validator and by git, so a list holding one still saves.</summary>
+    [Theory]
+    [InlineData("a/../src")]
+    [InlineData("src/../src")]
+    [InlineData("./src")]
+    public async Task APathThatStaysInsideTheRepositoryIsAcceptedByTheValidatorAndByGit(string pathspec)
+    {
+        Commit("src/a.txt", "one", "touch src");
+        Commit("docs/b.txt", "two", "touch docs");
+
+        (await EnumerateAsync(paths: [pathspec])).Count.ShouldBe(1);
+        SourceFilters.FirstUnusable([pathspec], SourceFilters.GlobReader.Git).ShouldBeNull();
+    }
+
+    /// <summary>
+    /// Git's default pathspec matching lets `*` cross `/`, so the include `docs/*.md` selects a commit touching
+    /// `docs/sub/b.md`. The file walk's `*` does not match that file. The two are not translated into each other.
+    /// </summary>
+    [Fact]
+    public async Task AStarInAnIncludeCrossesSlashesBecauseGitMatchesIt()
+    {
+        Commit("docs/sub/b.md", "one", "touch nested");
+        var nested = Head();
+
+        (await EnumerateAsync(paths: ["docs/*.md"])).ShouldHaveSingleItem().Sha.ShouldBe(nested);
+        (await EnumerateAsync(paths: ["/docs/*.md"])).ShouldHaveSingleItem().Sha.ShouldBe(nested);
+        var walk = new IgnoreRuleSet();
+        walk.AddPatterns(["docs/*.md"], "test");
+        walk.IsIgnored("docs/a.md", false).ShouldBeTrue("the control: the pattern matches a file directly under docs");
+        walk.IsIgnored("docs/sub/b.md", false).ShouldBeFalse("the walk's star stops at a slash");
+    }
+
+    /// <summary>
+    /// `/docs` and `docs` give git the same argument, so they are one filter. A fingerprint of the raw list made
+    /// editing one into the other re-read and re-embed the whole history.
+    /// </summary>
+    [Fact]
+    public void TheFingerprintIsOfWhatGitIsGivenSoALeadingSlashIsNotAChange()
+    {
+        var options = new GitHistoryOptions();
+
+        options.ContentFingerprint(["/docs"]).ShouldBe(options.ContentFingerprint(["docs"]));
+        options.ContentFingerprint(["/docs", "/"]).ShouldBe(options.ContentFingerprint(["docs"]));
+        options.ContentFingerprint(["/"]).ShouldBe(options.ContentFingerprint());
+        options.ContentFingerprint(["/:(exclude)docs"]).ShouldNotBe(options.ContentFingerprint(["/docs"]), "it reaches git unchanged");
+    }
+
+    /// <summary>
+    /// The values a plain list had before leading slashes were normalised. A source indexed under one is not
+    /// re-read by the upgrade, so these are literals and not computed from the code under test.
+    /// </summary>
+    [Fact]
+    public void TheFingerprintOfAListWithoutALeadingSlashIsWhatItWasBefore()
+    {
+        var options = new GitHistoryOptions();
+
+        options.ContentFingerprint().ShouldBe("m|s|-|-");
+        options.ContentFingerprint(["src/a.txt", "docs"]).ShouldBe("m|s|-|4:docs;9:src/a.txt;");
+        options.ContentFingerprint([":(glob)docs/*.md", "docs"]).ShouldBe("m|s|-|16::(glob)docs/*.md;4:docs;");
+        (options with { IncludeDiff = true }).ContentFingerprint(["docs"]).ShouldBe("m|s|d65536|4:docs;");
+    }
     /// <summary>
     /// The ref decides which commits, and must not be able to become a git option: a
     /// value starting with a dash arrives after `--end-of-options`.
