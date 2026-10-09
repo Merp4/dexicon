@@ -132,4 +132,28 @@ public sealed class ChunkSetRemovalRecheckTests
         var left = await check.ChunkSets.ToListAsync();
         (left.Single().Id, left.Single().IsDefault).ShouldBe(("set-1", true));
     }
+
+    [Fact]
+    public async Task TheDeleteRouteQueuesTheRefreshOfASetItKept()
+    {
+        await using var harness = await StartAsync(sets: 2);
+        await using var removing = harness.NewContext();
+        harness.Vectors.OnDeleteAsync = async () =>
+        {
+            await using var other = harness.NewContext();
+            await other.ChunkSets.Where(s => s.Id == "set-2").ExecuteUpdateAsync(u => u.SetProperty(s => s.IsDefault, true));
+            await other.ChunkSets.Where(s => s.Id == "set-1").ExecuteUpdateAsync(u => u.SetProperty(s => s.IsDefault, false));
+        };
+        var admin = new RequestContext
+        {
+            Principal = new Principal("k", "admin", new HashSet<string>(StringComparer.Ordinal) { Scopes.Admin }),
+        };
+
+        var result = await ChunkSetEndpoints.RemoveAsync(
+            IndexingHarness.CorpusId, "alt-1", admin, new ScopeResolver(removing), harness.NewConfiguration(removing), default);
+
+        result.ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(409);
+        await using var check = harness.NewContext();
+        (await check.Jobs.SingleAsync()).ChunkSetId.ShouldBe("set-2");
+    }
 }

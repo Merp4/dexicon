@@ -217,20 +217,25 @@ public static class ChunkSetEndpoints
 
         g.MapPost("/{setName}/promote", PromoteAsync).Produces<ChunkSetPromoted>();
 
-        g.MapDelete("/{setName}", async (string nameOrId, string setName, RequestContext rc,
-            ScopeResolver scopes, CorpusConfiguration config, CancellationToken ct) =>
-        {
-            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
-
-            var removed = await config.RemoveChunkSetAsync(corpus, setName, ct);
-            if (removed.Refusal is not { } refused) return Results.NoContent();
-
-            await config.FollowUpAsync(corpus, refused);
-            return refused.ToResult();
-        }).Produces(StatusCodes.Status204NoContent);
+        g.MapDelete("/{setName}", RemoveAsync).Produces(StatusCodes.Status204NoContent);
     }
 
+    /// <summary>
+    /// Removes a set. A method of its own, and the one the route is mapped to, so a test calls the handler that
+    /// runs. A refusal that kept the set without its vectors queues the refresh of the set before it is answered.
+    /// </summary>
+    internal static async Task<IResult> RemoveAsync(string nameOrId, string setName, RequestContext rc,
+        ScopeResolver scopes, CorpusConfiguration config, CancellationToken ct)
+    {
+        if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+        var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
+
+        var removed = await config.RemoveChunkSetAsync(corpus, setName, ct);
+        if (removed.Refusal is not { } refused) return Results.NoContent();
+
+        await config.FollowUpAsync(corpus, refused);
+        return refused.ToResult();
+    }
     /// <summary>
     /// Makes a set the default. A method of its own, and the one the route is mapped to, so a test calls the
     /// handler that runs.
