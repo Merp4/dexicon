@@ -218,4 +218,20 @@ public sealed class IgnoreFileReadabilityTests : IDisposable
 
         Should.Throw<IgnorePatternException>(() => Walk(shadowed: ["owned"]));
     }
+
+    [Fact]
+    public void ADexiconignoreOverEightMebibytesFailsTheWalkAndAGitignoreIsSkipped()
+    {
+        var big = new byte[9 * 1024 * 1024];
+        Array.Fill(big, (byte)'#');
+
+        WriteBytes(".dexiconignore", big);
+        Should.Throw<IgnorePatternException>(() => Walk())
+            .Message.ShouldBe(".dexiconignore cannot be used as patterns because it is larger than 8 MiB");
+
+        File.Delete(FullPath(".dexiconignore"));
+        WriteBytes(".gitignore", big);
+        Walk().Warnings.ShouldBe([
+            ".gitignore cannot be used as patterns because it is larger than 8 MiB; the file was skipped"]);
+    }
 }
