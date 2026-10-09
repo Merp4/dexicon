@@ -19,7 +19,7 @@ public sealed class GlobDifferentialTests
     [
         "a", "b", "A", "k", "K", U(0x212A), U(0x17F), "s", "S", U(0xDF), U(0x1E9E), U(0x130), U(0x131), "i", "I",
         U(0x3C3), U(0x3C2), U(0x3A3), U(0x1C5), U(0x1F600), "x.md", "dir", ".", "-", "!", "#", "$", "^", " ", "\r", "\n", "\\",
-        "\\*", "\\]", "/", "/", "/", "*", "*", "**", "**/", "/**", "?", "?", "[", "]", "[!", "[^", "[]", "[]a]", "[!]a]",
+        "\\*", "\\]", "/", "/", "/", "*", "*", "**", "***", "****", "**/", "/**", "?", "?", "[", "]", "[!", "[^", "[]", "[]a]", "[!]a]",
         "[a-z]", "[a-c]", "[!a-c]", "[^k]", "[" + U(0x212A) + "]", "[s-z]", "[z-a]", "[a-]", "[-a]", "[[]", "[a[]", "[/]",
         "[+-9]", "[\\]]", "[a\\-c]", ".md", ".git", "node_modules", "build", "0", "9",
     ];
@@ -194,6 +194,6 @@ public sealed class GlobDifferentialTests
             globCount: 1_000, pathsPerGlob: 120, seed: 7, mutate: glob => glob.Replace("*", "**", StringComparison.Ordinal));
 
         compared.ShouldBeGreaterThan(0);
-        differences.Count.ShouldBeGreaterThan(100);
+        differences.Count.ShouldBeGreaterThan(50);
     }
 }

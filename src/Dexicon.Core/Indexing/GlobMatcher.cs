@@ -103,7 +103,7 @@ internal sealed class GlobMatcher
                 case '*':
                     if (i + 1 < glob.Length && glob[i + 1] == '*')
                     {
-                        i++;
+                        i = EndOfDoubleStar(glob, i);
                         if (i + 1 < glob.Length && glob[i + 1] == '/') { i++; tokens.Add(new Token(Kind.SlashGlob)); }
                         else tokens.Add(new Token(Kind.Any));
                     }
@@ -136,6 +136,20 @@ internal sealed class GlobMatcher
         matcher = new GlobMatcher([.. tokens], directoryPrefix.Length > 0 ? directoryPrefix + "/" : string.Empty,
             wildcard ? weight : (weight + PlainDivisor - 1) / PlainDivisor);
         return true;
+    }
+
+    /// <summary>
+    /// The index of the last star of the <c>**</c> that begins at <paramref name="first"/>. Three or more stars that are
+    /// a whole path segment (<c>***/foo</c>, <c>a/****</c>) are one <c>**</c>, as in git; anywhere else the first two
+    /// stars are the <c>**</c> and the rest are read on their own.
+    /// </summary>
+    private static int EndOfDoubleStar(string glob, int first)
+    {
+        var last = first + 1;
+        while (last + 1 < glob.Length && glob[last + 1] == '*') last++;
+
+        var wholeSegment = (first == 0 || glob[first - 1] == '/') && (last + 1 == glob.Length || glob[last + 1] == '/');
+        return wholeSegment ? last : first + 1;
     }
 
     internal bool IsMatch(ReadOnlySpan<char> path)

@@ -9,8 +9,8 @@ namespace Dexicon.Tests;
 /// <c>GlobMatcher</c> with. It is built with <see cref="RegexOptions.IgnoreCase"/> and <see cref="RegexOptions.CultureInvariant"/>
 /// and the backtracking engine, with a timeout long enough for the globs the test generates.
 ///
-/// The wildcards are translated as the replaced implementation translated them (<c>*</c> to <c>[^/]*</c>, <c>**</c> to
-/// <c>.*</c>, <c>**/</c> to <c>(?:.*/)?</c>, the end of the pattern to <c>(?:/.*)?$</c>).
+/// The wildcards are translated <c>*</c> to <c>[^/]*</c>, <c>**</c> to <c>.*</c>, <c>**/</c> to <c>(?:.*/)?</c> and
+/// the end of the pattern to <c>(?:/.*)?$</c>, with three or more stars as a whole segment read as <c>**</c>.
 ///
 /// A bracket class is not read by the code under test. It is read here by a port of the loop git's <c>wildmatch</c>
 /// runs over a class (the first character is a member whatever it is, a backslash escapes, a dash after a member
@@ -50,6 +50,12 @@ internal static class GlobOracle
                     if (i + 1 < glob.Length && glob[i + 1] == '*')
                     {
                         i++;
+
+                        // Three or more stars that are a whole path segment are one `**`, as in git.
+                        var run = i - 1;
+                        while (run + 1 < glob.Length && glob[run + 1] == '*') run++;
+                        if ((i - 1 == 0 || glob[i - 2] == '/') && (run + 1 == glob.Length || glob[run + 1] == '/')) i = run;
+
                         if (i + 1 < glob.Length && glob[i + 1] == '/') { i++; sb.Append("(?:.*/)?"); }
                         else sb.Append(".*");
                     }

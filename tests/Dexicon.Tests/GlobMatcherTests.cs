@@ -52,6 +52,13 @@ public sealed class GlobMatcherTests
     [InlineData("foo/**", "foo/a/b", false, true)]
     [InlineData("foo/**", "foo", false, false)]
     [InlineData("**", "a/b", false, true)]
+    // Three or more stars that make a whole segment are one `**`, as in git.
+    [InlineData("***/foo", "foo", false, true)]
+    [InlineData("***/foo", "a/b/foo", false, true)]
+    [InlineData("a/***/b", "a/b", false, true)]
+    [InlineData("a/****/b", "a/x/y/b", false, true)]
+    [InlineData("a/***", "a/x/y", false, true)]
+    [InlineData("a/***", "a", false, false)]
     // ? is one character that is not a slash.
     [InlineData("a?c", "abc", false, true)]
     [InlineData("a?c", "a/c", false, false)]
