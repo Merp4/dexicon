@@ -14,6 +14,14 @@ namespace Dexicon.Tests;
 /// </summary>
 public sealed class ConcurrentQueuingTests
 {
+    /// <summary>
+    /// How long the first lookup is held for a second one. The second request is parked on the lock the
+    /// first holds, so it cannot arrive, and the first goes on when this has passed. It has to be long
+    /// enough for a loaded runner to start the second request meanwhile, or the test would pass without
+    /// the two having overlapped.
+    /// </summary>
+    private static readonly TimeSpan HowLongTheFirstWaits = TimeSpan.FromSeconds(3);
+
     private static bool IsTheQueuedJobLookup(string sql) =>
         sql.Contains("FROM \"jobs\"", StringComparison.Ordinal)
         && sql.Contains("LIMIT 1", StringComparison.Ordinal);
@@ -44,7 +52,7 @@ public sealed class ConcurrentQueuingTests
     [Fact]
     public async Task TwoRefreshesQueuedAtTheSameTimeForOneCorpusAreOneJob()
     {
-        var gate = new HoldTheLookup(TimeSpan.FromMilliseconds(750), IsTheQueuedJobLookup);
+        var gate = new HoldTheLookup(HowLongTheFirstWaits, IsTheQueuedJobLookup);
         await using var harness = await IndexingHarness.StartAsync(gate, "notes");
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await using var first = harness.NewContext();
