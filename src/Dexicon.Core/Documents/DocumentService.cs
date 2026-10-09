@@ -201,6 +201,7 @@ public sealed class DocumentService(
                 fileName, sha[..12]);
             return saved;
         }
+
         db.Blobs.Add(blob);
         db.BlobTexts.Add(text);
         try
@@ -289,7 +290,13 @@ public sealed class DocumentService(
     /// </summary>
     internal Func<string, ITextExtractor?> ExtractorFor { get; init; } = ExtractorRegistry.For;
 
-    private async Task<BlobText> ExtractAsync(string sha, string fileName, CancellationToken ct)
+    /// <param name="keepOnUnexpected">
+    /// Whether a verdict made from an exception type that points at a fault in the extractor is thrown
+    /// and not recorded. A stored document being extracted again has good cached text, which such a
+    /// fault should not replace.
+    /// </param>
+    private async Task<BlobText> ExtractAsync(string sha, string fileName, CancellationToken ct,
+        bool keepOnUnexpected = false)
     {
         var extractor = ExtractorFor(fileName);
         var path = PathFor(sha);
@@ -369,11 +376,19 @@ public sealed class DocumentService(
         // why it is empty. Every other failure (an I/O error, a refused permission, a shortage of
         // memory, a TimeoutException, or an extraction failure that wraps one of those) says how the
         // host was when it ran, so it reaches the caller as a timeout does and no row is written.
+        // A cancellation the caller did not ask for is how a library reports a timeout of its own, so it
+        // is a failure that is not a verdict on the file. One the caller asked for is theirs and
+        // propagates.
+        catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
+        {
+            throw new ExtractionFailedException($"'{fileName}' could not be read: {ex.Message}", ex);
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             var failure = ex as ExtractionFailedException
                 ?? ExtractionFailures.Of($"'{fileName}' could not be read: {ex.Message}", ex);
-            if (failure is not UnreadableDocumentException)
+            if (failure is not UnreadableDocumentException { } verdict
+                || (keepOnUnexpected && verdict.Unexpected))
             {
                 if (ReferenceEquals(failure, ex)) throw;
                 throw failure;
@@ -394,6 +409,7 @@ public sealed class DocumentService(
             };
         }
     }
+
     /// <summary>
     /// Attach a stored document to a corpus. The SAME blob may be attached to any number
     /// of corpora; each chunks it with its own settings, producing independent chunk
@@ -581,7 +597,9 @@ public sealed class DocumentService(
     /// anyone re-uploading anything.
     ///
     /// A re-extraction that fails for a reason that is not a verdict on the bytes (a timeout, an I/O
-    /// error, a refused permission, a shortage of memory, or an extraction failure that wraps one of those) leaves the row as it was and returns it, so a later pass tries again.
+    /// error, a refused permission, a shortage of memory, or an extraction failure that wraps one of
+    /// those), or whose exception points at a fault in the extractor (a null reference, an invalid
+    /// operation), leaves the row as it was and returns it, so a later pass tries again.
     /// </summary>
     /// <param name="failedThisPass">
     /// Hashes whose re-extraction has failed in this pass. The indexer calls this once per chunk set for
@@ -629,62 +647,83 @@ public sealed class DocumentService(
         BlobText fresh;
         try
         {
-            fresh = await ExtractAsync(sha256, fileName, ct);
+            fresh = await ExtractAsync(sha256, fileName, ct, keepOnUnexpected: true);
         }
         catch (ExtractionFailedException ex)
         {
-            // A timeout, an I/O error, a refused permission, a shortage of memory or a failure that wraps one of
-            // those says how the host was and not what the document holds. The row stays as it was, version included, so a later pass extracts again,
-            // and the caller carries on with the text it had.
+            // A timeout, an I/O error, a refused permission, a shortage of memory or a failure that wraps
+            // one of those says how the host was and not what the document holds, and a fault in the
+            // extractor says nothing certain about bytes that read well before. The row stays as it was,
+            // version included, so a later pass extracts again, and the caller carries on with the text it
+            // had.
             failedThisPass?.Add(sha256);
+            var outcome = ex switch
+            {
+                ExtractionTimeoutException => "timed out",
+                UnreadableDocumentException { Unexpected: true } =>
+                    $"hit an unexpected {ex.GetBaseException().GetType().Name} in {ExtractorFor(fileName)?.GetType().Name ?? "the reader"}",
+                _ => "failed",
+            };
             log.LogWarning(ex,
                 "Re-extraction of {File} ({Sha}) {Outcome}; keeping the cached v{Version} text and trying again on a later pass",
-                fileName, sha256[..12], ex is ExtractionTimeoutException ? "timed out" : "failed", cached.ExtractorVersion);
+                fileName, sha256[..12], outcome, cached.ExtractorVersion);
             return cached;
         }
 
+        // A pass cancelled while the extraction ran does not go on to rewrite the row. The extraction is
+        // synchronous and takes no token, so this is the first point at which the token is looked at.
+        ct.ThrowIfCancellationRequested();
+
         if (damaged)
+        {
             log.LogWarning(
                 "Cached text for {Sha} reads back {Read:N0} of the {Written:N0} characters stored with it; extracted again",
                 sha256[..12], cached.Text.Length, cached.ExtractedChars);
+
+            // A state chunked from this text before the repair is stamped with the plain fingerprint, which
+            // the repaired text also has, so the skip check would pass it and the head of the document would
+            // stay searchable. Cleared the way the indexer clears a file it is about to redo, in every set
+            // that holds this blob, and in the same save as the text so a crash leaves neither half. Read
+            // before the row is changed: a token cancelled during the read then leaves the tracked row as it
+            // was, and the save that records the job's outcome does not write half of this. A pass that
+            // chunks the damaged text from here on is stamped with a fingerprint that names the damage
+            // (CorpusIndexer.TextKey), so it does not need this.
+            var attached = await db.FileChunkStates
+                .Where(s => s.File!.BlobSha256 == sha256).ToListAsync(ct);
+            Rewrite(cached, fresh);
+            foreach (var state in attached)
+            {
+                state.ContentHash = null;
+                state.Status = FileStatus.Pending;
+                state.StatusDetail = null;
+            }
+        }
         else
+        {
             log.LogInformation(
                 "Re-extracted {Sha} with extractor v{Version}: {Before:N0} -> {After:N0} chars",
                 sha256[..12], ExtractorVersions.Current, cached.ExtractedChars, fresh.ExtractedChars);
 
-        // An upload's chunk state is fingerprinted by the blob hash, the chunk settings and the current
-        // extractor version, not by the text, so a rewritten text changes nothing the skip check
-        // compares. Two rewrites leave the chunks behind it: a repair of a damaged row, whose head would
-        // stay searchable, and the first success after a failed re-extraction of a stale row, whose
-        // chunks the indexer stamped with the current version although it chunked the old text. The
-        // states are cleared the way the indexer clears a file it is about to redo, in every set that
-        // holds this blob, and in the same save as the text so a crash leaves neither half. Where the
-        // version bump is the first to reach the document its fingerprint changes as well, so this
-        // makes the redo certain and not more frequent.
-        //
-        // Read before the row is changed: a token cancelled during the read then leaves the tracked row
-        // as it was, and the save that records the job's outcome does not write half of this.
-        var attached = await db.FileChunkStates
-            .Where(s => s.File!.BlobSha256 == sha256).ToListAsync(ct);
-
-        cached.Text = fresh.Text;
-        cached.UnitsJson = fresh.UnitsJson;
-        cached.Title = fresh.Title;
-        cached.ExtractedChars = fresh.ExtractedChars;
-        cached.Extractor = fresh.Extractor;
-        cached.ExtractorVersion = fresh.ExtractorVersion;
-        cached.ExtractedUtc = fresh.ExtractedUtc;
-        cached.EmptyReason = fresh.EmptyReason;
-
-        foreach (var state in attached)
-        {
-            state.ContentHash = null;
-            state.Status = FileStatus.Pending;
-            state.StatusDetail = null;
+            // A state chunked from the older text is stamped with a fingerprint that names its version
+            // (CorpusIndexer.TextKey), which the rewritten row does not have, so each set chunks it again.
+            Rewrite(cached, fresh);
         }
+
         await db.SaveChangesAsync(ct);
 
         return cached;
+    }
+
+    private static void Rewrite(BlobText row, BlobText fresh)
+    {
+        row.Text = fresh.Text;
+        row.UnitsJson = fresh.UnitsJson;
+        row.Title = fresh.Title;
+        row.ExtractedChars = fresh.ExtractedChars;
+        row.Extractor = fresh.Extractor;
+        row.ExtractorVersion = fresh.ExtractorVersion;
+        row.ExtractedUtc = fresh.ExtractedUtc;
+        row.EmptyReason = fresh.EmptyReason;
     }
 
     public static IReadOnlyList<ExtractedUnit> UnitsFrom(BlobText? text) =>

@@ -542,6 +542,7 @@ public sealed class DocumentExtractionTimeoutTests
         cts.IsCancellationRequested.ShouldBeTrue();
         stored.AlreadyExisted.ShouldBeTrue();
     }
+
     [Fact]
     public async Task AStaleDocumentWhoseReExtractionFailedIsChunkedAgainWhenALaterPassSucceeds()
     {
@@ -711,6 +712,205 @@ public sealed class DocumentExtractionTimeoutTests
         var thrown = Should.Throw<ExtractionFailedException>(() => new HtmlTextExtractor().Extract(new FaultyStream(), "page.html"));
 
         thrown.ShouldNotBeOfType<UnreadableDocumentException>();
+        thrown.Message.ShouldStartWith("'page.html' is not a readable HTML document: ");
         thrown.InnerException.ShouldBeOfType<IOException>();
+    }
+
+    /// <summary>Throws what <paramref name="make"/> builds, as an extractor with a fault in it does.</summary>
+    private sealed class ThrowingExtractor(Func<Exception> make) : ITextExtractor
+    {
+        public int Calls { get; private set; }
+
+        /// <summary>Runs when the extraction starts, for a test that acts while the extractor is working.</summary>
+        public Action? OnStart { get; init; }
+
+        public bool CanHandle(string extension) => extension == ".slow";
+
+        public ExtractedText Extract(Stream content, string fileName)
+        {
+            Calls++;
+            OnStart?.Invoke();
+            throw make();
+        }
+    }
+
+    [Fact]
+    public async Task AnIndexBuiltOnStaleTextWhileAnotherJobRewroteTheRowIsChunkedAgainByTheNextPass()
+    {
+        // Job one reads the stale row and then fails to extract it. While it does, another job extracts the
+        // same blob and rewrites the row. Job one goes on to chunk the old text and saves its state last, so
+        // the state has to name the text it chunked or the later pass finds nothing to redo.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using (var setup = harness.NewContext())
+        {
+            var corpus = await setup.Corpora.SingleAsync();
+            var documents = ServiceWith(harness, setup, Fast('g'));
+            var stored = await documents.StoreAsync(new MemoryStream(Bytes), "doc.slow");
+            await documents.AttachAsync(corpus, stored.Sha256, "doc.slow");
+            await setup.BlobTexts.ExecuteUpdateAsync(s => s.SetProperty(t => t.ExtractorVersion, 0));
+        }
+
+        var sha = ShaOf(Bytes);
+        await using var otherDb = harness.NewContext();
+        var other = ServiceWith(harness, otherDb, Fast('n'));
+        var failing = new EnvironmentFailingExtractor
+        {
+            OnStart = () => other.CurrentTextFor(sha, "doc.slow").GetAwaiter().GetResult(),
+        };
+
+        var first = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, failing));
+        var fast = Fast('n');
+        var later = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, fast));
+
+        first.FilesDone.ShouldBe(1, "the first job chunked the text it had");
+        later.FilesDone.ShouldBe(1, "the later pass chunks the text the other job wrote");
+        later.FilesSkipped.ShouldBe(0);
+        await using var check = harness.NewContext();
+        var row = await check.BlobTexts.AsNoTracking().SingleAsync();
+        row.Text.ShouldBe(new string('n', Bytes.Length));
+        row.ExtractorVersion.ShouldBe(ExtractorVersions.Current);
+    }
+
+    [Fact]
+    public async Task ADamagedRowThatIsRepairedIsChunkedAgainInEveryChunkSet()
+    {
+        // Both sets were chunked from the whole text before the row was damaged, so their states carry the
+        // plain fingerprint, which the repaired text also has. Only the clearing makes both redo it.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload, sets: 2);
+        await using (var setup = harness.NewContext())
+        {
+            var corpus = await setup.Corpora.SingleAsync();
+            var documents = ServiceWith(harness, setup, Fast('g'));
+            var stored = await documents.StoreAsync(new MemoryStream(Bytes), "doc.slow");
+            await documents.AttachAsync(corpus, stored.Sha256, "doc.slow");
+        }
+
+        var first = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, Fast('g')));
+        await using (var damage = harness.NewContext())
+            await damage.BlobTexts.ExecuteUpdateAsync(s => s.SetProperty(t => t.Text, new string('g', 100)));
+        var later = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, Fast('n')));
+
+        first.FilesDone.ShouldBe(2);
+        later.FilesDone.ShouldBe(2, "the repair has to reach the state of every set that holds the blob");
+        later.FilesSkipped.ShouldBe(0);
+        await using var check = harness.NewContext();
+        (await check.BlobTexts.AsNoTracking().SingleAsync()).Text.ShouldBe(new string('n', Bytes.Length));
+    }
+
+    [Fact]
+    public async Task AFaultInTheExtractorKeepsTheTextOfAStaleRowAndNamesTheExtractorAndTheType()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        var sha = await StoreStaleAsync(harness);
+        var log = new RecordingLog();
+        var failedThisPass = new HashSet<string>();
+        await using var db = harness.NewContext();
+        var faulty = new ThrowingExtractor(Activator.CreateInstance<NullReferenceException>);
+
+        var returned = await ServiceWith(harness, db, faulty, log).CurrentTextFor(sha, "doc.slow", failedThisPass);
+
+        returned.ShouldNotBeNull().Text.ShouldBe(new string('g', Bytes.Length));
+        failedThisPass.ShouldBe([sha]);
+        var warning = log.Entries.Where(e => e.Level == LogLevel.Warning).ShouldHaveSingleItem();
+        warning.Message.ShouldContain("unexpected NullReferenceException");
+        warning.Message.ShouldContain(nameof(ThrowingExtractor));
+        await using var check = harness.NewContext();
+        var row = await check.BlobTexts.AsNoTracking().SingleAsync();
+        row.Text.ShouldBe(new string('g', Bytes.Length));
+        row.ExtractorVersion.ShouldBe(0);
+        row.EmptyReason.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AFaultThatAHandlerInTheExtractorWrappedKeepsTheTextOfAStaleRowToo()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        var sha = await StoreStaleAsync(harness);
+        await using var db = harness.NewContext();
+        var faulty = new ThrowingExtractor(
+            () => ExtractionFailures.Of("could not be read as a document", new InvalidOperationException("bad state")));
+
+        var returned = await ServiceWith(harness, db, faulty).CurrentTextFor(sha, "doc.slow");
+
+        returned.ShouldNotBeNull().Text.ShouldBe(new string('g', Bytes.Length));
+        returned.ExtractorVersion.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task AParserExceptionForAMalformedFileReplacesTheTextOfAStaleRow()
+    {
+        // The control: a parser's own exception is a verdict on the bytes, and the row records it.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        var sha = await StoreStaleAsync(harness);
+        await using var db = harness.NewContext();
+        var parser = new ThrowingExtractor(() => new InvalidDataException("bad block"));
+
+        var returned = await ServiceWith(harness, db, parser).CurrentTextFor(sha, "doc.slow");
+
+        returned.ShouldNotBeNull().EmptyReason.ShouldNotBeNull().ShouldContain("bad block");
+        returned.ExtractorVersion.ShouldBe(ExtractorVersions.Current);
+    }
+
+    [Fact]
+    public async Task AFaultInTheExtractorIsStillRecordedAsTheVerdictOnANewUpload()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await using var db = harness.NewContext();
+        var faulty = new ThrowingExtractor(Activator.CreateInstance<NullReferenceException>);
+
+        var stored = await ServiceWith(harness, db, faulty).StoreAsync(new MemoryStream(Bytes), "doc.slow");
+
+        stored.EmptyReason.ShouldNotBeNull().ShouldContain("could not be read");
+        (await db.BlobTexts.SingleAsync()).ExtractorVersion.ShouldBe(ExtractorVersions.Current);
+    }
+
+    [Fact]
+    public async Task ACancellationTheCallerDidNotAskForIsAFailureOfTheExtractorThatIsNotAVerdict()
+    {
+        // A library reports a timeout of its own as a cancellation. Nobody cancelled the request, so this is
+        // not the request's cancellation and the upload lists the file, as for any failure of the host.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await using var db = harness.NewContext();
+        var cancelling = new ThrowingExtractor(() => new OperationCanceledException("the library gave up"));
+
+        var thrown = await Should.ThrowAsync<ExtractionFailedException>(
+            () => ServiceWith(harness, db, cancelling).StoreAsync(new MemoryStream(Bytes), "doc.slow"));
+
+        thrown.ShouldNotBeOfType<UnreadableDocumentException>();
+        thrown.InnerException.ShouldBeOfType<OperationCanceledException>();
+        (await db.Blobs.CountAsync()).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ACancellationOfTheCallersTokenDuringExtractionStaysACancellation()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await using var db = harness.NewContext();
+        using var cts = new CancellationTokenSource();
+        var cancelling = new ThrowingExtractor(() => new OperationCanceledException(cts.Token))
+        {
+            OnStart = cts.Cancel,
+        };
+
+        await Should.ThrowAsync<OperationCanceledException>(
+            () => ServiceWith(harness, db, cancelling).StoreAsync(new MemoryStream(Bytes), "doc.slow", cts.Token));
+
+        (await db.Blobs.CountAsync()).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ACancellationTheCallerDidNotAskForKeepsTheTextOfAStaleRow()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        var sha = await StoreStaleAsync(harness);
+        await using var db = harness.NewContext();
+        var cancelling = new ThrowingExtractor(() => new OperationCanceledException("the library gave up"));
+
+        var returned = await ServiceWith(harness, db, cancelling).CurrentTextFor(sha, "doc.slow");
+
+        returned.ShouldNotBeNull().Text.ShouldBe(new string('g', Bytes.Length));
+        returned.ExtractorVersion.ShouldBe(0);
     }
 }

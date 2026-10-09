@@ -548,8 +548,8 @@ public sealed class DocumentUploadEndpointTests
     [Fact]
     public async Task AnEpubWithADamagedEntryIsStoredWithItsReasonAndTheFilesAfterItAreStored()
     {
-        // The archive path threw InvalidDataException from the entry stream, which no handler wrapped: the
-        // answer read "The multipart body could not be read" and the files after it were lost.
+        // A zip whose entry data does not inflate is a verdict on the file: it is stored with the reason, and
+        // the files on either side of it are stored too.
         await using var harness = await StartAsync();
         var body = new MultipartBody()
             .File("files", "before.txt", 100, 'b')

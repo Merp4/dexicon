@@ -80,7 +80,17 @@ public class ExtractionFailedException(string message, Exception? inner = null)
 /// from an I/O error, so it chooses which to throw (<see cref="ExtractionFailures.Of"/>).
 /// </summary>
 public sealed class UnreadableDocumentException(string message, Exception? inner = null)
-    : ExtractionFailedException(message, inner);
+    : ExtractionFailedException(message, inner)
+{
+    /// <summary>
+    /// Set by <see cref="ExtractionFailures.Of"/> when the verdict was made from an exception type that
+    /// signals a fault in the code that read the file (a null reference, an invalid operation, an
+    /// argument) and not a malformed file. A new upload still records the verdict. A stored document
+    /// that has good cached text keeps it instead, because a fault in a library says nothing certain
+    /// about bytes that read well before.
+    /// </summary>
+    public bool Unexpected { get; init; }
+}
 
 internal static class ExtractionFailures
 {
@@ -90,10 +100,21 @@ internal static class ExtractionFailures
     /// Whatever else a parser throws while reading bytes it has been given is, however it is
     /// worded: an invalid colour space, a page it could not parse, a distance that overflows.
     ///
-    /// Looked for anywhere in the chain of causes, not only the top. A parser catches what the
-    /// stream throws and rethrows its own, and the extraction deadline throws from a read: a
-    /// timeout that arrived wrapped as "failed to parse the page" would otherwise be taken for
-    /// a corrupt file, and a file that was only slow would stay failed.
+    /// Every exception in the tree of causes is looked at, not only the top: a parser catches what the
+    /// stream throws and rethrows its own, and the extraction deadline throws from a read, so a
+    /// timeout that arrived wrapped as "failed to parse the page" would otherwise be taken for a
+    /// corrupt file, and a file that was only slow would stay failed. An <see cref="AggregateException"/>
+    /// is walked through all its members. The rule, in order:
+    /// <list type="number">
+    /// <item>A timeout (<see cref="ExtractionTimeoutException"/> or <see cref="TimeoutException"/>)
+    /// anywhere makes it environmental.</item>
+    /// <item>An <see cref="UnreadableDocumentException"/> anywhere is an explicit verdict from code that
+    /// read the file, and makes it a verdict.</item>
+    /// <item>Otherwise any environmental member makes it environmental: an I/O error other than
+    /// <see cref="EndOfStreamException"/>, a refused permission, memory, or another extraction failure.
+    /// End of stream while reading a stored blob means the bytes end early, which is a verdict.</item>
+    /// <item>Otherwise it is a verdict.</item>
+    /// </list>
     ///
     /// The cost of being wrong in each direction is not the same, and this chooses the cheaper
     /// one for the cases it can see. A mount that returns short reads could make a good file
@@ -102,15 +123,60 @@ internal static class ExtractionFailures
     /// </summary>
     public static ExtractionFailedException Of(string message, Exception cause)
     {
-        for (var e = cause; e is not null; e = e.InnerException)
-            if (e is IOException or UnauthorizedAccessException or OutOfMemoryException
-                or TimeoutException or ExtractionFailedException)
-                return new ExtractionFailedException(message, cause);
+        bool timeout = false, verdict = false, environmental = false;
+        foreach (var member in Members(cause))
+        {
+            switch (member)
+            {
+                case ExtractionTimeoutException or TimeoutException:
+                    timeout = true;
+                    break;
+                case UnreadableDocumentException:
+                    verdict = true;
+                    break;
+                case EndOfStreamException:
+                    break;
+                case IOException or UnauthorizedAccessException or OutOfMemoryException or ExtractionFailedException:
+                    environmental = true;
+                    break;
+            }
+        }
 
-        return new UnreadableDocumentException(message, cause);
+        if (timeout || (environmental && !verdict))
+            return new ExtractionFailedException(message, cause);
+
+        return new UnreadableDocumentException(message, cause) { Unexpected = !verdict && IsFault(cause) };
+    }
+
+    /// <summary>The exception, then everything under it, an aggregate's members included.</summary>
+    private static IEnumerable<Exception> Members(Exception root)
+    {
+        var pending = new Stack<Exception>();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            var current = pending.Pop();
+            yield return current;
+            if (current is AggregateException aggregate)
+                foreach (var inner in aggregate.InnerExceptions) pending.Push(inner);
+            else if (current.InnerException is { } next)
+                pending.Push(next);
+        }
+    }
+
+    /// <summary>
+    /// Whether what the code caught is a type that points at a fault in the code that read the file.
+    /// A parser's own exception for a malformed file (an invalid-data, format or parser-specific
+    /// type) is not one.
+    /// </summary>
+    private static bool IsFault(Exception cause)
+    {
+        var caught = cause is AggregateException aggregate ? aggregate.GetBaseException() : cause;
+        return caught is NullReferenceException or InvalidOperationException or ArgumentException
+            or IndexOutOfRangeException or KeyNotFoundException or InvalidCastException
+            or ArithmeticException or NotImplementedException or NotSupportedException;
     }
 }
-
 /// <summary>
 /// Bytes to text, per media type. The seam that keeps OCR a future registration
 /// rather than a rewrite: nothing downstream assumes the text came from a text layer.
@@ -492,6 +558,7 @@ public sealed class EpubTextExtractor : ITextExtractor
         foreach (var file in book.ReadingOrder)
         {
             units.Add(new ExtractedUnit(number, sb.Length, $"Chapter {number}"));
+            HtmlText.RequireShallow(file.Content, $"Chapter {number}");
             using var doc = parser.ParseDocument(file.Content);
             HtmlText.AppendBlocks(doc.Body, sb);
             number++;
@@ -530,8 +597,11 @@ public sealed class EpubTextExtractor : ITextExtractor
         {
             foreach (var entry in documents)
             {
-                using var stream = entry.Open();
-                using var doc = parser.ParseDocument(stream);
+                using var bytes = new MemoryStream();
+                using (var stream = entry.Open()) stream.CopyTo(bytes);
+                HtmlText.RequireShallow(Encoding.Latin1.GetString(bytes.GetBuffer(), 0, (int)bytes.Length), entry.FullName);
+                bytes.Position = 0;
+                using var doc = parser.ParseDocument(bytes);
                 var before = sb.Length;
                 HtmlText.AppendBlocks(doc.Body, sb);
 
@@ -589,7 +659,9 @@ public sealed class HtmlTextExtractor : ITextExtractor
         {
             using var reader = new StreamReader(content, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
             var parser = new HtmlParser();
-            using var doc = parser.ParseDocument(reader.ReadToEnd());
+            var markup = reader.ReadToEnd();
+            HtmlText.RequireShallow(markup, fileName);
+            using var doc = parser.ParseDocument(markup);
 
             var sb = new StringBuilder();
             HtmlText.AppendBlocks(doc.Body, sb);
@@ -619,6 +691,120 @@ public sealed class HtmlTextExtractor : ITextExtractor
 /// </summary>
 internal static class HtmlText
 {
+    /// <summary>
+    /// The deepest nesting of elements read. Browsers stop building the tree at 512. Deeper than that is
+    /// not a document: the parser takes time that grows with the square of the depth (100,000 nested
+    /// divs, about 500 KB, took 150 s to parse here) and the tree is a way to exhaust memory.
+    /// </summary>
+    public const int MaxNesting = 512;
+
+    /// <summary>
+    /// Elements the nesting scan does not count: void elements, and elements whose end tag may be left
+    /// out, so that a page of unclosed paragraphs or table cells is not taken for a deep one.
+    /// </summary>
+    private static readonly HashSet<string> NotCounted = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
+        "track", "wbr", "p", "li", "dt", "dd", "tr", "td", "th", "thead", "tbody", "tfoot", "colgroup",
+        "option", "optgroup", "rt", "rp", "html", "head", "body",
+    };
+
+    /// <summary>Elements whose content is text up to their end tag, so a tag in it opens nothing.</summary>
+    private static readonly HashSet<string> RawText = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "script", "style", "textarea", "title",
+    };
+
+    /// <summary>
+    /// Refuses markup that nests elements more than <see cref="MaxNesting"/> deep, before it is parsed.
+    /// A scan of the tags with a counter and no tree, linear in the markup. Comments and the content of
+    /// raw-text elements are skipped, as are quoted attribute values.
+    /// </summary>
+    /// <param name="what">The file or chapter the message names.</param>
+    /// <exception cref="UnreadableDocumentException">The markup nests deeper than the limit.</exception>
+    public static void RequireShallow(string markup, string what)
+    {
+        var depth = 0;
+        var foreign = 0;
+        var at = 0;
+        while ((at = markup.IndexOf('<', at)) >= 0 && at + 1 < markup.Length)
+        {
+            var next = markup[at + 1];
+            if (next == '!')
+            {
+                at = markup.AsSpan(at).StartsWith("<!--", StringComparison.Ordinal) ? SkipPast(markup, "-->", at + 4) : SkipPast(markup, ">", at + 2);
+                continue;
+            }
+
+            if (next == '?')
+            {
+                at = SkipPast(markup, ">", at + 2);
+                continue;
+            }
+
+            var closing = next == '/';
+            var nameStart = at + (closing ? 2 : 1);
+            if (nameStart >= markup.Length || !char.IsAsciiLetter(markup[nameStart]))
+            {
+                at++;
+                continue;
+            }
+
+            var nameEnd = nameStart;
+            while (nameEnd < markup.Length && (char.IsAsciiLetterOrDigit(markup[nameEnd]) || markup[nameEnd] == '-'))
+                nameEnd++;
+
+            var close = EndOfTag(markup, nameEnd);
+            if (close < 0) return;
+
+            var name = markup[nameStart..nameEnd];
+            if (!NotCounted.Contains(name))
+            {
+                // A trailing slash closes an element only in SVG and MathML. Elsewhere the parser ignores
+                // it, so <div/> opens a div.
+                var foreignName = name.Equals("svg", StringComparison.OrdinalIgnoreCase)
+                                  || name.Equals("math", StringComparison.OrdinalIgnoreCase);
+                if (closing)
+                {
+                    depth = Math.Max(0, depth - 1);
+                    if (foreignName) foreign = Math.Max(0, foreign - 1);
+                }
+                else if (!(foreign > 0 && markup[close - 1] == '/'))
+                {
+                    if (foreignName) foreign++;
+                    if (++depth > MaxNesting)
+                        throw new UnreadableDocumentException(
+                            $"{what} nests elements more than {MaxNesting} deep, which is too deep to read.");
+                }
+            }
+
+            at = close + 1;
+            if (!closing && RawText.Contains(name))
+                at = markup.IndexOf("</" + name, at, StringComparison.OrdinalIgnoreCase) is var end and >= 0 ? end : markup.Length;
+        }
+    }
+
+    private static int SkipPast(string markup, string terminator, int from)
+    {
+        var found = markup.IndexOf(terminator, from, StringComparison.Ordinal);
+        return found < 0 ? markup.Length : found + terminator.Length;
+    }
+
+    /// <summary>The index of the <c>&gt;</c> that ends the tag, outside quoted attribute values, or -1.</summary>
+    private static int EndOfTag(string markup, int from)
+    {
+        var quote = '\0';
+        for (var i = from; i < markup.Length; i++)
+        {
+            var c = markup[i];
+            if (quote != '\0') { if (c == quote) quote = '\0'; }
+            else if (c is '"' or '\'') quote = c;
+            else if (c == '>') return i;
+        }
+
+        return -1;
+    }
+
     /// <summary>Elements whose text is markup machinery, not content.</summary>
     private static readonly HashSet<string> Skipped =
         new(StringComparer.Ordinal) { "script", "style", "noscript", "template", "head" };
@@ -654,14 +840,30 @@ internal static class HtmlText
     /// that way, which is why this went unnoticed, but it is unreadable in a search result
     /// and the chunker splits on lines, so a long listing was one line it could not split.
     /// </param>
-    private static void Walk(INode node, StringBuilder sb, bool preformatted)
+    private static void Walk(INode root, StringBuilder sb, bool preformatted)
     {
-        foreach (var child in node.ChildNodes)
+        // An explicit stack: a document nested a few thousand deep overflowed the call stack, which
+        // kills the process and cannot be caught. Each frame is a node, the index of the child to visit
+        // next, whether the node is inside a pre, and whether its end closes a block.
+        var stack = new Stack<(INode Node, int Next, bool Pre, bool Block)>();
+        stack.Push((root, 0, preformatted, false));
+
+        while (stack.Count > 0)
         {
-            switch (child)
+            var (node, next, pre, block) = stack.Pop();
+            var children = node.ChildNodes;
+            if (next >= children.Length)
+            {
+                if (block) EndLine(sb);
+                continue;
+            }
+
+            stack.Push((node, next + 1, pre, block));
+
+            switch (children[next])
             {
                 case IText text:
-                    if (preformatted) AppendVerbatim(text.Data, sb);
+                    if (pre) AppendVerbatim(text.Data, sb);
                     else AppendCollapsed(text.Data, sb);
                     break;
 
@@ -674,12 +876,12 @@ internal static class HtmlText
                     break;
 
                 case IElement el:
-                    var block = Blocks.Contains(el.LocalName);
-                    if (block) EndLine(sb);
+                    var isBlock = Blocks.Contains(el.LocalName);
+                    if (isBlock) EndLine(sb);
+
                     // Inherited, so the <code> inside a <pre> is preformatted too, which
                     // is how a listing is marked up nearly everywhere.
-                    Walk(el, sb, preformatted || el.LocalName == "pre");
-                    if (block) EndLine(sb);
+                    stack.Push((el, 0, pre || el.LocalName == "pre", isBlock));
                     break;
             }
         }

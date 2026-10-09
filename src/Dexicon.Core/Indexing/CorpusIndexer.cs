@@ -432,7 +432,7 @@ public sealed class CorpusIndexer(
                     file.ExtractedChars = 0;
                     // Hash IS recorded: an empty extraction is a settled outcome, not a
                     // failure to retry. Re-uploading the file is what changes it.
-                    state.ContentHash = ChunkingFingerprint(set, cached.Sha256, templates, chunking);
+                    state.ContentHash = ChunkingFingerprint(set, TextKey(cached), templates, chunking);
                     state.IndexedUtc = DateTime.UtcNow;
                     job.FilesSkipped++;
                     continue;
@@ -441,7 +441,7 @@ public sealed class CorpusIndexer(
                 // The fingerprint mixes the blob hash WITH the corpus's chunk settings,
                 // so changing chunk size or boundary mode makes every attachment look
                 // changed and re-chunks it, without touching the bytes.
-                var fingerprint = ChunkingFingerprint(set, cached.Sha256, templates, chunking);
+                var fingerprint = ChunkingFingerprint(set, TextKey(cached), templates, chunking);
                 if (!full && state.ContentHash == fingerprint && state.Status == FileStatus.Indexed)
                 {
                     job.FilesSkipped++;
@@ -755,6 +755,19 @@ public sealed class CorpusIndexer(
         symbols.Count == 0
             ? symbols
             : [.. symbols.Where(s => half.Contains(s, StringComparison.Ordinal))];
+
+    /// <summary>
+    /// What an upload's fingerprint is built on in place of the blob hash: the hash alone when the row's
+    /// text is current and reads back whole, and otherwise the hash with the extractor version and length
+    /// of the text that was in hand. A pass that has to chunk older or damaged text, because
+    /// re-extracting it failed, stamps the state with that, so the state never equals the fingerprint of
+    /// the text a later pass reads, whichever job rewrote the row in between. The plain form for current
+    /// text is what every state written so far holds, so nothing is chunked again because of this.
+    /// </summary>
+    internal static string TextKey(BlobText text) =>
+        text.ExtractorVersion < ExtractorVersions.Current || text.Text.Length != text.ExtractedChars
+            ? $"{text.Sha256}|text-v{text.ExtractorVersion}|{text.Text.Length}"
+            : text.Sha256;
 
     /// <summary>
     /// The set's own settings, with no model measurement to reconcile them against. The
