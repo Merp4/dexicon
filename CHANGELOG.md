@@ -32,11 +32,13 @@ with no section here fails its release rather than publishing an undescribed one
 - One migration, `FoldTaggedModelNames`, applied at startup. Data only: it renames a saved framing
   or a measurement whose model is spelled with a `:latest` tag (in any letter case) or with capital
   letters to the lower-case name without the tag, which is the name the indexer reads. Where several
-  spellings of one model have a row it keeps the
-  newest (`UpdatedUtc` for a framing, `MeasuredUtc` for a measurement) and drops the others. A
-  chunk set whose framing was saved from the tagged Models row picks it up on its next pass and
-  re-embeds, which is what saving the framing already said it would do. The migration cannot be
-  undone.
+  spellings of one model have a row it keeps the newest (`UpdatedUtc` for a framing, `MeasuredUtc`
+  for a measurement) and drops the others. A chunk set whose framing was saved from the tagged
+  Models row picks it up on its next pass and re-embeds, which is what saving the framing already
+  said it would do. A measurement stored under the tagged name now applies to a set that records
+  the untagged one: the set's chunk budget follows the measured characters per token instead of the
+  default of 4, so that set re-chunks on its next pass. A 16-file set on `nomic-embed-text`, which
+  measures 2.82, went from 217 to 303 chunks. The migration cannot be undone.
 - A document upload is bounded as a request: ten files at `DEXICON__UPLOAD__MAXFILEBYTES` plus
   1 MiB of multipart framing, which is 2,098,200,576 bytes at the default. A body that declares a
   larger length, or that crosses the bound before any file is stored, answers `413` "Upload too
