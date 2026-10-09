@@ -158,6 +158,10 @@ with no section here fails its release rather than publishing an undescribed one
   loses now reports the stored file with `deduplicated: true`, as one that arrived later does, and
   its own extraction is dropped. Only a key already taken on the blob, or a stored file already
   present, is treated as the other upload having won; any other failure still answers `500`.
+- **A refused empty file read `(Parameter 'content')`.** The empty-file and blank-file-name refusals of
+  an upload passed the argument name to `ArgumentException`, so `failed[].error` and the Documents
+  screen that lists it ended in a name the sender did not pass. They read `'x.txt' is empty.` and
+  `A file name is required.`
 - **Stale developer scripts.** `scripts/screenshot.mjs` signs in with an admin session instead of
   an API key, which never carries `admin`; `scripts/retrieval-bench.py` queries files and content
   that exist; `scripts/bench/sweep.py` signs in as admin; `scripts/dev.ps1 password` returns the

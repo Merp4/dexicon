@@ -225,6 +225,7 @@ public sealed class DocumentUploadEndpointTests
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Select(s => s.FileName).ShouldBe(["full.txt"]);
         accepted.Failed.Select(f => f.File).ShouldBe(["empty.txt"]);
+        accepted.Failed[0].Error.ShouldBe("'empty.txt' is empty.", "the Documents screen shows this text as it is");
     }
 
     [Fact]
