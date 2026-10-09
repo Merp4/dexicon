@@ -352,8 +352,11 @@ public sealed class DocumentService(
         var blob = await db.Blobs.FirstOrDefaultAsync(b => b.Sha256 == sha256, ct)
             ?? throw new InvalidOperationException($"No stored document with hash {sha256}.");
 
-        // Needed to give the new attachment a state row per set.
-        await db.Entry(corpus).Collection(c => c.ChunkSets).LoadAsync(ct);
+        // Needed to give the new attachment a state row per set. Read here, under the lock, and not from
+        // corpus.ChunkSets: a corpus resolved with its sets included holds them as they were when the request
+        // was resolved, which is as old as the request for the later files of an upload.
+        var setIds = await db.ChunkSets.AsNoTracking().Where(s => s.CorpusId == corpus.Id)
+            .Select(s => s.Id).ToListAsync(ct);
 
         var source = await UploadSourceFor(corpus, ct);
 
@@ -418,12 +421,12 @@ public sealed class DocumentService(
 
         // A row per chunk set, all Pending: a new attachment is outstanding work for
         // every way this corpus cuts its content, not just the default one.
-        foreach (var set in corpus.ChunkSets)
+        foreach (var setId in setIds)
         {
             db.FileChunkStates.Add(new FileChunkState
             {
                 FileId = file.Id,
-                ChunkSetId = set.Id,
+                ChunkSetId = setId,
                 Status = FileStatus.Pending,
             });
         }
