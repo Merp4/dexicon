@@ -54,10 +54,10 @@ public sealed class PassesOverADeletedCorpusTests
     }
 
     [Fact]
-    public async Task OnlyTheRowsWhoseParentIsGoneAreDroppedFromTheOutcomeSave()
+    public async Task AChunkSetDeletedUnderAFolderPassLeavesTheFileRowAndRecordsTheJobAsFailed()
     {
-        // The pass adds a file under a source that is there and a chunk state under a set that is gone. The
-        // state is dropped and the file is saved with the outcome.
+        // The set is deleted after the pass loaded it. The file the pass walked is under a source that is
+        // still there, so its row stays.
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Workspace, sets: 2);
         await harness.WriteFileAsync("a.txt", IndexingHarness.Prose("alpha"));

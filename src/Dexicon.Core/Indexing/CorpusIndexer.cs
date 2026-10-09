@@ -636,7 +636,7 @@ public sealed class CorpusIndexer(
                     continue;
                 }
 
-                if (!recordingOutcome || !await StopTrackingWhatTheOutcomeCannotSaveAsync(ex)) throw;
+                if (!recordingOutcome || !StopTrackingWhatTheOutcomeCannotSave(ex)) throw;
 
                 log.LogWarning(ex,
                     "{Count} rows changed or went missing while the pass ran and are not saved; the next pass redoes them",
@@ -653,11 +653,13 @@ public sealed class CorpusIndexer(
     /// they describe are gone, and says whether there were any. A conflict that names the job's own row is
     /// not one of them, since the job is what is being recorded.
     ///
-    /// For a foreign-key failure only the rows the pass added under a parent that is gone are dropped: a file
-    /// under a source that is gone, a chunk state under a chunk set or a file that is gone. The rows added under
-    /// parents that are still there are saved with the outcome.
+    /// For a foreign-key failure every file and chunk state the pass added is dropped, not only those under the
+    /// parent that is gone. A pass saves one source's files and one chunk set's states at a time, so the rows
+    /// that are still tracked belong to the source and the set the failure is about; a pass over a second set
+    /// does not start once this one has failed. The next pass redoes what is dropped. A failure that is not
+    /// about a missing parent drops nothing, so a refused save (a full disk) keeps its rows for the retry.
     /// </summary>
-    private async Task<bool> StopTrackingWhatTheOutcomeCannotSaveAsync(DbUpdateException ex)
+    private bool StopTrackingWhatTheOutcomeCannotSave(DbUpdateException ex)
     {
         if (ex is DbUpdateConcurrencyException)
         {
@@ -669,29 +671,10 @@ public sealed class CorpusIndexer(
 
         if (!ex.IsForeignKeyViolation()) return false;
 
-        var added = db.ChangeTracker.Entries().Where(e => e.State == EntityState.Added).ToList();
-        var files = added.Select(e => e.Entity).OfType<IndexedFile>().ToList();
-        var states = added.Select(e => e.Entity).OfType<FileChunkState>().ToList();
-
-        var sourceIds = files.Select(f => f.SourceId).Distinct().ToList();
-        var setIds = states.Select(s => s.ChunkSetId).Distinct().ToList();
-        var addedFileIds = files.Select(f => f.Id).ToHashSet(StringComparer.Ordinal);
-        var loadedFileIds = states.Select(s => s.FileId).Where(id => !addedFileIds.Contains(id)).Distinct().ToList();
-
-        var sources = await db.Sources.AsNoTracking().Where(s => sourceIds.Contains(s.Id)).Select(s => s.Id)
-            .ToListAsync(CancellationToken.None);
-        var sets = await db.ChunkSets.AsNoTracking().Where(s => setIds.Contains(s.Id)).Select(s => s.Id)
-            .ToListAsync(CancellationToken.None);
-        var loaded = await db.Files.AsNoTracking().Where(f => loadedFileIds.Contains(f.Id)).Select(f => f.Id)
-            .ToListAsync(CancellationToken.None);
-
-        var goneFiles = files.Where(f => !sources.Contains(f.SourceId)).Select(f => f.Id).ToHashSet(StringComparer.Ordinal);
-        var gone = new List<object>(files.Where(f => goneFiles.Contains(f.Id)));
-        gone.AddRange(states.Where(s => !sets.Contains(s.ChunkSetId) || goneFiles.Contains(s.FileId)
-                                        || (!addedFileIds.Contains(s.FileId) && !loaded.Contains(s.FileId))));
-
-        foreach (var entity in gone) db.Entry(entity).State = EntityState.Detached;
-        return gone.Count > 0;
+        var added = db.ChangeTracker.Entries()
+            .Where(e => e.State == EntityState.Added && e.Entity is FileChunkState or IndexedFile).ToList();
+        foreach (var entry in added) entry.State = EntityState.Detached;
+        return added.Count > 0;
     }
 
     /// <summary>
