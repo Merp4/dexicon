@@ -157,12 +157,16 @@ as `.gitignore`, including `!` to re-include, and is read after it, so a `!` lin
 back a file `.gitignore` excludes. It cannot bring back one that a source's exclude filter,
 include filter or size limit leaves out: those apply after it.
 
-Write it as UTF-8 text with lines under 500 characters, and a class such as `[a-z]` with its range the
-right way round. A `.dexiconignore` with a line that cannot be read (`[z-a]`), a line over 500 characters, more than
-10,000 rules, a UTF-16 or NUL-bearing file, or a link in place of the file stops that source from being indexed
-until it is fixed, so that nothing the file meant to exclude gets in. `index_status` shows the source as unavailable
-and gives the reason, naming the file and the line (lines count from 1). A `.gitignore` with a line
-like that is not held to the same rule: the line is skipped and logged, as git would not apply it either.
+Write it as UTF-8 text (a UTF-16 or UTF-32 byte order mark is also read), with lines of at most 500 characters, and a
+class such as `[a-z]` with its range the right way round. A `.dexiconignore` with a line that cannot be read (`[z-a]`,
+`[]`, or a POSIX class such as `[[:alpha:]]`), a line over 500 characters, more than 5,000 rules in all the ignore
+files of the source, invalid UTF-8, a NUL, or a link or pipe in place of the file stops that source from being
+indexed until it is fixed, so that nothing the file meant to exclude gets in. `index_status` shows the corpus as
+unavailable, with an `error:` line that names the source, the file and the line (lines count from 1), and what was
+already indexed stays. A `.gitignore` is git's file, so a line in it that cannot be read is skipped and logged, and
+the rest of the file applies; one over 1 MiB, or past the same rule limit, stops the source as well. Patterns follow
+git, with a few differences (`**` that is not a whole path segment crosses `/`, case is always ignored, a backslash
+outside a class is a plain character): the list is in `docs/04-ingestion.md`.
 
 If your key lists `configure_corpus` and `configure_source`, you can make the other changes
 yourself. `list_folders` shows what is mounted, which folders are git repositories, and

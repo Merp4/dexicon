@@ -1922,6 +1922,13 @@ read the admin password and the bootstrap token back by search, which is the rou
 for keys. `.env` is not in the walker's built-in exclude list, so this rests on `.gitignore`
 listing it. A secret that no `.gitignore` names is within reach of a `configure` key like any
 other file in the workspace, and keeping such files out of a mounted tree is the operator's.
+The rule is also not in force when the walk skips the line that holds it or the file that holds it:
+a line over 500 characters or one that cannot be read (including a POSIX class), lines with bytes that are
+not valid UTF-8, the lines after the thousandth skipped line of a file, and a `.gitignore` that is a link,
+cannot be opened, is not a regular file or holds a NUL. Each is a warning in the log and the job still
+succeeds, because the file is git's and git applies no stricter reading. A `.gitignore` over 1 MiB, past the
+rule limits or past 16 MiB of ignore files in the walk fails the source instead
+([D-41](#d-41-ignore-patterns-are-matched-by-tokens-and-a-walk-that-cannot-read-its-rules-fails)).
 What the guard covers is narrower than "secrets". `.gitignore` is read from a source's root
 down, so a source rooted below a repository does not get the repository's own rules, and a
 `configure` key can index a gitignored folder by rooting a source on it, as anyone with the UI can.
@@ -2154,6 +2161,56 @@ widen keys that only ever searched.
 
 **Cost.** One scope, a data migration and a row in the Access page's table. A key issued with `ingest`
 alone from now on cannot detach a document, so anything scripted against it needs `destroy` added.
+
+---
+
+### D-41 Ignore patterns are matched by tokens, and a walk that cannot read its rules fails
+
+**Status.** Accepted and implemented, 2026-10-10. Follows [D-35](#d-35-links-are-not-followed), which made the
+ignore files part of what a walk trusts.
+
+**Decision.** A pattern is read into tokens and matched by running them over the path
+(`GlobMatcher`), with no regular expression. A match takes at most 2 x (tokens + 1) x (path length + 2)
+steps whatever the pattern, so there is no match timeout. A walk reads at most 5,000 rules and 12,000 weight
+from its ignore files together (`.git/info/exclude`, every `.gitignore` and `.dexiconignore`), and each stored
+glob list has a budget of 1,000 rules and 12,000 weight. A line or entry over 500 characters is refused, an
+ignore file over 1 MiB is refused, and a walk reads at most 16 MiB of them. Passing any of these fails the
+source's walk, for every kind of file, with a message that names the file and the limit. A `.dexiconignore`
+that cannot be used in any way fails the walk too. A `.gitignore` or `.git/info/exclude` that has a line that
+cannot be used skips the line and warns.
+
+**Why.** The first matcher built a .NET regular expression for each rule with a 250 ms match timeout. That
+timeout threw out of the middle of a walk for patterns such as `*a*a*a*a*a*a*a*a*a*a*a*a*b`, and it also fired for
+`*.so` on a host starved of CPU. The engine that cannot backtrack was tried next, and it matched correctly but
+held about 390 KiB for each rule (469 rules from grpc's ignore files held 402 MiB), so an ignore file in an
+indexed tree could take gigabytes. A rule held as tokens is a few hundred bytes. Failing at a limit, where the
+first design skipped the rules past it, follows from what the rules are for: the ones after the limit are the ones
+the operator wrote last, and a walk that dropped them indexed what they excluded.
+
+**Properties.**
+- The meaning is the one the regular expression had: `GlobOracle` in the tests rebuilds that expression and is
+  compared with the matcher over about a million random (pattern, prefix, path) triples per run. The classes are read as
+  git reads them, by a separate port of git's loop, and both agree with what `git check-ignore` printed.
+- A rule's weight is its tokens, one more for each range of a class, and a pattern without a `*`, `**` or
+  `**/` counts a twentieth of that: a wildcard makes every token after it look at the whole path. Measured, the
+  rules a budget lets in cost at most 2.5 ms to test one 255-character file (the worst shape: `*a` repeated, then
+  `*b`, against a path of `a`), 1.0 ms for 100 characters and 32 ms for 1,000, and hold at most 7 MiB.
+  `IgnoreRuleCostTests` (`Category=Benchmark`, run in a release build) reruns the figures.
+- Directories are visited in ordinal order, so the file a failure names is the same on every pass.
+- `Walk` takes a cancellation token, polled per directory and every 256 files.
+- Only a regular file is opened as an ignore file. A pipe named `.gitignore` blocked a walk for good when it was
+  read as any other file.
+
+**Rejected.** A timeout on the regular expressions, which fails on a loaded host and not only on a bad pattern. The
+engine that cannot backtrack, for its memory. A cache of compiled expressions, which would have bounded the
+memory by count when the cost is per expression. Skipping the rules past a limit with a warning, for the reason
+above. Splitting a pattern at slashes and matching segment by segment, which would have changed what `x**/y`
+and `a**b` mean.
+
+**Cost.** A pattern means what it meant, with these differences: a class never matches `/`, a POSIX class such as
+`[[:alpha:]]` and a reversed range are refused, `\` inside a class escapes, and a line feed in a name is an ordinary
+character. A source whose lists or ignore files were over a limit now fails its pass instead of indexing. The
+differences from git that remain are listed in [04](04-ingestion.md), under "Where the matching differs from git".
 
 ---
 
