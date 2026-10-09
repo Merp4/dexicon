@@ -841,7 +841,22 @@ public sealed class CorpusIndexer(
 
         // The same walk the sweep uses, so the inventory it records and the files this
         // indexes are one answer rather than two that have to agree.
-        var walk = WorkspaceDiscovery.Walk(corpus, source, root, _indexing);
+        WorkspaceDiscovery.Result walk;
+        try { walk = WorkspaceDiscovery.Walk(corpus, source, root, _indexing); }
+        catch (IgnorePatternException ex)
+        {
+            // A .dexiconignore line, or an include or exclude list entry, that cannot be read. The
+            // source is not indexed from, because skipping the line would index what it was written to
+            // keep out. Handled like an unreachable source: nothing already indexed is removed, the
+            // other sources are still indexed, and the job's error names the file and the line.
+            Unreachable(corpus, job, $"Source '{source.RootPath}' was not indexed because {ex.Message}");
+            return;
+        }
+
+        // Lines of a .gitignore or .git/info/exclude that git would not have applied either. The
+        // walk has no logger, so they are written out here.
+        foreach (var warning in walk.Warnings)
+            log.LogWarning("Source {Source}: {Warning}; the line was skipped", source.RootPath, warning);
 
         if (walk.ShadowedCount > 0)
             log.LogInformation(

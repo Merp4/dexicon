@@ -98,8 +98,15 @@ public static class SourceCoverage
             // check does not hide a file one of them would have taken.
             var maxFileBytes = group.Max(s => s.MaxFileBytes);
 
-            var walked = WorkspaceWalker.Walk(full, useGitignore: true, includeGlobs: null,
-                excludeGlobs: null, maxFileBytes, documentMaxBytes, topLevelOnly: true);
+            // A .dexiconignore line the walk cannot read would fail a source rooted here. No source is, so
+            // the directory is left out of the advisory rather than failing the endpoint.
+            WorkspaceWalker.WalkResult walked;
+            try
+            {
+                walked = WorkspaceWalker.Walk(full, useGitignore: true, includeGlobs: null,
+                    excludeGlobs: null, maxFileBytes, documentMaxBytes, topLevelOnly: true);
+            }
+            catch (IgnorePatternException) { continue; }
 
             if (walked.Files.Count == 0) continue;
 

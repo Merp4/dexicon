@@ -22,10 +22,12 @@ public static class WorkspaceDiscovery
     /// How many of the walk's files a more specific source owns. Not a skip: those files
     /// are indexed, just not here.
     /// </param>
+    /// <param name="Warnings">Unusable ignore-file lines the walk skipped, from <see cref="WorkspaceWalker.WalkResult"/>.</param>
     public sealed record Result(
         IReadOnlyList<WorkspaceWalker.Candidate> Owned,
         IReadOnlyList<WorkspaceWalker.Skipped> Skipped,
-        int ShadowedCount);
+        int ShadowedCount,
+        IReadOnlyList<string> Warnings);
 
     public static Result Walk(Corpus corpus, Source source, string root, IndexingOptions indexing)
     {
@@ -55,7 +57,7 @@ public static class WorkspaceDiscovery
             ? walk.SkippedFiles
             : walk.SkippedFiles.Where(s => !SourceScope.IsShadowed(s.RelativePath, shadowed)).ToList();
 
-        return new Result(owned, skipped, walk.Files.Count - owned.Count);
+        return new Result(owned, skipped, walk.Files.Count - owned.Count, walk.Warnings);
     }
 
     /// <summary>

@@ -128,9 +128,19 @@ public sealed class CorpusSweeper(
                     continue;
                 }
 
+                // The lines of a .gitignore that were skipped (Result.Warnings) are logged by the indexing
+                // pass over the same tree, not here, so the periodic sweep does not repeat them.
                 owned = source.Kind == SourceKind.GitHistory
                     ? await CommitsAsync(corpus, source, root, ct)
                     : WorkspaceDiscovery.Walk(corpus, source, root, _indexing).Owned;
+            }
+            catch (IgnorePatternException ex)
+            {
+                // The walk that indexing runs fails for the same reason (CorpusIndexer), and a sweep only
+                // adds to an inventory, so this source's rows stay as they are and the others are swept.
+                log.LogWarning("Source {Source} was not walked because {Reason}; leaving its inventory alone",
+                    source.RootPath, ex.Message);
+                continue;
             }
             catch (UnauthorizedAccessException ex)
             {
