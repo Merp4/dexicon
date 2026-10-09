@@ -24,6 +24,11 @@ with no section here fails its release rather than publishing an undescribed one
   shows three of the five common reasons for an empty result (still indexing, never indexed, left
   out). The tools are unchanged. Running `scripts/install-mcp.ps1` again upgrades installed
   copies. The hooks are unchanged.
+- A bracket class written with a leading `!`, such as `[!a]*.md`, now excludes the characters listed,
+  as gitignore defines it. It was read as a class that included `!` and those characters, so an
+  include list, an exclude list, a `.gitignore` or a `.dexiconignore` that holds one selected the
+  opposite files. On the first pass after the upgrade, a source that has such a pattern indexes
+  the files it now selects and drops the ones it no longer does. `[^a]` is unchanged.
 
 ### Fixed
 
@@ -33,15 +38,19 @@ with no section here fails its release rather than publishing an undescribed one
   position (`includeGlobs[1]`) and an error carrying the same text from `configure_corpus` and
   `configure_source`. Nothing is saved. A history source's include list is read by git as pathspecs,
   so only a null, empty or null-character element is refused there; a corpus's default include list
-  is read both ways, so it must have no such element and every pattern must compile. A list stored before this change still fails until it is
-  replaced or cleared, and a `configure_corpus` call that changes any filter re-sends the corpus's
-  stored lists, so it is refused until a bad stored list is reset. Patterns that compile but are slow
+  is read both ways, so it must have no such element and every pattern must compile. A list stored
+  before this change still fails until it is replaced or cleared, and a `configure_corpus` call that
+  changes any filter re-sends the corpus's stored lists, so it is refused until a bad stored list is
+  reset. Patterns that compile but are slow
   to match, and bad lines in a `.gitignore` or `.dexiconignore` in the tree, are not checked.
 - When a later file of an upload batch failed with an unexpected error, the earlier files were
   attached and had no indexing job until the next scheduled refresh. The job is now queued, and the
   caller still receives the error.
 - Detaching a document while the same document is being attached no longer fails the attachment's
   save. Removing a source or a corpus during an attachment can still fail it.
+- Attaching a stored document with a blank `fileName` stored the blank as the document's path. The
+  attach endpoint now answers `400`; leaving `fileName` out keeps the name the document was uploaded
+  under.
 - `configure_source` with a folder holding a null character answers with a message naming the
   character, in place of "An error occurred".
 - The unknown search mode echoed in an error is cut to 40 characters, with line breaks shown as a

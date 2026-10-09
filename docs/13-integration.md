@@ -213,6 +213,8 @@ media type should accept both.
 | 400 | `Query is required` | None. `POST /api/search` and `POST /api/context` with a blank `query`. |
 | 400 | `Unknown search mode` | `Unknown search mode 'fuzzy'. Expected hybrid, semantic or keyword.` The value is shown on one line and cut at 40 characters, with `...` after it. `POST /api/search` and `POST /api/context`. |
 | 400 | `Invalid expiry` | `expiresInDays is from 0 to 36,500, about 100 years, and 0 or leaving it out means the key does not expire. The key was not created.` `POST /api/tokens`. |
+| 400 | `Unusable glob` | `includeGlobs[1] (include[1] for the configure tools) is null, or a pattern that does not compile, such as [z-a]. Nothing was saved.` Creating or updating a corpus's defaults, or adding or updating a source. The text differs for a history source's include list and a corpus's default include list ([04](04-ingestion.md)). |
+| 400 | `fileName is blank` | `Leave fileName out to keep the name the document was uploaded under.` `POST /api/corpora/{x}/documents/attach` with a `fileName` that is empty or only spaces. |
 | 401 | `Missing credentials` | `Provide a key: Authorization: Bearer dex_…, or sign in at / for the UI.` |
 | 401 | `Invalid credentials` | `The credential was not recognised, or it has been revoked or has expired.` |
 | 403 | `Insufficient scope` | `This key has [search] and needs 'ingest'. Whoever runs Dexicon can grant it on the Access page.` |
