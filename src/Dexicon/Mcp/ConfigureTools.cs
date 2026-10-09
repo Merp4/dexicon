@@ -275,6 +275,8 @@ public sealed class ConfigureTools
         // signature says, and a null folder canonicalises to the workspace root: a source over
         // everything mounted, which nothing here can remove.
         if (folder is null) throw new McpException("folder is required: a folder relative to the workspace root, or \"\" for the root itself.");
+        // Path.GetFullPath throws an ArgumentException on it, and the SDK shows an agent only "An error occurred".
+        if (folder.Contains('\0')) throw new McpException("folder holds a null character, which no folder name does. list_folders shows what is mounted.");
         if (gitignore == false) throw new McpException(GitignoreStaysOn);
 
         var isHistory = kind?.Trim().ToLowerInvariant() switch
@@ -315,14 +317,7 @@ public sealed class ConfigureTools
                 + ".gitignore keeps out, such as Dexicon's own .env. Pass gitignore: true to keep it on for this "
                 + "source, or ask whoever runs Dexicon to change the corpus default in the UI.");
         var workspace = opts.Value.Indexing.WorkspaceRoot;
-        string root;
-        try { root = WorkspaceDiscovery.Canonical(workspace, folder); }
-        catch (UnauthorizedAccessException)
-        {
-            // The only refusal Canonical makes. Left to propagate it reached the agent as "An error occurred".
-            throw new McpException("folder holds a null character, which no folder name does. list_folders shows what is mounted.");
-        }
-
+        var root = WorkspaceDiscovery.Canonical(workspace, folder);
         // A segment of "..", not any name starting with two dots: "..data" is a folder.
         if (root == ".." || root.StartsWith("../", StringComparison.Ordinal))
             throw new McpException($"'{folder}' is outside the workspace. list_folders shows what is mounted.");

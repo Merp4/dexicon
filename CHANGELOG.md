@@ -27,19 +27,24 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Fixed
 
-- A glob list with a null element, or a bracket class that does not compile such as `[z-a]`, was
-  stored as sent and failed every pass of every source that read it. Creating or updating a source,
-  or a corpus's defaults, now answers `400` naming the list and position (`includeGlobs[1]`) and
-  saves nothing. A list already stored that way still fails until it is edited.
+- A glob list with a null element, or a pattern that does not compile such as the bracket class
+  `[z-a]`, was stored as sent and failed every pass of every source that read it. Creating or
+  updating a corpus's defaults or a source now refuses it: `400` over the API, naming the list and
+  position (`includeGlobs[1]`), and an error from `configure_corpus` and `configure_source`. Nothing is
+  saved. A history source's include list is read by git as pathspecs, so only a null or blank element
+  is refused there. A list stored before this change still fails until it is replaced or cleared, and
+  `configure_corpus` re-sends a corpus's stored lists with each change, so it refuses an unrelated
+  change until the bad list is reset. Slow patterns and bad lines in a `.gitignore` or
+  `.dexiconignore` in the tree are not checked.
 - When a later file of an upload batch failed with an unexpected error, the earlier files were
   attached and had no indexing job until the next scheduled refresh. The job is now queued, and the
   caller still receives the error.
 - Detaching a document while the same document is being attached no longer fails the attachment's
-  save.
+  save. Removing a source or a corpus during an attachment can still fail it.
 - `configure_source` with a folder holding a null character answers with a message naming the
-  character, in place of "An error occurred". The unknown search mode echoed in a `400` has its
-  control characters replaced.
-
+  character, in place of "An error occurred".
+- The unknown search mode echoed in an error is cut to 40 characters, with line breaks shown as a
+  space and any other control character replaced by U+FFFD.
 ## 0.6.8 — 2026-10-09
 
 ### ⚠️ Upgrading

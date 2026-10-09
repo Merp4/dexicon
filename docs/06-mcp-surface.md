@@ -101,8 +101,9 @@ tool advertises.
 
 The schema carries no bounds: `limit` is clamped to 1-50 and `maxCharsPerHit` to 0-100,000
 in the tool body. `mode` is a plain string, and a value other than `hybrid`, `semantic` or
-`keyword` fails with `An error occurred invoking 'search_index'.`, because the SDK withholds
-the message of any exception that is not an `McpException`. Each name in `corpus` may be
+`keyword` fails with `An error occurred invoking 'search_index': Unknown search mode '<mode>'.
+Expected hybrid, semantic or keyword.`, with the mode on one line, cut to 40 characters, and
+any control character in it replaced. Each name in `corpus` may be
 `corpus` or `corpus:set` ([above](#naming-a-corpus-and-a-chunk-set)).
 
 `corpus` is the only array on the tools that read the index: `source`, `language`, `symbol`
@@ -329,8 +330,11 @@ The last line is left out for a key that does not hold `search`, since `index_st
 listed to it.
 
 A change that leaves every value as it was queues nothing and says so. A setting both sent
-and named in `reset`, a file setting on a history source, and a `since` that is not a
-`yyyy-MM-dd` date are refused before anything changes.
+and named in `reset`, a file setting on a history source, a `since` that is not a
+`yyyy-MM-dd` date, an `include` or `exclude` list with a null element or a pattern that does
+not compile (such as `[z-a]`), and a `folder` holding a null character are refused before
+anything changes. A corpus's defaults are sent whole, so a list already stored with such a
+pattern is refused again when only the other list is changed; `reset` clears it.
 
 ### `propose_removal`
 

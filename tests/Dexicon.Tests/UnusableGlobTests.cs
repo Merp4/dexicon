@@ -40,6 +40,17 @@ public sealed class UnusableGlobTests
         SourceFilters.FirstUnusable(null).ShouldBeNull();
     }
 
+    [Fact]
+    public void AHistorySourcesIncludeListIsOnlyHeldToNotBeingNullOrBlank()
+    {
+        // Git reads these as pathspecs, which the walk's parser never sees: a class it cannot compile is left to git,
+        // and an empty pathspec is one git rejects.
+        SourceFilters.FirstUnusable(["docs/", "[z-a]"], pathspecs: true).ShouldBeNull();
+        SourceFilters.FirstUnusable(["docs/", ""], pathspecs: true).ShouldBe(1);
+        SourceFilters.FirstUnusable(["docs/", "  "], pathspecs: true).ShouldBe(1);
+        SourceFilters.FirstUnusable(NullAmongPatterns, pathspecs: true).ShouldBe(1);
+    }
+
     /// <summary>A harness with one workspace corpus, and a context on it.</summary>
     private sealed class Seeded : IAsyncDisposable
     {
@@ -83,6 +94,7 @@ public sealed class UnusableGlobTests
 
         include.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
         include.Refusal.Detail.ShouldContain("includeGlobs[1]");
+        include.Refusal.Detail.ShouldContain("include[1] for the configure tools");
         exclude.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
         exclude.Refusal.Detail.ShouldContain("excludeGlobs[1]");
         (await s.Db.Sources.CountAsync()).ShouldBe(before, "a refused source is not saved");
@@ -100,52 +112,98 @@ public sealed class UnusableGlobTests
         added.Value!.Source.IncludeGlobs.ShouldBe(["**/*.md", "[a-c]*.txt"]);
     }
 
-    [Fact]
-    public async Task ASourceUpdatedWithAnUnusableGlobIsRefusedAndKeepsItsOwn()
+    private static CorpusDefaults DefaultsWith(string field, params string[] globs) => field == "includeGlobs"
+        ? new CorpusDefaults(null, null, globs, null)
+        : new CorpusDefaults(null, null, null, globs);
+
+    [Theory]
+    [InlineData("includeGlobs")]
+    [InlineData("excludeGlobs")]
+    public async Task ASourceUpdatedWithAnUnusableGlobIsRefusedAndKeepsItsOwn(string field)
     {
         await using var s = await Seeded.StartAsync();
         var id = IndexingHarness.SourceIdFor(0);
-        (await s.Config.UpdateSourceAsync(s.Corpus, id, new UpdateSourceRequest(IncludeGlobs: ["**/*.md"]), default))
-            .Refusal.ShouldBeNull();
+        (await s.Config.UpdateSourceAsync(s.Corpus, id, field == "includeGlobs"
+            ? new UpdateSourceRequest(IncludeGlobs: ["**/*.md"])
+            : new UpdateSourceRequest(ExcludeGlobs: ["**/*.md"]), default)).Refusal.ShouldBeNull();
 
-        var outcome = await s.Config.UpdateSourceAsync(s.Corpus, id, new UpdateSourceRequest(IncludeGlobs: ["[z-a]"]), default);
+        var outcome = await s.Config.UpdateSourceAsync(s.Corpus, id, field == "includeGlobs"
+            ? new UpdateSourceRequest(IncludeGlobs: ["[z-a]"])
+            : new UpdateSourceRequest(ExcludeGlobs: ["[z-a]"]), default);
 
         outcome.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
+        outcome.Refusal.Detail.ShouldContain($"{field}[0]");
         s.Db.ChangeTracker.Clear();
-        SourceFilters.Globs((await s.Db.Sources.AsNoTracking().FirstAsync(x => x.Id == id)).IncludeGlobs)
+        var saved = await s.Db.Sources.AsNoTracking().FirstAsync(x => x.Id == id);
+        SourceFilters.Globs(field == "includeGlobs" ? saved.IncludeGlobs : saved.ExcludeGlobs)
             .ShouldBe(["**/*.md"], "the refused list is not saved over the one the source has");
     }
 
     [Fact]
-    public async Task CorpusDefaultsWithAnUnusableGlobAreRefusedAndTheOldOnesKept()
+    public async Task AListTheRequestClearsIsNotJudged()
     {
+        // ApplyFilters stores nothing for a field named in clear, so a pattern sent beside it is not stored.
         await using var s = await Seeded.StartAsync();
-        (await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(
-            Defaults: new CorpusDefaults(null, null, ["**/*.md"], null)), default)).Refusal.ShouldBeNull();
+        var id = IndexingHarness.SourceIdFor(0);
 
-        var outcome = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(
-            Defaults: new CorpusDefaults(null, null, ["**/*.md"], ["[z-a]"])), default);
+        var outcome = await s.Config.UpdateSourceAsync(s.Corpus, id,
+            new UpdateSourceRequest(IncludeGlobs: ["[z-a]"], Clear: ["includeGlobs"]), default);
 
-        outcome.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
-        outcome.Refusal.Detail.ShouldContain("excludeGlobs[0]");
+        outcome.Refusal.ShouldBeNull();
         s.Db.ChangeTracker.Clear();
-        var saved = await s.Db.Corpora.AsNoTracking().SingleAsync();
-        SourceFilters.Globs(saved.DefaultIncludeGlobs).ShouldBe(["**/*.md"]);
-        SourceFilters.Globs(saved.DefaultExcludeGlobs).ShouldBeNull();
+        (await s.Db.Sources.AsNoTracking().FirstAsync(x => x.Id == id)).IncludeGlobs.ShouldBeNull();
     }
 
     [Fact]
-    public async Task ACorpusCreatedWithAnUnusableDefaultGlobIsRefusedAndNotCreated()
+    public async Task AHistorySourceTakesAnIncludePathspecTheWalksParserWouldRefuse()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.GitHistory);
+        await using var db = harness.NewContext();
+        var corpus = await db.Corpora.SingleAsync();
+        var config = harness.NewConfiguration(db);
+        var id = IndexingHarness.SourceIdFor(0);
+
+        (await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["[z-a]"]), default))
+            .Refusal.ShouldBeNull();
+        var blank = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["docs/", " "]), default);
+
+        blank.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
+        blank.Refusal.Detail.ShouldContain("includeGlobs[1]");
+        blank.Refusal.Detail.ShouldContain("pathspec");
+    }
+
+    [Theory]
+    [InlineData("includeGlobs")]
+    [InlineData("excludeGlobs")]
+    public async Task CorpusDefaultsWithAnUnusableGlobAreRefusedAndTheOldOnesKept(string field)
+    {
+        await using var s = await Seeded.StartAsync();
+        (await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith(field, "**/*.md")), default))
+            .Refusal.ShouldBeNull();
+
+        var outcome = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith(field, "[z-a]")), default);
+
+        outcome.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
+        outcome.Refusal.Detail.ShouldContain($"{field}[0]");
+        s.Db.ChangeTracker.Clear();
+        var saved = await s.Db.Corpora.AsNoTracking().SingleAsync();
+        SourceFilters.Globs(field == "includeGlobs" ? saved.DefaultIncludeGlobs : saved.DefaultExcludeGlobs).ShouldBe(["**/*.md"]);
+    }
+
+    [Theory]
+    [InlineData("includeGlobs")]
+    [InlineData("excludeGlobs")]
+    public async Task ACorpusCreatedWithAnUnusableDefaultGlobIsRefusedAndNotCreated(string field)
     {
         await using var harness = await IndexingHarness.StartAsync("notes");
         await using var db = harness.NewContext();
 
         var outcome = await harness.NewConfiguration(db).CreateCorpusAsync(
-            new CreateCorpusRequest("papers"), default,
-            defaults: new CorpusDefaults(null, null, NullAmongPatterns, null));
+            new CreateCorpusRequest("papers"), default, defaults: DefaultsWith(field, "**/*.md", null!));
 
         outcome.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
-        outcome.Refusal.Detail.ShouldContain("includeGlobs[1]");
+        outcome.Refusal.Detail.ShouldContain($"{field}[1]");
         (await db.Corpora.AnyAsync(c => c.Name == "papers")).ShouldBeFalse();
     }
 }

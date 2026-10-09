@@ -224,13 +224,6 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public void CanonicalRefusesANullCharacterAsResolveDoes()
-    {
-        Should.Throw<UnauthorizedAccessException>(() => WorkspaceDiscovery.Canonical(Workspace, "a\0b"));
-        Should.Throw<UnauthorizedAccessException>(() => WorkspaceDiscovery.Resolve(Workspace, "a\0b"));
-    }
-
-    [Fact]
     public void ABackslashIsASeparatorOnlyWhereTheOperatingSystemSaysSo()
     {
         // On Linux "x\\..\\notes" is one odd name. Read as x/../notes it skipped the duplicate check,

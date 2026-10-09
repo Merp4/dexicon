@@ -369,7 +369,9 @@ public sealed class CorpusConfiguration(
             return new ConfigRefusal("Invalid size cap",
                 "maxFileBytes must be greater than zero, or omitted to follow the corpus.", 400);
 
-        if (CorpusEndpoints.UnusableGlobs(body.IncludeGlobs, body.ExcludeGlobs) is { } badGlob) return badGlob;
+        if (CorpusEndpoints.UnusableGlobs(body.IncludeGlobs, body.ExcludeGlobs, includeIsPathspec: body.GitHistory)
+            is { } badGlob)
+            return badGlob;
 
         if (body.GitHistory && CorpusEndpoints.UnusableHistorySettings(body.Git) is { } refused) return refused;
 
@@ -478,7 +480,12 @@ public sealed class CorpusConfiguration(
                 + "and never read. Include globs work there, as pathspecs.",
                 400);
 
-        if (CorpusEndpoints.UnusableGlobs(body.IncludeGlobs, body.ExcludeGlobs) is { } badGlob) return badGlob;
+        // A list the request clears is not stored, so it is not judged.
+        bool Cleared(string field) => body.Clear?.Contains(field, StringComparer.OrdinalIgnoreCase) == true;
+        if (CorpusEndpoints.UnusableGlobs(
+                Cleared("includeGlobs") ? null : body.IncludeGlobs, Cleared("excludeGlobs") ? null : body.ExcludeGlobs,
+                includeIsPathspec: source.Kind == SourceKind.GitHistory) is { } badGlob)
+            return badGlob;
 
         if (CorpusEndpoints.UnusableHistorySettings(body.Git) is { } refused) return refused;
 

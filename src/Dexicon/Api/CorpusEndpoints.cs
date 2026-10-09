@@ -492,23 +492,36 @@ public static class CorpusEndpoints
             : null;
 
     /// <summary>
-    /// A glob list the walk cannot read, refused where it arrives. Stored as sent it failed every pass of
+    /// A glob list that cannot be used, refused where it arrives. Stored as sent it failed every pass of
     /// every source that read it, with the reason in a job and the request answered 200. The position is
     /// named and the pattern is not echoed, because the text is the caller's and the message is logged.
+    /// <paramref name="includeIsPathspec"/> is for a history source, whose include list git reads as
+    /// pathspecs (<see cref="SourceFilters.FirstUnusable"/>). The configure tools name the same lists
+    /// <c>include</c> and <c>exclude</c>, so the message gives both.
     /// </summary>
-    internal static ConfigRefusal? UnusableGlobs(IReadOnlyList<string>? include, IReadOnlyList<string>? exclude)
+    internal static ConfigRefusal? UnusableGlobs(
+        IReadOnlyList<string>? include, IReadOnlyList<string>? exclude, bool includeIsPathspec = false)
     {
-        foreach (var (field, globs) in new[] { ("includeGlobs", include), ("excludeGlobs", exclude) })
-            if (SourceFilters.FirstUnusable(globs) is { } at)
-                return new ConfigRefusal(
-                    "Unusable glob",
-                    $"{field}[{at}] is not a pattern the walk can read: it is null, or has a character class "
-                    + "that does not compile, such as [z-a]. Nothing was saved.",
-                    400);
+        foreach (var (field, argument, globs, pathspecs) in new (string, string, IReadOnlyList<string>?, bool)[]
+                 {
+                     ("includeGlobs", "include", include, includeIsPathspec),
+                     ("excludeGlobs", "exclude", exclude, false),
+                 })
+        {
+            if (SourceFilters.FirstUnusable(globs, pathspecs) is not { } at) continue;
+
+            var why = pathspecs
+                ? "a null or blank pathspec, which git rejects"
+                : "null, or a pattern that does not compile, such as [z-a]";
+            return new ConfigRefusal(
+                "Unusable glob",
+                $"{field}[{at}] ({argument}[{at}] for the configure tools) is {why}. Nothing was saved. "
+                + "Send a corrected list, or clear it to follow the default.",
+                400);
+        }
 
         return null;
     }
-
     /// <summary>
     /// Stores a history source's settings when they differ from what it has, and says
     /// whether they did.

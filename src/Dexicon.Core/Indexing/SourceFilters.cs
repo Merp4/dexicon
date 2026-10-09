@@ -84,18 +84,22 @@ public static class SourceFilters
         globs is null ? null : JsonSerializer.Serialize(globs);
 
     /// <summary>
-    /// The position of the first pattern in <paramref name="globs"/> that the walk cannot read, or null
-    /// when it can read them all. A null element, or a character class that does not compile such as
-    /// <c>[z-a]</c>, was stored as sent and threw from <see cref="IgnoreRuleSet.AddPatterns"/> on every
-    /// pass of every source that read the list. Read by the walk's own parser, so the two cannot differ.
+    /// The position of the first element of <paramref name="globs"/> that cannot be used, or null when all
+    /// can. A file source reads its lists with <see cref="IgnoreRuleSet.AddPatterns"/>, so a null element,
+    /// or a pattern that does not compile such as <c>[z-a]</c>, is refused here by the same parser. A
+    /// history source passes its include list to git as pathspecs, which that parser never reads; for
+    /// those (<paramref name="pathspecs"/>) only a null or blank element is refused, because git rejects
+    /// an empty pathspec, and anything else is left to git. The check is of syntax: a pattern that
+    /// compiles but backtracks without limit when matched passes it.
     /// </summary>
-    public static int? FirstUnusable(IReadOnlyList<string>? globs)
+    public static int? FirstUnusable(IReadOnlyList<string>? globs, bool pathspecs = false)
     {
         if (globs is null) return null;
 
         for (var i = 0; i < globs.Count; i++)
         {
-            if (globs[i] is null) return i;
+            if (globs[i] is null || (pathspecs && string.IsNullOrWhiteSpace(globs[i]))) return i;
+            if (pathspecs) continue;
 
             try { new IgnoreRuleSet().AddPatterns([globs[i]], "check"); }
             catch (ArgumentException) { return i; }

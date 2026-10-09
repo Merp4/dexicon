@@ -104,28 +104,14 @@ public static class WorkspaceDiscovery
     /// the same folder.
     ///
     /// Lexical and checks nothing, so a caller about to store the result resolves the path
-    /// first; one outside the workspace comes back starting <c>..</c>. The one refusal is a null
-    /// character, which <c>Path.GetFullPath</c> cannot take.
+    /// first; one outside the workspace comes back starting <c>..</c>.
     /// </summary>
-    /// <exception cref="UnauthorizedAccessException">The path holds a null character.</exception>
     public static string Canonical(string workspaceRoot, string? relative)
     {
-        RefuseNullCharacter(relative);
-
         var root = Path.GetFullPath(workspaceRoot);
         var full = Path.GetFullPath(Path.Combine(root, relative ?? string.Empty));
         var canonical = Forward(Path.GetRelativePath(root, full)).Trim('/');
         return canonical == "." ? string.Empty : canonical;
-    }
-
-    /// <summary>
-    /// <c>Path.GetFullPath</c> throws ArgumentException on a null character, which no caller catches. The
-    /// refusal is the one every other rejection of a path in this class is.
-    /// </summary>
-    private static void RefuseNullCharacter(string? relative)
-    {
-        if (relative is not null && relative.Contains('\0'))
-            throw new UnauthorizedAccessException("Workspace path holds a null character and was refused.");
     }
 
     /// <summary>
@@ -202,7 +188,9 @@ public static class WorkspaceDiscovery
     /// </summary>
     private static string Contained(string root, string workspaceRoot, string? relative)
     {
-        RefuseNullCharacter(relative);
+        // GetFullPath throws ArgumentException on a null character, which no caller catches.
+        if (relative is not null && relative.Contains('\0'))
+            throw new UnauthorizedAccessException("Workspace path holds a null character and was refused.");
 
         var combined = Path.GetFullPath(Path.Combine(root, relative ?? string.Empty));
 

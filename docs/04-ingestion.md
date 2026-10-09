@@ -98,9 +98,12 @@ ancestor is excluded. Deliberate, and the case it came from is real: a repositor
 excludes `data/` and keeps `data/sessions/` while the bulk of the tree is a sibling. It is
 also what makes `!.vscode/launch.json` work against the always-exclude list.
 
-A pattern the walk cannot read is refused when the list is sent. A null element, or a bracket
-class that does not compile such as `[z-a]`, answers `400` naming the list and the position
-(`includeGlobs[1]`) and saves nothing. That holds for a source's lists and for a corpus's defaults.
+A glob list sent through the API or the configure tools is refused when it holds a null element or
+a pattern that does not compile, such as the bracket class `[z-a]`. The answer is `400`, naming the
+list and the position (`includeGlobs[1]`), and nothing is saved. That holds for a source's lists and
+for a corpus's defaults. A history source's include list is read by git as pathspecs, so only a null
+or blank element is refused there. The check is of syntax: a pattern that compiles but is slow to
+match passes it, and the lines of a `.gitignore` or `.dexiconignore` in the tree are not checked.
 
 Worktrees are the case that prompted `2`. Reported against a checkout with four of them:
 22,004 files walked to 5,463 tracked ones, and search returning the same document at two

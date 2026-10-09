@@ -496,6 +496,22 @@ public sealed class DocumentUploadEndpointTests
     }
 
     [Fact]
+    public async Task AFailureQueuingTheJobAfterAFailedBatchDoesNotHideTheFirstFailure()
+    {
+        // The catalogue refuses the job as well. The caller is told what went wrong with the batch.
+        var watcher = new FailOnInsert("jobs", 1);
+        await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        var body = new MultipartBody().File("files", "first.txt", 100, 'a').File("files", "second.txt", 20_000, 'b');
+
+        var thrown = await Should.ThrowAsync<IOException>(
+            () => PostAsync(harness, body, wrap: s => new FailingAfter(s, 1_000)));
+
+        watcher.Fired.ShouldBeTrue("the window has to have been opened");
+        thrown.Message.ShouldBe("the disk is full");
+    }
+
+    [Fact]
     public async Task AFileWhoseAttachmentFailedIsNotSavedWithTheJobOfTheFilesBeforeIt()
     {
         // The second file's save fails and leaves its rows tracked on the context the job is queued
