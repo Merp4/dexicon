@@ -31,15 +31,20 @@ public sealed class EchoSiteTests : IAsyncLifetime
 
     private IndexingHarness _harness = null!;
 
-    public static TheoryData<string> Sites => new()
+    /// <summary>
+    /// The site, and the longest message it may show. A caller's value is cut at 200 characters where it is
+    /// repeated, so those sites stay short. The first quotes a stored name through the service's own message,
+    /// which only the refusal holder cuts, at 4,000.
+    /// </summary>
+    public static TheoryData<string, int> Sites => new()
     {
-        "configure_corpus: a refusal from the service names a stored corpus",
-        "configure_corpus: the failure after the corpus is saved",
-        "search_index: the resolver refuses the corpus",
-        "get_context: the document has no such line",
-        "get_context: the file has no content around the line",
-        "file resource: the file is not indexed",
-        "propose_removal: the service refuses the target",
+        { "configure_corpus: a refusal from the service names a stored corpus", DexiconTools.MessageMax + 100 },
+        { "configure_corpus: the failure after the corpus is saved", 1_200 },
+        { "search_index: the resolver refuses the corpus", 1_200 },
+        { "get_context: the document has no such line", 1_200 },
+        { "get_context: the file has no content around the line", 1_200 },
+        { "file resource: the file is not indexed", 1_200 },
+        { "propose_removal: the service refuses the target", 1_200 },
     };
 
     public async Task InitializeAsync()
@@ -138,14 +143,14 @@ public sealed class EchoSiteTests : IAsyncLifetime
 
     [Theory]
     [MemberData(nameof(Sites))]
-    public async Task EachSiteShowsAHostileValueOnOneLineAndCut(string site)
+    public async Task EachSiteShowsAHostileValueOnOneLineAndCut(string site, int longest)
     {
         var thrown = await ThrownAtAsync(site);
 
         thrown.Message.Any(c => char.IsControl(c) || c is (char)0x2028 or (char)0x2029)
             .ShouldBeFalse("a line break or an escape sequence would begin a line of its own");
         thrown.Message.ShouldContain("bad", Case.Sensitive, "the start of the value still says what was refused");
-        thrown.Message.Length.ShouldBeLessThan(DexiconTools.MessageMax + 100, "the 5,000 characters sent are not all repeated");
+        thrown.Message.Length.ShouldBeLessThan(longest, "the 5,000 characters sent are not all repeated");
         thrown.Message.ShouldNotContain(new string('z', 4_500));
     }
 
