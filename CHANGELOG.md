@@ -25,6 +25,21 @@ with no section here fails its release rather than publishing an undescribed one
   out). The tools are unchanged. Running `scripts/install-mcp.ps1` again upgrades installed
   copies. The hooks are unchanged.
 
+### Fixed
+
+- A glob list with a null element, or a bracket class that does not compile such as `[z-a]`, was
+  stored as sent and failed every pass of every source that read it. Creating or updating a source,
+  or a corpus's defaults, now answers `400` naming the list and position (`includeGlobs[1]`) and
+  saves nothing. A list already stored that way still fails until it is edited.
+- When a later file of an upload batch failed with an unexpected error, the earlier files were
+  attached and had no indexing job until the next scheduled refresh. The job is now queued, and the
+  caller still receives the error.
+- Detaching a document while the same document is being attached no longer fails the attachment's
+  save.
+- `configure_source` with a folder holding a null character answers with a message naming the
+  character, in place of "An error occurred". The unknown search mode echoed in a `400` has its
+  control characters replaced.
+
 ## 0.6.8 — 2026-10-09
 
 ### ⚠️ Upgrading
