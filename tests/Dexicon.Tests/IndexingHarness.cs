@@ -164,7 +164,7 @@ internal sealed class IndexingHarness : IAsyncDisposable
     /// share the context, which is what lets a decision and the removal it names be one save.
     /// </summary>
     public Dexicon.Api.ProposalService NewProposals(CatalogDbContext db) =>
-        new(db, NewConfiguration(db), new Dexicon.Infrastructure.VectorStoreCleanup(db, Vectors),
+        new(db, NewConfiguration(db), new Dexicon.Infrastructure.VectorStoreCleanup(db, Vectors, NullLogger<Dexicon.Infrastructure.VectorStoreCleanup>.Instance),
             NewDocumentService(db), Settings, TimeProvider.System,
             NullLogger<Dexicon.Api.ProposalService>.Instance);
 
@@ -458,6 +458,12 @@ internal sealed class IndexingHarness : IAsyncDisposable
         /// </summary>
         public Func<Task>? OnDeleteAsync { get; set; }
 
+        /// <summary>
+        /// Runs after a file's points are deleted and before the delete returns. A test acts here to be
+        /// in the window between the vectors going and whatever the caller does next.
+        /// </summary>
+        public Func<Task>? AfterFileDeleteAsync { get; set; }
+
         public Task<IReadOnlyDictionary<string, int>?> CountByFileAsync(string collection,
             string chunkSetId, string sourceId, CancellationToken ct = default)
         {
@@ -516,6 +522,8 @@ internal sealed class IndexingHarness : IAsyncDisposable
             _points.RemoveAll(p => p.ChunkSetId == chunkSetId
                                 && p.SourceId == sourceId
                                 && p.FilePath == filePath);
+
+            if (AfterFileDeleteAsync is not null) await AfterFileDeleteAsync();
         }
 
         /// <summary>

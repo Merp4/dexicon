@@ -221,6 +221,15 @@ Removing the upload source itself (`DELETE /api/corpora/{name}/sources/{id}`, or
 button beside it in the corpus's source list) detaches every document attached to the corpus in
 the same way, and the next attachment creates the source again.
 
+Attaching, detaching and removing a source or a corpus take one lock in the process, each for its
+catalogue lookup and write and not across a vector-store call, so they do not interleave. A detach
+deletes the document's vectors, then its row, then the vectors again for the file the row held, because
+an attachment or a pass can have changed the file's name or written vectors in between. An indexing
+pass does not take the lock. A document detached while a pass runs is dropped from the pass's next
+save and the vectors the pass wrote for it are deleted; if that delete fails the pass still succeeds,
+and the next pass of the source deletes points whose path no row names. Dexicon is one process owning
+its catalogue file (D-01); a second process writing the file is not covered.
+
 Limits: 200 MB per file (`DEXICON__UPLOAD__MAXFILEBYTES`), applied while the file is read
 off the wire. The endpoint reads the multipart body with a `MultipartReader` and hands each
 file straight to the blob store, which copies it under a cap and stops one byte over, so

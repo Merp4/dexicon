@@ -20,6 +20,9 @@ public sealed record StoredDocument(
     bool AlreadyExisted,
     string? EmptyReason);
 
+/// <summary>An uploaded document's file row as it was when a detach deleted it.</summary>
+public sealed record DetachedFile(string SourceId, string RelativePath);
+
 /// <summary>
 /// Uploaded documents, stored once and chunked many times.
 ///
@@ -466,7 +469,15 @@ public sealed class DocumentService(
     /// Detach an uploaded document from one corpus. The blob survives, since other corpora may still
     /// use it. A file a source read from a folder or a commit is not a document and is not detached.
     /// </summary>
-    public async Task<bool> DetachAsync(string corpusId, string fileId, CancellationToken ct = default)
+    public async Task<bool> DetachAsync(string corpusId, string fileId, CancellationToken ct = default) =>
+        await DetachFileAsync(corpusId, fileId, ct) is not null;
+
+    /// <summary>
+    /// <see cref="DetachAsync"/>, answering with the file as it was when its row was deleted: an attachment
+    /// can have renamed or replaced it since the caller last read it, and the name here is the one a pass
+    /// may have written vectors under. Null when there was no such file.
+    /// </summary>
+    public async Task<DetachedFile?> DetachFileAsync(string corpusId, string fileId, CancellationToken ct = default)
     {
         // Under the lock attaching holds: an attachment that found this file and was about to rename or
         // replace it saved against a row the detach had deleted, and the save failed on it.
@@ -477,10 +488,16 @@ public sealed class DocumentService(
                 .FirstOrDefaultAsync(f => f.Id == fileId && f.Source!.CorpusId == corpusId
                                           && f.Source.Kind == SourceKind.Upload, ct);
 
-            if (file is null) return false;
+            if (file is null) return null;
+
+            // Read again outside the tracker. A caller that read this row earlier on the same context holds
+            // it with the name it had then, and the query above returns that instance as it is.
+            var current = await db.Files.AsNoTracking().Where(f => f.Id == fileId)
+                .Select(f => new DetachedFile(f.SourceId, f.RelativePath)).SingleAsync(ct);
+
             db.Files.Remove(file);
             await db.SaveChangesAsync(ct);
-            return true;
+            return current;
         }
         finally { Attaching.Release(); }
     }

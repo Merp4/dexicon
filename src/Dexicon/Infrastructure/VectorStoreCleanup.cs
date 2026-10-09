@@ -11,7 +11,8 @@ namespace Dexicon.Infrastructure;
 /// cached extraction survive, because another corpus may still hold the same document
 /// chunked its own way, which is the point of separating bytes from chunking.
 /// </summary>
-public sealed class VectorStoreCleanup(CatalogDbContext db, IVectorStore vectors) : IVectorStoreCleanup
+public sealed class VectorStoreCleanup(CatalogDbContext db, IVectorStore vectors, ILogger<VectorStoreCleanup> log)
+    : IVectorStoreCleanup
 {
     public async Task<bool> RemoveAttachmentAsync(Corpus corpus, string fileId, DocumentService documents,
         CancellationToken ct)
@@ -34,6 +35,29 @@ public sealed class VectorStoreCleanup(CatalogDbContext db, IVectorStore vectors
         foreach (var set in sets)
             await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, file.SourceId, file.RelativePath, ct);
 
-        return await documents.DetachAsync(corpus.Id, fileId, ct);
+        var detached = await documents.DetachFileAsync(corpus.Id, fileId, ct);
+        if (detached is null) return false;
+
+        // And again, for the file the detach deleted. An attachment can have renamed or replaced the
+        // document since it was read above, and a pass can have written vectors for it since they were
+        // deleted: nothing names those points once the row is gone, and search returns them until a later
+        // pass removes points for a path no row names. Not cancellable and not fatal: the row is deleted,
+        // and a failure here is left to that pass.
+        foreach (var set in sets)
+        {
+            try
+            {
+                await vectors.DeleteFileChunksAsync(
+                    set.CollectionName, set.Id, detached.SourceId, detached.RelativePath, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                log.LogWarning(ex,
+                    "Could not delete the points written for {File} in set {Set} while it was detached; "
+                    + "a later pass removes them", detached.RelativePath, set.Name);
+            }
+        }
+
+        return true;
     }
 }
