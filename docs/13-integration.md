@@ -209,7 +209,7 @@ media type should accept both.
 
 | Status | `title` | `detail` |
 |---|---|---|
-| 400 | `Unknown or unreadable corpus` | The message, for example `Unknown corpus 'x'. Corpora this key can reach: a, b.` A name the request sent is shown up to 200 characters, then `...`, and only the first three of the unknown names are quoted, then `(and N more)`. A list of corpora names up to 1,500 characters and ends at a whole name with `(and N more)`. |
+| 400 | `Unknown or unreadable corpus` | The message, for example `Unknown corpus 'x'. Corpora this key can reach: a, b.` A name the request sent is shown up to 200 characters, then `...`, and only the first three of the unknown names are quoted, then `(and N more)`. A list of corpora is written up to 1,500 characters, ends at a whole name, and is followed by `(and N more)` when names were left out. |
 | 400 | `Query is required` | None. `POST /api/search` and `POST /api/context` with a blank `query`. |
 | 400 | `Unknown search mode` | `Unknown search mode 'fuzzy'. Expected hybrid, semantic or keyword.` The value is shown on one line and cut at 40 characters, with `...` after it. `POST /api/search` and `POST /api/context`. |
 | 400 | `Invalid expiry` | `expiresInDays is from 0 to 36,500, about 100 years, and 0 or leaving it out means the key does not expire. The key was not created.` `POST /api/tokens`. |

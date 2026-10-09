@@ -655,8 +655,10 @@ public sealed class DexiconTools
     internal static string Echo(string? value, int max = EchoMax) => LogText.Echo(value, max);
 
     /// <summary>
-    /// A refusal whose message was composed elsewhere (a resolver or <see cref="CorpusConfiguration"/>),
-    /// which can quote what the caller sent, so it is held to one line and to <see cref="MessageMax"/>.
+    /// A refusal whose message was composed elsewhere: by <see cref="ScopeResolver"/> (read and write scope),
+    /// by <see cref="CorpusConfiguration"/> and by <see cref="Dexicon.Api.ProposalService"/> (their refusals), or
+    /// by a tool from one of those and a hint. Each can quote what the caller sent, so the message is held to one
+    /// line and to <see cref="MessageMax"/>.
     /// </summary>
     internal static McpException Refusal(string message) => new(Echo(message, MessageMax));
 

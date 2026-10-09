@@ -348,8 +348,10 @@ public static class SystemEndpoints
     }
 
     /// <summary>
-    /// A stored measurement as the models list shows it. A row measured before the recommendation was held
-    /// to the range a set accepts can still hold more than 8192 tokens, and the dialogs offer it.
+    /// A stored measurement as the models list shows it, with the recommended chunk size held to the range a
+    /// chunk set accepts (<see cref="CodeChunker.WithinChunkRange"/>). A row measured before that clamp
+    /// existed can hold more than 8192 tokens. The stored value is not rewritten, and this mapping clamps it
+    /// each time the list is read.
     /// </summary>
     internal static ModelMeasurement? MeasurementOf(EmbeddingModelMeasurement? facts) =>
         facts is null
