@@ -161,7 +161,8 @@ public sealed class IndexingOptions
     /// running.
     ///
     /// WHAT IT DOES NOT COVER. The clock is read between operations on the file, so this
-    /// bounds a file that keeps reading, not wall-clock time in extraction. A single read
+    /// bounds a file that keeps reading, and the parse of HTML, which the clock cancels, but not
+    /// wall-clock time in the other readers. A single read
     /// that never returns, or a long stretch of computation inside the library between
     /// two reads, passes unchecked. Both are out of reach from here for the same reason
     /// the budget exists: there is no cancellation to hook and no safe way to stop a
