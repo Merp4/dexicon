@@ -237,7 +237,17 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     {
         var ex = await Should.ThrowAsync<ArgumentException>(
             () => _documents.StoreAsync(new MemoryStream([]), "empty.txt"));
-        ex.Message.ShouldContain("empty");
+        ex.Message.ShouldBe("'empty.txt' is empty.", "the message is shown to whoever sent the file, with no argument name");
+        ex.ParamName.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ABlankFileNameIsRejectedWithAReasonThatNamesNoArgument()
+    {
+        var ex = await Should.ThrowAsync<ArgumentException>(
+            () => _documents.StoreAsync(new MemoryStream("some text"u8.ToArray()), " "));
+        ex.Message.ShouldBe("A file name is required.");
+        ex.ParamName.ShouldBeNull();
     }
 
     [Fact]

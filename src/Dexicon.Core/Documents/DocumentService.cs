@@ -67,7 +67,7 @@ public sealed class DocumentService(
     public async Task<StoredDocument> StoreAsync(Stream content, string fileName, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(fileName))
-            throw new ArgumentException("A file name is required.", nameof(fileName));
+            throw new ArgumentException("A file name is required.");
 
         // Buffer to a temp file rather than memory: a 200 MB upload should not be a
         // 200 MB allocation, and the hash is only known after the whole stream is read.
@@ -84,7 +84,8 @@ public sealed class DocumentService(
                 size = await CopyCappedAsync(content, fs, _upload.MaxFileBytes, fileName, ct);
             }
 
-            if (size == 0) throw new ArgumentException($"'{fileName}' is empty.", nameof(content));
+            // No paramName on either: the upload endpoint lists these messages for whoever sent the file.
+            if (size == 0) throw new ArgumentException($"'{fileName}' is empty.");
 
             await using (var fs = File.OpenRead(temp))
                 sha = Convert.ToHexStringLower(await SHA256.HashDataAsync(fs, ct));
