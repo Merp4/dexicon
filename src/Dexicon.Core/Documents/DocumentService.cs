@@ -158,10 +158,36 @@ public sealed class DocumentService(
             CreatedUtc = DateTime.UtcNow,
         };
 
-        // Extracted before either row is added to the context. A timeout leaves nothing tracked, so the
-        // save of the next file's attachment, or the one that queues the job, cannot write a blob
-        // that has no text. The bytes stay in the blob store, and a later upload of them extracts again.
-        var text = await ExtractAsync(sha, fileName, ct);
+        // Extracted before either row is added to the context. A timeout, or another failure that is not
+        // a verdict on the bytes, leaves nothing tracked, so the save of the next file's attachment, or
+        // the one that queues the job, cannot write a blob that has no text. No document record is
+        // created: the bytes stay in the blob store, which a concurrent upload of the same bytes may
+        // be relying on, and a later upload of them extracts again.
+        BlobText text;
+        try
+        {
+            text = await ExtractAsync(sha, fileName, ct);
+        }
+        catch (ExtractionFailedException ex)
+        {
+            // The same bytes were uploaded at the same moment and the other upload saved its blob while
+            // this one was extracting. This upload reports that blob and is not told to send the file again.
+            // Not cancellable, as for the duplicate key below: the read only decides the reply.
+            if (await ExistingAsync(sha, fileName, CancellationToken.None) is not { } saved)
+            {
+                log.LogWarning(ex, "Extraction of uploaded '{File}' {Outcome}; no document record was created",
+                    fileName,
+                    ex is ExtractionTimeoutException
+                        ? $"did not finish within {_indexing.ExtractionTimeoutSeconds} s"
+                        : "failed for a reason that is not a verdict on the file");
+                throw;
+            }
+
+            log.LogInformation("Upload '{File}' of {Sha} was saved by another upload while this one failed to extract it",
+                fileName, sha[..12]);
+            return saved;
+        }
+
         db.Blobs.Add(blob);
         db.BlobTexts.Add(text);
         try
@@ -279,7 +305,7 @@ public sealed class DocumentService(
                     extracted = extractor.Extract(deadline, fileName);
 
                     // An extractor that caught the timeout and went on has read part of the file.
-                    if (deadline.Expired) throw TimedOut(fileName, timeoutSeconds, null);
+                    if (deadline.Expired) throw deadline.TimedOut();
                 }
                 else
                 {
@@ -321,9 +347,14 @@ public sealed class DocumentService(
         catch (ExtractionFailedException ex) when (ex is ExtractionTimeoutException || deadline is { Expired: true })
         {
             if (ex is ExtractionTimeoutException) throw;
-            throw TimedOut(fileName, _indexing.ExtractionTimeoutSeconds, ex);
+            throw deadline!.TimedOut(ex);
         }
-        catch (ExtractionFailedException ex)
+        // Only the verdict on the bytes is recorded: a file that is encrypted or corrupt reads the same
+        // way every time, so the row says why it is empty. Every other ExtractionFailedException
+        // (ExtractionFailures.Of makes one of an I/O error, a refused permission or a shortage of
+        // memory) says how the host was when it ran, so it reaches the caller as a timeout does and
+        // nothing is stored or replaced.
+        catch (UnreadableDocumentException ex)
         {
             // Recorded rather than thrown away: the blob exists, so the UI can show it
             // as failed with a reason instead of the upload appearing to have worked.
@@ -340,9 +371,6 @@ public sealed class DocumentService(
             };
         }
     }
-
-    private static ExtractionTimeoutException TimedOut(string fileName, int seconds, Exception? cause) =>
-        new($"Extraction of '{fileName}' did not finish within {seconds} s.", cause);
 
     /// <summary>
     /// Attach a stored document to a corpus. The SAME blob may be attached to any number
@@ -529,8 +557,17 @@ public sealed class DocumentService(
     /// extractor or no longer reads back as long as it was written. Called on the indexing
     /// path, so an extractor fix reaches a library that was ingested before it without
     /// anyone re-uploading anything.
+    ///
+    /// A re-extraction that fails for a reason that is not a verdict on the bytes (a timeout, an I/O
+    /// error, a shortage of memory) leaves the row as it was and returns it, so a later pass tries again.
     /// </summary>
-    public async Task<BlobText?> CurrentTextFor(string sha256, string fileName, CancellationToken ct = default)
+    /// <param name="failedThisPass">
+    /// Hashes whose re-extraction has failed in this pass. The indexer calls this once per chunk set for
+    /// every attachment, so a slow document would cost its whole time budget once per set. A hash that
+    /// fails is added here, and one already here is not extracted again.
+    /// </param>
+    public async Task<BlobText?> CurrentTextFor(string sha256, string fileName,
+        ISet<string>? failedThisPass = null, CancellationToken ct = default)
     {
         // Check the version alone before loading anything. Extracted text runs to
         // hundreds of thousands of characters, and the usual answer is "already current"
@@ -564,19 +601,23 @@ public sealed class DocumentService(
             return cached;
         }
 
+        // Already failed in this pass, for another chunk set: the cost of a slow document is paid once.
+        if (failedThisPass?.Contains(sha256) == true) return cached;
+
         BlobText fresh;
         try
         {
             fresh = await ExtractAsync(sha256, fileName, ct);
         }
-        catch (ExtractionTimeoutException ex)
+        catch (ExtractionFailedException ex)
         {
-            // How long it took says how busy the host was, not what the document holds. The row stays as
-            // it was, version included, so a later pass extracts again, and the caller carries on with
-            // the text it had.
+            // A timeout, or an I/O error or a shortage of memory, says how the host was and not what the
+            // document holds. The row stays as it was, version included, so a later pass extracts again,
+            // and the caller carries on with the text it had.
+            failedThisPass?.Add(sha256);
             log.LogWarning(ex,
-                "Re-extraction of {File} ({Sha}) timed out; keeping the cached v{Version} text and trying again on a later pass",
-                fileName, sha256[..12], cached.ExtractorVersion);
+                "Re-extraction of {File} ({Sha}) {Outcome}; keeping the cached v{Version} text and trying again on a later pass",
+                fileName, sha256[..12], ex is ExtractionTimeoutException ? "timed out" : "failed", cached.ExtractorVersion);
             return cached;
         }
 

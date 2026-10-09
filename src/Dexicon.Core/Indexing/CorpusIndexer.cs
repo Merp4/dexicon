@@ -67,6 +67,10 @@ public sealed class CorpusIndexer(
     // and how current the ref is has one answer per pass.
     private readonly HashSet<string> _tracked = new(StringComparer.Ordinal);
 
+    // Blobs whose re-extraction failed in this pass. A job indexes an upload source once per chunk
+    // set, and a document that times out would otherwise cost the whole budget once per set.
+    private readonly HashSet<string> _reextractionFailed = new(StringComparer.Ordinal);
+
     /// <summary>How a history source's tracking is read. Replaced in tests, to make it fail.</summary>
     internal Func<GitRepository, string, DateTime, CancellationToken, Task<GitTracking>> ReadTracking { get; init; }
         = GitHistory.TrackingAsync;
@@ -90,6 +94,7 @@ public sealed class CorpusIndexer(
         _reasons.Clear();
         _unreachable = false;
         _tracked.Clear();
+        _reextractionFailed.Clear();
 
         // A source this pass could not reach: a mount that is away, a folder with no
         // repository in it. Not a failure of the job and not a success either.
@@ -389,7 +394,8 @@ public sealed class CorpusIndexer(
             {
                 // Re-extracts first if this text came from an older extractor, so a fix
                 // reaches documents that were ingested before it.
-                var cached = await documents.CurrentTextFor(file.BlobSha256!, file.RelativePath, ct);
+                var cached = await documents.CurrentTextFor(
+                    file.BlobSha256!, file.RelativePath, _reextractionFailed, ct);
                 var state = states[file.Id];
 
                 if (cached is null)

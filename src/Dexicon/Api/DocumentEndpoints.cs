@@ -75,8 +75,9 @@ public static class DocumentEndpoints
     /// wire into <see cref="DocumentService.StoreAsync"/>, which holds it to
     /// <see cref="UploadOptions.MaxFileBytes"/> as the bytes arrive. Nothing is spooled to a temp
     /// file first, which on the container's tmpfs would be memory. The request as a whole is held
-    /// to <see cref="UploadOptions.MaxRequestBytes"/>, and to <see cref="UploadOptions.BatchFiles"/>
-    /// file parts: the next one is reported as a failure of the request and not read.
+    /// to <see cref="UploadOptions.MaxRequestBytes"/>, to <see cref="UploadOptions.BatchFiles"/> file
+    /// parts and to <see cref="UploadOptions.MaxSections"/> sections, form fields included: the next
+    /// part past either count is reported as a failure of the request and not read.
     /// </summary>
     [SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", MessageId = "ReadNextSectionAsync",
         Justification = ReadsTheNextFileOnTheRequest)]
@@ -178,12 +179,18 @@ public static class DocumentEndpoints
                     // One bad file in a batch must not lose the good ones.
                     failures.Add(new UploadFailure(fileName, ex.Message));
                 }
-                // Its own catch: a timeout is neither an ArgumentException nor a failure that ends the
-                // batch. StoreAsync has added nothing to the context, so there is nothing to discard.
+                // Their own catches: a timeout, or another extraction failure that is not a verdict on the
+                // bytes, is neither an ArgumentException nor a failure that ends the batch. StoreAsync has
+                // logged it and added nothing to the context, so there is nothing to discard. The timeout
+                // is first because it is the subtype.
                 catch (ExtractionTimeoutException)
                 {
                     failures.Add(new UploadFailure(
                         fileName, ExtractionTimedOutMessage(opts.Value.Indexing.ExtractionTimeoutSeconds)));
+                }
+                catch (ExtractionFailedException)
+                {
+                    failures.Add(new UploadFailure(fileName, ExtractionFailedMessage));
                 }
             }
         }
@@ -362,10 +369,18 @@ public static class DocumentEndpoints
         $"The request holds more than {UploadOptions.MaxSections} parts, form fields included. The first " +
         $"{UploadOptions.MaxSections} were processed and the rest were not. Send the files in another request.";
 
+    private const string NoRecordSentence =
+        "No document record was created; the bytes stay in the blob store, and sending the file again extracts it again.";
+
     /// <summary>Does not name the file: it is listed beside it, and the message reaches whoever sent it.</summary>
     private static string ExtractionTimedOutMessage(int seconds) =>
         $"Extraction did not finish within {seconds} s (DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS). " +
-        "Nothing was stored for this file. Send it again.";
+        NoRecordSentence;
+
+    /// <summary>Not the exception's message, which can name a path on the server.</summary>
+    private const string ExtractionFailedMessage =
+        "Extraction failed on the server, from an I/O error, a refused permission or a shortage of memory; "
+        + "the log has the cause. " + NoRecordSentence;
 
     private static IResult TooLarge(UploadOptions upload) =>
         Results.Problem(title: "Upload too large", detail: TooLargeMessage(upload), statusCode: 413);

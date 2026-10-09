@@ -291,11 +291,16 @@ internal sealed class IndexingHarness : IAsyncDisposable
     /// The leases the pass takes the corpus with. A test that has the pass lose its lease
     /// gives it ones that renew often enough to notice within the test.
     /// </param>
+    /// <param name="documentsFor">
+    /// The document service the pass reads stored text through, built over the pass's own context,
+    /// for a test that replaces how an upload is extracted.
+    /// </param>
     /// <param name="cancel">The caller's token, for a test that stops the pass the way a caller does.</param>
     public async Task<IndexJob> RunIndexAsync(JobKind kind = JobKind.Refresh,
         Func<GitRepository, string, DateTime, CancellationToken, Task<GitTracking>>? readTracking = null,
         ILogger<CorpusIndexer>? log = null, TimeSpan? saveRetryDelay = null, Action? beforePass = null,
-        CorpusLeases? leases = null, CancellationToken cancel = default)
+        CorpusLeases? leases = null, Func<CatalogDbContext, DocumentService>? documentsFor = null,
+        CancellationToken cancel = default)
     {
         string jobId;
         await using (var db = NewContext())
@@ -327,7 +332,7 @@ internal sealed class IndexingHarness : IAsyncDisposable
             Vectors,
             Embedder,
             new RawProfiles(),
-            new DocumentService(runDb, options, NullLogger<DocumentService>.Instance),
+            documentsFor?.Invoke(runDb) ?? new DocumentService(runDb, options, NullLogger<DocumentService>.Instance),
             leases ?? new CorpusLeases(scopes, NullLogger<CorpusLeases>.Instance),
             options,
             log ?? NullLogger<CorpusIndexer>.Instance)

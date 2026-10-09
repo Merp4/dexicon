@@ -43,10 +43,17 @@ public sealed class DocumentExtractionTimeoutTests
 
         public int BytesRead { get; private set; }
 
+        public int Calls { get; private set; }
+
+        /// <summary>Runs when the extraction starts, for a test that acts while the extractor is working.</summary>
+        public Action? OnStart { get; init; }
+
         public bool CanHandle(string extension) => extension == ".slow";
 
         public virtual ExtractedText Extract(Stream content, string fileName)
         {
+            Calls++;
+            OnStart?.Invoke();
             BytesRead = 0;
             var one = new byte[1];
             while (content.Read(one, 0, 1) == 1)
@@ -90,6 +97,15 @@ public sealed class DocumentExtractionTimeoutTests
 
         public ExtractedText Extract(Stream content, string fileName) =>
             throw new UnreadableDocumentException("could not be read as a document");
+    }
+
+    /// <summary>Fails the way ExtractionFailures.Of reports an I/O error: an extraction failure that is not a verdict on the file.</summary>
+    private sealed class EnvironmentFailingExtractor : ITextExtractor
+    {
+        public bool CanHandle(string extension) => extension == ".slow";
+
+        public ExtractedText Extract(Stream content, string fileName) =>
+            throw new ExtractionFailedException("could not be read: disk fault", new IOException("disk fault"));
     }
 
     private sealed class RecordingLog : ILogger<DocumentService>
@@ -247,5 +263,150 @@ public sealed class DocumentExtractionTimeoutTests
         text.ExtractorVersion.ShouldBe(ExtractorVersions.Current);
         await using var check = harness.NewContext();
         (await check.BlobTexts.AsNoTracking().SingleAsync()).ExtractorVersion.ShouldBe(ExtractorVersions.Current);
+    }
+
+    [Fact]
+    public async Task ATimedOutStoreIsLoggedWithTheFileAndTheBudget()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await using var db = harness.NewContext();
+        var log = new RecordingLog();
+
+        await Should.ThrowAsync<ExtractionTimeoutException>(
+            () => ServiceWith(harness, db, Slow(), log).StoreAsync(new MemoryStream(Bytes), "stuck.slow"));
+
+        var warning = log.Entries.Where(e => e.Level == LogLevel.Warning).ShouldHaveSingleItem();
+        warning.Message.ShouldContain("stuck.slow");
+        warning.Message.ShouldContain("did not finish within 1 s");
+        warning.Message.ShouldContain("no document record was created");
+    }
+
+    [Fact]
+    public async Task AFailureThatIsNotAVerdictOnTheFileStoresNothingAndLeavesNothingTracked()
+    {
+        // An I/O error says how the host was. Recorded as the blob's reason it would be read back as
+        // the document's, and nothing extracts a row at the current version again.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await using var db = harness.NewContext();
+        var documents = ServiceWith(harness, db, new EnvironmentFailingExtractor());
+
+        var thrown = await Should.ThrowAsync<ExtractionFailedException>(
+            () => documents.StoreAsync(new MemoryStream(Bytes), "flaky.slow"));
+
+        thrown.ShouldNotBeOfType<ExtractionTimeoutException>();
+        thrown.ShouldNotBeOfType<UnreadableDocumentException>();
+        db.ChangeTracker.Entries().ShouldBeEmpty();
+        (await db.Blobs.CountAsync()).ShouldBe(0);
+        (await db.BlobTexts.CountAsync()).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task AStaleRowWhoseReExtractionFailsOnAnIoErrorKeepsItsTextAndIsNotEmptied()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        var sha = await StoreStaleAsync(harness);
+        await using var db = harness.NewContext();
+
+        var returned = await ServiceWith(harness, db, new EnvironmentFailingExtractor()).CurrentTextFor(sha, "doc.slow");
+
+        returned.ShouldNotBeNull().Text.ShouldBe(new string('g', Bytes.Length));
+        await using var check = harness.NewContext();
+        var row = await check.BlobTexts.AsNoTracking().SingleAsync();
+        row.Text.ShouldBe(new string('g', Bytes.Length));
+        row.ExtractorVersion.ShouldBe(0, "still stale, so a later pass tries again");
+        row.EmptyReason.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AStaleRowWhoseDocumentIsNowUnreadableRecordsThatVerdict()
+    {
+        // The control: a verdict on the bytes is still written over the old text.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        var sha = await StoreStaleAsync(harness);
+        await using var db = harness.NewContext();
+
+        var returned = await ServiceWith(harness, db, new BrokenExtractor()).CurrentTextFor(sha, "doc.slow");
+
+        returned.ShouldNotBeNull().EmptyReason.ShouldBe("could not be read as a document");
+        await using var check = harness.NewContext();
+        (await check.BlobTexts.AsNoTracking().SingleAsync()).ExtractorVersion.ShouldBe(ExtractorVersions.Current);
+    }
+
+    [Fact]
+    public async Task AStoreThatTimesOutAfterAnotherUploadSavedTheSameBytesReportsThatBlob()
+    {
+        // The other upload runs inside this one's extraction, so it saves first without a sleep to line them up.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await using var db = harness.NewContext();
+        await using var otherDb = harness.NewContext();
+        var other = ServiceWith(harness, otherDb, Fast('g'));
+        var slow = new ReadingExtractor
+        {
+            Pause = TimeSpan.FromMilliseconds(20),
+            OnStart = () => other.StoreAsync(new MemoryStream(Bytes), "stuck.slow").GetAwaiter().GetResult(),
+        };
+
+        var stored = await ServiceWith(harness, db, slow).StoreAsync(new MemoryStream(Bytes), "stuck.slow");
+
+        slow.BytesRead.ShouldBeLessThan(Bytes.Length, "this upload did time out");
+        stored.AlreadyExisted.ShouldBeTrue();
+        stored.ExtractedChars.ShouldBe(Bytes.Length);
+        (await db.Blobs.CountAsync()).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AHashThatFailedThisPassIsNotExtractedAgainInTheSamePass()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        var sha = await StoreStaleAsync(harness);
+        await using var db = harness.NewContext();
+        var slow = Slow('n');
+        var documents = ServiceWith(harness, db, slow);
+        var failedThisPass = new HashSet<string>();
+
+        await documents.CurrentTextFor(sha, "doc.slow", failedThisPass);
+        var again = await documents.CurrentTextFor(sha, "doc.slow", failedThisPass);
+
+        slow.Calls.ShouldBe(1, "the second chunk set did not pay the budget again");
+        again.ShouldNotBeNull().Text.ShouldBe(new string('g', Bytes.Length));
+        failedThisPass.ShouldBe([sha]);
+    }
+
+    [Fact]
+    public async Task WithNoPassSetEachCallExtractsAgain()
+    {
+        // The control for the test above.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        var sha = await StoreStaleAsync(harness);
+        await using var db = harness.NewContext();
+        var slow = Slow('n');
+        var documents = ServiceWith(harness, db, slow);
+
+        await documents.CurrentTextFor(sha, "doc.slow");
+        await documents.CurrentTextFor(sha, "doc.slow");
+
+        slow.Calls.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task AJobOverTwoChunkSetsExtractsAStaleDocumentThatTimesOutOnce()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload, sets: 2);
+        await using (var setup = harness.NewContext())
+        {
+            var corpus = await setup.Corpora.SingleAsync();
+            var documents = ServiceWith(harness, setup, Fast('g'));
+            var stored = await documents.StoreAsync(new MemoryStream(Bytes), "doc.slow");
+            await documents.AttachAsync(corpus, stored.Sha256, "doc.slow");
+            await setup.BlobTexts.ExecuteUpdateAsync(s => s.SetProperty(t => t.ExtractorVersion, 0));
+        }
+
+        var slow = Slow('n');
+        await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, slow));
+
+        slow.Calls.ShouldBe(1, "two chunk sets read the same stale document in one job");
+        await using var check = harness.NewContext();
+        (await check.BlobTexts.AsNoTracking().SingleAsync()).ExtractorVersion.ShouldBe(0);
     }
 }

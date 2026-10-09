@@ -145,8 +145,12 @@ public sealed class IndexingOptions
     public long DocumentMaxBytes { get; init; } = 512L * 1024 * 1024;
 
     /// <summary>
-    /// How long a file may go on reading itself during extraction before it is abandoned
-    /// and recorded as failed. 0 disables the limit.
+    /// How long a file may go on reading itself during extraction before it is abandoned.
+    /// 0 disables the limit. What the timeout leaves behind depends on the caller: a workspace
+    /// file is recorded as failed with the timeout text and tried again on a later refresh; an
+    /// uploaded file is listed under <c>failed</c> in the upload response and no document record
+    /// is created; a stored document being extracted again after an extractor change keeps its
+    /// cached text and is tried again on a later pass.
     ///
     /// Extraction is a synchronous call into PdfPig or the OpenXML readers, none of which
     /// take a cancellation token, so a job's own token cannot interrupt one. Without a

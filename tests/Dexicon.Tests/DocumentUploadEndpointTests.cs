@@ -409,7 +409,7 @@ public sealed class DocumentUploadEndpointTests
     public async Task AFileThatKeepsReadingPastTheExtractionTimeoutIsListedAsNotStoredAndTheFilesBesideItAreStored()
     {
         // 300 bytes at 20 ms each is six seconds of reading against a one second budget. The timeout is
-        // a fact about the host's load and not about the document, so nothing is recorded for the file.
+        // a fact about the host's load and not about the document, so no document record is created for the file.
         await using var harness = await StartAsync();
         var slow = new SlowReadingExtractor(TimeSpan.FromMilliseconds(20));
         var body = new MultipartBody()
@@ -426,8 +426,8 @@ public sealed class DocumentUploadEndpointTests
         failure.File.ShouldBe("stuck.slow");
         failure.Error.ShouldContain("DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS");
         failure.Error.ShouldContain("within 1 s");
-        failure.Error.ShouldContain("Nothing was stored");
-        failure.Error.ShouldContain("Send it again");
+        failure.Error.ShouldContain("No document record was created");
+        failure.Error.ShouldContain("sending the file again extracts it again");
         failure.Error.ShouldNotContain("stuck.slow", Case.Sensitive);
         slow.BytesRead.ShouldBeLessThan(300, "the deadline has to cut the extractor's reading short");
         await using var db = harness.NewContext();
@@ -479,6 +479,43 @@ public sealed class DocumentUploadEndpointTests
         stored.ExtractedChars.ShouldBe(300);
         accepted.Failed.ShouldBeEmpty();
     }
+
+    /// <summary>Fails as ExtractionFailures.Of reports an I/O error, with a message that names a path on the server.</summary>
+    private sealed class DiskFaultExtractor : ITextExtractor
+    {
+        public bool CanHandle(string extension) => extension == ".flaky";
+
+        public ExtractedText Extract(Stream content, string fileName) =>
+            throw new ExtractionFailedException(
+                "could not be read: /data/blobs/ab/abcdef", new IOException("disk fault"));
+    }
+
+    [Fact]
+    public async Task AnExtractionFailureThatIsNotAVerdictOnTheFileIsListedAsNotStoredAndTheFilesBesideItAreStored()
+    {
+        // An I/O error is not a timeout and not a bad argument, and used to be stored as the blob's reason.
+        await using var harness = await StartAsync();
+        var body = new MultipartBody()
+            .File("files", "before.txt", 100, 'b')
+            .File("files", "flaky.flaky", 100, 'f')
+            .File("files", "after.txt", 100, 'c');
+
+        var posted = await PostAsync(
+            harness, body, extractorFor: name => name.EndsWith(".flaky", StringComparison.Ordinal) ? new DiskFaultExtractor() : null);
+
+        var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
+        accepted.Stored.Select(s => s.FileName).ShouldBe(["before.txt", "after.txt"]);
+        var failure = accepted.Failed.ShouldHaveSingleItem();
+        failure.File.ShouldBe("flaky.flaky");
+        failure.Error.ShouldContain("No document record was created");
+        failure.Error.ShouldNotContain("/data/blobs", Case.Sensitive);
+        await using var db = harness.NewContext();
+        (await db.Blobs.CountAsync()).ShouldBe(2);
+        (await db.BlobTexts.CountAsync()).ShouldBe(2);
+        (await db.Files.CountAsync()).ShouldBe(2);
+        (await db.Jobs.CountAsync()).ShouldBe(1);
+    }
+
     [Theory]
     [InlineData(300)]
     [InlineData(0)]
