@@ -18,7 +18,8 @@ internal static class LogText
     /// control characters (C0, DEL and C1, which include NEL and CSI), the format characters (the
     /// bidirectional controls, zero-width characters, the byte order mark, the soft hyphen, the tag
     /// characters), and the line and paragraph separators. A zero-width joiner inside an emoji sequence or a
-    /// zero-width non-joiner inside a Persian word is one of them, and is replaced too.
+    /// zero-width non-joiner inside a Persian word is one of them, and is replaced too. A lone surrogate is
+    /// not a <see cref="Rune"/>: <see cref="Neutralise"/> meets it as invalid data when it decodes.
     /// </summary>
     /// <param name="includeC0">
     /// Whether U+0000 to U+001F count. <c>{Message:j}</c> already escapes them in a logged string.
@@ -28,7 +29,7 @@ internal static class LogText
         if (rune.Value < 0x20) return includeC0;
 
         return Rune.GetUnicodeCategory(rune) is UnicodeCategory.Control or UnicodeCategory.Format
-            or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator or UnicodeCategory.Surrogate;
+            or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator;
     }
 
     /// <summary>
