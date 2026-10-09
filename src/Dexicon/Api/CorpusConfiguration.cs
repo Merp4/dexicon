@@ -540,8 +540,9 @@ public sealed class CorpusConfiguration(
         // Source, so removing it is the whole of the catalogue side.
         //
         // Under the attachment lock, for the delete only: an attachment that had found this source and was
-        // about to add a file to it saved against a row the delete had removed. It is a file attached
-        // before the delete that goes with the source, and its vectors do not exist yet.
+        // about to add a file to it saved against a row the delete had removed. A file attached after the
+        // paths above were read goes with the source, and points a running pass wrote for it in that time
+        // stay in the vector store.
         using (await DocumentService.HoldAttachmentsAsync(ct))
         {
             db.Sources.Remove(source);
