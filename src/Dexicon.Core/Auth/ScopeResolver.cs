@@ -55,33 +55,50 @@ public sealed class ScopeResolver(CatalogDbContext db)
     /// The most characters of a name or path a caller sent that an error repeats. A corpus name is at most
     /// 200 characters, so one that exists is shown whole.
     /// </summary>
-    private const int ShownMax = 200;
+    public const int ShownMax = 200;
 
     /// <summary>The most characters of a list of names that an error writes.</summary>
-    internal const int ListedMax = 1_500;
+    public const int ListedMax = 1_500;
+
+    /// <summary>How many of the names a caller asked for that are not corpora an error quotes.</summary>
+    internal const int UnknownShownMax = 3;
 
     /// <summary>
-    /// The names, comma separated, up to <see cref="ListedMax"/> characters and ending at a whole name,
-    /// then "(and N more)" for those left out. The names are the server's, so a long list is shortened
-    /// here and not by cutting the message, which would lose the end of it.
+    /// The names, comma separated, each cut at <see cref="ShownMax"/>, written while the list stays within
+    /// <see cref="ListedMax"/> characters and ending at a whole name, then "(and N more)" for those left out.
+    /// The names are the server's, so a long list is shortened here and not by cutting the message, which
+    /// would lose the end of it. A name is cut because the first one is always written, and one of
+    /// thousands of characters would otherwise be the whole bound.
     /// </summary>
-    internal static string Listed(IReadOnlyList<string> names)
+    public static string Listed(IReadOnlyList<string> names)
     {
         var written = new System.Text.StringBuilder();
         var shown = 0;
 
         foreach (var name in names)
         {
-            var next = (shown == 0 ? 0 : 2) + name.Length;
-            if (shown > 0 && written.Length + next > ListedMax) break;
+            var text = Shown(name);
+            var next = (shown == 0 ? 0 : 2) + text.Length;
+            if (written.Length + next > ListedMax) break;
 
             if (shown > 0) written.Append(", ");
-            written.Append(name);
+            written.Append(text);
             shown++;
         }
 
         if (shown < names.Count) written.Append(" (and ").Append(names.Count - shown).Append(" more)");
         return written.ToString();
+    }
+
+    /// <summary>
+    /// The first <see cref="UnknownShownMax"/> of the names a caller asked for that are not corpora, each
+    /// quoted and cut, then "(and N more)". The caller's list has no bound of its own, and each name
+    /// is theirs to make long.
+    /// </summary>
+    internal static string QuotedUnknown(IReadOnlyList<string> unknown)
+    {
+        var written = string.Join(", ", unknown.Take(UnknownShownMax).Select(u => $"'{Shown(u)}'"));
+        return unknown.Count > UnknownShownMax ? $"{written} (and {unknown.Count - UnknownShownMax} more)" : written;
     }
 
     /// <summary>What a caller sent, as an error repeats it: cut, so a very long one is not echoed whole.</summary>
@@ -208,7 +225,7 @@ public sealed class ScopeResolver(CatalogDbContext db)
             {
                 var names = visible.Select(c => c.Name).Order(StringComparer.Ordinal).ToList();
                 throw new ScopeResolutionException(
-                    $"Unknown corpus {string.Join(", ", unknown.Select(u => $"'{Shown(u)}'"))}. " +
+                    $"Unknown corpus {QuotedUnknown(unknown)}. " +
                     (names.Count == 0
                         ? $"Key '{principal.Name}' can reach no corpora at all."
                         : $"Corpora this key can reach: {Listed(names)}."),

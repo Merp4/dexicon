@@ -2,6 +2,8 @@ using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Infrastructure;
 using Dexicon.Mcp;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol;
 
 namespace Dexicon.Tests;
@@ -128,6 +130,15 @@ public sealed class ScopeMessageTests : IAsyncLifetime
     }
 
     [Fact]
+    public void AnEchoedValueIsCutBeforeItIsSanitisedSoALineBreakPairThatShrinksDoesNotShiftTheCut()
+    {
+        // 150 CRLF pairs are 300 characters, and one space each once sanitised. Cut at 200 first, the value
+        // is 100 pairs. Sanitised first it would be 150 spaces and 50 of the x.
+        var value = string.Concat(Enumerable.Repeat("\r\n", 150)) + new string('x', 300);
+
+        DexiconTools.Echo(value).ShouldBe(new string(' ', 100) + "...");
+    }
+    [Fact]
     public void ARefusalIsCutAtFourThousandCharacters()
     {
         DexiconTools.MessageMax.ShouldBe(4_000);
@@ -139,5 +150,161 @@ public sealed class ScopeMessageTests : IAsyncLifetime
     public void ARefusalIsHeldToOneLine()
     {
         DexiconTools.Refusal("a\r\nb" + (char)0x1B + "c").Message.ShouldBe("a b�c");
+    }
+
+    private static string RaggedName(int i, int length) => $"{i:D3}-".PadRight(length, 'r');
+
+    [Fact]
+    public async Task AWrongSourceListsTheRootsUpToTheLimitAndSaysHowManyAreLeft()
+    {
+        await using (var seed = _harness.NewContext())
+        {
+            for (var i = 0; i < 40; i++)
+                seed.Sources.Add(new Source
+                {
+                    Id = $"extra-source-{i:D3}",
+                    CorpusId = IndexingHarness.CorpusId,
+                    Kind = SourceKind.Workspace,
+                    RootPath = RaggedName(i, 100),
+                    CreatedUtc = DateTime.UtcNow,
+                });
+            await seed.SaveChangesAsync();
+        }
+
+        await using var db = _harness.NewContext();
+        var thrown = await Should.ThrowAsync<ScopeResolutionException>(() =>
+            new ScopeResolver(db).SourceIdsAsync([IndexingHarness.CorpusId], "nowhere"));
+
+        thrown.Message.ShouldStartWith("No source at 'nowhere' in the corpora searched. Sources: ");
+        thrown.Message.ShouldEndWith(" more). A parent matches everything beneath it.");
+        thrown.Message.Length.ShouldBeLessThan(ScopeResolver.ListedMax + 200);
+    }
+
+    [Fact]
+    public async Task AWrongChunkSetListsTheSetsUpToTheLimitAndSaysHowManyAreLeft()
+    {
+        await using (var seed = _harness.NewContext())
+        {
+            for (var i = 0; i < 40; i++)
+                seed.ChunkSets.Add(new ChunkSet
+                {
+                    Id = $"extra-set-{i:D3}",
+                    CorpusId = IndexingHarness.CorpusId,
+                    Name = RaggedName(i, 100),
+                    EmbeddingModel = "m",
+                    EmbeddingDimensions = 768,
+                    CollectionName = "c",
+                    ChunkSize = 256,
+                    ChunkOverlap = 0,
+                    BoundaryMode = "none",
+                    State = CorpusState.Ready,
+                    CreatedUtc = DateTime.UtcNow,
+                });
+            await seed.SaveChangesAsync();
+        }
+
+        await using var db = _harness.NewContext();
+        var thrown = await Should.ThrowAsync<ScopeResolutionException>(() =>
+            new ScopeResolver(db).ResolveReadableAsync(Reader, ["notes:nope"]));
+
+        thrown.Message.ShouldStartWith("Corpus 'notes' has no chunk set named 'nope'. Its sets: ");
+        thrown.Message.ShouldEndWith(" more).");
+        thrown.Message.Length.ShouldBeLessThan(ScopeResolver.ListedMax + 200);
+    }
+
+    [Fact]
+    public async Task AWritableLookupOfAMissingCorpusListsTheCorporaUpToTheLimit()
+    {
+        await AddCorporaAsync(count: 40, nameLength: 100);
+        await using var db = _harness.NewContext();
+
+        var thrown = await Should.ThrowAsync<ScopeResolutionException>(() =>
+            new ScopeResolver(db).ResolveWritableAsync(Reader, "nowhere"));
+
+        thrown.Message.ShouldStartWith("No corpus named 'nowhere' is reachable by key 'reader'. Corpora this key can reach: ");
+        thrown.Message.ShouldEndWith(" more).");
+        thrown.Message.Length.ShouldBeLessThan(ScopeResolver.ListedMax + 200);
+    }
+
+    [Fact]
+    public void AListWhoseNamesJoinToExactlyTheLimitIsWrittenWholeAndOneCharacterMoreLosesTheLastName()
+    {
+        // Fourteen names of 98 characters and a last of 100: 1,372 + 100 + 14 separators of 2 = 1,500.
+        var names = Enumerable.Range(0, 14).Select(i => RaggedName(i, 98)).Append(RaggedName(14, 100)).ToList();
+        var oneOver = names.Take(14).Append(RaggedName(14, 101)).ToList();
+
+        var whole = ScopeResolver.Listed(names);
+        var over = ScopeResolver.Listed(oneOver);
+
+        whole.Length.ShouldBe(ScopeResolver.ListedMax);
+        whole.ShouldNotContain("(and");
+        over.ShouldEndWith(" (and 1 more)");
+        over.ShouldNotContain(RaggedName(14, 101));
+    }
+
+    [Fact]
+    public void AListWithOneVeryLongNameIsBoundedByTheCutOfThatName()
+    {
+        var listed = ScopeResolver.Listed([new string('n', 3_000)]);
+
+        listed.ShouldBe(new string('n', ScopeResolver.ShownMax) + "...");
+    }
+
+    [Fact]
+    public async Task ANameOfExactlyTwoHundredCharactersIsQuotedWholeAndTheCutDoesNotSplitAPair()
+    {
+        await using var db = _harness.NewContext();
+        var resolver = new ScopeResolver(db);
+        var pair = char.ConvertFromUtf32(0x1F600);
+
+        var exact = await Should.ThrowAsync<ScopeResolutionException>(() => resolver.ResolveReadableAsync(Reader, [new string('a', 200)]));
+        var plusOne = await Should.ThrowAsync<ScopeResolutionException>(() => resolver.ResolveReadableAsync(Reader, [new string('a', 201)]));
+        var straddling = await Should.ThrowAsync<ScopeResolutionException>(() =>
+            resolver.ResolveReadableAsync(Reader, [new string('a', 199) + pair + "tail"]));
+
+        exact.Message.ShouldStartWith($"Unknown corpus '{new string('a', 200)}'. ");
+        plusOne.Message.ShouldStartWith($"Unknown corpus '{new string('a', 200)}...'. ");
+        straddling.Message.ShouldStartWith($"Unknown corpus '{new string('a', 199)}...'. ");
+    }
+
+    [Fact]
+    public async Task OnlyTheFirstFewUnknownNamesAreQuotedWhateverHowManyAreSent()
+    {
+        await AddCorporaAsync(count: 3, nameLength: 20);
+        await using var db = _harness.NewContext();
+        var asked = Enumerable.Range(0, 25).Select(i => $"{i:D2}" + new string('u', 198)).ToList();
+
+        var thrown = await Should.ThrowAsync<ScopeResolutionException>(() =>
+            new ScopeResolver(db).ResolveReadableAsync(Reader, asked));
+
+        thrown.Message.ShouldContain("(and 22 more). Corpora this key can reach: ");
+        thrown.Message.ShouldEndWith(".");
+        thrown.Message.ShouldContain("'00" + new string('u', 198) + "'");
+        thrown.Message.ShouldContain("'02" + new string('u', 198) + "'");
+        thrown.Message.ShouldNotContain("'03");
+        thrown.Message.Length.ShouldBeLessThan(1_500);
+    }
+
+    [Fact]
+    public async Task AMillionUnknownNamesAreAnswerredByAShortMessageToAToolAndToTheRestHandler()
+    {
+        await using var db = _harness.NewContext();
+        var asked = Enumerable.Range(0, 1_000_000).Select(i => "n" + i).ToList();
+        var resolver = new ScopeResolver(db);
+
+        var thrown = await Should.ThrowAsync<ScopeResolutionException>(() => resolver.ResolveReadableAsync(Reader, asked));
+        var context = new Microsoft.AspNetCore.Http.DefaultHttpContext
+        {
+            RequestServices = new ServiceCollection()
+                .AddLogging().AddOptions().AddProblemDetails().BuildServiceProvider(),
+        };
+        context.Response.Body = new MemoryStream();
+        await new ScopeExceptionHandler(NullLogger<ScopeExceptionHandler>.Instance).TryHandleAsync(context, thrown, default);
+
+        thrown.Message.ShouldStartWith("Unknown corpus 'n0', 'n1', 'n2' (and 999997 more). ");
+        thrown.Message.Length.ShouldBeLessThan(1_000);
+        context.Response.Body.Length.ShouldBeLessThan(2_000);
+        context.Response.Body.Position = 0;
+        new StreamReader(context.Response.Body).ReadToEnd().ShouldContain("(and 999997 more)");
     }
 }

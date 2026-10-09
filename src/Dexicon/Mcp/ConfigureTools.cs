@@ -196,14 +196,14 @@ public sealed class ConfigureTools
                     + "the index again.");
             }
 
-            return $"Created corpus '{DexiconTools.OneLine(target.Name)}'{(filtersGiven ? ", with the filters given" : "")}. " +
+            return $"Created corpus '{DexiconTools.Echo(target.Name)}'{(filtersGiven ? ", with the filters given" : "")}. " +
                    $"It holds nothing yet: add a folder with configure_source(corpus: {DexiconTools.Quoted(target.Name)}, " +
                    "folder: ..., create: true). list_folders shows what is mounted.";
         }
 
         target = await WritableAsync(scopes, principal, corpus, "Pass create: true to create it.", ct);
         if (description is null && !filtersGiven)
-            return $"Nothing to change in corpus '{DexiconTools.OneLine(target.Name)}': pass a description, a filter, or reset.";
+            return $"Nothing to change in corpus '{DexiconTools.Echo(target.Name)}': pass a description, a filter, or reset.";
 
         var changed = new List<string>();
         if (description is not null && description != target.Description) changed.Add("description");
@@ -247,10 +247,10 @@ public sealed class ConfigureTools
         if (changed.Count == 0)
         {
             Audit("left unchanged", target, "none");
-            return $"Nothing changed in corpus '{DexiconTools.OneLine(target.Name)}': the values sent are the ones it has.";
+            return $"Nothing changed in corpus '{DexiconTools.Echo(target.Name)}': the values sent are the ones it has.";
         }
 
-        return $"Changed {string.Join(" and ", changed)} of corpus '{DexiconTools.OneLine(target.Name)}'." +
+        return $"Changed {string.Join(" and ", changed)} of corpus '{DexiconTools.Echo(target.Name)}'." +
                (queued
                    ? $" A refresh is queued.{StatusHint(principal, target.Name)} {Narrowing}"
                    : "");
@@ -363,7 +363,7 @@ public sealed class ConfigureTools
             try
             {
                 if ((await db.Sources.AsNoTracking().Where(s => s.CorpusId == target.Id).ToListAsync(ct)).Exists(Same))
-                    throw new McpException($"Corpus '{DexiconTools.OneLine(target.Name)}' already has a source for the {what}. Leave out create to change it.");
+                    throw new McpException($"Corpus '{DexiconTools.Echo(target.Name)}' already has a source for the {what}. Leave out create to change it.");
 
                 var added = await config.AddSourceAsync(target, new AddSourceRequest(
                     root, gitignore, maxBytes, include, exclude,
@@ -386,9 +386,9 @@ public sealed class ConfigureTools
             var sources = await db.Sources.AsNoTracking().Where(s => s.CorpusId == target.Id).ToListAsync(ct);
             var matches = sources.FindAll(Same);
             if (matches.Count == 0)
-                throw new McpException(
-                    $"Corpus '{DexiconTools.OneLine(target.Name)}' has no source for the {what}. Its sources: "
-                    + (sources.Count == 0 ? "none" : string.Join("; ", sources.Select(Describe)))
+                throw DexiconTools.Refusal(
+                    $"Corpus '{DexiconTools.Echo(target.Name)}' has no source for the {what}. Its sources: "
+                    + (sources.Count == 0 ? "none" : ScopeResolver.Listed([.. sources.Select(Describe)]))
                     + ". Pass create: true to add it.");
 
             // The UI allows more than one, such as two history sources following different
@@ -396,7 +396,7 @@ public sealed class ConfigureTools
             // would be a guess, so the change is left to the UI, which shows them apart.
             if (matches.Count > 1)
                 throw new McpException(
-                    $"Corpus '{DexiconTools.OneLine(target.Name)}' has {matches.Count} sources for the {what}, and a folder "
+                    $"Corpus '{DexiconTools.Echo(target.Name)}' has {matches.Count} sources for the {what}, and a folder "
                     + "cannot say which to change. Change them in the Dexicon UI, which lists each one.");
             var existing = matches[0];
 
@@ -437,9 +437,9 @@ public sealed class ConfigureTools
 
         return action switch
         {
-            "left unchanged" => $"Nothing changed: the source for the {what} in '{DexiconTools.OneLine(target.Name)}' already has those settings, "
+            "left unchanged" => $"Nothing changed: the source for the {what} in '{DexiconTools.Echo(target.Name)}' already has those settings, "
                                 + $"so no refresh was queued.\n  {line}\n",
-            _ => $"{(action == "added" ? $"Added a source for the {what} to" : $"Changed the source for the {what} in")} corpus '{DexiconTools.OneLine(target.Name)}', "
+            _ => $"{(action == "added" ? $"Added a source for the {what} to" : $"Changed the source for the {what} in")} corpus '{DexiconTools.Echo(target.Name)}', "
                  + $"and queued a refresh as job {jobId}. As of now:\n  {line}\n"
                  + (StatusHint(principal, target.Name) is { Length: > 0 } hint ? hint.TrimStart() + "\n" : "")
                  + (action == "added" ? "" : Narrowing + "\n"),

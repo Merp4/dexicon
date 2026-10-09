@@ -39,7 +39,7 @@ public sealed class DexiconTools
         [Description("hybrid blends meaning with exact terms; semantic is meaning only; keyword is exact-match only and keeps working when embeddings are unavailable.")] string mode = "hybrid",
         [Description("Maximum results, 1-50.")] int limit = 10,
         [Description("Restrict to files under this path, e.g. src/Auth/. Relative to the source root, not the corpus. Use `source` to narrow by folder instead.")] string? pathPrefix = null,
-        [Description("Restrict to one source, by the root path a search result cites, e.g. books/manuals/Architecture. A parent matches everything beneath it, so books/manuals covers every topic folder under it. list_corpora does not list these; run a search first, or pass a wrong one and the error names them all.")] string? source = null,
+        [Description("Restrict to one source, by the root path a search result cites, e.g. books/manuals/Architecture. A parent matches everything beneath it, so books/manuals covers every topic folder under it. list_corpora does not list these; run a search first, or pass a wrong one and the error lists them, up to 1,500 characters and then how many more.")] string? source = null,
         [Description("Restrict to one language, e.g. csharp, python, typescript.")] string? language = null,
         [Description("Restrict to chunks declaring this symbol, e.g. TokenService.")] string? symbol = null,
         [Description("Characters of each result to return, centred on the matching passage. The default is enough to read the match in context; raise it when a hit is clearly the right passage and you need more of it, or use get_context. 0 returns whole chunks, which on a book corpus is about 8,000 characters each.")]
@@ -106,9 +106,9 @@ public sealed class DexiconTools
         sb.Append($" ({result.Mode.ToString().ToLowerInvariant()}, corpus: {OneLine(scope)})\n");
 
         if (result.Degraded)
-            sb.Append($"\n! DEGRADED: {result.DegradedReason}\n");
+            sb.Append($"\n! DEGRADED: {Echo(result.DegradedReason, MessageMax)}\n");
         if (result.Note is not null)
-            sb.Append($"\n! {result.Note}\n");
+            sb.Append($"\n! {Echo(result.Note, MessageMax)}\n");
 
         if (result.Hits.Count == 0)
         {
@@ -203,7 +203,7 @@ public sealed class DexiconTools
 
         // What it is, before what it is made of.
         sb.Append(s.Description is { Length: > 0 }
-            ? $"    {s.Description}\n"
+            ? $"    {Echo(s.Description, MessageMax)}\n"
             : "    (no description: state what the corpus holds so an agent can choose between corpora)\n");
 
         // An empty corpus is a legal value for search_index that cannot answer anything.
@@ -223,7 +223,7 @@ public sealed class DexiconTools
         foreach (var set in s.ChunkSets)
         {
             sb.Append($"\n    {(set.IsDefault ? "*" : " ")} {OneLine(s.Name)}:{OneLine(set.Name)}");
-            sb.Append($" — {set.EmbeddingModel} ({set.EmbeddingDimensions}d), ");
+            sb.Append($" — {OneLine(set.EmbeddingModel)} ({set.EmbeddingDimensions}d), ");
             sb.Append($"{set.ChunkSize} tokens/{set.ChunkOverlap} overlap, {set.ChunkCount:N0} chunks");
             if (set.State != "ready") sb.Append($" [{set.State}]");
         }
@@ -235,7 +235,7 @@ public sealed class DexiconTools
             // The name as a JSON string, so the call can be copied as it stands whatever the
             // name holds: only a blank one is refused, and a quote in it broke the call.
             sb.Append($"\n    {s.FailedCount:N0} {UnitFor(s.Sources, s.FailedCount)} failed; " +
-                      $"index_status({System.Text.Json.JsonSerializer.Serialize(s.Name, Literal)}) lists them with the reason");
+                      $"index_status({Quoted(s.Name)}) lists them with the reason");
         sb.Append('\n');
         return sb.ToString();
     }
@@ -339,7 +339,7 @@ public sealed class DexiconTools
     /// path: <c>get_context</c> and the file resource.
     /// </summary>
     internal static string WarningLine(FileSource file) =>
-        file.Warning is { } warning ? $"! {warning}\n" : string.Empty;
+        file.Warning is { } warning ? $"! {Echo(warning, MessageMax)}\n" : string.Empty;
 
     [McpServerTool(Name = "index_refresh")]
     [Description("Queue a reindex of a corpus and return immediately. Use when you know the files have changed and search looks stale.")]
@@ -410,7 +410,7 @@ public sealed class DexiconTools
             foreach (var set in summary.ChunkSets)
             {
                 sb.Append($"  {(set.IsDefault ? "*" : " ")} {OneLine(set.Name)}: {set.State}, ");
-                sb.Append($"{set.EmbeddingModel} ({set.EmbeddingDimensions}d), {set.ChunkCount:N0} chunks");
+                sb.Append($"{OneLine(set.EmbeddingModel)} ({set.EmbeddingDimensions}d), {set.ChunkCount:N0} chunks");
                 if (set.PendingCount > 0) sb.Append($", {set.PendingCount:N0} pending");
                 if (set.FailedCount > 0) sb.Append($", {set.FailedCount:N0} failed");
                 sb.Append('\n');
@@ -420,7 +420,7 @@ public sealed class DexiconTools
             if (job is not null)
             {
                 sb.Append($"  latest job {job.Id}: {job.State.ToString().ToLowerInvariant()}");
-                if (job.Phase is { Length: > 0 }) sb.Append($" ({job.Phase})");
+                if (job.Phase is { Length: > 0 }) sb.Append($" ({Echo(job.Phase)})");
                 if (job.State == JobState.Running && job.FilesTotal > 0)
                 {
                     var pct = 100.0 * (job.FilesDone + job.FilesSkipped + job.FilesFailed) / job.FilesTotal;
@@ -428,7 +428,7 @@ public sealed class DexiconTools
                             + $" / {job.FilesTotal:N0} {UnitFor(summary.Sources, job.FilesTotal)})");
                 }
                 sb.Append('\n');
-                if (job.Error is { Length: > 0 }) sb.Append($"  error: {job.Error}\n");
+                if (job.Error is { Length: > 0 }) sb.Append($"  error: {Echo(job.Error, MessageMax)}\n");
             }
 
             // Workspace sources only, as the HTTP report does. A git-history source has a
@@ -482,7 +482,7 @@ public sealed class DexiconTools
             if (string.Equals(s.Kind, "githistory", StringComparison.OrdinalIgnoreCase))
             {
                 var git = s.Git ?? new GitHistoryOptions();
-                sb.Append($"    commit history of {where}: {s.FileCount:N0} {(s.FileCount == 1 ? "commit" : "commits")}, follows {git.Ref}");
+                sb.Append($"    commit history of {where}: {s.FileCount:N0} {(s.FileCount == 1 ? "commit" : "commits")}, follows {OneLine(git.Ref)}");
                 if (s.Tracking is { } tracking && Distance(tracking) is { } distance)
                     sb.Append($" ({distance})");
                 var holds = new[] { git.IncludeMessage ? "message" : null, git.IncludeStat ? "stat" : null, git.IncludeDiff ? "diff" : null }
@@ -613,7 +613,7 @@ public sealed class DexiconTools
                 {
                     // One line each: a reason is often an exception message, and a stack of
                     // them would push the rest of the report out of the result.
-                    var line = reason.ReplaceLineEndings(" ").Trim();
+                    var line = OneLine(reason).Trim();
                     sb.Append($" — {(line.Length > 160 ? line[..157] + "..." : line)}");
                 }
                 sb.Append('\n');
@@ -631,20 +631,15 @@ public sealed class DexiconTools
         _ => $"{b} bytes",
     };
 
-    /// <summary>
-    /// A path as one line. A file name on Linux can hold a line break, and printed as it
-    /// is, one would end its entry early and could begin a line that reads as another
-    /// status or reason. A glob is stored as it was typed, so it can hold one too.
-    /// Line breaks become spaces, and <see cref="DexiconAuthMiddleware.OneLine"/> then
-    /// replaces the control characters that remain, such as an escape sequence.
-    /// </summary>
-    internal static string OneLine(string path) => DexiconAuthMiddleware.OneLine(path.ReplaceLineEndings(" "));
+    /// <summary>A path as one line, as <see cref="LogText.OneLine"/> holds it.</summary>
+    internal static string OneLine(string path) => LogText.OneLine(path);
 
     /// <summary>
     /// The most characters of a caller's value that an error repeats: the length a corpus name may have
-    /// (<see cref="CorpusConfiguration.NameMax"/>), so a name that exists is never cut.
+    /// (<see cref="CorpusConfiguration.NameMax"/>, which <see cref="ScopeResolver.ShownMax"/> equals), so a
+    /// name that exists is never cut.
     /// </summary>
-    internal const int EchoMax = CorpusConfiguration.NameMax;
+    internal const int EchoMax = ScopeResolver.ShownMax;
 
     /// <summary>
     /// The most characters of a whole error, which is written here but can hold a caller's value (the
@@ -653,21 +648,11 @@ public sealed class DexiconTools
     internal const int MessageMax = 4_000;
 
     /// <summary>
-    /// A caller's value as an error repeats it: cut at <paramref name="max"/> characters, then held to one
-    /// line by <see cref="OneLine"/>. The SDK returns the message of an <see cref="McpException"/> to the
-    /// caller and a log can carry it, so a line break in the value could begin a line that reads as another
-    /// entry. The cut comes first, so a value of any length costs at most <paramref name="max"/> characters
-    /// of scanning, and replacement never lengthens text, so the cut cannot fall inside a replacement.
+    /// A caller's value as an error repeats it, as <see cref="LogText.Echo"/> holds it. The SDK returns the
+    /// message of an <see cref="McpException"/> to the caller and a log can carry it, so a line break in the
+    /// value could begin a line that reads as another entry.
     /// </summary>
-    internal static string Echo(string? value, int max = EchoMax)
-    {
-        if (value is null) return string.Empty;
-        if (value.Length <= max) return OneLine(value);
-
-        // Not between the halves of a surrogate pair.
-        var cut = char.IsHighSurrogate(value[max - 1]) ? max - 1 : max;
-        return OneLine(value[..cut]) + "...";
-    }
+    internal static string Echo(string? value, int max = EchoMax) => LogText.Echo(value, max);
 
     /// <summary>
     /// A refusal whose message was composed elsewhere (a resolver or <see cref="CorpusConfiguration"/>),

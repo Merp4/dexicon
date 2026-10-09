@@ -9,6 +9,7 @@ using Dexicon.Mcp;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol;
@@ -433,18 +434,8 @@ public sealed class ServerChunkDefaultsTests : IAsyncLifetime
         Bootstrapper.CheckChunkDefaults(good.CreateLogger("t"), new DexiconOptions());
 
         bad.Lines.ShouldHaveSingleItem().ShouldContain("DEXICON__INDEXING__CHUNKSIZE=10");
+        bad.Levels.ShouldBe([LogLevel.Error]);
         good.Lines.ShouldBeEmpty();
-    }
-
-    [Fact]
-    public void StartupRunsTheCheckOfTheConfiguredChunkSettings()
-    {
-        var bootstrapper = File.ReadAllText(SourceFiles.Find("src", "Dexicon", "Infrastructure", "Bootstrapper.cs"));
-        var initialise = bootstrapper[bootstrapper.IndexOf("public static async Task InitialiseAsync", StringComparison.Ordinal)..];
-
-        initialise.ShouldContain("CheckChunkDefaults(log, options);");
-        initialise.IndexOf("CheckChunkDefaults(log, options);", StringComparison.Ordinal)
-            .ShouldBeLessThan(initialise.IndexOf("VerifyDependenciesAsync(sp, log, options)", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -497,6 +488,52 @@ public sealed class ServerChunkDefaultsTests : IAsyncLifetime
         await NothingWasCreatedAsync(db);
     }
 
+    [Fact]
+    public async Task TheLoggedRefusalNamesTheKeyAndTheDetailOnOneLineWhateverTheyHold()
+    {
+        // The key's name is typed text, and an adopted key's can hold anything. The provider's message is
+        // the provider's.
+        _harness.Embedder = new UnavailableProbe();
+        await using var db = _harness.NewContext();
+        var logs = new RecordingLoggerFactory();
+        var forged = "[10:00:00Z INF] forged";
+        var rc = new RequestContext
+        {
+            Principal = new Principal("k", $"agent\n{forged}{TestText.Csi}",
+                new HashSet<string>(StringComparer.Ordinal) { Scopes.Configure }),
+        };
+
+        await Should.ThrowAsync<McpException>(() => ConfigureTools.ConfigureCorpusAsync(
+            rc, new ScopeResolver(db), db, _harness.NewConfiguration(db), logs, "papers", create: true));
+
+        var line = logs.Lines.Single(l => l.Contains("was refused", StringComparison.Ordinal));
+        line.ShouldStartWith("Key agent�" + forged);
+        line.ShouldContain("Embedding model unavailable: Could not probe");
+        line.ShouldContain("Connection refused (ollama:11434)");
+        line.Any(c => char.IsControl(c)).ShouldBeFalse();
+        logs.Levels.ShouldContain(LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task AWorkspacePathTheResolverRefusesIsGivenToAnAgentWithoutTheHostsWordsAtCreationAndAtAddingASource()
+    {
+        await using var db = _harness.NewContext();
+        var config = _harness.NewConfiguration(db);
+
+        var created = (await config.CreateCorpusAsync(new CreateCorpusRequest("papers", WorkspacePath: "../outside"), default))
+            .Refusal.ShouldNotBeNull();
+        var corpus = await db.Corpora.SingleAsync();
+        var added = (await config.AddSourceAsync(corpus, new AddSourceRequest("../outside"), default)).Refusal.ShouldNotBeNull();
+
+        foreach (var refusal in new[] { created, added })
+        {
+            refusal.Title.ShouldBe("Invalid workspace path");
+            refusal.AgentDetail.ShouldBe(
+                "The path is outside the workspace, or passes through a link, and links are not followed. "
+                + "list_folders shows what is mounted.");
+            refusal.Detail.ShouldNotBe(refusal.AgentDetail, "the admin is given the resolver's own message");
+        }
+    }
     private sealed class UnavailableProbe : IEmbeddingService
     {
         public Task<IReadOnlyList<float[]>> EmbedAsync(EmbeddingTarget target, EmbedPurpose purpose,

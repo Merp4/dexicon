@@ -67,7 +67,7 @@ results across the whole index is usually worse than eight from `src/Auth/`. `pa
 relative to a source's root, so it cannot select a folder that is itself a source's root;
 `source` does that. A result names its source's root (`· in books/manuals/Architecture` after
 the path) when the results span several sources, and a source that matches nothing is
-refused with an error that lists them all. A `source` that names a parent folder covers every
+refused with an error that lists them, up to 1,500 characters and then how many more. A `source` that names a parent folder covers every
 source beneath it: `books/manuals` covers each topic folder under it.
 
 Omitting `corpus` searches everything visible to you, and with several corpora of different

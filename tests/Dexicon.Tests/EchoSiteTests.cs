@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using Dexicon.Api;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
@@ -18,7 +17,7 @@ namespace Dexicon.Tests;
 /// Each place in the MCP surface that puts a caller's value, or a stored name that older catalogues allow to
 /// hold anything, into an error, driven with a value holding a line break, an escape, a C1 control and 5,000
 /// characters. The sites a test cannot reach with such a value (a refusal from the service that quotes
-/// nothing) are held by <see cref="EverySiteThatThrowsARefusalShowsItThroughTheHolders"/>, which reads the source.
+/// nothing) are held by <see cref="EchoScanTests"/>, which reads the compiled source.
 /// </summary>
 public sealed class EchoSiteTests : IAsyncLifetime
 {
@@ -34,7 +33,7 @@ public sealed class EchoSiteTests : IAsyncLifetime
     /// <summary>
     /// The site, and the longest message it may show. A caller's value is cut at 200 characters where it is
     /// repeated, so those sites stay short. The first quotes a stored name through the service's own message,
-    /// which only the refusal holder cuts, at 4,000.
+    /// which only the refusal helper cuts, at 4,000.
     /// </summary>
     public static TheoryData<string, int> Sites => new()
     {
@@ -152,46 +151,5 @@ public sealed class EchoSiteTests : IAsyncLifetime
         thrown.Message.ShouldContain("bad", Case.Sensitive, "the start of the value still says what was refused");
         thrown.Message.Length.ShouldBeLessThan(longest, "the 5,000 characters sent are not all repeated");
         thrown.Message.ShouldNotContain(new string('z', 4_500));
-    }
-
-    [Fact]
-    public void EverySiteThatThrowsARefusalShowsItThroughTheHolders()
-    {
-        var files = Directory.GetFiles(Path.GetDirectoryName(SourceFiles.Find("src", "Dexicon", "Mcp", "ConfigureTools.cs"))!, "*.cs");
-        files.Length.ShouldBeGreaterThanOrEqualTo(5, "the scan has to have found the tool files");
-        var all = files.ToDictionary(f => Path.GetFileName(f)!, File.ReadAllText);
-
-        // A refusal or a resolver message reaches the caller only through Refused or DexiconTools.Refusal.
-        foreach (var (file, text) in all)
-        {
-            // The two exception types whose messages the repository wrote whole (an unknown search mode and a
-            // dimension mismatch) are passed on as they are, and are not matched here.
-            Regex.IsMatch(text, @"new McpException\(\s*(refused|update|added|created|updated)\.(Detail|Message)")
-                .ShouldBeFalse($"{file} passes a refusal to the caller as it is");
-
-            foreach (var line in text.Split('\n').Where(l => l.Contains(".Refusal is {", StringComparison.Ordinal)))
-                line.ShouldMatch(@"throw (Refused|DexiconTools\.Refusal)\(", $"{file}: {line.Trim()}");
-
-            var lines = text.Split('\n');
-            for (var i = 0; i < lines.Length; i++)
-            {
-                if (!lines[i].Contains("catch (ScopeResolutionException", StringComparison.Ordinal)) continue;
-
-                string.Join("\n", lines.Skip(i).Take(8)).ShouldMatch(
-                    @"throw (DexiconTools\.)?Refusal\(", $"{file}:{i + 1}: {lines[i].Trim()}");
-            }
-        }
-
-        // The folder text in the source messages is built once, through Echo.
-        all["ConfigureTools.cs"].ShouldContain("DexiconTools.Echo(root))}\";");
-        all["ConfigureTools.cs"].ShouldContain("var what = ");
-
-        // The sites that call the holders: four refusals and one resolver message in ConfigureTools, four
-        // resolver messages in DexiconTools, one in the file resource, and one refusal in ProposeTools.
-        Regex.Count(all["ConfigureTools.cs"], @"throw Refused\(refused, logs, principal\)").ShouldBe(4);
-        Regex.Count(all["DexiconTools.cs"], @"throw Refusal\(ex\.Message\)").ShouldBe(4);
-        all["DexiconResources.cs"].ShouldContain("throw DexiconTools.Refusal(ex.Message)");
-        all["ProposeTools.cs"].ShouldContain("throw DexiconTools.Refusal(refused.Detail)");
-        all["ConfigureTools.cs"].ShouldContain("throw DexiconTools.Refusal($\"{ex.Message} {hint}\".TrimEnd())");
     }
 }

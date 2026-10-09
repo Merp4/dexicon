@@ -58,22 +58,36 @@ data/
 The one credential written to a log is the generated admin password, printed once on the
 first start (see the table above). A presented credential is not logged. The console
 template renders values as JSON (`LogOutput.ConsoleTemplate`), so a request path cannot
-start a new log line. The template escapes U+0000 to U+001F in a logged string and nothing
-else, and writes `{Exception}` as `Exception.ToString` does, so the console sink
-(`LogOutput.OneLineConsole`, built into the logger by `LogOutput.Configuration`) is wrapped in
-`OneLineLogSink`. It replaces U+007F, the C1 controls (U+0080 to U+009F, which include NEL and
-CSI), U+2028, U+2029 and the bidirectional controls with U+FFFD in every string a log call
-passes, including those inside sequences, structures and dictionaries to a depth of eight. It
-renders an exception from its own `ToString`, a line at a time: every kind of line break ends a
-line, a line that would start at the first column gets four spaces, and the same characters are
-replaced, so a message, a stack frame or what a type adds to `ToString` (the file name of a
-`FileNotFoundException`) cannot begin a log line. Stack trace lines already start with spaces and
-are as the runtime wrote them. The chain is read first without recursion, and past 100 levels or
-1,000 exceptions only the outermost type and message are written, with a note. The scope errors
-quote the corpus name or path a caller sent, and `ScopeExceptionHandler` logs them at Debug.
-Call sites that hold a caller's value in a log argument still pass it through
-`DexiconAuthMiddleware.OneLine`, which writes U+FFFD for a line break (one marker for a CRLF)
-and for any other control character, a tab included. A rejected request logs a 32-bit digest of the presented credential
+start a new log line. That holds for the characters the template escapes, and the sink wrapped
+around the console (`LogOutput.OneLineConsole`, built into the logger by `LogOutput.Configuration`)
+covers the rest. `OneLineLogSink` is what an operator sees:
+
+- A logged string is written as `{Message:j}` writes it: quoted, with `"`, `\` and U+0000 to
+  U+001F escaped, so a value `a`, line feed, `b` reads `"a\nb"`.
+- The sink first replaces, in every string a log call passes and in those nested in a sequence,
+  structure or dictionary to a depth of eight, each code point the template leaves alone with
+  U+FFFD: DEL, the C1 controls (which include NEL and CSI), the line and paragraph separators
+  U+2028 and U+2029, the bidirectional controls, and the other format characters (zero-width
+  characters, the byte order mark, the soft hyphen, the tag characters), and a lone surrogate.
+  A zero-width joiner inside an emoji sequence is one of them.
+  A value nested deeper than eight levels is written as `"..."`.
+- An exception is written from its own `ToString`, a line at a time. Every kind of line break ends
+  a line. A line that does not start the way the runtime starts its own (the type name for the
+  first line, `   at ` for a frame, `   --- ` for the end of an inner trace, ` ---> ` for an inner
+  exception) gets four spaces in front of it, a blank line becoming four spaces. Tab and every
+  other control or format character in it, and a separator, becomes U+FFFD. So a message, a stack
+  frame or what a type adds to `ToString` (the file name of a `FileNotFoundException`) cannot
+  begin a log line. A message is cut at 4,000 characters.
+- The chain is read first without recursion. Past 100 levels or 1,000 exceptions only the outermost
+  type and message are written, with a note. An exception whose text cannot be read, or a
+  property whose `ToString` throws, is written as a note naming its type.
+
+The scope errors quote the corpus name or path a caller sent, and `ScopeExceptionHandler` logs
+them at Debug. Call sites that put a caller's value in a log argument still pass it through
+`DexiconAuthMiddleware.OneLine`, which writes U+FFFD for each line break (one for a CRLF) and for
+every code point the sink replaces, a tab included. The sink and `OneLine` share their rules in
+`LogText`.
+A rejected request logs a 32-bit digest of the presented credential
 (`CallerDigest`), which tells one caller from several. It is not a secret: whoever can read
 the logs can compute the digest of a candidate credential and compare, and a match is a
 1 in 2^32 coincidence for a wrong guess, so 32 bits limits what the digest reveals and does
@@ -160,7 +174,7 @@ Audited 2026-09-17 by provoking each failure against the running stack.
 |---|---|
 | Unknown corpus | `Unknown corpus 'x'. Corpora this key can reach: books, docs.` — only what this key reaches |
 | Unknown file, `get_context` | The path and the corpus, nothing else. A value the caller sent is shown on one line and cut at 200 characters, with `...` after it: line breaks become spaces and other control characters become U+FFFD. The cut is made first, so a long value is not read in full. |
-| Resolver errors (`Unknown corpus`, `No corpus named`, `has no chunk set`, `No source at`) | The caller's name is quoted up to 200 characters, as above. A list of corpora, sets or roots is written up to 1,500 characters and ends at a whole name with `(and N more)`. The tools then hold the whole message to one line and 4,000 characters, which the lists above leave nothing to cut. |
+| Resolver errors (`Unknown corpus`, `No corpus named`, `has no chunk set`, `No source at`) | The caller's name is quoted up to 200 characters, as above, and only the first three of the names a caller asked for are quoted, then `(and N more)`. A list of corpora, sets or roots names up to 1,500 characters of them (each name cut at 200), ending at a whole name, then `(and N more)`. The tools hold the whole message to one line and 4,000 characters, plus `...` when it is cut, which a message built this way does not reach. A REST caller gets the same message as the `detail` of a 400. |
 | Failure after `configure_corpus` saved the corpus | `Corpus 'x' was created, but preparing its index failed. Dexicon's log has the cause. …` The exception is logged and not repeated, because its message is the client's or the database's own text (the Qdrant client's reads `Status(StatusCode="Unavailable", Detail="Error connecting to subchannel.", DebugException="System.Net.Sockets.SocketException: …")`). |
 | Embedding service down, `configure_corpus` creating a corpus | `The embedding service did not answer a probe of 'ollama/model'. The corpus was not created. Whoever runs Dexicon can see why in its log.` The provider's message goes to the log under the key's name. `POST /api/corpora` is an admin endpoint and returns it in full. The same goes for a path the workspace resolver refuses, which names where a link leads. |
 | Line outside the file | `…has no content around line -9999; it spans lines 1-197.` |
