@@ -221,11 +221,12 @@ public sealed class DexiconAuthMiddleware(
     /// Replaced rather than removed, and with U+FFFD, so a path that was odd still reads
     /// as odd rather than as a path somebody sent.
     ///
-    /// The two line breaks go through <see cref="string.Replace(string, string)"/> by
-    /// name. Written as one pass over <see cref="char.IsControl"/> it reads better and
-    /// does the same thing, but CodeQL's <c>cs/log-forging</c> recognises the Replace
-    /// form as the barrier and nothing else, so folding these two lines into the loop
-    /// below reopens the alert without changing the behaviour.
+    /// The line breaks go through <see cref="string.Replace(string, string)"/> by
+    /// name, and a CRLF is one line break with one marker. Written as one pass over
+    /// <see cref="char.IsControl"/> it reads better and does the same thing, but CodeQL's
+    /// <c>cs/log-forging</c> recognises the Replace form as the barrier and nothing else,
+    /// so folding these lines into the loop below reopens the alert without changing the
+    /// behaviour.
     ///
     /// The loop then takes the rest of the control range, which the Replace calls do not
     /// cover: an escape sequence reaching a terminal that tails the log is the same trick
@@ -235,7 +236,8 @@ public sealed class DexiconAuthMiddleware(
     {
         // U+2028 and U+2029 end a line for many readers and are not control characters,
         // so the loop below would pass them.
-        var held = value.Replace("\r", ReplacementText, StringComparison.Ordinal)
+        var held = value.Replace("\r\n", ReplacementText, StringComparison.Ordinal)
+                        .Replace("\r", ReplacementText, StringComparison.Ordinal)
                         .Replace("\n", ReplacementText, StringComparison.Ordinal)
                         .Replace("\u2028", ReplacementText, StringComparison.Ordinal)
                         .Replace("\u2029", ReplacementText, StringComparison.Ordinal);

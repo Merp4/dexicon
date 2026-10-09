@@ -101,7 +101,7 @@ public sealed class DexiconResources
         var document = await documents.ForAsync(corpus.Id, target.Set.Id, path, file.SourceId, ct);
 
         var sb = new StringBuilder();
-        sb.Append(path).Append(" (corpus: ").Append(corpus.Name).Append(")\n")
+        sb.Append(DexiconTools.OneLine(path)).Append(" (corpus: ").Append(DexiconTools.OneLine(corpus.Name)).Append(")\n")
           .Append(DexiconTools.WarningLine(file)).Append('\n');
         sb.Append(document?.Text
             ?? Passage.Stitch(file.Chunks.Select(h => (h.StartLine, h.EndLine, h.Content))));

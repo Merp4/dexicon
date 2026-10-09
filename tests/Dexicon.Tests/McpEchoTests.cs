@@ -103,6 +103,54 @@ public sealed class McpEchoTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AFolderWithNoSourceIsRepeatedOnOneLineAndCutWhenTheSourceIsToBeChanged()
+    {
+        await using var db = _harness.NewContext();
+
+        var thrown = await Should.ThrowAsync<McpException>(() => SourceAsync(db, Hostile));
+
+        thrown.Message.ShouldStartWith("Corpus 'notes' has no source for the files under bad");
+        ShouldEchoSafely(thrown);
+    }
+
+    [Fact]
+    public async Task TwoSourcesOnOneFolderAreRepeatedOnOneLineAndCutWhenTheSourceIsToBeChanged()
+    {
+        await using var db = _harness.NewContext();
+        var folder = "same\n[10:00:00Z INF] forged\u001B[2J" + new string('y', 500);
+        foreach (var id in new[] { "dup-1", "dup-2" })
+            db.Sources.Add(new Source
+            {
+                Id = id,
+                CorpusId = IndexingHarness.CorpusId,
+                Kind = SourceKind.Workspace,
+                RootPath = folder,
+                CreatedUtc = DateTime.UtcNow,
+            });
+        await db.SaveChangesAsync();
+
+        var thrown = await Should.ThrowAsync<McpException>(() => SourceAsync(db, folder));
+
+        thrown.Message.ShouldContain("has 2 sources for the files under same");
+        ShouldEchoSafely(thrown, "same");
+    }
+
+    [Fact]
+    public void AnEchoedValueIsCutBeforeItIsScannedAndNotBetweenTheHalvesOfACharacterPair()
+    {
+        // 199 characters, then a surrogate pair that would straddle the cut at 200.
+        var pair = new string('a', 199) + "\U0001F600" + "tail";
+        // 199 characters, then a CRLF that the cut would split.
+        var crlf = new string('a', 199) + "\r\n" + "tail";
+
+        DexiconTools.Echo(pair).ShouldBe(new string('a', 199) + "...");
+        DexiconTools.Echo(crlf).ShouldBe(new string('a', 199) + " ...");
+        DexiconTools.Echo(new string('z', 10_000_000)).Length.ShouldBe(DexiconTools.EchoMax + 3);
+        DexiconTools.Echo(null).ShouldBe(string.Empty);
+        DexiconTools.Echo("a\r\nb").ShouldBe("a b");
+    }
+
+    [Fact]
     public async Task AFolderOutsideTheWorkspaceIsRepeatedOnOneLineAndCut()
     {
         await using var db = _harness.NewContext();

@@ -95,13 +95,15 @@ public sealed class DexiconTools
         var sb = new StringBuilder();
         var scope = string.Join(", ", result.Scope.Select(s => s.Name));
 
+        // The query is the caller's own text, repeated on the line a reader takes to be the result's.
+        var query = Echo(result.Query);
         sb.Append(result.Hits.Count switch
         {
-            0 => $"No results for \"{result.Query}\"",
-            1 => $"1 result for \"{result.Query}\"",
-            var n => $"{n} results for \"{result.Query}\"",
+            0 => $"No results for \"{query}\"",
+            1 => $"1 result for \"{query}\"",
+            var n => $"{n} results for \"{query}\"",
         });
-        sb.Append($" ({result.Mode.ToString().ToLowerInvariant()}, corpus: {scope})\n");
+        sb.Append($" ({result.Mode.ToString().ToLowerInvariant()}, corpus: {OneLine(scope)})\n");
 
         if (result.Degraded)
             sb.Append($"\n! DEGRADED: {result.DegradedReason}\n");
@@ -124,9 +126,9 @@ public sealed class DexiconTools
         var i = 1;
         foreach (var hit in result.Hits)
         {
-            sb.Append($"\n{i++}. {hit.Location}");
+            sb.Append($"\n{i++}. {OneLine(hit.Location)}");
             if (spansSources && hit.SourceRoot is { Length: > 0 } root)
-                sb.Append($"  · in {root}");
+                sb.Append($"  · in {OneLine(root)}");
 
             // A hit in a PDF or an EPUB is cited by its unit, as `book.epub#chapter=7`,
             // which is right for a citation and unusable as an argument to get_context,
@@ -134,8 +136,8 @@ public sealed class DexiconTools
             // book and then have nothing to pass in order to read on from it.
             if (hit.Page is not null) sb.Append($"  · lines {hit.StartLine}-{hit.EndLine}");
 
-            if (hit.Section is { Length: > 0 }) sb.Append($"  · {hit.Section}");
-            if (result.Scope.Count > 1) sb.Append($"  [{hit.CorpusName}]");
+            if (hit.Section is { Length: > 0 }) sb.Append($"  · {OneLine(hit.Section)}");
+            if (result.Scope.Count > 1) sb.Append($"  [{Echo(hit.CorpusName)}]");
             sb.Append('\n');
 
             foreach (var line in hit.Content.Split('\n'))
@@ -159,12 +161,12 @@ public sealed class DexiconTools
         var visible = await scopes.VisibleAsync(principal, ct);
 
         if (visible.Count == 0)
-            return $"Key '{principal.Name}' can reach no corpora. Create one in the Dexicon UI, " +
+            return $"Key '{OneLine(principal.Name)}' can reach no corpora. Create one in the Dexicon UI, " +
                    "or map this key to one under Access.";
 
         var sb = new StringBuilder(
             $"{visible.Count} {(visible.Count == 1 ? "corpus" : "corpora")} " +
-            $"reachable by '{principal.Name}':\n");
+            $"reachable by '{OneLine(principal.Name)}':\n");
         foreach (var c in visible)
             sb.Append(RenderCorpus(await CorpusEndpoints.Summarise(db, c, opts.Value.Indexing, ct)));
         return sb.ToString();
@@ -197,7 +199,7 @@ public sealed class DexiconTools
     internal static string RenderCorpus(CorpusSummary s)
     {
         var sb = new StringBuilder();
-        sb.Append($"\n- {s.Name}\n");
+        sb.Append($"\n- {OneLine(s.Name)}\n");
 
         // What it is, before what it is made of.
         sb.Append(s.Description is { Length: > 0 }
@@ -220,7 +222,7 @@ public sealed class DexiconTools
         // corpus name cannot reach the others. Named here, with the default marked.
         foreach (var set in s.ChunkSets)
         {
-            sb.Append($"\n    {(set.IsDefault ? "*" : " ")} {s.Name}:{set.Name}");
+            sb.Append($"\n    {(set.IsDefault ? "*" : " ")} {OneLine(s.Name)}:{OneLine(set.Name)}");
             sb.Append($" — {set.EmbeddingModel} ({set.EmbeddingDimensions}d), ");
             sb.Append($"{set.ChunkSize} tokens/{set.ChunkOverlap} overlap, {set.ChunkCount:N0} chunks");
             if (set.State != "ready") sb.Append($" [{set.State}]");
@@ -304,7 +306,7 @@ public sealed class DexiconTools
                         $"'{Echo(filePath)}' in corpus '{Echo(corpus)}' has no line {aroundLine}; "
                         + $"it runs to line {document.Text.AsSpan().Count('\n') + 1}.");
 
-                return $"{filePath}:{gotLo}-{gotHi} (corpus: {corpus})\n{WarningLine(file)}\n"
+                return $"{OneLine(filePath)}:{gotLo}-{gotHi} (corpus: {OneLine(corpus)})\n{WarningLine(file)}\n"
                      + Passage.Stitch([(gotLo, gotHi, text)], lineNumbers);
             }
         }
@@ -326,7 +328,7 @@ public sealed class DexiconTools
         var shownLo = Math.Max(lo, pieces[0].StartLine);
         var shownHi = Math.Min(hi, pieces[^1].EndLine);
 
-        var header = $"{filePath}:{shownLo}-{shownHi} (corpus: {corpus})\n{WarningLine(file)}";
+        var header = $"{OneLine(filePath)}:{shownLo}-{shownHi} (corpus: {OneLine(corpus)})\n{WarningLine(file)}";
         return header + "\n" +
                Passage.Stitch(pieces.Select(p => (p.StartLine, p.EndLine, p.Content)), lineNumbers, (lo, hi));
     }
@@ -358,7 +360,7 @@ public sealed class DexiconTools
         var job = await queue.EnqueueAsync(target.Id, full ? JobKind.Full : JobKind.Refresh, ct: ct);
 
         // Never blocks: indexing a large repository outlasts any sensible tool timeout.
-        return $"Queued {(full ? "full" : "incremental")} reindex of '{target.Name}' as job {job.Id} " +
+        return $"Queued {(full ? "full" : "incremental")} reindex of '{OneLine(target.Name)}' as job {job.Id} " +
                $"(state: {job.State.ToString().ToLowerInvariant()}). Poll index_status for progress.";
     }
 
@@ -386,7 +388,7 @@ public sealed class DexiconTools
             catch (ScopeResolutionException ex) { throw Refusal(ex.Message); }
         }
 
-        if (targets.Count == 0) return $"Key '{principal.Name}' can reach no corpora.";
+        if (targets.Count == 0) return $"Key '{OneLine(principal.Name)}' can reach no corpora.";
 
         var sb = new StringBuilder();
         foreach (var c in targets)
@@ -400,14 +402,14 @@ public sealed class DexiconTools
                 .OrderByDescending(j => j.QueuedUtc).ThenByDescending(j => j.Id)
                 .FirstOrDefaultAsync(ct);
 
-            sb.Append($"{c.Name}: {summary.State}\n");
+            sb.Append($"{OneLine(c.Name)}: {summary.State}\n");
             sb.Append($"  {summary.FileCount:N0} {UnitFor(summary.Sources, summary.FileCount)} indexed, {summary.ChunkCount:N0} chunks");
             if (summary.SkippedCount > 0) sb.Append($", {summary.SkippedCount:N0} skipped");
             if (summary.FailedCount > 0) sb.Append($", {summary.FailedCount:N0} failed");
             sb.Append('\n');
             foreach (var set in summary.ChunkSets)
             {
-                sb.Append($"  {(set.IsDefault ? "*" : " ")} {set.Name}: {set.State}, ");
+                sb.Append($"  {(set.IsDefault ? "*" : " ")} {OneLine(set.Name)}: {set.State}, ");
                 sb.Append($"{set.EmbeddingModel} ({set.EmbeddingDimensions}d), {set.ChunkCount:N0} chunks");
                 if (set.PendingCount > 0) sb.Append($", {set.PendingCount:N0} pending");
                 if (set.FailedCount > 0) sb.Append($", {set.FailedCount:N0} failed");
@@ -633,8 +635,10 @@ public sealed class DexiconTools
     /// A path as one line. A file name on Linux can hold a line break, and printed as it
     /// is, one would end its entry early and could begin a line that reads as another
     /// status or reason. A glob is stored as it was typed, so it can hold one too.
+    /// Line breaks become spaces, and <see cref="DexiconAuthMiddleware.OneLine"/> then
+    /// replaces the control characters that remain, such as an escape sequence.
     /// </summary>
-    internal static string OneLine(string path) => path.ReplaceLineEndings(" ");
+    internal static string OneLine(string path) => DexiconAuthMiddleware.OneLine(path.ReplaceLineEndings(" "));
 
     /// <summary>
     /// The most characters of a caller's value that an error repeats: the length a corpus name may have
@@ -649,21 +653,20 @@ public sealed class DexiconTools
     internal const int MessageMax = 4_000;
 
     /// <summary>
-    /// A caller's value as an error repeats it: one line, no control characters, cut at
-    /// <paramref name="max"/>. The SDK returns the message of an <see cref="McpException"/> to the caller and
-    /// a log can carry it, so a line break in the value could begin a line that reads as another entry.
-    /// Line breaks become spaces, as <see cref="OneLine"/> makes them, and
-    /// <see cref="DexiconAuthMiddleware.OneLine"/> then replaces the control characters that remain, such as
-    /// an escape sequence.
+    /// A caller's value as an error repeats it: cut at <paramref name="max"/> characters, then held to one
+    /// line by <see cref="OneLine"/>. The SDK returns the message of an <see cref="McpException"/> to the
+    /// caller and a log can carry it, so a line break in the value could begin a line that reads as another
+    /// entry. The cut comes first, so a value of any length costs at most <paramref name="max"/> characters
+    /// of scanning, and replacement never lengthens text, so the cut cannot fall inside a replacement.
     /// </summary>
     internal static string Echo(string? value, int max = EchoMax)
     {
-        var line = DexiconAuthMiddleware.OneLine(OneLine(value ?? string.Empty));
-        if (line.Length <= max) return line;
+        if (value is null) return string.Empty;
+        if (value.Length <= max) return OneLine(value);
 
         // Not between the halves of a surrogate pair.
-        var cut = char.IsHighSurrogate(line[max - 1]) ? max - 1 : max;
-        return line[..cut] + "...";
+        var cut = char.IsHighSurrogate(value[max - 1]) ? max - 1 : max;
+        return OneLine(value[..cut]) + "...";
     }
 
     /// <summary>

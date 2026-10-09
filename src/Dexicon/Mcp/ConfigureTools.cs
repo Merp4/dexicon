@@ -331,7 +331,7 @@ public sealed class ConfigureTools
         if (root == ".." || root.StartsWith("../", StringComparison.Ordinal))
             throw new McpException($"'{DexiconTools.Echo(folder)}' is outside the workspace. list_folders shows what is mounted.");
         var wanted = isHistory ? SourceKind.GitHistory : SourceKind.Workspace;
-        var what = $"{(isHistory ? "commit history of" : "files under")} {(root.Length == 0 ? "the workspace root" : DexiconTools.OneLine(root))}";
+        var what = $"{(isHistory ? "commit history of" : "files under")} {(root.Length == 0 ? "the workspace root" : DexiconTools.Echo(root))}";
 
         // Recorded when the change is saved, by the service's callback, and not after it returns:
         // queuing the refresh can still fail with the source in place, and a creation with no entry
@@ -560,7 +560,7 @@ public sealed class ConfigureTools
     /// <summary>A source in the words the tools' replies use for it, the root named as such.</summary>
     private static string Describe(Source s)
     {
-        var where = Folder(s.RootPath) is { Length: > 0 } f ? DexiconTools.OneLine(f) : "the workspace root";
+        var where = Folder(s.RootPath) is { Length: > 0 } f ? DexiconTools.Echo(f) : "the workspace root";
         return s.Kind switch
         {
             SourceKind.GitHistory => $"commit history of {where}",

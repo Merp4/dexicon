@@ -129,6 +129,20 @@ public class LogForgingTests
     }
 
     [Fact]
+    public void ACarriageReturnAndLineFeedTogetherAreOneLineBreakWithOneMarker()
+    {
+        DexiconAuthMiddleware.OneLine("a\r\nb").ShouldBe("a�b");
+        DexiconAuthMiddleware.OneLine("a\n\rb").ShouldBe("a��b");
+        DexiconAuthMiddleware.OneLine("a\rb\nc").ShouldBe("a�b�c");
+    }
+
+    [Fact]
+    public void TheToolsLineHolderTakesEscapeSequencesAsWellAsLineBreaks()
+    {
+        Dexicon.Mcp.DexiconTools.OneLine("a\r\nb\u001B[2Jc").ShouldBe("a b�[2Jc");
+    }
+
+    [Fact]
     public void AnOrdinaryValueIsTheSameString()
     {
         // Every request goes through this. The common case must not allocate.

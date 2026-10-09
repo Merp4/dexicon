@@ -922,19 +922,20 @@ public static class SystemEndpoints
                     await http.Response.Body.FlushAsync(ct);
                 }
 
-                log.LogInformation("Pulled {Model} into provider {Provider}", model, provider);
+                log.LogInformation("Pulled {Model} into provider {Provider}",
+                    DexiconAuthMiddleware.OneLine(model), DexiconAuthMiddleware.OneLine(provider));
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 // The client navigated away. Ollama keeps the partial download and
                 // resumes next time, so there is nothing to clean up.
-                log.LogInformation("Pull of {Model} was cancelled by the client", model);
+                log.LogInformation("Pull of {Model} was cancelled by the client", DexiconAuthMiddleware.OneLine(model));
             }
             catch (Exception ex) when (ex is EmbeddingUnavailableException
                                           or UnknownEmbeddingProviderException
                                           or InvalidOperationException)
             {
-                log.LogWarning(ex, "Pull of {Model} failed", model);
+                log.LogWarning(ex, "Pull of {Model} failed", DexiconAuthMiddleware.OneLine(model));
                 var json = JsonSerializer.Serialize(new { model, provider, error = ex.Message }, JsonOptions.Web);
                 await http.Response.WriteAsync($"data: {json}\n\n", CancellationToken.None);
             }
