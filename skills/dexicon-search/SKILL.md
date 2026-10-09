@@ -1,5 +1,5 @@
 ---
-# dexicon-skill-version: 6
+# dexicon-skill-version: 7
 name: dexicon-search
 description: Search indexed code and documents by meaning using the Dexicon MCP server. Use when looking for where something is implemented, how a concept is handled, or what a document says about a topic — anything where you know the idea but not the term. Also covers reading an indexed file back, diagnosing an empty result, and changing what is indexed, including adding folders and corpora, and asking for a removal, when the key allows it.
 ---
@@ -28,7 +28,7 @@ Start with `list_corpora`. It returns the names you are allowed to pass, their s
 state and what each holds, and those names are the only legal values for `search_index`'s
 `corpus`. Guessing one wastes a call.
 
-## When this beats grep
+## When to search instead of grep
 
 Reach for `search_index` when you know **what you mean** but not what it is **called**:
 
@@ -39,10 +39,11 @@ Reach for `search_index` when you know **what you mean** but not what it is **ca
   place two subsystems agree on a format.
 
 Reach for grep/glob instead when you know **the exact string**: a symbol name, an error
-message, a config key, an import. Grep is faster, exact, and complete. Dexicon ranks; grep
-enumerates — and when you need *every* occurrence, ranking is the wrong tool.
+message, a config key, an import. Grep is faster, exact, and complete. Dexicon returns the
+best-ranked matches and grep returns every match, so when you need *every* occurrence, use grep.
 
-The two compose well: search to find the neighbourhood, grep to sweep it.
+The two work well together: search to find the right part of the tree, then grep to find every
+occurrence in it.
 
 A corpus can hold documents that exist nowhere on disk — uploaded PDFs, EPUBs, scraped
 pages. For those there is no grep to fall back to, so search is not the faster option, it
@@ -66,14 +67,15 @@ results across the whole index is usually worse than eight from `src/Auth/`. `pa
 relative to a source's root, so it cannot select a folder that is itself a source's root;
 `source` does that. A result names its source's root (`· in books/manuals/Architecture` after
 the path) when the results span several sources, and a source that matches nothing is
-refused with an error that lists them all. A parent matches everything beneath it.
+refused with an error that lists them all. A `source` that names a parent folder covers every
+source beneath it: `books/manuals` covers each topic folder under it.
 
 Omitting `corpus` searches everything visible to you, and with several corpora of different
 kinds that is noisy: asked of five corpora, a question about one project's design drew 6 of
 its top 10 hits from the four that did not hold the answer. Pick the one or two whose
-descriptions fit and name them. A targeted search ranks better, because the competition is
-relevant rather than merely abundant. Search everything when no description fits, or when a
-targeted search came back empty or thin and you need to know whether the answer is
+descriptions fit and name them. A targeted search ranks better, because every result it ranks
+comes from a corpus that could hold the answer. Search everything when no description fits,
+or when a targeted search came back empty or thin and you need to know whether the answer is
 elsewhere.
 
 ### Chunk sets: `corpus:set`
@@ -103,7 +105,7 @@ Pass `filePath` as `search_index` printed it, without the `:start-end` range (or
 `#chapter=` or `#slide=` anchor after it: the lookup matches the stored path exactly, so a
 path with its anchor finds nothing. For a hit in a book, `aroundLine` is one integer taken
 from the `lines 120-160` span the hit prints: `120` for the hit itself, `160` to read on past
-it. This returns the surrounding lines and reports any gap rather than papering over it.
+it. This returns the surrounding lines and reports any gap in them.
 
 If the corpus indexes a local source tree you can also just read the file directly — that
 is usually better, because it is the live file and Dexicon's copy is as old as the last
@@ -117,13 +119,13 @@ dexicon://corpus/{name}/file/{path}
 dexicon://corpus/{name}              # the corpus's config and counts, as JSON
 ```
 
-Both read by filter, not by relevance, so a file comes back whole rather than as its most
-interesting parts.
+Both are exact lookups, not relevance searches, so a file comes back whole rather than as its
+best-matching chunks.
 
 ## When search comes back empty
 
-Do not conclude the content is absent. `index_status(corpus?)` gives the honest answer, and
-there are five common ones:
+Do not conclude the content is absent. There are five common reasons for an empty result, and
+`index_status(corpus?)` shows three of them (still indexing, never indexed, left out):
 
 - **Still indexing.** A large corpus takes a while; counts climb as it goes.
 - **Never indexed.** The corpus exists, the files were never walked.
@@ -135,8 +137,8 @@ there are five common ones:
 - **Left out.** A filter excluded the file, it was over the size limit, it failed to
   extract or held no text (a scanned PDF), or no source covers its folder. `index_status`
   with a corpus **named** lists each source with its filters, and the files skipped, failed
-  or found empty with the reason for each. A file a filter or an ignore file excludes is
-  not listed; the source's filters account for it.
+  or found empty with the reason for each. Files excluded by a filter or an ignore file are
+  not listed.
 
 If you know files changed on disk and the index is behind, `index_refresh(corpus)` queues a
 reindex and returns immediately; it does not block, and results will not improve in this
@@ -164,25 +166,25 @@ settings. `configure_corpus(corpus, create: true, description: ...)` makes a cor
 without `create` changes its description or the filters its sources inherit. Settings you
 leave out keep their value; `reset` returns one to its default. A new or widened source
 starts indexing at once, which for a large tree takes a long time, so tell the user what you
-added. These tools cannot remove a corpus or a source, though a narrower filter drops
-the files it stops selecting from the index on the refresh, and widening it reads them back.
-`gitignore` can be set to true but not turned off. Prefer a `.dexiconignore` for what the
-repository should never have indexed, since it travels with the tree, and a source's
-filters for what only this corpus leaves out.
+added. These tools cannot remove a corpus or a source, though narrowing a filter removes
+the files it no longer selects from the index at the next refresh, and widening it again
+indexes them again. `gitignore` can be set to true but not turned off. Prefer a
+`.dexiconignore` for files that should never be indexed from a repository, since the file is
+stored in the tree itself, and a source's filters for files that only this corpus leaves out.
 
 If your key lists `propose_removal`, you can ask for something to be removed: a source, a
 chunk set, an uploaded document or a whole corpus. Nothing is removed by the call. It records
-the request and whoever runs Dexicon approves or rejects it, so ask only for what you
-can say a reason for, in one line, and say in your reply that you asked and that it is
-waiting. `propose_removal(kind, corpus, reason, target?)` takes `kind` as `source`,
-`chunk_set`, `document` or `corpus`. The `target` for a source is its folder as `index_status`
-shows it (`files:repos/app`, or `history:repos/app` when both read the folder), for a chunk
-set its name, for a document its path; for a `corpus` leave `target` out. The default chunk set and a
-corpus's only chunk set cannot be removed, so they are refused when asked. Ask once: a repeat
-returns the request already waiting. `removal_status` lists the requests your key has made
-and how each was decided: waiting, approved (it has been removed), rejected (it stays), or
-could not be done, with the reason. Check it before asking again, and it still answers once a
-corpus you asked to remove is gone.
+the request and whoever runs Dexicon approves or rejects it, so ask only when you can give
+the reason in one line, and say in your reply that you asked and that it is waiting.
+`propose_removal(kind, corpus, reason, target?)` takes `kind` as `source`, `chunk_set`,
+`document` or `corpus`. The `target` for a source is its folder as `index_status` shows it
+(`files:repos/app`, or `history:repos/app` when both read the folder), for a chunk set its
+name, for a document its path; for a `corpus` leave `target` out. The default chunk set and a
+corpus's only chunk set cannot be removed, so they are refused when asked. Ask once: asking
+again returns the request that is already waiting. `removal_status` lists the requests your
+key has made and how each was decided: waiting, approved (it has been removed), rejected (it
+stays), or could not be done, with the reason. Check it before asking again. It still lists a
+request after the corpus it named has been removed.
 
 Without those tools, anything else (a new corpus or source, a source's filters or size
 limit, a corpus description) is set in the Dexicon UI by whoever runs it, as are chunk sets

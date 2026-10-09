@@ -16,6 +16,15 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## Unreleased
+
+### ⚠️ Upgrading
+
+- The skill changes (`dexicon-skill-version: 7`). It is reworded, and states that `index_status`
+  shows three of the five common reasons for an empty result (still indexing, never indexed, left
+  out). The tools are unchanged. Running `scripts/install-mcp.ps1` again upgrades installed
+  copies. The hooks are unchanged.
+
 ## 0.6.8 — 2026-10-09
 
 ### ⚠️ Upgrading
