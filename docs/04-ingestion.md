@@ -265,7 +265,8 @@ What a pass records when rows it holds are deleted depends on which rows:
 | An upload source | Succeeded; its documents go with it and are skipped. |
 | A folder source | Failed, with the error below. |
 | A chunk set, or a chunk state on its own | Failed, with the error below; the document and its vectors are left as they are. |
-| The job's own row | Nothing is recorded, the failure goes to the worker, and the save is not retried. |
+| The corpus | Nothing is recorded, because its jobs went with it, and nothing is thrown; the log carries the "rows changed or went missing" warnings. |
+| The job's own row, deleted on its own | Nothing is recorded, the failure goes to the worker, and the save is not retried. |
 
 The error is "A chunk set, source or document was removed while the pass ran."; the exception, with
 the details of the save, is in the log. The save that records the outcome stops tracking the rows

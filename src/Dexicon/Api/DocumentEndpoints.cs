@@ -270,10 +270,10 @@ public static class DocumentEndpoints
         // This is the point of the whole design: the same bytes, chunked this
         // corpus's way, without re-uploading or re-extracting anything.
         var name = body.FileName ?? blob.OriginalFileName ?? body.Sha256[..12];
-        IndexedFile file;
+        Attachment attached;
         try
         {
-            file = await documents.AttachAsync(corpus, body.Sha256, name, ct);
+            attached = await documents.AttachWithSetsAsync(corpus, body.Sha256, name, ct);
         }
         catch (NameTakenException ex)
         {
@@ -284,9 +284,10 @@ public static class DocumentEndpoints
         var job = await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, ct: CancellationToken.None);
 
         return Results.Accepted($"/api/jobs/{job.Id}", new DocumentAttached(
-            corpus.Name, file.Id, name,
-            // Every set, because attaching queues the document into all of them.
-            [.. corpus.ChunkSets.Select(s => new AttachedChunking(
+            corpus.Name, attached.File.Id, name,
+            // Every set the attachment was given a state for, read when it was saved, because the document is
+            // queued into all of them. The corpus resolved with the request can list sets that are gone.
+            [.. attached.Sets.Select(s => new AttachedChunking(
                 s.Name, s.ChunkSize, s.ChunkOverlap, s.BoundaryMode, s.EmbeddingModel))],
             job.ToSummary()));
     }

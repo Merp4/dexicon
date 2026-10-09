@@ -357,6 +357,7 @@ describe('the chunk sets, collapsed', () => {
 
     expect(onChanged).toHaveBeenCalledTimes(again ? 1 : 0);
   });
+
   it('asks to open when its line is pressed', async () => {
     const onOpenChange = vi.fn();
     collapsed([chunkSet()], onOpenChange);

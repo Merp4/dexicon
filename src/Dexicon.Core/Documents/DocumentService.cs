@@ -21,6 +21,12 @@ public sealed record StoredDocument(
     bool AlreadyExisted,
     string? EmptyReason);
 
+/// <summary>
+/// An attachment and the chunk sets it was given a state for: the sets the corpus had when the attachment
+/// was saved, which are not always the ones the request resolved.
+/// </summary>
+public sealed record Attachment(IndexedFile File, IReadOnlyList<ChunkSet> Sets);
+
 /// <summary>An uploaded document's file row as it was when a detach deleted it.</summary>
 public sealed record DetachedFile(string SourceId, string RelativePath);
 
@@ -334,6 +340,12 @@ public sealed class DocumentService(
     /// document's.
     /// </exception>
     public async Task<IndexedFile> AttachAsync(Corpus corpus, string sha256, string fileName,
+        CancellationToken ct = default) =>
+        (await AttachWithSetsAsync(corpus, sha256, fileName, ct)).File;
+
+    /// <summary><see cref="AttachAsync"/>, answering also with the chunk sets the attachment was given states for.</summary>
+    /// <exception cref="NameTakenException">As <see cref="AttachAsync"/>.</exception>
+    public async Task<Attachment> AttachWithSetsAsync(Corpus corpus, string sha256, string fileName,
         CancellationToken ct = default)
     {
         // As StoreAsync: no paramName, so the message reads the same to whoever is told it.
@@ -344,7 +356,7 @@ public sealed class DocumentService(
         finally { Attaching.Release(); }
     }
 
-    private async Task<IndexedFile> AttachHeldAsync(Corpus corpus, string sha256, string fileName,
+    private async Task<Attachment> AttachHeldAsync(Corpus corpus, string sha256, string fileName,
         CancellationToken ct)
     {
         // The request resolved the corpus before it waited for the lock, and a removal that held the lock
@@ -360,8 +372,7 @@ public sealed class DocumentService(
         // Needed to give the new attachment a state row per set. Read here, under the lock, and not from
         // corpus.ChunkSets: a corpus resolved with its sets included holds them as they were when the request
         // was resolved, which is as old as the request for the later files of an upload.
-        var setIds = await db.ChunkSets.AsNoTracking().Where(s => s.CorpusId == corpus.Id)
-            .Select(s => s.Id).ToListAsync(ct);
+        var sets = await db.ChunkSets.AsNoTracking().Where(s => s.CorpusId == corpus.Id).ToListAsync(ct);
 
         var source = await UploadSourceFor(corpus, ct);
 
@@ -395,7 +406,7 @@ public sealed class DocumentService(
             }
             byBlob.SizeBytes = blob.SizeBytes;
             await db.SaveChangesAsync(ct);
-            return byBlob;
+            return new Attachment(byBlob, sets);
         }
 
         var existing = await db.Files.FirstOrDefaultAsync(
@@ -409,7 +420,7 @@ public sealed class DocumentService(
             existing.SizeBytes = blob.SizeBytes;
             await InvalidateAsync(existing.Id, ct);
             await db.SaveChangesAsync(ct);
-            return existing;
+            return new Attachment(existing, sets);
         }
 
         var file = new IndexedFile
@@ -426,18 +437,18 @@ public sealed class DocumentService(
 
         // A row per chunk set, all Pending: a new attachment is outstanding work for
         // every way this corpus cuts its content, not just the default one.
-        foreach (var setId in setIds)
+        foreach (var set in sets)
         {
             db.FileChunkStates.Add(new FileChunkState
             {
                 FileId = file.Id,
-                ChunkSetId = setId,
+                ChunkSetId = set.Id,
                 Status = FileStatus.Pending,
             });
         }
 
         await db.SaveChangesAsync(ct);
-        return file;
+        return new Attachment(file, sets);
     }
 
     /// <summary>

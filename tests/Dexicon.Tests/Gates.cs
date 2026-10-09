@@ -53,8 +53,9 @@ internal static class Gates
 }
 
 /// <summary>
-/// Test classes that hold the attachment lock for a stretch of time on purpose. A collection with parallelism
-/// off runs alone, so no other class waits on that lock, or has it held for it, while a gate is open.
+/// Test classes that hold the attachment lock, the job queue's lock or a gate inside code that holds one, for a
+/// stretch of time on purpose. A collection with parallelism off runs alone, so no other class waits on those
+/// locks, or has them held for it, while a gate is open.
 /// </summary>
 [CollectionDefinition(nameof(AttachmentLockCollection), DisableParallelization = true)]
 public sealed class AttachmentLockCollection;

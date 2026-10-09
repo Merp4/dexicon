@@ -130,4 +130,34 @@ public sealed class RemovedCorpusEndpointTests
         await using var check = harness.NewContext();
         (await check.Jobs.CountAsync()).ShouldBe(0);
     }
+
+    [Fact]
+    public async Task TheAttachResponseListsTheSetsTheAttachmentWasGivenStatesFor()
+    {
+        // The corpus was resolved with two sets. One is deleted while the attachment waits for the lock, so
+        // the attachment is given one state, and the response names that set and not the one that is gone.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload, sets: 2);
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt");
+
+        Task<IResult> attachment;
+        using (await DocumentService.HoldAttachmentsAsync().FinishesAsync("taking the lock"))
+        {
+            attachment = Task.Run(() => DocumentEndpoints.AttachAsync(
+                IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256, "doc.txt"),
+                As(Scopes.Search, Scopes.Ingest), new ScopeResolver(db), documents, db,
+                new IndexJobQueue(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance), default));
+            await using var removing = harness.NewContext();
+            await removing.ChunkSets.Where(s => s.Id == "set-2").ExecuteDeleteAsync();
+        }
+
+        var result = await attachment.FinishesAsync("the attachment");
+
+        var attached = result.ShouldBeOfType<Microsoft.AspNetCore.Http.HttpResults.Accepted<DocumentAttached>>().Value.ShouldNotBeNull();
+        attached.Chunking.Select(c => c.Set).ShouldBe(["default"]);
+        await using var check = harness.NewContext();
+        (await check.FileChunkStates.Select(s => s.ChunkSetId).ToListAsync()).ShouldBe(["set-1"]);
+    }
 }
