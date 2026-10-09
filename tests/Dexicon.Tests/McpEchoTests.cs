@@ -126,6 +126,34 @@ public sealed class McpEchoTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AFolderThatLeavesTheWorkspaceInListFoldersIsRepeatedOnOneLineAndCut()
+    {
+        await using var db = _harness.NewContext();
+
+        var thrown = await Should.ThrowAsync<McpException>(() => ConfigureTools.ListFoldersAsync(
+            Configurer, new ScopeResolver(db), db, _harness.Settings, "../../" + Hostile));
+
+        thrown.Message.ShouldContain("is outside the workspace, or passes through a link");
+        ShouldEchoSafely(thrown, "'../../bad");
+    }
+
+    [Fact]
+    public async Task AProposalKindThatIsNotOneOfTheChoicesIsRepeatedOnOneLineAndCut()
+    {
+        await using var db = _harness.NewContext();
+        var proposer = new RequestContext
+        {
+            Principal = new Principal("k4", "proposer", new HashSet<string>(StringComparer.Ordinal) { Scopes.Propose }),
+        };
+
+        var thrown = await Should.ThrowAsync<McpException>(() => ProposeTools.ProposeRemovalAsync(
+            proposer, new ScopeResolver(db), _harness.NewProposals(db), Hostile, "notes", "no longer needed"));
+
+        thrown.Message.ShouldContain(", not 'bad");
+        ShouldEchoSafely(thrown);
+    }
+
+    [Fact]
     public async Task AResetNameThatIsNotOneOfTheOnesAllowedIsRepeatedOnOneLineAndCut()
     {
         await using var db = _harness.NewContext();
