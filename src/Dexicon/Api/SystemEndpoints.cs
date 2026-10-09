@@ -800,7 +800,9 @@ public static class SystemEndpoints
                     templates.Document, templates.Query, templates.Origin.ToString().ToLowerInvariant(),
                     facts is null ? null : new ModelMeasurement(
                         facts.MaxInputChars, facts.TruncatesSilently,
-                        facts.RecommendedChunkTokens, facts.CharsPerToken, facts.MeasuredUtc)));
+                        // A row measured before the recommendation was capped can hold more than a set accepts.
+                        Math.Min(facts.RecommendedChunkTokens, CodeChunker.MaxChunkTokens),
+                        facts.CharsPerToken, facts.MeasuredUtc)));
             }
 
             return Results.Ok(new EmbeddingModelList(

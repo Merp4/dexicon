@@ -54,12 +54,33 @@ public sealed class ChunkSettingRulesTests
     public void ANullBoundaryModeIsUnknown() =>
         ChunkSettingRules.Check(256, 32, null, null).ShouldNotBeNull().Title.ShouldBe("Unknown boundary mode");
 
+    [Theory]
+    [InlineData(3, -1, "x", null, "chunkSize must be between 64 and 8192 tokens")]
+    [InlineData(3, 5, "none", null, "chunkSize must be between 64 and 8192 tokens")]
+    [InlineData(256, -1, "x", null, "chunkOverlap cannot be negative")]
+    [InlineData(256, 300, "x", null, "chunkOverlap must be smaller than chunkSize")]
+    [InlineData(256, 32, "x", null, "Unknown boundary mode")]
+    [InlineData(256, 32, "custom", null, "customBoundaryPattern is required for boundary mode 'custom'")]
+    [InlineData(256, 32, "custom", "[z-a]", "Invalid custom boundary pattern")]
+    public void WhenSeveralRulesFailTheFirstInTheDocumentedOrderIsReported(
+        int size, int overlap, string mode, string? pattern, string title) =>
+        ChunkSettingRules.Check(size, overlap, mode, pattern).ShouldNotBeNull().Title.ShouldBe(title);
+
     [Fact]
-    public void TheRangeIsCheckedBeforeTheOverlap()
+    public void TheFieldsAnAnswerIsAboutAreNamed()
     {
-        // A size of 3 with an overlap of 5 is wrong twice. The size is what the chunk-set endpoints named first.
-        ChunkSettingRules.Check(3, 5, "none", null).ShouldNotBeNull().Title
-            .ShouldBe("chunkSize must be between 64 and 8192 tokens");
+        ChunkSettingRules.Check(3, 0, "none", null)!.Fields.ShouldBe(ChunkSettingFields.Size);
+        ChunkSettingRules.Check(256, 300, "none", null)!.Fields.ShouldBe(ChunkSettingFields.Size | ChunkSettingFields.Overlap);
+        ChunkSettingRules.Check(256, 32, "x", null)!.Fields.ShouldBe(ChunkSettingFields.Mode);
+    }
+
+    [Fact]
+    public void TheLimitsAreTheOnesAChunkSetIsMadeWithAndTheOnesAModelIsRecommended()
+    {
+        ChunkSettingRules.MinChunkSize.ShouldBe(64);
+        ChunkSettingRules.MaxChunkSize.ShouldBe(8192);
+        ChunkSettingRules.Check(8192, 0, "none", null).ShouldBeNull();
+        ChunkSettingRules.Check(8193, 0, "none", null).ShouldNotBeNull();
     }
 
     [Fact]

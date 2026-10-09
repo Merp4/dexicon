@@ -51,11 +51,30 @@ public static class Bootstrapper
         await db.Database.MigrateAsync();
         log.LogInformation("Catalogue ready at {Path}", options.Storage.CatalogPath);
 
+        CheckChunkDefaults(log, options);
         await ReconcileOrphanedJobsAsync(db, log);
         await VerifyDependenciesAsync(sp, log, options);
         await EnsureAdminPasswordAsync(sp, log, options);
         await EnsureBootstrapTokenAsync(sp, db, log, options);
         await PurgeLegacyChunksAsync(sp, db, log);
+    }
+
+    /// <summary>
+    /// Logs an error naming the setting when the configured chunk size, overlap or boundary mode cannot make
+    /// a corpus. Only a creation that does not send its own settings is affected: existing sets store their
+    /// own, and indexing and search read those. So the error is logged and the service starts, where
+    /// refusing to start would take search down for a setting that touches one operation. The creation
+    /// itself answers 503 with the same setting named. Nothing in the repository validates options at
+    /// startup (no <c>IValidateOptions</c> or <c>ValidateOnStart</c>), and one check here is the smallest
+    /// mechanism that does not add a convention.
+    /// </summary>
+    internal static void CheckChunkDefaults(ILogger log, DexiconOptions options)
+    {
+        if (Api.ChunkSettingRules.CheckServerDefaults(options.Indexing) is not { } refused) return;
+
+        log.LogError(
+            "The chunk settings in the server's configuration cannot make a corpus, and creating one without its "
+            + "own settings will be refused until they are corrected: {Detail}", refused.Detail);
     }
 
     /// <summary>

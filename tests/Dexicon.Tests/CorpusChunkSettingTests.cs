@@ -67,7 +67,6 @@ public sealed class CorpusChunkSettingTests : IAsyncLifetime
         { 100, 150, "none", "chunkOverlap must be smaller than chunkSize" },
         { 256, 32, "paragraph", "Unknown boundary mode" },
         { 256, 32, "Blank-Line", "Unknown boundary mode" },
-        { 256, 32, "custom", "customBoundaryPattern is required for boundary mode 'custom'" },
     };
 
     private async Task NothingWasCreatedAsync(CatalogDbContext db)
@@ -130,9 +129,8 @@ public sealed class CorpusChunkSettingTests : IAsyncLifetime
         set.ProblemDetails.Title.ShouldBe(title);
         corpus.ProblemDetails.Title.ShouldBe(set.ProblemDetails.Title);
         corpus.ProblemDetails.Status.ShouldBe(set.ProblemDetails.Status);
-        // The chunk-set answer has no detail where the title says it all; the corpus answer repeats the
-        // title there, because the configure tools show an agent the detail alone.
-        corpus.ProblemDetails.Detail.ShouldBe(set.ProblemDetails.Detail ?? title);
+        // Where the title says it all neither answer has a detail, so the UI does not show it twice.
+        corpus.ProblemDetails.Detail.ShouldBe(set.ProblemDetails.Detail);
     }
 
     [Fact]

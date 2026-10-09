@@ -100,6 +100,15 @@ public static class CodeChunker
     public static int UsableContext(int contextTokens) =>
         Math.Max(1, (int)(contextTokens * ContextShare));
 
+    /// <summary>The smallest chunk size, in tokens, that a chunk set accepts.</summary>
+    public const int MinChunkTokens = 64;
+
+    /// <summary>
+    /// The largest chunk size, in tokens, that a chunk set accepts. A model with a longer context is
+    /// recommended this much, because anything over it is refused when the set is made.
+    /// </summary>
+    public const int MaxChunkTokens = 8192;
+
     /// <summary>
     /// Bumped whenever chunking OUTPUT changes for the same input and settings. Part of
     /// the chunking fingerprint, so a corpus re-chunks itself after an algorithm change.

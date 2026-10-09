@@ -700,7 +700,9 @@ never falls back without reporting it).
 A chunk set's size is from 64 to 8,192 tokens and its overlap is not negative and below the size.
 The same rules judge the settings a corpus is created with, for its default set, and a set added
 or changed afterwards; the custom pattern is compiled when it is set, so a bad one is refused on
-that request.
+that request. Creating a corpus carries no pattern, so mode `custom` is set afterwards on the
+default set. The size recommended for a model is cut at 8,192, so a model with a longer context
+is offered a size that can be used.
 
 ### No chunk exceeds the budget
 

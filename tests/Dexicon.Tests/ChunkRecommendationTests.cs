@@ -45,6 +45,23 @@ public sealed class ChunkRecommendationTests
         MeasuredUtc = DateTime.UtcNow,
     };
 
+    [Theory]
+    [InlineData(9_100, 8_190)]
+    [InlineData(9_102, 8_191)]
+    [InlineData(9_103, 8_192)]
+    [InlineData(32_768, 8_192)]
+    [InlineData(1_000_000, 8_192)]
+    public void TheRecommendationIsNeverMoreThanAChunkSetAccepts(int context, int expected)
+    {
+        ModelProbe.RecommendedTokens(contextTokens: context, budgetChars: 7850, charsPerToken: 3.8).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void TheRecommendationFromACharacterBudgetIsCappedToo()
+    {
+        ModelProbe.RecommendedTokens(contextTokens: null, budgetChars: 400_000, charsPerToken: 4).ShouldBe(CodeChunker.MaxChunkTokens);
+    }
+
     [Fact]
     public void TheRecommendationIsMostOfTheContext()
     {

@@ -172,7 +172,7 @@ public sealed class ConfigureTools
                         Audit("created", c, setAtCreation.Count == 0 ? "none" : string.Join(", ", setAtCreation));
                     },
                     defaults: filtersGiven ? new CorpusDefaults(gitignore, maxBytes, include, exclude) : null);
-                if (created.Refusal is { } refused) throw DexiconTools.Refusal(refused.Detail);
+                if (created.Refusal is { } refused) throw Refused(refused, logs, principal);
                 target = created.Value!;
             }
             catch (Exception ex) when (saved is not null && ex is not McpException)
@@ -229,7 +229,7 @@ public sealed class ConfigureTools
                     c.Description ? "description" : null,
                     c.Filters ? "the filters its sources inherit" : null,
                 }.OfType<string>())));
-            if (update.Refusal is { } refused) throw DexiconTools.Refusal(refused.Detail);
+            if (update.Refusal is { } refused) throw Refused(refused, logs, principal);
 
             // The service queues a refresh for moved filters only when there are sources to read.
             if (update.Value)
@@ -370,7 +370,7 @@ public sealed class ConfigureTools
                     GitHistory: isHistory,
                     Git: isHistory && history is not null ? Merge(new GitHistoryOptions(), history, []) : null), ct,
                     committed: _ => AuditSource("added"));
-                if (added.Refusal is { } refused) throw DexiconTools.Refusal(refused.Detail);
+                if (added.Refusal is { } refused) throw Refused(refused, logs, principal);
 
                 action = "added";
                 jobId = added.Value!.IndexJob.Id;
@@ -409,7 +409,7 @@ public sealed class ConfigureTools
                 gitignore, maxBytes, include, exclude,
                 Clear: resets.Where(FilterNames.ContainsKey).Select(r => FilterNames[r]).ToList(),
                 Git: git), ct, committed: _ => AuditSource("changed"));
-            if (updated.Refusal is { } refused) throw DexiconTools.Refusal(refused.Detail);
+            if (updated.Refusal is { } refused) throw Refused(refused, logs, principal);
 
             action = updated.Value!.IndexJob is null ? "left unchanged" : "changed";
             jobId = updated.Value.IndexJob?.Id;
@@ -444,6 +444,22 @@ public sealed class ConfigureTools
                  + (StatusHint(principal, target.Name) is { Length: > 0 } hint ? hint.TrimStart() + "\n" : "")
                  + (action == "added" ? "" : Narrowing + "\n"),
         };
+    }
+
+    /// <summary>
+    /// A refusal from <see cref="CorpusConfiguration"/> as an error for the agent. Where the refusal carries
+    /// text the repository did not write (a provider's message, a path the resolver names) the agent is given
+    /// its <see cref="ConfigRefusal.AgentDetail"/>, and the full detail goes to the log under the key's name.
+    /// </summary>
+    private static McpException Refused(ConfigRefusal refused, ILoggerFactory logs, Principal principal)
+    {
+        if (refused.AgentDetail is null) return DexiconTools.Refusal(refused.Detail);
+
+        logs.CreateLogger("Dexicon.Configure").LogWarning(
+            "Key {Key} was refused: {Title}: {Detail}",
+            DexiconAuthMiddleware.OneLine(principal.Name), DexiconAuthMiddleware.OneLine(refused.Title),
+            DexiconAuthMiddleware.OneLine(refused.Detail));
+        return DexiconTools.Refusal(refused.AgentDetail);
     }
 
     /// <summary>

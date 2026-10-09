@@ -263,12 +263,16 @@ public sealed class ModelProbe(IEmbeddingService embeddings, ILogger<ModelProbe>
 
     /// <summary>
     /// The chunk size to suggest for this model, in tokens. Named and internal so the
-    /// choice can be asserted directly rather than inferred from a probe run.
+    /// choice can be asserted directly rather than inferred from a probe run. Never more than
+    /// <see cref="Indexing.CodeChunker.MaxChunkTokens"/>, the most a chunk set accepts, so a model
+    /// with a context of tens of thousands of tokens is recommended a size that can be used.
     /// </summary>
     internal static int RecommendedTokens(int? contextTokens, int budgetChars, double? charsPerToken) =>
-        contextTokens is { } ctx
-            ? Indexing.CodeChunker.UsableContext(ctx)
-            : (int)(budgetChars / (charsPerToken ?? Indexing.CodeChunker.CharsPerToken));
+        Math.Min(
+            Indexing.CodeChunker.MaxChunkTokens,
+            contextTokens is { } ctx
+                ? Indexing.CodeChunker.UsableContext(ctx)
+                : (int)(budgetChars / (charsPerToken ?? Indexing.CodeChunker.CharsPerToken)));
 
     /// <summary>
     /// Characters per token, measured with the model's own tokenizer.
