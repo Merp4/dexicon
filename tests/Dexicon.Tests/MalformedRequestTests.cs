@@ -482,6 +482,9 @@ public sealed class MalformedRequestTests
         "line\u2028separator.txt",
         "paragraph\u2029separator.txt",
         "delete\u007f.txt",
+        "reversed\u202Egpj.txt",
+        "embedded\u202Aname.txt",
+        "isolated\u2069name.txt",
         new string('n', 257) + ".txt",
     };
 
@@ -535,6 +538,23 @@ public sealed class MalformedRequestTests
         (await db.Sources.CountAsync(s => s.Kind == SourceKind.Upload)).ShouldBe(1, "no upload source was added for it");
     }
 
+    [Theory]
+    [InlineData("emoji\u200Dzwj.txt")]
+    [InlineData("\u0645\u200C\u06A9.txt")]
+    public async Task ANameWithAJoinerOrAnotherFormatCharacterIsStoredAndAttached(string name)
+    {
+        // Only the bidirectional overrides and isolates are refused: U+200C and U+200D are part of Persian and of emoji.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var corpus = await db.Corpora.SingleAsync();
+
+        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), name);
+        var file = await documents.AttachAsync(corpus, stored.Sha256, name);
+
+        file.RelativePath.ShouldBe(name);
+    }
     [Fact]
     public async Task ANameOf260CharactersIsStoredAndAttached()
     {

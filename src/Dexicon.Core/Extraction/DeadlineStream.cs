@@ -107,4 +107,5 @@ public sealed class DeadlineStream(Stream inner, TimeSpan budget, string fileNam
 /// The indexer still catches it by its own name first, so a timeout is logged and counted
 /// as one.
 /// </summary>
-public sealed class ExtractionTimeoutException(string message) : ExtractionFailedException(message);
+public sealed class ExtractionTimeoutException(string message, Exception? inner = null)
+    : ExtractionFailedException(message, inner);

@@ -265,6 +265,15 @@ public sealed class UploadOptions
     public const int BatchFiles = 10;
 
     /// <summary>
+    /// The most multipart sections, file parts and form fields together, one upload request is read
+    /// for. Only file parts count towards <see cref="BatchFiles"/>, so without this a body of empty
+    /// form fields is bounded by <see cref="MaxRequestBytes"/> alone: about 29 million sections at the
+    /// default. The web UI sends one <c>files</c> part per file, ten at most, so 100 leaves room for the
+    /// fields a script adds beside them.
+    /// </summary>
+    public const int MaxSections = 100;
+
+    /// <summary>
     /// Added to the request bound for part headers, boundaries and form fields, so a batch of
     /// <see cref="BatchFiles"/> files that each fit the cap is not refused for its framing.
     /// </summary>

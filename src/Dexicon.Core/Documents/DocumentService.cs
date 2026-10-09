@@ -65,7 +65,7 @@ public sealed class DocumentService(
     /// <summary>
     /// Why <paramref name="fileName"/> cannot be stored as a file's path, or null when it can: it is
     /// blank, longer than <see cref="MaxFileNameLength"/>, or holds a control character (a line break
-    /// among them, including U+2028 and U+2029). A listing, a search hit and a log line show the name.
+    /// among them, including U+2028 and U+2029) or a bidirectional override. A listing, a search hit and a log line show the name.
     /// The text does not repeat the name, because the upload endpoint reports it to whoever sent the
     /// file and the attach endpoint puts it in a problem detail.
     /// </summary>
@@ -74,11 +74,18 @@ public sealed class DocumentService(
         if (string.IsNullOrWhiteSpace(fileName)) return "A file name is required.";
         if (fileName.Length > MaxFileNameLength)
             return $"A file name is limited to {MaxFileNameLength} characters.";
-        if (fileName.Any(c => char.IsControl(c) || c is '\u2028' or '\u2029'))
-            return "A file name cannot hold a control character, such as a line break.";
+        if (fileName.Any(c => char.IsControl(c) || c is '\u2028' or '\u2029' || IsBidirectionalOverride(c)))
+            return "A file name cannot hold a control character, such as a line break, or a bidirectional override.";
 
         return null;
     }
+
+    /// <summary>
+    /// The embedding and override characters U+202A to U+202E and the isolates U+2066 to U+2069, which
+    /// reorder the text around them and so can make a name read as another in a listing. Other format
+    /// characters stay allowed: U+200C and U+200D are part of Persian and of emoji sequences.
+    /// </summary>
+    private static bool IsBidirectionalOverride(char c) => c is >= '\u202a' and <= '\u202e' or >= '\u2066' and <= '\u2069';
 
     /// <summary>Where a blob's bytes live: /data/blobs/ab/abcdef…, with two hex chars of fan-out.</summary>
     public string PathFor(string sha256) =>
@@ -150,9 +157,12 @@ public sealed class DocumentService(
             OriginalFileName = fileName,
             CreatedUtc = DateTime.UtcNow,
         };
-        db.Blobs.Add(blob);
 
+        // Extracted before either row is added to the context. A timeout leaves nothing tracked, so the
+        // save of the next file's attachment, or the one that queues the job, cannot write a blob
+        // that has no text. The bytes stay in the blob store, and a later upload of them extracts again.
         var text = await ExtractAsync(sha, fileName, ct);
+        db.Blobs.Add(blob);
         db.BlobTexts.Add(text);
         try
         {
@@ -244,6 +254,7 @@ public sealed class DocumentService(
     {
         var extractor = ExtractorFor(fileName);
         var path = PathFor(sha);
+        DeadlineStream? deadline = null;
 
         try
         {
@@ -260,14 +271,20 @@ public sealed class DocumentService(
 
                 // The deadline the indexing path puts on a workspace file (ExtractedTextCache.ParseAsync):
                 // without it a file that keeps reading holds the request, and the files after it in an
-                // upload, for as long as it takes. A timeout is an ExtractionFailedException and is
-                // recorded below as the blob's reason. 0 disables it, as there.
+                // upload, for as long as it takes. 0 disables it, as there.
                 var timeoutSeconds = _indexing.ExtractionTimeoutSeconds;
-                extracted = extractor.Extract(
-                    timeoutSeconds > 0
-                        ? new DeadlineStream(stream, TimeSpan.FromSeconds(timeoutSeconds), fileName)
-                        : stream,
-                    fileName);
+                if (timeoutSeconds > 0)
+                {
+                    deadline = new DeadlineStream(stream, TimeSpan.FromSeconds(timeoutSeconds), fileName);
+                    extracted = extractor.Extract(deadline, fileName);
+
+                    // An extractor that caught the timeout and went on has read part of the file.
+                    if (deadline.Expired) throw TimedOut(fileName, timeoutSeconds, null);
+                }
+                else
+                {
+                    extracted = extractor.Extract(stream, fileName);
+                }
             }
 
             // Whatever produced it. A repair that wrote the same NUL-bearing text back would
@@ -296,6 +313,16 @@ public sealed class DocumentService(
                 EmptyReason = emptyReason,
             };
         }
+        // A timeout says how busy the host was when it ran, not what is in the document, so it is not
+        // recorded as the blob's text: a row at the current extractor version is never extracted
+        // again, and the same bytes uploaded again would reuse it. It reaches the caller, which
+        // leaves what it has. An extractor may wrap the exception in its own, so the deadline's own
+        // flag is read as well as the type.
+        catch (ExtractionFailedException ex) when (ex is ExtractionTimeoutException || deadline is { Expired: true })
+        {
+            if (ex is ExtractionTimeoutException) throw;
+            throw TimedOut(fileName, _indexing.ExtractionTimeoutSeconds, ex);
+        }
         catch (ExtractionFailedException ex)
         {
             // Recorded rather than thrown away: the blob exists, so the UI can show it
@@ -313,6 +340,9 @@ public sealed class DocumentService(
             };
         }
     }
+
+    private static ExtractionTimeoutException TimedOut(string fileName, int seconds, Exception? cause) =>
+        new($"Extraction of '{fileName}' did not finish within {seconds} s.", cause);
 
     /// <summary>
     /// Attach a stored document to a corpus. The SAME blob may be attached to any number
@@ -534,7 +564,22 @@ public sealed class DocumentService(
             return cached;
         }
 
-        var fresh = await ExtractAsync(sha256, fileName, ct);
+        BlobText fresh;
+        try
+        {
+            fresh = await ExtractAsync(sha256, fileName, ct);
+        }
+        catch (ExtractionTimeoutException ex)
+        {
+            // How long it took says how busy the host was, not what the document holds. The row stays as
+            // it was, version included, so a later pass extracts again, and the caller carries on with
+            // the text it had.
+            log.LogWarning(ex,
+                "Re-extraction of {File} ({Sha}) timed out; keeping the cached v{Version} text and trying again on a later pass",
+                fileName, sha256[..12], cached.ExtractorVersion);
+            return cached;
+        }
+
         if (damaged)
             log.LogWarning(
                 "Cached text for {Sha} reads back {Read:N0} of the {Written:N0} characters stored with it; extracted again",

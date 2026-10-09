@@ -279,6 +279,109 @@ public sealed class DocumentUploadEndpointTests
         (await db.Jobs.CountAsync()).ShouldBe(0);
     }
 
+    [Fact]
+    public async Task ManyFormFieldsAreNotReadPastTheSectionLimitAndAreAnswered400WithIt()
+    {
+        await using var harness = await StartAsync();
+        var body = new MultipartBody();
+        for (var i = 0; i < 5_000; i++) body.Field($"f{i}", "v");
+
+        var posted = await PostAsync(harness, body);
+
+        var refused = posted.Result.ShouldBeOfType<ProblemHttpResult>();
+        refused.StatusCode.ShouldBe(400);
+        refused.ProblemDetails.Title.ShouldBe("No files in the request");
+        refused.ProblemDetails.Detail.ShouldNotBeNull().ShouldContain($"more than {UploadOptions.MaxSections} parts");
+        posted.BodyLength.ShouldBeGreaterThan(256 * 1024);
+        posted.BytesRead.ShouldBeLessThan(64 * 1024, "the fields past the limit were read instead of being left unread");
+    }
+
+    [Fact]
+    public async Task ARequestOfExactlyTheSectionLimitIsReadInFull()
+    {
+        // Ten files, each followed by nine fields: one hundred sections.
+        await using var harness = await StartAsync();
+        var body = new MultipartBody();
+        for (var i = 0; i < UploadOptions.BatchFiles; i++)
+        {
+            body.File("files", $"f{i}.txt", 100, (char)('a' + i));
+            for (var j = 0; j < 9; j++) body.Field($"n{i}-{j}", "v");
+        }
+
+        var posted = await PostAsync(harness, body);
+
+        var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
+        accepted.Stored.Count.ShouldBe(UploadOptions.BatchFiles);
+        accepted.Failed.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task OneSectionPastTheLimitStopsTheReadAndKeepsTheFilesStoredBeforeIt()
+    {
+        // Ten files, then ninety-one fields: the hundred and first section is the first not read.
+        await using var harness = await StartAsync();
+        var body = new MultipartBody();
+        for (var i = 0; i < UploadOptions.BatchFiles; i++)
+            body.File("files", $"f{i}.txt", 100, (char)('a' + i));
+        for (var j = 0; j < UploadOptions.MaxSections - UploadOptions.BatchFiles + 1; j++)
+            body.Field($"n{j}", "v");
+
+        var posted = await PostAsync(harness, body);
+
+        var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
+        accepted.Stored.Count.ShouldBe(UploadOptions.BatchFiles);
+        var failure = accepted.Failed.ShouldHaveSingleItem();
+        failure.File.ShouldBeNull();
+        failure.Error.ShouldContain($"more than {UploadOptions.MaxSections} parts");
+    }
+
+    [Fact]
+    public async Task AnEleventhFileAsTheHundredAndFirstSectionIsStoppedBySectionsBeforeFiles()
+    {
+        // Ninety fields, then eleven files: the eleventh file is section 101, and no file is read past ten.
+        await using var harness = await StartAsync();
+        var body = new MultipartBody();
+        for (var j = 0; j < 90; j++) body.Field($"n{j}", "v");
+        for (var i = 0; i <= UploadOptions.BatchFiles; i++)
+            body.File("files", $"f{i}.txt", 100, (char)('a' + i));
+
+        var posted = await PostAsync(harness, body);
+
+        var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
+        accepted.Stored.Count.ShouldBe(UploadOptions.BatchFiles);
+        accepted.Failed.ShouldHaveSingleItem().Error.ShouldContain($"more than {UploadOptions.MaxSections} parts");
+    }
+
+    [Fact]
+    public async Task APartWithAnEmptyFileNameIsAFormFieldThatCountsAsASectionAndNotAsAFile()
+    {
+        // Ten files with an empty-filename part between each pair: the eleven fields are not files.
+        await using var harness = await StartAsync();
+        var body = new MultipartBody();
+        for (var i = 0; i < UploadOptions.BatchFiles; i++)
+            body.File("files", $"f{i}.txt", 100, (char)('a' + i)).File("files", "", 50, 'z');
+
+        var posted = await PostAsync(harness, body);
+
+        var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
+        accepted.Stored.Count.ShouldBe(UploadOptions.BatchFiles);
+        accepted.Failed.ShouldBeEmpty("an empty filename is a form field, so it is neither stored nor refused");
+    }
+
+    [Fact]
+    public async Task PartsWithEmptyFileNamesCountTowardsTheSectionLimit()
+    {
+        await using var harness = await StartAsync();
+        var body = new MultipartBody();
+        for (var i = 0; i <= UploadOptions.MaxSections; i++) body.File("files", "", 50, 'z');
+
+        var posted = await PostAsync(harness, body);
+
+        var refused = posted.Result.ShouldBeOfType<ProblemHttpResult>();
+        refused.StatusCode.ShouldBe(400);
+        refused.ProblemDetails.Detail.ShouldNotBeNull().ShouldContain($"more than {UploadOptions.MaxSections} parts");
+    }
+
     /// <summary>Reads its input a byte at a time with a pause between reads, as a parser working through a damaged file does.</summary>
     private sealed class SlowReadingExtractor(TimeSpan pause) : ITextExtractor
     {
@@ -303,9 +406,10 @@ public sealed class DocumentUploadEndpointTests
         name => name.EndsWith(".slow", StringComparison.Ordinal) ? slow : null;
 
     [Fact]
-    public async Task AFileThatKeepsReadingPastTheExtractionTimeoutIsReportedAndTheFilesBesideItAreStored()
+    public async Task AFileThatKeepsReadingPastTheExtractionTimeoutIsListedAsNotStoredAndTheFilesBesideItAreStored()
     {
-        // 300 bytes at 20 ms each is six seconds of reading against a one second budget.
+        // 300 bytes at 20 ms each is six seconds of reading against a one second budget. The timeout is
+        // a fact about the host's load and not about the document, so nothing is recorded for the file.
         await using var harness = await StartAsync();
         var slow = new SlowReadingExtractor(TimeSpan.FromMilliseconds(20));
         var body = new MultipartBody()
@@ -317,19 +421,64 @@ public sealed class DocumentUploadEndpointTests
             harness, body, indexing: new IndexingOptions { ExtractionTimeoutSeconds = 1 }, extractorFor: Registry(slow));
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
-        accepted.Stored.Select(s => s.FileName).ShouldBe(["before.txt", "stuck.slow", "after.txt"]);
-        accepted.Failed.ShouldBeEmpty();
-        var stuck = accepted.Stored[1];
-        stuck.Warning.ShouldNotBeNull().ShouldContain("abandoned");
-        stuck.ExtractedChars.ShouldBe(0);
+        accepted.Stored.Select(s => s.FileName).ShouldBe(["before.txt", "after.txt"]);
+        var failure = accepted.Failed.ShouldHaveSingleItem();
+        failure.File.ShouldBe("stuck.slow");
+        failure.Error.ShouldContain("DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS");
+        failure.Error.ShouldContain("within 1 s");
+        failure.Error.ShouldContain("Nothing was stored");
+        failure.Error.ShouldContain("Send it again");
+        failure.Error.ShouldNotContain("stuck.slow", Case.Sensitive);
         slow.BytesRead.ShouldBeLessThan(300, "the deadline has to cut the extractor's reading short");
         await using var db = harness.NewContext();
-        var text = await db.BlobTexts.SingleAsync(t => t.Sha256 == stuck.Sha256);
-        text.EmptyReason.ShouldNotBeNull().ShouldContain("abandoned");
-        text.Extractor.ShouldBe(nameof(SlowReadingExtractor));
-        (await db.Files.CountAsync()).ShouldBe(3, "the file is attached with the reason, like any extraction that failed");
+        var stored = accepted.Stored.Select(s => s.Sha256).ToList();
+        (await db.Blobs.Select(b => b.Sha256).ToListAsync()).ShouldBe(stored, ignoreOrder: true,
+            "the file after the timeout is attached and the job is queued, and neither saves a blob for the one that timed out");
+        (await db.BlobTexts.Select(t => t.Sha256).ToListAsync()).ShouldBe(stored, ignoreOrder: true);
+        (await db.Files.CountAsync()).ShouldBe(2);
+        (await db.Jobs.CountAsync()).ShouldBe(1);
     }
 
+    [Fact]
+    public async Task AFileThatTimedOutIsAnswered400WithTheSettingWhenNothingElseWasStored()
+    {
+        await using var harness = await StartAsync();
+        var body = new MultipartBody().File("files", "stuck.slow", 300, 's');
+
+        var posted = await PostAsync(
+            harness, body, indexing: new IndexingOptions { ExtractionTimeoutSeconds = 1 },
+            extractorFor: Registry(new SlowReadingExtractor(TimeSpan.FromMilliseconds(20))));
+
+        var refused = posted.Result.ShouldBeOfType<ProblemHttpResult>();
+        refused.StatusCode.ShouldBe(400);
+        refused.ProblemDetails.Title.ShouldBe("No files could be stored");
+        refused.ProblemDetails.Detail.ShouldNotBeNull().ShouldContain("DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS");
+        await using var db = harness.NewContext();
+        (await db.Blobs.AnyAsync()).ShouldBeFalse();
+        (await db.Jobs.CountAsync()).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task AFileThatTimedOutIsExtractedAgainWhenItIsSentAgain()
+    {
+        await using var harness = await StartAsync();
+        var body = () => new MultipartBody().File("files", "stuck.slow", 300, 's');
+        var first = await PostAsync(
+            harness, body(), indexing: new IndexingOptions { ExtractionTimeoutSeconds = 1 },
+            extractorFor: Registry(new SlowReadingExtractor(TimeSpan.FromMilliseconds(20))));
+        first.Result.ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(400);
+
+        var posted = await PostAsync(
+            harness, body(), indexing: new IndexingOptions { ExtractionTimeoutSeconds = 1 },
+            extractorFor: Registry(new SlowReadingExtractor(TimeSpan.Zero)));
+
+        var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
+        var stored = accepted.Stored.ShouldHaveSingleItem();
+        stored.Deduplicated.ShouldBeFalse();
+        stored.Warning.ShouldBeNull();
+        stored.ExtractedChars.ShouldBe(300);
+        accepted.Failed.ShouldBeEmpty();
+    }
     [Theory]
     [InlineData(300)]
     [InlineData(0)]
@@ -358,6 +507,8 @@ public sealed class DocumentUploadEndpointTests
         "paragraph\u2029break.txt",
         "bell\u0007.txt",
         "delete\u007f.txt",
+        "reversed\u202Egpj.txt",
+        "isolated\u2066name.txt",
         new string('n', 257) + ".txt",
     };
 
