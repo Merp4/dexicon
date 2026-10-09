@@ -12,10 +12,9 @@ namespace Dexicon.Tests;
 /// A document changed between the cleanup deleting its vectors and the detach deleting its row.
 ///
 /// The cleanup reads the file, deletes the vectors under the name it read, and then detaches the row. An
-/// attachment that renamed or replaced the document in between, followed by a pass that indexed it, left
-/// vectors for a document whose row was then deleted. Nothing named them, so search returned a document that
-/// had been detached until a later pass removed points for a path no row names. The cleanup now deletes
-/// the vectors again for the file the detach removed.
+/// attachment that renames or replaces the document in between, followed by a pass that indexes it, writes
+/// vectors for a document whose row is then deleted, and nothing names them. The cleanup deletes the
+/// vectors again for the file the detach removed.
 /// </summary>
 [Collection(nameof(AttachmentLockCollection))]
 public sealed class VectorCleanupOfADetachTests

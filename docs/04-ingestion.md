@@ -218,19 +218,34 @@ So:
 A corpus gets at most one upload source, created on first attachment. Detaching removes
 that corpus's chunks only; the blob survives, because another corpus may still hold it.
 Removing the upload source itself (`DELETE /api/corpora/{name}/sources/{id}`, or the Remove
-button beside it in the corpus's source list) detaches every document attached to the corpus in
-the same way, and the next attachment creates the source again.
+button beside it in the corpus's source list) deletes the vectors of every document attached to
+the corpus, in every chunk set, and the source takes its file rows with it. The blobs stay, and
+the next attachment creates the source again.
 
-Attaching, detaching and removing a source or a corpus take one lock in the process for their
-catalogue write (an attachment and a detach also for the lookup before it) and not across a
-vector-store call, so they do not interleave. A detach
-deletes the document's vectors, then its row, then the vectors again for the file the row held, because
-an attachment or a pass can have changed the file's name or written vectors in between. An indexing
-pass does not take the lock. A document detached while a pass runs is dropped from the pass's next
-save and the vectors the pass wrote for it are deleted; if that delete fails the pass still succeeds,
-and the next pass of the source deletes points whose path no row names. Dexicon is one process owning
-its catalogue file (D-01); a second process writing the file is not covered.
+One lock in the process orders the writes to a corpus's attachment rows. An attachment holds it
+from the lookup of the upload source and the file to the save. A detach holds it for the lookup
+and the delete of the row. Removing a source, a chunk set or a corpus holds it for the delete of
+the row. None of them holds it across a vector-store call, and a removal that finds its target
+already deleted by another request answers 404. An indexing pass does not take the lock.
+Dexicon is one process owning its catalogue file (D-01), so a second process writing the file is
+not covered.
 
+A detach deletes the document's vectors, then its row, then the vectors again for the file the
+row held, because an attachment can have renamed or replaced the file, and a pass can have
+written vectors for it, since the first delete. The second delete does not use the caller's
+token, so it runs when the caller has gone. It has a limit of 30 s of its own, and a failure is
+logged and does not undo the detach.
+
+A document detached while a pass is indexing the corpus is left out of the pass's saves, so the
+pass does not fail on its row. The saves that insert chunk states, claim a document, flush after
+a document and end the source also delete the vectors the pass wrote for the document and count
+it as skipped. The count reconcile at the start, the save that ends the pass and the save that
+records how the job ended only leave the document out, and a later pass of the same chunk set
+deletes any points it has, provided the vector store answers its per-file count. If the vector
+delete fails the pass still succeeds and the later pass removes the points. The flush while one
+file embeds holds no changes for another document and is saved without this handling. A chunk
+state deleted on its own, with the document still attached, fails the pass: the job is recorded
+as failed with the error, and the document and its vectors are left as they are.
 Limits: 200 MB per file (`DEXICON__UPLOAD__MAXFILEBYTES`), applied while the file is read
 off the wire. The endpoint reads the multipart body with a `MultipartReader` and hands each
 file straight to the blob store, which copies it under a cap and stops one byte over, so

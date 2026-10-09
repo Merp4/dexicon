@@ -539,16 +539,17 @@ public sealed class CorpusConfiguration(
         // The file rows and their per-set chunk states go with it: both cascade from
         // Source, so removing it is the whole of the catalogue side.
         //
-        // Under the attachment lock, for the delete only: an attachment that had found this source and was
-        // about to add a file to it saved against a row the delete had removed. A file attached after the
-        // paths above were read goes with the source, and points a running pass wrote for it in that time
-        // stay in the vector store.
+        // Under the attachment lock, for the delete only: an attachment that has found this source adds a
+        // file that names it, and the delete would remove the row that file is saved against. A file
+        // attached after the paths above were read goes with the source, and points a running pass wrote
+        // for it in that time stay in the vector store.
         using (await DocumentService.HoldAttachmentsAsync(ct))
         {
             // Read again under the lock: a request that removed this source first has deleted the row the
             // entity above was loaded from, and the delete here would find nothing to delete.
             if (!await db.Sources.AsNoTracking().AnyAsync(s => s.Id == source.Id, ct))
-                return new ConfigRefusal("No such source", $"Corpus '{corpus.Name}' has no source '{sourceId}'.", 404);
+                return new ConfigRefusal("No such source",
+                    $"Corpus '{corpus.Name}' has no source '{sourceId}': it was removed while this request waited.", 404);
 
             db.Sources.Remove(source);
             await db.SaveChangesAsync(ct);
@@ -594,8 +595,8 @@ public sealed class CorpusConfiguration(
         // keep points that nothing in the catalogue can name or clean up.
         await vectors.DeleteChunkSetAsync(set.CollectionName, set.Id, ct);
 
-        // Under the attachment lock for the delete only: an attachment that had loaded the corpus's sets
-        // adds a chunk state for each, and saved one for this set after the delete.
+        // Under the attachment lock for the delete only: an attachment that has loaded the corpus's sets
+        // saves a chunk state for each, and the delete would remove the row one of them is saved against.
         using (await DocumentService.HoldAttachmentsAsync(ct))
         {
             db.ChunkSets.Remove(set);
@@ -623,7 +624,7 @@ public sealed class CorpusConfiguration(
         using (await DocumentService.HoldAttachmentsAsync(ct))
         {
             if (!await db.Corpora.AsNoTracking().AnyAsync(c => c.Id == corpus.Id, ct))
-                return new ConfigRefusal("No such corpus", $"Corpus '{corpus.Name}' no longer exists.", 404);
+                return new ConfigRefusal("No such corpus", $"Corpus '{corpus.Name}' was removed while this request waited.", 404);
 
             db.Corpora.Remove(corpus);
             await db.SaveChangesAsync(ct);

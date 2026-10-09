@@ -49,33 +49,35 @@ public sealed class DocumentService(
     private readonly UploadOptions _upload = options.Value.Upload;
 
     /// <summary>
-    /// Held from looking for a corpus's upload source and for the document's existing attachment to the
-    /// save that adds them, so two attachments cannot both find none. A corpus has one upload source and
-    /// holds a blob once (the same blob may be attached to any number of corpora), and no unique index
-    /// says so: both were checks made before the insert, and two requests could pass them together and
-    /// each add one. Dexicon is one process owning its catalogue (D-01), so one lock is enough, and a
-    /// second process writing the file is not covered, as for <c>CorpusConfiguration.Naming</c>.
+    /// Orders the writes to a corpus's attachment rows, which an attachment reads and then saves against.
+    /// Held by:
+    /// <list type="bullet">
+    /// <item>an attachment, from the lookup of the corpus's upload source and the document's existing
+    /// attachment to the save that adds them, so two attachments cannot both find none (a corpus has one
+    /// upload source and holds a blob once, and no unique index says so);</item>
+    /// <item>a detach, for the lookup and the delete of the row (<see cref="DetachFileAsync"/>);</item>
+    /// <item>the removal of a source, a chunk set or a corpus, for the delete of its row
+    /// (<see cref="HoldAttachmentsAsync"/>), because an attachment saves a file row that names a source and
+    /// a chunk state that names each set.</item>
+    /// </list>
+    /// Nothing holds it across a call to the vector store. One lock for all corpora, because each of these
+    /// is a few queries and a save. Dexicon is one process owning its catalogue (D-01), so one lock is
+    /// enough, and a second process writing the file is not covered, as for
+    /// <c>CorpusConfiguration.Naming</c>.
     ///
-    /// Also held by the writers that delete rows an attachment reads and then saves against, each for its
-    /// catalogue delete and not across a call to the vector store: a detach (<see cref="DetachAsync"/>),
-    /// and the removal of a source or a corpus (<see cref="HoldAttachmentsAsync"/>). Without it a removal
-    /// that deleted the source between an attachment's lookup and its save made the save fail on the
-    /// foreign key. One lock for all corpora, because an attachment is a few queries and a save.
+    /// The indexer does not take it. A document detached while a pass runs is left out of the pass's saves
+    /// (<c>CorpusIndexer.SaveWithoutVanishedFilesAsync</c>), and the vectors the pass wrote for it are
+    /// deleted by that save or, when it cannot, by a later pass of the same chunk set.
     ///
-    /// Not taken by the indexer, whose pass saves rows it read at its start. A document detached while a
-    /// pass runs is dropped from the pass's next save (<c>CorpusIndexer.SaveUploadsAsync</c>), which
-    /// deletes the vectors the pass wrote for it. When that delete fails the pass still succeeds, and
-    /// the next pass of the source deletes points whose path no row names.
-    ///
-    /// Lock order: <c>ProposalService</c> holds its decision lock and then takes this one inside the
-    /// removal it runs. Nothing holds this lock while waiting for another.
+    /// Lock order: <c>ProposalService</c> holds its decision lock and then takes this one inside the removal
+    /// it runs. Nothing holds this lock while waiting for another.
     /// </summary>
     private static readonly SemaphoreSlim Attaching = new(1, 1);
 
     /// <summary>
-    /// Takes the lock attachments hold, for a writer that deletes a source or a corpus. Dispose it as soon
-    /// as the catalogue delete is saved, and call nothing slow, such as the vector store, while holding it:
-    /// every attachment and detach in the process waits for it.
+    /// Takes the lock attachments hold, for a writer that deletes a source, a chunk set or a corpus. Dispose
+    /// it as soon as the catalogue delete is saved, and call nothing slow, such as the vector store, while
+    /// holding it: every attachment and detach in the process waits for it.
     /// </summary>
     public static async Task<IDisposable> HoldAttachmentsAsync(CancellationToken ct = default)
     {
