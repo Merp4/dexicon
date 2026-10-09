@@ -49,20 +49,20 @@ with no section here fails its release rather than publishing an undescribed one
 
 - **An upload is streamed into the blob store.** The endpoint read the whole multipart form into
   `/tmp`, a tmpfs in the compose file, before the per-file cap applied: a 400 MB file, sent with
-  `DEXICON__UPLOAD__MAXFILEBYTES` raised above the default 200 MB, held 400 MiB for about
-  8 seconds. Each file now goes from the connection into the store under the cap, and the peak in
+  `DEXICON__UPLOAD__MAXFILEBYTES` raised above its default of 209,715,200 bytes, held 400 MiB for
+  about 8 seconds. Each file now goes from the connection into the store under the cap, and the peak in
   `/tmp` measured in the container was 0 for that file, a 50 MB file and a mixed batch. A file
   over the cap or an empty one is listed in the response's `failed` array and the files beside
   it are stored.
 - **The OpenAPI documents declare the status each operation returns.** Twelve operations answered
   201, 202 or 204 while declaring 200, so a generated client typed the wrong response. The
   committed documents and the typed web client are regenerated.
-- **The documentation was checked against the code and corrected.** About 220 statements were wrong
-  or out of date, most of them in the setup, install and upgrade procedures (`README.md`,
+- **The documentation was checked against the code and corrected.** Statements that no longer
+  matched the code were found in the setup, install and upgrade procedures (`README.md`,
   `docs/09-deployment.md`), the MCP, auth and integration references, the data model and the UI
-  guide. `docs/09-deployment.md` has an Upgrading section and a configuration table keyed by the
-  `.env` names. The README quickstart was followed step by step on a fresh clone, and the steps that
-  failed were corrected.
+  guide, and were corrected. `docs/09-deployment.md` has an Upgrading section and a configuration
+  table keyed by the `.env` names. The README quickstart was followed step by step on a fresh
+  clone, and the steps that failed were corrected.
 - **The first-start log and the sign-in screen say how to read the admin password.** It is the
   quoted value on the third line after `admin password`, so the commands read
   `grep -A 2 "admin password"`. The banner no longer says the password can be changed in the UI;
@@ -140,8 +140,8 @@ with no section here fails its release rather than publishing an undescribed one
   - `POST /api/search` and `/api/context`, and the MCP `search_index` tool, with a `mode` other than
     `hybrid`, `semantic` or `keyword` (in any letter case; an empty one is `hybrid`) threw an
     `ArgumentException` that nothing caught. REST answers `400` "Unknown search mode". The value is
-    shown on one line and cut at 40 characters, because the exception is written to the console log
-    with its message when the log level is Debug.
+    shown on one line and cut at 40 characters, with `...` after it, because the exception is logged
+    with its message at the Debug level.
   - A `null` among the names in `corpus` of those two requests threw on splitting it. It answers `400`.
   - Creating a chunk set, or queuing a sweep, for a corpus or chunk set whose name holds a letter
     outside ASCII saved the change and then answered `500`, because the name was written unescaped
@@ -167,9 +167,9 @@ with no section here fails its release rather than publishing an undescribed one
   requests answered `500` on 0.6.7 and 18 of 24 on main at `f691e4b`, and none did with this change.
   The probe is not in the repository; `ConcurrentStoreOfOneDocumentTests` reproduces the failure on
   the old code. The upload that loses now reports the stored file with `deduplicated: true`, as one
-  that arrived later does, and its own extraction is dropped. Only a duplicate key on the blob (with
-  its row found), or a failed move onto a file that is already there, is treated as the other
-  upload having won; any other failure still answers `500`.
+  that arrived later does, and its own extraction is dropped. A duplicate key on the save, with the
+  blob's row found, is treated as the other upload having won, and a failed move onto a file that is
+  already there as the same bytes being stored; any other failure still answers `500`.
 - **A refused empty file read `(Parameter 'content')`.** The empty-file and blank-file-name refusals of
   an upload passed the argument name to `ArgumentException`, so `failed[].error` and the Documents
   screen that lists it ended in a name the sender did not pass. They read `'x.txt' is empty.` and

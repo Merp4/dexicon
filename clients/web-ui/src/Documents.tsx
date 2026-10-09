@@ -74,7 +74,7 @@ export function DocumentsView({
       try {
         const result = await api.uploadDocuments(uploadTo, files);
         // A batch is accepted when any file is stored. The files the server refused (over the
-        // size cap, empty, or under a name the corpus already holds) come back in `failed` beside
+        // size cap, empty, or a rename onto another document's name) come back in `failed` beside
         // the stored ones, and are the only place the reason is said.
         setNotStored(result.failed);
         const deduped = result.stored.filter((s) => s.deduplicated).length;

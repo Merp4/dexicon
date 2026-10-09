@@ -188,7 +188,7 @@ whole design, and it is what makes the same document cheap to hold several ways:
 
 ```
   bytes         content-addressed          uploaded twice -> one blob
-  extraction    cached per blob hash       deterministic, expensive, done once per hash
+  extraction    cached per blob hash       deterministic, expensive, redone only when the extractor changes
   chunking      a property of the CORPUS   cheap, and the thing people vary
 ```
 
