@@ -319,8 +319,11 @@ public sealed class SourceFilterUpdateTests
         // How ApplyFilters compares them, so how this must.
         CorpusEndpoints.UnknownClearName(["MAXFILEBYTES"]).ShouldBeNull();
 
-        CorpusEndpoints.UnknownClearName(["maxFileBytes", "nonsense"]).ShouldBe("nonsense");
-        CorpusEndpoints.UnknownClearName(["git"]).ShouldBe("git", "history settings are not a filter");
+        var nonsense = CorpusEndpoints.UnknownClearName(["maxFileBytes", "nonsense"]).ShouldNotBeNull();
+        nonsense.Status.ShouldBe(400);
+        nonsense.Detail.ShouldContain("'nonsense'");
+        // History settings are not a filter.
+        CorpusEndpoints.UnknownClearName(["git"]).ShouldNotBeNull().Detail.ShouldContain("'git'");
     }
 
     [Fact]

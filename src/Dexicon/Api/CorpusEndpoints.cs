@@ -491,13 +491,19 @@ public static class CorpusEndpoints
             ? new ConfigRefusal("Unusable history settings", problem, 400)
             : null;
 
+    /// <summary>The sentence that says why a refusal about git applies to a caller who may have no history source.</summary>
+    private const string GitReads =
+        "A history source passes its include list to git as pathspecs, and a corpus's default include list is inherited by history sources.";
+
     /// <summary>
     /// A glob list that cannot be used, refused where it arrives. Stored as sent it failed every pass of
     /// every source that read it, with the reason in a job and the request answered 200. The position is
     /// named and the pattern is not echoed, because the text is the caller's and the message is logged.
     /// <paramref name="includeReader"/> says what reads the include list (<see cref="SourceFilters.FirstUnusable"/>);
     /// the exclude list is only ever read by the file walk. The configure tools name the same lists
-    /// <c>include</c> and <c>exclude</c>, so the message gives both.
+    /// <c>include</c> and <c>exclude</c>, so the message gives both. The caps on a list's length and on an
+    /// element's length (<see cref="SourceFilters.MaxGlobsPerList"/>, <see cref="SourceFilters.MaxGlobLength"/>)
+    /// apply to both lists whichever reader they have.
     /// </summary>
     internal static ConfigRefusal? UnusableGlobs(
         IReadOnlyList<string>? include, IReadOnlyList<string>? exclude,
@@ -509,20 +515,45 @@ public static class CorpusEndpoints
                      ("excludeGlobs", "exclude", exclude, SourceFilters.GlobReader.Walk),
                  })
         {
-            if (SourceFilters.FirstUnusable(globs, reader) is not { } at) continue;
+            if (SourceFilters.Check(globs, reader) is not { } problem) continue;
 
-            var why = reader switch
+            var at = problem.Index;
+            var named = $"{field}[{at}] ({argument}[{at}] for the configure tools)";
+
+            // Numbers and fixed text only: the elements are the caller's, and the message is logged.
+            var detail = problem.Kind switch
             {
-                SourceFilters.GlobReader.Git => "null, empty or holding a null character, which git cannot take as a pathspec",
-                SourceFilters.GlobReader.WalkAndGit =>
-                    "null, empty, holding a null character (a history source passes the list to git as pathspecs), "
-                    + "or a pattern that does not compile, such as [z-a]",
-                _ => "null, or a pattern that does not compile, such as [z-a]",
+                SourceFilters.GlobProblemKind.TooMany =>
+                    $"{field} ({argument} for the configure tools) holds more than {SourceFilters.MaxGlobsPerList} patterns, "
+                    + "which is the most a list can hold.",
+                SourceFilters.GlobProblemKind.TooLong =>
+                    $"{named} is longer than {SourceFilters.MaxGlobLength} characters, which is the most a pattern can hold.",
+                SourceFilters.GlobProblemKind.ClimbsOut =>
+                    $"{named} is a path that climbs out of the repository with '..', which git rejects. " + GitReads,
+                SourceFilters.GlobProblemKind.RootedPath =>
+                    $"{named} is a rooted path: it starts with '//', or with '/' after pathspec magic such as :(glob). "
+                    + "Write the path with at most one leading '/' and none after magic. A rooted path to a place inside "
+                    + "the repository is refused as well, since it cannot be told from one outside it when the list is saved. "
+                    + GitReads,
+                SourceFilters.GlobProblemKind.MalformedMagic =>
+                    $"{named} has pathspec magic that git rejects: a ':(' with no closing ')'; a word other than top, "
+                    + "literal, icase, glob, exclude, attr, attr:<specification> and prefix:<number>; glob together with "
+                    + "literal; more than one attr:; an attr: with a name or value git cannot use; a prefix: that is not a "
+                    + "number or is longer than the path; or, right after ':', one of - , ; # % & ' \" = < > @ _ ~ and the "
+                    + "backtick, which git does not implement as magic. " + GitReads,
+                SourceFilters.GlobProblemKind.SlashThenMagic =>
+                    $"{named} starts with '/:'. Without its slash it would read as pathspec magic, so it is refused: "
+                    + "write the path without the leading '/', or put the magic first. " + GitReads,
+                _ => $"{named} is " + reader switch
+                {
+                    SourceFilters.GlobReader.Git => "null, empty or holding a null character, which git cannot take as a pathspec",
+                    SourceFilters.GlobReader.WalkAndGit =>
+                        "null, empty, holding a null character (a history source passes the list to git as pathspecs), "
+                        + "or a pattern that does not compile, such as [z-a]",
+                    _ => "null, or a pattern that does not compile, such as [z-a]",
+                } + ".",
             };
-            return new ConfigRefusal(
-                "Unusable glob",
-                $"{field}[{at}] ({argument}[{at}] for the configure tools) is {why}. Nothing was saved.",
-                400);
+            return new ConfigRefusal("Unusable glob", $"{detail} Nothing was saved.", 400);
         }
 
         return null;
@@ -549,18 +580,42 @@ public static class CorpusEndpoints
     /// <summary>
     /// The names <c>clear</c> understands. Anything else is a typo the caller wants to
     /// know about: unknown names were dropped on the floor and the request answered 200,
-    /// so `clear: ["maxfilebytes"]` — or a field renamed one day — left the setting in
-    /// place and reported success.
+    /// so `clear: ["maxFileKb"]` (the configure tools' name for the setting) or a field
+    /// renamed one day left the setting in place and reported success.
     ///
-    /// Case-insensitive, because that is how <see cref="ApplyFilters"/> compares them.
+    /// Case-insensitive, because that is how <see cref="ApplyFilters"/> compares them, so
+    /// `maxfilebytes` is accepted.
     /// </summary>
     internal static readonly string[] ClearableFilters =
         ["useGitignore", "maxFileBytes", "includeGlobs", "excludeGlobs"];
 
-    /// <summary>The first name <c>clear</c> does not understand, or null.</summary>
-    internal static string? UnknownClearName(IReadOnlyList<string>? clear) =>
-        clear?.FirstOrDefault(
-            name => !ClearableFilters.Contains(name, StringComparer.OrdinalIgnoreCase));
+    /// <summary>
+    /// The refusal for the first entry of <c>clear</c> that is not a name it understands, or null when all
+    /// are. A null entry (<c>"clear": [null]</c>) is unknown: it matched no name and was skipped, so the request
+    /// was accepted and cleared nothing. A non-null name is the caller's text, so it is shown on one line and
+    /// cut short; a null entry has no text to show.
+    /// </summary>
+    internal static ConfigRefusal? UnknownClearName(IReadOnlyList<string>? clear)
+    {
+        if (clear is null) return null;
+
+        foreach (var name in clear)
+        {
+            if (name is not null && ClearableFilters.Contains(name, StringComparer.OrdinalIgnoreCase)) continue;
+
+            // A named entry is shown on one line and cut short; a null entry has no name to show.
+            return new ConfigRefusal(
+                "Unknown filter",
+                name is null
+                    ? "A null entry is not a filter that can be cleared. clear takes field names: "
+                      + $"{string.Join(", ", ClearableFilters)}."
+                    : $"'{Mapping.Shown(name)}' is not a filter that can be cleared. "
+                      + $"Name one of: {string.Join(", ", ClearableFilters)}.",
+                400);
+        }
+
+        return null;
+    }
 
     /// <summary>
     /// Apply a filter update to a source, returning whether anything actually moved.

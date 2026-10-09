@@ -683,7 +683,7 @@ public static class Mapping
     /// rest of the control range, such as the escape that starts <c>\u001B[2J</c>, goes through the log
     /// sanitiser's replacement.
     /// </summary>
-    private static string Shown(string? text)
+    internal static string Shown(string? text)
     {
         var line = DexiconAuthMiddleware.OneLine((text ?? string.Empty).ReplaceLineEndings(" "));
         return line.Length > 40 ? line[..40] + "..." : line;
