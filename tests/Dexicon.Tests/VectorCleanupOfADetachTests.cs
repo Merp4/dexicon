@@ -1,6 +1,7 @@
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Documents;
 using Dexicon.Infrastructure;
+using Grpc.Core;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
@@ -186,53 +187,111 @@ public sealed class VectorCleanupOfADetachTests
         tokens[^1].ShouldNotBe(caller.Token);
     }
 
-    [Fact]
-    public async Task ADeleteAfterTheRowIsGoneThatDoesNotAnswerIsGivenUpAndLogged()
+    /// <summary>The cleanup of one attached document, with the store and the log a test wants to watch.</summary>
+    private static async Task<bool> CleanUpAsync(IndexingHarness harness, ILoggerFactory logs, string fileName,
+        TimeSpan? timeout = null)
     {
-        var logs = new RecordingLoggerFactory();
-        await using var harness = await IndexingHarness.StartAsync("notes");
-        await harness.SeedCorpusAsync(SourceKind.Upload);
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
         var corpus = await db.Corpora.SingleAsync();
-        var stored = await documents.StoreAsync(new MemoryStream(TheBytes), "a.txt");
-        var attached = await documents.AttachAsync(corpus, stored.Sha256, "a.txt");
-        harness.Vectors.OnFileDeleteTokenAsync = async (token, deletes) =>
-        {
-            if (deletes == 2) await Task.Delay(Timeout.Infinite, token);
-        };
+        var stored = await documents.StoreAsync(new MemoryStream(TheBytes), fileName);
+        var attached = await documents.AttachAsync(corpus, stored.Sha256, fileName);
         var cleanup = new VectorStoreCleanup(db, harness.Vectors, logs.CreateLogger<VectorStoreCleanup>())
         {
-            SecondDeleteTimeout = TimeSpan.FromMilliseconds(300),
+            SecondDeleteTimeout = timeout ?? TimeSpan.FromMinutes(5),
         };
 
-        var removed = await cleanup.RemoveAttachmentAsync(corpus, attached.Id, documents, CancellationToken.None)
-            .FinishesAsync("the cleanup with a vector store that does not answer");
+        return await cleanup.RemoveAttachmentAsync(corpus, attached.Id, documents, CancellationToken.None)
+            .FinishesAsync("the cleanup");
+    }
+
+    [Fact]
+    public void TheDeletesAfterTheRowAreGivenThirtySecondsByDefault()
+    {
+        var cleanup = new VectorStoreCleanup(null!, null!, NullLogger<VectorStoreCleanup>.Instance);
+
+        cleanup.SecondDeleteTimeout.ShouldBe(TimeSpan.FromSeconds(30));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ADeleteAfterTheRowIsGoneThatDoesNotAnswerIsGivenUpAndTheOtherSetsAreNotTried(bool throwsRpcCancelled)
+    {
+        // A gRPC client that is not set to throw OperationCanceledException reports a cancelled call as an
+        // RpcException, so the timeout is recognised by the token and not by the exception type.
+        var logs = new RecordingLoggerFactory();
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload, sets: 2);
+        harness.Vectors.OnFileDeleteTokenAsync = async (token, deletes) =>
+        {
+            if (deletes != 3) return;
+
+            try { await Task.Delay(Timeout.Infinite, token); }
+            catch (OperationCanceledException) when (throwsRpcCancelled)
+            {
+                throw new RpcException(new Status(StatusCode.Cancelled, "Call canceled by the client."));
+            }
+        };
+
+        var removed = await CleanUpAsync(harness, logs, "a.txt", timeout: TimeSpan.FromMilliseconds(300));
 
         removed.ShouldBeTrue("the row was deleted");
         await using var check = harness.NewContext();
         (await check.Files.CountAsync()).ShouldBe(0);
+        harness.Vectors.DeleteTokens.Count.ShouldBe(3, "two deletes before the row and the one that timed out; the second set is not tried");
         logs.Lines.ShouldContain(l => l.Contains("timed out", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task TheNameOfADocumentIsLoggedOnOneLine()
+    public async Task ANameThatBreaksTheLineIsLoggedOnOneLineWhenTheTimeoutIsReported()
     {
         var logs = new RecordingLoggerFactory();
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Upload);
-        await using var db = harness.NewContext();
-        var documents = harness.NewDocumentService(db);
-        var corpus = await db.Corpora.SingleAsync();
-        var stored = await documents.StoreAsync(new MemoryStream(TheBytes), "two\nlines.txt");
-        var attached = await documents.AttachAsync(corpus, stored.Sha256, "two\nlines.txt");
-        harness.Vectors.OnFileDeleteTokenAsync = (_, deletes) =>
-            deletes == 2 ? throw new InvalidOperationException("the vector store is unreachable") : Task.CompletedTask;
-        var cleanup = new VectorStoreCleanup(db, harness.Vectors, logs.CreateLogger<VectorStoreCleanup>());
+        harness.Vectors.OnFileDeleteTokenAsync = async (token, deletes) =>
+        {
+            if (deletes == 2) await Task.Delay(Timeout.Infinite, token);
+        };
 
-        (await cleanup.RemoveAttachmentAsync(corpus, attached.Id, documents, CancellationToken.None)).ShouldBeTrue();
+        await CleanUpAsync(harness, logs, "two\nlines.txt", timeout: TimeSpan.FromMilliseconds(300));
 
         var line = logs.Lines.Single(l => l.Contains("lines.txt", StringComparison.Ordinal));
+        line.ShouldNotContain("\n");
+        line.ShouldNotContain("\r");
+    }
+
+    [Fact]
+    public async Task TheNameOfADocumentIsLoggedOnOneLineWhenADeleteFails()
+    {
+        var logs = new RecordingLoggerFactory();
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        harness.Vectors.OnFileDeleteTokenAsync = (_, deletes) =>
+            deletes == 2 ? throw new InvalidOperationException("the vector store is unreachable") : Task.CompletedTask;
+
+        await CleanUpAsync(harness, logs, "two\nlines.txt");
+
+        var line = logs.Lines.Single(l => l.Contains("lines.txt", StringComparison.Ordinal));
+        line.ShouldNotContain("\n");
+        line.ShouldNotContain("\r");
+    }
+
+    [Fact]
+    public async Task TheNameOfAChunkSetIsLoggedOnOneLineWhenADeleteFails()
+    {
+        var logs = new RecordingLoggerFactory();
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using (var db = harness.NewContext())
+            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.Name, "set\nname"));
+        harness.Vectors.OnFileDeleteTokenAsync = (_, deletes) =>
+            deletes == 2 ? throw new InvalidOperationException("the vector store is unreachable") : Task.CompletedTask;
+
+        await CleanUpAsync(harness, logs, "a.txt");
+
+        var line = logs.Lines.Single(l => l.Contains("name", StringComparison.Ordinal) && l.Contains("set", StringComparison.Ordinal)
+            && l.Contains("Could not delete", StringComparison.Ordinal));
         line.ShouldNotContain("\n");
         line.ShouldNotContain("\r");
     }

@@ -55,7 +55,9 @@ public sealed class VectorStoreCleanup(CatalogDbContext db, IVectorStore vectors
                 await vectors.DeleteFileChunksAsync(
                     set.CollectionName, set.Id, detached.SourceId, detached.RelativePath, timeout.Token);
             }
-            catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+            // Any exception while the token is cancelled: a gRPC client that does not throw
+            // OperationCanceledException reports a cancelled call as an RpcException with StatusCode.Cancelled.
+            catch (Exception) when (timeout.IsCancellationRequested)
             {
                 log.LogWarning(
                     "Deleting the points written for {File} while it was detached timed out after {Seconds:N0} s; "
