@@ -773,6 +773,38 @@ public sealed class DocumentExtractionTimeoutTests
     }
 
     [Fact]
+    public async Task AnIndexBuiltOnDamagedTextWhileAnotherJobRepairedTheRowIsChunkedAgainByTheNextPass()
+    {
+        // The same race as above, for a row whose text was cut: the job that chunks the head must not stamp
+        // what the repaired text will have.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using (var setup = harness.NewContext())
+        {
+            var corpus = await setup.Corpora.SingleAsync();
+            var documents = ServiceWith(harness, setup, Fast('g'));
+            var stored = await documents.StoreAsync(new MemoryStream(Bytes), "doc.slow");
+            await documents.AttachAsync(corpus, stored.Sha256, "doc.slow");
+            await setup.BlobTexts.ExecuteUpdateAsync(s => s.SetProperty(t => t.Text, new string('g', 100)));
+        }
+
+        var sha = ShaOf(Bytes);
+        await using var otherDb = harness.NewContext();
+        var other = ServiceWith(harness, otherDb, Fast('n'));
+        var failing = new EnvironmentFailingExtractor
+        {
+            OnStart = () => other.CurrentTextFor(sha, "doc.slow").GetAwaiter().GetResult(),
+        };
+
+        var first = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, failing));
+        var later = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, Fast('n')));
+
+        first.FilesDone.ShouldBe(1, "the first job chunked the head it had");
+        later.FilesDone.ShouldBe(1, "the later pass chunks the repaired text");
+        later.FilesSkipped.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task ADamagedRowThatIsRepairedIsChunkedAgainInEveryChunkSet()
     {
         // Both sets were chunked from the whole text before the row was damaged, so their states carry the
@@ -889,15 +921,17 @@ public sealed class DocumentExtractionTimeoutTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await using var db = harness.NewContext();
         using var cts = new CancellationTokenSource();
+        var log = new RecordingLog();
         var cancelling = new ThrowingExtractor(() => new OperationCanceledException(cts.Token))
         {
             OnStart = cts.Cancel,
         };
 
         await Should.ThrowAsync<OperationCanceledException>(
-            () => ServiceWith(harness, db, cancelling).StoreAsync(new MemoryStream(Bytes), "doc.slow", cts.Token));
+            () => ServiceWith(harness, db, cancelling, log).StoreAsync(new MemoryStream(Bytes), "doc.slow", cts.Token));
 
         (await db.Blobs.CountAsync()).ShouldBe(0);
+        log.Entries.ShouldNotContain(e => e.Level == LogLevel.Warning, "it was not recorded as a verdict on the file");
     }
 
     [Fact]
