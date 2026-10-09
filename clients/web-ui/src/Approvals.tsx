@@ -251,8 +251,11 @@ function ApproveModal({ proposal: p, onClose, onApproved }: {
           ? 'It is no longer there, so nothing will be removed. The request is recorded as failed.'
           : <>
               {amount ? <>This takes {amount}. </> : null}
-              The files on disk are untouched. It cannot be undone from here; getting it back means
-              indexing it again.
+              {p.kind === 'document'
+                // An uploaded document has no file on disk to index again. Its bytes and extracted
+                // text stay in the library, and attaching it chunks that text afresh.
+                ? 'The document stays stored and can be attached again from the Documents page. It cannot be undone from here.'
+                : 'The files on disk are untouched. It cannot be undone from here; getting it back means indexing it again.'}
             </>}
       </p>
       <div className="flex justify-end gap-2">
