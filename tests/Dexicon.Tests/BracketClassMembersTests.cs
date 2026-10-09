@@ -168,4 +168,17 @@ public sealed class BracketClassMembersTests
         Ignored("a[[:]b", "a:b").ShouldBeTrue();
         Ignored("a[[:]b", "axb").ShouldBeFalse();
     }
+
+    [Theory]
+    // The ASCII table of a class has a bit for each of the 128 characters: the last of the low word and the first of the high.
+    [InlineData("[?@]x", "?x", true)]
+    [InlineData("[?@]x", "@x", true)]
+    [InlineData("[>A]x", "Ax", true)]
+    [InlineData("[~]x", "~x", true)]
+    [InlineData("[ -/]x", " x", true)]
+    [InlineData("[ -/]x", "/x", false)]
+    public void EveryAsciiCharacterIsAMemberWhenItIsNamed(string pattern, string path, bool expected)
+    {
+        Ignored(pattern, path).ShouldBe(expected);
+    }
 }

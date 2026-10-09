@@ -837,8 +837,8 @@ public sealed class WorkspaceWalker
     }
 
     /// <summary>
-    /// The lines of <paramref name="text"/>, split on LF as git splits them, with one CR dropped from the end of a line
-    /// so a file written on Windows reads the same. A CR, U+0085 or U+2028 inside a line stays in it.
+    /// The lines of <paramref name="text"/>, split on LF as git splits them. A CR, U+0085 or U+2028 inside a line stays in
+    /// it; a CR before the LF is trimmed with the rest of the line's whitespace.
     /// </summary>
     private static List<string?> SplitLines(string text)
     {
@@ -848,7 +848,6 @@ public sealed class WorkspaceWalker
         {
             var end = text.IndexOf('\n', start);
             var stop = end < 0 ? text.Length : end;
-            if (stop > start && text[stop - 1] == '\r') stop--;
 
             lines.Add(text[start..stop]);
             if (end < 0) break;

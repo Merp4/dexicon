@@ -326,4 +326,19 @@ public sealed class CaseFoldTests
 
         rules.IsIgnored(path == "K" ? kelvin : path, false).ShouldBe(expected);
     }
+
+    [Fact]
+    public void ADirectoryIsNotPrunedWhenARuleReincludesBeneathItUnderACaseVariantOfItsName()
+    {
+        // The matcher pairs the Kelvin sign with k, so `k/` is ignored, `k/f.txt` is re-included by the second rule,
+        // and the walk must go into `k` to find it.
+        var kelvin = ((char)0x212A).ToString();
+        var rules = new IgnoreRuleSet();
+        rules.AddPatterns(["/k/", $"!/{kelvin}/f.txt"], "test");
+
+        rules.IsIgnored("k", isDirectory: true).ShouldBeTrue();
+        rules.IsIgnored("k/f.txt", isDirectory: false).ShouldBeFalse();
+        rules.MayReincludeBeneath("k").ShouldBeTrue();
+        rules.MayReincludeBeneath("k/sub").ShouldBeFalse("nothing is re-included inside k/sub that k/f.txt is not");
+    }
 }
