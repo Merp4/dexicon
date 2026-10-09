@@ -171,3 +171,147 @@ describe('signing out', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * A drop of many files is sent as several requests, because the server reads at most ten file
+ * parts from one (`UploadOptions.BatchFiles`). The responses are merged into the one the
+ * Documents screen summarises.
+ */
+describe('uploading many files', () => {
+  const files = (n: number) =>
+    Array.from({ length: n }, (_, i) => new File(['x'], `f${String(i + 1).padStart(2, '0')}.txt`));
+
+  /** The file names in the multipart body of one recorded call to `fetch`. */
+  const sentNames = (call: unknown[]) => {
+    const init = call[1] as RequestInit;
+    return init.body instanceof FormData ? init.body.getAll('files').map((f) => (f as File).name) : [];
+  };
+
+  /** The answer for a request: every file in it stored, and a job named for the request. */
+  const accepted = (n: number) => (_url: string, init: RequestInit) => {
+    const sent = sentNames([_url, init]);
+    return Promise.resolve(new Response(JSON.stringify({
+      corpus: 'library',
+      stored: sent.map((fileName) => ({ fileName, deduplicated: false })),
+      failed: [],
+      job: { id: `job-${n}` },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+  };
+
+  let uploadFetch: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    uploadFetch = vi.fn();
+    vi.stubGlobal('fetch', uploadFetch);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('sends 25 files as requests of 10, 10 and 5, in order', async () => {
+    uploadFetch
+      .mockImplementationOnce(accepted(1))
+      .mockImplementationOnce(accepted(2))
+      .mockImplementationOnce(accepted(3));
+
+    const result = await api.uploadDocuments('library', files(25));
+
+    expect(uploadFetch).toHaveBeenCalledTimes(3);
+    const sent = uploadFetch.mock.calls.map(sentNames);
+    expect(sent.map((n) => n.length)).toEqual([10, 10, 5]);
+    expect(sent.flat()).toEqual(files(25).map((f) => f.name));
+    expect(uploadFetch.mock.calls[0][0]).toBe('/api/corpora/library/documents');
+    expect(result.stored.map((s) => s.fileName)).toEqual(files(25).map((f) => f.name));
+    expect(result.corpus).toBe('library');
+    expect(result.failed).toEqual([]);
+    expect(result.job).toEqual({ id: 'job-3' });
+  });
+
+  it('sends a request after the previous one has answered', async () => {
+    let release: () => void = () => {};
+    uploadFetch
+      .mockImplementationOnce((url: string, init: RequestInit) => new Promise((resolve) => {
+        release = () => resolve(accepted(1)(url, init));
+      }))
+      .mockImplementationOnce(accepted(2));
+
+    const done = api.uploadDocuments('library', files(11));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(uploadFetch).toHaveBeenCalledTimes(1);
+    release();
+    await done;
+
+    expect(uploadFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('concatenates the files each request refused, in order', async () => {
+    uploadFetch
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        corpus: 'library',
+        stored: [{ fileName: 'f01.txt', deduplicated: false }],
+        failed: [{ file: 'f02.txt', error: 'f02.txt is empty.' }],
+        job: { id: 'job-1' },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        corpus: 'library',
+        stored: [{ fileName: 'f11.txt', deduplicated: true }],
+        failed: [{ file: null, error: 'The request is over the bound.' }],
+        job: { id: 'job-2' },
+      }), { status: 200 }));
+
+    const result = await api.uploadDocuments('library', files(11));
+
+    expect(result.stored.map((s) => s.fileName)).toEqual(['f01.txt', 'f11.txt']);
+    expect(result.failed).toEqual([
+      { file: 'f02.txt', error: 'f02.txt is empty.' },
+      { file: null, error: 'The request is over the bound.' },
+    ]);
+  });
+
+  it('keeps what was stored when a later request fails, and sends no more', async () => {
+    uploadFetch
+      .mockImplementationOnce(accepted(1))
+      .mockResolvedValueOnce(problem(503, 'Service Unavailable', 'The catalogue is busy.'));
+
+    const result = await api.uploadDocuments('library', files(25));
+
+    expect(uploadFetch).toHaveBeenCalledTimes(2);
+    expect(result.stored).toHaveLength(10);
+    expect(result.failed).toEqual([
+      { file: null, error: 'Service Unavailable: The catalogue is busy.' },
+    ]);
+    expect(result.job).toEqual({ id: 'job-1' });
+  });
+
+  it('keeps what was stored when a later request does not reach the server', async () => {
+    uploadFetch
+      .mockImplementationOnce(accepted(1))
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    const result = await api.uploadDocuments('library', files(15));
+
+    expect(uploadFetch).toHaveBeenCalledTimes(2);
+    expect(result.stored).toHaveLength(10);
+    expect(result.failed).toEqual([{ file: null, error: 'Failed to fetch' }]);
+  });
+
+  it('rejects when the first request fails, as before', async () => {
+    uploadFetch.mockResolvedValueOnce(problem(401, 'Missing credentials', 'Provide a token.'));
+
+    await expect(api.uploadDocuments('library', files(25))).rejects.toMatchObject({
+      status: 401,
+      message: 'Missing credentials: Provide a token.',
+    });
+    expect(uploadFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('makes exactly one request for 10 files and returns its answer as it came', async () => {
+    uploadFetch.mockImplementationOnce(accepted(1));
+
+    const result = await api.uploadDocuments('library', files(10));
+
+    expect(uploadFetch).toHaveBeenCalledTimes(1);
+    expect(sentNames(uploadFetch.mock.calls[0])).toHaveLength(10);
+    expect(result.stored).toHaveLength(10);
+    expect(result.job).toEqual({ id: 'job-1' });
+  });
+});

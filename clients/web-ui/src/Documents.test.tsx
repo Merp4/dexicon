@@ -297,6 +297,29 @@ describe('uploading a batch', () => {
     expect(screen.queryByText(/files? not stored/)).not.toBeInTheDocument();
   });
 
+  it('lists every failure of a whole request when a drop was sent as several', async () => {
+    // A drop of more than ten files is several requests, and the merged answer can carry one
+    // request-level failure from each.
+    uploadDocuments.mockResolvedValue({
+      corpus: 'library',
+      stored: [stored('a.txt'), stored('b.txt')],
+      failed: [
+        { file: 'c.txt', error: "'c.txt' is empty." },
+        { file: null, error: 'The first request was refused.' },
+        { file: null, error: 'The second request was refused.' },
+      ],
+      job: {},
+    });
+    const { user, input } = await renderReady();
+
+    await user.upload(input, [new File(['x'], 'a.txt'), new File(['x'], 'b.txt')]);
+
+    expect(await screen.findByText('2 files stored.')).toBeInTheDocument();
+    expect(screen.getByText('1 file not stored:')).toBeInTheDocument();
+    expect(screen.getByText('The first request was refused.')).toBeInTheDocument();
+    expect(screen.getByText('The second request was refused.')).toBeInTheDocument();
+  });
+
   it('says nothing about refused files when none were refused', async () => {
     uploadDocuments.mockResolvedValue({
       corpus: 'library', stored: [stored('notes.txt')], failed: [], job: {},

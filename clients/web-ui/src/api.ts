@@ -387,21 +387,32 @@ export const api = {
    * object; a browser file upload is a FormData the browser must set its own boundary on,
    * so going through the generated path would mean fighting it to send what it already
    * knows how to send.
+   *
+   * The files go in sequential requests of at most `UPLOAD_BATCH_FILES`, and the answers are
+   * merged into one `UploadResponse`: `stored` and `failed` in request order, `corpus` from the
+   * first, `job` from the last request that was answered. The first request failing rejects, as
+   * a single request does. A later one failing after files were stored returns what was stored,
+   * with the failure added to `failed` as a request-level entry (`file: null`), and sends no
+   * further requests.
    */
   uploadDocuments: async (corpus: string, files: File[]): Promise<UploadResponse> => {
-    const form = new FormData();
-    for (const f of files) form.append('files', f, f.name);
+    const first = await postUploadBatch(corpus, files.slice(0, UPLOAD_BATCH_FILES));
+    if (files.length <= UPLOAD_BATCH_FILES) return first;
 
-    const res = await fetch(`/api/corpora/${encodeURIComponent(corpus)}/documents`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: form,
-    });
-
-    const text = await res.text();
-    const body = text ? JSON.parse(text) : undefined;
-    if (!res.ok) throw new ApiError(res.status, body?.title ?? res.statusText, body?.detail);
-    return body;
+    const merged: UploadResponse = { ...first, stored: [...first.stored], failed: [...first.failed] };
+    for (let start = UPLOAD_BATCH_FILES; start < files.length; start += UPLOAD_BATCH_FILES) {
+      let next: UploadResponse;
+      try {
+        next = await postUploadBatch(corpus, files.slice(start, start + UPLOAD_BATCH_FILES));
+      } catch (e) {
+        merged.failed.push({ file: null, error: e instanceof Error ? e.message : String(e) });
+        break;
+      }
+      merged.stored.push(...next.stored);
+      merged.failed.push(...next.failed);
+      merged.job = next.job;
+    }
+    return merged;
   },
 
   // ── Access ────────────────────────────────────────────────────────────────
@@ -478,6 +489,31 @@ export const api = {
 function authHeaders(): HeadersInit {
   const token = getToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+/**
+ * Files per upload request. Mirrors the server's `UploadOptions.BatchFiles`
+ * (src/Dexicon.Core/Configuration/DexiconOptions.cs): it reads that many file parts from one
+ * request and refuses the rest. The limit is a compile-time constant there and appears in
+ * neither the OpenAPI document nor a settings endpoint, so it is repeated here.
+ */
+const UPLOAD_BATCH_FILES = 10;
+
+/** One multipart POST of `files` to a corpus. Rejects with an `ApiError` on a non-2xx answer. */
+async function postUploadBatch(corpus: string, files: File[]): Promise<UploadResponse> {
+  const form = new FormData();
+  for (const f of files) form.append('files', f, f.name);
+
+  const res = await fetch(`/api/corpora/${encodeURIComponent(corpus)}/documents`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: form,
+  });
+
+  const text = await res.text();
+  const body = text ? JSON.parse(text) : undefined;
+  if (!res.ok) throw new ApiError(res.status, body?.title ?? res.statusText, body?.detail);
+  return body;
 }
 
 /**
