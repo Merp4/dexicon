@@ -509,6 +509,7 @@ public sealed class DocumentUploadEndpointTests
         failure.File.ShouldBe("flaky.flaky");
         failure.Error.ShouldContain("No document record was created");
         failure.Error.ShouldNotContain("/data/blobs", Case.Sensitive);
+        failure.Error.ShouldNotContain("DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS", Case.Sensitive);
         await using var db = harness.NewContext();
         (await db.Blobs.CountAsync()).ShouldBe(2);
         (await db.BlobTexts.CountAsync()).ShouldBe(2);

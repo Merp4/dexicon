@@ -68,7 +68,8 @@ public sealed class CorpusIndexer(
     private readonly HashSet<string> _tracked = new(StringComparer.Ordinal);
 
     // Blobs whose re-extraction failed in this pass. A job indexes an upload source once per chunk
-    // set, and a document that times out would otherwise cost the whole budget once per set.
+    // set, and a document that times out would otherwise cost the whole budget once per set. Per
+    // indexer, which is one per job, and cleared when a run starts so that a reused indexer retries.
     private readonly HashSet<string> _reextractionFailed = new(StringComparer.Ordinal);
 
     /// <summary>How a history source's tracking is read. Replaced in tests, to make it fail.</summary>

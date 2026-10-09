@@ -24,9 +24,9 @@ internal static class TestEpubs
 
         var bytes = buffer.ToArray();
 
-        // The entry's data follows its 30 byte local header and its name (there is no extra field).
-        var start = 30 + EntryName.Length;
-        for (var i = 0; i < 8; i++) bytes[start + i] = 0xFF;
+        // The entry's data follows its 30 byte local header, its name and its extra field.
+        var start = 30 + BitConverter.ToUInt16(bytes, 26) + BitConverter.ToUInt16(bytes, 28);
+        for (var i = 2; i < 12; i++) bytes[start + i] = 0xFF;
         return bytes;
     }
 }

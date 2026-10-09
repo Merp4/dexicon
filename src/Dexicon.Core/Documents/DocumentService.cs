@@ -652,15 +652,6 @@ public sealed class DocumentService(
                 "Re-extracted {Sha} with extractor v{Version}: {Before:N0} -> {After:N0} chars",
                 sha256[..12], ExtractorVersions.Current, cached.ExtractedChars, fresh.ExtractedChars);
 
-        cached.Text = fresh.Text;
-        cached.UnitsJson = fresh.UnitsJson;
-        cached.Title = fresh.Title;
-        cached.ExtractedChars = fresh.ExtractedChars;
-        cached.Extractor = fresh.Extractor;
-        cached.ExtractorVersion = fresh.ExtractorVersion;
-        cached.ExtractedUtc = fresh.ExtractedUtc;
-        cached.EmptyReason = fresh.EmptyReason;
-
         // An upload's chunk state is fingerprinted by the blob hash, the chunk settings and the current
         // extractor version, not by the text, so a rewritten text changes nothing the skip check
         // compares. Two rewrites leave the chunks behind it: a repair of a damaged row, whose head would
@@ -670,8 +661,21 @@ public sealed class DocumentService(
         // holds this blob, and in the same save as the text so a crash leaves neither half. Where the
         // version bump is the first to reach the document its fingerprint changes as well, so this
         // makes the redo certain and not more frequent.
+        //
+        // Read before the row is changed: a token cancelled during the read then leaves the tracked row
+        // as it was, and the save that records the job's outcome does not write half of this.
         var attached = await db.FileChunkStates
             .Where(s => s.File!.BlobSha256 == sha256).ToListAsync(ct);
+
+        cached.Text = fresh.Text;
+        cached.UnitsJson = fresh.UnitsJson;
+        cached.Title = fresh.Title;
+        cached.ExtractedChars = fresh.ExtractedChars;
+        cached.Extractor = fresh.Extractor;
+        cached.ExtractorVersion = fresh.ExtractorVersion;
+        cached.ExtractedUtc = fresh.ExtractedUtc;
+        cached.EmptyReason = fresh.EmptyReason;
+
         foreach (var state in attached)
         {
             state.ContentHash = null;

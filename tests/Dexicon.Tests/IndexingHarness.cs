@@ -345,6 +345,56 @@ internal sealed class IndexingHarness : IAsyncDisposable
     }
 
     /// <summary>
+    /// Runs two jobs, one after the other, on the one indexer, for a test of what an indexer keeps from
+    /// one job to the next. <paramref name="betweenJobs"/> runs after the first.
+    /// </summary>
+    public async Task<IndexJob> RunTwoJobsOnOneIndexerAsync(
+        Func<CatalogDbContext, DocumentService> documentsFor, Action betweenJobs)
+    {
+        var options = _services.GetRequiredService<IOptions<DexiconOptions>>();
+        var scopes = _services.GetRequiredService<IServiceScopeFactory>();
+        await using var runDb = NewContext();
+        var indexer = new CorpusIndexer(
+            runDb,
+            new WorkspaceFileReader(scopes, options),
+            Vectors,
+            Embedder,
+            new RawProfiles(),
+            documentsFor(runDb),
+            new CorpusLeases(scopes, NullLogger<CorpusLeases>.Instance),
+            options,
+            NullLogger<CorpusIndexer>.Instance)
+        {
+            SaveRetryDelay = TimeSpan.Zero,
+        };
+
+        IndexJob last = null!;
+        for (var run = 0; run < 2; run++)
+        {
+            string jobId;
+            await using (var db = NewContext())
+            {
+                var job = new IndexJob
+                {
+                    Id = Ulid.NewUlid().ToString(),
+                    CorpusId = CorpusId,
+                    Kind = JobKind.Refresh,
+                    State = JobState.Queued,
+                    QueuedUtc = DateTime.UtcNow,
+                };
+                db.Jobs.Add(job);
+                await db.SaveChangesAsync(CancellationToken.None);
+                jobId = job.Id;
+            }
+
+            last = await indexer.RunAsync(jobId, null, CancellationToken.None);
+            if (run == 0) betweenJobs();
+        }
+
+        return last;
+    }
+
+    /// <summary>
     /// A discovery sweep over the harness's corpus, on its own catalogue connection as
     /// the hosted one would have.
     /// </summary>
