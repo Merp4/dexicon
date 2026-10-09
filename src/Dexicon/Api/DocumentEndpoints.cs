@@ -282,7 +282,7 @@ public static class DocumentEndpoints
 
         // The name a document was uploaded under before names were checked. Taken as the path when
         // fileName is left out, so it is held to the same rule.
-        if (DocumentService.FileNameProblem(name) is { } storedName)
+        if (body.FileName is null && DocumentService.FileNameProblem(name) is { } storedName)
             return Results.Problem(
                 title: "Invalid file name",
                 detail: $"{storedName} The name this document was uploaded under breaks that rule, so send a fileName.",
