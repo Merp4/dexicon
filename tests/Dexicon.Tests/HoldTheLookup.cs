@@ -17,14 +17,18 @@ internal sealed class HoldTheLookup(TimeSpan patience, Func<string, bool> isTheL
 {
     private readonly TaskCompletionSource _both = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _arrivals;
+    private int _releasedTogether;
 
     public bool Armed { get; set; }
 
     /// <summary>How many lookups reached the gate.</summary>
     public int Arrivals => Volatile.Read(ref _arrivals);
 
-    /// <summary>Whether two lookups were held at once.</summary>
-    public bool Met => _both.Task.IsCompletedSuccessfully;
+    /// <summary>
+    /// Whether two lookups were held at once: both were still waiting when the second arrived. A lookup
+    /// that gave up after <c>patience</c> and went on before the second came does not count.
+    /// </summary>
+    public bool Met => Volatile.Read(ref _releasedTogether) >= 2;
 
     public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
         DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
@@ -34,6 +38,7 @@ internal sealed class HoldTheLookup(TimeSpan patience, Func<string, bool> isTheL
         {
             if (Interlocked.Increment(ref _arrivals) >= 2) _both.TrySetResult();
             await Task.WhenAny(_both.Task, Task.Delay(patience, cancellationToken));
+            if (_both.Task.IsCompletedSuccessfully) Interlocked.Increment(ref _releasedTogether);
         }
 
         return result;

@@ -192,6 +192,9 @@ whole design, and it is what makes the same document cheap to hold several ways:
   chunking      a property of the CORPUS   cheap, and the thing people vary
 ```
 
+Two uploads of the same new bytes at the same moment each extract. The one saved second keeps the
+other's blob and text and drops its own.
+
 So:
 
 - Uploading the same PDF twice stores one copy and reuses the extraction. Measured on a

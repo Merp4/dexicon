@@ -85,7 +85,7 @@ export function DocumentsView({
           deduped === 0
             ? `${result.stored.length} file${result.stored.length === 1 ? '' : 's'} stored.`
             : `${deduped} of ${result.stored.length} ${deduped === 1 ? 'was' : 'were'} already stored; ` +
-              'the existing extraction was reused rather than running again.',
+              'the stored extraction was used.',
         );
         await load();
         await onRefresh();

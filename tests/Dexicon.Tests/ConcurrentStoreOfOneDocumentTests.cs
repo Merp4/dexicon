@@ -66,7 +66,7 @@ public sealed class ConcurrentStoreOfOneDocumentTests
 
         await using var check = harness.NewContext();
         (await check.Blobs.CountAsync()).ShouldBe(1, "one blob for one set of bytes");
-        (await check.BlobTexts.CountAsync()).ShouldBe(1, "extracted once");
+        (await check.BlobTexts.CountAsync()).ShouldBe(1, "one text row is kept");
         foreach (var context in new[] { first, second })
             context.ChangeTracker.Entries().ShouldNotContain(
                 e => e.State != EntityState.Unchanged, "the loser's pending rows are dropped, not left to fail the next save");

@@ -203,7 +203,9 @@ public sealed class ExtractedTextCache(
         {
             // Another source or corpus extracted the same bytes first. The text is already
             // in hand, so the collision costs a duplicated extraction and nothing else;
-            // letting it escape would record a readable file as failed.
+            // letting it escape would record a readable file as failed. Only a key already
+            // taken is treated so: with several jobs writing at once, a busy database or a
+            // full disk fails on this row too, and must not read as a harmless collision.
             log.LogDebug(ex, "file_texts row for {File} was written concurrently", relativePath);
         }
         finally

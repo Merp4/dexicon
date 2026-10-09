@@ -117,9 +117,11 @@ with no section here fails its release rather than publishing an undescribed one
   file's hash, found none, extracted the text and saved. The second save failed on the blob's primary
   key (`UNIQUE constraint failed: blobs.Sha256`), or its move onto the file the first had stored
   failed before that, so the request ended in `500` with the file in no corpus and no job queued.
-  Four uploads of one file at once to four corpora answered `500` to 17 of 24 requests on 0.6.7. The
-  upload that loses now reports the stored file with `deduplicated: true`, as one that arrived later
-  does, and its own extraction is dropped.
+  Six rounds of four uploads of one file at once, each to its own corpus, answered `500` to 17 of 24
+  requests on 0.6.7 and 18 of 24 on main before this change, and to none after it. The upload that
+  loses now reports the stored file with `deduplicated: true`, as one that arrived later does, and
+  its own extraction is dropped. Only a key already taken on the blob, or a stored file already
+  present, is treated as the other upload having won; any other failure still answers `500`.
 - **Stale developer scripts.** `scripts/screenshot.mjs` signs in with an admin session instead of
   an API key, which never carries `admin`; `scripts/retrieval-bench.py` queries files and content
   that exist; `scripts/bench/sweep.py` signs in as admin; `scripts/dev.ps1 password` returns the
