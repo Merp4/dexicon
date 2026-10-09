@@ -172,8 +172,22 @@ public sealed class DocumentService(
         {
             // The same bytes were uploaded at the same moment and the other upload saved its blob while
             // this one was extracting. This upload reports that blob and is not told to send the file again.
-            // Not cancellable, as for the duplicate key below: the read only decides the reply.
-            if (await ExistingAsync(sha, fileName, CancellationToken.None) is not { } saved)
+            // Not cancellable, as for the duplicate key below: the read only decides the reply. A lookup
+            // that fails (a busy catalogue) is logged and the extraction failure stays the answer, so a
+            // file's failure does not become the batch's.
+            StoredDocument? saved = null;
+            try
+            {
+                saved = await ExistingAsync(sha, fileName, CancellationToken.None);
+            }
+            catch (Exception lookup)
+            {
+                log.LogWarning(lookup,
+                    "Looking for a blob of {Sha} saved by another upload failed after the extraction of uploaded '{File}' failed",
+                    sha[..12], fileName);
+            }
+
+            if (saved is null)
             {
                 log.LogWarning(ex, "Extraction of uploaded '{File}' {Outcome}; no document record was created",
                     fileName,
@@ -187,7 +201,6 @@ public sealed class DocumentService(
                 fileName, sha[..12]);
             return saved;
         }
-
         db.Blobs.Add(blob);
         db.BlobTexts.Add(text);
         try
@@ -342,23 +355,33 @@ public sealed class DocumentService(
         // A timeout says how busy the host was when it ran, not what is in the document, so it is not
         // recorded as the blob's text: a row at the current extractor version is never extracted
         // again, and the same bytes uploaded again would reuse it. It reaches the caller, which
-        // leaves what it has. An extractor may wrap the exception in its own, so the deadline's own
-        // flag is read as well as the type.
-        catch (ExtractionFailedException ex) when (ex is ExtractionTimeoutException || deadline is { Expired: true })
+        // leaves what it has. An extractor may wrap the exception in its own, or fail with another one
+        // after the deadline passed, so the deadline's own flag is read as well as the type.
+        catch (Exception ex) when (ex is not OperationCanceledException
+                                   && (ex is ExtractionTimeoutException || deadline is { Expired: true }))
         {
             if (ex is ExtractionTimeoutException) throw;
             throw deadline!.TimedOut(ex);
         }
-        // Only the verdict on the bytes is recorded: a file that is encrypted or corrupt reads the same
-        // way every time, so the row says why it is empty. Every other ExtractionFailedException
-        // (ExtractionFailures.Of makes one of an I/O error, a refused permission or a shortage of
-        // memory) says how the host was when it ran, so it reaches the caller as a timeout does and
-        // nothing is stored or replaced.
-        catch (UnreadableDocumentException ex)
+        // Whatever an extractor or the read of the blob throws is classified as the indexing path
+        // classifies a parser's exception (ExtractionFailures.Of). Only the verdict on the bytes is
+        // recorded: a file that is encrypted or corrupt reads the same way every time, so the row says
+        // why it is empty. Every other failure (an I/O error, a refused permission, a shortage of
+        // memory, a TimeoutException, or an extraction failure that wraps one of those) says how the
+        // host was when it ran, so it reaches the caller as a timeout does and no row is written.
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            var failure = ex as ExtractionFailedException
+                ?? ExtractionFailures.Of($"'{fileName}' could not be read: {ex.Message}", ex);
+            if (failure is not UnreadableDocumentException)
+            {
+                if (ReferenceEquals(failure, ex)) throw;
+                throw failure;
+            }
+
             // Recorded rather than thrown away: the blob exists, so the UI can show it
             // as failed with a reason instead of the upload appearing to have worked.
-            log.LogWarning(ex, "Extraction failed for uploaded '{File}'", fileName);
+            log.LogWarning(failure, "Extraction failed for uploaded '{File}'", fileName);
             return new BlobText
             {
                 Sha256 = sha,
@@ -367,11 +390,10 @@ public sealed class DocumentService(
                 Extractor = extractor?.GetType().Name ?? "PlainText",
                 ExtractorVersion = ExtractorVersions.Current,
                 ExtractedUtc = DateTime.UtcNow,
-                EmptyReason = ex.Message,
+                EmptyReason = failure.Message,
             };
         }
     }
-
     /// <summary>
     /// Attach a stored document to a corpus. The SAME blob may be attached to any number
     /// of corpora; each chunks it with its own settings, producing independent chunk
@@ -639,23 +661,23 @@ public sealed class DocumentService(
         cached.ExtractedUtc = fresh.ExtractedUtc;
         cached.EmptyReason = fresh.EmptyReason;
 
-        if (damaged)
+        // An upload's chunk state is fingerprinted by the blob hash, the chunk settings and the current
+        // extractor version, not by the text, so a rewritten text changes nothing the skip check
+        // compares. Two rewrites leave the chunks behind it: a repair of a damaged row, whose head would
+        // stay searchable, and the first success after a failed re-extraction of a stale row, whose
+        // chunks the indexer stamped with the current version although it chunked the old text. The
+        // states are cleared the way the indexer clears a file it is about to redo, in every set that
+        // holds this blob, and in the same save as the text so a crash leaves neither half. Where the
+        // version bump is the first to reach the document its fingerprint changes as well, so this
+        // makes the redo certain and not more frequent.
+        var attached = await db.FileChunkStates
+            .Where(s => s.File!.BlobSha256 == sha256).ToListAsync(ct);
+        foreach (var state in attached)
         {
-            // An upload's chunk state is fingerprinted by the blob hash and the chunk settings,
-            // not by the text, so a repaired text changes nothing the skip check compares and
-            // the head of the document would stay searchable. Cleared the way the indexer clears
-            // a file it is about to redo, in every set that holds this blob, and in the same save
-            // as the text so a crash leaves neither half.
-            var attached = await db.FileChunkStates
-                .Where(s => s.File!.BlobSha256 == sha256).ToListAsync(ct);
-            foreach (var state in attached)
-            {
-                state.ContentHash = null;
-                state.Status = FileStatus.Pending;
-                state.StatusDetail = null;
-            }
+            state.ContentHash = null;
+            state.Status = FileStatus.Pending;
+            state.StatusDetail = null;
         }
-
         await db.SaveChangesAsync(ct);
 
         return cached;

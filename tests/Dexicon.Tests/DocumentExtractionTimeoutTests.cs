@@ -21,8 +21,10 @@ public sealed class DocumentExtractionTimeoutTests
 
     private static string ShaOf(byte[] bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
 
+    /// <param name="registry">Replaces how the extractor is chosen, for a test that needs the real ones or none.</param>
     private static DocumentService ServiceWith(
-        IndexingHarness harness, CatalogDbContext db, ITextExtractor extractor, ILogger<DocumentService>? log = null) =>
+        IndexingHarness harness, CatalogDbContext db, ITextExtractor? extractor, ILogger<DocumentService>? log = null,
+        Func<string, ITextExtractor?>? registry = null) =>
         new(db,
             Options.Create(new DexiconOptions
             {
@@ -31,7 +33,7 @@ public sealed class DocumentExtractionTimeoutTests
             }),
             log ?? NullLogger<DocumentService>.Instance)
         {
-            ExtractorFor = name => name.EndsWith(".slow", StringComparison.Ordinal) ? extractor : null,
+            ExtractorFor = registry ?? (name => name.EndsWith(".slow", StringComparison.Ordinal) ? extractor : null),
         };
 
     /// <summary>Reads a byte at a time with a pause between reads, as a parser working through a damaged file does.</summary>
@@ -408,5 +410,138 @@ public sealed class DocumentExtractionTimeoutTests
         slow.Calls.ShouldBe(1, "two chunk sets read the same stale document in one job");
         await using var check = harness.NewContext();
         (await check.BlobTexts.AsNoTracking().SingleAsync()).ExtractorVersion.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task AStaleDocumentWhoseReExtractionFailedIsChunkedAgainWhenALaterPassSucceeds()
+    {
+        // The failed pass chunks the old text and stamps it with the current fingerprint, which names the
+        // extractor version and not the text's. The later pass rewrites the row at that version, so nothing
+        // the skip check compares has changed and the index kept the old text.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using (var setup = harness.NewContext())
+        {
+            var corpus = await setup.Corpora.SingleAsync();
+            var documents = ServiceWith(harness, setup, Fast('g'));
+            var stored = await documents.StoreAsync(new MemoryStream(Bytes), "doc.slow");
+            await documents.AttachAsync(corpus, stored.Sha256, "doc.slow");
+            await setup.BlobTexts.ExecuteUpdateAsync(s => s.SetProperty(t => t.ExtractorVersion, 0));
+        }
+
+        var failed = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, Slow('n')));
+        var later = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, Fast('n')));
+
+        failed.FilesDone.ShouldBe(1, "the pass with the failed re-extraction chunks the text it had");
+        later.FilesDone.ShouldBe(1, "the pass that extracts again chunks the new text");
+        later.FilesSkipped.ShouldBe(0);
+        await using var check = harness.NewContext();
+        var row = await check.BlobTexts.AsNoTracking().SingleAsync();
+        row.Text.ShouldBe(new string('n', Bytes.Length));
+        row.ExtractorVersion.ShouldBe(ExtractorVersions.Current);
+    }
+
+    [Fact]
+    public void ADamagedEpubFixtureThrowsWhenAnEntryIsRead()
+    {
+        // The instrument for the tests below: a directory that reads and an entry that does not.
+        using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(TestEpubs.WithADamagedEntry()));
+        var entry = zip.Entries.ShouldHaveSingleItem();
+
+        Should.Throw<InvalidDataException>(() => entry.Open().CopyTo(Stream.Null));
+    }
+
+    [Fact]
+    public async Task AnEpubWithADamagedEntryIsRecordedAsTheDocumentsReason()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await using var db = harness.NewContext();
+        var documents = ServiceWith(harness, db, null, registry: ExtractorRegistry.For);
+
+        var stored = await documents.StoreAsync(new MemoryStream(TestEpubs.WithADamagedEntry()), "broken.epub");
+
+        stored.EmptyReason.ShouldNotBeNull().ShouldContain("not a readable .epub");
+        (await db.BlobTexts.SingleAsync()).Extractor.ShouldBe(nameof(EpubTextExtractor));
+    }
+
+    [Fact]
+    public async Task AStaleRowWhoseEpubIsDamagedRecordsThatVerdictAndEscapesNothing()
+    {
+        // The row is made stale from bytes the plain-text path read, then extracted again as an EPUB.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        string sha;
+        await using (var setup = harness.NewContext())
+        {
+            var stored = await ServiceWith(harness, setup, null, registry: _ => null)
+                .StoreAsync(new MemoryStream(TestEpubs.WithADamagedEntry()), "broken.epub");
+            sha = stored.Sha256;
+            await setup.BlobTexts.ExecuteUpdateAsync(s => s.SetProperty(t => t.ExtractorVersion, 0));
+        }
+
+        await using var db = harness.NewContext();
+        var returned = await ServiceWith(harness, db, null, registry: ExtractorRegistry.For).CurrentTextFor(sha, "broken.epub");
+
+        returned.ShouldNotBeNull().EmptyReason.ShouldNotBeNull().ShouldContain("not a readable .epub");
+        returned.ExtractorVersion.ShouldBe(ExtractorVersions.Current);
+    }
+
+    [Fact]
+    public async Task ABlobOfPlainTextThatCannotBeReadIsAFailureThatIsNotAVerdictOnTheFile()
+    {
+        // An IOException from the read of the stored bytes is not an ExtractionFailedException. It is
+        // classified like one, so the caller lists the file and the batch goes on.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await using var db = harness.NewContext();
+        var sha = ShaOf(Bytes);
+        var documents = ServiceWith(harness, db, null, registry: _ =>
+        {
+            foreach (var file in Directory.GetFiles(Path.Combine(harness.DataPath, "blobs"), sha, SearchOption.AllDirectories))
+                File.Delete(file);
+
+            return null;
+        });
+
+        var thrown = await Should.ThrowAsync<ExtractionFailedException>(
+            () => documents.StoreAsync(new MemoryStream(Bytes), "gone.txt"));
+
+        thrown.ShouldNotBeOfType<UnreadableDocumentException>();
+        thrown.InnerException.ShouldBeAssignableTo<IOException>();
+        db.ChangeTracker.Entries().ShouldBeEmpty();
+        (await db.Blobs.CountAsync()).ShouldBe(0);
+    }
+
+    /// <summary>Fails the nth SELECT from <c>blobs</c>, as a busy catalogue fails a lookup.</summary>
+    private sealed class FailNthBlobSelect(int nth) : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor
+    {
+        private int _seen;
+
+        public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader>> ReaderExecutingAsync(
+            System.Data.Common.DbCommand command, Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)
+                && command.CommandText.Contains("FROM \"blobs\"", StringComparison.OrdinalIgnoreCase)
+                && ++_seen == nth)
+                throw new InvalidOperationException("the catalogue is busy");
+
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
+    [Fact]
+    public async Task AFailedLookupForAConcurrentSaveLeavesTheExtractionFailureAsTheAnswer()
+    {
+        // The first SELECT from blobs is the look for stored bytes before extracting; the second is the one
+        // made after the extraction failed. Its failure must not replace the extraction's.
+        await using var harness = await IndexingHarness.StartAsync(new FailNthBlobSelect(2), "notes");
+        await using var db = harness.NewContext();
+        var log = new RecordingLog();
+
+        var thrown = await Should.ThrowAsync<Exception>(
+            () => ServiceWith(harness, db, Slow(), log).StoreAsync(new MemoryStream(Bytes), "stuck.slow"));
+
+        thrown.ShouldBeOfType<ExtractionTimeoutException>();
+        log.Entries.ShouldContain(e => e.Level == LogLevel.Warning && e.Message.Contains("saved by another upload failed"));
     }
 }

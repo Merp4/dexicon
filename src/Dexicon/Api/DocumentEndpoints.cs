@@ -121,6 +121,7 @@ public static class DocumentEndpoints
         var failures = new List<UploadFailure>();
         var filesSeen = 0;
         var sectionsSeen = 0;
+        var serverSideFailure = false;
         var overran = false;
         string? malformed = null;
         ExceptionDispatchInfo? failure = null;
@@ -186,11 +187,13 @@ public static class DocumentEndpoints
                 // is first because it is the subtype.
                 catch (ExtractionTimeoutException)
                 {
+                    serverSideFailure = true;
                     failures.Add(new UploadFailure(
                         fileName, ExtractionTimedOutMessage(opts.Value.Indexing.ExtractionTimeoutSeconds)));
                 }
                 catch (ExtractionFailedException)
                 {
+                    serverSideFailure = true;
                     failures.Add(new UploadFailure(fileName, ExtractionFailedMessage));
                 }
             }
@@ -265,10 +268,12 @@ public static class DocumentEndpoints
                     detail: failures.Count > 0 ? string.Join("; ", failures.Select(f => f.Error)) : null,
                     statusCode: 400);
 
+            // A file that could not be extracted for a reason on the server is not the caller's error, and
+            // sending it again can succeed, so a request that stored nothing for that reason is a 503.
             return Results.Problem(
                 title: "No files could be stored",
                 detail: string.Join("; ", failures.Select(f => f.File is null ? f.Error : $"{f.File}: {f.Error}")),
-                statusCode: 400);
+                statusCode: serverSideFailure ? 503 : 400);
         }
 
         // Chunking and embedding happen in the indexer, not on the request thread:
@@ -380,8 +385,8 @@ public static class DocumentEndpoints
 
     /// <summary>Not the exception's message, which can name a path on the server.</summary>
     private const string ExtractionFailedMessage =
-        "Extraction failed on the server, from an I/O error, a refused permission or a shortage of memory; "
-        + "the log has the cause. " + NoRecordSentence;
+        "Extraction failed on the server, from an I/O error, a refused permission, a shortage of memory or a "
+        + "timeout inside the extractor; the log has the cause. " + NoRecordSentence;
 
     private static IResult TooLarge(UploadOptions upload) =>
         Results.Problem(title: "Upload too large", detail: TooLargeMessage(upload), statusCode: 413);

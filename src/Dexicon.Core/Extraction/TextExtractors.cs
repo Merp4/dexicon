@@ -526,20 +526,30 @@ public sealed class EpubTextExtractor : ITextExtractor
         var parser = new HtmlParser();
         var number = 1;
 
-        foreach (var entry in documents)
+        try
         {
-            using var stream = entry.Open();
-            using var doc = parser.ParseDocument(stream);
-            var before = sb.Length;
-            HtmlText.AppendBlocks(doc.Body, sb);
-
-            // A cover page or a stylesheet wrapper contributes nothing; recording a unit
-            // for it would put chapter markers where there is no text.
-            if (sb.Length > before)
+            foreach (var entry in documents)
             {
-                units.Add(new ExtractedUnit(number, before, Path.GetFileNameWithoutExtension(entry.Name)));
-                number++;
+                using var stream = entry.Open();
+                using var doc = parser.ParseDocument(stream);
+                var before = sb.Length;
+                HtmlText.AppendBlocks(doc.Body, sb);
+
+                // A cover page or a stylesheet wrapper contributes nothing; recording a unit
+                // for it would put chapter markers where there is no text.
+                if (sb.Length > before)
+                {
+                    units.Add(new ExtractedUnit(number, before, Path.GetFileNameWithoutExtension(entry.Name)));
+                    number++;
+                }
             }
+        }
+        catch (Exception ex) when (ex is not ExtractionFailedException)
+        {
+            // An archive whose directory reads and whose entry data does not (a damaged deflate block,
+            // a failed checksum) throws InvalidDataException from the entry stream, outside the
+            // handler that wraps the other formats.
+            throw ExtractionFailures.Of($"'{fileName}' is not a readable .epub: {ex.Message}", ex);
         }
 
         if (sb.Length == 0)
@@ -575,13 +585,21 @@ public sealed class HtmlTextExtractor : ITextExtractor
         // Every .html and .htm file reaches this extractor, from an upload or from a
         // workspace tree (ExtractorRegistry.For). The text is chunked as prose; the
         // language-aware boundary patterns in LanguageMap apply to Razor, Vue and Svelte.
-        using var reader = new StreamReader(content, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        var parser = new HtmlParser();
-        using var doc = parser.ParseDocument(reader.ReadToEnd());
+        try
+        {
+            using var reader = new StreamReader(content, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            var parser = new HtmlParser();
+            using var doc = parser.ParseDocument(reader.ReadToEnd());
 
-        var sb = new StringBuilder();
-        HtmlText.AppendBlocks(doc.Body, sb);
-        return new ExtractedText(sb.ToString().Trim(), [], doc.Title);
+            var sb = new StringBuilder();
+            HtmlText.AppendBlocks(doc.Body, sb);
+            return new ExtractedText(sb.ToString().Trim(), [], doc.Title);
+        }
+        catch (Exception ex) when (ex is not ExtractionFailedException)
+        {
+            // An I/O error reading the file reaches the caller as a failure that is not a verdict on it.
+            throw ExtractionFailures.Of($"'{fileName}' is not a readable HTML document: {ex.Message}", ex);
+        }
     }
 }
 

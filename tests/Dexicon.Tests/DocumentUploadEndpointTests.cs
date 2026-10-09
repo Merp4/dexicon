@@ -440,7 +440,7 @@ public sealed class DocumentUploadEndpointTests
     }
 
     [Fact]
-    public async Task AFileThatTimedOutIsAnswered400WithTheSettingWhenNothingElseWasStored()
+    public async Task AFileThatTimedOutIsAnswered503WithTheSettingWhenNothingElseWasStored()
     {
         await using var harness = await StartAsync();
         var body = new MultipartBody().File("files", "stuck.slow", 300, 's');
@@ -450,7 +450,7 @@ public sealed class DocumentUploadEndpointTests
             extractorFor: Registry(new SlowReadingExtractor(TimeSpan.FromMilliseconds(20))));
 
         var refused = posted.Result.ShouldBeOfType<ProblemHttpResult>();
-        refused.StatusCode.ShouldBe(400);
+        refused.StatusCode.ShouldBe(503, "the host could not extract it, which is not the caller's error");
         refused.ProblemDetails.Title.ShouldBe("No files could be stored");
         refused.ProblemDetails.Detail.ShouldNotBeNull().ShouldContain("DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS");
         await using var db = harness.NewContext();
@@ -466,7 +466,7 @@ public sealed class DocumentUploadEndpointTests
         var first = await PostAsync(
             harness, body(), indexing: new IndexingOptions { ExtractionTimeoutSeconds = 1 },
             extractorFor: Registry(new SlowReadingExtractor(TimeSpan.FromMilliseconds(20))));
-        first.Result.ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(400);
+        first.Result.ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(503);
 
         var posted = await PostAsync(
             harness, body(), indexing: new IndexingOptions { ExtractionTimeoutSeconds = 1 },
@@ -514,6 +514,85 @@ public sealed class DocumentUploadEndpointTests
         (await db.BlobTexts.CountAsync()).ShouldBe(2);
         (await db.Files.CountAsync()).ShouldBe(2);
         (await db.Jobs.CountAsync()).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AnUploadWhoseFilesAllFailedExtractionOnTheServerIsAnswered503()
+    {
+        await using var harness = await StartAsync();
+        var body = new MultipartBody()
+            .File("files", "empty.txt", 0)
+            .File("files", "flaky.flaky", 100, 'f');
+
+        var posted = await PostAsync(
+            harness, body, extractorFor: name => name.EndsWith(".flaky", StringComparison.Ordinal) ? new DiskFaultExtractor() : null);
+
+        var refused = posted.Result.ShouldBeOfType<ProblemHttpResult>();
+        refused.StatusCode.ShouldBe(503, "one file failed for a reason on the server, so retrying can succeed");
+        refused.ProblemDetails.Detail.ShouldNotBeNull().ShouldContain("empty.txt");
+        refused.ProblemDetails.Detail.ShouldContain("No document record was created");
+    }
+
+    [Fact]
+    public async Task AnUploadWhoseFilesAllFailedOnTheirOwnIsStillAnswered400()
+    {
+        // The control for the 503 above.
+        await using var harness = await StartAsync();
+
+        var posted = await PostAsync(harness, new MultipartBody().File("files", "empty.txt", 0));
+
+        posted.Result.ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(400);
+    }
+
+    [Fact]
+    public async Task AnEpubWithADamagedEntryIsStoredWithItsReasonAndTheFilesAfterItAreStored()
+    {
+        // The archive path threw InvalidDataException from the entry stream, which no handler wrapped: the
+        // answer read "The multipart body could not be read" and the files after it were lost.
+        await using var harness = await StartAsync();
+        var body = new MultipartBody()
+            .File("files", "before.txt", 100, 'b')
+            .File("files", "broken.epub", TestEpubs.WithADamagedEntry())
+            .File("files", "after.txt", 100, 'c');
+
+        var posted = await PostAsync(harness, body);
+
+        var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
+        accepted.Stored.Select(s => s.FileName).ShouldBe(["before.txt", "broken.epub", "after.txt"]);
+        accepted.Failed.ShouldBeEmpty();
+        var broken = accepted.Stored[1];
+        broken.ExtractedChars.ShouldBe(0);
+        broken.Warning.ShouldNotBeNull().ShouldContain("not a readable .epub");
+    }
+
+    [Fact]
+    public async Task ABlobOfPlainTextThatCannotBeReadIsListedAsNotStoredAndTheFilesBesideItAreStored()
+    {
+        // The read of the stored bytes fails with an IOException, which is not an extraction failure.
+        // The extractor lookup is the first thing the extraction does, so it removes the bytes.
+        await using var harness = await StartAsync();
+        var goneSha = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(new byte[100].Select(_ => (byte)'g').ToArray()));
+        var body = new MultipartBody()
+            .File("files", "before.txt", 100, 'b')
+            .File("files", "gone.txt", 100, 'g')
+            .File("files", "after.txt", 100, 'c');
+
+        var posted = await PostAsync(harness, body, extractorFor: name =>
+        {
+            if (name == "gone.txt")
+                foreach (var file in Directory.GetFiles(Path.Combine(harness.DataPath, "blobs"), goneSha, SearchOption.AllDirectories))
+                    System.IO.File.Delete(file);
+
+            return null;
+        });
+
+        var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
+        accepted.Stored.Select(s => s.FileName).ShouldBe(["before.txt", "after.txt"]);
+        var failure = accepted.Failed.ShouldHaveSingleItem();
+        failure.File.ShouldBe("gone.txt");
+        failure.Error.ShouldContain("No document record was created");
+        await using var db = harness.NewContext();
+        (await db.Blobs.CountAsync()).ShouldBe(2);
     }
 
     [Theory]
@@ -1095,6 +1174,15 @@ public sealed class DocumentUploadEndpointTests
             Add($"--{Boundary}\r\nContent-Disposition: form-data; name=\"{field}\"; filename=\"{fileName}\"\r\n" +
                 "Content-Type: application/octet-stream\r\n\r\n");
             if (size > 0) _segments.Add(new Segment(null, size, (byte)fill));
+            Add("\r\n");
+            return this;
+        }
+
+        public MultipartBody File(string field, string fileName, byte[] content)
+        {
+            Add($"--{Boundary}\r\nContent-Disposition: form-data; name=\"{field}\"; filename=\"{fileName}\"\r\n" +
+                "Content-Type: application/octet-stream\r\n\r\n");
+            _segments.Add(new Segment(content, content.Length, 0));
             Add("\r\n");
             return this;
         }
