@@ -191,7 +191,9 @@ reading and not a single read that never returns ([09](09-deployment.md)).
 ### `upload` — files pushed through the UI or API
 
 Bytes are content-addressed into `/data/blobs/<sha256[0:2]>/<sha256>` and recorded in
-`blobs`. Two uploads of the same file store one blob.
+`blobs` once their text is extracted. Two uploads of the same file store one blob. An upload whose
+extraction times out or fails for a reason on the server leaves its bytes in `/data/blobs` with no
+`blobs` row (see the paragraph on extraction below).
 
 **Extraction is cached against the blob hash, and chunking is not.** That split is the
 whole design, and it is what makes the same document cheap to hold several ways:
@@ -244,14 +246,20 @@ section: `failed` lists a failure of the request (`file` is `null`) that says mo
 (or one hundred parts) were sent and to send the rest in another request, and the files beyond the
 limit are in neither `stored` nor `failed`. The files before it stay stored and are indexed. When
 none of them was stored the answer is `400`: "No files could be stored" when a file part was
-reached, with the failures as its detail, and "No files in the request" when only form fields were
-read, with the request-level text as its detail when the section limit was hit and no detail
-otherwise. A probe against Kestrel with the body-size limit unset, as the endpoint sets it, found
-that the server reads and discards the unread rest of the body after the handler returns (2,500 MB
-accepted, above the request bound), so the early answer saves the temp file, hash, save,
-extraction and lock work for the files left out and not the bandwidth of receiving them. The web
-UI sends one `files` part per file. A part whose `Content-Disposition` has an empty `filename` is a
-form field: it counts as a section, is not stored, and is not a failure.
+reached, with the failures as its detail (`503` instead when one of the failures is an extraction
+that timed out or failed on the server, because the caller did nothing wrong and sending the file
+again can succeed; the web UI ends a multi-request drop at a 5xx and lists the files not yet sent
+as `Not sent`), and "No files in the request" when only form fields were read, with the
+request-level text as its detail when the section limit was hit and no detail otherwise.
+
+A probe against Kestrel with the body-size limit unset, as the endpoint sets it, found that the
+server reads and discards the unread rest of the body after the handler returns (2,500 MB
+accepted, above the request bound), and so did a `413` answered from the declared
+`Content-Length` before any body byte was read (2,500 MB accepted). The early answer therefore
+saves the temp file, hash, save, extraction and lock work for the files left out and not the
+bandwidth of receiving them. The web UI sends one `files` part per file. A part whose
+`Content-Disposition` has an empty `filename` is a form field: it counts as a section, is not
+stored, and is not a failure.
 
 A file name is stored as the document's path, which a listing, a search hit and a log line show.
 An upload or an attach is refused for a name that holds a control character (a line break
@@ -267,12 +275,16 @@ uploaded again.
 
 Extraction of an uploaded file is abandoned after `DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS`
 (300 s), under the clock described above for workspace files. A timeout, or an extraction failure
-that is an I/O error, a refused permission or a shortage of memory, says how the host was and not
-what the document holds, so no document record is created. The file is listed under `failed` (the
+that is an I/O error, a refused permission, a shortage of memory, a `TimeoutException` or an extraction
+failure that wraps one of those, says how the host was and not what the document holds, so no document record is created. The file is listed under `failed` (the
 timeout names the setting), the files beside it in the request are stored, the bytes stay in the
 blob store, and sending the file again extracts it again. When another upload of the same bytes saved
 its blob meanwhile, the file is reported as stored. An extraction failure that is a verdict on the
-bytes, an encrypted or corrupt file, is stored with its message as the document's empty reason.
+bytes, an encrypted or corrupt file, is stored with its message as the document's empty reason. A
+`blob_texts` row that an earlier version wrote for an I/O error, a refused permission or a shortage of
+memory keeps that message as its empty reason: it is at the current extractor version, so no pass
+extracts it again, and uploading the same bytes returns it as already stored. Such rows are not
+repaired. The count on the maintainer's install is 0; other installs have not been measured.
 
 A workspace file that times out is recorded as failed with the timeout text and retried on a later
 refresh; one whose extractor caught the timeout and returned the text read so far is handled the same

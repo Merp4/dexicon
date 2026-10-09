@@ -581,7 +581,7 @@ public sealed class DocumentService(
     /// anyone re-uploading anything.
     ///
     /// A re-extraction that fails for a reason that is not a verdict on the bytes (a timeout, an I/O
-    /// error, a shortage of memory) leaves the row as it was and returns it, so a later pass tries again.
+    /// error, a refused permission, a shortage of memory, or an extraction failure that wraps one of those) leaves the row as it was and returns it, so a later pass tries again.
     /// </summary>
     /// <param name="failedThisPass">
     /// Hashes whose re-extraction has failed in this pass. The indexer calls this once per chunk set for
@@ -633,8 +633,8 @@ public sealed class DocumentService(
         }
         catch (ExtractionFailedException ex)
         {
-            // A timeout, or an I/O error or a shortage of memory, says how the host was and not what the
-            // document holds. The row stays as it was, version included, so a later pass extracts again,
+            // A timeout, an I/O error, a refused permission, a shortage of memory or a failure that wraps one of
+            // those says how the host was and not what the document holds. The row stays as it was, version included, so a later pass extracts again,
             // and the caller carries on with the text it had.
             failedThisPass?.Add(sha256);
             log.LogWarning(ex,

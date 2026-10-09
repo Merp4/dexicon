@@ -222,6 +222,7 @@ media type should accept both.
 | 404 | `Not Found` | None. `GET /api/jobs/{id}` for an unknown job, or one in a corpus the key cannot reach. The handler returns an empty 404 and the status-code middleware fills the body with problem details (`title`, `status`, `traceId`). |
 | 409 | `Name already used` | The message says which name is taken. `POST /api/corpora/{x}/documents/attach` with bytes the corpus already holds under another name, sent under a name that a different one of its documents holds. An upload lists that file under `failed` instead. |
 | 409 | `Embedding dimension mismatch` | `Collection '<collection>' was indexed with 768-dimension vectors but the configured model produces 1024. Rebuild the corpus with the current model, or restore the original one.` |
+| 503 | `No files could be stored` | The files with their reasons. `POST /api/corpora/{x}/documents` when nothing was stored and at least one file failed extraction for a reason on the server: a timeout (`DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS`), an I/O error, a refused permission or a shortage of memory. No document record is created for such a file, and sending it again can succeed. A request that stores nothing for any other reason is a `400` with the same title. |
 
 The server maps an unhandled embedding failure to 503 `Embedding service unavailable`.
 `POST /api/search` and `POST /api/context` catch it and return keyword results with
