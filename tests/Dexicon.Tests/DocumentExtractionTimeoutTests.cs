@@ -676,4 +676,41 @@ public sealed class DocumentExtractionTimeoutTests
         thrown.ShouldBeOfType<ExtractionTimeoutException>();
         log.Entries.ShouldContain(e => e.Level == LogLevel.Warning && e.Message.Contains("saved by another upload failed"));
     }
+
+    [Fact]
+    public void ADamagedEpubEntryIsAnUnreadableDocumentToTheExtractorItself()
+    {
+        // The indexing path calls the extractor without the classification the upload path adds, and a
+        // raw InvalidDataException there is logged as a failure to index on every pass.
+        using var content = new MemoryStream(TestEpubs.WithADamagedEntry());
+
+        var thrown = Should.Throw<UnreadableDocumentException>(() => new EpubTextExtractor().Extract(content, "broken.epub"));
+
+        thrown.Message.ShouldContain("not a readable .epub");
+        thrown.GetBaseException().ShouldBeOfType<InvalidDataException>();
+    }
+
+    /// <summary>A stream whose reads fail as a disk does.</summary>
+    private sealed class FaultyStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new IOException("disk fault");
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    [Fact]
+    public void AnIoErrorReadingAnHtmlFileIsAnExtractionFailureThatIsNotAVerdictOnIt()
+    {
+        var thrown = Should.Throw<ExtractionFailedException>(() => new HtmlTextExtractor().Extract(new FaultyStream(), "page.html"));
+
+        thrown.ShouldNotBeOfType<UnreadableDocumentException>();
+        thrown.InnerException.ShouldBeOfType<IOException>();
+    }
 }
