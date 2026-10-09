@@ -108,11 +108,11 @@ with no section here fails its release rather than publishing an undescribed one
 - **Two documents attached to one corpus at the same moment could create two upload sources, and
   one document attached to one corpus twice at the same moment could be attached twice.** The
   upload source, and the document's existing attachment to the corpus, were looked for and then
-  added with no lock between, so two requests passed the check together. Nothing failed: the corpus listed two upload sources, and a document attached
-  under both was chunked, embedded and returned twice. Attaching is now serialised in the process,
-  as the corpus name and the proposal decisions are. A catalogue that already holds two upload
-  sources for one corpus is not repaired, and a second process writing the same catalogue is not
-  covered.
+  added with no lock between, so two requests passed the check together. Nothing failed: the
+  corpus listed two upload sources, and a document attached under both was chunked, embedded and
+  returned twice. Attaching is now serialised in the process, as the corpus name and the proposal
+  decisions are. A catalogue that already holds two upload sources for one corpus is not repaired,
+  and a second process writing the same catalogue is not covered.
 - **Stale developer scripts.** `scripts/screenshot.mjs` signs in with an admin session instead of
   an API key, which never carries `admin`; `scripts/retrieval-bench.py` queries files and content
   that exist; `scripts/bench/sweep.py` signs in as admin; `scripts/dev.ps1 password` returns the
