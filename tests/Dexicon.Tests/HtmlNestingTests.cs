@@ -97,10 +97,14 @@ public sealed class HtmlNestingTests
         Should.Throw<UnreadableDocumentException>(() => Extract(html));
     }
 
+    // An undefined entity makes the chapter XML that is not well formed, so the XML check of the package
+    // leaves it to the HTML check, as it does a chapter written as HTML.
+    private const string NotXml = "<p>&nbsp;</p>";
+
     [Fact]
     public void AnEpubChapterReadByItsManifestIsRefusedWhenItNestsTooDeep()
     {
-        var epub = TestEpubs.WithAChapter(string.Concat(Enumerable.Repeat("<div>", HtmlText.MaxNesting + 1)));
+        var epub = TestEpubs.WithAChapter(NotXml + string.Concat(Enumerable.Repeat("<div>", HtmlText.MaxNesting + 1)));
 
         var thrown = Should.Throw<UnreadableDocumentException>(
             () => new EpubTextExtractor().Extract(new MemoryStream(epub), "book.epub"));
@@ -112,7 +116,7 @@ public sealed class HtmlNestingTests
     public void AnEpubChapterReadByItsManifestAtTheLimitIsExtracted()
     {
         var epub = TestEpubs.WithAChapter(
-            string.Concat(Enumerable.Repeat("<div>", HtmlText.MaxNesting - 1)) + "<p>kept</p>");
+            NotXml + string.Concat(Enumerable.Repeat("<div>", HtmlText.MaxNesting - 1)) + "<p>kept</p>");
 
         new EpubTextExtractor().Extract(new MemoryStream(epub), "book.epub").Text.ShouldContain("kept");
     }
@@ -120,7 +124,7 @@ public sealed class HtmlNestingTests
     [Fact]
     public void AnEpubEntryReadFromTheArchiveIsRefusedWhenItNestsTooDeep()
     {
-        var epub = TestEpubs.WithAnEntry(string.Concat(Enumerable.Repeat("<div>", HtmlText.MaxNesting + 1)));
+        var epub = TestEpubs.WithAnEntry(NotXml + string.Concat(Enumerable.Repeat("<div>", HtmlText.MaxNesting + 1)));
 
         var thrown = Should.Throw<UnreadableDocumentException>(
             () => new EpubTextExtractor().Extract(new MemoryStream(epub), "book.epub"));

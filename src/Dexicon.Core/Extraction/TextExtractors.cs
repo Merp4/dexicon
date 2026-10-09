@@ -458,6 +458,7 @@ public sealed class DocxTextExtractor : ITextExtractor
     {
         try
         {
+            XmlNesting.RequireShallowParts(content, fileName);
             using var doc = WordprocessingDocument.Open(content, false);
             var body = doc.MainDocumentPart?.Document?.Body;
             if (body is null) return ExtractedText.Empty;
@@ -486,6 +487,7 @@ public sealed class PptxTextExtractor : ITextExtractor
     {
         try
         {
+            XmlNesting.RequireShallowParts(content, fileName);
             using var doc = PresentationDocument.Open(content, false);
             var parts = doc.PresentationPart?.SlideParts?.ToList();
             if (parts is null or { Count: 0 }) return ExtractedText.Empty;
@@ -529,6 +531,7 @@ public sealed class EpubTextExtractor : ITextExtractor
         // stream it is given on some failure paths, so reusing one means the fallback
         // reads a closed stream and reports ObjectDisposedException instead of the book.
         var bytes = buffer.ToArray();
+        XmlNesting.RequireShallowParts(new MemoryStream(bytes), fileName);
 
         try
         {

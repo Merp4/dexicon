@@ -34,7 +34,8 @@ internal static class TestEpubs
     /// A well-formed EPUB 2 with a manifest, a spine and one chapter holding <paramref name="chapterBody"/>,
     /// so the extractor reads it by its manifest and not by the archive.
     /// </summary>
-    public static byte[] WithAChapter(string chapterBody)
+    /// <param name="navigationDepth">How many navigation points nest inside one another in the NCX.</param>
+    public static byte[] WithAChapter(string chapterBody, int navigationDepth = 1)
     {
         using var buffer = new MemoryStream();
         using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
@@ -56,7 +57,11 @@ internal static class TestEpubs
                 + "<item id=\"c1\" href=\"c1.xhtml\" media-type=\"application/xhtml+xml\"/></manifest><spine toc=\"ncx\"><itemref idref=\"c1\"/></spine></package>");
             Add("toc.ncx",
                 "<?xml version=\"1.0\"?><ncx xmlns=\"http://www.daisy.org/z3986/2005/ncx/\" version=\"2005-1\"><head/><docTitle><text>t</text></docTitle>"
-                + "<navMap><navPoint id=\"n1\" playOrder=\"1\"><navLabel><text>x</text></navLabel><content src=\"c1.xhtml\"/></navPoint></navMap></ncx>");
+                + "<navMap>"
+                + string.Concat(Enumerable.Range(1, navigationDepth).Select(i =>
+                    $"<navPoint id=\"n{i}\" playOrder=\"{i}\"><navLabel><text>x</text></navLabel><content src=\"c1.xhtml\"/>"))
+                + string.Concat(Enumerable.Repeat("</navPoint>", navigationDepth))
+                + "</navMap></ncx>");
             Add("c1.xhtml", $"<html xmlns=\"http://www.w3.org/1999/xhtml\"><body>{chapterBody}</body></html>");
         }
 
@@ -75,4 +80,103 @@ internal static class TestEpubs
 
         return buffer.ToArray();
     }
+
+    private const string WordNamespace = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+    /// <summary>
+    /// A DOCX whose body holds one paragraph "hello" inside <paramref name="nesting"/> pairs of
+    /// <c>sdt</c> and <c>sdtContent</c> elements, which nest to any depth.
+    /// </summary>
+    public static byte[] DocxNestedBy(int nesting) =>
+        DocxWithDocumentXml(
+            $"<?xml version=\"1.0\"?><w:document xmlns:w=\"{WordNamespace}\"><w:body>"
+            + string.Concat(Enumerable.Repeat("<w:sdt><w:sdtContent>", nesting))
+            + "<w:p><w:r><w:t>hello</w:t></w:r></w:p>"
+            + string.Concat(Enumerable.Repeat("</w:sdtContent></w:sdt>", nesting))
+            + "</w:body></w:document>");
+
+    /// <summary>A DOCX package whose <c>word/document.xml</c> is <paramref name="documentXml"/>.</summary>
+    public static byte[] DocxWithDocumentXml(string documentXml) =>
+        Package(
+            ("[Content_Types].xml",
+                "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+                + "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+                + "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+                + "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/></Types>"),
+            ("_rels/.rels",
+                "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+                + "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/></Relationships>"),
+            ("word/document.xml", documentXml));
+
+    /// <summary>
+    /// A PPTX with one slide holding the text "hello" in a shape inside <paramref name="nesting"/> nested
+    /// group shapes.
+    /// </summary>
+    public static byte[] PptxNestedBy(int nesting)
+    {
+        var shapes = string.Concat(Enumerable.Repeat("<p:grpSp>", nesting))
+                     + "<p:sp><p:txBody><a:p><a:r><a:t>hello</a:t></a:r></a:p></p:txBody></p:sp>"
+                     + string.Concat(Enumerable.Repeat("</p:grpSp>", nesting));
+
+        return Package(
+            ("[Content_Types].xml",
+                "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+                + "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+                + "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+                + "<Override PartName=\"/ppt/presentation.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml\"/>"
+                + "<Override PartName=\"/ppt/slides/slide1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.slide+xml\"/></Types>"),
+            ("_rels/.rels",
+                "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+                + "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"ppt/presentation.xml\"/></Relationships>"),
+            ("ppt/presentation.xml",
+                "<?xml version=\"1.0\"?><p:presentation xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\" "
+                + "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><p:sldIdLst><p:sldId id=\"256\" r:id=\"rId1\"/></p:sldIdLst></p:presentation>"),
+            ("ppt/_rels/presentation.xml.rels",
+                "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+                + "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide\" Target=\"slides/slide1.xml\"/></Relationships>"),
+            ("ppt/slides/slide1.xml",
+                "<?xml version=\"1.0\"?><p:sld xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\" "
+                + "xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><p:cSld><p:spTree>"
+                + shapes + "</p:spTree></p:cSld></p:sld>"));
+    }
+
+    /// <summary>A zip of the named text entries.</summary>
+    public static byte[] Package(params (string Name, string Content)[] entries)
+    {
+        using var buffer = new MemoryStream();
+        using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var (name, content) in entries)
+            {
+                using var writer = new StreamWriter(zip.CreateEntry(name).Open());
+                writer.Write(content);
+            }
+        }
+
+        return buffer.ToArray();
+    }
+
+    /// <summary>
+    /// An EPUB 3 whose navigation document holds <paramref name="depth"/> lists nested in one another, read
+    /// by its manifest.
+    /// </summary>
+    public static byte[] WithANavigationDocumentNestedBy(int depth) =>
+        Package(
+            ("mimetype", "application/epub+zip"),
+            ("META-INF/container.xml",
+                "<?xml version=\"1.0\"?><container version=\"1.0\" xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\">"
+                + "<rootfiles><rootfile full-path=\"content.opf\" media-type=\"application/oebps-package+xml\"/></rootfiles></container>"),
+            ("content.opf",
+                "<?xml version=\"1.0\"?><package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"id\">"
+                + "<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>t</dc:title><dc:identifier id=\"id\">x</dc:identifier>"
+                + "<dc:language>en</dc:language></metadata><manifest>"
+                + "<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>"
+                + "<item id=\"c1\" href=\"c1.xhtml\" media-type=\"application/xhtml+xml\"/></manifest><spine><itemref idref=\"c1\"/></spine></package>"),
+            ("nav.xhtml",
+                "<?xml version=\"1.0\"?><html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\"><body>"
+                + "<nav epub:type=\"toc\"><ol>"
+                + string.Concat(Enumerable.Repeat("<li><a href=\"c1.xhtml\">x</a><ol>", depth))
+                + string.Concat(Enumerable.Repeat("</ol></li>", depth))
+                + "</ol></nav></body></html>"),
+            ("c1.xhtml", "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body><p>hello</p></body></html>"));
 }
