@@ -56,6 +56,10 @@ beforeEach(() => {
         maxInputChars: 2816, truncatesSilently: true, recommendedChunkTokens: 665,
         charsPerToken: 2.82, measuredUtc: new Date().toISOString(),
       }),
+      model('qwen3-embedding:0.6b', {
+        maxInputChars: 131_072, truncatesSilently: false, recommendedChunkTokens: 29_491,
+        charsPerToken: 4, measuredUtc: new Date().toISOString(),
+      }),
     ],
   });
 });
@@ -113,6 +117,20 @@ describe('creating a corpus', () => {
 
     await waitFor(() => expect(createCorpus).toHaveBeenCalled());
     expect(createCorpus.mock.calls[0][0]).toMatchObject({ chunkSize: 665, chunkOverlap: 83 });
+  });
+
+  it('sends no more than the server accepts for a model with a very long context', async () => {
+    // The server refuses a chunk size over 8,192 tokens, and 0.9 of a 32k context is 29,491. Sent as
+    // recommended, the dialog got a 400 it had no field to correct.
+    const { user, dialog } = await openCreate();
+
+    await user.type(within(dialog).getByLabelText(/^Name/), 'api-repo');
+    await user.click(within(dialog).getByLabelText('Embedding model'));
+    await user.click(await screen.findByRole('option', { name: /qwen3/ }));
+    await user.click(within(dialog).getByRole('button', { name: /^Create$/ }));
+
+    await waitFor(() => expect(createCorpus).toHaveBeenCalled());
+    expect(createCorpus.mock.calls[0][0]).toMatchObject({ chunkSize: 8192, chunkOverlap: 1024 });
   });
 
   it('sends no chunk size for a model nobody has measured', async () => {

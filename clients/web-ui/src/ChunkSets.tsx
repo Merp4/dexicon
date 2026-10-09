@@ -16,6 +16,7 @@ import {
 import { ChevronRight, Trash2, TriangleAlert } from 'lucide-react';
 import { cn } from 'cn';
 import { count, unitFor } from './lib/units';
+import { suggestedOverlap, usableChunkTokens } from './chunkLimits';
 
 /** `nomic-embed-text` and `nomic-embed-text:latest` are the same model; only :latest is implicit. */
 const bareName = (m: string) => m.replace(/:latest$/i, '');
@@ -438,8 +439,9 @@ function ChunkSetModal({
     // never been probed has nothing to suggest, so the field keeps the inherited value
     // rather than snapping to a guess.
     if (!sizeIsOurs || existing || !measured) return;
-    setChunkSize(measured.recommendedChunkTokens);
-    setChunkOverlap(Math.max(1, Math.round(measured.recommendedChunkTokens / 8)));
+    const size = usableChunkTokens(measured.recommendedChunkTokens);
+    setChunkSize(size);
+    setChunkOverlap(suggestedOverlap(size));
   }, [measured, sizeIsOurs, existing]);
 
   return (
@@ -510,7 +512,7 @@ function ChunkSetModal({
             measured
               ? `${chosenModel?.name.split(':')[0]} was measured at ${measured.maxInputChars?.toLocaleString() ?? 'no'} chars` +
                 `${measured.charsPerToken ? ` · ${measured.charsPerToken} chars/token` : ''}` +
-                ` · suggested ${measured.recommendedChunkTokens.toLocaleString()}`
+                ` · suggested ${usableChunkTokens(measured.recommendedChunkTokens).toLocaleString()}`
               : 'Budgeted as four characters a token. Run Test limits on Models to measure this one.'
           }
         >
@@ -1001,7 +1003,7 @@ export function ModelsView() {
                         <strong>{caps.maxInputChars ? caps.maxInputChars.toLocaleString() : 'unbounded'}</strong> chars
                       </span>
                       <span>
-                        suggested chunk size <strong>{caps.recommendedChunkTokens.toLocaleString()}</strong> tokens
+                        suggested chunk size <strong>{usableChunkTokens(caps.recommendedChunkTokens).toLocaleString()}</strong> tokens
                       </span>
                       {/* The number that makes the one above mean anything. The chunker
                           budgets in characters at a flat 4 per token; this is what this
