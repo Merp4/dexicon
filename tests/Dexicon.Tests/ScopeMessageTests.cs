@@ -138,6 +138,7 @@ public sealed class ScopeMessageTests : IAsyncLifetime
 
         DexiconTools.Echo(value).ShouldBe(new string(' ', 100) + "...");
     }
+
     [Fact]
     public void ARefusalIsCutAtFourThousandCharacters()
     {
@@ -286,7 +287,7 @@ public sealed class ScopeMessageTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AMillionUnknownNamesAreAnswerredByAShortMessageToAToolAndToTheRestHandler()
+    public async Task AMillionUnknownNamesAreAnsweredByAShortMessageToAToolAndToTheRestHandler()
     {
         await using var db = _harness.NewContext();
         var asked = Enumerable.Range(0, 1_000_000).Select(i => "n" + i).ToList();

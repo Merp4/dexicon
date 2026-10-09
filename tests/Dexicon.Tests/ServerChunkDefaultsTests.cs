@@ -534,6 +534,7 @@ public sealed class ServerChunkDefaultsTests : IAsyncLifetime
             refusal.Detail.ShouldNotBe(refusal.AgentDetail, "the admin is given the resolver's own message");
         }
     }
+
     private sealed class UnavailableProbe : IEmbeddingService
     {
         public Task<IReadOnlyList<float[]>> EmbedAsync(EmbeddingTarget target, EmbedPurpose purpose,

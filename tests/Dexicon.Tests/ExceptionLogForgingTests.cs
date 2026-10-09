@@ -280,7 +280,6 @@ public sealed class ExceptionLogForgingTests
         Render(EventFor(null, "Refused: {Title}", text)).ShouldContain(text);
     }
 
-
     [Fact]
     public void ATypeLoggedByItsToStringHasThatTextReplaced()
     {
@@ -554,6 +553,7 @@ public sealed class ExceptionLogForgingTests
         rendered.ShouldContain(new string('p', 8_000) + "...");
         rendered.ShouldNotContain(new string('p', 8_001));
     }
+
     /// <summary>A chain deep enough to be cut, with a message on its outermost exception.</summary>
     private static InvalidOperationException DeepWith(string message)
     {
@@ -583,7 +583,7 @@ public sealed class ExceptionLogForgingTests
     }
 
     [Fact]
-    public void AnExceptionWhoseTextCannotBeReadIsStillWrittenWithAnote()
+    public void AnExceptionWhoseTextCannotBeReadIsStillWrittenWithANote()
     {
         foreach (Exception thrown in new Exception[] { new ThrowingMessageException(), new ThrowingToStringException(), new ThrowingStackTraceException() })
         {
