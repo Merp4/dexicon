@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChunkSetsPanel, ModelsView } from './ChunkSets';
-import type { ChunkSet, Corpus, EmbeddingModelInfo } from './api';
+import { ApiError, type ChunkSet, type Corpus, type EmbeddingModelInfo } from './api';
 
 /**
  * The chunk set screen, and the bugs it shipped with.
@@ -340,6 +340,23 @@ describe('the chunk sets, collapsed', () => {
     expect(screen.queryByRole('button', { name: 'Promote' })).not.toBeInTheDocument();
   });
 
+  it.each([
+    [404, true],
+    [409, true],
+    [500, false],
+  ])('reads the list again after a %i answer to an action: %s', async (status, again) => {
+    // A set that is gone, or one kept without its vectors, is not what the list showed before the request.
+    promoteChunkSet.mockRejectedValue(new ApiError(status, 'Refused', 'it changed while this request waited.'));
+    const onChanged = vi.fn();
+    const sets = [chunkSet(), chunkSet({ id: 's2', name: 'fine', isDefault: false })];
+    render(<ChunkSetsPanel corpus={corpus(sets)} onChanged={onChanged} open onOpenChange={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Promote' }));
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Promote' }));
+    await screen.findByText(/it changed while this request waited/);
+
+    expect(onChanged).toHaveBeenCalledTimes(again ? 1 : 0);
+  });
   it('asks to open when its line is pressed', async () => {
     const onOpenChange = vi.fn();
     collapsed([chunkSet()], onOpenChange);
