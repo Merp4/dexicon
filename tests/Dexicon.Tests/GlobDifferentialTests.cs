@@ -68,7 +68,7 @@ public sealed class GlobDifferentialTests
     /// refused. A glob one side refuses and the other accepts is a disagreement.
     /// </summary>
     private static (List<string> Differences, long Compared, int Refused, int Globs, long Matched, int TimedOut) Compare(
-        int globCount, int pathsPerGlob, int seed, Func<string, string>? mutate = null)
+        int globCount, int pathsPerGlob, int seed, Func<string, string>? mutate = null, int pad = 0)
     {
         var random = new Random(seed);
         var differences = new List<string>();
@@ -107,6 +107,9 @@ public sealed class GlobDifferentialTests
 
                 // Half the paths are made to resemble the glob: a prefix of it with the wildcards filled in.
                 if (p % 2 == 0) path = Resemble(random, glob, prefix);
+
+                // A directory name of `pad` characters before or after the path, so the match needs a pooled buffer.
+                if (pad > 0) path = p % 3 == 0 ? new string('d', pad) + "/" + path : path + "/" + new string('d', pad);
                 if (path.Contains('\n', StringComparison.Ordinal)) continue;
 
                 bool expected;
@@ -164,6 +167,22 @@ public sealed class GlobDifferentialTests
         var (differences, compared, _, _, _, _) = Compare(globCount: 1_000, pathsPerGlob: 120, seed: 7);
 
         differences.Take(10).ShouldBeEmpty($"of {compared:N0} pairs");
+    }
+
+    [Fact]
+    public void PathsLongEnoughToNeedAPooledBufferAgreeToo()
+    {
+        // A path of 512 characters or more is matched in a rented array, which is returned with whatever the last match
+        // left in it. 520 and 700 fall in different array sizes.
+        foreach (var pad in new[] { 520, 700 })
+        {
+            var (differences, compared, _, _, matched, timedOut) = Compare(globCount: 1_500, pathsPerGlob: 60, seed: 99 + pad, pad: pad);
+
+            var summary = $"{compared:N0} pairs with {pad} characters of padding, {matched:N0} matches, {timedOut} oracle timeouts";
+            differences.Take(10).ShouldBeEmpty(summary);
+            compared.ShouldBeGreaterThan(50_000, summary);
+            matched.ShouldBeGreaterThan(5_000, summary);
+        }
     }
 
     [Fact]

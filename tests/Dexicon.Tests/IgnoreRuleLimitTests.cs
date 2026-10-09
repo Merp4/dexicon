@@ -140,6 +140,15 @@ public sealed class IgnoreRuleLimitTests : IDisposable
     }
 
     [Fact]
+    public void ARuleOfWeightOnePastTheLimitFailsTheWalk()
+    {
+        // 24 lines of 500 are the limit exactly (above); `z` weighs 1.
+        Write(WorkspaceWalker.IgnoreFileName, string.Join("\n", Enumerable.Range(0, 24).Select(HeavyLine)) + "\nz\n");
+
+        Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldStartWith(".dexiconignore line 25 ('z') is past the limit");
+    }
+
+    [Fact]
     public void AClassHeavyFileIsHeldToTheWeightToo()
     {
         // A star and 45 classes of 3 ranges: 1 + 1 + 45 x 4 = 182 a rule, so 65 rules are 11,830 and the 66th passes 12,000.
@@ -302,6 +311,19 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         var thrown = Should.Throw<IgnorePatternException>(() => Walk());
 
         thrown.Warnings.ShouldBe([".gitignore line 1 ('[z-a]') cannot be compiled (reversed character range); the line was skipped"]);
+        thrown.WarningsOmitted.ShouldBe(0);
+    }
+
+    [Fact]
+    public void WarningsPastTheCapAreCountedOnTheExceptionToo()
+    {
+        Write(".gitignore", string.Concat(Enumerable.Repeat("[z-a]\n", 25)));
+        Write(WorkspaceWalker.IgnoreFileName, "[z-a]\n");
+
+        var thrown = Should.Throw<IgnorePatternException>(() => Walk());
+
+        thrown.Warnings.Count.ShouldBe(WarningSink.MaxKept);
+        thrown.WarningsOmitted.ShouldBe(5);
     }
 
     [Fact]
@@ -315,6 +337,26 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         File.WriteAllBytes(Path.Combine(_root, WorkspaceWalker.IgnoreFileName), [.. comment, (byte)'#']);
         Should.Throw<IgnorePatternException>(() => Walk())
             .Message.ShouldBe(".dexiconignore cannot be used as patterns because it is larger than 1 MiB");
+    }
+
+    [Fact]
+    public void SixteenMebibytesOfIgnoreFilesAreReadAndOneByteMoreFailsTheWalk()
+    {
+        var content = new byte[IgnoreFileText.MaxBytes];
+        Array.Fill(content, (byte)'#');
+        for (var i = 0; i < 16; i++)
+        {
+            var dir = Path.Combine(_root, $"d{i:D2}");
+            Directory.CreateDirectory(dir);
+            File.WriteAllBytes(Path.Combine(dir, ".gitignore"), content);
+        }
+
+        Should.NotThrow(() => Walk());
+
+        Directory.CreateDirectory(Path.Combine(_root, "zz"));
+        File.WriteAllText(Path.Combine(_root, "zz", ".gitignore"), "#");
+        Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldBe(
+            "zz/.gitignore takes the walk past the 16 MiB of ignore files it may read; reduce the files");
     }
 
     [Fact]
