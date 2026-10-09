@@ -87,10 +87,11 @@ Each of these has been decided, with the reasoning recorded in
   clear it, because swallowing the cancellation is how the follow-up is skipped. A function or type
   the rule does not fit, such as a background pass whose writes are each safe to stop after, carries
   `[SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", Justification = "...")]`. On a type
-  it covers every member, including one added later. `MessageId` names the method called and covers
-  every use of the token in a call of that name in the function, not one call. The test does not see
-  everything: its summary lists the shapes it misses, among them a token held in a field, a `catch`
-  reached after a write and a lambda passed to a call that runs it.
+  it covers every member, including one added later. `MessageId` limits it to findings with that
+  target (usually the method the token is passed to; a failure prints it) and covers every such
+  finding in the function, not one call. The test does not see everything: its summary lists the
+  shapes it misses, among them a token held in a field, a `catch` reached after a write and a lambda
+  that writes, passed to a call that runs it.
 - **A number without a measurement.** Chunk sizes, overlaps and model choices are
   estimates until `scripts/retrieval-bench.py` establishes otherwise, and the documentation
   labels them as such. Changes are welcome; changes accompanied by the measurements are

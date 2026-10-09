@@ -37,24 +37,27 @@ namespace Dexicon.Tests;
 /// same save. Catching <see cref="OperationCanceledException"/> around the use is not enough: swallowing
 /// the cancellation is how the follow-up is skipped.
 ///
-/// A function, type or member is exempt only through
+/// A function or type is exempt only through
 /// <c>[SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", Justification = "...")]</c>, with a
 /// reason that is not blank. A suppression on a type exempts every member of it, including one added later.
-/// A <c>MessageId</c> names the method called and limits the exemption to uses of the token in a call of that
-/// name; it cannot point at one call, so every call of that name in the function is covered. A loop that
-/// stops on the token is one: <c>DocumentEndpoints.UploadAsync</c> reads and stores the next file on it
-/// (<c>ReadNextSectionAsync</c>, <c>StoreAsync</c>, <c>AttachAsync</c>), and its queuing of the job after the
-/// loop is not exempt, but another call of those names with the token in it would be. A suppression that
+/// A <c>MessageId</c> limits the exemption to findings with that target and cannot point at one call, so it
+/// covers every such finding in the function. The target is the name of the method the token is passed to, the
+/// name of a local function, <c>lambda</c> or <c>delegate</c> for one that captures it, the type's name for a
+/// constructor, or <c>Token</c> for a linked source's token; a failure prints it. A loop that stops on the
+/// token is a case for a suppression: <c>DocumentEndpoints.UploadAsync</c> reads and stores the next file on
+/// it (<c>ReadNextSectionAsync</c>, <c>StoreAsync</c>, <c>AttachAsync</c>), and its queuing of the job after
+/// the loop is not exempt, but another call of those names with the token in it would be. A suppression that
 /// no longer suppresses anything fails, wherever it is written, as does one without a justification.
 ///
 /// Blind to: a token held in a field, a property, a collection, a tuple, an object it was passed into, a
-/// struct, a primary constructor, a nullable local or an <c>out</c> argument; a <c>catch</c> reached by an
+/// struct, a primary constructor, a <c>CancellationToken?</c> local or an <c>out</c> argument; a <c>catch</c> reached by an
 /// exception thrown after a write, since the graph has no edge for an exception and treats every catch as
 /// following a failed write; a callback passed to the writing call and run inside it, a delegate held in a
 /// field or a parameter, a writing lambda passed to a call that runs it or returned by a factory, and a
 /// delegate a factory call builds from the token, whose bodies the scan cannot see; a token handed to an
 /// enclosing call by an expression that calls something, which cannot be told from a result read with it;
-/// a task started with the token before the write and awaited after it, and a loop whose header names it;
+/// a task started with the token before the write and awaited after it, and the collection expression of a
+/// <c>foreach</c> that names it;
 /// a write made by a property accessor or from a field initializer, and one through a member declared
 /// outside <c>src/</c> that a type in <c>src/</c> implements; raw ADO.NET commands, and writes to Qdrant and
 /// the blob store, which are not catalogue writes; and the conditions on a path, so a branch taken only when
@@ -73,7 +76,7 @@ public sealed class RequestTokenAfterCommitTests
         source.UnexpectedErrors.ShouldBeEmpty(
             "src/ did not compile as the scan builds it, so calls may have bound to nothing and been missed");
         source.UnreadProjects.ShouldBeEmpty(
-            "a project under src/ that the scan does not read; add it to CommitScan.Source.Load");
+            "a project under src/ that the scan does not read; add it to CommitScan.Source.Load and ReadProjects");
         source.ConditionalFiles.ShouldBeEmpty(
             "the scan parses with no preprocessor symbols, so code under #if is not read as it is compiled");
 
@@ -446,12 +449,12 @@ public sealed class RequestTokenAfterCommitTests
     [Fact]
     public void AMessageIdCoversEveryUseOfTheTokenInACallOfThatNameAndNoOtherCall()
     {
-        // A suppression cannot point at one call, so MessageId names the method called. Both uses of the
-        // token in Delay calls are exempt, and the use in Run is reported: this is what the documentation
-        // says, pinned so that it cannot drift back to "the one call".
+        // A suppression cannot point at one call, so a MessageId covers every finding with its target. Both
+        // uses of the token in Delay calls, on lines of their own because findings are told apart by line,
+        // are exempt, and the use in Run is reported.
         var scan = CommitScan.Run([CommitScan.Source.FromSnippet(
             "[SuppressMessage(\"Dexicon.Cancellation\", \"TokenAfterCommit\", MessageId = \"Delay\", Justification = \"x\")]\n"
-            + Run("await db.SaveChangesAsync(); await Task.Delay(1, ct); await db.SaveChangesAsync(); await Task.Delay(2, ct); "
+            + Run("await db.SaveChangesAsync();\nawait Task.Delay(1, ct);\nawait db.SaveChangesAsync();\nawait Task.Delay(2, ct);\n"
                 + "await Task.Run(() => 1, ct);"))]);
 
         scan.Unsuppressed.Select(f => f.Target).ShouldBe(["Run"]);
@@ -530,7 +533,7 @@ internal sealed class CommitScan
     /// <param name="Site">File name and line of the token's use.</param>
     public sealed record Finding(string Site, string Function, string Use, string Target, string After)
     {
-        public override string ToString() => $"{Site} {Function}: '{Use}' after {After}";
+        public override string ToString() => $"{Site} {Function}: '{Use}' after {After} (MessageId target '{Target}')";
     }
 
     public int WriteCalls { get; private set; }
