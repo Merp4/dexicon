@@ -29,7 +29,8 @@ public sealed record StoredDocument(
 /// want to vary.
 ///
 /// That gives three things for free:
-///   - uploading the same PDF twice stores one blob and extracts once
+///   - uploading the same PDF twice stores one blob and extracts once (two uploads at the same moment
+///     each extract, and the one saved second keeps the other's text)
 ///   - attaching one document to two corpora with different chunk sizes produces two
 ///     independent chunk sets without re-opening the file
 ///   - changing a corpus's chunk settings re-chunks and re-embeds from cached text
@@ -91,8 +92,17 @@ public sealed class DocumentService(
             var final = PathFor(sha);
             Directory.CreateDirectory(Path.GetDirectoryName(final)!);
 
-            if (File.Exists(final)) File.Delete(temp);
-            else File.Move(temp, final);
+            // The move does not replace a file. Bytes that are stored already, from an earlier upload or one
+            // that finished between this one's hash and its move, are the file this upload would have
+            // written, so its copy is dropped. One path for both, so an upload of stored bytes reaches it.
+            try
+            {
+                File.Move(temp, final);
+            }
+            catch (IOException) when (File.Exists(final))
+            {
+                File.Delete(temp);
+            }
         }
         catch
         {
@@ -100,13 +110,11 @@ public sealed class DocumentService(
             throw;
         }
 
-        var existing = await db.Blobs.Include(b => b.Text).FirstOrDefaultAsync(b => b.Sha256 == sha, ct);
-        if (existing is not null)
+        if (await ExistingAsync(sha, fileName, ct) is { } existing)
         {
             log.LogInformation("Upload '{File}' is an existing blob {Sha}; stored once, extraction reused",
                 fileName, sha[..12]);
-            return new StoredDocument(sha, existing.SizeBytes, fileName, existing.Text?.Title,
-                existing.Text?.ExtractedChars ?? 0, AlreadyExisted: true, existing.Text?.EmptyReason);
+            return existing;
         }
 
         var blob = new Blob
@@ -121,13 +129,42 @@ public sealed class DocumentService(
 
         var text = await ExtractAsync(sha, fileName, ct);
         db.BlobTexts.Add(text);
-        await db.SaveChangesAsync(ct);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (ex.IsDuplicateKey())
+        {
+            // The same bytes were uploaded at the same moment, and the other upload saved its blob
+            // while this one was extracting: both had looked, found none, and gone on. The blob is
+            // there and holds the same bytes, so this upload reports it as it would one that
+            // arrived later, and the extraction it did is dropped. If no blob with this hash is
+            // there, the duplicate was something else and stays an error, as does any other failure.
+            db.Entry(blob).State = EntityState.Detached;
+            db.Entry(text).State = EntityState.Detached;
+
+            // Not cancellable: the other upload's blob is committed, and this read only decides the reply.
+            if (await ExistingAsync(sha, fileName, CancellationToken.None) is not { } winner) throw;
+            log.LogInformation("Upload '{File}' of {Sha} was saved by another upload first; its extraction is dropped",
+                fileName, sha[..12]);
+            return winner;
+        }
 
         log.LogInformation("Stored '{File}' as {Sha} ({Size:N0} bytes, {Chars:N0} chars extracted)",
             fileName, sha[..12], size, text.ExtractedChars);
 
         return new StoredDocument(sha, size, fileName, text.Title, text.ExtractedChars,
             AlreadyExisted: false, text.EmptyReason);
+    }
+
+    /// <summary>The stored document for bytes already in the library, or null when they are not.</summary>
+    private async Task<StoredDocument?> ExistingAsync(string sha, string fileName, CancellationToken ct)
+    {
+        var existing = await db.Blobs.Include(b => b.Text).FirstOrDefaultAsync(b => b.Sha256 == sha, ct);
+        if (existing is null) return null;
+
+        return new StoredDocument(sha, existing.SizeBytes, fileName, existing.Text?.Title,
+            existing.Text?.ExtractedChars ?? 0, AlreadyExisted: true, existing.Text?.EmptyReason);
     }
 
     /// <summary>
