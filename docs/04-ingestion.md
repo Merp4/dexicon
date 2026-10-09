@@ -885,6 +885,10 @@ rather than discovered.
   "charsPerToken": 2.82, "recommendedChunkTokens": 2783, "embedCalls": 27 }
 ```
 
+The probe needs the `admin` scope: it makes two dozen calls to the provider, which for a hosted one
+use the server's own credentials, and it saves the result as the model's measurement, which sets
+the chunk budget of every chunk set on that model.
+
 `charsPerToken` is measured with **the model's own tokenizer**, not estimated. Ollama
 returns `prompt_eval_count` on an embed call, so the probe embeds three samples (prose,
 dense code, and punctuation-heavy structured text) and divides. A provider that reports
