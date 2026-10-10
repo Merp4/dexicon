@@ -234,6 +234,23 @@ public sealed class IgnoreRuleLimitTests : IDisposable
     }
 
     [Fact]
+    public void AnIgnoreFileInADirectoryANegationBringsBackIsReadAndAppliesToItsFiles()
+    {
+        // `lib/` is ignored and `!lib/keep/` brings one directory back. Its own `.gitignore` was written for it, and
+        // leaving it unread would index `lib/keep/secret.txt` against the file's word.
+        Write(".gitignore", "lib/\n!lib/keep/\n");
+        Write("lib/.gitignore", "other.txt\n");
+        Write("lib/keep/.gitignore", "secret.txt\n");
+        Write("lib/keep/secret.txt", "x");
+        Write("lib/keep/note.txt", "x");
+
+        var files = Walk().Files.Select(f => f.RelativePath).ToList();
+
+        files.ShouldContain("lib/keep/note.txt");
+        files.ShouldNotContain("lib/keep/secret.txt");
+    }
+
+    [Fact]
     public void AnIgnoreFileInsideADirectoryTheRulesIgnoreDoesNotApplyToAFileTheyReinclude()
     {
         // `lib/` is ignored and `!lib/keep/` re-includes one directory in it; `lib/.gitignore` is not read, so its

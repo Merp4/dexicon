@@ -2208,7 +2208,8 @@ the pattern has a wildcard or not.
 - `Walk` takes a cancellation token, polled per directory and every 256 files.
 - An ignore file is opened without blocking on Linux and macOS (`O_NONBLOCK`) and refused if the handle cannot
   seek. A pipe named `.gitignore` blocked a walk for good when it was read as any other file.
-- Ignore files below an ignored directory are not read, even where a negation makes the walk enter the directory.
+- The ignore files of a directory the rules ignore are not read, even where a negation makes the walk enter it. A directory a
+  negation re-includes is read.
 - A `.dexiconignore` with a carriage return inside a line fails the walk, since lines end at a line feed and a file
   with old Mac line endings would otherwise exclude nothing.
 

@@ -81,9 +81,10 @@ looked at, so a `!keep.txt` in `vendor/.gitignore` does not bring `vendor/keep.t
 when `vendor/` was excluded above it. Git decides the same way and for the same reason: it
 does not read ignore files in a directory it has excluded. `.dexiconignore` higher up is
 where the exception goes. A negation that applies at every depth (`!.gitkeep`) makes the walk
-enter an ignored directory to look for what it re-includes, and the ignore files in that
-directory and beneath it are still not read, so a vendored `node_modules` does not use up the
-rule budget.
+enter an ignored directory to look for what it re-includes. The ignore files of a directory the
+rules ignore are not read, so a vendored `node_modules` does not use up the rule budget; a
+directory that a negation re-includes is read like any other, so the rules it holds apply to the
+files it was brought back for.
 
 **Links are not followed.** A symbolic link or junction, to a file or a directory, is
 recorded as `skipped` ("a link; links are not followed") and is neither read nor entered;
