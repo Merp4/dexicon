@@ -276,24 +276,48 @@ public sealed class IgnoreFileReadabilityTests : IDisposable
     [InlineData("utf16le")]
     [InlineData("utf16be")]
     [InlineData("utf32le")]
+    [InlineData("utf32be")]
     public void ADexiconignoreWithABrokenSurrogateOrUnitInItsEncodingFailsTheWalk(string encoding)
     {
         // The encoders replace a lone surrogate, so the bytes of one are written by hand. Decoded leniently it is U+FFFD,
         // a line that matches nothing.
-        var little = encoding != "utf16be";
-        byte[] Unit(ushort unit) => encoding == "utf32le" ? [(byte)unit, (byte)(unit >> 8), 0, 0]
-            : little ? [(byte)unit, (byte)(unit >> 8)] : [(byte)(unit >> 8), (byte)unit];
-        var encoder = encoding == "utf16be" ? new UnicodeEncoding(true, false)
-            : encoding == "utf16le" ? new UnicodeEncoding(false, false)
-            : (Encoding)new UTF32Encoding(false, false);
-        var preamble = encoding == "utf16be" ? new byte[] { 0xFE, 0xFF }
-            : encoding == "utf16le" ? [0xFF, 0xFE]
-            : [0xFF, 0xFE, 0, 0];
+        byte[] Unit(ushort unit) => encoding switch
+        {
+            "utf32le" => [(byte)unit, (byte)(unit >> 8), 0, 0],
+            "utf32be" => [0, 0, (byte)(unit >> 8), (byte)unit],
+            "utf16le" => [(byte)unit, (byte)(unit >> 8)],
+            _ => [(byte)(unit >> 8), (byte)unit],
+        };
+        Encoding encoder = encoding switch
+        {
+            "utf16be" => new UnicodeEncoding(true, false),
+            "utf16le" => new UnicodeEncoding(false, false),
+            "utf32be" => new UTF32Encoding(true, false),
+            _ => new UTF32Encoding(false, false),
+        };
+        byte[] preamble = encoding switch
+        {
+            "utf16be" => [0xFE, 0xFF],
+            "utf16le" => [0xFF, 0xFE],
+            "utf32be" => [0, 0, 0xFE, 0xFF],
+            _ => [0xFF, 0xFE, 0, 0],
+        };
         WriteBytes(".dexiconignore", [.. preamble, .. encoder.GetBytes("secret.txt\n"), .. Unit(0xD800), .. encoder.GetBytes("other.txt\n")]);
         Write("secret.txt");
 
         Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldStartWith(
             ".dexiconignore cannot be used as patterns because it is not valid UTF-");
+    }
+
+    [Fact]
+    public void AByteOrderMarkedUtf8DexiconignoreWithAnInvalidByteFailsTheWalk()
+    {
+        // The BOM is the one the default decoder would also take; with it the file must still be decoded strictly.
+        WriteBytes(".dexiconignore", [0xEF, 0xBB, 0xBF, .. "secret.txt\n"u8.ToArray(), 0xFF, .. "other.txt\n"u8.ToArray()]);
+        Write("secret.txt");
+
+        Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldBe(
+            ".dexiconignore cannot be used as patterns because it is not valid UTF-8");
     }
 
     [Fact]
@@ -310,7 +334,7 @@ public sealed class IgnoreFileReadabilityTests : IDisposable
         Names(walk).ShouldContain("keep.txt");
         Names(walk).ShouldNotContain("secret.txt");
         Names(walk).ShouldNotContain("other.txt");
-        walk.Warnings.ShouldBe([".gitignore has 1 lines with bytes that are not valid UTF-8; those lines were skipped"]);
+        walk.Warnings.ShouldBe([".gitignore has 1 line with bytes that are not valid in the file's encoding; that line was skipped"]);
     }
 
     [Fact]
@@ -326,7 +350,7 @@ public sealed class IgnoreFileReadabilityTests : IDisposable
         Names(walk).ShouldContain("keep.txt");
         Names(walk).ShouldNotContain("secret.txt");
         Names(walk).ShouldNotContain("other.txt");
-        walk.Warnings.ShouldBe([".gitignore has 1 lines with bytes that are not valid UTF-8; those lines were skipped"]);
+        walk.Warnings.ShouldBe([".gitignore has 1 line with bytes that are not valid in the file's encoding; that line was skipped"]);
     }
 
     [Fact]
@@ -405,6 +429,36 @@ public sealed class IgnoreFileReadabilityTests : IDisposable
 
         thrown.Message.ShouldBe(
             "a/.dexiconignore cannot be used because the directory holds 2 files whose names differ only in case (.DexiconIgnore, .dexiconignore); keep one");
+    }
+
+    [Fact]
+    public void AMessageListsAtMostFiveOfTheNamesThatDifferOnlyInCase()
+    {
+        // `.dexiconignore` has 13 letters, so a tree can hold 8,192 spellings of it, and the message goes to the job's
+        // error, the log and the jobs API.
+        string[] variants =
+        [
+            "/r/.dexiconignore", "/r/.Dexiconignore", "/r/.dEXiconignore", "/r/.DEXICONIGNORE",
+            "/r/.dexiconIgnore", "/r/.DexiconIgnore", "/r/.dexicOnignore", "/r/.dexiconignorE",
+        ];
+
+        var thrown = Should.Throw<IgnorePatternException>(() => WorkspaceWalker.Named(variants, ".dexiconignore", "", new WarningSink()));
+
+        thrown.Message.ShouldBe(
+            ".dexiconignore cannot be used because the directory holds 8 files whose names differ only in case "
+            + "(.DEXICONIGNORE, .DexiconIgnore, .Dexiconignore, .dEXiconignore, .dexicOnignore, and 3 more); keep one");
+    }
+
+    [Fact]
+    public void AWarningSaysFileOrFilesAsTheNumberOfOtherNamesRequires()
+    {
+        var one = new WarningSink();
+        WorkspaceWalker.Named(["/r/.gitignore", "/r/.GitIgnore"], ".gitignore", "", one);
+        var two = new WarningSink();
+        WorkspaceWalker.Named(["/r/.gitignore", "/r/.GitIgnore", "/r/.GITIGNORE"], ".gitignore", "", two);
+
+        one.Kept.Single().ShouldContain("has 1 other file whose name differs only in case");
+        two.Kept.Single().ShouldContain("has 2 other files whose names differ only in case");
     }
 
     [Fact]

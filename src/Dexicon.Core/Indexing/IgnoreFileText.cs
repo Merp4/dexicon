@@ -5,7 +5,7 @@ using Microsoft.Win32.SafeHandles;
 namespace Dexicon.Core.Indexing;
 
 /// <summary>
-/// Reads the text of an ignore file. It opens only a file that can seek, reads at most <see cref="MaxBytes"/> of it,
+/// Reads the text of an ignore file. It opens only a file that can seek, reads at most <see cref="MaxBytes"/> + 1 bytes of it,
 /// and decodes it as <c>File.ReadAllLines</c> does: UTF-8 unless a byte order mark says UTF-16 or UTF-32. A NUL in
 /// the text is refused, and for a file that must be exact (<c>.dexiconignore</c>) so are bytes that are not valid in
 /// the encoding, in every encoding. A reason is an <see cref="InvalidDataException"/> whose message completes "the

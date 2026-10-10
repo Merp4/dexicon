@@ -251,6 +251,10 @@ public sealed class UnusableIgnoreFileIndexingTests
     [Theory]
     [InlineData("source", "excludeGlobs[0]")]
     [InlineData("corpus", "corpus default excludeGlobs[0]")]
+    [InlineData("source include", "includeGlobs[0]")]
+    [InlineData("corpus include", "corpus default includeGlobs[0]")]
+    [InlineData("corpus include, source with its own exclude list", "corpus default includeGlobs[0]")]
+    [InlineData("corpus exclude, source with its own include list", "corpus default excludeGlobs[0]")]
     public async Task AnEntryOfAStoredListIsNamedByWhereItCameFrom(string holder, string expected)
     {
         await using var harness = await IndexingHarness.StartAsync("notes");
@@ -258,8 +262,27 @@ public sealed class UnusableIgnoreFileIndexingTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await using (var db = harness.NewContext())
         {
-            if (holder == "source") (await db.Sources.SingleAsync()).ExcludeGlobs = SourceFilters.Store([Faulty]);
-            else (await db.Corpora.SingleAsync()).DefaultExcludeGlobs = SourceFilters.Store([Faulty]);
+            var source = await db.Sources.SingleAsync();
+            var corpus = await db.Corpora.SingleAsync();
+            var faulty = SourceFilters.Store([Faulty]);
+            var fine = SourceFilters.Store(["*.log"]);
+            switch (holder)
+            {
+                case "source": source.ExcludeGlobs = faulty; break;
+                case "corpus": corpus.DefaultExcludeGlobs = faulty; break;
+                case "source include": source.IncludeGlobs = faulty; break;
+                case "corpus include": corpus.DefaultIncludeGlobs = faulty; break;
+                case "corpus include, source with its own exclude list":
+                    corpus.DefaultIncludeGlobs = faulty;
+                    source.ExcludeGlobs = fine;
+                    break;
+                case "corpus exclude, source with its own include list":
+                    corpus.DefaultExcludeGlobs = faulty;
+                    source.IncludeGlobs = SourceFilters.Store(["*.md"]);
+                    break;
+                default: throw new ArgumentOutOfRangeException(nameof(holder), holder, "an unknown holder");
+            }
+
             await db.SaveChangesAsync();
         }
 

@@ -59,7 +59,7 @@ public sealed class IgnoreRuleSet
 
     // The limits below bound the work a walk does for each file it meets, which is tested against every rule in force:
     // a rule costs a search for its longest literal run, and its weight in word operations (see GlobMatcher). The
-    // worst case at the limits, measured, is in IgnoreRuleCostTests and docs/04-ingestion.md.
+    // worst case at the limits, measured, is the table docs/04-ingestion.md gives, which IgnoreRuleCostTests prints.
 
     /// <summary>The most rules the ignore files of one walk may add (`.git/info/exclude` and every `.gitignore` and `.dexiconignore`).</summary>
     public const int MaxRulesPerSource = 5_000;
@@ -291,7 +291,8 @@ public sealed class IgnoreRuleSet
 /// <summary>
 /// Walks a workspace tree applying, in order: always-exclude, .git/info/exclude,
 /// .gitignore, .dexiconignore, per-source globs, size cap, binary sniff. The two ignore
-/// files are read in every directory the walk reaches, deeper outranking shallower. See
+/// files are read in every directory the walk reaches, deeper outranking shallower, except
+/// a directory another source owns and, for a .gitignore, a directory the rules ignore. See
 /// docs/04-ingestion.md.
 /// </summary>
 public sealed class WorkspaceWalker
@@ -698,15 +699,17 @@ public sealed class WorkspaceWalker
             // file and inherits its parent's sets by reference; copying first and
             // discarding the copy is a rule list per directory rather than per file found.
             //
-            // Not looked for inside a directory another source owns (its files are dropped by the caller), nor inside a
-            // directory the rules in force ignore, which the walk enters only because a negation could re-include a
-            // file there. Git reads no ignore file below an ignored directory, so a vendored tree's files neither
-            // apply nor use up the budget. A directory that a negation re-includes is not ignored and is read like any
-            // other, so the rules it holds apply to the files it was brought back for.
-            var shadowed = directoryIgnored || (shadowedPrefixes.Count > 0
-                && SourceScope.IsShadowed(IgnoreRuleSet.Join(prefix, "x"), shadowedPrefixes));
-            var gitignore = useGitignore && !shadowed ? Named(entries, ".gitignore", prefix, state.Warnings) : null;
-            var dexiconignore = shadowed ? null : Named(entries, IgnoreFileName, prefix, state.Warnings);
+            // Neither is looked for inside a directory another source owns (its files are dropped by the caller). A
+            // `.gitignore` is also not looked for inside a directory the rules in force ignore, which the walk enters
+            // only because a negation could re-include a file there: git reads no ignore file below an ignored
+            // directory, so a vendored tree's `.gitignore` files neither apply nor use up the budget. A
+            // `.dexiconignore` is the operator's own file and is read there, because the files the negation brings
+            // back are indexed, and skipping the file would index what it was written to exclude. A directory that a
+            // negation re-includes is not ignored and is read like any other.
+            var owned = shadowedPrefixes.Count > 0
+                && SourceScope.IsShadowed(IgnoreRuleSet.Join(prefix, "x"), shadowedPrefixes);
+            var gitignore = useGitignore && !owned && !directoryIgnored ? Named(entries, ".gitignore", prefix, state.Warnings) : null;
+            var dexiconignore = owned ? null : Named(entries, IgnoreFileName, prefix, state.Warnings);
 
             if (gitignore is not null || dexiconignore is not null)
             {
@@ -795,16 +798,21 @@ public sealed class WorkspaceWalker
         if (matches.Count < 2) return matches.Count == 0 ? null : matches[0];
 
         var label = IgnoreRuleSet.Join(directoryPrefix, name);
-        var names = string.Join(", ", matches.Select(Path.GetFileName));
+        var names = string.Join(", ", matches.Take(MaxNamesShown).Select(Path.GetFileName))
+            + (matches.Count > MaxNamesShown ? $", and {matches.Count - MaxNamesShown:N0} more" : string.Empty);
         if (name == IgnoreFileName)
             throw IgnorePatternException.ForFile(label,
-                $"cannot be used because the directory holds {matches.Count} files whose names differ only in case ({names}); keep one");
+                $"cannot be used because the directory holds {matches.Count:N0} files whose names differ only in case ({names}); keep one");
 
         var chosen = matches.FirstOrDefault(entry => Path.GetFileName(entry) == name) ?? matches[0];
+        var others = matches.Count - 1;
         warnings.Add(IgnorePatternException.ForFile(label,
-            $"has {matches.Count - 1} other file whose name differs only in case ({names}); only {Path.GetFileName(chosen)} was read").Message);
+            $"has {others:N0} other {(others == 1 ? "file whose name differs" : "files whose names differ")} only in case ({names}); only {Path.GetFileName(chosen)} was read").Message);
         return chosen;
     }
+
+    /// <summary>The most names of one ignore file's case variants that a message lists. A tree can hold 8,192 of them.</summary>
+    private const int MaxNamesShown = 5;
 
     /// <summary>
     /// Adds one ignore file's lines. What happens to a file or line that cannot be used depends on whose
@@ -812,7 +820,7 @@ public sealed class WorkspaceWalker
     ///
     /// <c>.gitignore</c> and <c>.git/info/exclude</c> belong to git, and the walk does not hold a tree to a stricter
     /// reading than it needs. A line that cannot be compiled or is longer than
-    /// <see cref="IgnoreRuleSet.MaxPatternLength"/>, or holds bytes that are not valid UTF-8, is skipped and added to
+    /// <see cref="IgnoreRuleSet.MaxPatternLength"/>, or holds bytes that are not valid in the file's encoding, is skipped and added to
     /// the warnings with the file and the line number, and the file's other lines still apply, up to 1,000 skipped
     /// lines. A file that cannot be opened, is not a regular file, or holds a NUL is skipped whole with a warning. A
     /// link is not read (<see cref="IsLink"/>), as git does not read it.
@@ -956,8 +964,9 @@ public sealed class WorkspaceWalker
     }
 
     /// <summary>
-    /// Blanks the lines that hold the replacement character a decoder writes for a byte that is not valid UTF-8, so
-    /// they are skipped without moving the numbers of the lines after them, and counts them in one warning.
+    /// Blanks the lines that hold the replacement character (U+FFFD) a decoder writes for a byte that is not valid in
+    /// the file's encoding, so they are skipped without moving the numbers of the lines after them, and counts them in
+    /// one warning. A U+FFFD that the file holds itself is read the same way.
     /// </summary>
     private static void SkipUndecodedLines(List<string?> lines, string label, WarningSink warnings)
     {
@@ -973,8 +982,9 @@ public sealed class WorkspaceWalker
         }
 
         if (count > 0)
-            warnings.Add(IgnorePatternException.ForFile(label,
-                $"has {count:N0} lines with bytes that are not valid UTF-8; those lines were skipped").Message);
+            warnings.Add(IgnorePatternException.ForFile(label, count == 1
+                ? "has 1 line with bytes that are not valid in the file's encoding; that line was skipped"
+                : $"has {count:N0} lines with bytes that are not valid in the file's encoding; those lines were skipped").Message);
     }
 
     internal static bool LooksBinary(string path)

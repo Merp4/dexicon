@@ -218,7 +218,7 @@ public sealed class IgnoreRuleLimitTests : IDisposable
     }
 
     [Fact]
-    public void IgnoreFilesInsideAnIgnoredDirectoryAreNotReadOrCharged()
+    public void GitignoreFilesInsideAnIgnoredDirectoryAreNotReadOrCharged()
     {
         // `!.gitkeep` applies at every depth, so the walk goes into node_modules to look for a re-included file. Git
         // reads nothing in an ignored directory, and 700 packages of 10 rules would be 7,000 rules.
@@ -226,11 +226,55 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         Write("app.txt", "x");
         Write("node_modules/.gitkeep", "x");
         for (var i = 0; i < 700; i++) Write($"node_modules/pkg{i:D4}/.gitignore", Rules(10, i * 10));
-        Write("node_modules/pkg0000/.dexiconignore", "[z-a]\n");
 
         var files = Walk().Files.Select(f => f.RelativePath).OrderBy(p => p, StringComparer.Ordinal).ToList();
 
         files.ShouldBe([".gitignore", "app.txt", "node_modules/.gitkeep"]);
+    }
+
+    [Fact]
+    public void ADexiconignoreInsideAnIgnoredDirectoryTheWalkEntersStillExcludesTheFilesANegationBringsBack()
+    {
+        // `vendor/` is ignored and the negations bring two files and a directory's `*.txt` back, so the walk enters
+        // vendor and vendor/sub. The operator's `.dexiconignore` in each is read: the files it names stay out.
+        Write(".dexiconignore", "vendor/\n!vendor/keep.txt\n!vendor/sub/*.txt\n");
+        Write("a.txt", "x");
+        Write("vendor/keep.txt", "x");
+        Write("vendor/.dexiconignore", "keep.txt\nsub/private.txt\n");
+        Write("vendor/sub/private.txt", "x");
+        Write("vendor/sub/private2.txt", "x");
+        Write("vendor/sub/pub.txt", "x");
+        Write("vendor/sub/.dexiconignore", "private2.txt\n");
+
+        var files = Walk().Files.Select(f => f.RelativePath).OrderBy(p => p, StringComparer.Ordinal).ToList();
+
+        files.ShouldBe([".dexiconignore", "a.txt", "vendor/sub/pub.txt"]);
+    }
+
+    [Fact]
+    public void ADexiconignoreInsideAnIgnoredDirectoryExcludesWhatAGitignoreNegationBringsBack()
+    {
+        // `build/` is in the walk's always-exclude list, so the negation is what brings `build/docs/*.md` back.
+        Write(".gitignore", "!build/docs/*.md\n");
+        Write("build/.dexiconignore", "docs/secret.md\n");
+        Write("build/docs/secret.md", "x");
+        Write("build/docs/other.md", "x");
+
+        var files = Walk().Files.Select(f => f.RelativePath).ToList();
+
+        files.ShouldContain("build/docs/other.md");
+        files.ShouldNotContain("build/docs/secret.md");
+    }
+
+    [Fact]
+    public void AnUnusableDexiconignoreInsideAnIgnoredDirectoryTheWalkEntersFailsTheWalk()
+    {
+        Write(".dexiconignore", "vendor/\n!vendor/keep.txt\n");
+        Write("vendor/keep.txt", "x");
+        Write("vendor/.dexiconignore", "[z-a]\n");
+
+        Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldBe(
+            "vendor/.dexiconignore line 1 ('[z-a]') cannot be compiled (reversed character range)");
     }
 
     [Fact]
