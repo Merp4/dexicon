@@ -468,8 +468,10 @@ public sealed class DocumentUploadEndpointTests
             extractorFor: Registry(new SlowReadingExtractor(TimeSpan.FromMilliseconds(20))));
         first.Result.ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(503);
 
+        // The second post reads with no delay, so its timeout is set well past anything but a stalled machine: with 1 s
+        // it timed out in a full-suite run on a loaded host (5 s for the test), which says nothing about re-extraction.
         var posted = await PostAsync(
-            harness, body(), indexing: new IndexingOptions { ExtractionTimeoutSeconds = 1 },
+            harness, body(), indexing: new IndexingOptions { ExtractionTimeoutSeconds = 30 },
             extractorFor: Registry(new SlowReadingExtractor(TimeSpan.Zero)));
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
