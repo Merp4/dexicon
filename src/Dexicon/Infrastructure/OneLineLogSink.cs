@@ -25,7 +25,7 @@ namespace Dexicon.Infrastructure;
 /// Text that cannot be read (a property whose <c>ToString</c> throws, an exception whose message does) is
 /// replaced by a note, so that one such value does not drop the whole entry. A string is cut at
 /// <see cref="MaxProperty"/> characters, a line of an exception at <see cref="MaxLine"/>, and the whole
-/// exception at <see cref="MaxTotal"/>.
+/// exception at about <see cref="MaxTotal"/> (the line that crosses it is written whole).
 /// </summary>
 internal sealed class OneLineLogSink(ILogEventSink inner) : ILogEventSink, IDisposable
 {
@@ -38,7 +38,10 @@ internal sealed class OneLineLogSink(ILogEventSink inner) : ILogEventSink, IDisp
     /// <summary>The most characters of a line of an exception that are written, and of an exception's message.</summary>
     internal const int MaxLine = 4_000;
 
-    /// <summary>The most characters of an exception that are written.</summary>
+    /// <summary>
+    /// The size at which the rest of an exception is cut. The line that crosses it is written whole (at most
+    /// <see cref="MaxLine"/>), so an exception is written to about this many characters.
+    /// </summary>
     internal const int MaxTotal = 64_000;
 
     /// <summary>The most characters of a string property that are written.</summary>
@@ -52,17 +55,42 @@ internal sealed class OneLineLogSink(ILogEventSink inner) : ILogEventSink, IDisp
 
     private const string EndOfInnerTrace = "   --- End of inner exception stack trace ---";
 
+    /// <summary>How an event is made safe. A test replaces it to make building an event fail.</summary>
+    internal Func<LogEvent, LogEvent> Prepare { get; init; } = Rebuild;
+
     public void Emit(LogEvent logEvent)
     {
         ArgumentNullException.ThrowIfNull(logEvent);
 
+        LogEvent safe;
+        try
+        {
+            safe = Prepare(logEvent);
+        }
+        catch (Exception ex)
+        {
+            // An entry that cannot be made safe is neither dropped (Serilog swallows a sink's exception) nor written
+            // as it was. What is written says that it was withheld, with the level, the time and the exception type.
+            var properties = logEvent.Properties.TryGetValue("UtcTime", out var time) && time is ScalarValue { Value: DateTime }
+                ? new[] { new LogEventProperty("UtcTime", time) }
+                : [];
+            safe = new LogEvent(logEvent.Timestamp, logEvent.Level, null,
+                new MessageTemplateParser().Parse("(a log entry was withheld because it could not be made safe to write: {Reason})"),
+                [.. properties, new LogEventProperty("Reason", new ScalarValue(ex.GetType().Name))]);
+        }
+
+        inner.Emit(safe);
+    }
+
+    private static LogEvent Rebuild(LogEvent logEvent)
+    {
         Exception? exception = logEvent.Exception is null ? null : new RenderedException(logEvent.Exception);
         var properties = logEvent.Properties.Select(p => new LogEventProperty(p.Key, Safe(p.Value, 0))).ToList();
         var template = SafeTemplate(logEvent.MessageTemplate);
 
-        inner.Emit(logEvent.TraceId is { } trace && logEvent.SpanId is { } span
+        return logEvent.TraceId is { } trace && logEvent.SpanId is { } span
             ? new LogEvent(logEvent.Timestamp, logEvent.Level, exception, template, properties, trace, span)
-            : new LogEvent(logEvent.Timestamp, logEvent.Level, exception, template, properties));
+            : new LogEvent(logEvent.Timestamp, logEvent.Level, exception, template, properties);
     }
 
     public void Dispose() => (inner as IDisposable)?.Dispose();
@@ -117,7 +145,7 @@ internal sealed class OneLineLogSink(ILogEventSink inner) : ILogEventSink, IDisp
     /// <see cref="MaxExceptionNodes"/> exceptions, because <see cref="Exception.ToString"/> recurses once per
     /// inner exception and a chain a hundred thousand deep overflows the stack. Past either limit only the
     /// outermost type and message are written, with a note. A line is cut at <see cref="MaxLine"/> characters
-    /// and the whole at <see cref="MaxTotal"/>; <see cref="Exception.ToString"/> still builds the text first.
+    /// and the whole at about <see cref="MaxTotal"/> (the line that crosses it is written whole); <see cref="Exception.ToString"/> still builds the text first.
     /// </summary>
     internal static string Render(Exception exception)
     {
@@ -125,7 +153,7 @@ internal sealed class OneLineLogSink(ILogEventSink inner) : ILogEventSink, IDisp
 
         var type = exception.GetType().ToString();
         if (!Walk(exception, out var runtime))
-            return Lines($"{type}: {SafeMessage(exception)}", type, new Runtime())
+            return Lines($"{type}: {SafeMessage(exception, bounded: false)}", type, new Runtime())
                    + Environment.NewLine + Indent
                    + $"(the exception chain was cut: it nests more than {MaxExceptionDepth} levels or holds more than "
                    + $"{MaxExceptionNodes} exceptions)";
@@ -144,8 +172,17 @@ internal sealed class OneLineLogSink(ILogEventSink inner) : ILogEventSink, IDisp
         return Lines(text, type, runtime);
     }
 
-    private static string SafeMessage(Exception exception)
+    /// <summary>
+    /// The message of an exception, cut. <see cref="AggregateException.Message"/> appends the message of every
+    /// exception under it, so for an aggregate whose chain <see cref="Walk"/> found too deep or too wide it is
+    /// not read: a chain of 100,000 overflows the stack there, and a diamond of 22 levels builds 75 million
+    /// characters.
+    /// </summary>
+    private static string SafeMessage(Exception exception, bool bounded)
     {
+        if (!bounded && exception is AggregateException)
+            return "(an AggregateException, whose message holds the messages of the exceptions under it; they are not read)";
+
         try
         {
             return LogText.Cut(exception.Message ?? string.Empty, MaxLine);
@@ -278,12 +315,31 @@ internal sealed class OneLineLogSink(ILogEventSink inner) : ILogEventSink, IDisp
                     structure.TypeTag);
 
             case DictionaryValue dictionary:
-                return new DictionaryValue(dictionary.Elements.Select(e => new KeyValuePair<ScalarValue, LogEventPropertyValue>(
-                    Safe(e.Key, depth + 1) as ScalarValue ?? new ScalarValue("..."), Safe(e.Value, depth + 1))).ToList());
+                return new DictionaryValue(Distinct(dictionary.Elements.Select(e => new KeyValuePair<ScalarValue, LogEventPropertyValue>(
+                    Safe(e.Key, depth + 1) as ScalarValue ?? new ScalarValue("..."), Safe(e.Value, depth + 1)))));
 
             default:
                 return value;
         }
+    }
+
+    /// <summary>
+    /// Keys that became equal when their text was made safe (two that differ only in a zero-width character, or after
+    /// the cut) get a counter, because a dictionary refuses a duplicate and the entry would be lost.
+    /// </summary>
+    private static List<KeyValuePair<ScalarValue, LogEventPropertyValue>> Distinct(
+        IEnumerable<KeyValuePair<ScalarValue, LogEventPropertyValue>> pairs)
+    {
+        var seen = new HashSet<ScalarValue>();
+        var result = new List<KeyValuePair<ScalarValue, LogEventPropertyValue>>();
+        foreach (var (key, value) in pairs)
+        {
+            var unique = key;
+            for (var n = 2; !seen.Add(unique); n++) unique = new ScalarValue($"{key.Value}#{n}");
+            result.Add(new(unique, value));
+        }
+
+        return result;
     }
 
     private static string TextOf(object? value)
@@ -307,7 +363,7 @@ internal sealed class OneLineLogSink(ILogEventSink inner) : ILogEventSink, IDisp
     {
         private readonly string _text = Render(original);
 
-        private static string OneLineMessage(Exception original) => LogText.OneLine(SafeMessage(original));
+        private static string OneLineMessage(Exception original) => LogText.OneLine(SafeMessage(original, Walk(original, out _)));
 
         public override string ToString() => _text;
     }

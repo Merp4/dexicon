@@ -528,6 +528,101 @@ public sealed class ExceptionLogForgingTests
         sink.Last!.Exception!.Message.Length.ShouldBeLessThanOrEqualTo(OneLineLogSink.MaxLine + 3);
     }
 
+    /// <summary>An exception that counts how often its message is read.</summary>
+    private sealed class CountingException : Exception
+    {
+        public int Reads { get; private set; }
+
+        public override string Message
+        {
+            get
+            {
+                Reads++;
+                return "counted";
+            }
+        }
+    }
+
+    [Fact]
+    public void AHundredThousandNestedAggregatesAreWrittenWithoutReadingTheirMessage()
+    {
+        var leaf = new CountingException();
+        Exception chain = leaf;
+        for (var i = 0; i < 100_000; i++) chain = new AggregateException("level", chain);
+
+        var rendered = Render(chain);
+
+        rendered.ShouldContain("the exception chain was cut");
+        rendered.ShouldContain("AggregateException, whose message holds the messages of the exceptions under it");
+        rendered.Length.ShouldBeLessThan(1_000);
+        leaf.Reads.ShouldBe(0, "reading the message of an aggregate reads every message under it");
+    }
+
+    [Fact]
+    public void ADiamondOfTwentyTwoAggregatesIsWrittenWithoutExpandingItsMessage()
+    {
+        var leaf = new CountingException();
+        var node = new AggregateException("l", leaf);
+        for (var i = 0; i < 22; i++) node = new AggregateException("l", node, node);
+        var sink = new CaptureSink();
+
+        new OneLineLogSink(sink).Emit(EventFor(node, "t"));
+
+        leaf.Reads.ShouldBe(0);
+        sink.Last!.Exception!.Message.ShouldContain("not read");
+        sink.Last.Exception.ToString().Length.ShouldBeLessThan(1_000);
+    }
+
+    [Fact]
+    public void AnAggregateWithinTheLimitsKeepsItsMessage()
+    {
+        var aggregate = Thrown(() => new AggregateException("outer", new InvalidOperationException("a"), new FormatException("b")));
+        var sink = new CaptureSink();
+
+        new OneLineLogSink(sink).Emit(EventFor(aggregate, "t"));
+
+        sink.Last!.Exception!.Message.ShouldBe(aggregate.Message);
+    }
+
+    [Fact]
+    public void DictionaryKeysThatBecomeEqualWhenMadeSafeAreKeptWithACounter()
+    {
+        var zwsp = char.ConvertFromUtf32(0x200B);
+        var zwnj = char.ConvertFromUtf32(0x200C);
+        var dictionary = new DictionaryValue(
+        [
+            new KeyValuePair<ScalarValue, LogEventPropertyValue>(new ScalarValue("a" + zwsp + "b"), new ScalarValue(1)),
+            new KeyValuePair<ScalarValue, LogEventPropertyValue>(new ScalarValue("a" + zwnj + "b"), new ScalarValue(2)),
+            new KeyValuePair<ScalarValue, LogEventPropertyValue>(new ScalarValue(new string('k', 9_000) + "x"), new ScalarValue(3)),
+            new KeyValuePair<ScalarValue, LogEventPropertyValue>(new ScalarValue(new string('k', 9_000) + "y"), new ScalarValue(4)),
+        ]);
+        var sink = new CaptureSink();
+
+        new OneLineLogSink(sink).Emit(EventFor(null, "t {Title}", dictionary));
+
+        var written = sink.Last!.Properties["Title"].ShouldBeOfType<DictionaryValue>();
+        written.Elements.Count.ShouldBe(4);
+        written.Elements.Values.Select(v => ((ScalarValue)v).Value).ShouldBe([1, 2, 3, 4], ignoreOrder: true);
+        written.Elements.Keys.Select(k => (string)k.Value!).ShouldContain("a" + LogText.Marker + "b#2");
+    }
+
+    [Fact]
+    public void AnEntryThatCannotBeMadeSafeIsWithheldWithItsLevelAndTheTypeOfTheFailureAndNotLost()
+    {
+        var sink = new CaptureSink();
+        var failing = new OneLineLogSink(sink) { Prepare = _ => throw new InvalidOperationException("secret caller text") };
+
+        failing.Emit(new LogEvent(DateTimeOffset.UnixEpoch, LogEventLevel.Warning, null,
+            new MessageTemplateParser().Parse("Refused: {Title}"),
+            [new LogEventProperty("Title", new ScalarValue("x")), new LogEventProperty("UtcTime", new ScalarValue(DateTime.UnixEpoch))]));
+
+        sink.Last.ShouldNotBeNull();
+        sink.Last.Level.ShouldBe(LogEventLevel.Warning);
+        sink.Last.Exception.ShouldBeNull();
+        sink.Last.Properties["Reason"].ShouldBeOfType<ScalarValue>().Value.ShouldBe("InvalidOperationException");
+        sink.Last.Properties.ContainsKey("UtcTime").ShouldBeTrue();
+        sink.Last.RenderMessage().ShouldNotContain("secret");
+    }
     [Fact]
     public void TheLimitsAreTheNumbersTheDocumentationGives()
     {

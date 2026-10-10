@@ -69,7 +69,7 @@ covers the rest. `OneLineLogSink` is what an operator sees:
   U+FFFD: DEL, the C1 controls (which include NEL and CSI), the line and paragraph separators
   U+2028 and U+2029, the bidirectional controls, and the other format characters (zero-width
   characters, the byte order mark, the soft hyphen, the tag characters), and a lone surrogate.
-  A string is cut at 8,000 characters, with `...` after it. The same replacement applies to the
+  A string is cut at 8,000 characters, with `...` after it. Dictionary keys that become equal after this get a counter (`a#2`), and an entry that cannot be made safe is replaced by a line saying it was withheld, with the exception type. The same replacement applies to the
   text of the message template, which is the code's and not a caller's: a call that interpolates a
   caller's value into the template fails the build (CA2254 is an error here), and the sink repeats
   that protection for the console. A template line after the first that does not start with a space
@@ -87,7 +87,7 @@ covers the rest. `OneLineLogSink` is what an operator sees:
   U+FFFD. So a message, a stack frame or what a type adds to `ToString` (the file name of a
   `FileNotFoundException`) cannot begin a log line, including by imitating a frame. A message that
   repeats a frame of the exception's own stack, or names the type of a real inner exception after
-  ` ---> `, is not told apart. The whole exception is cut at 64,000 characters, with a note.
+  ` ---> `, is not told apart. The lines after the one that crosses 64,000 characters are cut, with a note, so an exception is written to about 64,000 characters. An `AggregateException` whose chain is too deep or too wide to be read is written with a fixed message, because its `Message` joins the messages of everything under it.
 - The chain is read first without recursion. Past 100 levels or 1,000 exceptions only the outermost
   type and message are written, with a note. An exception whose text cannot be read, or a
   property whose `ToString` throws, is written as a note naming its type.
