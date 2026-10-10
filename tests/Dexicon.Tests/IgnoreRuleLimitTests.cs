@@ -396,6 +396,20 @@ public sealed class IgnoreRuleLimitTests : IDisposable
     }
 
     [Fact]
+    public void TheNoticesOfFilesThatStoppedBeingReadAreHeldUpToTheLimitAndThenCounted()
+    {
+        // A tree of many ignore files that each stop being read must not log one notice for each, on every pass.
+        for (var i = 0; i < 25; i++) Write($"d{i:D2}/.gitignore", string.Concat(Enumerable.Repeat("[z-a]\n", 1_000)));
+
+        var walk = WorkspaceWalker.Walk(_root, true, null, null, 1_000_000);
+
+        const string stopped = ".gitignore has 1,000 lines that cannot be used";
+        walk.Warnings.Count(w => w.Contains(stopped, StringComparison.Ordinal)).ShouldBe(WarningSink.MaxKept);
+        walk.Warnings.Count.ShouldBe(2 * WarningSink.MaxKept, "twenty descriptions and twenty notices");
+        walk.WarningsOmitted.ShouldBe(25 * 1_000 - WarningSink.MaxKept + 5, "the descriptions not kept, and the five notices past twenty");
+    }
+
+    [Fact]
     public void ADexiconignoreFailsAtTheFirstBadLineWhateverFollows()
     {
         Write(WorkspaceWalker.IgnoreFileName, string.Concat(Enumerable.Repeat("[z-a]\n", 1_500)));

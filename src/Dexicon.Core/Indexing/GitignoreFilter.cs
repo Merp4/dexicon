@@ -136,10 +136,11 @@ public sealed class IgnoreRuleSet
             if (problem.OverBudget || from.Unusable is null)
                 throw new IgnorePatternException(problem.Message());
 
-            from.Unusable.Add($"{problem.Message()}; the line was skipped");
+            from.Unusable.Add(() => $"{problem.Message()}; the line was skipped");
             if (++skipped < from.MaxSkipped) continue;
 
-            // Held whatever else the sink has dropped: after this line, nothing in the file applies.
+            // Held whatever else the sink has dropped (up to the sink's own limit of notices): after this line,
+            // nothing in the file applies.
             from.Unusable.AddNotice(IgnorePatternException.Clean(
                 $"{from.Source} has {skipped:N0} lines that cannot be used; the rest of the file was not read, so no rule after them applies"));
             break;
