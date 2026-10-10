@@ -102,6 +102,8 @@ public sealed class DirectoryPruningTests : IDisposable
     [InlineData("!foo*/bar", "foo123", true)]
     [InlineData("!foo*/bar", "anything", true)]
     [InlineData("!data/*/keep", "data/mariadb", true)]
+    // A class is a wildcard too: `fooa` is one of the directories `foo[ab]` names.
+    [InlineData("!foo[ab]/bar", "fooa", true)]
     // Unrelated, so the directory can go.
     [InlineData("!data/sessions/", "node_modules", false)]
     [InlineData("!.vscode/launch.json", "data/mariadb", false)]
@@ -121,6 +123,17 @@ public sealed class DirectoryPruningTests : IDisposable
 
         rules.MayReincludeBeneath("node_modules").ShouldBeFalse();
         rules.MayReincludeBeneath("anything/at/all").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ANegationOfADirectoryUnderACaseVariantOfItsNameStopsItBeingPruned()
+    {
+        // The matcher puts the Kelvin sign with k, so `!/K` re-includes the directory `k` that `/k/` ignored.
+        var rules = new IgnoreRuleSet();
+        rules.AddPatterns(["/k/", "!/" + char.ConvertFromUtf32(0x212A)], "test");
+
+        rules.IsIgnored("k", isDirectory: true).ShouldBeFalse();
+        rules.MayReincludeBeneath("k").ShouldBeTrue();
     }
 
     public void Dispose()

@@ -288,6 +288,16 @@ public static class ChunkSetEndpoints
 
             if (set is null) return NotFound(corpus, setName);
 
+            // A pass that could not walk a source (an unusable .dexiconignore, a limit passed, a root that is gone)
+            // leaves the set unavailable and writes no state for that source's files, so no row is pending. Counting
+            // pending rows alone would promote a set that search would then find missing the whole source.
+            if (set.State == CorpusState.Unavailable)
+                return Results.Problem(
+                    title: "Chunk set is unavailable",
+                    detail: $"'{set.Name}' could not index every source, so promoting it would remove that source's files " +
+                            "from search. See index_status for the reason, fix it, and let the pass finish.",
+                    statusCode: 409);
+
             // The whole point of the two-step migration: promotion is the only moment
             // search changes, and it is one UPDATE. Refused while the set is still
             // building, because promoting a half-built set is exactly the outage that

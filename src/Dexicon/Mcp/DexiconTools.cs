@@ -434,13 +434,15 @@ public sealed class DexiconTools
             // Workspace sources only, as the HTTP report does. A git-history source has a
             // root and reads none of the files under it, so counting it would make a
             // repository look covered and hide the gap that says to add a file source.
+            var leftOut = new List<SourceCoverage.LeftOut>();
             sb.Append(RenderCoverage(SourceCoverage.Find(
                 opts.Value.Indexing.WorkspaceRoot,
                 summary.Sources
                     .Where(s => string.Equals(s.Kind, nameof(SourceKind.Workspace),
                                 StringComparison.OrdinalIgnoreCase))
                     .Select(s => new SourceCoverage.SourceRoot(s.RootPath, s.MaxFileBytes)),
-                opts.Value.Indexing.DocumentMaxBytes)));
+                opts.Value.Indexing.DocumentMaxBytes, leftOut: leftOut, ct: ct)));
+            sb.Append(RenderCoverageNotChecked(leftOut));
 
             // The detail for one corpus asked about by name: what each source reads, and
             // which files it left out and why. It stopped at counts, so "why is this file
@@ -724,6 +726,32 @@ public sealed class DexiconTools
 
             sb.Append($"  Add a source on {where}, or move the file into one of its subfolders.\n");
         }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// The directories the coverage check could not look at because an ignore file in them is unusable. Without this the
+    /// advisory above reads as "nothing uncovered" for a directory it never read. At most five are named; the reason
+    /// is text from the tree and is held to one line.
+    /// </summary>
+    internal static string RenderCoverageNotChecked(IReadOnlyList<SourceCoverage.LeftOut> leftOut)
+    {
+        if (leftOut.Count == 0) return string.Empty;
+
+        var sb = new StringBuilder();
+        foreach (var item in leftOut.Take(5))
+        {
+            var where = item.DirectoryRelativePath.Length == 0
+                ? "the workspace root"
+                : OneLine(item.DirectoryRelativePath);
+
+            sb.Append($"  COVERAGE NOT CHECKED: {where}, because {Echo(item.Reason, MessageMax)}. ");
+            sb.Append("Files there that no source covers are not listed.\n");
+        }
+
+        if (leftOut.Count > 5)
+            sb.Append($"  ... and {leftOut.Count - 5:N0} more directories not checked\n");
 
         return sb.ToString();
     }

@@ -398,7 +398,7 @@ internal sealed class IndexingHarness : IAsyncDisposable
     /// A discovery sweep over the harness's corpus, on its own catalogue connection as
     /// the hosted one would have.
     /// </summary>
-    public async Task<SweepResult> SweepAsync()
+    public async Task<SweepResult> SweepAsync(ILogger<CorpusSweeper>? log = null)
     {
         await using var db = NewContext();
         var sweeper = new CorpusSweeper(
@@ -406,7 +406,7 @@ internal sealed class IndexingHarness : IAsyncDisposable
             new CorpusLeases(_services.GetRequiredService<IServiceScopeFactory>(),
                 NullLogger<CorpusLeases>.Instance),
             _services.GetRequiredService<IOptions<DexiconOptions>>(),
-            NullLogger<CorpusSweeper>.Instance);
+            log ?? NullLogger<CorpusSweeper>.Instance);
 
         return await sweeper.SweepAsync(CorpusId, CancellationToken.None);
     }

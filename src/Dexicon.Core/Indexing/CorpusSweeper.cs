@@ -73,6 +73,11 @@ public sealed class CorpusSweeper(
 
     private readonly IndexingOptions _indexing = options.Value.Indexing;
 
+    private const int MaxRememberedFailures = 1_000;
+
+    // The reason a source's ignore files last failed its walk, by workspace, path and source id, so a periodic sweep logs a failure once.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> IgnoreFailures = new();
+
     public async Task<SweepResult> SweepAsync(string corpusId, CancellationToken ct)
     {
         var corpus = await db.Corpora.Include(c => c.Sources)
@@ -128,9 +133,31 @@ public sealed class CorpusSweeper(
                     continue;
                 }
 
+                // The lines of a .gitignore that were skipped (Result.Warnings) are logged by the indexing
+                // pass over the same tree, not here, so the periodic sweep does not repeat them.
                 owned = source.Kind == SourceKind.GitHistory
                     ? await CommitsAsync(corpus, source, root, ct)
-                    : WorkspaceDiscovery.Walk(corpus, source, root, _indexing).Owned;
+                    : WorkspaceDiscovery.Walk(corpus, source, root, _indexing, ct).Owned;
+                IgnoreFailures.TryRemove($"{_indexing.WorkspaceRoot}|{source.RootPath}|{source.Id}", out _);
+            }
+            catch (IgnorePatternException ex)
+            {
+                // The walk that indexing runs fails for the same reason (CorpusIndexer), and a sweep only
+                // adds to an inventory, so this source's rows stay as they are and the others are swept.
+                //
+                // Logged when the reason first appears or changes. A sweep runs on a timer, and the same
+                // unusable file is the same finding each time; the index pass reports it in the job.
+                var key = $"{_indexing.WorkspaceRoot}|{source.RootPath}|{source.Id}";
+                if (!IgnoreFailures.TryGetValue(key, out var last) || last != ex.Message)
+                {
+                    // Forgotten sources (deleted, or never fixed) would otherwise stay for the life of the process.
+                    if (IgnoreFailures.Count >= MaxRememberedFailures) IgnoreFailures.Clear();
+                    IgnoreFailures[key] = ex.Message;
+                    log.LogWarning("Source {Source} was not walked because {Reason}; leaving its inventory alone",
+                        source.RootPath, ex.Message);
+                }
+
+                continue;
             }
             catch (UnauthorizedAccessException ex)
             {

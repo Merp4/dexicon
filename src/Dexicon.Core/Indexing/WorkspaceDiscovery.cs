@@ -22,21 +22,36 @@ public static class WorkspaceDiscovery
     /// How many of the walk's files a more specific source owns. Not a skip: those files
     /// are indexed, just not here.
     /// </param>
+    /// <param name="Warnings">
+    /// Ignore files and lines the walk skipped, from <see cref="WorkspaceWalker.WalkResult"/>. Only files in
+    /// directories this source owns are read, so none of these belongs to a more specific source.
+    /// </param>
+    /// <param name="WarningsOmitted">How many more were counted than <paramref name="Warnings"/> holds.</param>
     public sealed record Result(
         IReadOnlyList<WorkspaceWalker.Candidate> Owned,
         IReadOnlyList<WorkspaceWalker.Skipped> Skipped,
-        int ShadowedCount);
+        int ShadowedCount,
+        IReadOnlyList<string> Warnings,
+        int WarningsOmitted);
 
-    public static Result Walk(Corpus corpus, Source source, string root, IndexingOptions indexing)
+    /// <param name="ct">Stops the walk, which polls it for each directory and every 256 files.</param>
+    public static Result Walk(Corpus corpus, Source source, string root, IndexingOptions indexing,
+        CancellationToken ct = default)
     {
         // Through SourceFilters, not off the source: a null field there means the source
         // has no opinion and the corpus default applies. Reading the columns directly
         // indexed a source by its own emptiness.
         var filters = SourceFilters.Resolve(corpus, source, indexing);
 
+        var shadowed = SourceScope.ShadowedPrefixes(corpus.Sources, source);
+
+        // A list the source does not hold is the corpus's default, and a message about an entry of it says so.
         var walk = WorkspaceWalker.Walk(root, filters.UseGitignore,
             filters.IncludeGlobs, filters.ExcludeGlobs, filters.MaxFileBytes,
-            indexing.DocumentMaxBytes);
+            indexing.DocumentMaxBytes, shadowedPrefixes: shadowed,
+            includeListName: ListName(WorkspaceWalker.IncludeListName, source.IncludeGlobs),
+            excludeListName: ListName(WorkspaceWalker.ExcludeListName, source.ExcludeGlobs),
+            ct: ct);
 
         // The inventory is made distinct ACROSS sources here. A source covers its whole
         // tree, so one added above another makes every file beneath reachable twice, and
@@ -47,7 +62,6 @@ public static class WorkspaceDiscovery
         // What the walk skipped is shadowed the same way. Left alone, a file an exclusion
         // caught under a nested source was reported by every source above it, counted once
         // by each and given a catalogue row by each, and the Files list showed it twice.
-        var shadowed = SourceScope.ShadowedPrefixes(corpus.Sources, source);
         var owned = shadowed.Count == 0
             ? walk.Files
             : walk.Files.Where(f => !SourceScope.IsShadowed(f.RelativePath, shadowed)).ToList();
@@ -55,8 +69,11 @@ public static class WorkspaceDiscovery
             ? walk.SkippedFiles
             : walk.SkippedFiles.Where(s => !SourceScope.IsShadowed(s.RelativePath, shadowed)).ToList();
 
-        return new Result(owned, skipped, walk.Files.Count - owned.Count);
+        return new Result(owned, skipped, walk.Files.Count - owned.Count, walk.Warnings, walk.WarningsOmitted);
     }
+
+    private static string ListName(string name, string? sourceValue) =>
+        SourceFilters.Globs(sourceValue) is null ? $"corpus default {name}" : name;
 
     /// <summary>
     /// A source's root on disk, refusing anything outside the workspace or reached through

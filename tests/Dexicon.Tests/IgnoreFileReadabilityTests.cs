@@ -1,0 +1,623 @@
+using System.Diagnostics;
+using System.Text;
+using Dexicon.Core.Indexing;
+using Shouldly;
+using Xunit;
+
+namespace Dexicon.Tests;
+
+/// <summary>
+/// An ignore file the walk cannot read as text, or cannot read at all. A <c>.dexiconignore</c> is written to keep
+/// content out of the index, so one that is a link, is locked (Windows) or unreadable by permission (Linux), is a pipe,
+/// holds a NUL or is not valid UTF-8 fails the walk with the reason. The same in a <c>.gitignore</c> or
+/// <c>.git/info/exclude</c> is skipped, the file whole or the lines that cannot be decoded, with a warning. A byte
+/// order mark for UTF-8, UTF-16 or UTF-32 is honoured as <c>File.ReadAllLines</c> honours it. Also the scope of the
+/// warnings: a directory another source owns is not read.
+/// </summary>
+public sealed class IgnoreFileReadabilityTests : IDisposable
+{
+    private readonly string _root = Path.Combine(Path.GetTempPath(), $"readability-{Guid.NewGuid():N}");
+    private readonly string _outside = Path.Combine(Path.GetTempPath(), $"readability-outside-{Guid.NewGuid():N}");
+
+    public IgnoreFileReadabilityTests()
+    {
+        Directory.CreateDirectory(_root);
+        Directory.CreateDirectory(_outside);
+    }
+
+    public void Dispose()
+    {
+        Directory.Delete(_root, recursive: true);
+        Directory.Delete(_outside, recursive: true);
+    }
+
+    private string FullPath(string relative) => Path.Combine(_root, relative.Replace('/', Path.DirectorySeparatorChar));
+
+    private void Write(string relative, string content = "hello") => WriteBytes(relative, Encoding.UTF8.GetBytes(content));
+
+    private void WriteBytes(string relative, byte[] content)
+    {
+        var full = FullPath(relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        File.WriteAllBytes(full, content);
+    }
+
+    private WorkspaceWalker.WalkResult Walk(bool useGitignore = true, string[]? shadowed = null) =>
+        WorkspaceWalker.Walk(_root, useGitignore, null, null, 1_000_000, shadowedPrefixes: shadowed);
+
+    private static List<string> Names(WorkspaceWalker.WalkResult walk) =>
+        [.. walk.Files.Select(f => f.RelativePath).OrderBy(p => p, StringComparer.Ordinal)];
+
+    // ---- links and files that cannot be opened -----------------------------------------------------------------------
+
+    [Fact]
+    public void ALinkedDexiconignoreFailsTheWalkInsteadOfApplyingNoRules()
+    {
+        File.WriteAllText(Path.Combine(_outside, "rules"), "secret.txt\n");
+        File.CreateSymbolicLink(FullPath(".dexiconignore"), Path.Combine(_outside, "rules"));
+        Write("secret.txt");
+
+        Should.Throw<IgnorePatternException>(() => Walk())
+            .Message.ShouldBe(".dexiconignore is a link, and links are not followed");
+    }
+
+    [Fact]
+    public void ALinkedNestedDexiconignoreIsNamedByItsPath()
+    {
+        Directory.CreateDirectory(FullPath("sub"));
+        File.WriteAllText(Path.Combine(_outside, "rules"), "secret.txt\n");
+        File.CreateSymbolicLink(FullPath("sub/.dexiconignore"), Path.Combine(_outside, "rules"));
+
+        Should.Throw<IgnorePatternException>(() => Walk())
+            .Message.ShouldBe("sub/.dexiconignore is a link, and links are not followed");
+    }
+
+    [WindowsFact]
+    public void ADexiconignoreThatCannotBeOpenedFailsTheWalkWithoutNamingTheHostPath()
+    {
+        Write(".dexiconignore", "secret.txt\n");
+        Write("secret.txt");
+        using var held = new FileStream(FullPath(".dexiconignore"), FileMode.Open, FileAccess.Read, FileShare.None);
+
+        var thrown = Should.Throw<IgnorePatternException>(() => Walk());
+
+        thrown.Message.ShouldBe(".dexiconignore cannot be read");
+        thrown.Message.ShouldNotContain(_root);
+    }
+
+    [WindowsFact]
+    public void ALockedGitignoreIsSkippedWholeWithAWarning()
+    {
+        Write(".gitignore", "secret.txt\n");
+        using var held = new FileStream(FullPath(".gitignore"), FileMode.Open, FileAccess.Read, FileShare.None);
+
+        Walk().Warnings.ShouldBe([".gitignore cannot be read; the file was skipped"]);
+    }
+
+    [UnprivilegedLinuxFact]
+    public void ADexiconignoreWithNoReadPermissionFailsTheWalkWithoutNamingTheHostPath()
+    {
+        Write(".dexiconignore", "secret.txt\n");
+        Write("secret.txt");
+        DenyRead(".dexiconignore");
+
+        var thrown = Should.Throw<IgnorePatternException>(() => Walk());
+
+        thrown.Message.ShouldBe(".dexiconignore cannot be read (permission denied)");
+        thrown.Message.ShouldNotContain(_root);
+    }
+
+    [UnprivilegedLinuxFact]
+    public void AGitignoreWithNoReadPermissionIsSkippedWholeWithAWarning()
+    {
+        Write(".gitignore", "secret.txt\n");
+        DenyRead(".gitignore");
+
+        Walk().Warnings.ShouldBe([".gitignore cannot be read (permission denied); the file was skipped"]);
+    }
+
+    private void DenyRead(string relative)
+    {
+        if (OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("permission bits refuse a read on Linux only");
+
+        File.SetUnixFileMode(FullPath(relative), UnixFileMode.None);
+    }
+
+    // ---- named pipes, on Linux ---------------------------------------------------------------------------------------
+
+    [LinuxFact]
+    public void APipeNamedDexiconignoreFailsTheWalkInsteadOfBlockingForever()
+    {
+        MakePipe(".dexiconignore");
+
+        var thrown = Should.Throw<IgnorePatternException>(
+            () => RunWithinTimeout(() => Walk()), "a walk that blocked opening the pipe did not finish");
+
+        thrown.Message.ShouldBe(".dexiconignore cannot be used as patterns because it is not a regular file");
+    }
+
+    [LinuxFact]
+    public void APipeNamedGitignoreIsSkippedWithAWarningInsteadOfBlockingForever()
+    {
+        MakePipe(".gitignore");
+        MakePipe("sub/.gitignore");
+
+        var walk = RunWithinTimeout(() => Walk());
+
+        walk.Warnings.ShouldBe([
+            ".gitignore cannot be used as patterns because it is not a regular file; the file was skipped",
+            "sub/.gitignore cannot be used as patterns because it is not a regular file; the file was skipped"]);
+    }
+
+    [LinuxFact]
+    public void APipeAsTheLocalGitExcludeIsSkippedWithAWarning()
+    {
+        Directory.CreateDirectory(FullPath(".git/info"));
+        MakePipe(".git/info/exclude");
+
+        RunWithinTimeout(() => Walk()).Warnings.ShouldBe([
+            ".git/info/exclude cannot be used as patterns because it is not a regular file; the file was skipped"]);
+    }
+
+    [LinuxFact]
+    public void ACoverageCheckOverADirectoryWithAPipeDoesNotBlock()
+    {
+        Directory.CreateDirectory(FullPath("a"));
+        Directory.CreateDirectory(FullPath("b"));
+        MakePipe(".dexiconignore");
+
+        RunWithinTimeout(() => SourceCoverage.Find(_root,
+            [new SourceCoverage.SourceRoot("a", 262_144), new SourceCoverage.SourceRoot("b", 262_144)])).ShouldBeEmpty();
+    }
+
+    private void MakePipe(string relative)
+    {
+        var full = FullPath(relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        using var made = Process.Start(new ProcessStartInfo("mkfifo", full) { RedirectStandardError = true })!;
+        made.WaitForExit();
+        made.ExitCode.ShouldBe(0, made.StandardError.ReadToEnd());
+    }
+
+    /// <summary>
+    /// Runs <paramref name="action"/> on another thread and fails if it has not finished, since a walk that blocks cannot fail itself.
+    /// An exception the action throws reaches the caller as thrown, not wrapped in an <see cref="AggregateException"/>:
+    /// <c>Task.Wait</c> throws the wrapper for a faulted task, so the wait is <c>Task.WaitAny</c>, which does not.
+    /// </summary>
+    private static T RunWithinTimeout<T>(Func<T> action)
+    {
+        var task = Task.Factory.StartNew(action, TaskCreationOptions.LongRunning);
+        if (Task.WaitAny(new Task[] { task }, TimeSpan.FromSeconds(20)) < 0) throw new TimeoutException("the walk blocked");
+
+        return task.GetAwaiter().GetResult();
+    }
+
+    // ---- encodings ---------------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void ADexiconignoreWithANulByteFailsTheWalkAndSaysSo()
+    {
+        WriteBytes(".dexiconignore", Encoding.UTF8.GetBytes("secret.txt\0\n"));
+
+        Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldBe(
+            ".dexiconignore cannot be used as patterns because it contains a NUL character");
+    }
+
+    [Fact]
+    public void ANulByteLateInALargeFileIsStillFound()
+    {
+        // The scan is of the whole text, not of its first 8 KiB as the binary sniff is.
+        var lines = string.Concat(Enumerable.Repeat("generated.txt\n", 2_000));
+        WriteBytes(".dexiconignore", Encoding.UTF8.GetBytes(lines + "secret.txt\0\n"));
+
+        Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldContain("contains a NUL character");
+    }
+
+    [Fact]
+    public void ADexiconignoreInUtf16WithoutAByteOrderMarkHasNulsAndFailsTheWalk()
+    {
+        WriteBytes(".dexiconignore", Encoding.Unicode.GetBytes("secret.txt\n"));
+
+        Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldContain("contains a NUL character");
+    }
+
+    [Theory]
+    [InlineData("utf8")]
+    [InlineData("utf16le")]
+    [InlineData("utf16be")]
+    [InlineData("utf32le")]
+    [InlineData("utf32be")]
+    public void ADexiconignoreWithAByteOrderMarkIsDecodedAndApplied(string encoding)
+    {
+        var text = "secret.txt\r\n*.log\r\n";
+        byte[] Encoded(Encoding e) => [.. e.GetPreamble(), .. e.GetBytes(text)];
+        WriteBytes(".dexiconignore", encoding switch
+        {
+            "utf8" => Encoded(new UTF8Encoding(true)),
+            "utf16le" => Encoded(new UnicodeEncoding(false, true)),
+            "utf16be" => Encoded(new UnicodeEncoding(true, true)),
+            "utf32le" => Encoded(new UTF32Encoding(false, true)),
+            _ => Encoded(new UTF32Encoding(true, true)),
+        });
+        Write("secret.txt");
+        Write("a.log");
+        Write("keep.txt");
+
+        Names(Walk()).ShouldContain("keep.txt");
+        Names(Walk()).ShouldNotContain("secret.txt");
+        Names(Walk()).ShouldNotContain("a.log");
+    }
+
+    [Fact]
+    public void AGitignoreInUtf16WithAByteOrderMarkIsDecodedAndApplied()
+    {
+        WriteBytes("sub/.gitignore", [.. Encoding.Unicode.GetPreamble(), .. Encoding.Unicode.GetBytes("secret.txt\n")]);
+        Write("sub/secret.txt");
+        Write("sub/keep.txt");
+
+        var walk = Walk();
+
+        Names(walk).ShouldContain("sub/keep.txt");
+        Names(walk).ShouldNotContain("sub/secret.txt");
+        walk.Warnings.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ADexiconignoreThatIsNotValidUtf8FailsTheWalk()
+    {
+        // `caf` and a Latin-1 e-acute: decoded leniently it is a rule that matches nothing.
+        WriteBytes(".dexiconignore", [.. "secret.txt\n"u8.ToArray(), .. "caf"u8.ToArray(), 0xE9, .. ".txt\n"u8.ToArray()]);
+
+        Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldBe(
+            ".dexiconignore cannot be used as patterns because it is not valid UTF-8");
+    }
+
+    [Theory]
+    [InlineData("utf16le")]
+    [InlineData("utf16be")]
+    [InlineData("utf32le")]
+    [InlineData("utf32be")]
+    public void ADexiconignoreWithABrokenSurrogateOrUnitInItsEncodingFailsTheWalk(string encoding)
+    {
+        // The encoders replace a lone surrogate, so the bytes of one are written by hand. Decoded leniently it is U+FFFD,
+        // a line that matches nothing.
+        byte[] Unit(ushort unit) => encoding switch
+        {
+            "utf32le" => [(byte)unit, (byte)(unit >> 8), 0, 0],
+            "utf32be" => [0, 0, (byte)(unit >> 8), (byte)unit],
+            "utf16le" => [(byte)unit, (byte)(unit >> 8)],
+            _ => [(byte)(unit >> 8), (byte)unit],
+        };
+        Encoding encoder = encoding switch
+        {
+            "utf16be" => new UnicodeEncoding(true, false),
+            "utf16le" => new UnicodeEncoding(false, false),
+            "utf32be" => new UTF32Encoding(true, false),
+            _ => new UTF32Encoding(false, false),
+        };
+        byte[] preamble = encoding switch
+        {
+            "utf16be" => [0xFE, 0xFF],
+            "utf16le" => [0xFF, 0xFE],
+            "utf32be" => [0, 0, 0xFE, 0xFF],
+            _ => [0xFF, 0xFE, 0, 0],
+        };
+        WriteBytes(".dexiconignore", [.. preamble, .. encoder.GetBytes("secret.txt\n"), .. Unit(0xD800), .. encoder.GetBytes("other.txt\n")]);
+        Write("secret.txt");
+
+        Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldStartWith(
+            ".dexiconignore cannot be used as patterns because it is not valid UTF-");
+    }
+
+    [Fact]
+    public void AByteOrderMarkedUtf8DexiconignoreWithAnInvalidByteFailsTheWalk()
+    {
+        // The BOM is the one the default decoder would also take; with it the file must still be decoded strictly.
+        WriteBytes(".dexiconignore", [0xEF, 0xBB, 0xBF, .. "secret.txt\n"u8.ToArray(), 0xFF, .. "other.txt\n"u8.ToArray()]);
+        Write("secret.txt");
+
+        Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldBe(
+            ".dexiconignore cannot be used as patterns because it is not valid UTF-8");
+    }
+
+    [Fact]
+    public void AGitignoreInUtf16WithABrokenSurrogateSkipsOnlyThatLine()
+    {
+        var text = "secret.txt\n" + (char)0xD800 + "x\nother.txt\n";
+        WriteBytes(".gitignore", [.. Encoding.Unicode.GetPreamble(), .. new UnicodeEncoding(false, false).GetBytes(text)]);
+        Write("secret.txt");
+        Write("other.txt");
+        Write("keep.txt");
+
+        var walk = Walk();
+
+        Names(walk).ShouldContain("keep.txt");
+        Names(walk).ShouldNotContain("secret.txt");
+        Names(walk).ShouldNotContain("other.txt");
+        walk.Warnings.ShouldBe([".gitignore has 1 line with bytes that are not valid in the file's encoding; that line was skipped"]);
+    }
+
+    [Fact]
+    public void AGitignoreThatIsNotValidUtf8SkipsOnlyTheLinesItCannotDecodeAndCountsThem()
+    {
+        WriteBytes(".gitignore", [.. "secret.txt\n"u8.ToArray(), .. "caf"u8.ToArray(), 0xE9, .. ".txt\n"u8.ToArray(), .. "other.txt\n"u8.ToArray()]);
+        Write("secret.txt");
+        Write("other.txt");
+        Write("keep.txt");
+
+        var walk = Walk();
+
+        Names(walk).ShouldContain("keep.txt");
+        Names(walk).ShouldNotContain("secret.txt");
+        Names(walk).ShouldNotContain("other.txt");
+        walk.Warnings.ShouldBe([".gitignore has 1 line with bytes that are not valid in the file's encoding; that line was skipped"]);
+    }
+
+    [Fact]
+    public void AGitignoreWithANulByteIsSkippedWholeWithAWarning()
+    {
+        WriteBytes(".gitignore", Encoding.UTF8.GetBytes("secret.txt\0\n"));
+        Write("secret.txt");
+
+        var walk = Walk();
+
+        // The file holds a NUL byte, so the binary sniff leaves it out of the files; the secret is not excluded.
+        Names(walk).ShouldBe(["secret.txt"]);
+        walk.Warnings.ShouldBe([".gitignore cannot be used as patterns because it contains a NUL character; the file was skipped"]);
+    }
+
+    [Fact]
+    public void ALocalGitExcludeWithANulByteIsSkippedWholeWithAWarning()
+    {
+        WriteBytes(".git/info/exclude", Encoding.UTF8.GetBytes("worktrees/\0\n"));
+
+        Walk().Warnings.ShouldBe([
+            ".git/info/exclude cannot be used as patterns because it contains a NUL character; the file was skipped"]);
+    }
+
+    // ---- names and lines ---------------------------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(".DexiconIgnore")]
+    [InlineData(".DEXICONIGNORE")]
+    public void ADexiconignoreIsFoundWhateverTheCaseOfItsName(string name)
+    {
+        Write(name, "secret.txt\n");
+        Write("secret.txt");
+        Write("keep.txt");
+
+        Names(Walk()).ShouldNotContain("secret.txt");
+    }
+
+    [Fact]
+    public void AGitignoreIsFoundWhateverTheCaseOfItsName()
+    {
+        Write(".GitIgnore", "secret.txt\n");
+        Write("secret.txt");
+        Write("keep.txt");
+
+        Names(Walk()).ShouldNotContain("secret.txt");
+    }
+
+    [Fact]
+    public void WhenTwoGitignoreNamesDifferOnlyInCaseTheExactOneIsReadWhateverOrderTheyAreListed()
+    {
+        // A case-sensitive filesystem can hold both; the test lists them, since a Windows directory cannot.
+        var warnings = new WarningSink();
+        foreach (var listing in new[] { new[] { "/r/.gitignore", "/r/.GitIgnore" }, new[] { "/r/.GitIgnore", "/r/.gitignore" } })
+            WorkspaceWalker.Named(listing, ".gitignore", "sub", warnings).ShouldBe("/r/.gitignore");
+
+        warnings.Kept.ShouldBe(Enumerable.Repeat(
+            "sub/.gitignore has 1 other file whose name differs only in case (.GitIgnore, .gitignore); only .gitignore was read", 2));
+    }
+
+    [Fact]
+    public void WhenNoGitignoreNameIsExactTheFirstInOrdinalOrderIsReadWhateverOrderTheyAreListed()
+    {
+        var warnings = new WarningSink();
+        foreach (var listing in new[] { new[] { "/r/.GitIgnore", "/r/.GITIGNORE" }, new[] { "/r/.GITIGNORE", "/r/.GitIgnore" } })
+            WorkspaceWalker.Named(listing, ".gitignore", "", warnings).ShouldBe("/r/.GITIGNORE");
+
+        warnings.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public void TwoDexiconignoreNamesThatDifferOnlyInCaseFailTheWalk()
+    {
+        var thrown = Should.Throw<IgnorePatternException>(
+            () => WorkspaceWalker.Named(["/r/.DexiconIgnore", "/r/.dexiconignore"], ".dexiconignore", "a", new WarningSink()));
+
+        thrown.Message.ShouldBe(
+            "a/.dexiconignore cannot be used because the directory holds 2 files whose names differ only in case (.DexiconIgnore, .dexiconignore); keep one");
+    }
+
+    [Fact]
+    public void AMessageListsAtMostFiveOfTheNamesThatDifferOnlyInCase()
+    {
+        // `.dexiconignore` has 13 letters, so a tree can hold 8,192 spellings of it, and the message goes to the job's
+        // error, the log and the jobs API.
+        string[] variants =
+        [
+            "/r/.dexiconignore", "/r/.Dexiconignore", "/r/.dEXiconignore", "/r/.DEXICONIGNORE",
+            "/r/.dexiconIgnore", "/r/.DexiconIgnore", "/r/.dexicOnignore", "/r/.dexiconignorE",
+        ];
+
+        var thrown = Should.Throw<IgnorePatternException>(() => WorkspaceWalker.Named(variants, ".dexiconignore", "", new WarningSink()));
+
+        thrown.Message.ShouldBe(
+            ".dexiconignore cannot be used because the directory holds 8 files whose names differ only in case "
+            + "(.DEXICONIGNORE, .DexiconIgnore, .Dexiconignore, .dEXiconignore, .dexicOnignore, and 3 more); keep one");
+    }
+
+    [Fact]
+    public void AWarningSaysFileOrFilesAsTheNumberOfOtherNamesRequires()
+    {
+        var one = new WarningSink();
+        WorkspaceWalker.Named(["/r/.gitignore", "/r/.GitIgnore"], ".gitignore", "", one);
+        var two = new WarningSink();
+        WorkspaceWalker.Named(["/r/.gitignore", "/r/.GitIgnore", "/r/.GITIGNORE"], ".gitignore", "", two);
+
+        one.Kept.Single().ShouldContain("has 1 other file whose name differs only in case");
+        two.Kept.Single().ShouldContain("has 2 other files whose names differ only in case");
+    }
+
+    [Fact]
+    public void ANameThatNoEntryMatchesIsNotFound()
+    {
+        WorkspaceWalker.Named(["/r/readme.md"], ".gitignore", "", new WarningSink()).ShouldBeNull();
+    }
+
+    [Fact]
+    public void ALineEndsAtALineFeedAndNotAtTheOtherCharactersThatBreakALine()
+    {
+        // Git splits on LF. U+0085 or U+2028 inside a line is part of the pattern, which then matches no file of the
+        // names below, so both are indexed.
+        var separators = new[] { ((char)0x85).ToString(), ((char)0x2028).ToString() };
+        foreach (var separator in separators)
+        {
+            WriteBytes(".dexiconignore", Encoding.UTF8.GetBytes($"one.txt{separator}two.txt\n"));
+            Write("one.txt");
+            Write("two.txt");
+
+            Names(Walk()).ShouldContain("one.txt");
+            Names(Walk()).ShouldContain("two.txt");
+        }
+    }
+
+    [Fact]
+    public void ACarriageReturnInsideALineOfAGitignoreStaysInThePatternAsGitReadsIt()
+    {
+        WriteBytes(".gitignore", Encoding.UTF8.GetBytes("one.txt\rtwo.txt\n"));
+        Write("one.txt");
+        Write("two.txt");
+
+        Names(Walk()).ShouldContain("one.txt");
+        Names(Walk()).ShouldContain("two.txt");
+    }
+
+    [Fact]
+    public void ADexiconignoreWithOldMacLineEndingsFailsTheWalkInsteadOfApplyingNoRule()
+    {
+        WriteBytes(".dexiconignore", Encoding.UTF8.GetBytes("secret.txt\rother.txt\r"));
+        Write("secret.txt");
+
+        Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldBe(
+            ".dexiconignore line 1 ('secret.txt?other.txt') has a carriage return that does not end the line; end the lines with LF or CRLF");
+    }
+
+    [Fact]
+    public void ACarriageReturnBeforeALineFeedIsNotPartOfTheLine()
+    {
+        WriteBytes(".dexiconignore", Encoding.UTF8.GetBytes("one.txt\r\ntwo.txt\r\n"));
+        Write("one.txt");
+        Write("two.txt");
+        Write("keep.txt");
+
+        Names(Walk()).ShouldBe([".dexiconignore", "keep.txt"]);
+    }
+
+    [Fact]
+    public void LeadingAndTrailingWhitespaceOfALineIsDropped()
+    {
+        // Git keeps leading whitespace and honours an escaped trailing space. Here both ends are trimmed, so a rule
+        // for a name that begins with a space cannot be written.
+        WriteBytes(".dexiconignore", Encoding.UTF8.GetBytes("  one.txt\t \ntwo.txt  \n"));
+        Write("one.txt");
+        Write("two.txt");
+
+        Names(Walk()).ShouldNotContain("one.txt");
+        Names(Walk()).ShouldNotContain("two.txt");
+    }
+
+    [Fact]
+    public void ABadLineInADirectorysGitignoreLeavesTheRestOfThatFileInForceBeneathIt()
+    {
+        // A bad line costs that line and nothing else, wherever the file sits: the rules after it still reach
+        // every directory below. Files above the source root are never read, so there is no ancestor to fail.
+        Write(".gitignore", "[z-a]\nsecret.txt\n");
+        Write("secret.txt");
+        Write("sub/deep/secret.txt");
+        Write("sub/deep/keep.txt");
+
+        var walk = Walk();
+
+        Names(walk).ShouldBe([".gitignore", "sub/deep/keep.txt"]);
+        walk.Warnings.Count.ShouldBe(1);
+    }
+
+    // ---- directories another source owns -----------------------------------------------------------------------------
+
+    [Fact]
+    public void ADirectoryAnotherSourceOwnsIsNotReadSoItsBadGitignoreLineIsNotReported()
+    {
+        Write("owned/.gitignore", "[z-a]\n");
+        Write("owned/x.txt");
+        Write("mine.txt");
+
+        Walk(shadowed: ["owned"]).Warnings.ShouldBeEmpty();
+        Walk().Warnings.Count.ShouldBe(1, "the control: the same line is reported when nothing shadows the directory");
+    }
+
+    [Fact]
+    public void ADirectoryAnotherSourceOwnsIsNotReadSoItsBadDexiconignoreCannotFailThisWalk()
+    {
+        Write("owned/.dexiconignore", "[z-a]\n");
+        Write("owned/x.txt");
+        Write("mine.txt");
+
+        Names(Walk(shadowed: ["owned"])).ShouldContain("mine.txt");
+        Should.Throw<IgnorePatternException>(() => Walk(), "the control: the same file fails the walk when nothing shadows it");
+    }
+
+    [Fact]
+    public void ADirectoryDeeperThanAShadowedOneIsNotReadEither()
+    {
+        Write("owned/deep/.dexiconignore", "[z-a]\n");
+        Write("mine.txt");
+
+        Names(Walk(shadowed: ["owned"])).ShouldContain("mine.txt");
+    }
+
+    [Fact]
+    public void ASiblingWhoseNameStartsWithAShadowedPrefixIsStillRead()
+    {
+        // `owned2` is not inside `owned`.
+        Write("owned2/.dexiconignore", "[z-a]\n");
+
+        Should.Throw<IgnorePatternException>(() => Walk(shadowed: ["owned"]));
+    }
+}
+
+/// <summary>
+/// A fact that runs on Linux where <c>mkfifo</c> exists, and is reported as skipped, with the reason, everywhere else.
+/// </summary>
+public sealed class LinuxFactAttribute : FactAttribute
+{
+    public LinuxFactAttribute()
+    {
+        if (!OperatingSystem.IsLinux()) Skip = "named pipes are made with mkfifo, which is only used on Linux";
+        else if (!File.Exists("/usr/bin/mkfifo") && !File.Exists("/bin/mkfifo")) Skip = "mkfifo was not found in /usr/bin or /bin";
+    }
+}
+
+/// <summary>
+/// A fact for a read refused by permission bits: Linux, and not root, which opens any file. A file opened through
+/// <c>open(2)</c> on Linux is not held back by another stream's <c>FileShare.None</c>, so a lock cannot refuse the read there.
+/// </summary>
+public sealed class UnprivilegedLinuxFactAttribute : FactAttribute
+{
+    public UnprivilegedLinuxFactAttribute()
+    {
+        if (!OperatingSystem.IsLinux()) Skip = "a read is refused by permission bits on Linux; Windows refuses it by a file lock";
+        else if (Environment.IsPrivilegedProcess) Skip = "root opens a file whatever its permission bits";
+    }
+}
+
+/// <summary>A fact that runs on Windows, where <c>FileShare.None</c> keeps another open from reading the file.</summary>
+public sealed class WindowsFactAttribute : FactAttribute
+{
+    public WindowsFactAttribute()
+    {
+        if (!OperatingSystem.IsWindows()) Skip = "a file lock refuses a read on Windows only";
+    }
+}

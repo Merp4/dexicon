@@ -137,15 +137,18 @@ public static class SourceFilters
     /// <summary>
     /// The first problem with <paramref name="globs"/>, or null when it can be used. The count cap
     /// (<see cref="MaxGlobsPerList"/>) is judged before any element is read, so a list far past it is refused
-    /// without a regular expression compiled or an element examined. Past the count, elements are examined in
+    /// without a pattern read or an element examined. Past the count, elements are examined in
     /// order, each for its length before it is compiled or parsed, and the check stops at the first problem; its
     /// work is bounded by <see cref="MaxGlobsPerList"/> times <see cref="MaxGlobLength"/>. Lists already stored
     /// are not passed through here.
     ///
     /// Every reader: a null element is never usable, and an element is at most <see cref="MaxGlobLength"/>
     /// characters. For <see cref="GlobReader.Walk"/> an element that <see cref="IgnoreRuleSet.AddPatterns"/>
-    /// cannot compile, such as <c>[z-a]</c>, is refused by the same parser. A path that climbs out with <c>..</c>
-    /// is not refused there: the walk matches against paths below the root, so it compiles and matches nothing.
+    /// cannot compile, such as <c>[z-a]</c> or <c>[[:alpha:]]</c>, is refused by the same parser, and so is the first
+    /// element that takes the list past its limits (<see cref="IgnoreRuleSet.MaxRulesPerList"/> rules or
+    /// <see cref="IgnoreRuleSet.MaxWeightPerList"/> pattern parts), which a walk would fail on. The list is counted
+    /// against one budget here as it is in the walk, which gives each list its own. A path that climbs out with
+    /// <c>..</c> is not refused there: the walk matches against paths below the root, so it compiles and matches nothing.
     ///
     /// For <see cref="GlobReader.Git"/> and <see cref="GlobReader.WalkAndGit"/> an empty element or one holding a
     /// null character is refused, because git rejects an empty pathspec and cannot be passed a null character.
@@ -158,12 +161,16 @@ public static class SourceFilters
     /// the path, see <see cref="PathspecMagic.PathUnchecked"/>. A single leading
     /// <c>/</c> is accepted: <see cref="GitHistory.Pathspecs"/> removes it before git sees it. The rules are those of
     /// git on Linux, measured on git 2.54.0. Anything else is left to git. A rooted path is refused whether or
-    /// not it names a place inside the repository, which the check cannot know. The check is of syntax: a pattern that compiles but is slow to match passes it.
+    /// not it names a place inside the repository, which the check cannot know. The lines of a <c>.gitignore</c> or <c>.dexiconignore</c> in the tree are not checked here; the walk reads them
+    /// (see <see cref="WorkspaceWalker"/>).
     /// </summary>
     public static GlobProblem? Check(IReadOnlyList<string>? globs, GlobReader reader = GlobReader.Walk)
     {
         if (globs is null) return null;
         if (globs.Count > MaxGlobsPerList) return new GlobProblem(MaxGlobsPerList, GlobProblemKind.TooMany);
+
+        var rules = new IgnoreRuleSet();
+        var budget = RuleBudget.ForList();
 
         for (var i = 0; i < globs.Count; i++)
         {
@@ -179,7 +186,7 @@ public static class SourceFilters
 
             if (reader == GlobReader.Git) continue;
 
-            try { new IgnoreRuleSet().AddPatterns([glob], "check"); }
+            try { rules.AddPatterns([glob], "check", isList: true, budget: budget); }
             catch (ArgumentException) { return new GlobProblem(i, GlobProblemKind.Unusable); }
         }
 
