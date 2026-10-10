@@ -90,6 +90,9 @@ public sealed class GlobMatcherTests
     [InlineData("*aabaab*", "aabaaab", false)]
     [InlineData("*aabaaab*", "aabaaab", true)]
     [InlineData("*abab*", "ababab", true)]
+    [InlineData("*aabaaab*", "aabaabaaab", true)]
+    [InlineData("*abacabab*", "abacabacabab", true)]
+    [InlineData("*abacabab*", "abacabacabaa", false)]
     public void ALiteralRunIsFoundWhereverItBeginsInsideAnEarlierNearMiss(string pattern, string path, bool expected)
     {
         Ignored(pattern, path).ShouldBe(expected);
@@ -272,6 +275,22 @@ public sealed class GlobMatcherTests
         matcher.IsMatch(new string('a', 200), ref steps).ShouldBe(matched);
 
         steps.ShouldBe(expected);
+    }
+
+    [Fact]
+    public void ARentedBufferThatOneMatchLeftFullDoesNotChangeTheAnswerOfTheNext()
+    {
+        // 8,200 characters is 129 words, so the match is run in a rented array. `*` leaves its final positions in it,
+        // and a class adds to the array it writes into, so a stale bit would put a position at the end of the path.
+        var path = new string('a', 8_200);
+        var everything = GlobMatcher.Compile("*", "");
+        var one = GlobMatcher.Compile("[a]", "");
+
+        for (var round = 0; round < 3; round++)
+        {
+            everything.IsMatch(path).ShouldBeTrue();
+            one.IsMatch(path).ShouldBeFalse();
+        }
     }
 
     [Fact]
