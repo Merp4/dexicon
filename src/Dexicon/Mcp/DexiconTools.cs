@@ -93,7 +93,7 @@ public sealed class DexiconTools
     internal static string Render(SearchResult result)
     {
         var sb = new StringBuilder();
-        var scope = string.Join(", ", result.Scope.Select(s => s.Name));
+        var scope = OneLine(string.Join(", ", result.Scope.Select(s => s.Name)));
 
         // The query is the caller's own text, repeated on the line a reader takes to be the result's.
         var query = Echo(result.Query);
@@ -103,7 +103,7 @@ public sealed class DexiconTools
             1 => $"1 result for \"{query}\"",
             var n => $"{n} results for \"{query}\"",
         });
-        sb.Append($" ({result.Mode.ToString().ToLowerInvariant()}, corpus: {OneLine(scope)})\n");
+        sb.Append($" ({result.Mode.ToString().ToLowerInvariant()}, corpus: {scope})\n");
 
         if (result.Degraded)
             sb.Append($"\n! DEGRADED: {Echo(result.DegradedReason, MessageMax)}\n");
@@ -548,15 +548,17 @@ public sealed class DexiconTools
     {
         if (tracking.Upstream is not { } up) return null;
 
+        // A ref name can hold U+0085 or U+202A, which git accepts.
+        var upstream = OneLine(up.ShortName);
         string where;
-        if (up.Gone) where = $"its upstream {up.ShortName} is gone";
+        if (up.Gone) where = $"its upstream {upstream} is gone";
         else if (up.Behind is null && up.Ahead is null) return null;
         else where = (up.Behind ?? 0, up.Ahead ?? 0) switch
         {
-            (0, 0) => $"up to date with {up.ShortName}",
-            (var behind, 0) => $"{behind} behind {up.ShortName}",
-            (0, var ahead) => $"{ahead} ahead of {up.ShortName}",
-            var (behind, ahead) => $"{behind} behind and {ahead} ahead of {up.ShortName}",
+            (0, 0) => $"up to date with {upstream}",
+            (var behind, 0) => $"{behind} behind {upstream}",
+            (0, var ahead) => $"{ahead} ahead of {upstream}",
+            var (behind, ahead) => $"{behind} behind and {ahead} ahead of {upstream}",
         };
 
         return tracking.LastFetchUtc is { } fetched

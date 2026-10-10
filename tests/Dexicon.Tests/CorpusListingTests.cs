@@ -1,6 +1,7 @@
 using Dexicon.Api;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Indexing;
+using Dexicon.Infrastructure;
 using Dexicon.Mcp;
 
 namespace Dexicon.Tests;
@@ -262,6 +263,20 @@ public class CorpusDiagnosisTests
             DateTime.UtcNow);
 
         DexiconTools.Distance(tracking).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData(0x85)]
+    [InlineData(0x202A)]
+    [InlineData(0x0A)]
+    public void AnUpstreamNameThatHoldsALineBreakOrABidiControlIsWrittenOnOneLine(int codePoint)
+    {
+        // git check-ref-format accepts refs/remotes/origin/a<U+0085>b and a<U+202A>b.
+        var name = "origin/a" + char.ConvertFromUtf32(codePoint) + "b";
+        var tracking = new Dexicon.Core.Indexing.GitTracking("refs/heads/main", "refs/heads/main",
+            new Dexicon.Core.Indexing.GitUpstream("refs/remotes/" + name, name, 0, 3, false), null, DateTime.UtcNow);
+
+        DexiconTools.Distance(tracking).ShouldBe("3 behind " + "origin/a" + (codePoint == 0x0A ? " " : LogText.Marker.ToString()) + "b");
     }
 
     [Fact]
