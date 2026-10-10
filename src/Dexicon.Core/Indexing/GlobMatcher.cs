@@ -17,13 +17,16 @@ namespace Dexicon.Core.Indexing;
 /// matches everything beneath it. The test project keeps the regular expression that spells this out
 /// (<c>GlobOracle</c>) and compares the two over random patterns and paths.
 ///
-/// Cost. The set of positions in the path that the tokens so far can have reached is kept as a window over a byte
-/// array. A literal, <c>?</c> or class moves each position forward by one if the character fits; <c>*</c> extends
-/// each position to the next <c>/</c>; <c>**</c> extends to the end; <c>**/</c> adds each position after a later
-/// <c>/</c>. A token looks at each position of the path at most twice, so a match takes at most
-/// 2 x (tokens + 1) x (length + 2) steps whatever the pattern, and there is no match timeout. A rule holds its tokens,
-/// 16 bytes each, and a class holds its ranges besides, which is what <see cref="Weight"/> counts. Most rules are
-/// rejected before a match runs, by a search for the longest run of literal characters the pattern needs.
+/// Cost. The positions of the path that the tokens so far can have reached are a set of bits (<see cref="PathMasks"/>),
+/// one word for every 64 characters of the path. A literal or <c>?</c> keeps the positions whose character fits and
+/// moves each on by one; <c>*</c> carries each position through the characters up to the next <c>/</c> with one
+/// addition for each word; <c>**</c> fills to the end; <c>**/</c> adds each position after a later <c>/</c>; and a class
+/// is asked about each position separately. A token takes at most one operation for each word, which is
+/// <c>n / 64 + 1</c> for a path of <c>n</c> characters, and a class at most <c>n + 1</c> position tests. The search for
+/// the longest literal run (below) reads each character of the path once. So a match takes at most
+/// <c>(tokens + 1) x words + classes x (n + 1) + n</c> steps whatever the pattern, there is no match timeout, and
+/// <c>steps</c> counts exactly these. A rule holds its tokens, 16 bytes each, and a class holds its ranges besides;
+/// <see cref="Weight"/> counts both, and charges a class for the position tests.
 ///
 /// Case. Two characters are the same when their invariant lower cases are (<see cref="Fold"/>), which is the case
 /// equivalence of <c>RegexOptions.IgnoreCase</c>. Characters are UTF-16 units, so <c>?</c> matches one unit and not a
@@ -43,22 +46,19 @@ internal sealed class GlobMatcher
     // The longest run of literal characters in the tokens, folded. A path without it cannot match.
     private readonly char[]? _required;
     private readonly SearchValues<char>? _requiredFirst;
+    private readonly int[]? _fail;
 
     /// <summary>The number of tokens, which with the length of a path bounds the steps of a match.</summary>
     internal int TokenCount => _tokens.Length;
 
     /// <summary>
-    /// What the pattern costs to hold and to run, which a walk adds up against a limit. A token counts one, and a class
-    /// one more for each range it holds. A pattern with a wildcard (a <c>*</c>, <c>**</c> or <c>**/</c> other than the
-    /// any-depth prefix) counts that in full: a wildcard widens the set of positions to the length of the path and every
-    /// token after it then looks at all of them. A pattern without one counts a <see cref="PlainDivisor"/>th of it
-    /// (at least one), because its tokens look at a few positions. Measured (IgnoreRuleCostTests), the worst wildcard
-    /// pattern costs about twenty times as much per token as the worst pattern without one.
+    /// What the pattern costs to hold and to run, which a walk adds up against a limit: one for each token, and for a
+    /// class <see cref="ClassWeight"/> and one more for each range it holds.
     /// </summary>
     internal int Weight { get; }
 
-    /// <summary>How many tokens of a pattern without a wildcard weigh as one.</summary>
-    internal const int PlainDivisor = 20;
+    /// <summary>What a class token weighs besides its ranges.</summary>
+    internal const int ClassWeight = 16;
 
     private GlobMatcher(Token[] tokens, string prefix, int weight)
     {
@@ -66,7 +66,7 @@ internal sealed class GlobMatcher
         _prefix = prefix;
         Weight = weight;
 
-        (_required, _requiredFirst) = RequiredLiteral(tokens);
+        (_required, _requiredFirst, _fail) = RequiredLiteral(tokens);
     }
 
     /// <exception cref="FormatException">A bracket class that cannot be read; see <see cref="ReadClass"/>.</exception>
@@ -92,7 +92,6 @@ internal sealed class GlobMatcher
 
         var tokens = new List<Token>(glob.Length + 1);
         var weight = 0;
-        var wildcard = false;
         if (matchAtAnyDepth) { tokens.Add(new Token(Kind.SlashGlob)); weight++; }
 
         for (var i = 0; i < glob.Length; i++)
@@ -109,7 +108,6 @@ internal sealed class GlobMatcher
                     }
                     else tokens.Add(new Token(Kind.Star));
 
-                    wildcard = true;
                     weight++;
                     break;
                 case '?':
@@ -122,7 +120,7 @@ internal sealed class GlobMatcher
                         if (cls is null) { tokens.Add(new Token(Kind.Literal, '[')); weight++; break; }
 
                         tokens.Add(new Token(Kind.Class, Class: new CharClass(cls.Members, cls.Negated)));
-                        weight += 1 + cls.Members.Count;
+                        weight += ClassWeight + cls.Members.Count;
                         i = cls.Close;
                         break;
                     }
@@ -133,8 +131,7 @@ internal sealed class GlobMatcher
             }
         }
 
-        matcher = new GlobMatcher([.. tokens], directoryPrefix.Length > 0 ? directoryPrefix + "/" : string.Empty,
-            wildcard ? weight : (weight + PlainDivisor - 1) / PlainDivisor);
+        matcher = new GlobMatcher([.. tokens], directoryPrefix.Length > 0 ? directoryPrefix + "/" : string.Empty, weight);
         return true;
     }
 
@@ -165,10 +162,10 @@ internal sealed class GlobMatcher
     internal bool IsMatchBeneath(ReadOnlySpan<char> path)
     {
         long steps = 0;
-        return Match(path, beneath: true, ref steps);
+        return IsMatchBeneath(path, ref steps);
     }
 
-    /// <param name="steps">Incremented by the positions looked at, so a test can bound the work of a match.</param>
+    /// <param name="steps">Increased by the work of the match (see the class summary), so a test can bound it.</param>
     internal bool IsMatch(ReadOnlySpan<char> path, ref long steps) => Match(path, beneath: false, ref steps);
 
     /// <summary><see cref="IsMatchBeneath(ReadOnlySpan{char})"/>, counting steps.</summary>
@@ -176,128 +173,206 @@ internal sealed class GlobMatcher
 
     private bool Match(ReadOnlySpan<char> path, bool beneath, ref long steps)
     {
+        var masks = PathMasks.Rent();
+        try { return Match(path, beneath, masks, ref steps); }
+        finally { masks.Return(); }
+    }
+
+    /// <summary>
+    /// A match for a caller that tests one path against many rules and so shares <paramref name="masks"/>, which must
+    /// not have been used for another path since it was rented.
+    /// </summary>
+    internal bool Match(ReadOnlySpan<char> path, bool beneath, PathMasks masks, ref long steps)
+    {
         var start = 0;
         if (_prefix.Length > 0)
         {
             if (path.Length < _prefix.Length) return false;
-            for (var i = 0; i < _prefix.Length; i++)
-                if (!Fold.Equal(path[i], _prefix[i])) return false;
+
+            // The part that is equal as written is found with a vector compare, and only the rest is folded.
+            var same = path[.._prefix.Length].CommonPrefixLength(_prefix);
+            for (; same < _prefix.Length; same++)
+                if (!Fold.Equal(path[same], _prefix[same])) return false;
 
             start = _prefix.Length;
         }
 
-        if (_required is not null && !ContainsRequired(path[start..])) return false;
+        if (_required is not null && !ContainsRequired(path[start..], ref steps)) return false;
 
-        var n = path.Length;
-        var size = n + 2;
-        byte[]? rented = null;
-        Span<byte> buffer = 2 * size <= 1024
-            ? stackalloc byte[2 * size]
-            : (rented = ArrayPool<byte>.Shared.Rent(2 * size)).AsSpan(0, 2 * size);
+        masks.Prepare(path);
+
+        var words = masks.Words;
+        ulong[]? rented = null;
+        Span<ulong> buffer = 2 * words <= 256
+            ? stackalloc ulong[2 * words]
+            : (rented = ArrayPool<ulong>.Shared.Rent(2 * words)).AsSpan(0, 2 * words);
         buffer.Clear();
 
         try
         {
-            return Run(path, start, beneath, buffer[..size], buffer[size..], ref steps);
+            return Run(path, start, beneath, masks, buffer[..words], buffer[words..], ref steps);
         }
         finally
         {
-            if (rented is not null) ArrayPool<byte>.Shared.Return(rented);
+            if (rented is not null) ArrayPool<ulong>.Shared.Return(rented);
         }
     }
 
-    private bool Run(ReadOnlySpan<char> path, int start, bool beneath, Span<byte> cur, Span<byte> next, ref long steps)
+    private bool Run(
+        ReadOnlySpan<char> path, int start, bool beneath, PathMasks masks, Span<ulong> cur, Span<ulong> next, ref long steps)
     {
         var n = path.Length;
-        cur[start] = 1;
-        int lo = start, hi = start;
+        var words = cur.Length;
+        var slash = masks.Slash;
+        var nonSlash = masks.NonSlash;
+
+        // The positions reached so far are the set bits of `cur`, and `lo` to `hi` are the words that hold them.
+        int lo = start >> 6, hi = lo;
+        cur[lo] = 1UL << (start & 63);
 
         foreach (var token in _tokens)
         {
             steps += hi - lo + 1;
-            int nextLo = lo, nextHi = -1;
+            int nextLo, nextHi;
 
             switch (token.Kind)
             {
-                case Kind.Literal or Kind.One or Kind.Class:
+                case Kind.Literal or Kind.One:
                     {
-                        nextLo = int.MaxValue;
-                        var last = Math.Min(hi, n - 1);
-                        for (var i = lo; i <= last; i++)
-                        {
-                            if (cur[i] == 0 || !Accepts(token, path[i])) continue;
+                        // Each position whose character fits moves forward by one.
+                        var mask = token.Kind == Kind.One ? nonSlash : masks.CharMask(Fold.Of(token.Char));
+                        if (mask.IsEmpty) return false;
 
-                            next[i + 1] = 1;
-                            if (i + 1 < nextLo) nextLo = i + 1;
-                            nextHi = i + 1;
+                        ulong carry = 0;
+                        for (var w = lo; w <= hi; w++)
+                        {
+                            var fits = cur[w] & mask[w];
+                            next[w] = (fits << 1) | carry;
+                            carry = fits >> 63;
+                        }
+
+                        var top = hi;
+                        if (carry != 0) { next[hi + 1] = carry; top = hi + 1; }
+
+                        (nextLo, nextHi) = Occupied(next, lo, top);
+                        break;
+                    }
+                case Kind.Class:
+                    {
+                        // Only the positions reached are asked, one at a time.
+                        var cls = token.Class!;
+                        nextLo = int.MaxValue;
+                        nextHi = -1;
+                        for (var w = lo; w <= hi; w++)
+                        {
+                            var bits = cur[w] & nonSlash[w];
+                            steps += System.Numerics.BitOperations.PopCount(bits);
+                            while (bits != 0)
+                            {
+                                var i = (w << 6) + System.Numerics.BitOperations.TrailingZeroCount(bits);
+                                bits &= bits - 1;
+                                if (!cls.Matches(path[i])) continue;
+
+                                var j = i + 1;
+                                next[j >> 6] |= 1UL << (j & 63);
+                                if ((j >> 6) < nextLo) nextLo = j >> 6;
+                                if ((j >> 6) > nextHi) nextHi = j >> 6;
+                            }
                         }
 
                         break;
                     }
                 case Kind.Star:
                     {
-                        // next[j] = cur[j] or (next[j-1] and the character before j is not a slash)
-                        var reached = false;
-                        for (var j = lo; j <= n; j++)
+                        // Each position extends to the next `/` or the end. A run of characters that are not `/` is a
+                        // run of ones in `nonSlash`, and adding a position to it carries through the rest of the run,
+                        // so the bits that changed are the positions from there to the run's end.
+                        ulong carry = 0;
+                        var w = lo;
+                        for (; w < words; w++)
                         {
-                            var here = (j <= hi && cur[j] != 0) || (reached && path[j - 1] != '/');
-                            if (!here && j > hi) break;
+                            var inside = w <= hi;
+                            if (!inside && carry == 0) break;
 
-                            steps++;
-                            reached = here;
-                            if (here) { next[j] = 1; nextHi = j; }
+                            var held = inside ? cur[w] : 0UL;
+                            var run = nonSlash[w];
+                            var start1 = held & run;
+                            var sum = run + start1;
+                            var overflow = sum < run;
+                            var total = sum + carry;
+                            overflow |= total < sum;
+                            carry = overflow ? 1UL : 0UL;
+                            next[w] = held | (total ^ run) | start1;
                         }
 
+                        steps += Math.Max(0, w - 1 - hi);
+                        (nextLo, nextHi) = Occupied(next, lo, w - 1);
                         break;
                     }
                 case Kind.Any:
                     {
-                        steps += n - lo;
-                        next[lo..(n + 1)].Fill(1);
-                        nextHi = n;
+                        // Every position from the first reached to the end.
+                        var first = System.Numerics.BitOperations.TrailingZeroCount(cur[lo]);
+                        var valid = masks.Valid;
+                        next[lo] = valid[lo] & (ulong.MaxValue << first);
+                        for (var w = lo + 1; w < words; w++) next[w] = valid[w];
+
+                        steps += words - 1 - hi;
+                        nextLo = lo;
+                        nextHi = words - 1;
                         break;
                     }
                 default:
                     {
-                        // `**/`: where it is, or after any later slash.
-                        for (var j = lo; j <= n; j++)
+                        // `**/`: where it is, or just after any later slash.
+                        var first = System.Numerics.BitOperations.TrailingZeroCount(cur[lo]);
+                        var after = masks.AfterSlash;
+                        for (var w = lo; w < words; w++)
                         {
-                            steps++;
-                            if ((j <= hi && cur[j] != 0) || (j > lo && path[j - 1] == '/')) { next[j] = 1; nextHi = j; }
+                            var held = w <= hi ? cur[w] : 0UL;
+                            var later = w > lo ? ulong.MaxValue : first == 63 ? 0UL : ulong.MaxValue << (first + 1);
+                            next[w] = held | (after[w] & later);
                         }
 
+                        steps += words - 1 - hi;
+                        (nextLo, nextHi) = Occupied(next, lo, words - 1);
                         break;
                     }
             }
 
-            cur.Slice(lo, hi - lo + 1).Clear();
             if (nextHi < 0) return false;
 
-            var swap = cur;
+            cur.Slice(lo, hi - lo + 1).Clear();
+            var spare = cur;
             cur = next;
-            next = swap;
+            next = spare;
             lo = nextLo;
             hi = nextHi;
         }
 
         // The tokens must end at a slash, or at the end of the path unless a directory is asked for.
-        for (var i = lo; i <= hi; i++)
-            if (cur[i] != 0 && (i < n ? path[i] == '/' : !beneath)) return true;
+        for (var w = lo; w <= hi; w++)
+            if ((cur[w] & slash[w]) != 0) return true;
 
-        return false;
+        return !beneath && (n >> 6) >= lo && (n >> 6) <= hi && ((cur[n >> 6] >> (n & 63)) & 1) != 0;
     }
 
-    private static bool Accepts(Token token, char c) =>
-        token.Kind switch
-        {
-            Kind.Literal => Fold.Equal(c, token.Char),
-            Kind.One => c != '/',
-            _ => c != '/' && token.Class!.Matches(c),
-        };
+    /// <summary>The first and last words of <paramref name="set"/> between two words that are not zero, or -1 for both.</summary>
+    private static (int Lo, int Hi) Occupied(ReadOnlySpan<ulong> set, int from, int to)
+    {
+        while (from <= to && set[from] == 0) from++;
+        if (from > to) return (-1, -1);
+
+        while (set[to] == 0) to--;
+        return (from, to);
+    }
 
     // ---- the required literal ----------------------------------------------------------
 
-    private static (char[]?, SearchValues<char>?) RequiredLiteral(Token[] tokens)
+    // The longest run of literal characters is searched for in the path before a match, with the Knuth-Morris-Pratt
+    // search on folded characters, which reads each character of the path once whatever the run. Its failure table is
+    // kept with the run.
+    private static (char[]?, SearchValues<char>?, int[]?) RequiredLiteral(Token[] tokens)
     {
         int bestStart = 0, bestLength = 0;
         for (var i = 0; i < tokens.Length;)
@@ -310,35 +385,56 @@ internal sealed class GlobMatcher
             i = j;
         }
 
-        if (bestLength == 0) return (null, null);
+        if (bestLength == 0) return (null, null, null);
 
         var folded = new char[bestLength];
         for (var k = 0; k < bestLength; k++) folded[k] = Fold.Of(tokens[bestStart + k].Char);
 
-        return (folded, Fold.TryVariants(folded[0], out var variants) ? SearchValues.Create(variants) : null);
-    }
-
-    private bool ContainsRequired(ReadOnlySpan<char> text)
-    {
-        var required = _required!;
-        var last = text.Length - required.Length;
-
-        for (var at = 0; at <= last;)
+        var fail = new int[bestLength];
+        for (int i = 1, matched = 0; i < bestLength; i++)
         {
-            var found = _requiredFirst is not null
-                ? text[at..(last + 1)].IndexOfAny(_requiredFirst)
-                : text[at..(last + 1)].IndexOf(required[0]);
-            if (found < 0) return false;
-
-            at += found;
-            var all = true;
-            for (var k = 1; k < required.Length && all; k++)
-                all = Fold.Of(text[at + k]) == required[k];
-
-            if (all) return true;
-            at++;
+            while (matched > 0 && folded[i] != folded[matched]) matched = fail[matched - 1];
+            if (folded[i] == folded[matched]) matched++;
+            fail[i] = matched;
         }
 
+        return (folded, Fold.TryVariants(folded[0], out var variants) ? SearchValues.Create(variants) : null, fail);
+    }
+
+    private bool ContainsRequired(ReadOnlySpan<char> text, ref long steps)
+    {
+        ReadOnlySpan<char> required = _required!;
+        ReadOnlySpan<int> fail = _fail!;
+        var matched = 0;
+        var read = 0;
+        var i = 0;
+
+        while (i < text.Length)
+        {
+            if (matched == 0)
+            {
+                // Nothing is matched, so the search can jump to the next character that could begin the run.
+                var found = _requiredFirst is not null ? text[i..].IndexOfAny(_requiredFirst) : text[i..].IndexOf(required[0]);
+                if (found < 0) break;
+
+                i += found;
+            }
+
+            read++;
+            var c = text[i++];
+            c = c < 128 ? ((uint)(c - 'A') <= 'Z' - 'A' ? (char)(c | 0x20) : c) : char.ToLowerInvariant(c);
+            while (matched > 0 && c != required[matched]) matched = fail[matched - 1];
+            if (c != required[matched]) continue;
+
+            matched++;
+            if (matched == required.Length)
+            {
+                steps += read;
+                return true;
+            }
+        }
+
+        steps += read;
         return false;
     }
 

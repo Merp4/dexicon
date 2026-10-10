@@ -139,9 +139,17 @@ public sealed class GlobMatcherTests
     /// <summary>A walk that does not finish cannot fail itself, so the loop is given a limit the test can fail on.</summary>
     private static void Bounded(Action action) => Should.CompleteIn(action, TimeSpan.FromSeconds(60));
 
+    /// <summary>The most steps a match can take: see the cost paragraph of <see cref="GlobMatcher"/>.</summary>
+    private static long Bound(GlobMatcher matcher, string glob, string path)
+    {
+        var words = (path.Length >> 6) + 1;
+        var classes = glob.Count(c => c == '[');
+        return (matcher.TokenCount + 1L) * words + classes * (path.Length + 1L) + path.Length;
+    }
+
     [Theory]
     [MemberData(nameof(PathologicalGlobs))]
-    public void AMatchTakesNoMoreThanTwiceTheTokensPlusOneTimesThePathPlusTwoSteps(string glob)
+    public void AMatchTakesNoMoreStepsThanTokensTimesWordsPlusAClassTestForEachPositionPlusOnePassOverThePath(string glob)
     {
         var matcher = GlobMatcher.Compile(glob, "");
         var checkedShapes = 0;
@@ -150,7 +158,7 @@ public sealed class GlobMatcherTests
         {
             foreach (var path in LongPaths(4096))
             {
-                var bound = 2L * (matcher.TokenCount + 1) * (path.Length + 2);
+                var bound = Bound(matcher, glob, path);
                 Steps(matcher, path).ShouldBeLessThanOrEqualTo(bound, $"path of {path.Length} characters");
                 Steps(matcher, path, beneath: true).ShouldBeLessThanOrEqualTo(bound, $"path of {path.Length} characters, beneath");
                 checkedShapes++;
@@ -206,22 +214,23 @@ public sealed class GlobMatcherTests
             more = Steps(rule, deeper, beneath: true);
         });
 
-        steps.ShouldBeLessThanOrEqualTo(2L * (rule.TokenCount + 1) * (deep.Length + 2));
+        steps.ShouldBeLessThanOrEqualTo(Bound(rule, string.Concat(Enumerable.Repeat("*a", 248)) + "*b", deep));
         ((double)more / steps).ShouldBeLessThan(2.6);
     }
 
     [Theory]
-    // glob, path, beneath, matched, steps, tokens. The cost model, pinned: a literal looks at the positions it holds,
-    // a star at each position it reaches, and so on. A change to the count is a change to what a limit is worth.
-    [InlineData("*a*b", "aab", false, true, 22L)]
-    [InlineData("**/x", "a/b/x", false, true, 12L)]
-    [InlineData("a?c", "abc", false, true, 8L)]
-    [InlineData("bin", "src/bin/x.dll", true, true, 26L)]
-    [InlineData("bin", "src/bin", true, false, 16L)]
-    [InlineData("bin", "src/bin/x.dll", false, true, 26L)]
-    [InlineData("docs/*.md", "docs/a.md", false, true, 18L)]
-    [InlineData("[a-c]*x", "bcx", false, true, 13L)]
-    [InlineData("a*a*a*b", "aaaa", false, false, 31L)]
+    // glob, path, beneath, matched, steps. A path of under 64 characters is one word, so a step is a token, a
+    // position a class is asked about, or a character the literal search reads. `bin` is the any-depth prefix and three
+    // literals (4) and the search reads `bin` (3).
+    [InlineData("*a*b", "aab", false, true, 6L)]
+    [InlineData("**/x", "a/b/x", false, true, 3L)]
+    [InlineData("a?c", "abc", false, true, 5L)]
+    [InlineData("bin", "src/bin/x.dll", true, true, 7L)]
+    [InlineData("bin", "src/bin", true, false, 7L)]
+    [InlineData("bin", "src/bin/x.dll", false, true, 7L)]
+    [InlineData("docs/*.md", "docs/a.md", false, true, 14L)]
+    [InlineData("[a-c]*x", "bcx", false, true, 6L)]
+    [InlineData("a*a*a*b", "aaaa", false, false, 9L)]
     public void TheStepsOfASmallMatchAreWhatTheCostModelSays(string glob, string path, bool beneath, bool matched, long expected)
     {
         var matcher = GlobMatcher.Compile(glob, "");

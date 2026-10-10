@@ -57,23 +57,24 @@ public sealed class IgnoreRuleSet
     /// <summary>The longest line of an ignore file, or entry of a glob list, that is read, in characters.</summary>
     public const int MaxPatternLength = 500;
 
-    // The limits below bound the work a walk does for each file it meets, which is tested against every rule in force.
-    // The cost of a rule is its weight: a token, or a range of a class, is about 27 ns per 100 characters of path when
-    // the whole pattern has to be run, which is what the worst pattern (`*a` repeated, then `*b`, against a path of a)
-    // costs, and a rule a literal search rejects costs about 30 ns whatever its weight. IgnoreRuleLimitCostTests
-    // measures both; docs/04-ingestion.md has the figures.
+    // The limits below bound the work a walk does for each file it meets, which is tested against every rule in force:
+    // a rule costs a search for its longest literal run, and its weight in word operations (see GlobMatcher). The
+    // worst case at the limits, measured, is in IgnoreRuleCostTests and docs/04-ingestion.md.
 
     /// <summary>The most rules the ignore files of one walk may add (`.git/info/exclude` and every `.gitignore` and `.dexiconignore`).</summary>
     public const int MaxRulesPerSource = 5_000;
 
     /// <summary>The most weight (<see cref="GlobMatcher.Weight"/>) the ignore files of one walk may add.</summary>
-    public const int MaxWeightPerSource = 12_000;
+    public const int MaxWeightPerSource = 60_000;
 
-    /// <summary>The most rules one stored glob list may add. A list holds at most 200 entries.</summary>
+    /// <summary>
+    /// The most rules one stored glob list may add. A list is capped at <c>SourceFilters.MaxGlobsPerList</c> entries when
+    /// it is stored; this holds a list stored before that cap.
+    /// </summary>
     public const int MaxRulesPerList = 1_000;
 
     /// <summary>The most weight one stored glob list may add.</summary>
-    public const int MaxWeightPerList = 12_000;
+    public const int MaxWeightPerList = 20_000;
 
     /// <summary>
     /// What a caller needs to read patterns out of a file or list: where they came from, how a message names a
@@ -94,13 +95,13 @@ public sealed class IgnoreRuleSet
     /// Where a line that cannot be used is described when it is skipped. Null makes the first such line throw.
     /// </param>
     /// <param name="Budget">The limits the lines are counted against. Passing one makes the walk fail, whatever <paramref name="Unusable"/> is.</param>
-    /// <param name="Remedy">What the message tells an operator to do when the budget is passed.</param>
+    /// <param name="Remedy">Says what an operator should do, in a message about a budget that was passed.</param>
     /// <param name="MaxSkipped">
     /// How many lines may be skipped before the rest of the file is left unread, with one description saying so.
     /// </param>
     internal sealed record PatternSource(
         string Source, string DirectoryPrefix = "", bool IsList = false, WarningSink? Unusable = null,
-        RuleBudget? Budget = null, string? Remedy = null, int MaxSkipped = 1_000);
+        RuleBudget? Budget = null, Func<string>? Remedy = null, int MaxSkipped = 1_000);
 
     /// <summary>
     /// Reads each line of <paramref name="patterns"/> into a rule and appends it. A line that cannot be used (null,
@@ -185,7 +186,7 @@ public sealed class IgnoreRuleSet
         {
             var limit = $"{budget.MaxRules:N0} rules or {budget.MaxWeight:N0} pattern parts";
             return new Problem(where, line, $"is past the limit of {limit} for {(from.IsList ? "one list" : "one source")}"
-                + (from.Remedy is null ? string.Empty : $"; {from.Remedy}"), true);
+                + (from.Remedy is null ? string.Empty : $"; {from.Remedy()}"), true);
         }
 
         _rules.Add(new Rule(
@@ -205,13 +206,25 @@ public sealed class IgnoreRuleSet
     {
         var path = relativePath.AsSpan();
         var ignored = false;
-        foreach (var rule in _rules)
+        long steps = 0;
+
+        // The positions of the path's characters are worked out once, for the first rule that needs them.
+        var masks = PathMasks.Rent();
+        try
         {
-            // `bin/` excludes `bin/Debug/App.dll` and not a file named `bin`: for a file it asks for a directory
-            // above it, which is a match that ends at a slash before the end.
-            var matches = rule.DirectoryOnly && !isDirectory ? rule.Pattern.IsMatchBeneath(path) : rule.Pattern.IsMatch(path);
-            if (matches) ignored = !rule.Negated;
+            foreach (var rule in _rules)
+            {
+                // `bin/` excludes `bin/Debug/App.dll` and not a file named `bin`: for a file it asks for a directory
+                // above it, which is a match that ends at a slash before the end.
+                var beneath = rule.DirectoryOnly && !isDirectory;
+                if (rule.Pattern.Match(path, beneath, masks, ref steps)) ignored = !rule.Negated;
+            }
         }
+        finally
+        {
+            masks.Return();
+        }
+
         return ignored;
     }
 
@@ -509,7 +522,7 @@ public sealed class WorkspaceWalker
     public const string ExcludeListName = "excludeGlobs";
 
     private static IgnoreRuleSet.PatternSource ListSource(string name) =>
-        new(name, IsList: true, Budget: RuleBudget.ForList(), Remedy: "shorten the list");
+        new(name, IsList: true, Budget: RuleBudget.ForList(), Remedy: () => "shorten the list");
 
     /// <summary>The most ignore-file text one walk reads, whatever the number of files.</summary>
     private const long MaxBytesPerWalk = 16L * 1024 * 1024;
@@ -523,6 +536,9 @@ public sealed class WorkspaceWalker
 
         // A field, since the reader adds to it by reference.
         public long BytesRead;
+
+        /// <summary>The files read so far, with the rules and weight each added to the budget.</summary>
+        public List<(string Label, int Rules, int Weight)> Files { get; } = [];
     }
 
     /// <summary>
@@ -858,10 +874,31 @@ public sealed class WorkspaceWalker
         if (ownFile) RejectEmbeddedCarriageReturns(lines, label);
         else SkipUndecodedLines(lines, label, state.Warnings);
 
+        var startRules = state.Budget.Rules;
+        var startWeight = state.Budget.Weight;
         rules.Add(lines, new IgnoreRuleSet.PatternSource(
             label, directoryPrefix, Unusable: ownFile ? null : state.Warnings, Budget: state.Budget,
-            Remedy: FileRemedy(ownFile)));
+            Remedy: () => BudgetRemedy(state, label, state.Budget.Rules - startRules, state.Budget.Weight - startWeight)));
+        state.Files.Add((label, state.Budget.Rules - startRules, state.Budget.Weight - startWeight));
         return true;
+    }
+
+    /// <summary>
+    /// What a message about the walk's budget tells the operator. The file that passed it is rarely the file that used
+    /// it up, so the three files that used most are named, this one among them, and the way out that skips every
+    /// <c>.gitignore</c> is given whichever file it was.
+    /// </summary>
+    private static string BudgetRemedy(ReadState state, string label, int rules, int weight)
+    {
+        var biggest = state.Files.Append((Label: label, Rules: rules, Weight: weight))
+            .Where(file => file.Rules > 0)
+            .OrderByDescending(file => file.Rules)
+            .ThenByDescending(file => file.Weight)
+            .ThenBy(file => file.Label, StringComparer.Ordinal)
+            .Take(3)
+            .Select(file => $"{file.Label} ({file.Rules:N0} rules, {file.Weight:N0} parts)");
+
+        return $"the files using most so far are {string.Join(", ", biggest)}; reduce them, or turn off use_gitignore for the source";
     }
 
     private static string FileRemedy(bool ownFile) =>

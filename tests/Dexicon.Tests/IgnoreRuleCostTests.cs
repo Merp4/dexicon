@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using Dexicon.Core.Indexing;
 using Shouldly;
 using Xunit;
@@ -7,22 +8,49 @@ using Xunit.Abstractions;
 namespace Dexicon.Tests;
 
 /// <summary>
-/// What a walk costs at the limits (<see cref="IgnoreRuleSet.MaxRulesPerSource"/>,
-/// <see cref="IgnoreRuleSet.MaxWeightPerSource"/>): the work to test one file against every rule the limits let in, for
-/// the patterns that cost most, and the memory those rules are built from. These are the figures
-/// <c>docs/04-ingestion.md</c> gives. Show them with
-/// <c>dotnet test tests/Dexicon.Tests --filter "Category=Benchmark" --logger "console;verbosity=detailed"</c>.
+/// What testing one file costs at the limits (<see cref="IgnoreRuleSet.MaxRulesPerSource"/> rules and
+/// <see cref="IgnoreRuleSet.MaxWeightPerSource"/> weight), for the rule shapes that cost most, against paths of 255 and
+/// 4,093 characters. These are the figures <c>docs/04-ingestion.md</c> gives. Print the table, in a release build for
+/// times that mean something, with
+/// <c>dotnet test tests/Dexicon.Tests -c Release --filter "Category=Benchmark" --logger "console;verbosity=detailed"</c>.
 ///
 /// The work is counted in steps (<see cref="GlobMatcher.IsMatch(ReadOnlySpan{char}, ref long)"/>), which are the same on
-/// every machine and every load, and asserted against the figure measured. The time is printed and not asserted: it
-/// is what the steps cost on the machine that runs the test: about 1.5 ns each in a release build on an idle one.
+/// every machine and under every load, and asserted against the bound of the cost model in <see cref="GlobMatcher"/>.
+/// The time is printed and not asserted.
 /// </summary>
 [Trait("Category", "Benchmark")]
 public sealed class IgnoreRuleCostTests(ITestOutputHelper output)
 {
-    private static string Stars => string.Concat(Enumerable.Repeat("*a", 248)) + "*b";
+    private static string Repeat(string unit, int times) => string.Concat(Enumerable.Repeat(unit, times));
 
-    /// <summary>The matchers a budget lets in for a glob, as a walk would hold them.</summary>
+    /// <summary>The rule shapes: each is the line of an ignore file, repeated until a limit is reached.</summary>
+    public static TheoryData<string, string> Shapes() => new()
+    {
+        { "stars: *a x248 then *b", Repeat("*a", 248) + "*b" },
+        { "a near miss: a x30 then c", new string('a', 30) + "c" },
+        { "question marks: ? x20", new string('?', 20) },
+        { "classes: [a-c] x62", Repeat("[a-c]", 62) },
+        { "a star before each class: *[a-c] x62", Repeat("*[a-c]", 62) },
+        { "slash globs: **/a x100", Repeat("**/a", 100) },
+        { "one star", "*" },
+        { "typical: *.log", "*.log" },
+        { "plain: a x498", new string('a', 498) },
+    };
+
+    private static string DistinctCharacters(int count) => string.Concat(Enumerable.Range(0x4E00, count).Select(c => (char)c));
+
+    private static readonly (string Name, string Path)[] Paths =
+    [
+        ("255 characters in one name", new string('a', 255)),
+        ("127 directories of one character", Repeat("a/", 127) + "a"),
+        ("255 different characters", DistinctCharacters(255)),
+        ("4,093 characters in one name", new string('a', 4093)),
+        ("2,046 directories of one character", Repeat("a/", 2046) + "a"),
+        ("4,093 different characters", DistinctCharacters(4093)),
+        ("a typical path", "src/module123/sub7/component_1234.cs"),
+    ];
+
+    /// <summary>The rules a budget lets in for a line, as a walk would hold them, and the glob each was written as.</summary>
     private static List<GlobMatcher> AtTheLimit(string glob)
     {
         var budget = RuleBudget.ForIgnoreFiles();
@@ -30,7 +58,7 @@ public sealed class IgnoreRuleCostTests(ITestOutputHelper output)
         var matchers = new List<GlobMatcher>();
         for (var n = 0; ; n++)
         {
-            var line = string.Format(System.Globalization.CultureInfo.InvariantCulture, glob, n);
+            var line = string.Format(CultureInfo.InvariantCulture, glob, n);
             try { rules.AddPatterns([line], "bench", budget: budget); }
             catch (IgnorePatternException) { break; }
 
@@ -40,108 +68,80 @@ public sealed class IgnoreRuleCostTests(ITestOutputHelper output)
         return matchers;
     }
 
-    /// <summary>The steps to test one path against every matcher, and the time it took.</summary>
-    private static (long Steps, double Milliseconds) Test(List<GlobMatcher> matchers, string path, bool beneath = false)
-    {
-        long steps = 0;
-        var clock = Stopwatch.StartNew();
-        foreach (var matcher in matchers)
-        {
-            if (beneath) matcher.IsMatchBeneath(path, ref steps);
-            else matcher.IsMatch(path, ref steps);
-        }
-
-        return (steps, clock.Elapsed.TotalMilliseconds);
-    }
+    /// <summary>The most steps the cost model allows for one path against one rule of <paramref name="glob"/>.</summary>
+    private static long Bound(GlobMatcher matcher, string glob, string path) =>
+        (matcher.TokenCount + 1L) * ((path.Length >> 6) + 1) + glob.Count(c => c == '[') * (path.Length + 1L) + path.Length;
 
     [Theory]
-    // `*a` repeated and then `*b`, against a path of a: the one with the most work a pattern can make. 24 rules.
-    [InlineData(100, 450_000L)]
-    [InlineData(255, 3_000_000L)]
-    [InlineData(1000, 20_000_000L)]
-    public void TheWorstWildcardRulesAtTheLimitTakeMillionsOfStepsToTestOneFile(int pathLength, long allowedSteps)
+    [MemberData(nameof(Shapes))]
+    public void TheWorkOfOneFileAgainstTheRulesAtTheLimitsStaysWithinTheCostModel(string name, string glob)
     {
-        var matchers = AtTheLimit(Stars);
-        var (steps, milliseconds) = Test(matchers, new string('a', pathLength));
+        var matchers = AtTheLimit(glob);
 
-        output.WriteLine($"{matchers.Count} rules, path of {pathLength} characters: {steps:N0} steps, {milliseconds:F2} ms");
-        matchers.Count.ShouldBe(24);
-        steps.ShouldBeLessThanOrEqualTo(allowedSteps);
+        foreach (var (pathName, path) in Paths)
+        {
+            long steps = 0;
+            var bound = 0L;
+            var clock = Stopwatch.StartNew();
+            foreach (var matcher in matchers)
+            {
+                matcher.IsMatch(path, ref steps);
+                bound += Bound(matcher, glob, path);
+            }
+
+            var milliseconds = clock.Elapsed.TotalMilliseconds;
+            output.WriteLine($"{name} ({matchers.Count} rules) against {pathName}: {steps:N0} steps of {bound:N0} allowed, {milliseconds:F3} ms");
+            steps.ShouldBeLessThanOrEqualTo(bound, $"{name} against {pathName}");
+        }
     }
 
     [Fact]
-    public void ARuleWithOneStarAndFiveHundredLiteralsAtTheLimitFindsItsLiteralMissing()
+    public void TheShapesFillTheLimitsTheDocumentationNames()
     {
-        // Rejected by a search for the literal run when the path is shorter than it, and a full match when it is long.
-        var matchers = AtTheLimit("*" + new string('a', 498));
-
-        var (shortSteps, _) = Test(matchers, new string('a', 255));
-        var (longSteps, milliseconds) = Test(matchers, new string('a', 1000));
-
-        output.WriteLine($"{matchers.Count} rules: {shortSteps:N0} steps for 255 characters, {longSteps:N0} for 1,000 ({milliseconds:F2} ms)");
-        shortSteps.ShouldBe(0);
-        longSteps.ShouldBeLessThanOrEqualTo(2L * matchers.Count * 500 * 1_002);
+        AtTheLimit(Repeat("*a", 248) + "*b").Count.ShouldBe(120, "weight 499 each");
+        AtTheLimit(new string('a', 30) + "c").Count.ShouldBe(1_875, "weight 32 each");
+        AtTheLimit(new string('?', 20)).Count.ShouldBe(2_857, "weight 21 each");
+        AtTheLimit("*").Count.ShouldBe(5_000, "the rule limit");
     }
 
     [Fact]
-    public void ThePatternsWithoutAWildcardAtTheLimitTakeTensOfThousandsOfStepsToTestOneFile()
-    {
-        var matchers = AtTheLimit("a" + new string('?', 498));
-
-        var (steps, milliseconds) = Test(matchers, new string('a', 255));
-
-        output.WriteLine($"{matchers.Count} rules, path of 255 characters: {steps:N0} steps, {milliseconds:F2} ms");
-        matchers.Count.ShouldBe(480);
-        steps.ShouldBeLessThanOrEqualTo(330_000L);
-    }
-
-    [Fact]
-    public void ClassRulesAtTheLimitTakeThousandsOfStepsToTestOneFile()
-    {
-        var matchers = AtTheLimit(string.Concat(Enumerable.Repeat("[a-cx-z]", 62)));
-
-        var (steps, milliseconds) = Test(matchers, new string('a', 255));
-
-        output.WriteLine($"{matchers.Count} rules, path of 255 characters: {steps:N0} steps, {milliseconds:F2} ms");
-        matchers.Count.ShouldBe(1_200);
-        steps.ShouldBeLessThanOrEqualTo(500_000L);
-    }
-
-    [Fact]
-    public void RulesAtTheCountLimitThatALiteralRejectsTakeNoSteps()
+    public void RulesAtTheCountLimitThatALiteralRejectsReadAFewCharactersEach()
     {
         var matchers = AtTheLimit("foo{0}*.bar");
+        long steps = 0;
 
-        var (steps, milliseconds) = Test(matchers, "src/module1/sub2/file3.cs");
+        foreach (var matcher in matchers) matcher.IsMatch("src/module1/sub2/file3.cs", ref steps);
 
-        output.WriteLine($"{matchers.Count} rules `fooN*.bar`: {steps:N0} steps, {milliseconds:F3} ms (the search for the literal)");
-        steps.ShouldBe(0);
+        output.WriteLine($"{matchers.Count} rules `fooN*.bar`: {steps:N0} steps");
+        steps.ShouldBeLessThanOrEqualTo(matchers.Count * 3L, "the search skips to an f and reads at most `fi`");
     }
 
     [Fact]
     public void ADirectoryOnlyRuleTakesOnePassOverAFileAThousandDirectoriesDeep()
     {
-        var matcher = GlobMatcher.Compile(Stars, string.Empty);
-        var path = string.Concat(Enumerable.Repeat("a/", 2_040)) + "file";
+        var glob = Repeat("*a", 248) + "*b";
+        var matcher = GlobMatcher.Compile(glob, string.Empty);
+        var path = Repeat("a/", 2_040) + "file";
 
-        var (steps, milliseconds) = Test([matcher], path, beneath: true);
+        long steps = 0;
+        var clock = Stopwatch.StartNew();
+        matcher.IsMatchBeneath(path, ref steps);
 
-        output.WriteLine($"one rule `*a` x248 `*b/`, path 2,040 directories deep: {steps:N0} steps, {milliseconds:F3} ms");
-        steps.ShouldBeLessThanOrEqualTo(2L * (matcher.TokenCount + 1) * (path.Length + 2));
+        output.WriteLine($"one rule `*a` x248 `*b/`, path 2,040 directories deep: {steps:N0} steps, {clock.Elapsed.TotalMilliseconds:F3} ms");
+        steps.ShouldBeLessThanOrEqualTo(Bound(matcher, glob, path));
     }
 
     [Fact]
     public void TheMemoryTheRulesAtTheLimitsAreBuiltFromIsAFewMegabytes()
     {
         // Allocated while the rules are built, which is more than they keep, and counted for this thread so that the
-        // tests running beside this one do not move it. What is kept, measured in a process of its own, is at most
-        // 15 MiB (class-heavy rules), 8 MiB (question marks), 3 MiB (plain rules) and under 1 MiB (wildcards).
+        // tests running beside this one do not move it.
         var shapes = new (string Name, string Glob, long Allowed)[]
         {
-            ("plain rules", "generated{0}.txt", 32L * 1024 * 1024),
-            ("wildcard rules of 498 characters", Stars, 4L * 1024 * 1024),
-            ("class-heavy rules", string.Concat(Enumerable.Repeat("[a-cx-z]", 62)), 150L * 1024 * 1024),
-            ("rules of 498 question marks", "a" + new string('?', 498), 50L * 1024 * 1024),
+            ("plain rules", "generated{0}.txt", 16L * 1024 * 1024),
+            ("wildcard rules of 498 characters", Repeat("*a", 248) + "*b", 4L * 1024 * 1024),
+            ("class-heavy rules", Repeat("[a-cx-z]", 62), 16L * 1024 * 1024),
+            ("rules of 498 question marks", "a" + new string('?', 498), 16L * 1024 * 1024),
         };
 
         foreach (var (name, glob, allowed) in shapes)
@@ -154,16 +154,6 @@ public sealed class IgnoreRuleCostTests(ITestOutputHelper output)
             output.WriteLine($"{name}: {rules.Count} rules allocate {allocated / 1024.0 / 1024.0:F2} MiB building");
             allocated.ShouldBeLessThan(allowed, name);
         }
-    }
-
-    /// <summary>Whether any matches, having tested every one as a walk must, since the last to match decides.</summary>
-    private static bool EveryRuleTested(List<System.Text.RegularExpressions.Regex> expressions, string path)
-    {
-        var any = false;
-        foreach (var expression in expressions)
-            if (expression.IsMatch(path)) any = true;
-
-        return any;
     }
 
     [Fact]
@@ -184,74 +174,5 @@ public sealed class IgnoreRuleCostTests(ITestOutputHelper output)
             output.WriteLine($"{count:N0} lines: {milliseconds:F1} ms, {allocated / 1024.0 / 1024.0:F1} MiB allocated");
             rules.Count.ShouldBe(count);
         }
-    }
-
-    [ReleaseBuildFact]
-    public void TestingFilesAgainstManyRulesTakesLessThanTheRegularExpressionsDid()
-    {
-        // The rules and paths of the figures in docs/04-ingestion.md, against the regular expression
-        // translation the matcher replaced (GlobOracle). Printed, and compared only for the answer.
-        foreach (var (rules, paths) in new[] { (469, 20_000), (3_000, 30_000) })
-        {
-            var lines = Enumerable.Range(0, rules).Select(i => $"foo{i}*.bar").ToList();
-            var random = new Random(1);
-            var files = Enumerable.Range(0, paths)
-                .Select(i => $"src/module{random.Next(200)}/sub{random.Next(20)}/file{i}{(random.Next(50) == 0 ? ".bar" : ".cs")}")
-                .ToList();
-
-            var set = new IgnoreRuleSet();
-            for (var i = 0; i < lines.Count; i += 1_000) set.AddPatterns(lines.Skip(i).Take(1_000), "bench");
-
-            var clock = Stopwatch.StartNew();
-            var ignored = files.Count(f => set.IsIgnored(f, isDirectory: false));
-            var matcherSeconds = clock.Elapsed.TotalSeconds;
-
-            var expressions = lines.Select(l => GlobOracle.Compile(l, string.Empty)).ToList();
-            clock.Restart();
-            var hits = files.Count(f => EveryRuleTested(expressions, f));
-            var expressionSeconds = clock.Elapsed.TotalSeconds;
-
-            output.WriteLine($"{rules:N0} rules x {paths:N0} paths: matcher {matcherSeconds:F2} s, regular expressions {expressionSeconds:F2} s ({ignored} ignored, {hits} matched)");
-            ignored.ShouldBe(hits);
-        }
-    }
-
-    [ReleaseBuildFact]
-    public void RulesNoLiteralCanRejectTakeLessThanTheRegularExpressionsDidToo()
-    {
-        // `*a*b*c*.cs` with three letters at random, against paths that all end in `.cs`: every pair runs the whole match.
-        var random = new Random(3);
-        var lines = Enumerable.Range(0, 469)
-            .Select(_ => $"*{(char)('a' + random.Next(26))}*{(char)('a' + random.Next(26))}*{(char)('a' + random.Next(26))}*.cs")
-            .ToList();
-        var files = Enumerable.Range(0, 20_000).Select(i => $"src/module{random.Next(200)}/sub{random.Next(20)}/component_{i}.cs").ToList();
-
-        var set = new IgnoreRuleSet();
-        set.AddPatterns(lines, "bench");
-        var clock = Stopwatch.StartNew();
-        var ignored = files.Count(f => set.IsIgnored(f, isDirectory: false));
-        var matcherSeconds = clock.Elapsed.TotalSeconds;
-
-        var expressions = lines.Select(l => GlobOracle.Compile(l, string.Empty)).ToList();
-        clock.Restart();
-        var hits = files.Count(f => EveryRuleTested(expressions, f));
-        var expressionSeconds = clock.Elapsed.TotalSeconds;
-
-        output.WriteLine($"469 rules x 20,000 paths, none rejected by a literal: matcher {matcherSeconds:F2} s, regular expressions {expressionSeconds:F2} s ({ignored} ignored, {hits} matched)");
-        ignored.ShouldBe(hits);
-    }
-}
-
-/// <summary>
-/// A fact that runs in a release build and is reported as skipped, with the reason, in a debug one, where the times it
-/// prints are not the ones the documentation gives and the regular expressions take a minute.
-/// </summary>
-public sealed class ReleaseBuildFactAttribute : FactAttribute
-{
-    public ReleaseBuildFactAttribute()
-    {
-#if DEBUG
-        Skip = "a timing comparison, which means something in a release build: dotnet test tests/Dexicon.Tests -c Release --filter Category=Benchmark";
-#endif
     }
 }

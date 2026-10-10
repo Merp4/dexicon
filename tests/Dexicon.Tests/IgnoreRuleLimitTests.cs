@@ -28,7 +28,7 @@ public sealed class IgnoreRuleLimitTests : IDisposable
     }
 
     private static string Rules(int count, int from = 0) =>
-        string.Join("\n", Enumerable.Range(from, count).Select(i => $"generated{i}.txt")) + "\n";
+        string.Join("\n", Enumerable.Range(from, count).Select(i => $"g{i}")) + "\n";
 
     /// <summary>A line of weight 500: a star, and the any-depth prefix and each character as tokens, in a pattern with a wildcard.</summary>
     private static string HeavyLine(int n) => $"*h{n:D4}" + new string('x', 493);
@@ -41,25 +41,23 @@ public sealed class IgnoreRuleLimitTests : IDisposable
     public void TheLimitsAre()
     {
         IgnoreRuleSet.MaxRulesPerSource.ShouldBe(5_000);
-        IgnoreRuleSet.MaxWeightPerSource.ShouldBe(12_000);
+        IgnoreRuleSet.MaxWeightPerSource.ShouldBe(60_000);
         IgnoreRuleSet.MaxRulesPerList.ShouldBe(1_000);
-        IgnoreRuleSet.MaxWeightPerList.ShouldBe(12_000);
+        IgnoreRuleSet.MaxWeightPerList.ShouldBe(20_000);
         WarningSink.MaxKept.ShouldBe(20);
     }
 
     [Fact]
-    public void AWildcardPatternWeighsItsTokensAndAPlainOneAtwentiethOfThem()
+    public void APatternWeighsOnePerTokenAndAClassSixteenMoreAndOnePerRange()
     {
-        // The any-depth prefix is a token. A star is one, a class is one and one for each range.
+        // The any-depth prefix is a token. A star is one, a class is sixteen and one for each range.
         GlobMatcher.Compile("*.md", "").Weight.ShouldBe(5, "prefix, star, and three characters");
         GlobMatcher.Compile("docs/**/*.md", "").Weight.ShouldBe(10);
-        GlobMatcher.Compile("*[a-cx-z]", "").Weight.ShouldBe(1 + 1 + 1 + 2);
+        GlobMatcher.Compile("*[a-cx-z]", "").Weight.ShouldBe(1 + 1 + 16 + 2);
         GlobMatcher.Compile("a/**", "").Weight.ShouldBe(3);
-
-        GlobMatcher.Compile("a", "").Weight.ShouldBe(1, "two tokens, at least one");
-        GlobMatcher.Compile(new string('a', 39), "").Weight.ShouldBe(2, "40 tokens");
-        GlobMatcher.Compile(new string('a', 40), "").Weight.ShouldBe(3, "41 tokens round up");
-        GlobMatcher.Compile("[abcdef]x?", "").Weight.ShouldBe(1, "ten tokens, no wildcard");
+        GlobMatcher.Compile("a", "").Weight.ShouldBe(2, "the prefix and the character");
+        GlobMatcher.Compile(new string('a', 39), "").Weight.ShouldBe(40);
+        GlobMatcher.Compile("[abcdef]x?", "").Weight.ShouldBe(1 + 16 + 6 + 1 + 1);
     }
 
     // ---- the rule count of the ignore files -------------------------------------------------------------------------
@@ -68,7 +66,7 @@ public sealed class IgnoreRuleLimitTests : IDisposable
     public void ADexiconignoreOfExactlyTheRuleLimitIsRead()
     {
         Write(WorkspaceWalker.IgnoreFileName, Rules(IgnoreRuleSet.MaxRulesPerSource));
-        Write("generated4999.txt", "x");
+        Write("g4999", "x");
         Write("keep.txt", "x");
 
         Walk().Files.Select(f => f.RelativePath).OrderBy(p => p, StringComparer.Ordinal)
@@ -81,7 +79,8 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         Write(WorkspaceWalker.IgnoreFileName, Rules(IgnoreRuleSet.MaxRulesPerSource + 1));
 
         Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldBe(
-            ".dexiconignore line 5001 ('generated5000.txt') is past the limit of 5,000 rules or 12,000 pattern parts for one source; reduce the file");
+            ".dexiconignore line 5001 ('g5000') is past the limit of 5,000 rules or 60,000 pattern parts for one source; "
+            + "the files using most so far are .dexiconignore (5,000 rules, 28,890 parts); reduce them, or turn off use_gitignore for the source");
     }
 
     [Fact]
@@ -90,17 +89,17 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         Write(".gitignore", Rules(IgnoreRuleSet.MaxRulesPerSource + 5));
 
         Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldBe(
-            ".gitignore line 5001 ('generated5000.txt') is past the limit of 5,000 rules or 12,000 pattern parts for one source; "
-            + "reduce the file, or turn off use_gitignore for the source");
+            ".gitignore line 5001 ('g5000') is past the limit of 5,000 rules or 60,000 pattern parts for one source; "
+            + "the files using most so far are .gitignore (5,000 rules, 28,890 parts); reduce them, or turn off use_gitignore for the source");
     }
 
     [Fact]
     public void WithGitignoreTurnedOffTheSameFileIsNotReadAndTheWalkSucceeds()
     {
         Write(".gitignore", Rules(IgnoreRuleSet.MaxRulesPerSource + 5));
-        Write("generated0.txt", "x");
+        Write("g0", "x");
 
-        Walk(useGitignore: false).Files.Select(f => f.RelativePath).ShouldContain("generated0.txt");
+        Walk(useGitignore: false).Files.Select(f => f.RelativePath).ShouldContain("g0");
     }
 
     [Fact]
@@ -109,7 +108,7 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         Write(".git/info/exclude", Rules(IgnoreRuleSet.MaxRulesPerSource + 1));
 
         Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldStartWith(
-            ".git/info/exclude line 5001 ('generated5000.txt') is past the limit");
+            ".git/info/exclude line 5001 ('g5000') is past the limit");
     }
 
     [Fact]
@@ -125,7 +124,7 @@ public sealed class IgnoreRuleLimitTests : IDisposable
     [Fact]
     public void RulesOfExactlyTheWeightLimitAreRead()
     {
-        Write(WorkspaceWalker.IgnoreFileName, string.Join("\n", Enumerable.Range(0, 24).Select(HeavyLine)) + "\n");
+        Write(WorkspaceWalker.IgnoreFileName, string.Join("\n", Enumerable.Range(0, 120).Select(HeavyLine)) + "\n");
 
         Should.NotThrow(() => Walk());
     }
@@ -133,31 +132,31 @@ public sealed class IgnoreRuleLimitTests : IDisposable
     [Fact]
     public void TheRuleThatPassesTheWeightLimitFailsTheWalkNamingIt()
     {
-        Write(WorkspaceWalker.IgnoreFileName, string.Join("\n", Enumerable.Range(0, 25).Select(HeavyLine)) + "\n");
+        Write(WorkspaceWalker.IgnoreFileName, string.Join("\n", Enumerable.Range(0, 121).Select(HeavyLine)) + "\n");
 
         Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldStartWith(
-            ".dexiconignore line 25 ('*h0024");
+            ".dexiconignore line 121 ('*h0120");
     }
 
     [Fact]
     public void ARuleOfWeightOnePastTheLimitFailsTheWalk()
     {
-        // 24 lines of 500 are the limit exactly (above); `z` weighs 1.
-        Write(WorkspaceWalker.IgnoreFileName, string.Join("\n", Enumerable.Range(0, 24).Select(HeavyLine)) + "\nz\n");
+        // 119 lines of 500 and one of 501 are 60,001.
+        Write(WorkspaceWalker.IgnoreFileName, string.Join("\n", Enumerable.Range(0, 119).Select(HeavyLine)) + "\n" + HeavyLine(119) + "x\n");
 
-        Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldStartWith(".dexiconignore line 25 ('z') is past the limit");
+        Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldStartWith(".dexiconignore line 120 ('*h0119");
     }
 
     [Fact]
     public void AClassHeavyFileIsHeldToTheWeightToo()
     {
-        // A star and 45 classes of 3 ranges: 1 + 1 + 45 x 4 = 182 a rule, so 65 rules are 11,830 and the 66th passes 12,000.
+        // A star and 45 classes of 3 ranges: 1 + 1 + 45 x 19 = 857 a rule, so 70 rules are 59,990 and the 71st passes 60,000.
         var line = "*" + string.Concat(Enumerable.Repeat("[a-cx-zA-C]", 45));
-        GlobMatcher.Compile(line, "").Weight.ShouldBe(1 + 1 + 45 * (1 + 3));
+        GlobMatcher.Compile(line, "").Weight.ShouldBe(1 + 1 + 45 * (16 + 3));
 
-        Write(WorkspaceWalker.IgnoreFileName, string.Join("\n", Enumerable.Repeat(line, 66)) + "\n");
+        Write(WorkspaceWalker.IgnoreFileName, string.Join("\n", Enumerable.Repeat(line, 71)) + "\n");
 
-        Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldStartWith(".dexiconignore line 66 ");
+        Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldStartWith(".dexiconignore line 71 ");
     }
 
     // ---- one budget for the files, in a stable order ------------------------------------------------------------------
@@ -182,7 +181,27 @@ public sealed class IgnoreRuleLimitTests : IDisposable
 
         for (var pass = 0; pass < 3; pass++)
             Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldStartWith(
-                "b/.gitignore line 2001 ('generated2000.txt') is past the limit");
+                "b/.gitignore line 2001 ('g2000') is past the limit");
+    }
+
+    private static int WeightOf(int count, int from = 0) =>
+        Enumerable.Range(from, count).Sum(i => GlobMatcher.Compile($"g{i}", string.Empty).Weight);
+
+    [Fact]
+    public void TheMessageNamesTheFilesThatUsedTheBudgetAndNotOnlyTheOneThatPassedIt()
+    {
+        // Three files, the last one small: it is where the budget runs out, and the first two are where it went.
+        Write("a/.gitignore", Rules(3_000));
+        Write("b/.gitignore", Rules(1_500));
+        Write("c/.gitignore", Rules(1_000));
+
+        var thrown = Should.Throw<IgnorePatternException>(() => Walk());
+
+        thrown.Message.ShouldBe(
+            "c/.gitignore line 501 ('g500') is past the limit of 5,000 rules or 60,000 pattern parts for one source; "
+            + $"the files using most so far are a/.gitignore (3,000 rules, {WeightOf(3_000):N0} parts), "
+            + $"b/.gitignore (1,500 rules, {WeightOf(1_500):N0} parts), c/.gitignore (500 rules, {WeightOf(500):N0} parts); "
+            + "reduce them, or turn off use_gitignore for the source");
     }
 
     [Fact]
@@ -265,16 +284,16 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         var exclude = Enumerable.Range(0, IgnoreRuleSet.MaxRulesPerList + 1).Select(i => $"x{i}").ToArray();
 
         Should.Throw<IgnorePatternException>(() => Walk(exclude: exclude)).Message.ShouldBe(
-            "excludeGlobs[1000] ('x1000') is past the limit of 1,000 rules or 12,000 pattern parts for one list; shorten the list");
+            "excludeGlobs[1000] ('x1000') is past the limit of 1,000 rules or 20,000 pattern parts for one list; shorten the list");
     }
 
     [Fact]
     public void AListPastItsWeightLimitFailsTheWalkNamingTheEntry()
     {
-        var include = Enumerable.Range(0, 25).Select(HeavyLine).ToArray();
+        var include = Enumerable.Range(0, 41).Select(HeavyLine).ToArray();
 
         Should.Throw<IgnorePatternException>(() => Walk(include: include)).Message.ShouldStartWith(
-            "includeGlobs[24] ('*h0024");
+            "includeGlobs[40] ('*h0040");
     }
 
     [Fact]
@@ -282,11 +301,11 @@ public sealed class IgnoreRuleLimitTests : IDisposable
     {
         var atLimit = Enumerable.Range(0, IgnoreRuleSet.MaxRulesPerList).Select(i => $"x{i}").ToList();
         var over = atLimit.Append("one-too-many").ToList();
-        var heavy = Enumerable.Range(0, 25).Select(HeavyLine).ToList();
+        var heavy = Enumerable.Range(0, 41).Select(HeavyLine).ToList();
 
         SourceFilters.FirstUnusable(atLimit).ShouldBeNull();
         SourceFilters.FirstUnusable(over).ShouldBe(IgnoreRuleSet.MaxRulesPerList);
-        SourceFilters.FirstUnusable(heavy).ShouldBe(24);
+        SourceFilters.FirstUnusable(heavy).ShouldBe(40);
         SourceFilters.FirstUnusable(over, SourceFilters.GlobReader.WalkAndGit).ShouldBe(IgnoreRuleSet.MaxRulesPerList);
         SourceFilters.FirstUnusable(over, SourceFilters.GlobReader.Git).ShouldBeNull("git reads a history source's list, not the walk");
     }

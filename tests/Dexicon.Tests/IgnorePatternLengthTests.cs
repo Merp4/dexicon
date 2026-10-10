@@ -119,7 +119,7 @@ public sealed class IgnorePatternLengthTests : IDisposable
         refusal.Status.ShouldBe(400);
         refusal.Detail.ShouldBe(
             "includeGlobs[1] (include[1] for the configure tools) is null, or a pattern that does not compile (such as [z-a]) "
-            + "or is longer than 500 characters, or the list goes past 1,000 rules or 12,000 pattern parts. Nothing was saved.");
+            + "or is longer than 500 characters, or the list goes past 1,000 rules or 20,000 pattern parts. Nothing was saved.");
     }
 
     [Fact]
