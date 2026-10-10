@@ -58,6 +58,7 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         GlobMatcher.Compile("a", "").Weight.ShouldBe(2, "the prefix and the character");
         GlobMatcher.Compile(new string('a', 39), "").Weight.ShouldBe(40);
         GlobMatcher.Compile("[abcdef]x?", "").Weight.ShouldBe(1 + 16 + 6 + 1 + 1);
+        GlobMatcher.Compile("a[b", "").Weight.ShouldBe(4, "an unterminated bracket is a literal token");
     }
 
     // ---- the rule count of the ignore files -------------------------------------------------------------------------
