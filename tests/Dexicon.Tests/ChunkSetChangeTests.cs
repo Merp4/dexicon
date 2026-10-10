@@ -141,6 +141,35 @@ public sealed class ChunkSetChangeTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task APatternAloneSentToACustomSetIsCompiledBeforeItIsStored()
+    {
+        await using (var db = _harness.NewContext())
+            await db.ChunkSets.ExecuteUpdateAsync(u => u
+                .SetProperty(s => s.BoundaryMode, "custom").SetProperty(s => s.CustomBoundaryPattern, "^#"));
+
+        var bad = await PatchAsync(new UpdateChunkSetRequest(CustomBoundaryPattern: "[z-a]"));
+        var good = await PatchAsync(new UpdateChunkSetRequest(CustomBoundaryPattern: "^##"));
+
+        bad.ShouldBeOfType<ProblemHttpResult>().ProblemDetails.Title.ShouldBe("Invalid custom boundary pattern");
+        good.ShouldBeOfType<Ok<ChunkSetUpdated>>();
+        await using var fresh = _harness.NewContext();
+        (await fresh.ChunkSets.AsNoTracking().SingleAsync()).CustomBoundaryPattern.ShouldBe("^##");
+    }
+
+    [Fact]
+    public async Task AnOverlapSentAgainAtTheStoredValueIsNotAChangeEvenWhenItIsNotBelowTheSize()
+    {
+        await using (var db = _harness.NewContext())
+            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.ChunkSize, 100).SetProperty(s => s.ChunkOverlap, 500));
+
+        var same = await PatchAsync(new UpdateChunkSetRequest(Description: "edited", ChunkOverlap: 500));
+        var changed = await PatchAsync(new UpdateChunkSetRequest(ChunkOverlap: 501));
+
+        same.ShouldBeOfType<Ok<ChunkSetUpdated>>();
+        changed.ShouldBeOfType<ProblemHttpResult>().ProblemDetails.Title.ShouldBe("chunkOverlap must be smaller than chunkSize");
+    }
+
+    [Fact]
     public async Task APatternSentWhileTheModeIsNotCustomIsNotJudgedAgainstAnUnknownModeStoredBeforeTheRule()
     {
         await using (var db = _harness.NewContext())
