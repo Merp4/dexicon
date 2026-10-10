@@ -898,20 +898,26 @@ public sealed class WorkspaceWalker
 
     /// <summary>
     /// What a message about the walk's budget tells the operator. The file that passed it is rarely the file that used
-    /// it up, so the three files that used most are named, this one among them, and the way out that skips every
-    /// <c>.gitignore</c> is given whichever file it was.
+    /// it up, so the three files that used most are named, this one among them. The way out that skips every
+    /// <c>.gitignore</c> is given whichever file passed the limit, but only when a <c>.gitignore</c> or
+    /// <c>.git/info/exclude</c> has used some of the budget; a <c>.dexiconignore</c> is read whatever
+    /// <c>use_gitignore</c> says, so the setting frees nothing when the files using the budget are all of that name.
     /// </summary>
     private static string BudgetRemedy(ReadState state, string label, int rules, int weight)
     {
-        var biggest = state.Files.Append((Label: label, Rules: rules, Weight: weight))
+        var used = state.Files.Append((Label: label, Rules: rules, Weight: weight))
             .Where(file => file.Rules > 0)
+            .ToList();
+        var biggest = used
             .OrderByDescending(file => file.Rules)
             .ThenByDescending(file => file.Weight)
             .ThenBy(file => file.Label, StringComparer.Ordinal)
             .Take(3)
             .Select(file => $"{file.Label} ({file.Rules:N0} rules, {file.Weight:N0} parts)");
+        var gitFilesUsed = used.Any(file => !file.Label.EndsWith(IgnoreFileName, StringComparison.Ordinal));
 
-        return $"the files using most so far are {string.Join(", ", biggest)}; reduce them, or turn off use_gitignore for the source";
+        return $"the files using most so far are {string.Join(", ", biggest)}; reduce them"
+            + (gitFilesUsed ? ", or turn off use_gitignore for the source" : string.Empty);
     }
 
     private static string FileRemedy(bool ownFile) =>

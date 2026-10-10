@@ -48,7 +48,7 @@ public sealed class IgnoreRuleLimitTests : IDisposable
     }
 
     [Fact]
-    public void APatternWeighsOnePerTokenAndAClassSixteenMoreAndOnePerRange()
+    public void APatternWeighsOnePerTokenAndAClassSixteenMoreAndOnePerMember()
     {
         // The any-depth prefix is a token. A star is one, a class is sixteen and one for each range.
         GlobMatcher.Compile("*.md", "").Weight.ShouldBe(5, "prefix, star, and three characters");
@@ -59,6 +59,9 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         GlobMatcher.Compile(new string('a', 39), "").Weight.ShouldBe(40);
         GlobMatcher.Compile("[abcdef]x?", "").Weight.ShouldBe(1 + 16 + 6 + 1 + 1);
         GlobMatcher.Compile("a[b", "").Weight.ShouldBe(4, "an unterminated bracket is a literal token");
+        GlobMatcher.Compile("[+-9]", "").Weight.ShouldBe(1 + 16 + 2, "a range over `/` is two members, as no class matches `/`");
+        GlobMatcher.Compile("[+-.0-9]", "").Weight.ShouldBe(1 + 16 + 2, "the same two members written without the `/`");
+        GlobMatcher.Compile("[abc]", "").Weight.ShouldBe(1 + 16 + 3, "each character of a class is a member");
     }
 
     // ---- the rule count of the ignore files -------------------------------------------------------------------------
@@ -81,7 +84,19 @@ public sealed class IgnoreRuleLimitTests : IDisposable
 
         Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldBe(
             ".dexiconignore line 5001 ('g5000') is past the limit of 5,000 rules or 60,000 pattern parts for one source; "
-            + "the files using most so far are .dexiconignore (5,000 rules, 28,890 parts); reduce them, or turn off use_gitignore for the source");
+            + "the files using most so far are .dexiconignore (5,000 rules, 28,890 parts); reduce them");
+    }
+
+    [Fact]
+    public void TheWayOutThatTurnsGitignoreOffIsOfferedWhenAGitignoreHasUsedPartOfTheBudget()
+    {
+        // The .dexiconignore is read whatever use_gitignore says, so the setting helps only by freeing what the
+        // .gitignore files used: 3,000 rules here, with the .dexiconignore's 2,500 then fitting.
+        Write(".gitignore", Rules(3_000));
+        Write(WorkspaceWalker.IgnoreFileName, Rules(2_500, 3_000));
+
+        Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldEndWith(
+            "reduce them, or turn off use_gitignore for the source");
     }
 
     [Fact]
