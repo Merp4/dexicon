@@ -346,6 +346,93 @@ public sealed class GlobMatcherTests
         allocated.ShouldBeLessThan(1024 * 1024, $"1,000 calls allocated {allocated:N0} bytes");
     }
 
+    [Theory]
+    [InlineData('a', true)]
+    [InlineData('c', true)]
+    [InlineData('d', true)]
+    [InlineData('e', true)]
+    [InlineData('f', true)]
+    [InlineData('q', true)]
+    [InlineData('x', true)]
+    [InlineData('z', true)]
+    [InlineData('`', false)]
+    [InlineData('g', false)]
+    [InlineData('p', false)]
+    [InlineData('r', false)]
+    [InlineData('w', false)]
+    [InlineData('{', false)]
+    [InlineData('ж', false)]
+    [InlineData('￿', false)]
+    public void AClassFindsACharacterInMembersGivenOutOfOrderOverlappingTouchingAndRepeated(char c, bool member)
+    {
+        // a-c and d-f touch, c-e overlaps both, x-z comes first in the list, and q is given twice.
+        var members = new (char, char)[] { ('x', 'z'), ('a', 'c'), ('d', 'f'), ('c', 'e'), ('q', 'q'), ('q', 'q') };
+
+        new GlobMatcher.CharClass(members, negated: false).Matches(c).ShouldBe(member);
+        new GlobMatcher.CharClass(members, negated: true).Matches(c).ShouldBe(!member);
+    }
+
+    [Fact]
+    public void AClassOfTheLastCharactersOfTheRangeFindsThemAndDoesNotWrapAround()
+    {
+        var cls = new GlobMatcher.CharClass([('￰', '￿'), ('￯', '￯')], negated: false);
+
+        cls.Matches('￿').ShouldBeTrue();
+        cls.Matches('￯').ShouldBeTrue();
+        cls.Matches('￮').ShouldBeFalse();
+        cls.Matches('\0').ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AClassHoldingOneCaseOfANonAsciiLetterMatchesTheOtherCase()
+    {
+        // U+03B9 is small iota and U+0399 capital iota; the class holds a character if it holds any case of it.
+        var cls = new GlobMatcher.CharClass([('а', 'а'), ('ι', 'ι')], negated: false);
+
+        cls.Matches('Ι').ShouldBeTrue();
+        cls.Matches('А').ShouldBeTrue("capital a of Cyrillic against the small one");
+        cls.Matches('κ').ShouldBeFalse("small kappa");
+    }
+
+    [Fact]
+    public void TheTimeOfAClassOfManyMembersDoesNotGrowWithTheirNumber()
+    {
+        // The same 116 rules of `*[members]` against 2,046 Greek letters, once with 495 members and once with 5, every
+        // second character from U+0100 so that none merge and none is the iota the path is made of. Scanning the members
+        // for each case variant of each position made the first set 8 to 15 times slower than the second; the search of
+        // the merged members makes it about as fast. The two are timed alternately, best of seven, so that a loaded host
+        // slows both, and the bound is a ratio and not a time.
+        RuleBudget Budget() => RuleBudget.ForIgnoreFiles();
+        IgnoreRuleSet Rules(int members)
+        {
+            var text = string.Concat(Enumerable.Range(0, members).Select(i => (char)(0x0100 + 2 * i)));
+            var set = new IgnoreRuleSet();
+            var budget = Budget();
+            for (var added = 0; added < 116; added++) set.AddPatterns([$"*[{text}]"], "test", budget: budget);
+            return set;
+        }
+
+        var many = Rules(495);
+        var few = Rules(5);
+        var path = new string('ι', 2_046);
+        many.IsIgnored(path, isDirectory: false).ShouldBeFalse();
+        few.IsIgnored(path, isDirectory: false).ShouldBeFalse();
+
+        var bestMany = TimeSpan.MaxValue;
+        var bestFew = TimeSpan.MaxValue;
+        for (var run = 0; run < 7; run++)
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            many.IsIgnored(path, isDirectory: false);
+            if (clock.Elapsed < bestMany) bestMany = clock.Elapsed;
+
+            clock.Restart();
+            few.IsIgnored(path, isDirectory: false);
+            if (clock.Elapsed < bestFew) bestFew = clock.Elapsed;
+        }
+
+        bestMany.ShouldBeLessThan(bestFew * 4, $"495 members {bestMany.TotalMilliseconds:F1} ms, 5 members {bestFew.TotalMilliseconds:F1} ms");
+    }
     [Fact]
     public void ARuleHoldsOnlyItsTokens()
     {

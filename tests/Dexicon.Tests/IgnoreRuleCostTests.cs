@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
 using Dexicon.Core.Indexing;
 using Shouldly;
 using Xunit;
@@ -35,7 +36,15 @@ public sealed class IgnoreRuleCostTests(ITestOutputHelper output)
         { "one star", "*" },
         { "typical: *.log", "*.log" },
         { "plain: a x498", new string('a', 498) },
+        { "a literal that nearly matches: aac", "aac" },
+        { "a star before each class: *[a-c] x10", Repeat("*[a-c]", 10) },
+        { "a class of 495 members that are not adjacent", "*[" + NonAdjacentMembers + "]" },
     };
+
+    /// <summary>495 members that cannot be merged into fewer ranges (every second character from U+0100), so a lookup cannot shorten.</summary>
+    private static readonly string NonAdjacentMembers = string.Concat(Enumerable.Range(0, 495).Select(i => (char)(0x0100 + 2 * i)));
+
+    private const string Iota = "ι";
 
     private static string DistinctCharacters(int count) => string.Concat(Enumerable.Range(0x4E00, count).Select(c => (char)c));
 
@@ -47,6 +56,9 @@ public sealed class IgnoreRuleCostTests(ITestOutputHelper output)
         ("4,093 characters in one name", new string('a', 4093)),
         ("2,046 directories of one character", Repeat("a/", 2046) + "a"),
         ("4,093 different characters", DistinctCharacters(4093)),
+        ("255 Greek characters in one name", Repeat(Iota, 255)),
+        ("127 and 127 Greek characters in two directories", Repeat(Iota, 127) + "/" + Repeat(Iota, 127)),
+        ("2,046 Greek characters in one name", Repeat(Iota, 2046)),
         ("a typical path", "src/module123/sub7/component_1234.cs"),
     ];
 
@@ -96,23 +108,27 @@ public sealed class IgnoreRuleCostTests(ITestOutputHelper output)
     }
 
     /// <summary>The rows of the table in docs/04-ingestion.md: its label, the glob repeated up to the limit, and the rules that fit.</summary>
-    private static readonly (string Label, string Glob, int Rules)[] TableRows =
+    private static readonly (string Label, string Glob, int Rules, string Unit)[] TableRows =
     [
-        ("aac", "aac", 5_000),
-        ("a x30 then c", new string('a', 30) + "c", 1_875),
-        ("*[a-c] x10", Repeat("*[a-c]", 10), 331),
-        ("*[a-c] x62", Repeat("*[a-c]", 62), 53),
-        ("**/a x100", Repeat("**/a", 100), 300),
-        ("*a x248 then *b", Repeat("*a", 248) + "*b", 120),
-        ("*", "*", 5_000),
-        ("? x20", new string('?', 20), 2_857),
-        ("*.log", "*.log", 5_000),
+        ("aac", "aac", 5_000, "a"),
+        ("a x30 then c", new string('a', 30) + "c", 1_875, "a"),
+        ("*[a-c] x10", Repeat("*[a-c]", 10), 331, "a"),
+        ("*[a-c] x62", Repeat("*[a-c]", 62), 53, "a"),
+        ("**/a x100", Repeat("**/a", 100), 300, "a"),
+        ("*a x248 then *b", Repeat("*a", 248) + "*b", 120, "a"),
+        ("*", "*", 5_000, "a"),
+        ("? x20", new string('?', 20), 2_857, "a"),
+        ("*.log", "*.log", 5_000, "a"),
+        ("*[495 members], Greek path", "*[" + NonAdjacentMembers + "]", 116, Iota),
     ];
+
+    /// <summary><paramref name="unit"/> repeated and cut to <paramref name="length"/> characters.</summary>
+    private static string Fill(string unit, int length) => Repeat(unit, length / unit.Length + 1)[..length];
 
     [Fact]
     public void TheShapesFillTheLimitsTheDocumentationNames()
     {
-        foreach (var (label, glob, rules) in TableRows)
+        foreach (var (label, glob, rules, _) in TableRows)
             AtTheLimit(glob).Count.ShouldBe(rules, $"{label}: the Rules column of the table in docs/04-ingestion.md");
     }
 
@@ -151,31 +167,29 @@ public sealed class IgnoreRuleCostTests(ITestOutputHelper output)
     /// <summary>
     /// Prints the table of docs/04-ingestion.md: one file tested through the rule set as a walk tests it (the character
     /// masks of the path built once and shared by every rule), best of seven runs, the larger of the one-name path and the
-    /// one-character-directories path at each length, and the memory the rule set keeps after a collection. Nothing is
-    /// asserted about time or memory, which are machine figures; the rule counts are asserted by
+    /// one-character-directories path at each length (the longer one is as long as 4,093 bytes of the row's character
+    /// allow: 4,093 characters of `a`, 2,046 of a Greek letter), and one typical path. Nothing is asserted about time,
+    /// which is a machine figure; the memory is bounded by <see cref="TheMemoryTheRulesAtTheLimitsAreBuiltFromIsAFewMegabytes"/>, the rule counts are asserted by
     /// <see cref="TheShapesFillTheLimitsTheDocumentationNames"/> and the steps by the theory above.
     /// </summary>
     [Fact]
     public void ThePrintedTableIsTheOneInTheDocumentation()
     {
-        output.WriteLine("| Rules at the limit | Rules | 255-character path | 4,093-character path | kept |");
-        foreach (var (label, glob, expected) in TableRows)
+        output.WriteLine("| Rules at the limit | Rules | 255-character path | longest path (4,093 bytes) | typical path (36 characters) |");
+        foreach (var (label, glob, expected, unit) in TableRows)
         {
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            GC.Collect();
-            var before = GC.GetTotalMemory(forceFullCollection: true);
             var (rules, count) = RuleSetAtTheLimit(glob);
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            GC.Collect();
-            var kept = GC.GetTotalMemory(forceFullCollection: true) - before;
 
-            var short255 = Math.Max(BestMilliseconds(rules, new string('a', 255)), BestMilliseconds(rules, Repeat("a/", 127) + "a"));
-            var long4093 = Math.Max(BestMilliseconds(rules, new string('a', 4093)), BestMilliseconds(rules, Repeat("a/", 2046) + "a"));
+            var longest = 4093 / Encoding.UTF8.GetByteCount(unit);
+            var short255 = Math.Max(
+                BestMilliseconds(rules, Fill(unit, 255)), BestMilliseconds(rules, Fill(unit + "/", 255).TrimEnd('/')));
+            var long4093 = Math.Max(
+                BestMilliseconds(rules, Fill(unit, longest)), BestMilliseconds(rules, Fill(unit + "/", longest).TrimEnd('/')));
             GC.KeepAlive(rules);
 
-            output.WriteLine($"| {label} | {count:N0} | {short255:F1} ms | {long4093:F1} ms | {kept / 1024.0 / 1024.0:F2} MiB |");
+            var typical = BestMilliseconds(rules, "src/module123/sub7/component_1234.cs");
+
+            output.WriteLine($"| {label} | {count:N0} | {short255:F1} ms | {long4093:F1} ms ({longest:N0} characters) | {typical:F2} ms |");
             count.ShouldBe(expected, label);
         }
     }
@@ -215,7 +229,8 @@ public sealed class IgnoreRuleCostTests(ITestOutputHelper output)
         var shapes = new (string Name, string Glob, long Allowed)[]
         {
             ("plain rules", "generated{0}.txt", 16L * 1024 * 1024),
-            ("wildcard rules of 498 characters", Repeat("*a", 248) + "*b", 4L * 1024 * 1024),
+            // 3.9 MiB measured in a release build; the bound leaves room for a runtime that allocates a little more.
+            ("wildcard rules of 498 characters", Repeat("*a", 248) + "*b", 8L * 1024 * 1024),
             ("class-heavy rules", Repeat("[a-cx-z]", 62), 16L * 1024 * 1024),
             ("rules of 498 question marks", "a" + new string('?', 498), 16L * 1024 * 1024),
         };

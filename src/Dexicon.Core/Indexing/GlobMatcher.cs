@@ -53,7 +53,8 @@ internal sealed class GlobMatcher
 
     /// <summary>
     /// What the pattern costs to hold and to run, which a walk adds up against a limit: one for each token, and for a
-    /// class <see cref="ClassWeight"/> and one more for each range it holds.
+    /// class <see cref="ClassWeight"/> and one more for each member it holds (a single character, or a range; a range
+    /// that includes <c>/</c> is two members, since no class matches it).
     /// </summary>
     internal int Weight { get; }
 
@@ -452,7 +453,7 @@ internal sealed class GlobMatcher
 
         public CharClass(IReadOnlyList<(char Low, char High)> members, bool negated)
         {
-            _members = [.. members];
+            _members = Merge(members);
             _negated = negated;
 
             for (var c = 0; c < 128; c++)
@@ -489,10 +490,37 @@ internal sealed class GlobMatcher
             return found != _negated;
         }
 
+        /// <summary>
+        /// The members sorted by their first character, with ranges that overlap or touch joined, so that
+        /// <see cref="In"/> finds a character by binary search. A class of 495 members is then about nine comparisons
+        /// for each case variant of a non-ASCII character, where a scan of the members was 495.
+        /// </summary>
+        private static (char Low, char High)[] Merge(IReadOnlyList<(char Low, char High)> members)
+        {
+            var merged = new List<(char Low, char High)>(members.Count);
+            foreach (var (low, high) in members.OrderBy(m => m.Low).ThenBy(m => m.High))
+            {
+                if (merged.Count > 0 && low <= merged[^1].High + 1)
+                    merged[^1] = (merged[^1].Low, (char)Math.Max(merged[^1].High, high));
+                else
+                    merged.Add((low, high));
+            }
+
+            return [.. merged];
+        }
+
         private bool In(char c)
         {
-            foreach (var (low, high) in _members)
-                if (low <= c && c <= high) return true;
+            var from = 0;
+            var to = _members.Length - 1;
+            while (from <= to)
+            {
+                var middle = (from + to) >> 1;
+                var (low, high) = _members[middle];
+                if (c < low) to = middle - 1;
+                else if (c > high) from = middle + 1;
+                else return true;
+            }
 
             return false;
         }
