@@ -11,6 +11,7 @@ namespace Dexicon.Tests;
 /// and each added one. Every upload source is indexed on its own, so nothing failed: the corpus listed
 /// two, and a document attached under both was chunked, embedded and returned twice.
 /// </summary>
+[Collection(nameof(AttachmentLockCollection))]
 public sealed class UploadSourceUniquenessTests
 {
     private static bool IsTheSourceLookup(string sql) =>

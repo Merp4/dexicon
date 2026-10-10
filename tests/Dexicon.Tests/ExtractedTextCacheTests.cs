@@ -3,7 +3,9 @@ using Dexicon.Core.Configuration;
 using Dexicon.Core.Documents;
 using Dexicon.Core.Extraction;
 using Dexicon.Core.Indexing;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -56,6 +58,15 @@ public sealed class ExtractedTextCacheTests : IDisposable
     {
         var db = new CatalogDbContext(
             new DbContextOptionsBuilder<CatalogDbContext>().UseSqlite($"Data Source={_db};Pooling=False").Options);
+        db.Database.EnsureCreated();
+        return db;
+    }
+
+    private CatalogDbContext Db(IInterceptor watcher)
+    {
+        var db = new CatalogDbContext(
+            new DbContextOptionsBuilder<CatalogDbContext>().UseSqlite($"Data Source={_db};Pooling=False")
+                .AddInterceptors(watcher).Options);
         db.Database.EnsureCreated();
         return db;
     }
@@ -324,6 +335,89 @@ public sealed class ExtractedTextCacheTests : IDisposable
         await Read(cache, File("i.pdf", "one"), new Counting("read back"));
 
         db.ChangeTracker.Entries<FileText>().ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// Runs <see cref="Before"/> ahead of the next save that adds a cached text, once. A test uses it to
+    /// have another reader save the same row first, which is the window two reads of the same bytes have
+    /// between extracting and storing.
+    /// </summary>
+    private sealed class BeforeTheTextIsSaved : SaveChangesInterceptor
+    {
+        private int _fired;
+        public Func<Task>? Before { get; set; }
+
+        public bool Fired => Volatile.Read(ref _fired) == 1;
+
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (eventData.Context!.ChangeTracker.Entries<FileText>().Any(e => e.State == EntityState.Added)
+                && Interlocked.Exchange(ref _fired, 1) == 0)
+                await Before!();
+
+            return result;
+        }
+    }
+
+    private async Task SaveTheCompetingRowAsync(string name, string text)
+    {
+        var bytes = System.IO.File.ReadAllBytes(Path.Combine(_dir, name));
+        await using var other = Db();
+        other.FileTexts.Add(new FileText
+        {
+            Sha256 = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes)),
+            Extractor = nameof(Counting),
+            Text = text,
+            ExtractedChars = text.Length,
+            ExtractorVersion = ExtractorVersions.Current,
+            ExtractedUtc = DateTime.UtcNow,
+        });
+        await other.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Two reads of the same new bytes both find no cached text, both extract, and the second save fails on
+    /// the row's key. The read that lost has the text it extracted, so it returns it and the row the other
+    /// read saved stays. Without the catch the loser's read failed, and the file was recorded as failed.
+    /// </summary>
+    [Fact]
+    public async Task AReadThatLosesTheRaceToStoreItsTextReturnsItsOwnTextAndLeavesTheWinnersRow()
+    {
+        var race = new BeforeTheTextIsSaved();
+        await using var db = Db(race);
+        var cache = Cache(db);
+        var extractor = new Counting("text of the read that lost");
+        var file = File("race.pdf", "bytes read twice");
+        race.Before = () => SaveTheCompetingRowAsync("race.pdf", "text of the read that won");
+
+        var read = await Read(cache, file, extractor);
+
+        race.Fired.ShouldBeTrue("the other read has to have saved its row before this one did");
+        extractor.Calls.ShouldBe(1);
+        read.Text.Text.ShouldBe("text of the read that lost");
+        await using var check = Db();
+        var rows = await check.FileTexts.AsNoTracking().ToListAsync();
+        rows.Count.ShouldBe(1, "one row for one set of bytes under one extractor");
+        rows[0].Text.ShouldBe("text of the read that won", "the row that was there first is kept");
+        db.ChangeTracker.Entries<FileText>().ShouldBeEmpty("the loser's row is not left to fail the next save");
+    }
+
+    [Fact]
+    public async Task AFailedSaveOfTheTextThatIsNotAKeyAlreadyTakenIsAnError()
+    {
+        // Only a key already taken is the race. A database that is locked fails the same save and has not
+        // stored anything, so reading it as a collision would index a file whose text was never cached.
+        var race = new BeforeTheTextIsSaved
+        {
+            Before = () => throw new DbUpdateException("save failed", new SqliteException("database is locked", 5, 5)),
+        };
+        await using var db = Db(race);
+        var cache = Cache(db);
+
+        await Should.ThrowAsync<DbUpdateException>(() => Read(cache, File("busy.pdf", "bytes"), new Counting("text")));
+
+        db.ChangeTracker.Entries<FileText>().ShouldBeEmpty("the row is dropped whether or not the save worked");
     }
 
     /// <summary>

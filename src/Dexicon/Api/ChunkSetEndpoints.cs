@@ -1,6 +1,7 @@
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
+using Dexicon.Core.Documents;
 using Dexicon.Core.Embedding;
 using Dexicon.Core.Indexing;
 using Dexicon.Core.Vectors;
@@ -214,15 +215,48 @@ public static class ChunkSetEndpoints
 
         g.MapPatch("/{setName}", UpdateAsync).Produces<ChunkSetUpdated>();
 
-        g.MapPost("/{setName}/promote", async (string nameOrId, string setName, RequestContext rc,
-            ScopeResolver scopes, CatalogDbContext db, CancellationToken ct) =>
-        {
-            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var principal = rc.RequirePrincipal();
-            var corpus = await scopes.ResolveWritableAsync(principal, nameOrId, ct);
+        g.MapPost("/{setName}/promote", PromoteAsync).Produces<ChunkSetPromoted>();
 
-            await db.Entry(corpus).Collection(c => c.ChunkSets).LoadAsync(ct);
-            var set = corpus.ChunkSets.FirstOrDefault(s =>
+        g.MapDelete("/{setName}", RemoveAsync).Produces(StatusCodes.Status204NoContent);
+    }
+
+    /// <summary>
+    /// Removes a set. A method of its own, and the one the route is mapped to, so a test calls the handler that
+    /// runs. A refusal that kept the set without its vectors queues the refresh of the set before it is answered.
+    /// </summary>
+    internal static async Task<IResult> RemoveAsync(string nameOrId, string setName, RequestContext rc,
+        ScopeResolver scopes, CorpusConfiguration config, CancellationToken ct)
+    {
+        if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+        var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
+
+        var removed = await config.RemoveChunkSetAsync(corpus, setName, ct);
+        if (removed.Refusal is not { } refused) return Results.NoContent();
+
+        await config.FollowUpAsync(corpus, refused);
+        return refused.ToResult();
+    }
+
+    /// <summary>
+    /// Makes a set the default. A method of its own, and the one the route is mapped to, so a test calls the
+    /// handler that runs.
+    ///
+    /// Under the attachment lock, with the sets read again under it: a removal of a set checks the default
+    /// flag and deletes the row under that lock, and a promotion in between would have it delete the set that
+    /// had just become the default. The sets are not read from the corpus the request resolved, which can be
+    /// as old as the request.
+    /// </summary>
+    internal static async Task<IResult> PromoteAsync(string nameOrId, string setName, RequestContext rc,
+        ScopeResolver scopes, CatalogDbContext db, CancellationToken ct)
+    {
+        if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+        var principal = rc.RequirePrincipal();
+        var corpus = await scopes.ResolveWritableAsync(principal, nameOrId, ct);
+
+        using (await DocumentService.HoldAttachmentsAsync(ct))
+        {
+            var sets = await db.ChunkSets.AsNoTracking().Where(s => s.CorpusId == corpus.Id).ToListAsync(ct);
+            var set = sets.FirstOrDefault(s =>
                 string.Equals(s.Name, setName, StringComparison.OrdinalIgnoreCase) || s.Id == setName);
 
             if (set is null) return NotFound(corpus, setName);
@@ -241,22 +275,11 @@ public static class ChunkSetEndpoints
                             "make search return incomplete results. Wait for the backfill to finish.",
                     statusCode: 409);
 
-            foreach (var other in corpus.ChunkSets) other.IsDefault = false;
-            set.IsDefault = true;
-            await db.SaveChangesAsync(ct);
+            await db.ChunkSets.Where(s => s.CorpusId == corpus.Id)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.IsDefault, s => s.Id == set.Id), ct);
 
             return Results.Ok(new ChunkSetPromoted(set.Name, corpus.Name));
-        }).Produces<ChunkSetPromoted>();
-
-        g.MapDelete("/{setName}", async (string nameOrId, string setName, RequestContext rc,
-            ScopeResolver scopes, CorpusConfiguration config, CancellationToken ct) =>
-        {
-            if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
-            var corpus = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), nameOrId, ct);
-
-            var removed = await config.RemoveChunkSetAsync(corpus, setName, ct);
-            return removed.Refusal is { } refused ? refused.ToResult() : Results.NoContent();
-        }).Produces(StatusCodes.Status204NoContent);
+        }
     }
 
     private static Task<ChunkSet?> FindSet(CatalogDbContext db, Corpus corpus, string setName, CancellationToken ct) =>

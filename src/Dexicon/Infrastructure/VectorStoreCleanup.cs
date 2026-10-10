@@ -11,8 +11,12 @@ namespace Dexicon.Infrastructure;
 /// cached extraction survive, because another corpus may still hold the same document
 /// chunked its own way, which is the point of separating bytes from chunking.
 /// </summary>
-public sealed class VectorStoreCleanup(CatalogDbContext db, IVectorStore vectors) : IVectorStoreCleanup
+public sealed class VectorStoreCleanup(CatalogDbContext db, IVectorStore vectors, ILogger<VectorStoreCleanup> log)
+    : IVectorStoreCleanup
 {
+    /// <summary>How long the deletes that follow the row delete have between them. Replaced in tests.</summary>
+    internal TimeSpan SecondDeleteTimeout { get; init; } = TimeSpan.FromSeconds(30);
+
     public async Task<bool> RemoveAttachmentAsync(Corpus corpus, string fileId, DocumentService documents,
         CancellationToken ct)
     {
@@ -34,6 +38,41 @@ public sealed class VectorStoreCleanup(CatalogDbContext db, IVectorStore vectors
         foreach (var set in sets)
             await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, file.SourceId, file.RelativePath, ct);
 
-        return await documents.DetachAsync(corpus.Id, fileId, ct);
+        var detached = await documents.DetachFileAsync(corpus.Id, fileId, ct);
+        if (detached is null) return false;
+
+        // And again, for the file the detach deleted. An attachment can have renamed or replaced the
+        // document since it was read above, and a pass can have written vectors for it since they were
+        // deleted: nothing names those points once the row is gone, and search returns them until a later
+        // pass of the set removes points for a path no row names. The row is deleted, so the caller's token
+        // is not used and a failure is logged and left to that pass. The deletes share SecondDeleteTimeout,
+        // so a vector store that does not answer cannot hold the request.
+        using var timeout = new CancellationTokenSource(SecondDeleteTimeout);
+        foreach (var set in sets)
+        {
+            try
+            {
+                await vectors.DeleteFileChunksAsync(
+                    set.CollectionName, set.Id, detached.SourceId, detached.RelativePath, timeout.Token);
+            }
+            // Any exception while the token is cancelled: a gRPC client that does not throw
+            // OperationCanceledException reports a cancelled call as an RpcException with StatusCode.Cancelled.
+            catch (Exception) when (timeout.IsCancellationRequested)
+            {
+                log.LogWarning(
+                    "Deleting the points written for {File} while it was detached timed out after {Seconds:N0} s; "
+                    + "a later pass removes them",
+                    DexiconAuthMiddleware.OneLine(detached.RelativePath), SecondDeleteTimeout.TotalSeconds);
+                break;
+            }
+            catch (Exception ex)
+            {
+                log.LogWarning(ex,
+                    "Could not delete the points written for {File} in set {Set} while it was detached; "
+                    + "a later pass removes them",
+                    DexiconAuthMiddleware.OneLine(detached.RelativePath), DexiconAuthMiddleware.OneLine(set.Name));
+            }
+        }
+        return true;
     }
 }
