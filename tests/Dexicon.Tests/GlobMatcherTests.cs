@@ -317,6 +317,36 @@ public sealed class GlobMatcherTests
     }
 
     [Fact]
+    public void AnyDepthTokenStartingAtTheLastBitOfAWordStaysOutsideTheDirectoryPrefix()
+    {
+        // The prefix `a/` plus 60 `b` is 62 characters, so the first position the rule can start at is 63, the last bit
+        // of a word. A 64-bit shift by 64 is a shift by 0 in C#, which would put the position just after the `a/`
+        // (inside the prefix, where the 60 `b` spell a name that `b*` matches) back into the set.
+        var prefix = "a/" + new string('b', 60);
+        var matcher = GlobMatcher.Compile("b*", prefix);
+
+        matcher.IsMatch(prefix + "/zbz").ShouldBeFalse("the name beneath the prefix is zbz, which does not start with b");
+        matcher.IsMatch(prefix + "/bzz").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ThePathMasksOfOneCallAreReusedByTheNextAndTheirStorageDoesNotGrowWithTheCalls()
+    {
+        // 257 different characters is 257 runs of five words in the slab. Reset on every call it is allocated once; if the
+        // count of words in use were not reset, each call would add another 10 KB and 1,000 calls would allocate 10 MB.
+        var rules = new IgnoreRuleSet();
+        rules.AddPatterns(["x*y"], "test");
+        var path = "x" + string.Concat(Enumerable.Range(0x4E00, 255).Select(c => (char)c)) + "y";
+        for (var warm = 0; warm < 5; warm++) rules.IsIgnored(path, isDirectory: false).ShouldBeTrue();
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var call = 0; call < 1_000; call++) rules.IsIgnored(path, isDirectory: false);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        allocated.ShouldBeLessThan(1024 * 1024, $"1,000 calls allocated {allocated:N0} bytes");
+    }
+
+    [Fact]
     public void ARuleHoldsOnlyItsTokens()
     {
         // A rule holds its tokens: a 500-character glob is 501 tokens at most.
