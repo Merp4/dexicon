@@ -95,13 +95,89 @@ public sealed class IgnoreRuleCostTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>The rows of the table in docs/04-ingestion.md: its label, the glob repeated up to the limit, and the rules that fit.</summary>
+    private static readonly (string Label, string Glob, int Rules)[] TableRows =
+    [
+        ("aac", "aac", 5_000),
+        ("a x30 then c", new string('a', 30) + "c", 1_875),
+        ("*[a-c] x10", Repeat("*[a-c]", 10), 331),
+        ("*[a-c] x62", Repeat("*[a-c]", 62), 53),
+        ("**/a x100", Repeat("**/a", 100), 300),
+        ("*a x248 then *b", Repeat("*a", 248) + "*b", 120),
+        ("*", "*", 5_000),
+        ("? x20", new string('?', 20), 2_857),
+        ("*.log", "*.log", 5_000),
+    ];
+
     [Fact]
     public void TheShapesFillTheLimitsTheDocumentationNames()
     {
-        AtTheLimit(Repeat("*a", 248) + "*b").Count.ShouldBe(120, "weight 499 each");
-        AtTheLimit(new string('a', 30) + "c").Count.ShouldBe(1_875, "weight 32 each");
-        AtTheLimit(new string('?', 20)).Count.ShouldBe(2_857, "weight 21 each");
-        AtTheLimit("*").Count.ShouldBe(5_000, "the rule limit");
+        foreach (var (label, glob, rules) in TableRows)
+            AtTheLimit(glob).Count.ShouldBe(rules, $"{label}: the Rules column of the table in docs/04-ingestion.md");
+    }
+
+    /// <summary>The rule set a walk holds for <paramref name="glob"/> repeated up to the limits, and its size in rules.</summary>
+    private static (IgnoreRuleSet Rules, int Count) RuleSetAtTheLimit(string glob)
+    {
+        var budget = RuleBudget.ForIgnoreFiles();
+        var rules = new IgnoreRuleSet();
+        var count = 0;
+        for (var n = 0; ; n++)
+        {
+            try { rules.AddPatterns([string.Format(CultureInfo.InvariantCulture, glob, n)], "bench", budget: budget); }
+            catch (IgnorePatternException) { break; }
+
+            count++;
+        }
+
+        return (rules, count);
+    }
+
+    private static double BestMilliseconds(IgnoreRuleSet rules, string path)
+    {
+        for (var warm = 0; warm < 3; warm++) rules.IsIgnored(path, isDirectory: false);
+
+        var best = double.MaxValue;
+        for (var run = 0; run < 7; run++)
+        {
+            var clock = Stopwatch.StartNew();
+            rules.IsIgnored(path, isDirectory: false);
+            best = Math.Min(best, clock.Elapsed.TotalMilliseconds);
+        }
+
+        return best;
+    }
+
+    /// <summary>
+    /// Prints the table of docs/04-ingestion.md: one file tested through the rule set as a walk tests it (the character
+    /// masks of the path built once and shared by every rule), best of seven runs, the larger of the one-name path and the
+    /// one-character-directories path at each length, and the memory the rule set keeps after a collection. Nothing is
+    /// asserted about time or memory, which are machine figures; the rule counts are asserted by
+    /// <see cref="TheShapesFillTheLimitsTheDocumentationNames"/> and the steps by the theory above.
+    /// </summary>
+    [Fact]
+    public void ThePrintedTableIsTheOneInTheDocumentation()
+    {
+        output.WriteLine("| Rules at the limit | Rules | 255-character path | 4,093-character path | kept |");
+        foreach (var (label, glob, expected) in TableRows)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            var before = GC.GetTotalMemory(forceFullCollection: true);
+            var (rules, count) = RuleSetAtTheLimit(glob);
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            var kept = GC.GetTotalMemory(forceFullCollection: true) - before;
+
+            var short255 = Math.Max(BestMilliseconds(rules, new string('a', 255)), BestMilliseconds(rules, Repeat("a/", 127) + "a"));
+            var long4093 = Math.Max(BestMilliseconds(rules, new string('a', 4093)), BestMilliseconds(rules, Repeat("a/", 2046) + "a"));
+            GC.KeepAlive(rules);
+
+            output.WriteLine($"| {label} | {count:N0} | {short255:F1} ms | {long4093:F1} ms | {kept / 1024.0 / 1024.0:F2} MiB |");
+            count.ShouldBe(expected, label);
+        }
     }
 
     [Fact]
