@@ -24,7 +24,7 @@ public sealed class HtmlNestingTests
         Stream content = new MemoryStream([.. encoding.GetPreamble(), .. encoding.GetBytes(html)]);
         if (budget is { } clock) content = new DeadlineStream(content, clock, "page.html");
 
-        return new HtmlTextExtractor().Extract(content, "page.html");
+        return BoundedCalls.Within(BoundedCalls.Generous, () => new HtmlTextExtractor().Extract(content, "page.html"));
     }
 
     private static string Repeat(string markup, int times) => string.Concat(Enumerable.Repeat(markup, times));
@@ -107,7 +107,10 @@ public sealed class HtmlNestingTests
     // leaves it to the parse, as it does a chapter written as HTML.
     private const string NotXml = "<p>&nbsp;</p>";
 
-    private static DeadlineStream Clock(byte[] bytes) => new(new MemoryStream(bytes), Budget, "book.epub");
+    private static ExtractedText Within(byte[] epub) =>
+        BoundedCalls.Within(
+            BoundedCalls.Generous,
+            () => new EpubTextExtractor().Extract(new DeadlineStream(new MemoryStream(epub), Budget, "book.epub"), "book.epub"));
 
     [Fact]
     public void AnEpubChapterReadByItsManifestStopsAtTheBudget()
@@ -115,7 +118,7 @@ public sealed class HtmlNestingTests
         var epub = TestEpubs.WithAChapter(NotXml + Repeat("<div></span>", 30_000));
         var clock = Stopwatch.StartNew();
 
-        Should.Throw<ExtractionTimeoutException>(() => new EpubTextExtractor().Extract(Clock(epub), "book.epub"));
+        Should.Throw<ExtractionTimeoutException>(() => Within(epub));
 
         clock.Elapsed.ShouldBeLessThan(Margin);
     }
@@ -126,7 +129,7 @@ public sealed class HtmlNestingTests
         var epub = TestEpubs.WithAnEntry(NotXml + Repeat("<div></span>", 30_000));
         var clock = Stopwatch.StartNew();
 
-        Should.Throw<ExtractionTimeoutException>(() => new EpubTextExtractor().Extract(Clock(epub), "book.epub"));
+        Should.Throw<ExtractionTimeoutException>(() => Within(epub));
 
         clock.Elapsed.ShouldBeLessThan(Margin);
     }
@@ -136,7 +139,7 @@ public sealed class HtmlNestingTests
     {
         var epub = TestEpubs.WithAChapter(NotXml + Repeat("<div>", 600) + "<p>kept</p>");
 
-        new EpubTextExtractor().Extract(Clock(epub), "book.epub").Text.ShouldContain("kept");
+        Within(epub).Text.ShouldContain("kept");
     }
 
     [Fact]
@@ -144,6 +147,6 @@ public sealed class HtmlNestingTests
     {
         var epub = TestEpubs.WithAnEntry(NotXml + Repeat("<div>", 600) + "<p>kept</p>");
 
-        new EpubTextExtractor().Extract(Clock(epub), "book.epub").Text.ShouldContain("kept");
+        Within(epub).Text.ShouldContain("kept");
     }
 }

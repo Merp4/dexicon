@@ -6,8 +6,8 @@ namespace Dexicon.Core.Extraction;
 /// <summary>
 /// How deep the XML parts of a package may nest. The readers of DOCX, PPTX and EPUB load a part into a
 /// tree by recursion, in the Open XML SDK (<c>OpenXmlElement.Load</c>) and in VersOne.Epub
-/// (<c>Epub2NcxReader.ReadNavigationPoint</c>), and the stack overflowed at about 5,000 nested
-/// <c>sdt</c> elements in a DOCX and 5,000 nested <c>navPoint</c> elements in an NCX. A stack overflow
+/// (<c>Epub2NcxReader.ReadNavigationPoint</c>), and the process ended at a few thousand nested
+/// <c>sdt</c> elements in a DOCX and <c>navPoint</c> elements in an NCX. A stack overflow
 /// ends the process and cannot be caught, so the depth is counted with a streaming <see cref="XmlReader"/>,
 /// which keeps no call stack, before either library sees the part.
 /// </summary>

@@ -420,8 +420,8 @@ meanwhile, the file is reported as stored. An extraction failure that is a verdi
 encrypted or corrupt file, is stored with its message as the document's empty reason.
 
 Because no row records a timeout, a file that times out every time does so for the full budget on
-every upload of it, and the response carries no `Retry-After`. A request in which every file failed
-for such a reason answers `503`. In the web UI a drop of more than ten files is sent as several
+every upload of it, and the response carries no `Retry-After`. A request that stored nothing, where at least
+one file failed for such a reason, answers `503`. In the web UI a drop of more than ten files is sent as several
 requests, and a request that answers `503` ends the drop: the files not yet sent are listed as
 `Not sent`. That is intended. A server that cannot extract is not helped by more uploads, and
 dropping the rest again is the retry.
@@ -439,7 +439,7 @@ refresh. One whose extractor caught the timeout and returned the text read so fa
 same way, and that text is not cached. A stored document that is extracted again after an extractor
 change keeps its previous text, is tried again on a later pass, and is tried once per job and not
 once per chunk set, when the extraction fails for any of the reasons above or when the exception
-points at a fault in the extractor (a null reference, an invalid operation, an argument). A new
+points at a fault in the extractor (such as a null reference, an invalid operation or an argument). A new
 upload with the same fault records the verdict. A set that chunked the older text is stamped with a
 fingerprint that names that text's extractor version, so it chunks the new text on the next pass.
 
@@ -458,11 +458,12 @@ own bound.
   token that the extraction clock cancels, and the parse stops within about 50 ms of it: 100,000
   nested divs with stray end tags took 319 s to parse unbounded, and stop at the budget. A deep
   document that parses within the budget is extracted. The text walk keeps an explicit stack.
-- **PDF** is not bounded ([10](10-security-secrets.md#input-handling) has the numbers).
+- **PDF** is not bounded ([10](10-security-secrets.md#input-handling) says what that means).
+
 A body that ends before its closing boundary, or whose headers are over the reader's limits, is
-handled as an overrun of the byte bound is: files completed before it stay stored and are indexed,
-the response lists the cause under `failed` with a `null` `file`, and when nothing was stored the answer is `400`
-"Malformed multipart upload". A client that disconnects after some files were stored is handled
+handled like an overrun of the byte bound: files completed before it stay stored and are indexed,
+the response lists the cause under `failed` with a `null` `file`, and when nothing was stored the answer is
+`400` "Malformed multipart upload". A client that disconnects after some files were stored is handled
 the same way: those files are attached and indexed, and the file being attached at that moment is
 discarded rather than saved without being reported. The Documents screen names each file in
 `failed` under the count it stored.

@@ -75,6 +75,10 @@ public sealed class ExtractionFailureClassificationTests
     [InlineData(typeof(IndexOutOfRangeException))]
     [InlineData(typeof(ArgumentOutOfRangeException))]
     [InlineData(typeof(KeyNotFoundException))]
+    [InlineData(typeof(InvalidCastException))]
+    [InlineData(typeof(ArithmeticException))]
+    [InlineData(typeof(NotImplementedException))]
+    [InlineData(typeof(NotSupportedException))]
     public void AVerdictMadeFromAFaultInTheReaderIsMarkedUnexpected(Type fault)
     {
         var cause = fault == typeof(ObjectDisposedException)
@@ -133,5 +137,13 @@ public sealed class ExtractionFailureClassificationTests
         ShouldBeEnvironmental(new OperationCanceledException("gave up"));
         ShouldBeEnvironmental(new TaskCanceledException("gave up"));
         ShouldBeEnvironmental(new InvalidDataException("failed to parse", new OperationCanceledException()));
+    }
+
+    [Fact]
+    public void AFaultAroundAnExplicitVerdictIsNotMarkedUnexpected()
+    {
+        // The code that read the file had already decided, and the fault only carries the decision.
+        Classify(new InvalidOperationException("wrapper", new UnreadableDocumentException("not a readable .docx")))
+            .ShouldBeOfType<UnreadableDocumentException>().Unexpected.ShouldBeFalse();
     }
 }

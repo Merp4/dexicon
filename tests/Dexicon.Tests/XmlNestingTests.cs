@@ -27,8 +27,12 @@ public sealed class XmlNestingTests
     // innermost li holds an a. The deepest element is at depth 3 + 2 * lists.
     private const int NavigationListsAtTheLimit = (XmlNesting.MaxDepth - 1 - 3) / 2;
 
+    /// <summary>
+    /// Bounded in time: a guard that is missing makes the library recurse, which ends the host, or load
+    /// 20,000 levels slowly enough that the run stalls.
+    /// </summary>
     private static ExtractedText Extract(ITextExtractor extractor, byte[] bytes, string name) =>
-        extractor.Extract(new MemoryStream(bytes), name);
+        BoundedCalls.Within(BoundedCalls.Generous, () => extractor.Extract(new MemoryStream(bytes), name));
 
     [Fact]
     public void ADocxNestedAtTheLimitIsExtracted()
@@ -245,7 +249,9 @@ public sealed class XmlNestingTests
 
         // 200 ms is not enough to read 200 MB of XML at any speed this reader has.
         var thrown = Should.Throw<ExtractionTimeoutException>(
-            () => extractor.Extract(new DeadlineStream(new MemoryStream(bomb), TimeSpan.FromMilliseconds(200), name), name));
+            () => BoundedCalls.Within(
+                BoundedCalls.Generous,
+                () => extractor.Extract(new DeadlineStream(new MemoryStream(bomb), TimeSpan.FromMilliseconds(200), name), name)));
 
         // Raised while the package was being scanned, not by a later parse that found the clock already out.
         thrown.StackTrace.ShouldNotBeNull().ShouldContain(nameof(XmlNesting.RequireShallowParts));
@@ -284,7 +290,7 @@ public sealed class XmlNestingTests
             TestEpubs.WithAChapter("<p>kept</p>"), XmlNesting.TotalBudgetBytes + 1024 * 1024);
         var clock = Stopwatch.StartNew();
 
-        Should.Throw<UnreadableDocumentException>(() => new EpubTextExtractor().Extract(new MemoryStream(bomb), "book.epub"))
+        Should.Throw<UnreadableDocumentException>(() => Extract(new EpubTextExtractor(), bomb, "book.epub"))
             .Message.ShouldContain("inflates to more than 256 MiB");
 
         clock.Elapsed.ShouldBeLessThan(Margin);

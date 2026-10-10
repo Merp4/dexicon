@@ -760,6 +760,7 @@ public sealed class DocumentExtractionTimeoutTests
         };
 
         var first = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, failing));
+        await AssertTheOtherJobRewroteTheRowAsync(harness);
         var fast = Fast('n');
         var later = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, fast));
 
@@ -797,6 +798,7 @@ public sealed class DocumentExtractionTimeoutTests
         };
 
         var first = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, failing));
+        await AssertTheOtherJobRewroteTheRowAsync(harness);
         var later = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, Fast('n')));
 
         first.FilesDone.ShouldBe(1, "the first job chunked the head it had");
@@ -986,5 +988,14 @@ public sealed class DocumentExtractionTimeoutTests
 
             return new ExtractedText("done", []);
         }
+    }
+
+    /// <summary>A hook that never runs would leave both race tests passing, so the rewrite is looked for.</summary>
+    private static async Task AssertTheOtherJobRewroteTheRowAsync(IndexingHarness harness)
+    {
+        await using var check = harness.NewContext();
+        var row = await check.BlobTexts.AsNoTracking().SingleAsync();
+        row.ExtractorVersion.ShouldBe(ExtractorVersions.Current, "the other job rewrote the row during the first job's extraction");
+        row.Text.ShouldBe(new string('n', Bytes.Length));
     }
 }

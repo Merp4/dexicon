@@ -86,7 +86,7 @@ public sealed class UnreadableDocumentException(string message, Exception? inner
 {
     /// <summary>
     /// Set by <see cref="ExtractionFailures.Of"/> when the verdict was made from an exception type that
-    /// signals a fault in the code that read the file (a null reference, an invalid operation, an
+    /// signals a fault in the code that read the file (such as a null reference, an invalid operation, an
     /// argument) and not a malformed file. A new upload still records the verdict. A stored document
     /// that has good cached text keeps it instead, because a fault in a library says nothing certain
     /// about bytes that read well before.
@@ -753,6 +753,7 @@ internal static class HtmlText
             throw deadline.TimedOut(ex);
         }
     }
+
     /// <summary>Elements whose text is markup machinery, not content.</summary>
     private static readonly HashSet<string> Skipped =
         new(StringComparer.Ordinal) { "script", "style", "noscript", "template", "head" };

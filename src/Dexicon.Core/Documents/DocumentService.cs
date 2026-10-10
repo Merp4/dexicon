@@ -682,7 +682,7 @@ public sealed class DocumentService(
     ///
     /// A re-extraction that fails for a reason that is not a verdict on the bytes (a timeout, an I/O
     /// error, a refused permission, a shortage of memory, or an extraction failure that wraps one of
-    /// those), or whose exception points at a fault in the extractor (a null reference, an invalid
+    /// those), or whose exception points at a fault in the extractor (such as a null reference, an invalid
     /// operation), leaves the row as it was and returns it, so a later pass tries again.
     /// </summary>
     /// <param name="failedThisPass">
