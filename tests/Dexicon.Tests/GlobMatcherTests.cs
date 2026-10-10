@@ -6,7 +6,7 @@ namespace Dexicon.Tests;
 
 /// <summary>
 /// What <see cref="GlobMatcher"/> matches, as a table of the gitignore documentation's examples, and how much work a
-/// match may take. The matcher is held to the regular expression it replaced by <see cref="GlobDifferentialTests"/>.
+/// match may take. <see cref="GlobDifferentialTests"/> compares the matcher with a regular expression translation of each pattern.
 /// </summary>
 public sealed class GlobMatcherTests
 {
@@ -80,8 +80,9 @@ public sealed class GlobMatcherTests
     }
 
     [Theory]
-    // A line feed in a name is an ordinary character, as git reads it. The regular expression this replaced stopped
-    // ** at one and let `$` match before a final one.
+    // A line feed in a name is an ordinary character, as git reads it: `**` crosses it, and `*.md` does not match a
+    // name that ends in one after `.md`. A regular expression translation would stop `**` at a line feed and let `$`
+    // match before a final one.
     [InlineData("*.md", "x.md\n", false)]
     [InlineData("a*b", "a\nb", true)]
     [InlineData("**/c", "a\nb/c", true)]
@@ -200,8 +201,8 @@ public sealed class GlobMatcherTests
     public void AFileAgainstADirectoryOnlyRuleCostsOnePassAndNotOneForEachDirectoryAbove()
     {
         // A rule for directories is asked of a file by whether some match ends at a slash before the end of the
-        // path, in one pass. Asked once for each directory above the file, a path 2,040 directories deep cost 98 ms
-        // for one rule.
+        // path, in one pass. Asked once for each directory above the file, the steps would grow with the square of
+        // the depth, and doubling the depth here must at most double them.
         var rule = GlobMatcher.Compile(string.Concat(Enumerable.Repeat("*a", 248)) + "*b", "");
         var deep = string.Concat(Enumerable.Repeat("a/", 2_040));
         var deeper = string.Concat(Enumerable.Repeat("a/", 4_080));
@@ -283,7 +284,8 @@ public sealed class GlobMatcherTests
 
 /// <summary>
 /// <see cref="Fold"/> against the case equivalence of <c>RegexOptions.IgnoreCase</c>, over every code point of the BMP
-/// that has a case, so the matcher and the regular expression it replaced agree on what ignoring case means.
+/// that has a case, so the matcher and the regular expression's case-insensitive comparison agree on what ignoring case
+/// means.
 /// </summary>
 public sealed class CaseFoldTests
 {
@@ -319,7 +321,7 @@ public sealed class CaseFoldTests
     {
         Fold.Equal('k', (char)0x212A).ShouldBeTrue("the Kelvin sign is a k");
         Fold.Equal((char)0xDF, (char)0x1E9E).ShouldBeTrue("capital sharp s is sharp s");
-        Fold.Equal('s', (char)0x17F).ShouldBeFalse("the long s is not an s here, as in the regular expression");
+        Fold.Equal('s', (char)0x17F).ShouldBeFalse("the long s is not an s, as in the regular expression's comparison");
         Fold.Equal((char)0x3C3, (char)0x3C2).ShouldBeFalse("final sigma is not sigma");
         Fold.Equal((char)0x3C3, (char)0x3A3).ShouldBeTrue();
         Fold.Equal((char)0x1C5, (char)0x1C6).ShouldBeTrue("the titlecase digraph is the digraph");

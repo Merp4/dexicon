@@ -5,13 +5,13 @@ using Shouldly;
 namespace Dexicon.Tests;
 
 /// <summary>
-/// <see cref="GlobMatcher"/> against the regular expression it replaced (<see cref="GlobOracle"/>), over random
+/// <see cref="GlobMatcher"/> against a regular expression translation of each pattern (<see cref="GlobOracle"/>), over random
 /// (glob, directory prefix, path) triples drawn from an alphabet of the characters that make a glob or a path
 /// hard: every wildcard and class form, slashes, escapes, case-folding oddities (the Kelvin sign, the long s, sharp
 /// s in both cases, dotted and dotless i, the Greek sigmas, a titlecase digraph) and an emoji. Paths with a line
 /// feed are left out, which is the one documented difference (<see cref="GlobOracle"/>).
 /// </summary>
-public sealed class GlobDifferentialTests
+public sealed class GlobDifferentialTests(Xunit.Abstractions.ITestOutputHelper output)
 {
     private static string U(int codePoint) => char.ConvertFromUtf32(codePoint);
 
@@ -154,6 +154,7 @@ public sealed class GlobDifferentialTests
         var (differences, compared, refused, globs, matched, timedOut) = Compare(globCount: 5_500, pathsPerGlob: 320, seed: 20261009);
 
         var summary = $"{compared:N0} pairs from {globs:N0} globs, {matched:N0} of them matches, {refused} globs refused by both, {timedOut} oracle timeouts";
+        output.WriteLine(summary);
         differences.Take(10).ShouldBeEmpty(summary);
         compared.ShouldBeGreaterThanOrEqualTo(1_000_000, summary);
         matched.ShouldBeGreaterThan(50_000, "pairs the oracle matches; too few and the test mostly compares falsehoods: " + summary);
@@ -179,6 +180,7 @@ public sealed class GlobDifferentialTests
             var (differences, compared, _, _, matched, timedOut) = Compare(globCount: 1_500, pathsPerGlob: 60, seed: 99 + pad, pad: pad);
 
             var summary = $"{compared:N0} pairs with {pad} characters of padding, {matched:N0} matches, {timedOut} oracle timeouts";
+            output.WriteLine(summary);
             differences.Take(10).ShouldBeEmpty(summary);
             compared.ShouldBeGreaterThan(50_000, summary);
             matched.ShouldBeGreaterThan(5_000, summary);

@@ -160,11 +160,15 @@ include filter or size limit leaves out: those apply after it.
 Write it as UTF-8 text (a UTF-16 or UTF-32 byte order mark is also read), with lines of at most 500 characters, and a
 class such as `[a-z]` with its range the right way round. A `.dexiconignore` with a line that cannot be read (`[z-a]`,
 `[]`, or a POSIX class such as `[[:alpha:]]`), a line over 500 characters, more than 5,000 rules in all the ignore
-files of the source, invalid UTF-8, a NUL, or a link or pipe in place of the file stops that source from being
+files of the source, invalid UTF-8, a NUL, a carriage return inside a line, two files in one folder whose names differ
+only in case, or a link or pipe in place of the file stops that source from being
 indexed until it is fixed, so that nothing the file meant to exclude gets in. `index_status` shows the corpus as
 unavailable, with an `error:` line that names the source, the file and the line (lines count from 1), and what was
 already indexed stays. A `.gitignore` is git's file, so a line in it that cannot be read is skipped and logged, and
-the rest of the file applies; one over 1 MiB, or past the same rule limit, stops the source as well. Patterns follow
+the rest of the file applies; one over 1 MiB, or past the same rule limit, stops the source as well, and so does a
+total over the limit for the source's ignore files (5,000 rules, or 60,000 pattern parts, where a class counts 16 and
+one for each range and every other character, wildcard or `?` counts 1; the message names the three files that used
+most). Patterns follow
 git, with a few differences (`**` that is not a whole path segment crosses `/`, case is always ignored, a backslash
 outside a class is a plain character): the list is in `docs/04-ingestion.md`.
 

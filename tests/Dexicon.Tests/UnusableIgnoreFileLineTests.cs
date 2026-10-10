@@ -216,6 +216,6 @@ public sealed class UnusableIgnoreFileLineTests : IDisposable
             [new SourceCoverage.SourceRoot("a", 262_144), new SourceCoverage.SourceRoot("b", 262_144)],
             log: recorded.CreateLogger("test"));
 
-        recorded.Lines.ShouldBe(["Coverage of  was left out because .dexiconignore line 1 ('[z-a]') cannot be compiled (reversed character range)"]);
+        recorded.Lines.ShouldBe(["Coverage of the workspace root was left out because .dexiconignore line 1 ('[z-a]') cannot be compiled (reversed character range)"]);
     }
 }

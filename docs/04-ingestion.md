@@ -75,12 +75,15 @@ its directory: `secret.txt` in `sub/.gitignore` is `sub/**/secret.txt`. It reach
 depth beneath `sub` and no sibling of `sub`. A leading `/` still anchors, now to that
 directory: `/secret.txt` there is `sub/secret.txt` alone.
 
-**A file inside a pruned directory is never read.** The decision to skip a directory is
+**A file inside an ignored directory is never read.** The decision to skip a directory is
 made from the rules in force when the walk reaches it, and nothing inside it has been
-looked at — so a `!keep.txt` in `vendor/.gitignore` does not bring `vendor/keep.txt` back
+looked at, so a `!keep.txt` in `vendor/.gitignore` does not bring `vendor/keep.txt` back
 when `vendor/` was excluded above it. Git decides the same way and for the same reason: it
 does not read ignore files in a directory it has excluded. `.dexiconignore` higher up is
-where the exception goes.
+where the exception goes. A negation that applies at every depth (`!.gitkeep`) makes the walk
+enter an ignored directory to look for what it re-includes, and the ignore files in that
+directory and beneath it are still not read, so a vendored `node_modules` does not use up the
+rule budget.
 
 **Links are not followed.** A symbolic link or junction, to a file or a directory, is
 recorded as `skipped` ("a link; links are not followed") and is neither read nor entered;
@@ -108,71 +111,110 @@ matches `/`, whether it is positive or negated.
 pattern differently, each with the line that shows it:
 
 - A reversed range such as `[z-a]` or `a[b-/]c` is unusable. Git matches only the start character.
-- An empty class such as `[]` or `[^]x` is unusable. Git matches nothing. `[!]x` is the one-member class of `!`, and matches
-  nothing in git.
-- A POSIX class such as `[[:alpha:]]`, `[[:digit:]]` or `[a[:digit:]]` is unusable. Git matches the characters it
-  names, and reading it as the members `[:alph` and a literal `]` would match nothing git ignores.
+- An empty class such as `[]` or `[^]x` is unusable. Git matches nothing. `[!]` and `[!]x`, where nothing closes the class
+  after the `]`, are the one-member class of `!` and match `!`; git matches nothing.
+- A POSIX class such as `[[:alpha:]]`, `[[:digit:]]` or `[a[:digit:]]` is unusable, and so is any other name between `[:`
+  and `:]` (`[[:foo:]]`, `[[:a1:]]`, `[[::]]`). Git matches the characters a known name stands for and nothing for an
+  unknown one, and reading the shape as the members `[:alph` and a literal `]` would match nothing git ignores.
+  `[[:]` and `[[:ab:cd]`, where the first `]` after the `[:` does not follow a colon, are ordinary members, as in git.
 - `[abc` with no closing bracket makes the `[` an ordinary character. Git matches nothing, not even a file named `[abc`.
 - A backslash outside a class is an ordinary character, and `a\b` matches the name `a\b`. In git it escapes, and
-  `a\b` matches `ab`. A trailing space is trimmed here and honoured in git when it follows a backslash, and leading
-  whitespace is trimmed here and kept in git.
-- A `**` that is not a whole path segment crosses `/`: `a**b`, `a/**b`, `a***b` and `x**/y` match `a/x/b`, `a/x/b`, `a/x/b` and
-  `xa/b/y`. In git 2.54 it acts as `*`, and none of these match.
+  `a\b` matches `ab`.
+- A line has all its leading and trailing whitespace removed with `string.Trim`, which removes tabs and every Unicode
+  space. Git removes trailing spaces, honours one that follows a backslash, and keeps leading whitespace, so `foo` followed
+  by a tab matches `foo` here and a file of that name in git.
+- A `**` that is not a whole path segment crosses `/`: `a**b`, `a/**b` and `x**/y` match `a/x/b`, `a/x/b` and `xa/b/y`.
+  In git 2.54 it acts as `*`, and none of these match. Three or more stars that are a whole segment (`***/foo`,
+  `a/****`) are one `**`, as in git.
 - Case is always ignored, by comparing characters' invariant lower cases (the Kelvin sign is `k`, capital sharp s is
   sharp s, the long s is not `s`, final sigma is not sigma). Git ignores case only with `core.ignorecase`, and never
-  folds the non-ASCII letters. Characters are UTF-16 units, so `?` matches one unit and not a whole emoji.
+  folds the non-ASCII letters.
+- Patterns and paths are UTF-16 text and a character is one unit. Git compares bytes, so `?` and a class match a
+  multibyte character as a whole here (`?` matches a Japanese character, `[é]` matches `é`) and a part of it in git. `?`
+  matches one unit and not a whole emoji.
 - A negation reaches into an excluded directory, as described above: `build/` then `!build/keep.txt` indexes
   `keep.txt`, where git ignores it.
-- A line feed in a file name is an ordinary character, as it is in git. Lines are split at line feeds, with one carriage
-  return before the line feed dropped; a carriage return, U+0085 or U+2028 inside a line stays in it.
+- A line feed in a file name is an ordinary character, as it is in git. Lines are split at line feeds. A carriage return
+  before the line feed is removed with the other whitespace; one inside a line stays in it, as in git, and in a
+  `.dexiconignore` fails the walk.
+- An ignore file is found by its name without regard to case on every platform (`.GitIgnore` is read). Where one directory
+  holds more than one such name, the exact name is read, else the first in ordinal order, and a `.gitignore` warning or a
+  `.dexiconignore` failure says the others were not.
 
 **How a pattern is matched.** A pattern is read into tokens (a character, `?`, a class, `*`, `**`, `**/`) and a match
-runs them over the path. The set of positions the tokens so far can have reached is kept as a window over the path, and
-each token looks at a position at most twice, so a match takes at most 2 x (tokens + 1) x (length + 2) steps whatever the
-pattern (`*a*a*a*a*a*a*a*a*a*a*a*a*b`, ten `**/` in a row, a directory rule against a path thousands of directories deep).
-There is no match timeout. A rule holds its tokens, 16 bytes each, and a class holds its ranges and a table of the ASCII
-characters it matches. Most rules are turned away by a search for the longest run of literal characters they need,
-before any token runs. The meaning of a pattern is that of a regular expression the tests keep (`GlobOracle`) and compare
-with the matcher over about a million random patterns and paths per run; its classes are read by a separate port of
-git's loop. `IgnoreRuleCostTests` holds the figures below and prints them:
-`dotnet test tests/Dexicon.Tests -c Release --filter "Category=Benchmark" --logger "console;verbosity=detailed"`
-(a debug build gives times three to ten times higher; the step counts are the same).
+moves the set of positions of the path that the tokens so far can have reached through them. The set is a bit set with
+one 64-bit word for each 64 characters of the path, and the bit sets of the path's characters (which positions hold an
+`a`, a `/`, anything but a `/`) are built once for a file and shared by every rule tested against it. A character, `?`,
+`*`, `**` or `**/` takes at most one operation for each word (a `*` is one addition with carry), and a class takes one
+test for each position reached. The longest run of literal characters of the pattern is searched for first, reading each
+character of the path once (Knuth-Morris-Pratt, folded for case), and a path without it is not matched any further.
+A match therefore takes at most
 
-Measured in a release build, rules of the form `fooN*.bar`: 469 lines build in 26 ms, 10,000 in 35 ms and 50,000 in
-116 ms, and hold 0.4 to 0.6 KB each. Testing 20,000 paths against 469 such rules took 0.18 s and testing 30,000 paths against 3,000
-took 1.6 s, where the regular expressions the matcher replaced took 3.5 s and 41 s. Rules no literal can turn away
-(`*a*b*c*.cs` with random letters, against paths that all end in `.cs`) take about 200 ns each per path: 469 of them
-against 20,000 paths took 2.3 s, and the regular expressions 8.6 s.
+    (tokens + 1) x words + classes x (length + 1) + length    steps, with words = length / 64 + 1
+
+whatever the pattern (`*a*a*a*a*a*a*a*a*a*a*a*a*b`, ten `**/` in a row, a directory rule against a path thousands of
+directories deep), and there is no match timeout. `IgnoreRuleCostTests` asserts the bound for the shapes below and prints the
+work and the time; `GlobMatcher` holds the derivation. A rule holds its tokens, 16 bytes each, and a class holds its
+ranges and a table of the ASCII characters it matches.
+
+The meaning of a pattern is checked against a translation to a regular expression that the tests keep (`GlobOracle`; its
+classes are read by a separate port of git's loop). `GlobDifferentialTests` compares the two over 1.3 million random
+(pattern, path) pairs a run, drawn from an alphabet of wildcards, class forms, escapes, case-folding oddities and an emoji,
+and again over 67,000 pairs each with paths of 520 and 700 characters, which need a larger buffer.
 
 **Limits on what a walk reads.** Every file the walk meets is tested against every rule in force, so the limits bound
-the work for one file.
+the work for one file. The unit is the weight of a rule: one for each token (the any-depth prefix is a token, so `*.md`
+weighs 5 and `docs/readme.md` weighs 14), and for a class 16 and one more for each range it holds. A message calls it
+"pattern parts".
 
 - A line of an ignore file or an entry of a glob list over 500 characters is not read.
-- The ignore files of a walk (`.git/info/exclude` and every `.gitignore` and `.dexiconignore`) share a budget of 5,000
-  rules and 12,000 weight. A rule weighs its tokens, one more for each range of a class, and a pattern with no `*`, `**`
-  or `**/` weighs a twentieth of that (at least one), because the tokens of a pattern with a wildcard look at the whole path
-  and the others at a few positions. `*.md` weighs 5 and `docs/readme.md` weighs 1.
-- Each stored glob list (a source's include list, its exclude list, a corpus's default for each) has a budget of
-  1,000 rules and 12,000 weight of its own, so a long ignore file does not use up what the operator's list may hold.
-- An ignore file over 1 MiB is not read, and a walk reads at most 16 MiB of ignore files.
-- A `.gitignore` or `.git/info/exclude` stops being read after 1,000 skipped lines, with a warning that says so.
+- The ignore files of a walk (`.git/info/exclude` and every `.gitignore` and `.dexiconignore` that is read) share a
+  budget of 5,000 rules and 60,000 weight. The largest of 93 git repositories on the machine that measured them held 1,373
+  rules and weight 19,543 (every ignore file below each root, counted without pruning), so the limits leave 3.6 and 3.1
+  times that.
+- Each stored glob list (a source's include list, its exclude list, a corpus's default for each) has a budget of 20,000
+  weight and 1,000 rules of its own, so a long ignore file does not use up what the operator's list may hold. A list is
+  capped at 200 entries when it is stored (`SourceFilters.MaxGlobsPerList`); the 1,000 holds a list stored before that cap.
+- An ignore file over 1 MiB fails the walk, and so do 16 MiB of ignore files read, counting a file that is then refused.
+- A `.gitignore` or `.git/info/exclude` stops being read after 1,000 skipped lines. After that line nothing later in the
+  file applies, and the last warning says so.
 - The walk holds the first 20 warnings it raises and counts the rest, and the index pass logs those 20 and the count once.
+  The warning that a file stopped being read is held whatever else was dropped.
 
-At the budget, testing one file against the rules that cost most (`*a` repeated and then `*b`, 498 characters each, 24 of
-them, against a path of `a`) takes 1.0 ms for a 100-character path, 2.5 ms for 255, 32 ms for 1,000 and about 120 ms for
-4,000. The rules of every other shape at the limits cost less, and 1,008 plain rules a literal turns away cost 0.05 ms. The
-rules at the limits hold at most 7 MiB (1,200 class-heavy rules), against 3 MiB for 5,000 plain ones. A million files
-of 255 characters, every one the worst case, would take about 42 minutes of matching.
+Testing one file at the limits costs most for rules that nearly match a long literal or that put a class after a star.
+Measured in a release build on the development machine (the worst of two runs; `dotnet test tests/Dexicon.Tests -c Release
+--filter "Category=Benchmark" --logger "console;verbosity=detailed"` prints the steps and the time for each shape):
+
+| Rules at the limit | Rules | 255-character path | 4,093-character path |
+| --- | ---: | ---: | ---: |
+| `aac` (a literal that almost matches `aaaa...`) | 5,000 | 5.2 ms | 75 ms |
+| `a` x30 then `c` | 1,875 | 1.8 ms | 28 ms |
+| `*[a-c]` x10 | 331 | 2.7 ms | 54 ms |
+| `*[a-c]` x62 | 53 | 1.8 ms | 32 ms |
+| `**/a` x100 | 300 | 1.0 ms | 6.2 ms |
+| `*a` x248 then `*b` | 120 | 0.6 ms | 4.8 ms |
+| `*` | 5,000 | 0.4 ms | 2.3 ms |
+| `?` x20 | 2,857 | 0.5 ms | 0.9 ms |
+| `*.log` | 5,000 | 0.1 ms | 0.45 ms |
+
+The 255-character figures are for a path of one long name and for one of 127 directories, the larger of the two. 4,093 is
+the longest path Linux accepts. A typical path of 37 characters takes under 0.1 ms against any of these. A million files
+of 255 characters, every one the worst case, would take about 90 minutes of matching, and a million against 5,000 rules
+like `*.log` about 90 seconds. The rules at the limits hold at most 1.8 MB (the shapes above, measured after a
+collection).
 
 Passing a budget, a size or the 16 MiB fails the source's walk for every kind of file, because the rules past the limit
 are the ones written last and a walk that dropped them would index what they excluded. The message names the file, the
-line and the limit, and says what to do: `... line 5001 ('generated5000.txt') is past the limit of 5,000 rules or 12,000
-pattern parts for one source; reduce the file, or turn off use_gitignore for the source` (for a `.dexiconignore` only
-"reduce the file"). Turning `use_gitignore` off stops the `.gitignore` files and `.git/info/exclude` from being read.
+line and the limit, and the three files that used most of the budget so far, since the file that passed the limit is
+seldom the one that filled it: `... line 5001 ('g5000') is past the limit of 5,000 rules or 60,000 pattern parts for one
+source; the files using most so far are .gitignore (5,000 rules, 28,890 parts); reduce them, or turn off use_gitignore for
+the source`. A single file over 1 MiB reads `... cannot be used as patterns because it is larger than 1 MiB; reduce the
+file` (for a `.gitignore`, `reduce the file, or turn off use_gitignore for the source`). Turning `use_gitignore` off
+stops the `.gitignore` files and `.git/info/exclude` from being read.
 
 A glob list sent through the API or the configure tools is refused when it holds a null element, an entry over 500
 characters, a pattern that cannot be read such as `[z-a]` or `[[:alpha:]]`, or more than the list's budget allows (1,000
-rules or 12,000 weight). The API answers `400`, naming the list and the entry's position counted from zero
+rules or 20,000 weight). The API answers `400`, naming the list and the entry's position counted from zero
 (`includeGlobs[1]`); the configure tools return an error with the same text. Nothing is saved. That holds for a source's
 lists and for a corpus's defaults. A history source's include list is read by git as pathspecs, so only a null, empty or
 null-character element is refused there, and a corpus's default include list, which sources of both kinds inherit, is
@@ -181,25 +223,27 @@ an anchored pattern, still fails in a history source that inherits it.
 
 The lines of a `.gitignore`, `.git/info/exclude` or `.dexiconignore` in the tree are not checked when a list is stored; the
 walk reads them. Their lines are numbered from 1, as an editor numbers them, and list entries from 0, as the API does. A
-file is read as UTF-8 text unless it begins with a byte order mark for UTF-16 or UTF-32, as `File.ReadAllLines` reads it. Its
-name is matched without regard to case (`.GitIgnore` is read), and only a regular file is opened: a pipe, a link or a file
-that cannot be opened is not read. What the walk cannot use is handled by whose file it is:
+file is read as UTF-8 text unless it begins with a byte order mark for UTF-16 or UTF-32, as `File.ReadAllLines` reads it. On
+Linux and macOS the file is opened with `O_NONBLOCK` and refused if the handle cannot seek, so a named pipe is not waited
+on; a link or a file that cannot be opened is not read. What the walk cannot use is handled by whose file it is:
 
 - `.gitignore` and `.git/info/exclude` belong to git, and the walk does not hold them to a stricter reading than it
   needs. A line it cannot read is skipped, and the rest of the file applies to that directory and everything beneath
   it. The index pass logs a warning such as
   `Source docs: sub/.gitignore line 3 ('[z-a]') cannot be compiled (reversed character range); the line was skipped`.
-  A line holding bytes that are not valid UTF-8 is skipped and the lines are counted in one warning. A file that
-  cannot be opened, is not a regular file, or holds a NUL is skipped whole with a warning, and a link is not read, as
-  git does not read it. The job still succeeds. Files above the source's root are never read, so no ancestor's bad
-  line can reach the walk, and directories another source owns are not read either, so a bad line there is reported
+  A line holding bytes that are not valid in the file's encoding is skipped and the lines are counted in one warning. A
+  file that cannot be opened, is not a regular file, or holds a NUL is skipped whole with a warning, and a link is not
+  read, as git does not read it. The job still succeeds. Files above the source's root are never read, so no ancestor's
+  bad line can reach the walk, and directories another source owns are not read either, so a bad line there is reported
   by the source that owns it. These skips are the cases where a rule a `.gitignore` held is not in force; D-36 lists
-  them for the secrets it guards.
+  them for the secrets it guards. A size or budget breach is not among them: it fails the walk.
 - `.dexiconignore` is written to keep content out of the index, so skipping any of it would index what it meant to
-  exclude. A line it cannot read, a line over 500 characters, a link, a pipe, a file that cannot be opened, a NUL, and
-  bytes that are not valid UTF-8 each fail the walk of that source. The pass treats the source like one that could not be
-  reached: nothing already indexed is removed, the corpus's other sources are still indexed, the job finishes
-  `degraded`, the corpus reads `unavailable`, and the job's error (shown by `index_status` as `error:`) reads, for example,
+  exclude. A line it cannot read, a line over 500 characters, a carriage return inside a line (old Mac line endings),
+  a link, a pipe, a file that cannot be opened, a NUL, bytes that are not valid in the file's encoding (UTF-8, or the
+  UTF-16 or UTF-32 its byte order mark names), and two files whose names differ only in case each fail the walk of that
+  source. The pass treats the source like one that could not be reached: nothing already indexed is removed, the corpus's
+  other sources are still indexed, the job finishes `degraded`, the corpus reads `unavailable`, and the job's error (shown
+  by `index_status` as `error:`) reads, for example,
   `Source 'docs' was not indexed because sub/.dexiconignore line 3 ('[z-a]') cannot be compiled (reversed character range).`
   or `... because .dexiconignore is a link, and links are not followed.` A sweep leaves that source's inventory as it is.
   Fixing or removing the cause clears it on the next pass. A hard link to a file elsewhere is read as the file it is,

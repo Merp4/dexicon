@@ -112,7 +112,9 @@ public static class SourceCoverage
             }
             catch (IgnorePatternException ex)
             {
-                log?.LogInformation("Coverage of {Directory} was left out because {Reason}", parent, ex.Message);
+                // Logged on every call, since a coverage request is not a pass that could hold a record of it.
+                log?.LogInformation("Coverage of {Directory} was left out because {Reason}",
+                    parent.Length == 0 ? "the workspace root" : parent, ex.Message);
                 continue;
             }
 
