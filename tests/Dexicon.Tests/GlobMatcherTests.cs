@@ -93,6 +93,9 @@ public sealed class GlobMatcherTests
     [InlineData("*aabaaab*", "aabaabaaab", true)]
     [InlineData("*abacabab*", "abacabacabab", true)]
     [InlineData("*abacabab*", "abacabacabaa", false)]
+    [InlineData("*aabaaaa*", "aabaaabaaaa", true)]
+    [InlineData("*aabbaaaa*", "aabbaaabbaaaa", true)]
+    [InlineData("*aabaaaab*", "aabaaabaaaab", true)]
     public void ALiteralRunIsFoundWhereverItBeginsInsideAnEarlierNearMiss(string pattern, string path, bool expected)
     {
         Ignored(pattern, path).ShouldBe(expected);
@@ -280,16 +283,18 @@ public sealed class GlobMatcherTests
     [Fact]
     public void ARentedBufferThatOneMatchLeftFullDoesNotChangeTheAnswerOfTheNext()
     {
-        // 8,200 characters is 129 words, so the match is run in a rented array. `*` leaves its final positions in it,
-        // and a class adds to the array it writes into, so a stale bit would put a position at the end of the path.
-        var path = new string('a', 8_200);
-        var everything = GlobMatcher.Compile("*", "");
-        var one = GlobMatcher.Compile("[a]", "");
+        // 8,200 characters is 129 words, so the match is run in a rented array. `**` leaves every position set in
+        // it, and a class adds to the array it writes into, so a stale bit would be a position the class never reached.
+        // Here the class is followed by a literal, and `a/` repeated has a slash at every odd position: with the stale
+        // bits the pattern would end at one of them.
+        var path = string.Concat(Enumerable.Repeat("a/", 4_100));
+        var everything = GlobMatcher.Compile("**", "");
+        var classThenLiteral = GlobMatcher.Compile("[a]a", "");
 
         for (var round = 0; round < 3; round++)
         {
             everything.IsMatch(path).ShouldBeTrue();
-            one.IsMatch(path).ShouldBeFalse();
+            classThenLiteral.IsMatch(path).ShouldBeFalse();
         }
     }
 
