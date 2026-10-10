@@ -137,7 +137,7 @@ public static class SourceFilters
     /// <summary>
     /// The first problem with <paramref name="globs"/>, or null when it can be used. The count cap
     /// (<see cref="MaxGlobsPerList"/>) is judged before any element is read, so a list far past it is refused
-    /// without a regular expression compiled or an element examined. Past the count, elements are examined in
+    /// without a pattern read or an element examined. Past the count, elements are examined in
     /// order, each for its length before it is compiled or parsed, and the check stops at the first problem; its
     /// work is bounded by <see cref="MaxGlobsPerList"/> times <see cref="MaxGlobLength"/>. Lists already stored
     /// are not passed through here.

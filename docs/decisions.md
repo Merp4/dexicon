@@ -1924,8 +1924,9 @@ listing it. A secret that no `.gitignore` names is within reach of a `configure`
 other file in the workspace, and keeping such files out of a mounted tree is the operator's.
 The rule is also not in force when the walk skips the line that holds it or the file that holds it:
 a line over 500 characters or one that cannot be read (including a POSIX class), lines with bytes that are
-not valid UTF-8, the lines after the thousandth skipped line of a file, and a `.gitignore` that is a link,
-cannot be opened, is not a regular file or holds a NUL. Each is a warning in the log and the job still
+not valid in the file's encoding, the lines after the thousandth skipped line of a file, and a `.gitignore` that is a link,
+cannot be opened, is not a regular file or holds a NUL. Each is a warning in the log, except a link, which is
+listed among the source's skipped files, and the job still
 succeeds, because the file is git's and git applies no stricter reading. A `.gitignore` over 1 MiB, past the
 rule limits or past 16 MiB of ignore files in the walk fails the source instead
 ([D-41](#d-41-ignore-patterns-are-matched-by-tokens-and-a-walk-that-cannot-read-its-rules-fails)).
@@ -2175,53 +2176,60 @@ for each 64 characters of the path, so a match takes at most (tokens + 1) x word
 steps whatever the pattern, and there is no match timeout. A walk reads at most 5,000 rules and 60,000 weight from
 its ignore files together (`.git/info/exclude`, every `.gitignore` and `.dexiconignore`), and each stored glob list
 has a budget of 1,000 rules and 20,000 weight. Weight is one for each token and, for a class, 16 and one for each
-range; messages call it "pattern parts". A line or entry over 500 characters is refused, an ignore file over 1 MiB
-is refused, and a walk reads at most 16 MiB of them. Passing any of these fails the source's walk, for every kind of
-file, with a message that names the file and the limit. A `.dexiconignore` that cannot be used in any way fails the
-walk too. A `.gitignore` or `.git/info/exclude` that has a line that cannot be used skips the line and warns.
+member (a character or a range); messages call it "pattern parts". An ignore file over 1 MiB is refused, and a walk
+reads at most 16 MiB of them. Passing the rule or weight budget, the file size or the 16 MiB fails the source's walk,
+for every kind of file, with a message that names the file and the limit. A line or entry over 500 characters is
+refused in a `.dexiconignore` and in a list, which fails the walk, and skipped with a warning in a `.gitignore` or
+`.git/info/exclude`. A `.dexiconignore` that cannot be used in any way fails the walk too, wherever it is, including in
+a directory the rules ignore but a negation makes the walk enter. A `.gitignore` or `.git/info/exclude` that has a
+line that cannot be used skips the line and warns.
 
 **Why.** The first matcher built a .NET regular expression for each rule with a 250 ms match timeout. That
 timeout threw out of the middle of a walk for patterns such as `*a*a*a*a*a*a*a*a*a*a*a*a*b`, and it also fired for
 `*.so` on a host starved of CPU. The engine that cannot backtrack was tried next, and it matched correctly but
-held about 390 KiB for each rule (469 rules from grpc's ignore files held 402 MiB), so an ignore file in an
-indexed tree could take gigabytes. A rule held as tokens is a few hundred bytes. Failing at a limit, where the
-first design skipped the rules past it, follows from what the rules are for: the ones after the limit are the ones
-the operator wrote last, and a walk that dropped them indexed what they excluded.
-
-A first token matcher kept the reachable positions as one byte each and charged a pattern without a wildcard a
-twentieth of its tokens. Measured with paths of long repeated runs it took 217 ms to test one 255-character file
-against 5,000 rules of `a` x30 then `c` and 2.8 s for 4,093 characters, because the literal search compared every
-start against the whole run and `?` and classes kept the window at every segment start. The bit sets make each token
-cost one operation per word, the literal search reads each character once, and every token weighs the same whether
-the pattern has a wildcard or not.
+held up to 390 KiB for one rule, so an ignore file in an indexed tree could take gigabytes. A rule held as tokens is
+a few hundred bytes. Failing at a limit, where the first design skipped the rules past it, follows from what the
+rules are for: the ones after the limit are the ones the operator wrote last, and a walk that dropped them indexed
+what they excluded. The bit sets make each token cost one operation per word, the literal search reads each
+character once, and every token weighs the same whether the pattern has a wildcard or not. The members of a class
+are sorted and merged once and searched by binary search: a scan of 495 members for each case variant of each
+position took about 250 to 320 ms for 116 such rules against 4,093 Greek letters, and the search takes about 5 ms against
+2,046 (the most that two-byte letters make a Linux path).
 
 **Properties.**
 - The meaning is checked against a translation to a regular expression that the tests keep: `GlobOracle` is compared
   with the matcher over 1.3 million random (pattern, prefix, path) triples per run. The classes are read as git
   reads them, by a separate port of git's loop, and both agree with what `git check-ignore` printed.
-- The rules a budget lets in cost, to test one file, at most 5.2 ms for a 255-character path and 75 ms for 4,093
-  characters (5,000 rules of `aac` against `a` repeated), and hold at most 1.8 MB.
-  `IgnoreRuleCostTests` (`Category=Benchmark`, run in a release build) reruns the table in
-  [04](04-ingestion.md). The limits leave three times the largest of 93 repositories measured (1,373 rules, weight
-  19,543).
+- The rules a budget lets in cost, to test one file, at most 6 ms for a 255-character path and 70 ms for 4,093
+  characters (5,000 rules of `aac` against `a/a/a/...`), and building them allocates at most 4 MiB.
+  `IgnoreRuleCostTests.ThePrintedTableIsTheOneInTheDocumentation` (`Category=Benchmark`, run in a release build) prints
+  the table in [04](04-ingestion.md), time and memory included. The limits leave three times the largest of 93
+  repositories measured (1,373 rules, weight 19,543), a measurement made once on the development machine and not kept
+  in the repository.
 - Directories are visited in ordinal order, so the file a failure names is the same on every pass.
 - `Walk` takes a cancellation token, polled per directory and every 256 files.
 - An ignore file is opened without blocking on Linux and macOS (`O_NONBLOCK`) and refused if the handle cannot
   seek. A pipe named `.gitignore` blocked a walk for good when it was read as any other file.
-- The ignore files of a directory the rules ignore are not read, even where a negation makes the walk enter it. A directory a
-  negation re-includes is read.
+- The `.gitignore` files of a directory the rules ignore are not read, even where a negation makes the walk enter it;
+  git reads none there. A `.dexiconignore` there is read, because it is the operator's statement of what to leave
+  out and the files the negation brings back are indexed. A directory a negation re-includes is read.
 - A `.dexiconignore` with a carriage return inside a line fails the walk, since lines end at a line feed and a file
   with old Mac line endings would otherwise exclude nothing.
 
 **Rejected.** A timeout on the regular expressions, which fails on a loaded host and not only on a bad pattern. The
 engine that cannot backtrack, for its memory. A cache of compiled expressions, which would have bounded the
-memory by count when the cost is per expression. Skipping the rules past a limit with a warning, for the reason
-above. Splitting a pattern at slashes and matching segment by segment, which would have changed what `x**/y`
+memory by count when the cost is per expression. A token matcher that kept the reachable positions as one byte each
+and charged a pattern without a wildcard a twentieth of its tokens: with paths of long repeated runs it took 217 ms to
+test one 255-character file against 5,000 rules of `a` x30 then `c` and 2.8 s for 4,093 characters, because the
+literal search compared every start against the whole run and `?` and classes kept the window at every segment
+start. Skipping the rules past a limit with a warning, for the reason above. Splitting a pattern at slashes and matching segment by segment, which would have changed what `x**/y`
 and `a**b` mean. A limit on the work of a whole walk in place of the weight limit: the weight limit bounds one
 file's cost directly and is the same on every pass.
 
-**Cost.** Differences from the regular expression translation the walk used before this decision: a class never
-matches `/`, a POSIX class such as `[[:alpha:]]` and a reversed range are refused, `\` inside a class escapes, and a
+**Cost.** Differences from the regular expression translation the walk used before this decision: no class matches
+`/` (a negated class never did; a positive one such as `[+-9]` could), a POSIX class such as `[[:alpha:]]` and a
+reversed range are refused, `\` inside a class escapes (`[\d]` was the digit class and is the letter `d`),
+`[a-z-[b]]` was .NET class subtraction and is now the members `a-z`, `-`, `[` and `b` followed by a literal `]`, and a
 line feed in a name is an ordinary character. A source whose lists or ignore files go past a limit fails its pass;
 before this decision it was indexed with the rules past the limit skipped. A list stored before the limits existed
 fails its source's pass on the first pass after an upgrade if it goes past one. The differences from git that remain

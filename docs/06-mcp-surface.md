@@ -240,11 +240,22 @@ a single folder stays silent.
 ```
 
 The directory has no source, so it has no include or exclude globs to apply. What is
-applied is what holds for any path: the always-exclude list, a `.gitignore` and a
+applied is what holds for any path: the always-exclude list, a `.gitignore`, a `.dexiconignore` and a
 `.git/info/exclude` in the directory itself — only that one, since this does not descend —
 the size caps and binary sniffing. A reported file is one that would have been indexed had
 a source covered it, so a file git excludes locally is not reported as missing. Five files
 are listed per directory and the rest counted (`    ... and 3 more`).
+
+A directory whose ignore file cannot be used (a `.dexiconignore` line that does not compile, a link, a file past
+the limits in [04](04-ingestion.md)) cannot be checked, and the status says so instead of leaving it out
+silently, up to five directories and then a count:
+
+```
+  COVERAGE NOT CHECKED: books, because .dexiconignore line 1 ('[z-a]') cannot be compiled (reversed character range). Files there that no source covers are not listed.
+```
+
+The coverage endpoint of the web UI (`/api/corpora/{name}/coverage`) leaves such a directory out and logs the
+reason at Information.
 
 With a corpus named, it adds what an agent needs to say why a file is or is not indexed,
 and what to change:
