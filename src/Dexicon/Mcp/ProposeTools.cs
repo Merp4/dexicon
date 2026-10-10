@@ -46,12 +46,12 @@ public sealed class ProposeTools
         var principal = rc.RequirePrincipal();
 
         if (!ProposalKinds.TryParse(kind, out var parsed))
-            throw new McpException($"kind is {ProposalKinds.Choices}, not '{DexiconTools.OneLine(kind ?? string.Empty)}'.");
+            throw new McpException($"kind is {ProposalKinds.Choices}, not '{DexiconTools.Echo(kind)}'.");
 
         var found = await ConfigureTools.WritableAsync(scopes, principal, corpus, string.Empty, ct);
 
         var asked = await proposals.ProposeAsync(principal, found, parsed, target, reason, ct);
-        if (asked.Refusal is { } refused) throw new McpException(DexiconTools.OneLine(refused.Detail));
+        if (asked.Refusal is { } refused) throw DexiconTools.Refusal(refused.Detail);
 
         var p = asked.Value!.Proposal;
         var what = $"remove {Phrase(p)}";

@@ -39,7 +39,7 @@ public sealed class DexiconTools
         [Description("hybrid blends meaning with exact terms; semantic is meaning only; keyword is exact-match only and keeps working when embeddings are unavailable.")] string mode = "hybrid",
         [Description("Maximum results, 1-50.")] int limit = 10,
         [Description("Restrict to files under this path, e.g. src/Auth/. Relative to the source root, not the corpus. Use `source` to narrow by folder instead.")] string? pathPrefix = null,
-        [Description("Restrict to one source, by the root path a search result cites, e.g. books/manuals/Architecture. A parent matches everything beneath it, so books/manuals covers every topic folder under it. list_corpora does not list these; run a search first, or pass a wrong one and the error names them all.")] string? source = null,
+        [Description("Restrict to one source, by the root path a search result cites, e.g. books/manuals/Architecture. A parent matches everything beneath it, so books/manuals covers every topic folder under it. list_corpora does not list these; run a search first, or pass a wrong one and the error lists them, up to 1,500 characters and then how many more.")] string? source = null,
         [Description("Restrict to one language, e.g. csharp, python, typescript.")] string? language = null,
         [Description("Restrict to chunks declaring this symbol, e.g. TokenService.")] string? symbol = null,
         [Description("Characters of each result to return, centred on the matching passage. The default is enough to read the match in context; raise it when a hit is clearly the right passage and you need more of it, or use get_context. 0 returns whole chunks, which on a book corpus is about 8,000 characters each.")]
@@ -69,7 +69,7 @@ public sealed class DexiconTools
         }
         catch (ScopeResolutionException ex)
         {
-            throw new McpException(ex.Message);
+            throw Refusal(ex.Message);
         }
         catch (UnknownSearchModeException ex)
         {
@@ -93,20 +93,22 @@ public sealed class DexiconTools
     internal static string Render(SearchResult result)
     {
         var sb = new StringBuilder();
-        var scope = string.Join(", ", result.Scope.Select(s => s.Name));
+        var scope = OneLine(string.Join(", ", result.Scope.Select(s => s.Name)));
 
+        // The query is the caller's own text, repeated on the line a reader takes to be the result's.
+        var query = Echo(result.Query);
         sb.Append(result.Hits.Count switch
         {
-            0 => $"No results for \"{result.Query}\"",
-            1 => $"1 result for \"{result.Query}\"",
-            var n => $"{n} results for \"{result.Query}\"",
+            0 => $"No results for \"{query}\"",
+            1 => $"1 result for \"{query}\"",
+            var n => $"{n} results for \"{query}\"",
         });
         sb.Append($" ({result.Mode.ToString().ToLowerInvariant()}, corpus: {scope})\n");
 
         if (result.Degraded)
-            sb.Append($"\n! DEGRADED: {result.DegradedReason}\n");
+            sb.Append($"\n! DEGRADED: {Echo(result.DegradedReason, MessageMax)}\n");
         if (result.Note is not null)
-            sb.Append($"\n! {result.Note}\n");
+            sb.Append($"\n! {Echo(result.Note, MessageMax)}\n");
 
         if (result.Hits.Count == 0)
         {
@@ -124,9 +126,9 @@ public sealed class DexiconTools
         var i = 1;
         foreach (var hit in result.Hits)
         {
-            sb.Append($"\n{i++}. {hit.Location}");
+            sb.Append($"\n{i++}. {OneLine(hit.Location)}");
             if (spansSources && hit.SourceRoot is { Length: > 0 } root)
-                sb.Append($"  · in {root}");
+                sb.Append($"  · in {OneLine(root)}");
 
             // A hit in a PDF or an EPUB is cited by its unit, as `book.epub#chapter=7`,
             // which is right for a citation and unusable as an argument to get_context,
@@ -134,8 +136,8 @@ public sealed class DexiconTools
             // book and then have nothing to pass in order to read on from it.
             if (hit.Page is not null) sb.Append($"  · lines {hit.StartLine}-{hit.EndLine}");
 
-            if (hit.Section is { Length: > 0 }) sb.Append($"  · {hit.Section}");
-            if (result.Scope.Count > 1) sb.Append($"  [{hit.CorpusName}]");
+            if (hit.Section is { Length: > 0 }) sb.Append($"  · {OneLine(hit.Section)}");
+            if (result.Scope.Count > 1) sb.Append($"  [{Echo(hit.CorpusName)}]");
             sb.Append('\n');
 
             foreach (var line in hit.Content.Split('\n'))
@@ -159,12 +161,12 @@ public sealed class DexiconTools
         var visible = await scopes.VisibleAsync(principal, ct);
 
         if (visible.Count == 0)
-            return $"Key '{principal.Name}' can reach no corpora. Create one in the Dexicon UI, " +
+            return $"Key '{OneLine(principal.Name)}' can reach no corpora. Create one in the Dexicon UI, " +
                    "or map this key to one under Access.";
 
         var sb = new StringBuilder(
             $"{visible.Count} {(visible.Count == 1 ? "corpus" : "corpora")} " +
-            $"reachable by '{principal.Name}':\n");
+            $"reachable by '{OneLine(principal.Name)}':\n");
         foreach (var c in visible)
             sb.Append(RenderCorpus(await CorpusEndpoints.Summarise(db, c, opts.Value.Indexing, ct)));
         return sb.ToString();
@@ -197,11 +199,11 @@ public sealed class DexiconTools
     internal static string RenderCorpus(CorpusSummary s)
     {
         var sb = new StringBuilder();
-        sb.Append($"\n- {s.Name}\n");
+        sb.Append($"\n- {OneLine(s.Name)}\n");
 
         // What it is, before what it is made of.
         sb.Append(s.Description is { Length: > 0 }
-            ? $"    {s.Description}\n"
+            ? $"    {Echo(s.Description, MessageMax)}\n"
             : "    (no description: state what the corpus holds so an agent can choose between corpora)\n");
 
         // An empty corpus is a legal value for search_index that cannot answer anything.
@@ -220,8 +222,8 @@ public sealed class DexiconTools
         // corpus name cannot reach the others. Named here, with the default marked.
         foreach (var set in s.ChunkSets)
         {
-            sb.Append($"\n    {(set.IsDefault ? "*" : " ")} {s.Name}:{set.Name}");
-            sb.Append($" — {set.EmbeddingModel} ({set.EmbeddingDimensions}d), ");
+            sb.Append($"\n    {(set.IsDefault ? "*" : " ")} {OneLine(s.Name)}:{OneLine(set.Name)}");
+            sb.Append($" — {OneLine(set.EmbeddingModel)} ({set.EmbeddingDimensions}d), ");
             sb.Append($"{set.ChunkSize} tokens/{set.ChunkOverlap} overlap, {set.ChunkCount:N0} chunks");
             if (set.State != "ready") sb.Append($" [{set.State}]");
         }
@@ -233,7 +235,7 @@ public sealed class DexiconTools
             // The name as a JSON string, so the call can be copied as it stands whatever the
             // name holds: only a blank one is refused, and a quote in it broke the call.
             sb.Append($"\n    {s.FailedCount:N0} {UnitFor(s.Sources, s.FailedCount)} failed; " +
-                      $"index_status({System.Text.Json.JsonSerializer.Serialize(s.Name, Literal)}) lists them with the reason");
+                      $"index_status({Quoted(s.Name)}) lists them with the reason");
         sb.Append('\n');
         return sb.ToString();
     }
@@ -262,7 +264,7 @@ public sealed class DexiconTools
             var scope = await scopes.ResolveReadableAsync(rc.RequirePrincipal(), [corpus], ct);
             target = scope.Targets[0];
         }
-        catch (ScopeResolutionException ex) { throw new McpException(ex.Message); }
+        catch (ScopeResolutionException ex) { throw Refusal(ex.Message); }
 
         // Read from the index rather than from disk, so this works for uploads, which have
         // no file to read, and by filter rather than by search.
@@ -301,10 +303,10 @@ public sealed class DexiconTools
 
                 if (gotHi < gotLo)
                     throw new McpException(
-                        $"'{filePath}' in corpus '{corpus}' has no line {aroundLine}; "
+                        $"'{Echo(filePath)}' in corpus '{Echo(corpus)}' has no line {aroundLine}; "
                         + $"it runs to line {document.Text.AsSpan().Count('\n') + 1}.");
 
-                return $"{filePath}:{gotLo}-{gotHi} (corpus: {corpus})\n{WarningLine(file)}\n"
+                return $"{OneLine(filePath)}:{gotLo}-{gotHi} (corpus: {OneLine(corpus)})\n{WarningLine(file)}\n"
                      + Passage.Stitch([(gotLo, gotHi, text)], lineNumbers);
             }
         }
@@ -315,9 +317,9 @@ public sealed class DexiconTools
 
         if (pieces.Count == 0)
             throw new McpException(chunks.Count == 0
-                ? $"No indexed file '{filePath}' in corpus '{corpus}'. " +
+                ? $"No indexed file '{Echo(filePath)}' in corpus '{Echo(corpus)}'. " +
                   "Check the path is exactly as search_index returned it."
-                : $"'{filePath}' is indexed in corpus '{corpus}' but has no content around line " +
+                : $"'{Echo(filePath)}' is indexed in corpus '{Echo(corpus)}' but has no content around line " +
                   $"{aroundLine}; it spans lines {chunks.Min(c => c.StartLine)}-{chunks.Max(c => c.EndLine)}.");
 
         // The window, not the span of the chunks overlapping it. `before` and `after` are
@@ -326,7 +328,7 @@ public sealed class DexiconTools
         var shownLo = Math.Max(lo, pieces[0].StartLine);
         var shownHi = Math.Min(hi, pieces[^1].EndLine);
 
-        var header = $"{filePath}:{shownLo}-{shownHi} (corpus: {corpus})\n{WarningLine(file)}";
+        var header = $"{OneLine(filePath)}:{shownLo}-{shownHi} (corpus: {OneLine(corpus)})\n{WarningLine(file)}";
         return header + "\n" +
                Passage.Stitch(pieces.Select(p => (p.StartLine, p.EndLine, p.Content)), lineNumbers, (lo, hi));
     }
@@ -337,7 +339,7 @@ public sealed class DexiconTools
     /// path: <c>get_context</c> and the file resource.
     /// </summary>
     internal static string WarningLine(FileSource file) =>
-        file.Warning is { } warning ? $"! {warning}\n" : string.Empty;
+        file.Warning is { } warning ? $"! {Echo(warning, MessageMax)}\n" : string.Empty;
 
     [McpServerTool(Name = "index_refresh")]
     [Description("Queue a reindex of a corpus and return immediately. Use when you know the files have changed and search looks stale.")]
@@ -353,12 +355,12 @@ public sealed class DexiconTools
 
         Corpus target;
         try { target = await scopes.ResolveWritableAsync(rc.RequirePrincipal(), corpus, ct); }
-        catch (ScopeResolutionException ex) { throw new McpException(ex.Message); }
+        catch (ScopeResolutionException ex) { throw Refusal(ex.Message); }
 
         var job = await queue.EnqueueAsync(target.Id, full ? JobKind.Full : JobKind.Refresh, ct: ct);
 
         // Never blocks: indexing a large repository outlasts any sensible tool timeout.
-        return $"Queued {(full ? "full" : "incremental")} reindex of '{target.Name}' as job {job.Id} " +
+        return $"Queued {(full ? "full" : "incremental")} reindex of '{OneLine(target.Name)}' as job {job.Id} " +
                $"(state: {job.State.ToString().ToLowerInvariant()}). Poll index_status for progress.";
     }
 
@@ -383,10 +385,10 @@ public sealed class DexiconTools
         else
         {
             try { targets = (await scopes.ResolveReadableAsync(principal, [corpus], ct)).Corpora.ToList(); }
-            catch (ScopeResolutionException ex) { throw new McpException(ex.Message); }
+            catch (ScopeResolutionException ex) { throw Refusal(ex.Message); }
         }
 
-        if (targets.Count == 0) return $"Key '{principal.Name}' can reach no corpora.";
+        if (targets.Count == 0) return $"Key '{OneLine(principal.Name)}' can reach no corpora.";
 
         var sb = new StringBuilder();
         foreach (var c in targets)
@@ -400,15 +402,15 @@ public sealed class DexiconTools
                 .OrderByDescending(j => j.QueuedUtc).ThenByDescending(j => j.Id)
                 .FirstOrDefaultAsync(ct);
 
-            sb.Append($"{c.Name}: {summary.State}\n");
+            sb.Append($"{OneLine(c.Name)}: {summary.State}\n");
             sb.Append($"  {summary.FileCount:N0} {UnitFor(summary.Sources, summary.FileCount)} indexed, {summary.ChunkCount:N0} chunks");
             if (summary.SkippedCount > 0) sb.Append($", {summary.SkippedCount:N0} skipped");
             if (summary.FailedCount > 0) sb.Append($", {summary.FailedCount:N0} failed");
             sb.Append('\n');
             foreach (var set in summary.ChunkSets)
             {
-                sb.Append($"  {(set.IsDefault ? "*" : " ")} {set.Name}: {set.State}, ");
-                sb.Append($"{set.EmbeddingModel} ({set.EmbeddingDimensions}d), {set.ChunkCount:N0} chunks");
+                sb.Append($"  {(set.IsDefault ? "*" : " ")} {OneLine(set.Name)}: {set.State}, ");
+                sb.Append($"{OneLine(set.EmbeddingModel)} ({set.EmbeddingDimensions}d), {set.ChunkCount:N0} chunks");
                 if (set.PendingCount > 0) sb.Append($", {set.PendingCount:N0} pending");
                 if (set.FailedCount > 0) sb.Append($", {set.FailedCount:N0} failed");
                 sb.Append('\n');
@@ -418,7 +420,7 @@ public sealed class DexiconTools
             if (job is not null)
             {
                 sb.Append($"  latest job {job.Id}: {job.State.ToString().ToLowerInvariant()}");
-                if (job.Phase is { Length: > 0 }) sb.Append($" ({job.Phase})");
+                if (job.Phase is { Length: > 0 }) sb.Append($" ({Echo(job.Phase)})");
                 if (job.State == JobState.Running && job.FilesTotal > 0)
                 {
                     var pct = 100.0 * (job.FilesDone + job.FilesSkipped + job.FilesFailed) / job.FilesTotal;
@@ -426,7 +428,7 @@ public sealed class DexiconTools
                             + $" / {job.FilesTotal:N0} {UnitFor(summary.Sources, job.FilesTotal)})");
                 }
                 sb.Append('\n');
-                if (job.Error is { Length: > 0 }) sb.Append($"  error: {job.Error}\n");
+                if (job.Error is { Length: > 0 }) sb.Append($"  error: {Echo(job.Error, MessageMax)}\n");
             }
 
             // Workspace sources only, as the HTTP report does. A git-history source has a
@@ -480,7 +482,7 @@ public sealed class DexiconTools
             if (string.Equals(s.Kind, "githistory", StringComparison.OrdinalIgnoreCase))
             {
                 var git = s.Git ?? new GitHistoryOptions();
-                sb.Append($"    commit history of {where}: {s.FileCount:N0} {(s.FileCount == 1 ? "commit" : "commits")}, follows {git.Ref}");
+                sb.Append($"    commit history of {where}: {s.FileCount:N0} {(s.FileCount == 1 ? "commit" : "commits")}, follows {OneLine(git.Ref)}");
                 if (s.Tracking is { } tracking && Distance(tracking) is { } distance)
                     sb.Append($" ({distance})");
                 var holds = new[] { git.IncludeMessage ? "message" : null, git.IncludeStat ? "stat" : null, git.IncludeDiff ? "diff" : null }
@@ -546,15 +548,17 @@ public sealed class DexiconTools
     {
         if (tracking.Upstream is not { } up) return null;
 
+        // A ref name can hold U+0085 or U+202A, which git accepts.
+        var upstream = OneLine(up.ShortName);
         string where;
-        if (up.Gone) where = $"its upstream {up.ShortName} is gone";
+        if (up.Gone) where = $"its upstream {upstream} is gone";
         else if (up.Behind is null && up.Ahead is null) return null;
         else where = (up.Behind ?? 0, up.Ahead ?? 0) switch
         {
-            (0, 0) => $"up to date with {up.ShortName}",
-            (var behind, 0) => $"{behind} behind {up.ShortName}",
-            (0, var ahead) => $"{ahead} ahead of {up.ShortName}",
-            var (behind, ahead) => $"{behind} behind and {ahead} ahead of {up.ShortName}",
+            (0, 0) => $"up to date with {upstream}",
+            (var behind, 0) => $"{behind} behind {upstream}",
+            (0, var ahead) => $"{ahead} ahead of {upstream}",
+            var (behind, ahead) => $"{behind} behind and {ahead} ahead of {upstream}",
         };
 
         return tracking.LastFetchUtc is { } fetched
@@ -611,7 +615,7 @@ public sealed class DexiconTools
                 {
                     // One line each: a reason is often an exception message, and a stack of
                     // them would push the rest of the report out of the result.
-                    var line = reason.ReplaceLineEndings(" ").Trim();
+                    var line = OneLine(reason).Trim();
                     sb.Append($" — {(line.Length > 160 ? line[..157] + "..." : line)}");
                 }
                 sb.Append('\n');
@@ -629,12 +633,36 @@ public sealed class DexiconTools
         _ => $"{b} bytes",
     };
 
+    /// <summary>A path as one line, as <see cref="LogText.OneLine"/> holds it.</summary>
+    internal static string OneLine(string path) => LogText.OneLine(path);
+
     /// <summary>
-    /// A path as one line. A file name on Linux can hold a line break, and printed as it
-    /// is, one would end its entry early and could begin a line that reads as another
-    /// status or reason. A glob is stored as it was typed, so it can hold one too.
+    /// The most characters of a caller's value that an error repeats: the length a corpus name may have
+    /// (<see cref="CorpusConfiguration.NameMax"/>, which is <see cref="ScopeResolver.ShownMax"/>), so a
+    /// name that exists is never cut.
     /// </summary>
-    internal static string OneLine(string path) => path.ReplaceLineEndings(" ");
+    internal const int EchoMax = ScopeResolver.ShownMax;
+
+    /// <summary>
+    /// The most characters of a whole error, which is written here but can hold a caller's value (the
+    /// resolver's messages quote the corpus name as sent).
+    /// </summary>
+    internal const int MessageMax = 4_000;
+
+    /// <summary>
+    /// A caller's value as an error repeats it, as <see cref="LogText.Echo"/> holds it. The SDK returns the
+    /// message of an <see cref="McpException"/> to the caller and a log can carry it, so a line break in the
+    /// value could begin a line that reads as another entry.
+    /// </summary>
+    internal static string Echo(string? value, int max = EchoMax) => LogText.Echo(value, max);
+
+    /// <summary>
+    /// A refusal whose message was composed elsewhere: by <see cref="ScopeResolver"/> (read and write scope),
+    /// by <see cref="CorpusConfiguration"/> and by <see cref="Dexicon.Api.ProposalService"/> (their refusals), or
+    /// by a tool from one of those and a hint. Each can quote what the caller sent, so the message is held to one
+    /// line and to <see cref="MessageMax"/>.
+    /// </summary>
+    internal static McpException Refusal(string message) => new(Echo(message, MessageMax));
 
     /// <summary>
     /// A name as a JSON string, for a call an agent will be told to make: <c>"a\"b"</c> and not

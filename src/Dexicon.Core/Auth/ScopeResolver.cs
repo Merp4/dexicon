@@ -51,6 +51,67 @@ public sealed record ResolvedScope(IReadOnlyList<ScopedCorpus> Targets)
 /// </summary>
 public sealed class ScopeResolver(CatalogDbContext db)
 {
+    /// <summary>
+    /// The most characters of a name or path a caller sent that an error repeats. A corpus name is at most
+    /// 200 characters, so one that exists is shown whole.
+    /// </summary>
+    public const int ShownMax = 200;
+
+    /// <summary>The most characters of a list of names that an error writes.</summary>
+    public const int ListedMax = 1_500;
+
+    /// <summary>How many of the names a caller asked for that are not corpora an error quotes.</summary>
+    internal const int UnknownShownMax = 3;
+
+    /// <summary>
+    /// The names, comma separated, each cut at <see cref="ShownMax"/>, written while the list stays within
+    /// <see cref="ListedMax"/> characters and ending at a whole name, then "(and N more)" for those left out.
+    /// The names are the server's, so a long list is shortened here and not by cutting the message, which
+    /// would lose the end of it. A name is cut because the first one is always written, and one of
+    /// thousands of characters would otherwise be the whole bound.
+    /// </summary>
+    public static string Listed(IReadOnlyList<string> names)
+    {
+        var written = new System.Text.StringBuilder();
+        var shown = 0;
+
+        foreach (var name in names)
+        {
+            var text = Shown(name);
+            var next = (shown == 0 ? 0 : 2) + text.Length;
+            if (written.Length + next > ListedMax) break;
+
+            if (shown > 0) written.Append(", ");
+            written.Append(text);
+            shown++;
+        }
+
+        if (shown < names.Count) written.Append(" (and ").Append(names.Count - shown).Append(" more)");
+        return written.ToString();
+    }
+
+    /// <summary>
+    /// The first <see cref="UnknownShownMax"/> of the names a caller asked for that are not corpora, each
+    /// quoted and cut, then "(and N more)". The caller's list has no bound of its own, and each name
+    /// is theirs to make long.
+    /// </summary>
+    internal static string QuotedUnknown(IReadOnlyList<string> unknown)
+    {
+        var written = string.Join(", ", unknown.Take(UnknownShownMax).Select(u => $"'{Shown(u)}'"));
+        return unknown.Count > UnknownShownMax ? $"{written} (and {unknown.Count - UnknownShownMax} more)" : written;
+    }
+
+    /// <summary>What a caller sent, as an error repeats it: cut, so a very long one is not echoed whole.</summary>
+    private static string Shown(string? text)
+    {
+        if (text is null) return string.Empty;
+        if (text.Length <= ShownMax) return text;
+
+        // Not between the halves of a surrogate pair.
+        var cut = char.IsHighSurrogate(text[ShownMax - 1]) ? ShownMax - 1 : ShownMax;
+        return string.Concat(text.AsSpan(0, cut), "...");
+    }
+
     /// <summary>What is indexing now, for the corpora in an already-resolved scope.</summary>
     public Task<IndexingActivity> IndexingAsync(IReadOnlyCollection<string> corpusIds, CancellationToken ct = default) =>
         IndexingActivity.ReadAsync(db, corpusIds, ct);
@@ -103,10 +164,10 @@ public sealed class ScopeResolver(CatalogDbContext db)
             var roots = rooted.Select(s => s.RootPath!).Distinct().Order(StringComparer.Ordinal).ToList();
 
             throw new ScopeResolutionException(
-                $"No source at '{rootPath}' in the corpora searched. " +
+                $"No source at '{Shown(rootPath)}' in the corpora searched. " +
                 (roots.Count == 0
                     ? "They have no workspace sources at all; only uploaded documents, which have no path."
-                    : $"Sources: {string.Join(", ", roots)}. A parent matches everything beneath it."),
+                    : $"Sources: {Listed(roots)}. A parent matches everything beneath it."),
                 roots);
         }
 
@@ -150,10 +211,10 @@ public sealed class ScopeResolver(CatalogDbContext db)
                 {
                     var sets = match.ChunkSets.Select(s => s.Name).Order(StringComparer.Ordinal).ToList();
                     throw new ScopeResolutionException(
-                        $"Corpus '{match.Name}' has no chunk set named '{setPart}'. " +
+                        $"Corpus '{match.Name}' has no chunk set named '{Shown(setPart)}'. " +
                         (sets.Count == 0
                             ? "It has no chunk sets at all, which means nothing is indexed."
-                            : $"Its sets: {string.Join(", ", sets)}."),
+                            : $"Its sets: {Listed(sets)}."),
                         visible.Select(c => c.Name).ToList());
                 }
 
@@ -164,10 +225,10 @@ public sealed class ScopeResolver(CatalogDbContext db)
             {
                 var names = visible.Select(c => c.Name).Order(StringComparer.Ordinal).ToList();
                 throw new ScopeResolutionException(
-                    $"Unknown corpus {string.Join(", ", unknown.Select(u => $"'{u}'"))}. " +
+                    $"Unknown corpus {QuotedUnknown(unknown)}. " +
                     (names.Count == 0
                         ? $"Key '{principal.Name}' can reach no corpora at all."
-                        : $"Corpora this key can reach: {string.Join(", ", names)}."),
+                        : $"Corpora this key can reach: {Listed(names)}."),
                     names);
             }
 
@@ -270,10 +331,10 @@ public sealed class ScopeResolver(CatalogDbContext db)
 
         var names = visible.Select(c => c.Name).Order(StringComparer.Ordinal).ToList();
         throw new ScopeResolutionException(
-            $"No corpus named '{nameOrId}' is reachable by key '{principal.Name}'. " +
+            $"No corpus named '{Shown(nameOrId)}' is reachable by key '{principal.Name}'. " +
             (names.Count == 0
                 ? "It is mapped to no corpora that exist."
-                : $"Corpora this key can reach: {string.Join(", ", names)}."),
+                : $"Corpora this key can reach: {Listed(names)}."),
             names);
     }
 }

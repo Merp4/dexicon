@@ -1,3 +1,8 @@
+using Serilog;
+using Serilog.Configuration;
+using Serilog.Core;
+using Serilog.Events;
+
 namespace Dexicon.Infrastructure;
 
 /// <summary>
@@ -19,7 +24,34 @@ public static class LogOutput
     /// Without <c>l</c> the values are rendered as JSON, which quotes them and escapes the
     /// newline. The quotes are the cost, and they also make the boundaries of a logged
     /// value explicit. See <c>LogForgingTests</c>.
+    ///
+    /// <c>:j</c> escapes U+0000 to U+001F and leaves U+007F, the C1 controls, U+2028, U+2029 and the
+    /// bidirectional controls, and <c>{Exception}</c> writes <see cref="Exception.ToString"/> as it is.
+    /// The sink is therefore <see cref="OneLineConsole"/>, which replaces those characters in every
+    /// logged string and renders the exception line by line. See <c>ExceptionLogForgingTests</c>.
     /// </summary>
     public const string ConsoleTemplate =
         "[{UtcTime:HH:mm:ss}Z {Level:u3}] {Message:j}{NewLine}{Exception}";
+
+    /// <summary>
+    /// The application's logger configuration: the minimum level, quieter framework categories, the UTC
+    /// timestamp, and <see cref="OneLineConsole"/> as the only sink. <c>Program.cs</c> builds its logger
+    /// from this, and a test builds the same one, so a change to the sink is seen by the test.
+    /// </summary>
+    public static LoggerConfiguration Configuration(LogEventLevel level) =>
+        new LoggerConfiguration()
+            .MinimumLevel.Is(level)
+            .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+            .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
+            .Enrich.FromLogContext()
+            .Enrich.With<UtcTimestampEnricher>()
+            .WriteTo.OneLineConsole();
+
+    /// <summary>
+    /// The console sink with <see cref="ConsoleTemplate"/>, behind <see cref="OneLineLogSink"/>.
+    /// </summary>
+    public static LoggerConfiguration OneLineConsole(this LoggerSinkConfiguration sinks) =>
+        sinks.Sink(LoggerSinkConfiguration.Wrap(
+            (ILogEventSink inner) => new OneLineLogSink(inner),
+            (LoggerSinkConfiguration wrapped) => wrapped.Console(outputTemplate: ConsoleTemplate)));
 }

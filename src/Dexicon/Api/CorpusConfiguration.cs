@@ -1,9 +1,11 @@
+using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
 using Dexicon.Core.Documents;
 using Dexicon.Core.Embedding;
 using Dexicon.Core.Indexing;
 using Dexicon.Core.Vectors;
+using Dexicon.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -11,14 +13,23 @@ namespace Dexicon.Api;
 
 /// <summary>A change to a corpus or a source, refused, in the words every caller is shown.</summary>
 /// <param name="Status">The HTTP status the API answers with.</param>
+/// <param name="AgentDetail">
+/// What an MCP tool says instead of <paramref name="Detail"/>, when <paramref name="Detail"/> carries text the
+/// repository did not write, such as a provider's error. Null where <paramref name="Detail"/> is safe to show.
+/// </param>
 /// <param name="KeptSetId">
 /// A chunk set a removal refused to delete after its vectors were deleted. The caller queues a refresh of it
 /// (<see cref="CorpusConfiguration.FollowUpAsync"/>) once the refusal is decided, and not before: queuing saves
 /// the context, which a proposal being approved shares with the removal.
 /// </param>
-public sealed record ConfigRefusal(string Title, string Detail, int Status, string? KeptSetId = null)
+public sealed record ConfigRefusal(string Title, string Detail, int Status, string? AgentDetail = null, string? KeptSetId = null)
 {
-    public IResult ToResult() => Results.Problem(title: Title, detail: Detail, statusCode: Status);
+    /// <summary>
+    /// The problem response. A detail that only repeats the title is left out, because the UI joins the two
+    /// as "title: detail".
+    /// </summary>
+    public IResult ToResult() => Results.Problem(
+        title: Title, detail: string.Equals(Detail, Title, StringComparison.Ordinal) ? null : Detail, statusCode: Status);
 }
 
 /// <summary>What a saved corpus change altered, passed to the caller's callback.</summary>
@@ -49,8 +60,19 @@ public sealed class CorpusConfiguration(
 {
     private IndexingOptions Indexing => opts.Value.Indexing;
 
-    /// <summary>The length the model declares for a corpus name.</summary>
-    internal const int NameMax = 200;
+    /// <summary>
+    /// What an MCP tool says for a path the workspace resolver refused. The resolver's message names where a
+    /// link leads, which is the host's own path.
+    /// </summary>
+    private const string WorkspacePathAgentDetail =
+        "The path is outside the workspace, or passes through a link, and links are not followed. "
+        + "list_folders shows what is mounted.";
+
+    /// <summary>
+    /// The length the model declares for a corpus name. It is <see cref="ScopeResolver.ShownMax"/>, the most that an
+    /// error repeats of a name, so a name that exists is never cut in an error.
+    /// </summary>
+    internal const int NameMax = ScopeResolver.ShownMax;
 
     /// <summary>
     /// Held from the last name check to the insert, which makes the two one step. The unique
@@ -164,6 +186,15 @@ public sealed class CorpusConfiguration(
                 + "could not be addressed by its name.",
                 400);
 
+        // The settings the default set is stored with, request first and configuration after, judged by the
+        // rules a chunk set added later is. After the four checks on the name above, which need no query, and
+        // before the taken-name query and the model probe, which cost a query and a call to the embedding
+        // service for a request that is refused anyway. A refusal says whether a setting came from the
+        // request or from the server's configuration.
+        if (ChunkSettingRules.CheckNewCorpus(body.ChunkSize, body.ChunkOverlap, body.BoundaryMode, Indexing, out var chunking)
+            is { } badChunking)
+            return badChunking;
+
         if (await TakenAsync(name, ct) is { } early) return early;
 
         var model = string.IsNullOrWhiteSpace(body.EmbeddingModel)
@@ -189,10 +220,15 @@ public sealed class CorpusConfiguration(
         {
             // Refuse rather than guess. A corpus created with the wrong dimension
             // count is unusable and the failure surfaces much later, as bad results.
+            //
+            // The provider's message can name its address, so a caller that is not the admin is given
+            // AgentDetail, and the tool that shows it logs the message.
             return new ConfigRefusal(
                 "Embedding model unavailable",
                 $"Could not probe '{target}': {ex.Message}. The corpus was not created.",
-                503);
+                503,
+                AgentDetail: $"The embedding service did not answer a probe of '{DexiconAuthMiddleware.OneLine(target.ToString())}'. "
+                             + "The corpus was not created. Whoever runs Dexicon can see why in its log.");
         }
 
         var corpus = new Corpus
@@ -224,9 +260,9 @@ public sealed class CorpusConfiguration(
             EmbeddingModel = model,
             EmbeddingDimensions = dims,
             CollectionName = vectors.CollectionNameFor(target, dims),
-            ChunkSize = body.ChunkSize ?? Indexing.ChunkSize,
-            ChunkOverlap = body.ChunkOverlap ?? Indexing.ChunkOverlap,
-            BoundaryMode = body.BoundaryMode ?? Indexing.BoundaryMode,
+            ChunkSize = chunking.Size,
+            ChunkOverlap = chunking.Overlap,
+            BoundaryMode = chunking.Mode,
             IsDefault = true,
             State = CorpusState.Ready,
             CreatedUtc = DateTime.UtcNow,
@@ -236,7 +272,7 @@ public sealed class CorpusConfiguration(
         {
             try { WorkspaceDiscovery.Resolve(Indexing.WorkspaceRoot, body.WorkspacePath); }
             catch (UnauthorizedAccessException ex)
-            { return new ConfigRefusal("Invalid workspace path", ex.Message, 400); }
+            { return new ConfigRefusal("Invalid workspace path", ex.Message, 400, AgentDetail: WorkspacePathAgentDetail); }
 
             corpus.Sources.Add(CorpusEndpoints.FirstSource(corpus.Id,
                 WorkspaceDiscovery.Canonical(Indexing.WorkspaceRoot, body.WorkspacePath)));
@@ -411,7 +447,7 @@ public sealed class CorpusConfiguration(
         }
         catch (UnauthorizedAccessException ex)
         {
-            return new ConfigRefusal("Invalid workspace path", ex.Message, 400);
+            return new ConfigRefusal("Invalid workspace path", ex.Message, 400, AgentDetail: WorkspacePathAgentDetail);
         }
 
         var source = new Source

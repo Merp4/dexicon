@@ -943,6 +943,22 @@ Boundary modes: `none` | `blank-line` | `language-aware` | `custom` (operator re
 with a 500 ms timeout; an invalid or timing-out regex fails the job with a clear error and
 never falls back without reporting it).
 
+A chunk set's size is from 64 to 8,192 tokens and its overlap is not negative and below the size.
+The same rules judge the settings a corpus is created with, for its default set, and a set added
+or changed afterwards; the custom pattern is compiled when it is set, so a bad one is refused on
+that request. Creating a corpus carries no pattern, so mode `custom` is set afterwards on the
+default set. The size recommended for a model is held to between 64 and 8,192 tokens, so a model
+with a longer or a much shorter context is offered a size that can be used. A set stored before
+the rules, with a size over 8,192, can still have its description or its boundary settings edited.
+A setting sent with the value the set already has is not a change. Each setting that is changed is
+judged on its own: a size against the range, an overlap for being negative, a mode and a custom
+pattern as such. The size and the overlap are judged together (an overlap not below the size) when
+either changes, with the other as stored, so a size change on a set whose stored overlap is not
+below the new size is refused for an overlap the request did not send. A new set that inherits from
+another is judged for what the request sent only, so an unusable size or overlap stored in the
+template is inherited by the new set; that is intended, and editing the new set mends it. The
+chunk-set edit dialog sends only the settings that were edited.
+
 ### No chunk exceeds the budget
 
 The chunker avoids splitting within a line, so every chunk carries exact
@@ -1163,7 +1179,7 @@ calls, with no documentation to trust and nothing indexed.
 
 Measured on this stack, both `nomic-embed-text` and `embeddinggemma` accept about 11,776
 characters of English prose, or 2,048 tokens, and **truncate without error** beyond it. Where the provider reports tokens, the recommended chunk size is 90% of the
-measured context (`CodeChunker.UsableContext`); where it does not, it is two thirds of the
+measured context (`CodeChunker.UsableContext`), held to between 64 and 8,192 tokens, the range a chunk set accepts; where it does not, it is two thirds of the
 measured characters divided by the characters-per-token estimate. The measurement is in
 characters of prose and the model counts tokens: code, minified output and CJK reach the same
 token limit in far fewer characters, which the margin absorbs.

@@ -84,11 +84,11 @@ public sealed class DexiconResources
             var state = await documents.StatusAtAsync(corpus.Id, target.Set.Id, path, ct);
 
             throw new McpException(state is { Status: FileStatus.Empty } empty
-                ? $"'{path}' is indexed in corpus '{corpus.Name}' and has no text: " +
-                  $"{empty.Detail ?? "no extractable text content"}."
-                : $"No indexed file '{path}' in corpus '{corpus.Name}'. " +
+                ? $"'{DexiconTools.Echo(path)}' is indexed in corpus '{DexiconTools.Echo(corpus.Name)}' and has no text: " +
+                  $"{DexiconTools.Echo(empty.Detail ?? "no extractable text content", DexiconTools.MessageMax)}."
+                : $"No indexed file '{DexiconTools.Echo(path)}' in corpus '{DexiconTools.Echo(corpus.Name)}'. " +
                   "Paths are exactly as search_index reports them; browse dexicon://corpus/" +
-                  $"{corpus.Name} for what the corpus contains.");
+                  $"{DexiconTools.Echo(corpus.Name)} for what the corpus contains.");
         }
 
         // A path two sources of the corpus hold is two files. The one with the most chunks
@@ -101,7 +101,7 @@ public sealed class DexiconResources
         var document = await documents.ForAsync(corpus.Id, target.Set.Id, path, file.SourceId, ct);
 
         var sb = new StringBuilder();
-        sb.Append(path).Append(" (corpus: ").Append(corpus.Name).Append(")\n")
+        sb.Append(DexiconTools.OneLine(path)).Append(" (corpus: ").Append(DexiconTools.OneLine(corpus.Name)).Append(")\n")
           .Append(DexiconTools.WarningLine(file)).Append('\n');
         sb.Append(document?.Text
             ?? Passage.Stitch(file.Chunks.Select(h => (h.StartLine, h.EndLine, h.Content))));
@@ -132,7 +132,7 @@ public sealed class DexiconResources
         catch (ScopeResolutionException ex)
         {
             // Carries the list of visible corpora, which is what makes it recoverable.
-            throw new McpException(ex.Message);
+            throw DexiconTools.Refusal(ex.Message);
         }
     }
 }
