@@ -181,12 +181,13 @@ public sealed class IgnoreFileReadabilityTests : IDisposable
 
     /// <summary>
     /// Runs <paramref name="action"/> on another thread and fails if it has not finished, since a walk that blocks cannot fail itself.
-    /// An exception the action throws reaches the caller as thrown, not wrapped in an <see cref="AggregateException"/>.
+    /// An exception the action throws reaches the caller as thrown, not wrapped in an <see cref="AggregateException"/>:
+    /// <c>Task.Wait</c> throws the wrapper for a faulted task, so the wait is <c>Task.WaitAny</c>, which does not.
     /// </summary>
     private static T RunWithinTimeout<T>(Func<T> action)
     {
         var task = Task.Factory.StartNew(action, TaskCreationOptions.LongRunning);
-        if (!task.Wait(TimeSpan.FromSeconds(20))) throw new TimeoutException("the walk blocked");
+        if (Task.WaitAny(new Task[] { task }, TimeSpan.FromSeconds(20)) < 0) throw new TimeoutException("the walk blocked");
 
         return task.GetAwaiter().GetResult();
     }
