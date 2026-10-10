@@ -112,21 +112,26 @@ public sealed class IgnorePatternLengthTests : IDisposable
     }
 
     [Fact]
-    public void TheApiRefusalOfAnOverlongEntryNamesTheLengthAndTheListLimits()
+    public void TheApiRefusalOfAnOverlongEntryNamesTheLength()
     {
         var refusal = CorpusEndpoints.UnusableGlobs(["*.md", new string('a', 501)], null).ShouldNotBeNull();
 
         refusal.Status.ShouldBe(400);
         refusal.Detail.ShouldBe(
-            "includeGlobs[1] (include[1] for the configure tools) is null, or a pattern that does not compile (such as [z-a]) "
-            + "or is longer than 500 characters, or the list goes past 1,000 rules or 20,000 pattern parts. Nothing was saved.");
+            "includeGlobs[1] (include[1] for the configure tools) is longer than 500 characters, which is the most a pattern can hold. "
+            + "Nothing was saved.");
     }
 
     [Fact]
-    public void TheApiRefusalOfAListPastItsLimitsIsTheSameText()
+    public void TheApiRefusalOfAListPastItsWeightNamesTheEntryAndTheLimits()
     {
-        var list = Enumerable.Range(0, 1_001).Select(i => $"x{i}").ToArray();
+        // 41 patterns of 500 characters are under the 200 element cap and over the 20,000 weight of a list.
+        var list = Enumerable.Range(0, 41).Select(i => "*" + new string('x', 497) + (char)('a' + i % 26)).ToArray();
 
-        CorpusEndpoints.UnusableGlobs(null, list).ShouldNotBeNull().Detail.ShouldStartWith("excludeGlobs[1000] (exclude[1000] for the configure tools)");
+        var refusal = CorpusEndpoints.UnusableGlobs(null, list).ShouldNotBeNull();
+
+        refusal.Detail.ShouldBe(
+            "excludeGlobs[40] (exclude[40] for the configure tools) is null, or a pattern that does not compile, such as [z-a], "
+            + "or the entry at which the list goes past 1,000 rules or 20,000 pattern parts. Nothing was saved.");
     }
 }

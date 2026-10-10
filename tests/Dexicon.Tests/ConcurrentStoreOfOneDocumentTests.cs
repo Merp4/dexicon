@@ -17,6 +17,7 @@ namespace Dexicon.Tests;
 /// no corpus and no job queued. Found by driving four uploads of one file at once against a running
 /// build, where three of the four failed.
 /// </summary>
+[Collection(nameof(AttachmentLockCollection))]
 public sealed class ConcurrentStoreOfOneDocumentTests
 {
     private static readonly byte[] TheSameBytes = "one document, uploaded by two requests at the same moment"u8.ToArray();

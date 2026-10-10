@@ -6,6 +6,7 @@ using Dexicon.Infrastructure;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Dexicon.Tests;
 
@@ -25,7 +26,7 @@ public sealed class DocumentDetachEndpointTests
     private static Task<IResult> DetachAsync(IndexingHarness harness, CatalogDbContext db, RequestContext rc, string fileId) =>
         DocumentEndpoints.DetachAsync(
             "notes", fileId, rc, new ScopeResolver(db), harness.NewDocumentService(db),
-            new VectorStoreCleanup(db, harness.Vectors), default);
+            new VectorStoreCleanup(db, harness.Vectors, NullLogger<VectorStoreCleanup>.Instance), default);
 
     /// <summary>An uploaded document, attached and indexed. Returns the attachment's id.</summary>
     private static async Task<string> UploadedAndIndexedAsync(IndexingHarness harness, CatalogDbContext db)

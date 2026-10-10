@@ -1927,19 +1927,24 @@ function RemoveSourceModal({ corpus, source, onClose, onRemoved }: {
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const where = sourceName(source);
+  // An upload source holds documents, not files in a folder.
+  const unit = (n: number) => source.kind === 'upload' ? (n === 1 ? 'document' : 'documents') : unitOf(source, n);
 
   return (
     <Modal title={`Remove ${where}?`} onClose={onClose}>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       {/* No typed confirmation, unlike deleting a corpus: this is recoverable by adding
-          the folder back, and the cost of getting it wrong is a reindex rather than an
-          index that no longer exists. Say what it costs and take one click. */}
+          the folder back (or attaching the documents again), and the cost of getting it
+          wrong is a reindex rather than an index that no longer exists. Say what it costs
+          and take one click. */}
       <p className="mt-0 text-sm">
         {source.fileCount
-          ? `Its ${source.fileCount.toLocaleString()} ${unitOf(source, source.fileCount)} ${source.fileCount === 1 ? 'leaves' : 'leave'} the index immediately, in every chunk set of ${corpus.name}.`
-          : `It has no indexed ${unitOf(source, 0)}, so nothing leaves the index.`}
-        {' '}The folder on disk is untouched; Dexicon only ever reads it. Adding it again
-        re-indexes from scratch.
+          ? `Its ${source.fileCount.toLocaleString()} ${unit(source.fileCount)} ${source.fileCount === 1 ? 'leaves' : 'leave'} the index immediately, in every chunk set of ${corpus.name}.`
+          : `It has no indexed ${unit(0)}, so nothing leaves the index.`}
+        {source.kind === 'upload'
+          // Its files are the corpus's attachments of uploaded documents, not files in a folder.
+          ? ' The uploaded documents stay stored and can be attached again from the Documents page, which creates this source again.'
+          : ' The folder on disk is untouched; Dexicon only ever reads it. Adding it again re-indexes from scratch.'}
       </p>
       <div className="flex gap-2 justify-end">
         <Button onClick={onClose}>Cancel</Button>
@@ -1950,7 +1955,13 @@ function RemoveSourceModal({ corpus, source, onClose, onRemoved }: {
             setBusy(true);
             setError(null);
             try { await api.removeSource(corpus.name, source.id); await onRemoved(); }
-            catch (e) { setError(e); setBusy(false); }
+            catch (e) {
+              // Gone already, removed by another request. The list is read again, which is what the
+              // person wanted to see.
+              if (e instanceof ApiError && e.status === 404) { await onRemoved(); return; }
+              setError(e);
+              setBusy(false);
+            }
           }}
         >
           <Trash2 />

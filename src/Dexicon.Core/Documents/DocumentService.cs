@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
 using Dexicon.Core.Extraction;
@@ -19,6 +20,15 @@ public sealed record StoredDocument(
     int ExtractedChars,
     bool AlreadyExisted,
     string? EmptyReason);
+
+/// <summary>
+/// An attachment and the chunk sets it was given a state for: the sets the corpus had when the attachment
+/// was saved, which are not always the ones the request resolved.
+/// </summary>
+public sealed record Attachment(IndexedFile File, IReadOnlyList<ChunkSet> Sets);
+
+/// <summary>An uploaded document's file row as it was when a detach deleted it.</summary>
+public sealed record DetachedFile(string SourceId, string RelativePath);
 
 /// <summary>
 /// Uploaded documents, stored once and chunked many times.
@@ -46,17 +56,61 @@ public sealed class DocumentService(
     private readonly UploadOptions _upload = options.Value.Upload;
 
     /// <summary>
-    /// Held from looking for a corpus's upload source and for the document's existing attachment to the
-    /// save that adds them, so two attachments cannot both find none, and by a detach for its lookup and
-    /// delete, so an attachment does not save against a row a detach has removed. A corpus has one upload source and
-    /// holds a blob once (the same blob may be attached to any number of corpora), and no unique index
-    /// says so: both were checks made before the insert, and two requests could pass them together and
-    /// each add one. Dexicon is one process owning its catalogue (D-01), so one lock is enough, and a
-    /// second process writing the file is not covered, as for <c>CorpusConfiguration.Naming</c>, and neither
-    /// are the writers of file rows that do not take it: removing a source or a corpus, and the indexer's
-    /// reconcile. One lock for all corpora, because an attachment is a few queries and a save.
+    /// Orders the writes to a corpus's attachment rows, which an attachment reads and then saves against.
+    /// Held by:
+    /// <list type="bullet">
+    /// <item>an attachment, from its entry to its save: it checks that the corpus is still there, reads the
+    /// corpus's sets, and looks for the upload source and the document's existing attachment, so two
+    /// attachments cannot both find none (a corpus has one upload source and holds a blob once, and no
+    /// unique index says so);</item>
+    /// <item>a detach, for the lookup and the delete of the row (<see cref="DetachFileAsync"/>);</item>
+    /// <item>the removal of a source, a chunk set or a corpus, for the delete of its row
+    /// (<see cref="HoldAttachmentsAsync"/>), because an attachment saves a file row that names a source and
+    /// a chunk state that names each set, and a removal checks its target again under the lock;</item>
+    /// <item>the promotion of a chunk set to the default, which reads the sets and writes the flag, so that a
+    /// removal cannot delete a set that has just become the default.</item>
+    /// </list>
+    /// Adding a source or a chunk set does not take it: their rows name a corpus, and the removal of that
+    /// corpus at the same moment fails their save with a foreign-key error.
+    ///
+    /// Nothing holds it across a call to the vector store. One lock for all corpora, because each of these
+    /// is a few queries and a save. Dexicon is one process owning its catalogue (D-01), so one lock is
+    /// enough, and a second process writing the file is not covered, as for
+    /// <c>CorpusConfiguration.Naming</c>.
+    ///
+    /// The indexer does not take it. A document detached while a pass runs is left out of the pass's saves
+    /// (<c>CorpusIndexer.SaveWithoutVanishedFilesAsync</c>). The saves that insert chunk states, claim a
+    /// document, flush after one and end the source also delete the vectors the pass wrote for it; the count
+    /// reconcile and the save that records the job's outcome only leave it out, and a later pass of the same
+    /// chunk set deletes its points.
+    ///
+    /// Lock order: <c>ProposalService</c> holds its decision lock and then takes this one inside the removal
+    /// it runs. Nothing waits for another lock while holding this one: the refresh that a refused chunk set
+    /// removal asks for is queued after the lock is released, and the queue's own lock is always the last one
+    /// taken.
     /// </summary>
     private static readonly SemaphoreSlim Attaching = new(1, 1);
+
+    /// <summary>
+    /// Takes the lock attachments hold, for a writer that deletes a source, a chunk set or a corpus. Dispose
+    /// it as soon as the catalogue delete is saved, and call nothing slow, such as the vector store, while
+    /// holding it: every attachment and detach in the process waits for it.
+    /// </summary>
+    public static async Task<IDisposable> HoldAttachmentsAsync(CancellationToken ct = default)
+    {
+        await Attaching.WaitAsync(ct);
+        return new AttachmentsHold();
+    }
+
+    private sealed class AttachmentsHold : IDisposable
+    {
+        private int _released;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _released, 1) == 0) Attaching.Release();
+        }
+    }
 
     /// <summary>Where a blob's bytes live: /data/blobs/ab/abcdef…, with two hex chars of fan-out.</summary>
     public string PathFor(string sha256) =>
@@ -286,6 +340,12 @@ public sealed class DocumentService(
     /// document's.
     /// </exception>
     public async Task<IndexedFile> AttachAsync(Corpus corpus, string sha256, string fileName,
+        CancellationToken ct = default) =>
+        (await AttachWithSetsAsync(corpus, sha256, fileName, ct)).File;
+
+    /// <summary><see cref="AttachAsync"/>, answering also with the chunk sets the attachment was given states for.</summary>
+    /// <exception cref="NameTakenException">As <see cref="AttachAsync"/>.</exception>
+    public async Task<Attachment> AttachWithSetsAsync(Corpus corpus, string sha256, string fileName,
         CancellationToken ct = default)
     {
         // As StoreAsync: no paramName, so the message reads the same to whoever is told it.
@@ -296,14 +356,23 @@ public sealed class DocumentService(
         finally { Attaching.Release(); }
     }
 
-    private async Task<IndexedFile> AttachHeldAsync(Corpus corpus, string sha256, string fileName,
+    private async Task<Attachment> AttachHeldAsync(Corpus corpus, string sha256, string fileName,
         CancellationToken ct)
     {
+        // The request resolved the corpus before it waited for the lock, and a removal that held the lock
+        // meanwhile can have deleted it. The upload source and the file are looked up below, under the lock.
+        // The caller answers this as it answers a corpus that was not there to begin with.
+        if (!await db.Corpora.AsNoTracking().AnyAsync(c => c.Id == corpus.Id, ct))
+            throw new ScopeResolutionException(
+                $"Corpus '{corpus.Name}' was removed while this request waited.", []);
+
         var blob = await db.Blobs.FirstOrDefaultAsync(b => b.Sha256 == sha256, ct)
             ?? throw new InvalidOperationException($"No stored document with hash {sha256}.");
 
-        // Needed to give the new attachment a state row per set.
-        await db.Entry(corpus).Collection(c => c.ChunkSets).LoadAsync(ct);
+        // Needed to give the new attachment a state row per set. Read here, under the lock, and not from
+        // corpus.ChunkSets: a corpus resolved with its sets included holds them as they were when the request
+        // was resolved, which is as old as the request for the later files of an upload.
+        var sets = await db.ChunkSets.AsNoTracking().Where(s => s.CorpusId == corpus.Id).ToListAsync(ct);
 
         var source = await UploadSourceFor(corpus, ct);
 
@@ -337,7 +406,7 @@ public sealed class DocumentService(
             }
             byBlob.SizeBytes = blob.SizeBytes;
             await db.SaveChangesAsync(ct);
-            return byBlob;
+            return new Attachment(byBlob, sets);
         }
 
         var existing = await db.Files.FirstOrDefaultAsync(
@@ -351,7 +420,7 @@ public sealed class DocumentService(
             existing.SizeBytes = blob.SizeBytes;
             await InvalidateAsync(existing.Id, ct);
             await db.SaveChangesAsync(ct);
-            return existing;
+            return new Attachment(existing, sets);
         }
 
         var file = new IndexedFile
@@ -368,7 +437,7 @@ public sealed class DocumentService(
 
         // A row per chunk set, all Pending: a new attachment is outstanding work for
         // every way this corpus cuts its content, not just the default one.
-        foreach (var set in corpus.ChunkSets)
+        foreach (var set in sets)
         {
             db.FileChunkStates.Add(new FileChunkState
             {
@@ -379,7 +448,7 @@ public sealed class DocumentService(
         }
 
         await db.SaveChangesAsync(ct);
-        return file;
+        return new Attachment(file, sets);
     }
 
     /// <summary>
@@ -433,8 +502,11 @@ public sealed class DocumentService(
     /// <summary>
     /// Detach an uploaded document from one corpus. The blob survives, since other corpora may still
     /// use it. A file a source read from a folder or a commit is not a document and is not detached.
+    /// Answers with the file as it was when its row was deleted: an attachment can have renamed or replaced
+    /// it since the caller last read it, and the name here is the one a pass may have written vectors
+    /// under. Null when there was no such file.
     /// </summary>
-    public async Task<bool> DetachAsync(string corpusId, string fileId, CancellationToken ct = default)
+    public async Task<DetachedFile?> DetachFileAsync(string corpusId, string fileId, CancellationToken ct = default)
     {
         // Under the lock attaching holds: an attachment that found this file and was about to rename or
         // replace it saved against a row the detach had deleted, and the save failed on it.
@@ -445,13 +517,23 @@ public sealed class DocumentService(
                 .FirstOrDefaultAsync(f => f.Id == fileId && f.Source!.CorpusId == corpusId
                                           && f.Source.Kind == SourceKind.Upload, ct);
 
-            if (file is null) return false;
+            if (file is null) return null;
+
+            // Read again outside the tracker. A caller that read this row earlier on the same context holds
+            // it with the name it had then, and the query above returns that instance as it is.
+            var current = await db.Files.AsNoTracking().Where(f => f.Id == fileId)
+                .Select(f => new DetachedFile(f.SourceId, f.RelativePath)).SingleAsync(ct);
+
             db.Files.Remove(file);
             await db.SaveChangesAsync(ct);
-            return true;
+            return current;
         }
         finally { Attaching.Release(); }
     }
+
+    /// <summary><see cref="DetachFileAsync"/> for a caller that needs only whether a document was detached.</summary>
+    internal async Task<bool> DetachAsync(string corpusId, string fileId, CancellationToken ct = default) =>
+        await DetachFileAsync(corpusId, fileId, ct) is not null;
 
     public Task<BlobText?> TextFor(string sha256, CancellationToken ct = default) =>
         db.BlobTexts.AsNoTracking().FirstOrDefaultAsync(t => t.Sha256 == sha256, ct);

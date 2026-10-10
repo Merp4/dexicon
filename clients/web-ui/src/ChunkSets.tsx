@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useId, useRef, useState } from 'react';
 import {
   api,
+  ApiError,
   getToken,
   type ChunkSet,
   type Corpus,
@@ -103,6 +104,9 @@ export function ChunkSetsPanel({
       onChanged();
     } catch (e) {
       setError(e);
+      // The set is gone (404), or it was kept without its vectors because it became the default or the
+      // only set meanwhile (409). The list shows what it showed before the request, so it is read again.
+      if (e instanceof ApiError && (e.status === 404 || e.status === 409)) onChanged();
     } finally {
       setBusy(null);
     }

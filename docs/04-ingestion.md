@@ -212,14 +212,93 @@ the source`. A single file over 1 MiB reads `... cannot be used as patterns beca
 file` (for a `.gitignore`, `reduce the file, or turn off use_gitignore for the source`). Turning `use_gitignore` off
 stops the `.gitignore` files and `.git/info/exclude` from being read.
 
-A glob list sent through the API or the configure tools is refused when it holds a null element, an entry over 500
-characters, a pattern that cannot be read such as `[z-a]` or `[[:alpha:]]`, or more than the list's budget allows (1,000
-rules or 20,000 weight). The API answers `400`, naming the list and the entry's position counted from zero
-(`includeGlobs[1]`); the configure tools return an error with the same text. Nothing is saved. That holds for a source's
-lists and for a corpus's defaults. A history source's include list is read by git as pathspecs, so only a null, empty or
-null-character element is refused there, and a corpus's default include list, which sources of both kinds inherit, is
-held to both rules. What git itself rejects is not checked, so a default such as `/build`, which a file source reads as
-an anchored pattern, still fails in a history source that inherits it.
+A glob list sent through the API or the configure tools is refused when it holds more than 200
+elements, an element of more than 500 characters, a null element, a pattern that does not
+compile, such as the bracket class `[z-a]` or `[[:alpha:]]`, or an element at which the list goes past its
+budget (1,000 rules or 20,000 weight, counted as the walk counts them; the 200-element cap is judged first, so
+the budget is reached only by a list stored before that cap). The API answers `400`, naming the list and the
+position (`includeGlobs[1]`; for a list over the count cap, the list alone) and not repeating the
+pattern; the configure tools return an error with the same text. Nothing is saved. That holds for
+a source's lists and for a corpus's defaults. The caps (`SourceFilters.MaxGlobsPerList` and
+`MaxGlobLength`) apply to every include and exclude list whichever reader it has. The count is
+judged first, so a list over it is refused without an element examined; past it each element's
+length is judged before the element is compiled or parsed, and the first problem ends the check,
+so the work is bounded by 200 elements of 500 characters. The request body has been read by then.
+A list stored before the caps is read as stored; it is refused only when a request sends it back.
+
+A history source's include list is read by git as pathspecs, so the walk's parser does not judge
+it. An element is refused when it is empty, holds a null character, or is a pathspec git rejects:
+
+- pathspec magic git rejects whatever the path. The long form is `:(`, comma-separated words and
+  `)`. Git accepts the words `top`, `literal`, `icase`, `glob`, `exclude`, `attr`, `attr:` followed
+  by a specification and `prefix:` followed by a number, matched exactly (`:(GLOB)x` and
+  `:( glob)x` are rejected), and empty words. It is refused when there is no closing `)`, a word
+  is anything else, `glob` and `literal` are both named, there is more than one `attr:`, the
+  `attr:` is empty or has a name or value git cannot use, or a `prefix:` is not a number or the
+  last one is larger than the path. The short form is `:` followed by characters from git's magic
+  set (`!"#%&',-/;<=>@_`, the backtick, `~` and `^`) and an optional `:` that ends it. Git
+  implements `!`, `^` and `/` and fails on the others, so `:-x` is refused; any other character
+  starts the path, so `:docs`, `:.x` and `:*x` are paths.
+- an `attr:` git cannot use. Its items are separated by spaces, and an empty specification is
+  refused but spaces alone are not. An item is a name, `-name`, `!name` or `name=value`. A name is
+  not empty, does not start with `-` and holds only ASCII letters, digits, `-`, `.` and `_`, so
+  `-`, `--a`, `!!a`, `a/b`, `a:b`, `-a=b` and a tab in the name fail. A value holds only ASCII
+  letters, digits, `-`, `_` and a comma written `\,`, where a backslash escapes the next character
+  and a lone one at the end of an item fails, so `a=b.c`, `a=b=c`, `a=\)` and a non-ASCII
+  character fail.
+- a `prefix:` git cannot use. The number is read as C's `strtol` (spaces, a sign, digits; empty is
+  zero) and stored in 32 bits, and it may not be larger than the path in bytes: git aborts on
+  `:(prefix:2)x`. It is not checked for being a path git can reach, see below.
+- a path that climbs out of the repository with `..`. Segments are split on `/` only and judged
+  lexically, as git resolves them: empty and `.` segments are skipped, so a doubled slash is one
+  separator, and each `..` removes one level. `a/../b`, `docs/..` and `a//..` are accepted;
+  `..`, `../x`, `a/../..` and `a//../..` are refused. A backslash is an ordinary character in a
+  name on Linux.
+- a rooted path: one starting with `//`, or one whose path starts with `/` after pathspec magic,
+  such as `:(glob)/docs`. Git accepts a rooted path that names a place inside the repository
+  (`//tmp/repo/docs` when the repository is `/tmp/repo`), and the check cannot know where the
+  repository is when a list is saved, so every rooted path is refused deliberately.
+- an element starting with `/:`. Removing its slash would turn the name into pathspec magic
+  (`/:(exclude)docs` would exclude `docs`), so it is refused and is passed to git as written if
+  one was stored earlier.
+
+The path is the part after the magic. Git does not look at where the path goes for `top` magic
+(`:(top)`, or a `/` in the short form such as `:/` and `:!/`), which reads it from the repository
+root, or for `prefix:N` with N of zero or more. The rule about a path that climbs out and the
+rule about a rooted path do not apply to those: `:(top)../x`, `:/..` and `:(prefix:0)../x` select
+nothing and are accepted. The `/:` rule applies to them as to every element. A corpus's default
+include list, which sources of both kinds inherit, is held to the walk's rule and to all of these.
+The refusal says why in the same words for both, because a caller adding a default may have no
+history source yet.
+
+One leading `/` is accepted in both: a file source reads it as a pattern anchored at the root,
+and the history reader removes the slash before passing the pathspec, because git rejects
+`/build` as a path outside the repository. The path is the same, matched by git's rules (see the
+history section for how they differ from the walk's). An element of only `/` compiles to no rule
+in the walk, so the history reader drops it as well, and a list of only such elements selects
+every path. A file source's include list may hold a path that climbs out with `..`: its patterns
+are matched against paths below the root, so such an element matches nothing.
+
+These rules are those of git on Linux, measured on git 2.54.0, the version in the image. The
+check agreed with that git on 20,000 generated elements. Git for Windows 2.31.1 differs in three
+ways: it also treats a backslash as a separator, so it refuses `..\x`, which is accepted here; it
+refuses a colon in a path as outside the repository (`a:b`, `x:`), which is accepted here; and its
+`long` is 32 bits, so a `prefix:` number past 2,147,483,647 reads differently. A list of 200
+elements of 500 characters is accepted, and on Windows its command line is longer than the system
+allows: starting git fails with "The filename or extension is too long", which the history reader
+reports as "git could not be started. A git-history source needs the git binary on PATH."
+
+Saving also sends lists back. The web UI's Save defaults form sends both default lists, its
+source edit forms send the lists they show (a field that follows the corpus default is not
+sent), and `configure_corpus` sends a corpus's defaults whole. A stored list that fails any rule
+above therefore blocks that save, whichever field was edited, until the list is edited. That
+includes lists over the caps, and a corpus default stored earlier with an empty element, `//x`,
+`/:x`, a path that climbs out, a rooted path or malformed magic: a file source read these without
+error, and a history source that inherits one could not run. The upgrade does not change a stored
+row.
+
+What else git rejects is not checked, and fails each pass of the history source with git's message as
+the reason.
 
 The lines of a `.gitignore`, `.git/info/exclude` or `.dexiconignore` in the tree are not checked when a list is stored; the
 walk reads them. Their lines are numbered from 1, as an editor numbers them, and list entries from 0, as the API does. A
@@ -324,7 +403,10 @@ PATCH /api/corpora/books/sources/{id}
 
 Clearing is named rather than inferred from a null, because JSON gives no way to tell an
 absent property from an explicit null; inferring it would make every partial update reset
-whatever it did not mention.
+whatever it did not mention. `clear` takes field names: `useGitignore`, `maxFileBytes`,
+`includeGlobs` and `excludeGlobs`, in any case. A name that is not one of them, and a null entry
+(`"clear": [null]`), are refused with `400` `Unknown filter` and nothing is changed. The message
+shows an unknown name on one line cut to 40 characters, and shows no text for a null entry.
 
 Changing a filter queues a refresh, and only when something actually moved. Narrowing one
 removes the files it now excludes through the ordinary reconcile: the walk stops seeing
@@ -367,6 +449,60 @@ So:
 
 A corpus gets at most one upload source, created on first attachment. Detaching removes
 that corpus's chunks only; the blob survives, because another corpus may still hold it.
+Removing the upload source itself (`DELETE /api/corpora/{name}/sources/{id}`, or the Remove
+button beside it in the corpus's source list) deletes the vectors of every document attached to
+the corpus, in every chunk set, and the source takes its file rows with it. The blobs stay, and
+the next attachment creates the source again.
+
+One lock in the process orders the writes to a corpus's attachment rows. An attachment holds it
+from its entry to its save, and a detach for the lookup and the delete of the row. Removing a
+source, a chunk set or a corpus holds it for the delete of the row, after its vector calls, and
+reads its target again under it. Promoting a chunk set holds it while it reads the sets and writes
+the default flag. None of them holds it across a vector-store call. An indexing pass does not take
+it. Adding a source or a chunk set does not take it either: their rows name a corpus, and the
+removal of that corpus at the same moment fails their save with a foreign-key error. Dexicon is
+one process owning its catalogue file (D-01); a second process writing the file is not covered.
+
+The second of two simultaneous removals of one source, chunk set or corpus answers 404 ("removed
+while this request waited"). A later `DELETE` of a source or a chunk set answers 404, and a later
+`DELETE` of a corpus answers 400 from the scope resolver. A chunk set that became the default or
+the only set while its vectors were being deleted is kept: the removal answers the 409 it would
+have answered at the start, and a refresh of the set is queued, because its vectors are gone. A
+proposal to remove it stays waiting, and the refresh is queued after the proposal is put back. An
+attachment that waited for the lock behind the removal of its corpus is answered as an unknown
+corpus (400).
+
+A detach deletes the document's vectors, then its row, then the vectors again for the file the
+row held, because an attachment can have renamed or replaced the file, and a pass can have
+written vectors for it, since the first delete. The second delete does not use the caller's
+token, so it runs when the caller has gone. It has a limit of 30 s of its own, and a failure is
+logged and does not undo the detach. A source removal deletes the vectors of the files it read
+before the row is deleted; points that a running pass writes for the source after that stay in
+the vector store, and no pass runs for a source that no longer exists.
+
+A document detached while a pass is indexing the corpus is left out of the pass's saves, so the
+pass does not fail on its row. The saves that insert chunk states, claim a document, flush after
+a document and end the source also delete the vectors the pass wrote for the document and count
+it as skipped. The count reconcile at the start and the save that records how the job ended only
+leave the document out, and a later pass of the same chunk set deletes any points it has,
+provided the vector store answers its per-file count. If the vector delete fails the pass still
+succeeds and the later pass removes the points. The flush while one file embeds holds no changes
+for another document and is saved without this handling.
+
+What a pass records when rows it holds are deleted depends on which rows:
+
+| Deleted under the pass | Job outcome |
+|---|---|
+| A document of an upload source | Succeeded; the document is skipped. |
+| An upload source | Succeeded; its documents go with it and are skipped. |
+| A folder source | Failed, with the error below. |
+| A chunk set, or a chunk state on its own | Failed, with the error below; the document and its vectors are left as they are. |
+| The corpus | Nothing is recorded, because its jobs went with it, and nothing is thrown; the log carries the "rows changed or went missing" warnings. |
+| The job's own row, deleted on its own | Nothing is recorded, the failure goes to the worker, and the save is not retried. |
+
+The error is "A chunk set, source or document was removed while the pass ran."; the exception, with
+the details of the save, is in the log. The save that records the outcome stops tracking the rows
+the pass held for what is gone, so the job is recorded.
 
 Limits: 200 MB per file (`DEXICON__UPLOAD__MAXFILEBYTES`), applied while the file is read
 off the wire. The endpoint reads the multipart body with a `MultipartReader` and hands each
@@ -380,12 +516,13 @@ to the corpus yet, sent under a name it holds, replace that document.
 
 The request as a whole is bounded at ten files at the cap plus 1 MiB of multipart framing,
 which is 2,098,200,576 bytes at the default and follows `DEXICON__UPLOAD__MAXFILEBYTES`.
-The web UI sends every dropped file in one request, so the bound allows a batch. A larger
-body is refused with `413` and a message that names the bound, before any of it is read
-when the client declares its `Content-Length`, and otherwise when the body reaches the bound.
-Files stored before the bound was reached stay stored, and the answer is then `202` with the
-overrun listed under `failed`. A failure of the request as a whole has a `null` `file`; a failure
-of one file carries its name, whatever that name is.
+The web UI sends a drop of more than ten files as several requests of at most ten, one after
+another, so the bound allows a full request. A larger body is refused with `413` and a message
+that names the bound, before any of it is read when the client declares its `Content-Length`,
+and otherwise when the body reaches the bound. Files stored before the bound was reached stay
+stored, and the answer is then `202` with the overrun listed under `failed`. A failure of the
+request as a whole has a `null` `file`; a failure of one file carries its name, whatever that
+name is.
 
 A body that ends before its closing boundary, or whose headers are over the reader's limits, is
 treated the same way: files completed before it stay stored and are indexed, the response lists
@@ -445,7 +582,25 @@ alone, in UTF-8 bytes, and the stat is kept when the patch is dropped — it is 
 half and it is what still answers "which files" without it.
 
 The source's include globs become git pathspecs, so they mean whose history and narrow the
-diff at the same time. Excludes are not passed: git's exclude pathspec syntax is its own,
+diff at the same time. A leading `/` is removed first, as described under the glob rules above.
+Git, not the file walk, matches them, and its default pathspec matching differs from the walk's
+in three ways, which are not translated into each other:
+
+- An unglobbed name is anchored at the repository root. `docs` selects commits touching
+  `docs/a.md` and not `a/docs/x.txt`, where the walk matches `docs` at any depth.
+- `*` crosses `/`. `docs/*.md` and `/docs/*.md` select a commit touching `docs/sub/b.md`, which
+  the walk's `*` does not match.
+- `**/*.md` without `:(glob)` is an ordinary fnmatch pattern and needs a `/` in the path, so it
+  does not select a commit touching a root-level `README.md`, where the walk's `**/*.md` matches
+  that file. `:(glob)**/*.md` selects it.
+
+No variable whose name starts with `GIT_` reaches git: they are all removed from the environment of
+every git call, bar the two the code sets (`GIT_TERMINAL_PROMPT` and `GIT_OPTIONAL_LOCKS`). Each
+can change what a call returns or whether it works: the four that set how a pathspec is read
+(`GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS`, `GIT_ICASE_PATHSPECS`)
+change what every include means, `GIT_DIFF_OPTS` adds patch context that the pinned configuration
+does not, `GIT_DIR` and `GIT_WORK_TREE` name another repository, and `GIT_CONFIG_COUNT` sets any
+key the pins do not name. Excludes are not passed: git's exclude pathspec syntax is its own,
 and mapping one glob language onto another quietly is how a filter comes to mean something
 else.
 
@@ -462,7 +617,8 @@ every document really is different. Changing `ref`, `maxCommits`, `keepIndexed`,
 or `includeMerges` does not: those decide which commits are indexed, not what any one of
 them holds, and turning merges on adds documents without altering a single existing one.
 The include globs DO, because they are passed to git and decide which files the stat
-lists and which hunks the patch holds.
+lists and which hunks the patch holds. The fingerprint holds the list as git is given it, sorted,
+so reordering the paths, or writing `docs` as `/docs`, is not a change and re-reads nothing.
 
 **A commit limit is a window unless the source keeps what it indexed.** With `maxCommits`
 alone, the source holds the newest that many commits, and each new commit pushes the
@@ -1034,6 +1190,10 @@ rather than discovered.
 { "dimensions": 768, "maxInputChars": 11776, "truncatesSilently": true,
   "charsPerToken": 2.82, "recommendedChunkTokens": 2783, "embedCalls": 27 }
 ```
+
+The probe needs the `admin` scope: it makes two dozen calls to the provider, which for a hosted one
+use the server's own credentials, and it saves the result as the model's measurement, which sets
+the chunk budget of every chunk set on that model.
 
 `charsPerToken` is measured with **the model's own tokenizer**, not estimated. Ollama
 returns `prompt_eval_count` on an embed call, so the probe embeds three samples (prose,

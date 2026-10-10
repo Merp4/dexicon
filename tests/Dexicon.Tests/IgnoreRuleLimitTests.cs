@@ -301,15 +301,17 @@ public sealed class IgnoreRuleLimitTests : IDisposable
     [Fact]
     public void AStoredListIsCheckedAgainstTheLimitsTheWalkAppliesToIt()
     {
-        var atLimit = Enumerable.Range(0, IgnoreRuleSet.MaxRulesPerList).Select(i => $"x{i}").ToList();
-        var over = atLimit.Append("one-too-many").ToList();
+        // The 200 element cap is judged first, so only the weight is reachable from a list that can be stored now.
         var heavy = Enumerable.Range(0, 41).Select(HeavyLine).ToList();
+        var fits = Enumerable.Range(0, 40).Select(HeavyLine).ToList();
 
-        SourceFilters.FirstUnusable(atLimit).ShouldBeNull();
-        SourceFilters.FirstUnusable(over).ShouldBe(IgnoreRuleSet.MaxRulesPerList);
+        SourceFilters.FirstUnusable(fits).ShouldBeNull();
         SourceFilters.FirstUnusable(heavy).ShouldBe(40);
-        SourceFilters.FirstUnusable(over, SourceFilters.GlobReader.WalkAndGit).ShouldBe(IgnoreRuleSet.MaxRulesPerList);
-        SourceFilters.FirstUnusable(over, SourceFilters.GlobReader.Git).ShouldBeNull("git reads a history source's list, not the walk");
+        SourceFilters.FirstUnusable(heavy, SourceFilters.GlobReader.WalkAndGit).ShouldBe(40);
+        SourceFilters.FirstUnusable(heavy, SourceFilters.GlobReader.Git).ShouldBeNull("git reads a history source's list, not the walk");
+
+        var tooMany = Enumerable.Range(0, SourceFilters.MaxGlobsPerList + 1).Select(i => $"x{i}").ToList();
+        SourceFilters.Check(tooMany).ShouldBe(new SourceFilters.GlobProblem(SourceFilters.MaxGlobsPerList, SourceFilters.GlobProblemKind.TooMany));
     }
 
     // ---- skipped lines, warnings and bytes ----------------------------------------------------------------------------

@@ -29,6 +29,17 @@ public sealed class IndexJobQueue(CatalogDbContext db, WorkScheduler scheduler, 
         kind is JobKind.Full or JobKind.Rebuild ? WorkType.Rebuild : WorkType.Index;
 
     /// <summary>
+    /// Held from looking for a queued job to the save that adds one, so two requests cannot both find
+    /// none and each add a job. Dexicon is one process owning its catalogue (D-01), so one lock is
+    /// enough, and a second process writing the file is not covered. One lock for all corpora, because
+    /// the section is a query and a save, as for <c>DocumentService</c>'s attachment lock. Always the
+    /// last lock taken: a caller may hold its own (the MCP tool that adds a source holds <c>Adding</c>
+    /// while it queues the first pass), and nothing inside the section waits for another lock, so no
+    /// order of locks can form a cycle through it.
+    /// </summary>
+    private static readonly SemaphoreSlim Queuing = new(1, 1);
+
+    /// <summary>
     /// Enqueue a job for a corpus. Queuing a refresh for a corpus that already has one
     /// pending is a no-op returning the existing id, since two identical scans in a row
     /// is wasted work rather than throughput.
@@ -39,6 +50,14 @@ public sealed class IndexJobQueue(CatalogDbContext db, WorkScheduler scheduler, 
     /// </param>
     public async Task<IndexJob> EnqueueAsync(string corpusId, JobKind kind, string? chunkSetId = null,
         CancellationToken ct = default)
+    {
+        await Queuing.WaitAsync(ct);
+        try { return await EnqueueHeldAsync(corpusId, kind, chunkSetId, ct); }
+        finally { Queuing.Release(); }
+    }
+
+    private async Task<IndexJob> EnqueueHeldAsync(string corpusId, JobKind kind, string? chunkSetId,
+        CancellationToken ct)
     {
         // Deduplicated per (corpus, SET). Matching on the corpus alone would hand back a
         // job for a different set, so a request to backfill a new set would return the
