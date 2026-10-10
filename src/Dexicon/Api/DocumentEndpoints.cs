@@ -4,6 +4,7 @@ using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
 using Dexicon.Core.Documents;
+using Dexicon.Core.Extraction;
 using Dexicon.Core.Indexing;
 using Dexicon.Infrastructure;
 using Microsoft.AspNetCore.Http.Features;
@@ -74,7 +75,9 @@ public static class DocumentEndpoints
     /// wire into <see cref="DocumentService.StoreAsync"/>, which holds it to
     /// <see cref="UploadOptions.MaxFileBytes"/> as the bytes arrive. Nothing is spooled to a temp
     /// file first, which on the container's tmpfs would be memory. The request as a whole is held
-    /// to <see cref="UploadOptions.MaxRequestBytes"/>.
+    /// to <see cref="UploadOptions.MaxRequestBytes"/>, to <see cref="UploadOptions.BatchFiles"/> file
+    /// parts and to <see cref="UploadOptions.MaxSections"/> sections, form fields included: the next
+    /// part past either count is reported as a failure of the request and not read.
     /// </summary>
     [SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", MessageId = "ReadNextSectionAsync",
         Justification = ReadsTheNextFileOnTheRequest)]
@@ -117,6 +120,8 @@ public static class DocumentEndpoints
         var stored = new List<UploadedDocumentResponse>();
         var failures = new List<UploadFailure>();
         var filesSeen = 0;
+        var sectionsSeen = 0;
+        var serverSideFailure = false;
         var overran = false;
         string? malformed = null;
         ExceptionDispatchInfo? failure = null;
@@ -138,7 +143,27 @@ public static class DocumentEndpoints
             // not kept, and the files after it are reached.
             while (await reader.ReadNextSectionAsync(ct) is { } section)
             {
-                if (section.AsFileSection() is not { } part) continue;   // a form field
+                // Every section counts, fields as well as files: a field costs the reader a header parse
+                // and a discard, and a body of them is otherwise bounded by the byte limit alone.
+                if (++sectionsSeen > UploadOptions.MaxSections)
+                {
+                    failures.Add(new UploadFailure(null, TooManySectionsMessage));
+                    break;
+                }
+
+                if (section.AsFileSection() is not { } part) continue;   // a form field, or a part with an empty filename
+
+                // The application reads nothing more from the body: only this part's headers have been
+                // read. A probe found Kestrel reading and discarding the unread rest after the handler
+                // returns, with the body-size limit unset as it is above, so the early answer saves the
+                // temp file, hash, save, extraction and lock work of the files left out and not the
+                // bandwidth of receiving them. Each file costs that work, so the count is bounded as well
+                // as the bytes.
+                if (filesSeen == UploadOptions.BatchFiles)
+                {
+                    failures.Add(new UploadFailure(null, TooManyFilesMessage));
+                    break;
+                }
 
                 filesSeen++;
                 var fileName = part.FileName ?? "";
@@ -155,6 +180,21 @@ public static class DocumentEndpoints
                 {
                     // One bad file in a batch must not lose the good ones.
                     failures.Add(new UploadFailure(fileName, ex.Message));
+                }
+                // Their own catches: a timeout, or another extraction failure that is not a verdict on the
+                // bytes, is neither an ArgumentException nor a failure that ends the batch. StoreAsync has
+                // logged it and added nothing to the context, so there is nothing to discard. The timeout
+                // is first because it is the subtype.
+                catch (ExtractionTimeoutException)
+                {
+                    serverSideFailure = true;
+                    failures.Add(new UploadFailure(
+                        fileName, ExtractionTimedOutMessage(opts.Value.Indexing.ExtractionTimeoutSeconds)));
+                }
+                catch (ExtractionFailedException)
+                {
+                    serverSideFailure = true;
+                    failures.Add(new UploadFailure(fileName, ExtractionFailedMessage));
                 }
             }
         }
@@ -224,13 +264,20 @@ public static class DocumentEndpoints
             if (malformed is not null)
                 return Results.Problem(title: "Malformed multipart upload", detail: malformed, statusCode: 400);
 
+            // No file part was reached. The detail is the request-level failure when there is one: a body
+            // of form fields past the section limit.
             if (filesSeen == 0)
-                return Results.Problem(title: "No files in the request", statusCode: 400);
+                return Results.Problem(
+                    title: "No files in the request",
+                    detail: failures.Count > 0 ? string.Join("; ", failures.Select(f => f.Error)) : null,
+                    statusCode: 400);
 
+            // A file that could not be extracted for a reason on the server is not the caller's error, and
+            // sending it again can succeed, so a request that stored nothing for that reason is a 503.
             return Results.Problem(
                 title: "No files could be stored",
                 detail: string.Join("; ", failures.Select(f => f.File is null ? f.Error : $"{f.File}: {f.Error}")),
-                statusCode: 400);
+                statusCode: serverSideFailure ? 503 : 400);
         }
 
         // Chunking and embedding happen in the indexer, not on the request thread:
@@ -264,12 +311,24 @@ public static class DocumentEndpoints
                 detail: "Leave fileName out to keep the name the document was uploaded under.",
                 statusCode: 400);
 
+        if (body.FileName is not null && DocumentService.FileNameProblem(body.FileName) is { } invalid)
+            return Results.Problem(title: "Invalid file name", detail: invalid, statusCode: 400);
+
         var blob = await db.Blobs.FirstOrDefaultAsync(b => b.Sha256 == body.Sha256, ct);
         if (blob is null) return Results.Problem(title: "No such document", statusCode: 404);
 
         // This is the point of the whole design: the same bytes, chunked this
         // corpus's way, without re-uploading or re-extracting anything.
         var name = body.FileName ?? blob.OriginalFileName ?? body.Sha256[..12];
+
+        // The name a document was uploaded under before names were checked. Taken as the path when
+        // fileName is left out, so it is held to the same rule.
+        if (body.FileName is null && DocumentService.FileNameProblem(name) is { } storedName)
+            return Results.Problem(
+                title: "Invalid file name",
+                detail: $"{storedName} The name this document was uploaded under breaks that rule, so send a fileName.",
+                statusCode: 400);
+
         Attachment attached;
         try
         {
@@ -312,6 +371,27 @@ public static class DocumentEndpoints
         $"The upload is over the {upload.MaxRequestBytes:N0} byte request limit: {UploadOptions.BatchFiles} files " +
         $"at the {upload.MaxFileBytes:N0} byte per-file limit (DEXICON__UPLOAD__MAXFILEBYTES) plus form framing. " +
         "Send fewer files in each request.";
+
+    private static readonly string TooManyFilesMessage =
+        $"The request holds more than {UploadOptions.BatchFiles} files. The first {UploadOptions.BatchFiles} " +
+        "were processed and the rest were not. Send them in another request.";
+
+    private static readonly string TooManySectionsMessage =
+        $"The request holds more than {UploadOptions.MaxSections} parts, form fields included. The first " +
+        $"{UploadOptions.MaxSections} were processed and the rest were not. Send the files in another request.";
+
+    private const string NoRecordSentence =
+        "No document record was created; the bytes stay in the blob store, and sending the file again extracts it again.";
+
+    /// <summary>Does not name the file: it is listed beside it, and the message reaches whoever sent it.</summary>
+    private static string ExtractionTimedOutMessage(int seconds) =>
+        $"Extraction did not finish within {seconds} s (DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS). " +
+        NoRecordSentence;
+
+    /// <summary>Not the exception's message, which can name a path on the server.</summary>
+    private const string ExtractionFailedMessage =
+        "Extraction failed on the server, from an I/O error, a refused permission, a shortage of memory or a "
+        + "timeout inside the extractor; the log has the cause. " + NoRecordSentence;
 
     private static IResult TooLarge(UploadOptions upload) =>
         Results.Problem(title: "Upload too large", detail: TooLargeMessage(upload), statusCode: 413);

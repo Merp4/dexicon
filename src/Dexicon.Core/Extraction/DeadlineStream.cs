@@ -5,9 +5,10 @@ namespace Dexicon.Core.Extraction;
 /// <summary>
 /// A read-only view over another stream that stops answering once a deadline passes.
 ///
-/// Extraction is synchronous and takes no cancellation token, because the libraries
+/// Extraction is synchronous and takes no cancellation token, because most of the libraries
 /// underneath it do not: <c>PdfDocument.Open</c> and the OpenXML readers are ordinary
-/// blocking calls. Cancelling an index job therefore could not interrupt one, and a
+/// blocking calls. (The HTML parser does take one, and is cancelled when this clock runs out:
+/// <c>HtmlText.Parse</c> reads <see cref="Remaining"/>.) Cancelling an index job therefore could not interrupt one, and a
 /// single file could hold the corpus indefinitely. One did: a truncated 68 MB PDF with
 /// no cross-reference table sent PdfPig into a brute-force backward scan of the whole
 /// file, one byte per 4 KB read, which over a 9p bind mount ran at about 6,000 reads a
@@ -23,9 +24,9 @@ namespace Dexicon.Core.Extraction;
 /// The throw is permanent rather than one-shot: a library that catches broadly and
 /// retries meets the same exception on its next read instead of resuming.
 ///
-/// It is an inter-read guard, so it bounds a file that keeps reading rather than
-/// wall-clock time in extraction: a read that never returns, or computation inside the
-/// library between two reads, is not covered. See
+/// Apart from the HTML parse it is an inter-read guard, so it bounds a file that keeps reading
+/// rather than wall-clock time in extraction: a read that never returns, or computation inside
+/// the library between two reads, is not covered. See
 /// <see cref="Configuration.IndexingOptions.ExtractionTimeoutSeconds"/>.
 /// </summary>
 public sealed class DeadlineStream(Stream inner, TimeSpan budget, string fileName) : Stream
@@ -35,16 +36,38 @@ public sealed class DeadlineStream(Stream inner, TimeSpan budget, string fileNam
     /// <summary>Set once the deadline is hit, so the caller can tell a timeout from a parse error.</summary>
     public bool Expired { get; private set; }
 
-    private void ThrowIfExpired()
+    /// <summary>Time left in the budget, zero once it has passed.</summary>
+    public TimeSpan Remaining =>
+        Expired ? TimeSpan.Zero : TimeSpan.FromSeconds(Math.Max(0, (double)(_deadline - Stopwatch.GetTimestamp()) / Stopwatch.Frequency));
+
+    /// <summary>
+    /// Throws <see cref="ExtractionTimeoutException"/> once the budget has passed. For code that reads
+    /// the file by some other route than this stream, such as a copy of it in memory, and checks the
+    /// clock itself.
+    /// </summary>
+    public void ThrowIfExpired()
     {
         if (!Expired && Stopwatch.GetTimestamp() < _deadline) return;
 
         Expired = true;
-        throw new ExtractionTimeoutException(
-            $"'{fileName}' was still being read after {budget.TotalSeconds:N0}s and was "
-            + "abandoned. A document this slow is usually structurally broken: a PDF with "
-            + "no cross-reference table is searched byte by byte.");
+        throw TimedOut();
     }
+
+    /// <summary>
+    /// The exception for this deadline having passed. A caller that finds <see cref="Expired"/> set
+    /// after the extractor returned, because the extractor caught the exception and went on, throws
+    /// it so the partial text is not kept.
+    /// </summary>
+    public ExtractionTimeoutException TimedOut(Exception? cause = null)
+    {
+        Expired = true;
+        return Timeout(cause);
+    }
+
+    private ExtractionTimeoutException Timeout(Exception? cause) =>
+        new($"'{fileName}' was still being read after {budget.TotalSeconds:N0}s and was "
+            + "abandoned. A document this slow is usually structurally broken or nested very deeply: "
+            + "a PDF with no cross-reference table, for one, is searched byte by byte.", cause);
 
     public override int Read(byte[] buffer, int offset, int count)
     {
@@ -107,4 +130,10 @@ public sealed class DeadlineStream(Stream inner, TimeSpan budget, string fileNam
 /// The indexer still catches it by its own name first, so a timeout is logged and counted
 /// as one.
 /// </summary>
-public sealed class ExtractionTimeoutException(string message) : ExtractionFailedException(message);
+public sealed class ExtractionTimeoutException : ExtractionFailedException
+{
+    public ExtractionTimeoutException(string message) : base(message) { }
+
+    /// <summary>With the extractor's own exception that wrapped the timeout.</summary>
+    public ExtractionTimeoutException(string message, Exception? inner) : base(message, inner) { }
+}

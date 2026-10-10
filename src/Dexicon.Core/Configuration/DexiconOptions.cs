@@ -145,8 +145,12 @@ public sealed class IndexingOptions
     public long DocumentMaxBytes { get; init; } = 512L * 1024 * 1024;
 
     /// <summary>
-    /// How long a file may go on reading itself during extraction before it is abandoned
-    /// and recorded as failed. 0 disables the limit.
+    /// How long a file may go on reading itself during extraction before it is abandoned.
+    /// 0 disables the limit. What the timeout leaves behind depends on the caller: a workspace
+    /// file is recorded as failed with the timeout text and tried again on a later refresh; an
+    /// uploaded file is listed under <c>failed</c> in the upload response and no document record
+    /// is created; a stored document being extracted again after an extractor change keeps its
+    /// cached text and is tried again on a later pass.
     ///
     /// Extraction is a synchronous call into PdfPig or the OpenXML readers, none of which
     /// take a cancellation token, so a job's own token cannot interrupt one. Without a
@@ -157,7 +161,8 @@ public sealed class IndexingOptions
     /// running.
     ///
     /// WHAT IT DOES NOT COVER. The clock is read between operations on the file, so this
-    /// bounds a file that keeps reading, not wall-clock time in extraction. A single read
+    /// bounds a file that keeps reading, and the parse of HTML, which the clock cancels, but not
+    /// wall-clock time in the other readers. A single read
     /// that never returns, or a long stretch of computation inside the library between
     /// two reads, passes unchecked. Both are out of reach from here for the same reason
     /// the budget exists: there is no cancellation to hook and no safe way to stop a
@@ -259,10 +264,19 @@ public sealed class IndexingOptions
 public sealed class UploadOptions
 {
     /// <summary>
-    /// Files at <see cref="MaxFileBytes"/> that one upload request may carry. The web UI sends
-    /// every dropped file in a single request, so the request bound has to allow a batch.
+    /// The most files one upload request is read for, and the number of files at
+    /// <see cref="MaxFileBytes"/> its byte bound allows. A file part past that count is not read.
     /// </summary>
     public const int BatchFiles = 10;
+
+    /// <summary>
+    /// The most multipart sections, file parts and form fields together, one upload request is read
+    /// for. Only file parts count towards <see cref="BatchFiles"/>, so without this a body of empty
+    /// form fields is bounded by <see cref="MaxRequestBytes"/> alone: about 29 million sections at the
+    /// default. The web UI sends one <c>files</c> part per file, ten at most, so 100 leaves room for the
+    /// fields a script adds beside them.
+    /// </summary>
+    public const int MaxSections = 100;
 
     /// <summary>
     /// Added to the request bound for part headers, boundaries and form fields, so a batch of

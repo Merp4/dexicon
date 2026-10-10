@@ -147,11 +147,17 @@ public sealed class ExtractedTextCache(
             // The result loses any U+0000 before it is stored: SQLite would cut the cached copy
             // there, and the row would then fail its own length check on every read. Plain text
             // and code never reach here, because they are not cached.
-            return (timeoutSeconds > 0
-                ? extractor.Extract(
-                    new DeadlineStream(stream, TimeSpan.FromSeconds(timeoutSeconds), relativePath),
-                    relativePath)
-                : extractor.Extract(stream, relativePath)).WithoutNul();
+            //
+            // An extractor may catch the timeout and return what it had read. That text is partial and
+            // would be stored at the current version, which nothing extracts again, so the expiry is
+            // checked after the call as well as thrown from inside it.
+            if (timeoutSeconds <= 0) return extractor.Extract(stream, relativePath).WithoutNul();
+
+            var deadline = new DeadlineStream(stream, TimeSpan.FromSeconds(timeoutSeconds), relativePath);
+            var extracted = extractor.Extract(deadline, relativePath);
+            if (deadline.Expired) throw deadline.TimedOut();
+
+            return extracted.WithoutNul();
         }
         finally { limits.Extractions.Release(); }
     }

@@ -272,7 +272,9 @@ reading and not a single read that never returns ([09](09-deployment.md)).
 ### `upload` — files pushed through the UI or API
 
 Bytes are content-addressed into `/data/blobs/<sha256[0:2]>/<sha256>` and recorded in
-`blobs`. Two uploads of the same file store one blob.
+`blobs` once their text is extracted. Two uploads of the same file store one blob. An upload whose
+extraction times out or fails for a reason on the server leaves its bytes in `/data/blobs` with no
+`blobs` row (see the paragraph on extraction below).
 
 **Extraction is cached against the blob hash, and chunking is not.** That split is the
 whole design, and it is what makes the same document cheap to hold several ways:
@@ -373,10 +375,99 @@ stored, and the answer is then `202` with the overrun listed under `failed`. A f
 request as a whole has a `null` `file`; a failure of one file carries its name, whatever that
 name is.
 
+A request is read for ten file parts and one hundred multipart sections, form fields and files
+together. The application reads nothing past the eleventh file part or the hundred and first
+section: `failed` lists a failure of the request (`file` is `null`) that says more than ten files
+(or one hundred parts) were sent and to send the rest in another request, and the files beyond the
+limit are in neither `stored` nor `failed`. The files before it stay stored and are indexed. When
+none of them was stored the answer is `400`: "No files could be stored" when a file part was
+reached, with the failures as its detail (`503` instead when one of the failures is an extraction
+that timed out or failed on the server, because the caller did nothing wrong and sending the file
+again can succeed; the web UI ends a multi-request drop at a 5xx and lists the files not yet sent
+as `Not sent`), and "No files in the request" when only form fields were read, with the
+request-level text as its detail when the section limit was hit and no detail otherwise.
+
+A probe against Kestrel with the body-size limit unset, as the endpoint sets it, found that the
+server reads and discards the unread rest of the body after the handler returns (2,500 MB
+accepted, above the request bound), and so did a `413` answered from the declared
+`Content-Length` before any body byte was read (2,500 MB accepted). The early answer therefore
+saves the temp file, hash, save, extraction and lock work for the files left out and not the
+bandwidth of receiving them. The web UI sends one `files` part per file. A part whose
+`Content-Disposition` has an empty `filename` is a form field: it counts as a section, is not
+stored, and is not a failure.
+
+A file name is stored as the document's path, which a listing, a search hit and a log line show.
+An upload or an attach is refused for a name that holds a control character (a line break
+among them, including U+2028 and U+2029) or a bidirectional override or isolate (U+202A to
+U+202E, U+2066 to U+2069), or that is longer than 260 UTF-16 characters. Other format characters,
+such as U+200C and U+200D, are allowed. The upload lists that file under `failed` with the
+reason, which does not repeat the name, and stores the files beside it; the attach endpoint
+answers `400` "Invalid file name". The same check applies to the name the document was uploaded
+under when an attach leaves `fileName` out. A document stored before this rule under a name that
+breaks it cannot be attached without a `fileName` (`400`), and the web UI's Attach button sends the
+stored name, so such a document is attached through the API with a `fileName`, or detached and
+uploaded again.
+
+Extraction of an uploaded file is abandoned after `DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS`
+(300 s), under the clock described above for workspace files. A timeout, or an extraction failure
+that is an I/O error, a refused permission, a shortage of memory, a `TimeoutException`, or an
+extraction failure that wraps one of those, says how the host was and not what the document holds,
+so no document record is created. So is a cancellation that the caller did not ask for, which is how
+a library reports a timeout of its own. The file is listed under `failed` (the timeout names the
+setting), the files beside it in the request are stored, the bytes stay in the blob store, and
+sending the file again extracts it again. When another upload of the same bytes saved its blob
+meanwhile, the file is reported as stored. An extraction failure that is a verdict on the bytes, an
+encrypted or corrupt file, is stored with its message as the document's empty reason.
+
+Because no row records a timeout, a file that times out every time does so for the full budget on
+every upload of it, and the response carries no `Retry-After`. A request that stored nothing, where at least
+one file failed for such a reason, answers `503`. In the web UI a drop of more than ten files is sent as several
+requests, and a request that answers `503` ends the drop: the files not yet sent are listed as
+`Not sent`. That is intended. A server that cannot extract is not helped by more uploads, and
+dropping the rest again is the retry.
+
+A `blob_texts` row that an earlier version wrote for an I/O error, a refused permission, a shortage
+of memory, a `TimeoutException`, or an extraction failure that wraps one of those keeps that message
+as its empty reason: it is at the current extractor version, so no pass extracts it again, and
+uploading the same bytes returns it as already stored. Such rows are not repaired. On the
+0.6.7-era backup of the maintainer's catalogue taken on 2026-10-09 there were no uploads at all
+(`blobs` and `blob_texts` empty; the 1,997 `file_texts` rows are workspace files, a different
+table). Other installs, and the maintainer's catalogue since, have not been measured.
+
+A workspace file that times out is recorded as failed with the timeout text and retried on a later
+refresh. One whose extractor caught the timeout and returned the text read so far is handled the
+same way, and that text is not cached. A stored document that is extracted again after an extractor
+change keeps its previous text, is tried again on a later pass, and is tried once per job and not
+once per chunk set, when the extraction fails for any of the reasons above or when the exception
+points at a fault in the extractor (such as a null reference, an invalid operation or an argument). A new
+upload with the same fault records the verdict. A set that chunked the older text is stamped with a
+fingerprint that names that text's extractor version, so it chunks the new text on the next pass.
+
+Nesting and size are bounded before a library loads a file, because the libraries recurse (a stack
+overflow ends the process) or take time that grows with the square of the depth. Each format has its
+own bound.
+
+- **DOCX, PPTX and EPUB.** Every entry of the package is tried as XML by a streaming reader, whatever
+  it is called, because a relationship or manifest can name a part anything. An entry that is not XML
+  fails at the first read. A package with a part nested more than 512 deep is an unreadable document
+  ("nests XML elements more than 512 deep"). The XML of one package may inflate to at most 256 MiB,
+  summed over the entries, and the reading is held to the extraction clock; past either it is an
+  unreadable document or a timeout. A part that is not well formed, and bytes that are not a zip, are
+  left to the reader that follows.
+- **HTML**, a file or an EPUB chapter, is bounded in time by the extraction clock and in memory by
+  the number of tags. The parser runs under a cancellation token that the clock cancels, and the
+  parse stops within about 50 ms of it: 100,000 nested divs with stray end tags took 319 s to parse
+  unbounded, and stop at the budget. A deep document that parses within the budget is extracted. The
+  text walk keeps an explicit stack. A document with more than 1,000,000 tags (counted as the
+  less-than signs) is an unreadable document ("contains more than 1,000,000 tags"), because the
+  parser takes 290 to 560 bytes of memory per tag, 0.4 to 0.8 GB at the limit, and the clock alone
+  let 100 MB of paragraphs reach 10 GB.
+- **PDF** is not bounded ([10](10-security-secrets.md#input-handling) says what that means).
+
 A body that ends before its closing boundary, or whose headers are over the reader's limits, is
-treated the same way: files completed before it stay stored and are indexed, the response lists
-the cause under `failed` with a `null` `file`, and when nothing was stored the answer is `400`
-"Malformed multipart upload". A client that disconnects after some files were stored is handled
+handled like an overrun of the byte bound: files completed before it stay stored and are indexed,
+the response lists the cause under `failed` with a `null` `file`, and when nothing was stored the answer is
+`400` "Malformed multipart upload". A client that disconnects after some files were stored is handled
 the same way: those files are attached and indexed, and the file being attached at that moment is
 discarded rather than saved without being reported. The Documents screen names each file in
 `failed` under the count it stored.
