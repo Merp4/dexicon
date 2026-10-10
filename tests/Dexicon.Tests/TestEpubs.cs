@@ -179,6 +179,7 @@ internal static class TestEpubs
         encoding ??= new System.Text.UTF8Encoding(false);
         return [.. encoding.GetPreamble(), .. encoding.GetBytes(text)];
     }
+
     /// <summary>
     /// An EPUB 3 whose navigation document holds <paramref name="depth"/> lists nested in one another, read
     /// by its manifest.

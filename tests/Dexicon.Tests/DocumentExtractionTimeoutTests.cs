@@ -998,4 +998,36 @@ public sealed class DocumentExtractionTimeoutTests
         row.ExtractorVersion.ShouldBe(ExtractorVersions.Current, "the other job rewrote the row during the first job's extraction");
         row.Text.ShouldBe(new string('n', Bytes.Length));
     }
+
+    /// <summary>Raises the timeout the way the HTML parse does, and swallows it.</summary>
+    private sealed class SwallowingTheParseTimeout : ITextExtractor
+    {
+        public bool CanHandle(string extension) => extension == ".slow";
+
+        public ExtractedText Extract(Stream content, string fileName)
+        {
+            try
+            {
+                throw ((DeadlineStream)content).TimedOut();
+            }
+            catch (ExtractionTimeoutException)
+            {
+                return new ExtractedText("partial", []);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ATimeoutAnExtractorSwallowedStillCountsAsExpiredAndTheTextIsNotKept()
+    {
+        // Nothing read the stream past the deadline, so the stream never saw it expire: only the exception
+        // built by TimedOut() says so.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await using var db = harness.NewContext();
+
+        await Should.ThrowAsync<ExtractionTimeoutException>(
+            () => ServiceWith(harness, db, new SwallowingTheParseTimeout()).StoreAsync(new MemoryStream(Bytes), "doc.slow"));
+
+        (await db.Blobs.CountAsync()).ShouldBe(0);
+    }
 }

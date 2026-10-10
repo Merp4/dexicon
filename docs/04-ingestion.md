@@ -454,10 +454,14 @@ own bound.
   summed over the entries, and the reading is held to the extraction clock; past either it is an
   unreadable document or a timeout. A part that is not well formed, and bytes that are not a zip, are
   left to the reader that follows.
-- **HTML**, a file or an EPUB chapter, is bounded by time only. The parser runs under a cancellation
-  token that the extraction clock cancels, and the parse stops within about 50 ms of it: 100,000
-  nested divs with stray end tags took 319 s to parse unbounded, and stop at the budget. A deep
-  document that parses within the budget is extracted. The text walk keeps an explicit stack.
+- **HTML**, a file or an EPUB chapter, is bounded in time by the extraction clock and in memory by
+  the number of tags. The parser runs under a cancellation token that the clock cancels, and the
+  parse stops within about 50 ms of it: 100,000 nested divs with stray end tags took 319 s to parse
+  unbounded, and stop at the budget. A deep document that parses within the budget is extracted. The
+  text walk keeps an explicit stack. A document with more than 1,000,000 tags (counted as the
+  less-than signs) is an unreadable document ("contains more than 1,000,000 tags"), because the
+  parser takes 290 to 560 bytes of memory per tag, 0.4 to 0.8 GB at the limit, and the clock alone
+  let 100 MB of paragraphs reach 10 GB.
 - **PDF** is not bounded ([10](10-security-secrets.md#input-handling) says what that means).
 
 A body that ends before its closing boundary, or whose headers are over the reader's limits, is

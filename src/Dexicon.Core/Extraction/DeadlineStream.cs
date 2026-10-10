@@ -5,9 +5,10 @@ namespace Dexicon.Core.Extraction;
 /// <summary>
 /// A read-only view over another stream that stops answering once a deadline passes.
 ///
-/// Extraction is synchronous and takes no cancellation token, because the libraries
+/// Extraction is synchronous and takes no cancellation token, because most of the libraries
 /// underneath it do not: <c>PdfDocument.Open</c> and the OpenXML readers are ordinary
-/// blocking calls. Cancelling an index job therefore could not interrupt one, and a
+/// blocking calls. (The HTML parser does take one, and is cancelled when this clock runs out:
+/// <c>HtmlText.Parse</c> reads <see cref="Remaining"/>.) Cancelling an index job therefore could not interrupt one, and a
 /// single file could hold the corpus indefinitely. One did: a truncated 68 MB PDF with
 /// no cross-reference table sent PdfPig into a brute-force backward scan of the whole
 /// file, one byte per 4 KB read, which over a 9p bind mount ran at about 6,000 reads a
@@ -23,9 +24,9 @@ namespace Dexicon.Core.Extraction;
 /// The throw is permanent rather than one-shot: a library that catches broadly and
 /// retries meets the same exception on its next read instead of resuming.
 ///
-/// It is an inter-read guard, so it bounds a file that keeps reading rather than
-/// wall-clock time in extraction: a read that never returns, or computation inside the
-/// library between two reads, is not covered. See
+/// Apart from the HTML parse it is an inter-read guard, so it bounds a file that keeps reading
+/// rather than wall-clock time in extraction: a read that never returns, or computation inside
+/// the library between two reads, is not covered. See
 /// <see cref="Configuration.IndexingOptions.ExtractionTimeoutSeconds"/>.
 /// </summary>
 public sealed class DeadlineStream(Stream inner, TimeSpan budget, string fileName) : Stream
@@ -65,8 +66,8 @@ public sealed class DeadlineStream(Stream inner, TimeSpan budget, string fileNam
 
     private ExtractionTimeoutException Timeout(Exception? cause) =>
         new($"'{fileName}' was still being read after {budget.TotalSeconds:N0}s and was "
-            + "abandoned. A document this slow is usually structurally broken: a PDF with "
-            + "no cross-reference table is searched byte by byte.", cause);
+            + "abandoned. A document this slow is usually structurally broken or nested very deeply: "
+            + "a PDF with no cross-reference table, for one, is searched byte by byte.", cause);
 
     public override int Read(byte[] buffer, int offset, int count)
     {

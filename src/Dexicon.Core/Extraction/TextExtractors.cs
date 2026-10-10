@@ -485,7 +485,8 @@ public sealed class DocxTextExtractor : ITextExtractor
     {
         try
         {
-            XmlNesting.RequireShallowParts(content, fileName, content as DeadlineStream);
+            // The package is read through the extraction clock already: content is the DeadlineStream.
+            XmlNesting.RequireShallowParts(content, fileName);
             using var doc = WordprocessingDocument.Open(content, false);
             var body = doc.MainDocumentPart?.Document?.Body;
             if (body is null) return ExtractedText.Empty;
@@ -514,7 +515,7 @@ public sealed class PptxTextExtractor : ITextExtractor
     {
         try
         {
-            XmlNesting.RequireShallowParts(content, fileName, content as DeadlineStream);
+            XmlNesting.RequireShallowParts(content, fileName);
             using var doc = PresentationDocument.Open(content, false);
             var parts = doc.PresentationPart?.SlideParts?.ToList();
             if (parts is null or { Count: 0 }) return ExtractedText.Empty;
@@ -545,7 +546,8 @@ public sealed class PptxTextExtractor : ITextExtractor
     }
 }
 
-public sealed class EpubTextExtractor : ITextExtractor
+/// <param name="maxTags">The most tags a chapter may hold; see <see cref="HtmlText.MaxTags"/>.</param>
+public sealed class EpubTextExtractor(int maxTags = HtmlText.MaxTags) : ITextExtractor
 {
     public bool CanHandle(string extension) => extension == ".epub";
 
@@ -564,7 +566,7 @@ public sealed class EpubTextExtractor : ITextExtractor
         try
         {
             using var forManifest = new MemoryStream(bytes);
-            return ReadWithManifest(forManifest, deadline);
+            return ReadWithManifest(forManifest, deadline, maxTags);
         }
         catch (Exception ex) when (ex is not ExtractionFailedException)
         {
@@ -573,12 +575,12 @@ public sealed class EpubTextExtractor : ITextExtractor
             // file that is not there. Falling back to the archive reads those, in a worse
             // order and without chapter titles, which is enormously better than not at all.
             using var forArchive = new MemoryStream(bytes);
-            return ReadFromArchive(forArchive, fileName, ex, deadline);
+            return ReadFromArchive(forArchive, fileName, ex, deadline, maxTags);
         }
     }
 
     /// <summary>The good path: the manifest gives real reading order and a title.</summary>
-    private static ExtractedText ReadWithManifest(MemoryStream buffer, DeadlineStream? deadline)
+    private static ExtractedText ReadWithManifest(MemoryStream buffer, DeadlineStream? deadline, int maxTags)
     {
         var book = VersOne.Epub.EpubReader.ReadBook(buffer);
         var sb = new StringBuilder();
@@ -589,6 +591,7 @@ public sealed class EpubTextExtractor : ITextExtractor
         foreach (var file in book.ReadingOrder)
         {
             units.Add(new ExtractedUnit(number, sb.Length, $"Chapter {number}"));
+            HtmlText.RequireFewTags(file.Content, $"Chapter {number}", maxTags);
             using var doc = HtmlText.Parse(parser, file.Content, deadline);
             HtmlText.AppendBlocks(doc.Body, sb);
             number++;
@@ -603,7 +606,7 @@ public sealed class EpubTextExtractor : ITextExtractor
     /// usually the authoring order and is nearly always alphabetical by chapter.
     /// </summary>
     private static ExtractedText ReadFromArchive(
-        MemoryStream buffer, string fileName, Exception cause, DeadlineStream? deadline)
+        MemoryStream buffer, string fileName, Exception cause, DeadlineStream? deadline, int maxTags)
     {
         using var zip = OpenArchive(buffer, fileName, cause);
 
@@ -630,6 +633,7 @@ public sealed class EpubTextExtractor : ITextExtractor
             {
                 using var bytes = new MemoryStream();
                 using (var stream = entry.Open()) stream.CopyTo(bytes);
+                HtmlText.RequireFewTags(bytes.GetBuffer().AsSpan(0, (int)bytes.Length), entry.FullName, maxTags);
                 bytes.Position = 0;
                 using var doc = HtmlText.Parse(parser, bytes, deadline);
                 var before = sb.Length;
@@ -676,7 +680,8 @@ public sealed class EpubTextExtractor : ITextExtractor
     }
 }
 
-public sealed class HtmlTextExtractor : ITextExtractor
+/// <param name="maxTags">The most tags a document may hold; see <see cref="HtmlText.MaxTags"/>.</param>
+public sealed class HtmlTextExtractor(int maxTags = HtmlText.MaxTags) : ITextExtractor
 {
     public bool CanHandle(string extension) => extension is ".html" or ".htm";
 
@@ -689,7 +694,9 @@ public sealed class HtmlTextExtractor : ITextExtractor
         {
             using var reader = new StreamReader(content, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
             var parser = new HtmlParser();
-            using var doc = HtmlText.Parse(parser, reader.ReadToEnd(), content as DeadlineStream);
+            var markup = reader.ReadToEnd();
+            HtmlText.RequireFewTags(markup, fileName, maxTags);
+            using var doc = HtmlText.Parse(parser, markup, content as DeadlineStream);
 
             var sb = new StringBuilder();
             HtmlText.AppendBlocks(doc.Body, sb);
@@ -720,6 +727,36 @@ public sealed class HtmlTextExtractor : ITextExtractor
 internal static class HtmlText
 {
     /// <summary>
+    /// The most tags a document or a chapter may hold. The parser is bounded in time by the extraction clock
+    /// and in memory by this: a parse costs 290 to 560 bytes of working set per tag (measured on flat
+    /// paragraphs, spans, list items and anchors with four attributes: 361 to 769 MB at the limit, with the
+    /// markup itself), 100 MB of paragraphs reached 10 GB before the clock ended it, and a
+    /// real 12 MB single-page specification holds about 300,000 tags. Counted as the
+    /// less-than signs, which is exact for text and an upper bound for tags.
+    /// </summary>
+    public const int MaxTags = 1_000_000;
+
+    /// <summary>Refuses text with more than <paramref name="maxTags"/> tags.</summary>
+    /// <param name="what">What the message names: a file or a chapter.</param>
+    /// <exception cref="UnreadableDocumentException">There are more tags than allowed.</exception>
+    public static void RequireFewTags(string markup, string what, int maxTags)
+    {
+        if (markup.AsSpan().Count('<') > maxTags) throw TooManyTags(what, maxTags);
+    }
+
+    /// <summary>
+    /// The same for bytes, whatever their encoding: the byte 0x3C is the less-than sign in UTF-8 and the
+    /// low byte of it in UTF-16, and a byte that is part of another character only makes the count higher.
+    /// </summary>
+    public static void RequireFewTags(ReadOnlySpan<byte> markup, string what, int maxTags)
+    {
+        if (markup.Count((byte)0x3C) > maxTags) throw TooManyTags(what, maxTags);
+    }
+
+    private static UnreadableDocumentException TooManyTags(string what, int maxTags) =>
+        new($"{what} contains more than {maxTags:N0} tags, which is more than can be read.");
+
+    /// <summary>
     /// Parses under the extraction clock. AngleSharp builds the tree in time that grows with the square
     /// of the nesting (100,000 nested divs took 319 s here), and no count of tags taken beforehand
     /// matches what the parser makes of them: it closes elements an end tag does not name, ignores end
@@ -739,10 +776,14 @@ internal static class HtmlText
     public static IHtmlDocument Parse(HtmlParser parser, Stream markup, DeadlineStream? deadline) =>
         Parsed(token => parser.ParseDocumentAsync(markup, token), deadline);
 
+    private static readonly TimeSpan MaxCancelDelay = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
+
     private static IHtmlDocument Parsed(Func<CancellationToken, Task<IHtmlDocument>> parse, DeadlineStream? deadline)
     {
         using var cancel = new CancellationTokenSource();
-        if (deadline is not null) cancel.CancelAfter(deadline.Remaining);
+        // CancelAfter takes no more than about 49 days. A budget longer than that is as good as none.
+        if (deadline is not null)
+            cancel.CancelAfter(deadline.Remaining > MaxCancelDelay ? Timeout.InfiniteTimeSpan : deadline.Remaining);
 
         try
         {

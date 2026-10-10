@@ -21,9 +21,10 @@ internal static class XmlNesting
 
     /// <summary>
     /// The most XML that is read, summed over the parts of one package, once inflated: 256 MiB, which the
-    /// reader takes about four seconds to scan at the 60 MB/s it was measured at. The XML of the 61 real
-    /// EPUB, DOCX and PPTX files the check was run on scanned in 2 to 125 ms each. A package with more is
-    /// not a document: a 5.7 MB one was measured inflating to 1 GiB in a single part.
+    /// reader takes about four seconds to scan when the XML is made of elements (60 MB/s measured; flat text
+    /// goes through at about 400 MB/s). The XML of 61 real EPUB, DOCX and PPTX files scanned in under half
+    /// a second each, under load. A package with more is not a document: a 5.7 MB one was measured
+    /// inflating to 1 GiB in a single part.
     /// </summary>
     public const long TotalBudgetBytes = 256L * 1024 * 1024;
 
@@ -73,8 +74,13 @@ internal static class XmlNesting
 
                 try
                 {
+                    var before = meter.Used;
                     using var part = new MeteredStream(entry.Open(), meter);
-                    RequireShallow(part, $"{fileName} ({entry.FullName})");
+
+                    // An entry that is not XML fails at its first read, having been charged for the buffer
+                    // that was read, and is given the charge back: a package of tens of thousands of images
+                    // is not a package of XML.
+                    if (!RequireShallow(part, $"{Shown(fileName)} ({Shown(entry.FullName)})")) meter.Refund(meter.Used - before);
                 }
                 catch (InvalidDataException)
                 {
@@ -84,9 +90,30 @@ internal static class XmlNesting
         }
     }
 
+    /// <summary>
+    /// A name as the messages show it. It reaches the status detail of a file and the reason stored with a
+    /// document, so it is cut to 120 characters and a control character, a line separator or a
+    /// bidirectional override becomes U+FFFD.
+    /// </summary>
+    private static string Shown(string name)
+    {
+        var cut = name.Length > 120 ? name[..120] + "…" : name;
+        return string.Create(cut.Length, cut, static (span, source) =>
+        {
+            for (var i = 0; i < source.Length; i++)
+            {
+                var c = source[i];
+                span[i] = char.IsControl(c) || c is '\u2028' or '\u2029' or (>= '\u202a' and <= '\u202e') or (>= '\u2066' and <= '\u2069')
+                    ? '\ufffd'
+                    : c;
+            }
+        });
+    }
+
     /// <summary>Reads the part to its end, or to the first element deeper than the limit.</summary>
     /// <param name="what">The part the message names.</param>
-    public static void RequireShallow(Stream part, string what)
+    /// <returns>False when the part is not XML at all: its first read failed.</returns>
+    public static bool RequireShallow(Stream part, string what)
     {
         var settings = new XmlReaderSettings
         {
@@ -96,11 +123,13 @@ internal static class XmlNesting
             IgnoreWhitespace = true,
         };
 
+        var started = false;
         try
         {
             using var reader = XmlReader.Create(part, settings);
             while (reader.Read())
             {
+                started = true;
                 if (reader.NodeType == XmlNodeType.Element && reader.Depth >= MaxDepth)
                     throw new UnreadableDocumentException(
                         $"{what} nests XML elements more than {MaxDepth} deep, which is too deep to read.");
@@ -110,12 +139,18 @@ internal static class XmlNesting
         {
             // Not well formed from here on. The reader that loads the part reports it.
         }
+
+        return started;
     }
 
     /// <summary>What is left of the budget and the clock, shared by the entries of one package.</summary>
     private sealed class Meter(long budgetBytes, DeadlineStream? deadline, string fileName)
     {
         private long _used;
+
+        public long Used => _used;
+
+        public void Refund(long bytes) => _used -= bytes;
 
         public void Charge(int bytes)
         {
@@ -124,7 +159,7 @@ internal static class XmlNesting
             _used += bytes;
             if (_used > budgetBytes)
                 throw new UnreadableDocumentException(
-                    $"{fileName} holds XML that inflates to more than {budgetBytes / (1024 * 1024):N0} MiB, which is too much to read.");
+                    $"{Shown(fileName)} holds XML that inflates to more than {budgetBytes / (1024 * 1024):N0} MiB, which is too much to read.");
         }
     }
 

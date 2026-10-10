@@ -295,4 +295,48 @@ public sealed class XmlNestingTests
 
         clock.Elapsed.ShouldBeLessThan(Margin);
     }
+
+    [Fact]
+    public void ThePackageIsRefusedAtOneByteOverTheBudgetAndNotAtTheBudget()
+    {
+        // The XML entry is exactly 1,000 bytes, and the check reads each of them once.
+        var content = "<root>" + new string('x', 987) + "</root>";
+        content.Length.ShouldBe(1_000);
+        var package = TestEpubs.Package(("part.xml", content));
+
+        Should.NotThrow(() => XmlNesting.RequireShallowParts(new MemoryStream(package), "a.docx", budgetBytes: 1_000));
+        Should.Throw<UnreadableDocumentException>(
+            () => XmlNesting.RequireShallowParts(new MemoryStream(package), "a.docx", budgetBytes: 999));
+    }
+
+    [Fact]
+    public void EntriesThatAreNotXmlAreNotChargedAgainstTheBudget()
+    {
+        // Each fails at its first read, having cost a 4 KB buffer, which is given back: 2,000 images would
+        // otherwise be 8 MB of XML.
+        var random = new Random(7);
+        var entries = Enumerable.Range(0, 2_000)
+            .Select(i => ($"media/image{i}.bin", Enumerable.Range(0, 8_192).Select(_ => (byte)random.Next(1, 256)).ToArray()))
+            .ToArray();
+        var package = TestEpubs.PackageOfBytes(entries);
+
+        Should.NotThrow(() => XmlNesting.RequireShallowParts(new MemoryStream(package), "a.docx", budgetBytes: 100_000));
+    }
+
+    [Fact]
+    public void ThePartNameInAMessageIsCutAndHasItsControlCharactersReplaced()
+    {
+        // The message becomes the reason stored with a document and the detail of a file's status.
+        var name = new string('n', 65_000) + "\nline.xml";
+        var package = TestEpubs.Package((name, "<root>" + string.Concat(Enumerable.Repeat("<a>", 600)) + "</root>"));
+
+        var thrown = Should.Throw<UnreadableDocumentException>(
+            () => XmlNesting.RequireShallowParts(new MemoryStream(package), "a\r\nb.docx"));
+
+        thrown.Message.Length.ShouldBeLessThan(400);
+        thrown.Message.ShouldNotContain("\n");
+        thrown.Message.ShouldNotContain("\r");
+        thrown.Message.ShouldContain("…");
+        thrown.Message.ShouldStartWith("a\ufffd\ufffdb.docx (");
+    }
 }

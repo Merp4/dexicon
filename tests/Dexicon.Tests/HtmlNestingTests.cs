@@ -6,25 +6,40 @@ using Dexicon.Core.Extraction;
 namespace Dexicon.Tests;
 
 /// <summary>
-/// Deeply nested HTML. The text walk used to recurse and overflowed the stack, and the parser's time
-/// grows with the square of the depth (100,000 nested divs took 319 s). The walk keeps its own stack, and
-/// the parse runs under the extraction clock, which cancels it. No count of tags taken beforehand is
-/// exact, so none is used: a deep document that parses within the budget is extracted.
+/// Deeply nested and very large HTML. The text walk used to recurse and overflowed the stack, and the
+/// parser's time grows with the square of the depth. The walk keeps its own stack, the parse runs under the
+/// extraction clock, which cancels it, and the number of tags is limited because the parser's memory grows
+/// with it. No count of nested tags taken beforehand is exact, so none is used: a deep document that
+/// parses within the budget is extracted.
 /// </summary>
 public sealed class HtmlNestingTests
 {
-    private static readonly TimeSpan Budget = TimeSpan.FromSeconds(1);
+    /// <summary>
+    /// A budget the inputs below overrun by orders of magnitude: 200,000 levels take minutes to parse.
+    /// Faster hardware or a faster parser changes nothing.
+    /// </summary>
+    private static readonly TimeSpan Short = TimeSpan.FromMilliseconds(100);
 
-    /// <summary>Longer than the budget by far, and still short of a test that stalls the run.</summary>
+    /// <summary>For the timeout that has to come from the parse and not from reading the markup.</summary>
+    private static readonly TimeSpan Parse = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>A budget a document that parses in time cannot spend.</summary>
+    private static readonly TimeSpan Roomy = TimeSpan.FromSeconds(10);
+
+    private const int Levels = 200_000;
+
+    /// <summary>Longer than any budget above by far, and still short of a test that stalls the run.</summary>
     private static readonly TimeSpan Margin = TimeSpan.FromSeconds(20);
 
-    private static ExtractedText Extract(string html, Encoding? encoding = null, TimeSpan? budget = null)
+    private static ExtractedText Extract(
+        string html, Encoding? encoding = null, TimeSpan? budget = null, HtmlTextExtractor? extractor = null)
     {
         encoding ??= new UTF8Encoding(false);
         Stream content = new MemoryStream([.. encoding.GetPreamble(), .. encoding.GetBytes(html)]);
         if (budget is { } clock) content = new DeadlineStream(content, clock, "page.html");
 
-        return BoundedCalls.Within(BoundedCalls.Generous, () => new HtmlTextExtractor().Extract(content, "page.html"));
+        return BoundedCalls.Within(
+            BoundedCalls.Generous, () => (extractor ?? new HtmlTextExtractor()).Extract(content, "page.html"));
     }
 
     private static string Repeat(string markup, int times) => string.Concat(Enumerable.Repeat(markup, times));
@@ -62,21 +77,21 @@ public sealed class HtmlNestingTests
     [Fact]
     public void ADeepStrayEndTagDocumentStopsAtTheBudget()
     {
-        var html = $"<html><body>{Repeat("<div></span>", 100_000)}</body></html>";
+        var html = $"<html><body>{Repeat("<div></span>", Levels)}</body></html>";
         var clock = Stopwatch.StartNew();
 
-        Should.Throw<ExtractionTimeoutException>(() => Extract(html, budget: Budget));
+        Should.Throw<ExtractionTimeoutException>(() => Extract(html, budget: Short));
 
         clock.Elapsed.ShouldBeLessThan(Margin, "the parse took longer than the budget allows, so the clock did not cancel it");
     }
 
     [Fact]
-    public void AMillionNestedDivsStopAtTheBudgetWithoutCrashing()
+    public void NineHundredThousandNestedDivsStopAtTheBudgetWithoutCrashing()
     {
-        var html = $"<html><body>{Repeat("<div>", 1_000_000)}</body></html>";
+        var html = $"<html><body>{Repeat("<div>", 900_000)}</body></html>";
         var clock = Stopwatch.StartNew();
 
-        Should.Throw<ExtractionTimeoutException>(() => Extract(html, budget: Budget));
+        Should.Throw<ExtractionTimeoutException>(() => Extract(html, budget: Short));
 
         clock.Elapsed.ShouldBeLessThan(Margin);
     }
@@ -85,10 +100,10 @@ public sealed class HtmlNestingTests
     public void ADeepDocumentWrittenAsUtf16StopsAtTheBudgetToo()
     {
         // A scan of the bytes as Latin-1 never saw tags written in UTF-16. The parse reads what the text reader decoded.
-        var html = $"<html><body>{Repeat("<div></span>", 30_000)}</body></html>";
+        var html = $"<html><body>{Repeat("<div></span>", Levels)}</body></html>";
         var clock = Stopwatch.StartNew();
 
-        Should.Throw<ExtractionTimeoutException>(() => Extract(html, new UnicodeEncoding(false, true), Budget));
+        Should.Throw<ExtractionTimeoutException>(() => Extract(html, new UnicodeEncoding(false, true), Short));
 
         clock.Elapsed.ShouldBeLessThan(Margin);
     }
@@ -96,29 +111,72 @@ public sealed class HtmlNestingTests
     [Fact]
     public void ATimeoutFromTheParseCarriesTheCancellationThatEndedIt()
     {
-        var html = $"<html><body>{Repeat("<div>", 1_000_000)}</body></html>";
+        var html = $"<html><body>{Repeat("<div>", 900_000)}</body></html>";
 
-        var thrown = Should.Throw<ExtractionTimeoutException>(() => Extract(html, budget: Budget));
+        var thrown = Should.Throw<ExtractionTimeoutException>(() => Extract(html, budget: Parse));
 
         thrown.InnerException.ShouldBeAssignableTo<OperationCanceledException>();
+    }
+
+    [Fact]
+    public void ABudgetBeyondWhatTheCancellationTimerTakesIsNoBudget()
+    {
+        // CancelAfter takes up to about 49 days. A budget of 5,000,000 s made every HTML file unreadable.
+        var content = new DeadlineStream(
+            new MemoryStream("<html><body><p>kept</p></body></html>"u8.ToArray()), TimeSpan.FromSeconds(5_000_000), "page.html");
+
+        new HtmlTextExtractor().Extract(content, "page.html").Text.ShouldBe("kept");
+    }
+
+    // The memory bound: the parse costs 290 to 560 bytes per tag, so the tags are counted before it starts.
+
+    private static string Tags(int count) => $"<html><body>{Repeat("<p>x", count - 4)}</body></html>";
+
+    [Fact]
+    public void ADocumentWithExactlyTheMostTagsIsExtracted()
+    {
+        Extract(Tags(100), extractor: new HtmlTextExtractor(maxTags: 100)).Text.ShouldContain("x");
+    }
+
+    [Fact]
+    public void ADocumentWithOneTagMoreIsRefused()
+    {
+        var thrown = Should.Throw<UnreadableDocumentException>(
+            () => Extract(Tags(101), extractor: new HtmlTextExtractor(maxTags: 100)));
+
+        thrown.Message.ShouldBe("page.html contains more than 100 tags, which is more than can be read.");
+        thrown.Unexpected.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TheTagsOfADocumentWrittenAsUtf16AreCountedToo()
+    {
+        Should.Throw<UnreadableDocumentException>(
+            () => Extract(Tags(101), new UnicodeEncoding(false, true), extractor: new HtmlTextExtractor(maxTags: 100)));
+    }
+
+    [Fact]
+    public void TheDefaultLimitIsAMillionTags()
+    {
+        HtmlText.MaxTags.ShouldBe(1_000_000);
     }
 
     // An undefined entity makes the chapter XML that is not well formed, so the XML check of the package
     // leaves it to the parse, as it does a chapter written as HTML.
     private const string NotXml = "<p>&nbsp;</p>";
 
-    private static ExtractedText Within(byte[] epub) =>
+    private static ExtractedText Within(byte[] epub, TimeSpan budget, int maxTags = HtmlText.MaxTags) =>
         BoundedCalls.Within(
             BoundedCalls.Generous,
-            () => new EpubTextExtractor().Extract(new DeadlineStream(new MemoryStream(epub), Budget, "book.epub"), "book.epub"));
+            () => new EpubTextExtractor(maxTags).Extract(new DeadlineStream(new MemoryStream(epub), budget, "book.epub"), "book.epub"));
 
     [Fact]
     public void AnEpubChapterReadByItsManifestStopsAtTheBudget()
     {
-        var epub = TestEpubs.WithAChapter(NotXml + Repeat("<div></span>", 30_000));
+        var epub = TestEpubs.WithAChapter(NotXml + Repeat("<div></span>", Levels));
         var clock = Stopwatch.StartNew();
 
-        Should.Throw<ExtractionTimeoutException>(() => Within(epub));
+        Should.Throw<ExtractionTimeoutException>(() => Within(epub, Short));
 
         clock.Elapsed.ShouldBeLessThan(Margin);
     }
@@ -126,10 +184,10 @@ public sealed class HtmlNestingTests
     [Fact]
     public void AnEpubEntryReadFromTheArchiveStopsAtTheBudget()
     {
-        var epub = TestEpubs.WithAnEntry(NotXml + Repeat("<div></span>", 30_000));
+        var epub = TestEpubs.WithAnEntry(NotXml + Repeat("<div></span>", Levels));
         var clock = Stopwatch.StartNew();
 
-        Should.Throw<ExtractionTimeoutException>(() => Within(epub));
+        Should.Throw<ExtractionTimeoutException>(() => Within(epub, Short));
 
         clock.Elapsed.ShouldBeLessThan(Margin);
     }
@@ -139,7 +197,7 @@ public sealed class HtmlNestingTests
     {
         var epub = TestEpubs.WithAChapter(NotXml + Repeat("<div>", 600) + "<p>kept</p>");
 
-        Within(epub).Text.ShouldContain("kept");
+        Within(epub, Roomy).Text.ShouldContain("kept");
     }
 
     [Fact]
@@ -147,6 +205,42 @@ public sealed class HtmlNestingTests
     {
         var epub = TestEpubs.WithAnEntry(NotXml + Repeat("<div>", 600) + "<p>kept</p>");
 
-        Within(epub).Text.ShouldContain("kept");
+        Within(epub, Roomy).Text.ShouldContain("kept");
+    }
+
+    // The chapter file holds four tags of its own (html and body, opened and closed).
+
+    [Fact]
+    public void AnEpubChapterReadByItsManifestWithExactlyTheMostTagsIsExtracted()
+    {
+        var epub = TestEpubs.WithAChapter("&nbsp;" + Repeat("<p>x", 96));
+
+        Within(epub, Roomy, maxTags: 100).Text.ShouldContain("x");
+    }
+
+    [Fact]
+    public void AnEpubChapterReadByItsManifestWithOneTagMoreIsRefused()
+    {
+        var epub = TestEpubs.WithAChapter("&nbsp;" + Repeat("<p>x", 97));
+
+        Should.Throw<UnreadableDocumentException>(() => Within(epub, Roomy, maxTags: 100))
+            .Message.ShouldBe("Chapter 1 contains more than 100 tags, which is more than can be read.");
+    }
+
+    [Fact]
+    public void AnEpubEntryReadFromTheArchiveWithExactlyTheMostTagsIsExtracted()
+    {
+        var epub = TestEpubs.WithAnEntry("&nbsp;" + Repeat("<p>x", 96));
+
+        Within(epub, Roomy, maxTags: 100).Text.ShouldContain("x");
+    }
+
+    [Fact]
+    public void AnEpubEntryReadFromTheArchiveWithOneTagMoreIsRefused()
+    {
+        var epub = TestEpubs.WithAnEntry("&nbsp;" + Repeat("<p>x", 97));
+
+        Should.Throw<UnreadableDocumentException>(() => Within(epub, Roomy, maxTags: 100))
+            .Message.ShouldBe("OEBPS/ch1.xhtml contains more than 100 tags, which is more than can be read.");
     }
 }
