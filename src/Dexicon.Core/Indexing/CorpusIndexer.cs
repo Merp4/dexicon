@@ -278,7 +278,7 @@ public sealed class CorpusIndexer(
             // Files that failed to embed before the failure were recorded as such, and the
             // reason is otherwise only added once the pass completes.
             if (embeddingFailed) AddReason(job, EmbeddingFailedReason);
-            AddReason(job, ex.Message);
+            AddReason(job, ReasonFor(ex));
 
             // Only while this job still owns the corpus. A job that never got the lease,
             // or lost it, would otherwise mark a corpus someone else is working as
@@ -374,9 +374,36 @@ public sealed class CorpusIndexer(
             .ToHashSet(StringComparer.Ordinal);
         await ReconcileChunkCountsAsync(set, source.Id, byPath, named.Contains, ct);
 
+        var attached = attachments.ToDictionary(f => f.Id, StringComparer.Ordinal);
+
+        // What each document added to the job's counts. One that is detached after it was counted moves to
+        // the skipped count, so the three still add up to the documents the pass read.
+        var tallied = new Dictionary<string, Tally>(StringComparer.Ordinal);
+        void Count(IndexedFile counted, Tally outcome)
+        {
+            tallied[counted.Id] = outcome;
+            switch (outcome)
+            {
+                case Tally.Done: job.FilesDone++; break;
+                case Tally.Skipped: job.FilesSkipped++; break;
+                default: job.FilesFailed++; break;
+            }
+        }
+
+        void Dropped(IndexedFile gone)
+        {
+            if (!tallied.Remove(gone.Id, out var was)) return;
+            if (was == Tally.Done) job.FilesDone--;
+            else if (was == Tally.Failed) job.FilesFailed--;
+            else return;
+            job.FilesSkipped++;
+        }
+
+        var onVanished = DropUploads(set, attached, Dropped, ct);
+
         job.FilesTotal += attachments.Count;
         job.Phase = "extract";
-        await db.SaveChangesAsync(ct);
+        await SaveWithoutVanishedFilesAsync(onVanished, ct);
         Report(progress, job, null);
 
         var sinceFlush = System.Diagnostics.Stopwatch.StartNew();
@@ -384,6 +411,13 @@ public sealed class CorpusIndexer(
         foreach (var file in attachments)
         {
             ct.ThrowIfCancellationRequested();
+
+            // Left out by an earlier save, so there is no document to index.
+            if (db.Entry(file).State == EntityState.Detached)
+            {
+                Count(file, Tally.Skipped);
+                continue;
+            }
 
             try
             {
@@ -397,7 +431,7 @@ public sealed class CorpusIndexer(
                     state.Status = FileStatus.Failed;
                     state.StatusDetail = "the stored document has no extracted text; re-upload it";
                     state.ContentHash = null;
-                    job.FilesFailed++;
+                    Count(file, Tally.Failed);
                     continue;
                 }
 
@@ -427,7 +461,7 @@ public sealed class CorpusIndexer(
                     // failure to retry. Re-uploading the file is what changes it.
                     state.ContentHash = ChunkingFingerprint(set, cached.Sha256, templates, chunking);
                     state.IndexedUtc = DateTime.UtcNow;
-                    job.FilesSkipped++;
+                    Count(file, Tally.Skipped);
                     continue;
                 }
 
@@ -437,7 +471,7 @@ public sealed class CorpusIndexer(
                 var fingerprint = ChunkingFingerprint(set, cached.Sha256, templates, chunking);
                 if (!full && state.ContentHash == fingerprint && state.Status == FileStatus.Indexed)
                 {
-                    job.FilesSkipped++;
+                    Count(file, Tally.Skipped);
                     continue;
                 }
 
@@ -446,7 +480,14 @@ public sealed class CorpusIndexer(
                 // describes vectors that are about to stop existing.
                 state.ContentHash = null;
                 state.Status = FileStatus.Pending;
-                await db.SaveChangesAsync(ct);
+                await SaveWithoutVanishedFilesAsync(onVanished, ct);
+
+                // Detached since the pass read it, so the save above left it out. Nothing is embedded for it.
+                if (db.Entry(file).State == EntityState.Detached)
+                {
+                    job.FilesSkipped++;
+                    continue;
+                }
 
                 await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, file.SourceId, file.RelativePath, ct);
 
@@ -488,7 +529,7 @@ public sealed class CorpusIndexer(
                 state.IndexedUtc = DateTime.UtcNow;
                 file.Language = language;
                 file.ExtractedChars = cached.ExtractedChars;
-                job.FilesDone++;
+                Count(file, Tally.Done);
             }
             catch (EmbeddingUnavailableException ex)
             {
@@ -497,7 +538,7 @@ public sealed class CorpusIndexer(
                 failed.Status = FileStatus.Failed;
                 failed.StatusDetail = $"embedding failed: {ex.Message}";
                 failed.ContentHash = null;
-                job.FilesFailed++;
+                Count(file, Tally.Failed);
                 onEmbeddingFailure();
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -507,20 +548,167 @@ public sealed class CorpusIndexer(
                 failed.Status = FileStatus.Failed;
                 failed.StatusDetail = ex.Message;
                 failed.ContentHash = null;
-                job.FilesFailed++;
+                Count(file, Tally.Failed);
             }
 
             if (sinceFlush.ElapsedMilliseconds >= 1000)
             {
-                await db.SaveChangesAsync(ct);
+                await SaveWithoutVanishedFilesAsync(onVanished, ct);
                 Report(progress, job, file.RelativePath);
                 sinceFlush.Restart();
             }
         }
 
-        await db.SaveChangesAsync(ct);
+        await SaveWithoutVanishedFilesAsync(onVanished, ct);
         log.LogInformation("Upload source: {Indexed} indexed, {Skipped} skipped, {Failed} failed",
             job.FilesDone, job.FilesSkipped, job.FilesFailed);
+    }
+
+    /// <summary>What a document added to the job's counts, so that dropping it moves it to the skipped count.</summary>
+    private enum Tally { Done, Skipped, Failed }
+
+    /// <summary>
+    /// What a save of an upload pass does once it has left out an attachment whose row was deleted since the
+    /// pass read it (<see cref="SaveWithoutVanishedFilesAsync"/>): it tells the job's counts, then deletes
+    /// the vectors the pass wrote for the document. A failure to delete them is logged and left to a later
+    /// pass of the same chunk set, which removes points for a path no row names
+    /// (<see cref="ReconcileChunkCountsAsync"/>) when the vector store answers its per-file count.
+    /// </summary>
+    /// <param name="dropped">Told of the attachment that was left out.</param>
+    private Func<string, Task> DropUploads(ChunkSet set, Dictionary<string, IndexedFile> attached,
+        Action<IndexedFile> dropped, CancellationToken ct) =>
+        async fileId =>
+        {
+            if (!attached.TryGetValue(fileId, out var file)) return;
+
+            dropped(file);
+            log.LogInformation(
+                "Set {SetId}: document {FileId} was detached while the pass was indexing it; its changes are dropped",
+                set.Id, file.Id);
+            try
+            {
+                await vectors.DeleteFileChunksAsync(set.CollectionName, set.Id, file.SourceId,
+                    file.RelativePath, ct);
+            }
+            catch (Exception removal) when (removal is not OperationCanceledException)
+            {
+                log.LogWarning(removal,
+                    "Set {SetId}: could not remove the points written for document {FileId}, which was detached; "
+                    + "a later pass removes them", set.Id, file.Id);
+            }
+        };
+
+    /// <summary>
+    /// Save, and when the save fails because the row of a file that was loaded from the catalogue is gone,
+    /// stop tracking that file and save again.
+    ///
+    /// A document detached while a pass runs has no row for the pass's pending update, insert or delete. The
+    /// entries stay in the tracker after a failed save, so each later save fails on them too, and so does
+    /// the one that records how the job ended. SQLite stops at the first command that fails, so a failed
+    /// save names one file (<c>SqliteSaveFailureTests</c>), and the loop drops the next file on the next
+    /// round. A failure that names no such file is thrown.
+    /// </summary>
+    /// <param name="afterDropping">Runs once the file has left the tracker, with its id.</param>
+    /// <param name="recordingOutcome">
+    /// Also stops tracking what the pass held for rows that are gone when the save is the one that records
+    /// how the job ended, which has to succeed whatever the pass left in the tracker: every entry of a
+    /// conflict that does not name the job's own row, and the files and chunk states the pass added when
+    /// their parent is missing. The next pass redoes what the dropped entries described.
+    /// </param>
+    private async Task SaveWithoutVanishedFilesAsync(
+        Func<string, Task>? afterDropping, CancellationToken ct, bool recordingOutcome = false)
+    {
+        // Each round stops tracking at least one entry that failed, so the tracker bounds the rounds.
+        var rounds = db.ChangeTracker.Entries().Count() + 1;
+        for (var round = 0; round < rounds; round++)
+        {
+            try
+            {
+                await db.SaveChangesAsync(ct);
+                return;
+            }
+            catch (DbUpdateException ex) when (ex.Entries.Count > 0)
+            {
+                if (await VanishedFileAsync(ex, ct) is { } fileId)
+                {
+                    ForgetFile(fileId);
+                    if (afterDropping is not null) await afterDropping(fileId);
+                    continue;
+                }
+
+                if (!recordingOutcome || !StopTrackingWhatTheOutcomeCannotSave(ex)) throw;
+
+                log.LogWarning(ex,
+                    "{Count} rows changed or went missing while the pass ran and are not saved; the next pass redoes them",
+                    ex.Entries.Count);
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"The save still failed after {rounds - 1} rounds of dropping the files whose rows are gone.");
+    }
+
+    /// <summary>
+    /// For the save that records the outcome: stops tracking the entries that cannot be saved because the rows
+    /// they describe are gone, and says whether there were any. A conflict that names the job's own row is
+    /// not one of them, since the job is what is being recorded.
+    ///
+    /// For a foreign-key failure every file and chunk state the pass added is dropped, not only those under the
+    /// parent that is gone. A pass saves one source's files and one chunk set's states at a time, so the rows
+    /// that are still tracked belong to the source and the set the failure is about; a pass over a second set
+    /// does not start once this one has failed. The next pass redoes what is dropped. A failure that is not
+    /// about a missing parent drops nothing, so a refused save (a full disk) keeps its rows for the retry.
+    /// </summary>
+    private bool StopTrackingWhatTheOutcomeCannotSave(DbUpdateException ex)
+    {
+        if (ex is DbUpdateConcurrencyException)
+        {
+            if (ex.Entries.Any(e => e.Entity is IndexJob)) return false;
+
+            foreach (var entry in ex.Entries) entry.State = EntityState.Detached;
+            return true;
+        }
+
+        if (!ex.IsForeignKeyViolation()) return false;
+
+        var added = db.ChangeTracker.Entries()
+            .Where(e => e.State == EntityState.Added && e.Entity is FileChunkState or IndexedFile).ToList();
+        foreach (var entry in added) entry.State = EntityState.Detached;
+        return added.Count > 0;
+    }
+
+    /// <summary>
+    /// The id of a file named by a failed save whose catalogue row is gone, or null when there is none. A file
+    /// the pass added is not in the catalogue yet, so it has not vanished from it.
+    /// </summary>
+    private async Task<string?> VanishedFileAsync(DbUpdateException ex, CancellationToken ct)
+    {
+        var added = db.ChangeTracker.Entries<IndexedFile>()
+            .Where(e => e.State == EntityState.Added).Select(e => e.Entity.Id).ToHashSet(StringComparer.Ordinal);
+
+        var named = ex.Entries
+            .Select(e => e.Entity switch { FileChunkState state => state.FileId, IndexedFile file => file.Id, _ => null })
+            .OfType<string>().Where(id => !added.Contains(id)).Distinct().ToList();
+
+        if (named.Count == 0) return null;
+
+        var present = await db.Files.AsNoTracking().Where(f => named.Contains(f.Id)).Select(f => f.Id).ToListAsync(ct);
+        return named.Find(id => !present.Contains(id));
+    }
+
+    /// <summary>
+    /// Stops tracking a file and every chunk state of it, whatever state they are in. EF Core stops tracking
+    /// the chunk states of a file with it only for states that are Added, Unchanged or Modified
+    /// (<c>EntityFrameworkDetachTests</c>); one that is Deleted, as the reconcile of a folder leaves for a file it
+    /// no longer sees, stays tracked and fails every save after it.
+    /// </summary>
+    private void ForgetFile(string fileId)
+    {
+        foreach (var entry in db.ChangeTracker.Entries().ToList())
+        {
+            var owner = entry.Entity switch { IndexedFile file => file.Id, FileChunkState state => state.FileId, _ => null };
+            if (owner == fileId) entry.State = EntityState.Detached;
+        }
     }
 
     /// <summary>
@@ -1569,6 +1757,15 @@ public sealed class CorpusIndexer(
     }
 
     /// <summary>
+    /// What the job's error says of a failure. A save that fails because a row it held is gone says so in
+    /// words, and the exception, with the details of the save, is in the log.
+    /// </summary>
+    private static string ReasonFor(Exception ex) =>
+        ex is DbUpdateConcurrencyException || ex is DbUpdateException update && update.IsForeignKeyViolation()
+            ? "A chunk set, source or document was removed while the pass ran."
+            : ex.Message;
+
+    /// <summary>
     /// Adds a reason to the job's error rather than replacing what is there. One string
     /// serves the whole job, and each reason used to overwrite the last: two unreachable
     /// sources reported only the second, and an embedding failure at the end of the pass
@@ -1664,7 +1861,7 @@ public sealed class CorpusIndexer(
         {
             try
             {
-                await db.SaveChangesAsync(CancellationToken.None);
+                await SaveWithoutVanishedFilesAsync(null, CancellationToken.None, recordingOutcome: true);
 
                 if (attempt > 1)
                     log.LogWarning("Recorded the outcome of job {JobId} on attempt {Attempt} of {Attempts}",
@@ -1673,6 +1870,13 @@ public sealed class CorpusIndexer(
             }
             catch (Exception ex) when (attempt < SaveAttempts && !stop.IsCancellationRequested)
             {
+                // A job whose row was deleted is not saved by waiting for it.
+                if (ex is DbUpdateConcurrencyException && await JobRowIsGoneAsync(job))
+                {
+                    await GaveUpAsync(job, attempt, ex);
+                    throw;
+                }
+
                 log.LogWarning(ex,
                     "Could not record the outcome of job {JobId} (attempt {Attempt} of {Attempts}); "
                     + "trying again in {Delay}", job.Id, attempt, SaveAttempts, delay);
@@ -1688,6 +1892,12 @@ public sealed class CorpusIndexer(
 
             delay *= 2;
         }
+    }
+
+    private async Task<bool> JobRowIsGoneAsync(IndexJob job)
+    {
+        try { return !await db.Jobs.AsNoTracking().AnyAsync(j => j.Id == job.Id, CancellationToken.None); }
+        catch (Exception) { return false; }
     }
 
     /// <summary>
@@ -1869,7 +2079,7 @@ public sealed class CorpusIndexer(
 
         if (mismatched > 0)
         {
-            await db.SaveChangesAsync(ct);
+            await SaveWithoutVanishedFilesAsync(null, ct);
             log.LogWarning(
                 "Set {Set}: {Count} file(s) whose recorded chunk count and the index disagree; "
                 + "they will be re-indexed",

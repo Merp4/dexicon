@@ -9,6 +9,7 @@ namespace Dexicon.Tests;
 /// two made the save fail. The detach takes the lock attaching holds, so the second of the two waits for
 /// the first.
 /// </summary>
+[Collection(nameof(AttachmentLockCollection))]
 public sealed class DetachingWhileAttachingTests
 {
     private static bool IsAFileLookup(string sql) =>

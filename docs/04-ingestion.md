@@ -298,6 +298,60 @@ So:
 
 A corpus gets at most one upload source, created on first attachment. Detaching removes
 that corpus's chunks only; the blob survives, because another corpus may still hold it.
+Removing the upload source itself (`DELETE /api/corpora/{name}/sources/{id}`, or the Remove
+button beside it in the corpus's source list) deletes the vectors of every document attached to
+the corpus, in every chunk set, and the source takes its file rows with it. The blobs stay, and
+the next attachment creates the source again.
+
+One lock in the process orders the writes to a corpus's attachment rows. An attachment holds it
+from its entry to its save, and a detach for the lookup and the delete of the row. Removing a
+source, a chunk set or a corpus holds it for the delete of the row, after its vector calls, and
+reads its target again under it. Promoting a chunk set holds it while it reads the sets and writes
+the default flag. None of them holds it across a vector-store call. An indexing pass does not take
+it. Adding a source or a chunk set does not take it either: their rows name a corpus, and the
+removal of that corpus at the same moment fails their save with a foreign-key error. Dexicon is
+one process owning its catalogue file (D-01); a second process writing the file is not covered.
+
+The second of two simultaneous removals of one source, chunk set or corpus answers 404 ("removed
+while this request waited"). A later `DELETE` of a source or a chunk set answers 404, and a later
+`DELETE` of a corpus answers 400 from the scope resolver. A chunk set that became the default or
+the only set while its vectors were being deleted is kept: the removal answers the 409 it would
+have answered at the start, and a refresh of the set is queued, because its vectors are gone. A
+proposal to remove it stays waiting, and the refresh is queued after the proposal is put back. An
+attachment that waited for the lock behind the removal of its corpus is answered as an unknown
+corpus (400).
+
+A detach deletes the document's vectors, then its row, then the vectors again for the file the
+row held, because an attachment can have renamed or replaced the file, and a pass can have
+written vectors for it, since the first delete. The second delete does not use the caller's
+token, so it runs when the caller has gone. It has a limit of 30 s of its own, and a failure is
+logged and does not undo the detach. A source removal deletes the vectors of the files it read
+before the row is deleted; points that a running pass writes for the source after that stay in
+the vector store, and no pass runs for a source that no longer exists.
+
+A document detached while a pass is indexing the corpus is left out of the pass's saves, so the
+pass does not fail on its row. The saves that insert chunk states, claim a document, flush after
+a document and end the source also delete the vectors the pass wrote for the document and count
+it as skipped. The count reconcile at the start and the save that records how the job ended only
+leave the document out, and a later pass of the same chunk set deletes any points it has,
+provided the vector store answers its per-file count. If the vector delete fails the pass still
+succeeds and the later pass removes the points. The flush while one file embeds holds no changes
+for another document and is saved without this handling.
+
+What a pass records when rows it holds are deleted depends on which rows:
+
+| Deleted under the pass | Job outcome |
+|---|---|
+| A document of an upload source | Succeeded; the document is skipped. |
+| An upload source | Succeeded; its documents go with it and are skipped. |
+| A folder source | Failed, with the error below. |
+| A chunk set, or a chunk state on its own | Failed, with the error below; the document and its vectors are left as they are. |
+| The corpus | Nothing is recorded, because its jobs went with it, and nothing is thrown; the log carries the "rows changed or went missing" warnings. |
+| The job's own row, deleted on its own | Nothing is recorded, the failure goes to the worker, and the save is not retried. |
+
+The error is "A chunk set, source or document was removed while the pass ran."; the exception, with
+the details of the save, is in the log. The save that records the outcome stops tracking the rows
+the pass held for what is gone, so the job is recorded.
 
 Limits: 200 MB per file (`DEXICON__UPLOAD__MAXFILEBYTES`), applied while the file is read
 off the wire. The endpoint reads the multipart body with a `MultipartReader` and hands each
