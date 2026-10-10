@@ -205,6 +205,36 @@ public sealed class UnusableIgnoreFileLineTests : IDisposable
     }
 
     [Fact]
+    public void TheCoverageAdvisoryReportsTheDirectoryItLeftOutToACallerThatAsks()
+    {
+        Write(WorkspaceWalker.IgnoreFileName, "[z-a]\n");
+        Write("a/x.md");
+        Write("b/y.md");
+        var leftOut = new List<SourceCoverage.LeftOut>();
+
+        var gaps = SourceCoverage.Find(_root,
+            [new SourceCoverage.SourceRoot("a", 262_144), new SourceCoverage.SourceRoot("b", 262_144)], leftOut: leftOut);
+
+        gaps.ShouldBeEmpty();
+        leftOut.ShouldBe([new SourceCoverage.LeftOut(
+            string.Empty, ".dexiconignore line 1 ('[z-a]') cannot be compiled (reversed character range)")]);
+    }
+
+    [Fact]
+    public void TheCoverageAdvisoryReportsNoDirectoryLeftOutWhenTheDexiconignoreIsUsable()
+    {
+        Write(WorkspaceWalker.IgnoreFileName, "*.txt\n");
+        Write("a/x.md");
+        Write("b/y.md");
+        var leftOut = new List<SourceCoverage.LeftOut>();
+
+        SourceCoverage.Find(_root,
+            [new SourceCoverage.SourceRoot("a", 262_144), new SourceCoverage.SourceRoot("b", 262_144)], leftOut: leftOut);
+
+        leftOut.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void TheCoverageAdvisoryLogsWhyItLeftADirectoryOut()
     {
         Write(WorkspaceWalker.IgnoreFileName, "[z-a]\n");

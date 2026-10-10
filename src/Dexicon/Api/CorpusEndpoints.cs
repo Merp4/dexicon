@@ -674,7 +674,7 @@ public static class CorpusEndpoints
             indexing.WorkspaceRoot,
             sources.Select(s => new SourceCoverage.SourceRoot(
                 s.RootPath, SourceFilters.Resolve(corpus, s, indexing).MaxFileBytes)),
-            indexing.DocumentMaxBytes, log, ct);
+            indexing.DocumentMaxBytes, log: log, ct: ct);
 
         return new CoverageReport(
             gaps.Select(g => new CoverageGap(g.DirectoryRelativePath, g.Files)).ToList());

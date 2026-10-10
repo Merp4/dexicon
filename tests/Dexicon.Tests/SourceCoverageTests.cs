@@ -264,4 +264,37 @@ public sealed class SourceCoverageTests : IDisposable
         text.ShouldContain("the workspace root");
         text.ShouldNotContain("in  are");
     }
+
+    [Fact]
+    public void NothingLeftOutAddsNothingToIndexStatus()
+    {
+        DexiconTools.RenderCoverageNotChecked([]).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ADirectoryTheCheckCouldNotReadIsNamedWithTheReasonSoItIsNotTakenForCovered()
+    {
+        var text = DexiconTools.RenderCoverageNotChecked([
+            new SourceCoverage.LeftOut("books", ".dexiconignore line 1 ('[z-a]') cannot be compiled (reversed character range)"),
+            new SourceCoverage.LeftOut("", ".dexiconignore is a link, and links are not followed"),
+        ]);
+
+        text.ShouldBe(
+            "  COVERAGE NOT CHECKED: books, because .dexiconignore line 1 ('[z-a]') cannot be compiled (reversed character range). "
+            + "Files there that no source covers are not listed.\n"
+            + "  COVERAGE NOT CHECKED: the workspace root, because .dexiconignore is a link, and links are not followed. "
+            + "Files there that no source covers are not listed.\n");
+    }
+
+    [Fact]
+    public void MoreThanFiveDirectoriesNotCheckedAreCountedAndAReasonIsHeldToOneLine()
+    {
+        var many = Enumerable.Range(1, 7).Select(n => new SourceCoverage.LeftOut($"d{n}", $"reason\nline {n}")).ToList();
+
+        var text = DexiconTools.RenderCoverageNotChecked(many);
+
+        text.Split('\n').Count(l => l.Contains("COVERAGE NOT CHECKED", StringComparison.Ordinal)).ShouldBe(5);
+        text.ShouldContain("and 2 more directories not checked");
+        text.ShouldNotContain("reason\nline");
+    }
 }

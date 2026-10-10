@@ -39,15 +39,26 @@ public static class SourceCoverage
     public sealed record Gap(string DirectoryRelativePath, IReadOnlyList<string> Files);
 
     /// <summary>
+    /// A directory the check could not look at because an ignore file in it is unusable, and why.
+    /// <paramref name="DirectoryRelativePath"/> is as in <see cref="Gap"/>.
+    /// </summary>
+    public sealed record LeftOut(string DirectoryRelativePath, string Reason);
+
+    /// <summary>
     /// Bounded by construction: at most one directory listing per distinct parent shared by
     /// two or more sources, and no recursion. A corpus with ten sources in one folder costs
     /// one listing.
     /// </summary>
+    /// <param name="leftOut">
+    /// Receives each directory left out of the result because an ignore file in it is unusable, so a caller can say that
+    /// the check did not cover it. The reason is also logged to <paramref name="log"/>.
+    /// </param>
     public static IReadOnlyList<Gap> Find(
         string workspaceRoot,
         IEnumerable<SourceRoot> sources,
         long? documentMaxBytes = null,
         ILogger? log = null,
+        ICollection<LeftOut>? leftOut = null,
         CancellationToken ct = default)
     {
         var comparer = CorpusIndexer.PathComparison == StringComparison.Ordinal
@@ -115,6 +126,7 @@ public static class SourceCoverage
                 // Logged on every call, since a coverage request is not a pass that could hold a record of it.
                 log?.LogInformation("Coverage of {Directory} was left out because {Reason}",
                     parent.Length == 0 ? "the workspace root" : parent, ex.Message);
+                leftOut?.Add(new LeftOut(parent, ex.Message));
                 continue;
             }
 
