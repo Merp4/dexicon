@@ -126,6 +126,32 @@ public sealed class ChunkSetChangeTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ANegativeOverlapStoredBeforeTheRuleDoesNotBlockADescriptionOrAModeChange()
+    {
+        await using (var db = _harness.NewContext())
+            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.ChunkSize, 256).SetProperty(s => s.ChunkOverlap, -5));
+
+        var description = await PatchAsync(new UpdateChunkSetRequest(Description: "edited"));
+        var mode = await PatchAsync(new UpdateChunkSetRequest(BoundaryMode: "none"));
+        var overlap = await PatchAsync(new UpdateChunkSetRequest(ChunkOverlap: -6));
+
+        description.ShouldBeOfType<Ok<ChunkSetUpdated>>();
+        mode.ShouldBeOfType<Ok<ChunkSetUpdated>>();
+        overlap.ShouldBeOfType<ProblemHttpResult>().ProblemDetails.Title.ShouldBe("chunkOverlap cannot be negative");
+    }
+
+    [Fact]
+    public async Task APatternSentWhileTheModeIsNotCustomIsNotJudgedAgainstAnUnknownModeStoredBeforeTheRule()
+    {
+        await using (var db = _harness.NewContext())
+            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.BoundaryMode, "bogus"));
+
+        var result = await PatchAsync(new UpdateChunkSetRequest(CustomBoundaryPattern: "^#"));
+
+        result.ShouldBeOfType<Ok<ChunkSetUpdated>>();
+    }
+
+    [Fact]
     public async Task ASetThatInheritsAStoredSizeIsNotRefusedForItWhenTheRequestSentOnlyAModel()
     {
         await using var db = _harness.NewContext();
