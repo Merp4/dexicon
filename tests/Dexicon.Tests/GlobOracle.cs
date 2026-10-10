@@ -134,7 +134,7 @@ internal static class GlobOracle
                 var end = glob.IndexOf(']', q + 2);
                 if (end < 0) return Unterminated(glob, open, first);
 
-                if (glob[end - 1] == ':' && end - 1 > q + 1 && glob[(q + 2)..(end - 1)].All(char.IsAsciiLetter))
+                if (glob[end - 1] == ':' && end - 1 > q + 1)
                     refusal ??= "a POSIX character class";
 
                 ranges.Add((ch, ch));
@@ -201,7 +201,7 @@ internal static class GlobTestAlphabet
 
     private static (char[], Dictionary<char, char[]>) Build()
     {
-        var chars = GlobDifferentialTests.AllPieces().SelectMany(s => s).Concat("abcdefghijklmnopqrstuvwxyz0123456789/.-_ ")
+        var chars = GlobDifferentialTests.AllPieces().SelectMany(s => s).Concat("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/.-_ ")
             .Distinct().OrderBy(c => c).ToArray();
 
         var equivalents = new Dictionary<char, char[]>();

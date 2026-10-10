@@ -21,7 +21,7 @@ public sealed class GlobDifferentialTests
         U(0x3C3), U(0x3C2), U(0x3A3), U(0x1C5), U(0x1F600), "x.md", "dir", ".", "-", "!", "#", "$", "^", " ", "\r", "\n", "\\",
         "\\*", "\\]", "/", "/", "/", "*", "*", "**", "***", "****", "**/", "/**", "?", "?", "[", "]", "[!", "[^", "[]", "[]a]", "[!]a]",
         "[a-z]", "[a-c]", "[!a-c]", "[^k]", "[" + U(0x212A) + "]", "[s-z]", "[z-a]", "[a-]", "[-a]", "[[]", "[a[]", "[/]",
-        "[+-9]", "[\\]]", "[a\\-c]", ".md", ".git", "node_modules", "build", "0", "9",
+        "[+-9]", "[\\]]", "[a\\-c]", ":", "[[:alpha:]]", "[[:a1:]]", "[[::]]", "[[:]", ".md", ".git", "node_modules", "build", "0", "9",
     ];
 
     private static readonly string[] PathPieces =
@@ -151,7 +151,7 @@ public sealed class GlobDifferentialTests
     [Fact]
     public void TheMatcherAnswersAsTheRegularExpressionDidOverAMillionPairs()
     {
-        var (differences, compared, refused, globs, matched, timedOut) = Compare(globCount: 4_000, pathsPerGlob: 320, seed: 20261009);
+        var (differences, compared, refused, globs, matched, timedOut) = Compare(globCount: 5_500, pathsPerGlob: 320, seed: 20261009);
 
         var summary = $"{compared:N0} pairs from {globs:N0} globs, {matched:N0} of them matches, {refused} globs refused by both, {timedOut} oracle timeouts";
         differences.Take(10).ShouldBeEmpty(summary);

@@ -523,9 +523,9 @@ internal sealed class GlobMatcher
     /// following the <c>!</c>, is the one-member class of <c>!</c>. <c>[]x</c> and <c>[^]x</c> are an empty class,
     /// a range whose end is before its start such as <c>[z-a]</c> is a reversed range, and a POSIX class such as
     /// <c>[[:alpha:]]</c> is not supported: each cannot be read, and the line is unusable. Git matches only the start
-    /// character for the reversed range, nothing for the empty class, and the named characters for the POSIX class.
-    /// A POSIX class is refused and not read as the members <c>[:alph</c> because that would match nothing git
-    /// ignores.
+    /// character for the reversed range, nothing for the empty class, and the named characters for the POSIX class,
+    /// or nothing for a name it does not know. A POSIX class, with any name between the colons, is refused and not
+    /// read as the members <c>[:alph</c> because that would match nothing git ignores.
     /// </summary>
     internal static bool TryReadClass(string glob, int open, out ClassSpan? span, out string? problem)
     {
@@ -563,7 +563,7 @@ internal sealed class GlobMatcher
         var members = new List<(char, char)>();
         for (var p = start; p < close;)
         {
-            if (glob[p] == '[' && IsPosixClassAt(glob, p, close))
+            if (glob[p] == '[' && IsPosixClassAt(glob, p))
             {
                 problem = "a POSIX character class such as [:alpha:] is not supported";
                 return false;
@@ -589,14 +589,15 @@ internal sealed class GlobMatcher
         return true;
     }
 
-    // `[:name:` running to the end of the members, where the class ends at the `]` of `:]`.
-    private static bool IsPosixClassAt(string glob, int p, int close)
+    // `[:` followed by anything and then `:]`, with the first `]` after the `[:` being that one. Git reads the name between
+    // the colons as a POSIX class (`[:alpha:]`) and abandons the whole match for a name it does not know (`[:a1:]`,
+    // `[::]`), so each of them is refused here, as the shape with a known name is.
+    private static bool IsPosixClassAt(string glob, int p)
     {
-        if (p + 1 >= close || glob[p + 1] != ':') return false;
+        if (p + 1 >= glob.Length || glob[p + 1] != ':') return false;
 
-        var q = p + 2;
-        while (q < close && char.IsAsciiLetter(glob[q])) q++;
-        return q == close - 1 && q > p + 2 && glob[q] == ':';
+        var end = glob.IndexOf(']', p + 2);
+        return end > p + 2 && glob[end - 1] == ':';
     }
 
     private static char Member(string glob, ref int p)

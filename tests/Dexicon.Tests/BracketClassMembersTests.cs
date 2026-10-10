@@ -152,12 +152,27 @@ public sealed class BracketClassMembersTests
     [InlineData("[a[:digit:]]x")]
     [InlineData("[[:foo:]]x")]
     [InlineData("[![:space:]]x")]
+    [InlineData("[[:ALPHA:]]x")]
+    [InlineData("[[:a:]]x")]
+    [InlineData("[[:a1:]]x")]
+    [InlineData("[[::]]x")]
+    [InlineData("[[:foo bar:]]x")]
     public void APosixClassIsRefused(string pattern)
     {
         var thrown = Should.Throw<IgnorePatternException>(() => new IgnoreRuleSet().AddPatterns([pattern], "test"));
 
         thrown.Message.ShouldBe($"test line 1 ('{pattern}') cannot be compiled (a POSIX character class such as [:alpha:] is not supported)");
         SourceFilters.FirstUnusable([pattern]).ShouldBe(0);
+    }
+
+    [Theory]
+    // Not POSIX syntax, so members, as in git: the first `]` after `[:` must follow a colon that is not the one in `[:`.
+    [InlineData("[[:ab:cd]x", "cx", true)]
+    [InlineData("[[:ab:cd]x", "ax", true)]
+    [InlineData("[[:ab:cd]x", "zx", false)]
+    public void ABracketColonThatIsNotAPosixClassIsOrdinaryMembers(string pattern, string path, bool expected)
+    {
+        Ignored(pattern, path).ShouldBe(expected);
     }
 
     [Fact]
@@ -167,6 +182,21 @@ public sealed class BracketClassMembersTests
         Ignored("a[[:]b", "a[b").ShouldBeTrue();
         Ignored("a[[:]b", "a:b").ShouldBeTrue();
         Ignored("a[[:]b", "axb").ShouldBeFalse();
+    }
+
+    [Theory]
+    // A class holds a character when it holds any case variant of it, so a range of capitals holds the small letters.
+    [InlineData("[A-C]x", "bx", true)]
+    [InlineData("[A-C]x", "Bx", true)]
+    [InlineData("[A-C]x", "dx", false)]
+    [InlineData("[a-c]x", "Bx", true)]
+    [InlineData("[!A-C]x", "bx", false)]
+    [InlineData("[!A-C]x", "dx", true)]
+    [InlineData("[\u00E9]x", "\u00C9x", true)]
+    [InlineData("[\u00C0-\u00C5]x", "\u00E4x", true)]
+    public void AClassFoldsCaseOverItsRanges(string pattern, string path, bool expected)
+    {
+        Ignored(pattern, path).ShouldBe(expected);
     }
 
     [Theory]
