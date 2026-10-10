@@ -819,69 +819,8 @@ public static class SystemEndpoints
             await SaveModelProfileAsync(body, rc, db, cache, queue, opts, ct))
             .Produces<ModelProfileSaved>().WithTags("System");
 
-        app.MapPost("/api/embedding-models/probe", async (ProbeModelRequest body, RequestContext rc,
-            ModelProbe probe, CatalogDbContext db, IOptions<DexiconOptions> opts,
-            CancellationToken ct) =>
-        {
-            if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
-
-            if (string.IsNullOrWhiteSpace(body.Model))
-                return Results.Problem(title: "A model name is required", statusCode: 400);
-
-            var target = new EmbeddingTarget(
-                string.IsNullOrWhiteSpace(body.Provider) ? opts.Value.Embedding.Provider : body.Provider.Trim(),
-                body.Model.Trim());
-
-            // The probe is two dozen sequential embed calls, each with the embedding
-            // client's own 120 s timeout, so on a backend that is busy indexing it can run
-            // for the better part of an hour. It has no partial answer to give, so grinding
-            // is only a slower way to fail: bounded here, where the reason is known, rather
-            // than left to whatever the caller does about a request that never returns.
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            deadline.CancelAfter(ProbeDeadline);
-
-            try
-            {
-                var caps = await probe.RunAsync(target, deadline.Token);
-
-                // Remembered, because a measurement that has to be taken again is a
-                // measurement nobody takes. Two dozen embed calls to learn a number that
-                // then vanished on reload is why the chunk size field could never say what
-                // the chosen model accepts.
-                var row = await MeasuredModels.RowForAsync(db, target, ct);
-
-                row.Dimensions = caps.Dimensions;
-                row.MaxInputChars = caps.MaxInputChars;
-                row.TruncatesSilently = caps.TruncatesSilently;
-                row.RecommendedChunkChars = caps.RecommendedChunkChars;
-                row.RecommendedChunkTokens = caps.RecommendedChunkTokens;
-                row.CharsPerToken = caps.CharsPerToken;
-                row.ContextTokens = caps.ContextTokens;
-                row.MeasuredUtc = DateTime.UtcNow;
-                await db.SaveChangesAsync(ct);
-
-                return Results.Ok(caps);
-            }
-            catch (UnknownEmbeddingProviderException ex)
-            {
-                return Results.Problem(title: "Unknown embedding provider", detail: ex.Message, statusCode: 400);
-            }
-            catch (EmbeddingUnavailableException ex)
-            {
-                return Results.Problem(title: "Provider unavailable", detail: ex.Message, statusCode: 503);
-            }
-            // Ours, not the caller's: a client that went away is not a timeout, and
-            // reporting it as one would put an error on a screen nobody is looking at.
-            catch (OperationCanceledException) when (deadline.IsCancellationRequested && !ct.IsCancellationRequested)
-            {
-                return Results.Problem(
-                    title: "The model probe timed out",
-                    detail: $"No answer within {ProbeDeadline.TotalSeconds:F0}s. The probe embeds two dozen inputs, "
-                          + "and the embedding service answers indexing first, so this usually means an index job is "
-                          + "running. Check index_status or the Jobs view, and probe again when it has finished.",
-                    statusCode: 504);
-            }
-        }).Produces<Dexicon.Core.Embedding.ModelCapabilities>().WithTags("System");
+        app.MapPost("/api/embedding-models/probe", ProbeModelAsync)
+            .Produces<Dexicon.Core.Embedding.ModelCapabilities>().WithTags("System");
 
         app.MapPost("/api/embedding-models/pull", async (PullModelRequest body, HttpContext http,
             RequestContext rc, IModelCatalog catalog, IOptions<DexiconOptions> opts,
@@ -1030,6 +969,75 @@ public static class SystemEndpoints
                     ? await db.Proposals.CountAsync(p => p.Status == ProposalStatus.Pending, ct)
                     : null));
         }).Produces<HealthResponse>().WithTags("Health");
+    }
+
+    /// <summary>
+    /// The handler of <c>POST /api/embedding-models/probe</c>, a method so a test can call it without a server.
+    /// It needs <c>admin</c>: it makes two dozen calls to the provider, which for a hosted one are the
+    /// server's own credentials and quota, and it saves what it measures as the model's measurement, which
+    /// sets the chunk budget of every chunk set on that model.
+    /// </summary>
+    internal static async Task<IResult> ProbeModelAsync(ProbeModelRequest body, RequestContext rc,
+        ModelProbe probe, CatalogDbContext db, IOptions<DexiconOptions> opts, CancellationToken ct)
+    {
+        if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
+
+        if (string.IsNullOrWhiteSpace(body.Model))
+            return Results.Problem(title: "A model name is required", statusCode: 400);
+
+        var target = new EmbeddingTarget(
+            string.IsNullOrWhiteSpace(body.Provider) ? opts.Value.Embedding.Provider : body.Provider.Trim(),
+            body.Model.Trim());
+
+        // The probe is two dozen sequential embed calls, each with the embedding
+        // client's own 120 s timeout, so on a backend that is busy indexing it can run
+        // for the better part of an hour. It has no partial answer to give, so grinding
+        // is only a slower way to fail: bounded here, where the reason is known, rather
+        // than left to whatever the caller does about a request that never returns.
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(ProbeDeadline);
+
+        try
+        {
+            var caps = await probe.RunAsync(target, deadline.Token);
+
+            // Remembered, because a measurement that has to be taken again is a
+            // measurement nobody takes. Two dozen embed calls to learn a number that
+            // then vanished on reload is why the chunk size field could never say what
+            // the chosen model accepts.
+            var row = await MeasuredModels.RowForAsync(db, target, ct);
+
+            row.Dimensions = caps.Dimensions;
+            row.MaxInputChars = caps.MaxInputChars;
+            row.TruncatesSilently = caps.TruncatesSilently;
+            row.RecommendedChunkChars = caps.RecommendedChunkChars;
+            row.RecommendedChunkTokens = caps.RecommendedChunkTokens;
+            row.CharsPerToken = caps.CharsPerToken;
+            row.ContextTokens = caps.ContextTokens;
+            row.MeasuredUtc = DateTime.UtcNow;
+            await db.SaveChangesAsync(ct);
+
+            return Results.Ok(caps);
+        }
+        catch (UnknownEmbeddingProviderException ex)
+        {
+            return Results.Problem(title: "Unknown embedding provider", detail: ex.Message, statusCode: 400);
+        }
+        catch (EmbeddingUnavailableException ex)
+        {
+            return Results.Problem(title: "Provider unavailable", detail: ex.Message, statusCode: 503);
+        }
+        // Ours, not the caller's: a client that went away is not a timeout, and
+        // reporting it as one would put an error on a screen nobody is looking at.
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            return Results.Problem(
+                title: "The model probe timed out",
+                detail: $"No answer within {ProbeDeadline.TotalSeconds:F0}s. The probe embeds two dozen inputs, "
+                      + "and the embedding service answers indexing first, so this usually means an index job is "
+                      + "running. Check index_status or the Jobs view, and probe again when it has finished.",
+                statusCode: 504);
+        }
     }
 
     /// <summary>
