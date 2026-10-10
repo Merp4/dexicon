@@ -188,6 +188,42 @@ public sealed class GlobDifferentialTests(Xunit.Abstractions.ITestOutputHelper o
     }
 
     [Fact]
+    public void PathsThatEndNearAWordBoundaryOfTheBitSetsAgreeToo()
+    {
+        // The positions are 64-bit words, and a `*` carries through a name by one addition per word. Names of every length
+        // up to 200 and around the next word boundaries, with a slash after, before and between names, so a carry has to
+        // cross zero, one, two and three whole words.
+        string[] globs =
+        [
+            "*/x", "d*/x", "*d/x", "?*/x", "**/x", "[d]*/x", "*", "d*", "*d", "**", "d**", "*[d]", "?", "??", "*?/x", "x*",
+            "*/*/x", "d*d/d*d", "**/d/**", "d/**/d", "[d]*[d]",
+        ];
+        var lengths = Enumerable.Range(0, 201).Concat([254, 255, 256, 257, 319, 320, 321, 511, 512, 513, 700]).ToList();
+        var oracles = globs.Select(g => GlobOracle.Compile(g, string.Empty)).ToList();
+        var matchers = globs.Select(g => GlobMatcher.Compile(g, string.Empty)).ToList();
+        var differences = new List<string>();
+        var matched = 0;
+
+        foreach (var length in lengths)
+        {
+            var name = new string('d', length);
+            foreach (var path in new[] { name, name + "/x", "x/" + name, name + "/" + name, name + "/x/" + name })
+            {
+                for (var g = 0; g < globs.Length; g++)
+                {
+                    var expected = oracles[g].IsMatch(path);
+                    if (expected) matched++;
+                    if (matchers[g].IsMatch(path) != expected)
+                        differences.Add($"glob '{globs[g]}', a name of {length}: oracle {expected} for '{(path.Length > 12 ? path[..6] + "..." + path[^5..] : path)}'");
+                }
+            }
+        }
+
+        differences.Take(10).ShouldBeEmpty();
+        matched.ShouldBeGreaterThan(3_000, "pairs the oracle matches");
+    }
+
+    [Fact]
     public void TheComparisonFindsAMatcherThatDiffers()
     {
         // The control: a matcher built from every glob with each `*` doubled, which crosses a slash, must be caught,
