@@ -173,17 +173,17 @@ public sealed class GlobDifferentialTests(Xunit.Abstractions.ITestOutputHelper o
     [Fact]
     public void PathsLongEnoughToNeedAPooledBufferAgreeToo()
     {
-        // A path of 512 characters or more is matched in a rented array, which is returned with whatever the last match
-        // left in it. 520 and 700 fall in different array sizes.
-        foreach (var pad in new[] { 520, 700 })
+        // A path of 512 characters or more has more than 8 words. 520 and 700 are matched in stack space, and the rented
+        // array of a path of 8,128 characters or more is covered by PathsThatEndNearAWordBoundaryOfTheBitSetsAgreeToo.
+        foreach (var (pad, globs, paths, least) in new[] { (520, 1_500, 60, 50_000), (700, 1_500, 60, 50_000) })
         {
-            var (differences, compared, _, _, matched, timedOut) = Compare(globCount: 1_500, pathsPerGlob: 60, seed: 99 + pad, pad: pad);
+            var (differences, compared, _, _, matched, timedOut) = Compare(globCount: globs, pathsPerGlob: paths, seed: 99 + pad, pad: pad);
 
             var summary = $"{compared:N0} pairs with {pad} characters of padding, {matched:N0} matches, {timedOut} oracle timeouts";
             output.WriteLine(summary);
             differences.Take(10).ShouldBeEmpty(summary);
-            compared.ShouldBeGreaterThan(50_000, summary);
-            matched.ShouldBeGreaterThan(5_000, summary);
+            compared.ShouldBeGreaterThan(least, summary);
+            matched.ShouldBeGreaterThan(least / 10, summary);
         }
     }
 
@@ -198,7 +198,7 @@ public sealed class GlobDifferentialTests(Xunit.Abstractions.ITestOutputHelper o
             "*/x", "d*/x", "*d/x", "?*/x", "**/x", "[d]*/x", "*", "d*", "*d", "**", "d**", "*[d]", "?", "??", "*?/x", "x*",
             "*/*/x", "d*d/d*d", "**/d/**", "d/**/d", "[d]*[d]",
         ];
-        var lengths = Enumerable.Range(0, 201).Concat([254, 255, 256, 257, 319, 320, 321, 511, 512, 513, 700]).ToList();
+        var lengths = Enumerable.Range(0, 201).Concat([254, 255, 256, 257, 319, 320, 321, 511, 512, 513, 700, 8_190, 8_191, 8_192, 8_193, 8_300]).ToList();
         var oracles = globs.Select(g => GlobOracle.Compile(g, string.Empty)).ToList();
         var matchers = globs.Select(g => GlobMatcher.Compile(g, string.Empty)).ToList();
         var differences = new List<string>();

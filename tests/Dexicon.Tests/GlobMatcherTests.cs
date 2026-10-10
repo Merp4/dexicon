@@ -80,6 +80,22 @@ public sealed class GlobMatcherTests
     }
 
     [Theory]
+    // The search for the longest literal run restarts inside a partial match as Knuth-Morris-Pratt does, so a run that
+    // begins inside an earlier near miss is found.
+    [InlineData("*aab*", "aaab", true)]
+    [InlineData("*aab*", "xaaab", true)]
+    [InlineData("*abcabd*", "abcabcabd", true)]
+    [InlineData("*abcabd*", "abcabcabc", false)]
+    [InlineData("*AAB*", "aAab", true)]
+    [InlineData("*aabaab*", "aabaaab", false)]
+    [InlineData("*aabaaab*", "aabaaab", true)]
+    [InlineData("*abab*", "ababab", true)]
+    public void ALiteralRunIsFoundWhereverItBeginsInsideAnEarlierNearMiss(string pattern, string path, bool expected)
+    {
+        Ignored(pattern, path).ShouldBe(expected);
+    }
+
+    [Theory]
     // A line feed in a name is an ordinary character, as git reads it: `**` crosses it, and `*.md` does not match a
     // name that ends in one after `.md`. A regular expression translation would stop `**` at a line feed and let `$`
     // match before a final one.
@@ -238,6 +254,22 @@ public sealed class GlobMatcherTests
         long steps = 0;
 
         (beneath ? matcher.IsMatchBeneath(path, ref steps) : matcher.IsMatch(path, ref steps)).ShouldBe(matched);
+
+        steps.ShouldBe(expected);
+    }
+
+    [Theory]
+    // A path of 200 characters is 4 words. The any-depth prefix reaches into the 3 words after the first, which a `*`
+    // and `**` then fill the same way, and `?` moves the one position it holds and extends nothing.
+    [InlineData("*", true, 8L)]
+    [InlineData("**", true, 8L)]
+    [InlineData("?", false, 5L)]
+    public void TheStepsOnAPathOfSeveralWordsCountTheWordsAWildcardFills(string glob, bool matched, long expected)
+    {
+        var matcher = GlobMatcher.Compile(glob, "");
+        long steps = 0;
+
+        matcher.IsMatch(new string('a', 200), ref steps).ShouldBe(matched);
 
         steps.ShouldBe(expected);
     }

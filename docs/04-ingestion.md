@@ -90,8 +90,9 @@ recorded as `skipped` ("a link; links are not followed") and is neither read nor
 one the rules already exclude is simply absent, like any ignored entry. The directory a
 link points at is indexed under its own path wherever a source covers it. An ignore file
 that is a link is not read either, which is what git does: git 2.54 reports `unable to
-access '.gitignore': Symbolic link loop` and applies nothing from it. A source path that
-passes through a link is refused. Why, and what it costs, is
+access '.gitignore': Symbolic link loop` and applies nothing from it. The check for a link and
+the open of the file are two calls, so a file replaced by a link between them is read as the
+link's target. A source path that passes through a link is refused. Why, and what it costs, is
 [D-35](decisions.md#d-35-links-are-not-followed).
 
 **The glob syntax is gitignore's; the resolution is not git's in one place.** A negation
