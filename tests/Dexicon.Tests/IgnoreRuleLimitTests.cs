@@ -512,12 +512,17 @@ public sealed class IgnoreRuleLimitTests : IDisposable
     [Fact]
     public void ATokenCancelledPartWayStopsTheWalkWithinAnotherDirectory()
     {
-        // One directory with many files, so only the poll among the files can see the cancel.
+        // One directory with many files, so only the poll among the files can see the cancel. The walk has to outlast
+        // the 5 ms delay on any machine, and listing 6,000 files can take less than that on a warm Linux filesystem,
+        // so a list of 1,000 rules that match nothing makes each file cost about 65 microseconds (measured on
+        // Windows: 1.4 to 1.9 s for the walk against 1.0 to 1.3 s without the list, which is CPU time and does not
+        // depend on the filesystem).
         for (var i = 0; i < 6_000; i++) File.WriteAllText(Path.Combine(_root, $"f{i:D5}.txt"), "x");
+        var rulesThatMatchNothing = Enumerable.Range(0, 1_000).Select(i => $"x*x*x*x*y{i}").ToArray();
         using var cts = new CancellationTokenSource();
         cts.CancelAfter(TimeSpan.FromMilliseconds(5));
 
-        Should.Throw<OperationCanceledException>(() => Walk(ct: cts.Token));
+        Should.Throw<OperationCanceledException>(() => Walk(exclude: rulesThatMatchNothing, ct: cts.Token));
     }
 
     // ---- reporting ---------------------------------------------------------------------------------------------------
