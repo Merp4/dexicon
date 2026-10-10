@@ -271,12 +271,12 @@ public class CorpusDiagnosisTests
     [InlineData(0x0A)]
     public void AnUpstreamNameThatHoldsALineBreakOrABidiControlIsWrittenOnOneLine(int codePoint)
     {
-        // git check-ref-format accepts refs/remotes/origin/a<U+0085>b and a<U+202A>b.
+        // git check-ref-format accepts refs/remotes/origin/a<U+0085>b and a<U+202A>b. A line break (LF, NEL) becomes a space and the bidi control a marker.
         var name = "origin/a" + char.ConvertFromUtf32(codePoint) + "b";
         var tracking = new Dexicon.Core.Indexing.GitTracking("refs/heads/main", "refs/heads/main",
             new Dexicon.Core.Indexing.GitUpstream("refs/remotes/" + name, name, 0, 3, false), null, DateTime.UtcNow);
 
-        DexiconTools.Distance(tracking).ShouldBe("3 behind " + "origin/a" + (codePoint == 0x0A ? " " : LogText.Marker.ToString()) + "b");
+        DexiconTools.Distance(tracking).ShouldBe("3 behind " + "origin/a" + (codePoint is 0x0A or 0x85 ? " " : LogText.Marker.ToString()) + "b");
     }
 
     [Fact]
