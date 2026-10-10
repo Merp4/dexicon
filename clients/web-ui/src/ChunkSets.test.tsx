@@ -259,6 +259,29 @@ describe('the Add a chunk set form', () => {
     expect(sent).toEqual({ description: 'read for the fine search' });
     expect(Object.keys(sent).filter((k) => sent[k] !== undefined)).toEqual(['description']);
   });
+
+  it('leaves the description out of the request when only another setting was edited', async () => {
+    updateChunkSet.mockResolvedValue({});
+    const user = userEvent.setup();
+    render(
+      <ChunkSetsPanel
+        corpus={corpus([chunkSet({ chunkSize: 29_491, chunkOverlap: 3_686, description: 'old', headingContext: false })])}
+        onChanged={vi.fn()}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByLabelText('Heading context'));
+    await user.click(within(dialog).getByRole('button', { name: 'Save and re-chunk' }));
+
+    await waitFor(() => expect(updateChunkSet).toHaveBeenCalled());
+    const sent = updateChunkSet.mock.calls[0][2];
+    expect(Object.keys(sent).filter((k) => sent[k] !== undefined)).toEqual(['headingContext']);
+  });
+
   it('leaves the size alone for a model that has never been probed', async () => {
     // No measurement is not a licence to guess. The set being copied stays the reference.
     const { dialog } = await openAddModal();
