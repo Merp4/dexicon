@@ -174,14 +174,15 @@ public sealed class IgnoreRuleLimitTests : IDisposable
     [Fact]
     public void WhichDirectoryFailsDoesNotDependOnTheOrderTheyWereMade()
     {
-        // 3,000 rules in each of a/ and b/ is more than the walk reads. The directories are visited in ordinal
-        // order, so it is b/ that is past the limit, whichever was created first and however the filesystem lists them.
-        Write("b/.gitignore", Rules(3_000));
+        // 3,000 rules in each of B/ and a/ is more than the walk reads. The directories are visited in ordinal order,
+        // where `B` comes before `a`, so it is a/ that is past the limit, whichever was created first. A filesystem
+        // that sorts without regard to case lists a first, so a walk in listing order would name B/.
         Write("a/.gitignore", Rules(3_000));
+        Write("B/.gitignore", Rules(3_000));
 
         for (var pass = 0; pass < 3; pass++)
             Should.Throw<IgnorePatternException>(() => Walk()).Message.ShouldStartWith(
-                "b/.gitignore line 2001 ('g2000') is past the limit");
+                "a/.gitignore line 2001 ('g2000') is past the limit");
     }
 
     private static int WeightOf(int count, int from = 0) =>
@@ -480,6 +481,12 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         cts.Cancel();
 
         Should.Throw<OperationCanceledException>(() => Walk(ct: cts.Token));
+    }
+
+    [Fact]
+    public void TheWalkLooksAtItsTokenEveryTwoHundredAndFiftySixFiles()
+    {
+        WorkspaceWalker.FilesBetweenPolls.ShouldBe(256);
     }
 
     [Fact]

@@ -73,6 +73,8 @@ public sealed class CorpusSweeper(
 
     private readonly IndexingOptions _indexing = options.Value.Indexing;
 
+    private const int MaxRememberedFailures = 1_000;
+
     // The reason a source's ignore files last failed its walk, by workspace, path and source id, so a periodic sweep logs a failure once.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> IgnoreFailures = new();
 
@@ -148,6 +150,8 @@ public sealed class CorpusSweeper(
                 var key = $"{_indexing.WorkspaceRoot}|{source.RootPath}|{source.Id}";
                 if (!IgnoreFailures.TryGetValue(key, out var last) || last != ex.Message)
                 {
+                    // Forgotten sources (deleted, or never fixed) would otherwise stay for the life of the process.
+                    if (IgnoreFailures.Count >= MaxRememberedFailures) IgnoreFailures.Clear();
                     IgnoreFailures[key] = ex.Message;
                     log.LogWarning("Source {Source} was not walked because {Reason}; leaving its inventory alone",
                         source.RootPath, ex.Message);

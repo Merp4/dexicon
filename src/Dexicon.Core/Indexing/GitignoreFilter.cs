@@ -440,7 +440,7 @@ public sealed class WorkspaceWalker
                      root, layer, useGitignore, excludeRules, skipped, state, topLevelOnly,
                      shadowedPrefixes ?? [], ct))
         {
-            if ((++seen & 255) == 0) ct.ThrowIfCancellationRequested();
+            if (++seen % FilesBetweenPolls == 0) ct.ThrowIfCancellationRequested();
 
             var relative = Path.GetRelativePath(root, full).Replace('\\', '/');
 
@@ -523,6 +523,9 @@ public sealed class WorkspaceWalker
 
     private static IgnoreRuleSet.PatternSource ListSource(string name) =>
         new(name, IsList: true, Budget: RuleBudget.ForList(), Remedy: () => "shorten the list");
+
+    /// <summary>How many files the walk goes through between two looks at its token.</summary>
+    internal const int FilesBetweenPolls = 256;
 
     /// <summary>The most ignore-file text one walk reads, whatever the number of files.</summary>
     private const long MaxBytesPerWalk = 16L * 1024 * 1024;
