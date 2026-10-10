@@ -16,46 +16,218 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
-## Unreleased
+## 0.6.9 — 2026-10-10
 
 ### ⚠️ Upgrading
 
-- The skill changes (`dexicon-skill-version: 7`). It is reworded, and states that `index_status`
-  shows three of the five common reasons for an empty result (still indexing, never indexed, left
-  out). The tools are unchanged. Running `scripts/install-mcp.ps1` again upgrades installed
-  copies. The hooks are unchanged.
-- A bracket class written with a leading `!`, such as `[!a]*.md`, now matches any character except
-  those listed, as gitignore defines it. It was read as a class that matched `!` or those characters,
-  so an include list, an exclude list, a `.gitignore` or a `.dexiconignore` that holds one selected the
-  wrong files. A negated class, written `[!…]` or `[^…]`, no longer matches `/`, so a pattern cannot
-  reach across a directory boundary. On the first pass after the upgrade, a source that has such a
-  pattern indexes the files it now selects and drops the ones it no longer does.
+- **Uploads are bounded in more ways, and some answers change.**
+  - A request is read for at most ten file parts and 100 multipart sections, form fields included.
+    Past either limit the application reads no more and answers `202` with a request-level `failed`
+    entry (`file` is `null`); parts it did not read are in neither `stored` nor `failed`, so a script
+    reads `failed`. When none of the first ten files was stored the answer is `400` "No files could be
+    stored", or `400` "No files in the request" (its detail repeats the text only when the section
+    limit was hit), or `503` when at least one failure was server-side. The transfer is not stopped,
+    so no bandwidth is saved.
+  - A file name is refused on upload (listed under `failed`) and on attach (`400` "Invalid file
+    name") when it holds a control character (line breaks, U+2028 and U+2029 included), a
+    bidirectional override or isolate (U+202A to U+202E, U+2066 to U+2069), or is longer than 260
+    UTF-16 units. U+200E, U+200F and U+061C pass. Attaching with a blank `fileName` answers `400`;
+    leaving it out keeps the name the document was uploaded under, and `400` follows if that name
+    breaks the rule, so a script that attaches by hash alone gets `400` for such an older document.
+  - `DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS` (300; 0 disables) applies to uploads as well. An
+    upload that exceeds it, or fails for a reason that is not a verdict on the file (an I/O error,
+    a refused permission, a shortage of memory, a `TimeoutException`, a library cancellation), is
+    listed under `failed` and no document record is created; the bytes stay in `/data/blobs`, up to
+    `DEXICON__UPLOAD__MAXFILEBYTES` each, listed nowhere. Sending the file again extracts it again
+    for the full budget, with no `Retry-After`. A concurrent upload of the same bytes is reported as
+    stored.
+  - A `blob_texts` row written by 0.6.8 or earlier for one of those failures keeps its message as
+    the document's empty reason. It is at the current extractor version, so no pass extracts it
+    again, and uploading the same bytes returns it as already stored. The 0.6.7-era backup of the
+    maintainer's catalogue taken on 2026-10-09 held no uploads; other installs are unmeasured.
+  - A DOCX, PPTX or EPUB package with an XML part nested deeper than 512 levels, or XML that
+    inflates to more than 256 MiB in total, is an unreadable document. An HTML file or EPUB chapter
+    with more than 1,000,000 tags is too. HTML has no nesting limit: its parse is cancelled when the
+    extraction clock runs out, so a document too deep to parse within the budget is a timeout, and
+    with a budget of 0 the HTML parse is unbounded in time.
+- **Creating a corpus checks its chunk settings.** A client that posted a size outside 64 to 8,192,
+  an overlap that is negative or not below the size, or an unknown boundary mode to
+  `POST /api/corpora` and relied on `201` gets `400`, and `custom` cannot be set at creation. A
+  server that sets `DEXICON__INDEXING__CHUNKSIZE`, `CHUNKOVERLAP` or `BOUNDARYMODE` outside those
+  rules logs an error at startup and answers `503` to a creation that sends no value of its own. A
+  size under 64 or over 8,192, an overlap equal to the size and a negative overlap used to create
+  corpora that indexed; an unknown mode used to create a corpus whose files all failed.
+  `docker-compose.yml` does not forward `BOUNDARYMODE`; set it in `docker-compose.override.yml`. A
+  chunk set added from a template inherits the template's size and overlap as stored, even when
+  the current rules would refuse them.
+- **Glob lists are capped, and git pathspecs are checked at save.** A list holds at most 200
+  elements and an element at most 500 characters. A history source's include list, and a corpus
+  default include list (which history sources inherit), are refused when an element makes `git log`
+  fail on every pass: malformed pathspec magic, a path that climbs out of the repository, a rooted
+  path, or an element starting with `/:`; the rules are those of git 2.54.0 on Linux. The web UI
+  forms and `configure_corpus` send stored lists back, so a stored list that fails a rule blocks
+  any save until it is edited. That includes a default over the caps and one stored with an empty
+  element, `//x`, `/:x`, a climbing path, a rooted path or malformed magic, all of which a file
+  source read without error. No stored row changes. A history source that stored `/docs` fails again
+  on an older version.
+- **Ignore files are read with limits, and a breach fails the source.** A walk reads at most 5,000
+  rules and 60,000 pattern parts across all ignore files, a file of 1 MiB, and 16 MiB of ignore
+  files. A stored list is held to 1,000 rules and 20,000 parts. Passing any of these fails that
+  source's walk, for `.gitignore` and `.git/info/exclude` as well as `.dexiconignore`: the source's
+  files are not indexed or removed, the corpus reads unavailable and the reason is in
+  `index_status`, naming the files that used most of the budget and offering `use_gitignore: false`.
+  A line or list entry over 500 characters fails the walk in a `.dexiconignore` and in a list, and
+  is skipped with a warning in a `.gitignore` or `.git/info/exclude`. A stored list with an entry
+  over 500 characters, a POSIX class, more than 1,000 rules or a weight over 20,000 makes its source
+  unavailable on the first pass after the upgrade, until the list is edited. A `.dexiconignore`
+  that has an unusable line, a carriage return inside a line, a link, a pipe, an unreadable file, a
+  NUL, bytes invalid in its encoding or a twin differing only in case fails the walk. Before, a
+  link was skipped, a NUL or an invalid byte was read as a character that matched nothing, and a
+  lone carriage return ended a line, so a file with old Mac line endings applied and now fails the
+  walk; lines end at a line feed, as in git. Byte-order-marked UTF-16 and UTF-32 files are still
+  decoded.
+- **Bracket classes and some patterns are read as git reads them.** A class written with a leading
+  `!`, such as `[!a]*.md`, matches any character except those listed. No class matches `/`; a
+  positive class that spanned it, such as `[+-9]`, matched it before. A backslash inside a class
+  escapes the next character (`[\d]` is the letter `d`, not a digit), and `[a-z-[b]]` is the
+  members `a-z`, `-`, `[` and `b` followed by a literal `]`, where it was class subtraction. A
+  leading `]`, a `[` and a trailing `-` are members.
+  POSIX classes, any other name between `[:` and `:]`, empty classes and reversed ranges (`[z-a]`)
+  are refused as unusable lines. Three or more stars forming a whole segment are one `**`. Names
+  are matched case-insensitively and lines are split at line feeds. On the first pass after the
+  upgrade, a source whose patterns change meaning indexes the files it now selects and drops the
+  ones it no longer does. Differences from git remain and are listed in `docs/04-ingestion.md`.
+- **Removal, attach and promote answer differently.** The second of two simultaneous removals of one
+  source, chunk set or corpus answers `404` ("removed while this request waited"). A later `DELETE`
+  of a source or a chunk set answers `404`, and a later `DELETE` of a corpus answers `400` from the
+  scope resolver. An upload or attach that waited behind the removal of its corpus answers `400` as
+  an unknown corpus. A chunk set that became the default or the only set while its vectors were
+  being deleted is kept and the removal answers `409`; a refresh of the set is queued, and a
+  proposal to remove it stays waiting.
+- **Log lines and tool replies change.** Characters the console template leaves alone are replaced
+  with U+FFFD in logged values: DEL, C1 controls, line and paragraph separators, bidirectional
+  and other format characters, and a zero-width joiner or non-joiner, so a family emoji or a
+  Persian word written with a ZWNJ shows the marker. A line break in a logged value shows as `\n`
+  inside quotes. An exception is written a line at a time: each line is cut at 4,000 characters,
+  the rest after the line that crosses 64,000 (about 64,000 in all) and a string property at 8,000,
+  and a line the runtime did not write is indented by four spaces. MCP tool errors show a caller's
+  value on one line cut at 200 characters, stored text on one line cut at 4,000, only three unknown
+  corpus names and a corpus list cut at a whole name within 1,500 characters. An agent no longer
+  sees a provider's message or a path the workspace resolver refuses; the log has them.
+- The skill changes (`dexicon-skill-version: 7`). It is reworded, states that `index_status` shows
+  three of the five common reasons for an empty result (still indexing, never indexed, left out),
+  and describes the ignore-file failures. The tools are unchanged. Running
+  `scripts/install-mcp.ps1` again upgrades installed copies. The hooks are unchanged.
 
 ### Fixed
 
-- A glob list with a null element, or a pattern that does not compile such as the bracket class
-  `[z-a]`, was stored as sent and failed every pass of every source that read it. Creating or
-  updating a corpus's defaults or a source now refuses it, with `400` over the API naming the list and
-  position (`includeGlobs[1]`) and an error carrying the same text from `configure_corpus` and
-  `configure_source`. Nothing is saved. A history source's include list is read by git as pathspecs,
-  so only a null, empty or null-character element is refused there; a corpus's default include list
-  is read both ways, so it must have no such element and every pattern must compile. A list stored
-  before this change still fails until it is replaced or cleared, and a `configure_corpus` call that
-  changes any filter re-sends the corpus's stored lists, so it is refused until a bad stored list is
-  reset. Patterns that compile but are slow
-  to match, and bad lines in a `.gitignore` or `.dexiconignore` in the tree, are not checked.
-- When a later file of an upload batch failed with an unexpected error, the earlier files were
-  attached and had no indexing job until the next scheduled refresh. The job is now queued, and the
-  caller still receives the error.
-- Detaching a document while the same document is being attached no longer fails the attachment's
-  save. Removing a source or a corpus during an attachment can still fail it.
-- Attaching a stored document with a blank `fileName` stored the blank as the document's path. The
-  attach endpoint now answers `400`; leaving `fileName` out keeps the name the document was uploaded
-  under.
-- `configure_source` with a folder holding a null character answers with a message naming the
-  character, in place of "An error occurred".
-- The unknown search mode echoed in an error is cut to 40 characters, with line breaks shown as a
-  space and any other control character replaced by U+FFFD.
+- **Uploads.** Extraction of an uploaded file has a time limit. A stored document whose
+  re-extraction fails keeps its previous text and is tried again once per job, then chunked again
+  after a later success even when another job rewrote the row meanwhile. A damaged EPUB entry, an
+  I/O error reading an upload and a fault inside an extractor end in a stored document with a
+  reason or an entry under `failed`; they ended in "The multipart body could not be read" and lost
+  the files after them, or replaced a stored document's text. Deeply nested HTML, DOCX, PPTX and
+  EPUB documents no longer end the process. A workspace extractor that caught the timeout and
+  returned partial text has that text discarded, not cached. Attaching a stored document with a
+  blank `fileName` stored the blank as the document's path.
+- **Attach, detach and removal.**
+  - Removing a source, a chunk set or a corpus takes the attachment lock for its catalogue delete,
+    after its vector calls, and reads its target again under it, so an attachment is saved against
+    rows that are there; an attachment reads the corpus's chunk sets under the lock and its
+    response lists those sets. Promoting a chunk set takes the same lock, so a removal cannot delete
+    a set that has just become the default. The lock does not cover adding a source or a chunk set;
+    a removal of the corpus at the same moment fails their save with a foreign-key error.
+  - A document detached while an indexing pass runs is left out of the pass's saves, so the pass
+    completes and the job is recorded. The saves that insert chunk states, claim a document, flush
+    after one and end the source delete the vectors the pass wrote for it and count it as skipped;
+    the count reconcile and the save that records the outcome only leave it out, and a later pass
+    of the same chunk set removes its points. When rows a pass holds are deleted the job is
+    recorded: a document or an upload source gives `Succeeded` with the documents skipped; a folder
+    source, a chunk set or a chunk state gives `Failed` with "A chunk set, source or document was
+    removed while the pass ran."; a deleted corpus leaves nothing to record and logs two warnings.
+    A job whose own row is gone is not recorded and its save is not retried.
+  - Detaching a document deletes its vectors again after its row. That delete is best effort with
+    a 30 s limit of its own and a failure is logged; a later pass removes the points. Points a
+    running pass writes for a source after a removal's vector deletes stay in the vector store.
+  - Two simultaneous refresh requests for one corpus queue one job.
+- **Glob and ignore patterns.** A glob list with a null element, or a pattern that does not
+  compile, was stored as sent and failed every pass of every source that read it; saving refuses
+  it, with `400` naming the list and position (`includeGlobs[1]`) and the same text from
+  `configure_corpus` and `configure_source`. `PATCH` on a source with `"clear": [null]` answers
+  `400` "Unknown filter" instead of clearing nothing. A history source's include `/docs` selects
+  the same commits as `docs` and is not re-read when one is edited into the other. Git's matching
+  differs from the file walk's: an unglobbed name is anchored at the root, `*` crosses `/`, and
+  `**/*.md` needs a `/` unless it is written `:(glob)**/*.md`; the `configure_corpus` and
+  `configure_source` descriptions say so. Git calls no longer inherit any `GIT_` variable except
+  the two the code sets. The web UI forms split a path list at commas and newlines except inside
+  the parentheses of pathspec magic, and the history editor sends its paths only after they are
+  edited.
+- **A chunk set that could not walk a source is not promoted.** Promoting a set whose last pass
+  could not walk a source (an unusable `.dexiconignore`, a limit passed, a missing root) answers
+  `409` "Chunk set is unavailable". Only pending files were counted before, so the set became the
+  default and search lost that source's files.
+- **`index_status` names the directories its coverage check could not read.** A directory whose
+  ignore file is unusable is listed as `COVERAGE NOT CHECKED: <directory>, because <reason>`, up to
+  five and then a count, where it was left out of the "NOT INDEXED" advisory without a word. The
+  check also applies a `.dexiconignore` in the directory, which `docs/06-mcp-surface.md` omitted.
+- **Ignore matching.** Ignore patterns are matched by tokens over bit sets of path positions, with
+  no regular expression and no match timeout. A match takes at most
+  `(tokens + 1) × words + classes × (length + 1) + length` steps and the longest literal run of a
+  pattern is searched in linear time, so a pattern such as `*a*a*a*a*b` or ten `**/` in a row
+  cannot stall a pass. A `.gitignore` line that cannot be used is skipped with a warning; after
+  1,000 skipped lines nothing later in that file applies and the log says so. At most 20 warnings
+  and 20 of those notices are kept and the rest are counted, once per pass. The message for a walk
+  past its rule budget offers `use_gitignore: false` only when a `.gitignore` or
+  `.git/info/exclude` has used part of the budget. A class is searched by binary search over its
+  merged members, so 495 members cost about as much as 5 against a path of letters that have case
+  variants. A `.gitignore` in a directory the rules already
+  ignore is not read, so a vendored tree does not use up the rule budget; a `.dexiconignore` there
+  is read, and so is any ignore file in a directory a negation brings back. On Linux and macOS ignore files are opened non-blocking and refused if the
+  handle cannot seek, so a pipe cannot hang the walk. A message that quotes an ignore-file line is
+  cleaned of control, format and separator characters.
+- **Chunk settings, logs and tool replies.** `POST /api/corpora` applies the chunk-set rules to
+  the corpus's first set: a bad request value answers `400` before the embedding probe and saves
+  nothing, and a request value that fails only beside a usable server default names the default.
+  Editing a chunk set judges each setting the edit changes, and size and overlap together when
+  either changes; a value sent unchanged is not a change. The corpus dialogs do not suggest a chunk
+  size over 8,192 tokens or under 64, and the edit dialog sends only the settings that were
+  edited. A log line cannot be forged with a corpus name, a path, an exception or a message
+  template; a chain deeper than 100 levels or longer than 1,000 exceptions is written as its
+  outermost type and message with a note, dictionary keys that collide get a counter and an entry
+  that cannot be made safe is replaced by a line saying it was withheld. A failure in
+  `InitialiseAsync` or while running is logged through the same sink. After `configure_corpus` has
+  saved a corpus, a later failure is logged and the agent is told only that the corpus was created.
+  A null entry in `reset` is refused with a message. `EchoScanTests` compiles `src/Dexicon` and
+  fails when text from a caller or the catalogue reaches a tool reply, an `McpException` or a log
+  argument without a wrapper.
+- Detaching a document while the same document is being attached does not fail the attachment's
+  save, and a later file of an upload batch that failed with an unexpected error leaves the earlier
+  files with an indexing job. `configure_source` with a folder holding a null character answers
+  with a message naming the character. The embedding model probe requires the admin scope. The
+  unknown search mode echoed in an error is cut to 40 characters, with line breaks shown as a space
+  and any other control character replaced by U+FFFD.
+
+### Known limits
+
+- A PDF whose page tree is nested a few thousand levels deep (3,000 to 7,000 in probes, by file
+  layout and platform) ends the process when it is opened. A real bound needs PDFs opened in a
+  separate process.
+- An HTML or EPUB parse is bounded in time by the extraction clock and in tags by the 1,000,000
+  limit; its memory per tag was measured at 290 to 560 bytes.
+- A kept chunk set whose follow-up refresh is lost to a cancellation or a failed jobs insert stays
+  empty until the next refresh; `DEXICON__INDEXING__REFRESHMINUTES` is 0 by default.
+- `EchoScanTests` reads `src/Dexicon` only; it does not read `src/Dexicon.Core`, collections,
+  records or non-string log arguments.
+- A directory that cannot be listed reads as empty during an ignore-file walk, and a hard link to an
+  ignore file is read as the file it links to.
+- A chunk set promoted before its first pass has run has no pending files, so it is promoted and
+  search finds nothing in it until the pass finishes. Promotion is refused while files are pending
+  and when the set is unavailable.
+- A `.gitignore` of 1,000 unusable lines costs about 1.6 ms to read, so a tree of thousands of such
+  files makes each pass spend seconds in the walk (300 files: about 0.5 s).
+- A `.dexiconignore` line that holds a zero-width space (U+200B) or a byte order mark (U+FEFF)
+  inside the line matches nothing and does not fail the walk. A directory named `.dexiconignore`
+  applies no rules and does not fail the walk, as before this release.
 
 ## 0.6.8 — 2026-10-09
 
