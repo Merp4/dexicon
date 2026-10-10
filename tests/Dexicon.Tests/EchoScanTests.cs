@@ -836,6 +836,9 @@ public sealed class EchoScanTests
     [InlineData("""$"{string.Concat("a", v)}" """, true)]
     [InlineData("""$"{string.Format("{0}", v)}" """, true)]
     [InlineData("""$"{(object)v}" """, true)]
+    [InlineData("""$"{System.Text.Json.JsonSerializer.Serialize(new object())}" """, true)]
+    [InlineData("""$"{System.Text.Json.JsonSerializer.Serialize(v)}" """, true)]
+    [InlineData("""$"{System.Text.Json.JsonSerializer.Serialize("lit")}" """, false)]
     [InlineData("""$"{string.Join(",", new[] { v })}" """, true)]
     public void AValueIsFoundWhereverTheCallPutsIt(string expression, bool flagged)
     {
@@ -845,10 +848,11 @@ public sealed class EchoScanTests
     }
 
     [Theory]
-    [InlineData("string t; (t, _) = (v, 1); return $\"{t}\";")]
-    [InlineData("string t; (t, var n) = Pair(v); return $\"{t}\";")]
-    [InlineData("string t; Fill(out t, v); return $\"{t}\";")]
+    [InlineData("var t = \"ok\"; (t, _) = (v, 1); return $\"{t}\";")]
+    [InlineData("var t = \"ok\"; (t, var n) = Pair(v); return $\"{t}\";")]
+    [InlineData("var t = \"ok\"; Fill(out t, v); return $\"{t}\";")]
     [InlineData("var t = \"\"; t = v; return $\"{t}\";")]
+    [InlineData("string t; (t, _) = (v, 1); return $\"{t}\";")]
     public void AValueGivenToALocalByAssignmentDeconstructionOrOutIsFound(string body)
     {
         var code = "class Probe { static void Fill(out string t, string v) { t = v; } static (string, int) Pair(string v) => (v, 1); "
