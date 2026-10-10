@@ -22,14 +22,20 @@ namespace Dexicon.Tests;
 ///
 /// Not read, so it can be defeated by: text carried in a collection, a record or a field that is built in one
 /// place and printed in another (the printing site is read, the building site is not); a
-/// <c>StringBuilder</c> handed to another method; a non-string log argument, whose text the log sink makes
-/// safe (<c>OneLineLogSink</c> is tested on its own); and anything written in a file that is not one of those
-/// above. <see cref="Trusted"/> is trusted by name, and <c>LogTextTests</c> and <c>ScopeMessageTests</c> hold
-/// what each does. The other guard is the wrapper's own test at each site (<c>McpEchoTests</c>,
-/// <c>EchoSiteTests</c>), which drives the tools with hostile values.
+/// <c>StringBuilder</c> handed to another method (what is appended in this method is read, what another method
+/// appends is not); a non-string log argument, whose text the log sink makes safe (<c>OneLineLogSink</c> is
+/// tested on its own); and anything written in a file that is not one of those above. A value given to a local
+/// by an <c>out</c> argument, by a deconstruction of anything but a tuple of the same size, or as a lambda
+/// parameter or a <c>foreach</c> variable over something that is not read, is not followed and is reported
+/// until an entry names its declaration. <see cref="Trusted"/> is trusted by name, and <c>LogTextTests</c>
+/// and <c>ScopeMessageTests</c> hold what each does. The other guard is the wrapper's own test at each site
+/// (<c>McpEchoTests</c>, <c>EchoSiteTests</c>), which drives the tools with hostile values.
 ///
-/// <see cref="Allowed"/> excuses one expression at one place, keyed by file, member and expression text, with
-/// the reason. An entry that excuses nothing fails <see cref="AnAllowedEntryThatExcusesNoSiteIsRemoved"/>.
+/// <see cref="Allowed"/> excuses one expression at one place, keyed by file and member and then, for a local or
+/// a parameter, by the text of its declaration (so another variable of the same name is not excused); for a
+/// property or a field, by the type it is read from and its name; and otherwise by the text of the expression,
+/// each with the reason. An entry that excuses nothing fails
+/// <see cref="AnAllowedEntryThatExcusesNoSiteIsRemoved"/>.
 /// </summary>
 public sealed class EchoScanTests
 {
@@ -60,7 +66,7 @@ public sealed class EchoScanTests
     private static readonly HashSet<string> Transforms = new(StringComparer.Ordinal)
     {
         "ToString", "ToLowerInvariant", "ToUpperInvariant", "Trim", "TrimStart", "TrimEnd", "Substring", "PadLeft",
-        "PadRight", "Replace", "ReplaceLineEndings", "Normalize",
+        "PadRight", "Replace", "ReplaceLineEndings", "Normalize", "Insert", "Remove",
     };
 
     private static readonly HashSet<string> BuilderMethods = new(StringComparer.Ordinal)
@@ -75,53 +81,54 @@ public sealed class EchoScanTests
     private static readonly Dictionary<string, string> Allowed = new(StringComparer.Ordinal)
     {
         ["ProposalService.cs|ResolveAsync|WorkspaceDiscovery.Canonical(root, s.RootPath)"] = "Describe: its result goes through Line at both its uses",
-        ["ConfigureTools.cs|ListFoldersAsync|hereBy"] = "a value of the dictionary IndexedFoldersAsync builds, whose corpus names go through OneLine there",
-        ["ConfigureTools.cs|ListFoldersAsync|by"] = "a value of the dictionary IndexedFoldersAsync builds, whose corpus names go through OneLine there",
+        ["ConfigureTools.cs|ListFoldersAsync|declared: out var hereBy"] = "a value of the dictionary IndexedFoldersAsync builds, whose corpus names go through OneLine there",
+        ["ConfigureTools.cs|ListFoldersAsync|declared: out var by"] = "a value of the dictionary IndexedFoldersAsync builds, whose corpus names go through OneLine there",
         ["ConfigureTools.cs|ConfigureSourceAsync|updated.Value.IndexJob?.Id"] = "an id the catalogue generated",
         ["DexiconResources.cs|FileAsync|Passage.Stitch(file.Chunks.Select(h => (h.StartLine, h.EndLine, h.Content)))"] = "the indexed text of a file, which the resource returns",
-        ["ConfigureTools.cs|ConfigureSourceAsync|added.Value!.IndexJob.Id"] = "an id the catalogue generated",
-        ["ConfigureTools.cs|Resets|allowed"] = "the names reset may take, written at each call of Resets",
-        ["ConfigureTools.cs|Clashes|g.Name"] = "the names of arguments, written in the table that Clashes reads",
-        ["ConfigureTools.cs|Kilobytes|name"] = "the name of an argument, written at each call of Kilobytes",
-        ["ConfigureTools.cs|ConfigureCorpusAsync|action"] = "Audit: a verb written at each call",
-        ["ConfigureTools.cs|ConfigureCorpusAsync|set"] = "Audit: the names of what changed, written at each call",
-        ["ConfigureTools.cs|ConfigureSourceAsync|what1"] = "AuditSource: a verb written at each call",
-        ["DexiconResources.cs|CorpusAsync|summary"] = "JSON from the serializer, which writes every character outside Basic Latin as an escape",
+        ["ConfigureTools.cs|ConfigureSourceAsync|JobSummary.Id"] = "an id the catalogue generated",
+        ["ConfigureTools.cs|Resets|declared: IEnumerable<string> allowed"] = "the names reset may take, written at each call of Resets",
+        ["ConfigureTools.cs|Clashes|ValueTuple.Name"] = "the names of arguments, written in the table that Clashes reads",
+        ["ConfigureTools.cs|Kilobytes|declared: string name"] = "the name of an argument, written at each call of Kilobytes",
+        ["ConfigureTools.cs|ConfigureCorpusAsync|declared: string action"] = "Audit: a verb written at each call",
+        ["ConfigureTools.cs|ConfigureCorpusAsync|declared: string set"] = "Audit: the names of what changed, written at each call",
+        ["ConfigureTools.cs|ConfigureSourceAsync|declared: string what1"] = "AuditSource: a verb written at each call",
+        ["DexiconResources.cs|CorpusAsync|JsonSerializer.Serialize(summary, JsonOptions.Web)"] = "JSON from the serializer, which writes every character outside Basic Latin as an escape",
         ["DexiconResources.cs|FileAsync|document?.Text"] = "the indexed file's own text, which is what the resource returns",
-        ["DexiconResources.cs|ResolveAsync|principal.Scopes"] = "the scope names of a key, from the repository's list",
-        ["DexiconTools.cs|SearchIndexAsync|ex.Message"] = "the messages of UnknownSearchModeException and EmbeddingDimensionMismatchException, which the repository writes",
-        ["DexiconTools.cs|Render|hit.Content"] = "the indexed text of a hit, which is what search returns",
-        ["DexiconTools.cs|RenderCorpus|s.State"] = "the name of a state, from the repository's list",
-        ["DexiconTools.cs|RenderCorpus|set.State"] = "the name of a state, from the repository's list",
+        ["DexiconResources.cs|ResolveAsync|Principal.Scopes"] = "the scope names of a key, from the repository's list",
+        ["DexiconTools.cs|SearchIndexAsync|UnknownSearchModeException.Message"] = "the message of UnknownSearchModeException, which the repository writes",
+        ["DexiconTools.cs|SearchIndexAsync|EmbeddingDimensionMismatchException.Message"] = "the message of EmbeddingDimensionMismatchException, which the repository writes",
+        ["DexiconTools.cs|Render|SearchHit.Content"] = "the indexed text of a hit, which is what search returns",
+        ["DexiconTools.cs|RenderCorpus|CorpusSummary.State"] = "the name of a state, from the repository's list",
+        ["DexiconTools.cs|RenderCorpus|ChunkSetSummary.State"] = "the name of a state, from the repository's list",
         ["DexiconTools.cs|GetContextAsync|Passage.Stitch([(gotLo, gotHi, text)], lineNumbers)"] = "the indexed text of a file, which get_context returns",
         ["DexiconTools.cs|GetContextAsync|Passage.Stitch(pieces.Select(p => (p.StartLine, p.EndLine, p.Content)), lineNumbers, (lo, hi))"] = "the indexed text of a file, which get_context returns",
-        ["DexiconTools.cs|IndexRefreshAsync|job.Id"] = "an id the catalogue generated",
-        ["DexiconTools.cs|IndexStatusAsync|summary.State"] = "the name of a state, from the repository's list",
-        ["DexiconTools.cs|IndexStatusAsync|set.State"] = "the name of a state, from the repository's list",
-        ["DexiconTools.cs|IndexStatusAsync|job.Id"] = "an id the catalogue generated",
-        ["DexiconTools.cs|RenderSources|newest.Sha"] = "seven hexadecimal digits of a commit id",
+        ["DexiconTools.cs|IndexRefreshAsync|IndexJob.Id"] = "an id the catalogue generated",
+        ["DexiconTools.cs|IndexStatusAsync|CorpusSummary.State"] = "the name of a state, from the repository's list",
+        ["DexiconTools.cs|IndexStatusAsync|ChunkSetSummary.State"] = "the name of a state, from the repository's list",
+        ["DexiconTools.cs|IndexStatusAsync|IndexJob.Id"] = "an id the catalogue generated",
+        ["DexiconTools.cs|RenderSources|CommitSummary.Sha"] = "seven hexadecimal digits of a commit id",
         ["DexiconTools.cs|ProblemFilesAsync|roots.GetValueOrDefault(r.SourceId)"] = "a path in a sample of problem files, which RenderProblemFiles passes through OneLine",
-        ["DexiconTools.cs|ProblemFilesAsync|r.RelativePath"] = "a path in a sample of problem files, which RenderProblemFiles passes through OneLine",
-        ["DexiconTools.cs|RenderProblemFiles|g.Status"] = "the name of a file status, from the repository's list",
-        ["DexiconTools.cs|Require|principal.Scopes"] = "the scope names of a key, from the repository's list",
-        ["DexiconTools.cs|Require|scope"] = "Require: the scope the tool needs, written at each call",
-        ["ProposeTools.cs|ProposeRemovalAsync|p.Id"] = "an id the catalogue generated",
-        ["ProposeTools.cs|RenderOwnAsync|p.Id"] = "an id the catalogue generated",
+        ["DexiconTools.cs|ProblemFilesAsync|.RelativePath"] = "a path in a sample of problem files, which RenderProblemFiles passes through OneLine",
+        ["DexiconTools.cs|RenderProblemFiles|ProblemFiles.Status"] = "the name of a file status, from the repository's list",
+        ["DexiconTools.cs|Require|Principal.Scopes"] = "the scope names of a key, from the repository's list",
+        ["DexiconTools.cs|Require|declared: string scope"] = "Require: the scope the tool needs, written at each call",
+        ["ProposeTools.cs|ProposeRemovalAsync|Proposal.Id"] = "an id the catalogue generated",
+        ["ProposeTools.cs|RenderOwnAsync|Proposal.Id"] = "an id the catalogue generated",
         ["Program.cs|<top-level>|app.Services.GetService<IServer>()?.Features .Get<IServerAddressesFeature>()?.Addresses"] = "the addresses the server listens on, operator configuration",
-        ["DocumentEndpoints.cs|UploadAsync|corpus.Id"] = "an id the catalogue generated",
-        ["ProposalService.cs|RejectHeldAsync|p.Id"] = "an id the catalogue generated",
-        ["ProposalService.cs|ApproveHeldAsync|p.Id"] = "an id the catalogue generated",
-        ["ProposalService.cs|FailAsync|p.Id"] = "an id the catalogue generated",
-        ["SystemEndpoints.cs|SetScopesAsync|token.Scopes"] = "the scope names of a key, from the repository's list",
-        ["Bootstrapper.cs|InitialiseAsync|options.Storage.CatalogPath"] = "operator configuration at startup, not a caller's",
-        ["Bootstrapper.cs|CheckChunkDefaults|refused.Detail"] = "the startup check's own text, built from operator configuration",
-        ["Bootstrapper.cs|VerifyDependenciesAsync|options.Qdrant.Endpoint"] = "operator configuration at startup, not a caller's",
-        ["Bootstrapper.cs|VerifyDependenciesAsync|target.Provider"] = "operator configuration at startup, not a caller's",
-        ["Bootstrapper.cs|VerifyDependenciesAsync|target.Model"] = "operator configuration at startup, not a caller's",
+        ["DocumentEndpoints.cs|UploadAsync|Corpus.Id"] = "an id the catalogue generated",
+        ["ProposalService.cs|RejectHeldAsync|Proposal.Id"] = "an id the catalogue generated",
+        ["ProposalService.cs|ApproveHeldAsync|Proposal.Id"] = "an id the catalogue generated",
+        ["ProposalService.cs|FailAsync|Proposal.Id"] = "an id the catalogue generated",
+        ["SystemEndpoints.cs|SetScopesAsync|ApiToken.Scopes"] = "the scope names of a key, from the repository's list",
+        ["Bootstrapper.cs|InitialiseAsync|StorageOptions.CatalogPath"] = "operator configuration at startup, not a caller's",
+        ["Bootstrapper.cs|CheckChunkDefaults|ConfigRefusal.Detail"] = "the startup check's own text, built from operator configuration",
+        ["Bootstrapper.cs|VerifyDependenciesAsync|QdrantOptions.Endpoint"] = "operator configuration at startup, not a caller's",
+        ["Bootstrapper.cs|VerifyDependenciesAsync|EmbeddingTarget.Provider"] = "operator configuration at startup, not a caller's",
+        ["Bootstrapper.cs|VerifyDependenciesAsync|EmbeddingTarget.Model"] = "operator configuration at startup, not a caller's",
         ["Bootstrapper.cs|EnsureAdminPasswordAsync|Convert.ToBase64String(RandomNumberGenerator.GetBytes(18))"] = "the generated admin password, printed once on purpose (docs/10)",
         ["DexiconAuth.cs|InvokeAsync|ctx.Connection.RemoteIpAddress?.ToString()"] = "the text of an IP address, from the connection",
         ["DexiconAuth.cs|CallerDigest|Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(presented)))"] = "a hex digest of the presented credential, from CallerDigest",
-        ["ScopeExceptionHandler.cs|TryHandleAsync|title"] = "a title written in the handler",
+        ["ScopeExceptionHandler.cs|TryHandleAsync|declared: title"] = "a title written in the handler",
     };
 
     private static readonly Lazy<Compiled> Source = new(() => new Compiled());
@@ -145,6 +152,7 @@ public sealed class EchoScanTests
                 .Where(p => Path.GetFileNameWithoutExtension(p) is not ("Dexicon" or "Dexicon.Tests"))
                 .Select(p => (MetadataReference)MetadataReference.CreateFromFile(p))
                 .ToList();
+            References = references;
             Compilation = CSharpCompilation.Create(
                 "DexiconScan", Trees, references,
                 new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
@@ -152,10 +160,19 @@ public sealed class EchoScanTests
 
         public IReadOnlyList<SyntaxTree> Trees { get; }
 
+        public IReadOnlyList<MetadataReference> References { get; }
+
         public CSharpCompilation Compilation { get; }
     }
 
-    private static SemanticModel ModelOf(SyntaxNode node) => Source.Value.Compilation.GetSemanticModel(node.SyntaxTree);
+    /// <summary>The compilation that a tree other than the application's belongs to (a probe in a test).</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<SyntaxTree, Compilation> Owners = new();
+
+    /// <summary>A semantic model is built once per tree: asking the compilation for one on every node made the scan slow.</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<SyntaxTree, SemanticModel> Models = new();
+
+    private static SemanticModel ModelOf(SyntaxNode node) => Models.GetOrAdd(
+        node.SyntaxTree, tree => (Owners.TryGetValue(tree, out var owner) ? owner : Source.Value.Compilation).GetSemanticModel(tree));
 
     private static string FileOf(SyntaxNode node) => Path.GetFileName(node.SyntaxTree.FilePath);
 
@@ -191,8 +208,37 @@ public sealed class EchoScanTests
         var other => other.Kind().ToString(),
     };
 
-    private static string KeyOf(ExpressionSyntax expression) =>
-        $"{FileOf(expression)}|{MemberOf(expression)}|{System.Text.RegularExpressions.Regex.Replace(Bare(expression).ToString(), @"\s+", " ")}";
+    private static string Squash(string text) => System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
+
+    /// <summary>
+    /// What an allowlist entry for an expression is keyed by: file, member, and then (a) for a local or a parameter,
+    /// the text of its declaration, so that another variable of the same name in the member is not excused; (b) for a
+    /// property or a field, the type it is read from and its name, so that <c>p.Id</c> and <c>q.Id</c> of one type are
+    /// one entry and another type's <c>Id</c> is not; (c) otherwise the text of the expression.
+    /// </summary>
+    private static string KeyOf(ExpressionSyntax start)
+    {
+        var expression = Bare(start);
+        var prefix = $"{FileOf(expression)}|{MemberOf(expression)}|";
+        var symbol = ModelOf(expression).GetSymbolInfo(expression).Symbol;
+
+        if (expression is IdentifierNameSyntax && symbol is ILocalSymbol or IParameterSymbol)
+        {
+            var declaration = symbol.DeclaringSyntaxReferences.Select(r => r.GetSyntax()).FirstOrDefault();
+            var shown = declaration is null
+                ? symbol.Name
+                : declaration.AncestorsAndSelf().OfType<ArgumentSyntax>().FirstOrDefault()?.ToString() ?? declaration.ToString();
+            return prefix + "declared: " + Squash(shown);
+        }
+
+        if (expression is MemberAccessExpressionSyntax access && symbol is IPropertySymbol or IFieldSymbol)
+        {
+            var owner = ModelOf(access.Expression).GetTypeInfo(access.Expression).Type;
+            return prefix + $"{owner?.Name}.{access.Name.Identifier.Text}";
+        }
+
+        return prefix + Squash(expression.ToString());
+    }
 
     private static string? NameOf(IMethodSymbol? method) => method is null ? null : $"{method.ContainingType.Name}.{method.Name}";
 
@@ -236,16 +282,22 @@ public sealed class EchoScanTests
     }
 
     /// <summary>One scan: what it excused is recorded, so that an entry that excused nothing can be found.</summary>
-    private sealed class Scanner
+    private sealed class Scanner(Dictionary<string, string>? allowed = null)
     {
+        private readonly Dictionary<string, string> _allowed = allowed ?? Allowed;
+
         public HashSet<string> Used { get; } = new(StringComparer.Ordinal);
 
         /// <summary>The key to paste into <see cref="Allowed"/> for the expression that is not safe, with a note.</summary>
-        private static string Flag(ExpressionSyntax expression, string note = "") => KeyOf(expression) + note;
+        private static string Flag(ExpressionSyntax expression, string note = "") =>
+            KeyOf(expression) + (Squash(Bare(expression).ToString()) is var text && !KeyOf(expression).EndsWith(text, StringComparison.Ordinal)
+                ? $"   [= {text}]"
+                : "") + note;
+
         private bool IsAllowed(ExpressionSyntax expression)
         {
             var key = KeyOf(expression);
-            if (!Allowed.ContainsKey(key)) return false;
+            if (!_allowed.ContainsKey(key)) return false;
 
             Used.Add(key);
             return true;
@@ -328,15 +380,26 @@ public sealed class EchoScanTests
                 // The text a builder holds was checked where it was appended to.
                 if (name == "ToString" && ModelOf(receiver.Expression).GetTypeInfo(receiver.Expression).Type?.Name == "StringBuilder")
                     return null;
-                return Unsafe(receiver.Expression, seen, depth + 1);
+                // The receiver, and each argument that is a string: "lit".Replace("a", v) puts v in the result.
+                return Unsafe(receiver.Expression, seen, depth + 1)
+                       ?? invocation.ArgumentList.Arguments
+                           .Where(a => ModelOf(a.Expression).GetTypeInfo(a.Expression).Type?.SpecialType == SpecialType.System_String)
+                           .Select(a => Unsafe(a.Expression, seen, depth + 1)).FirstOrDefault(x => x is not null);
             }
 
             if (method?.ContainingType.SpecialType == SpecialType.System_String && name is "Join" or "Concat" or "Format")
                 return invocation.ArgumentList.Arguments
                     .Select(a => UnsafeArgument(a.Expression, seen, depth + 1)).FirstOrDefault(x => x is not null);
 
+            // JSON escapes what it writes. A string argument is still read, because the options may leave characters
+            // unescaped; an object is excused only as the whole call, by its text.
             if (name == "Serialize" && invocation.ArgumentList.Arguments.Count > 0)
-                return Unsafe(invocation.ArgumentList.Arguments[0].Expression, seen, depth + 1);
+            {
+                var first = invocation.ArgumentList.Arguments[0].Expression;
+                return ModelOf(first).GetTypeInfo(first).Type?.SpecialType == SpecialType.System_String
+                    ? Unsafe(first, seen, depth + 1)
+                    : Flag(invocation);
+            }
 
             // A method of the application: what it returns.
             // A method that is being read already is a recursion, which adds nothing to what the first read finds.
@@ -379,14 +442,38 @@ public sealed class EchoScanTests
                 {
                     var scope = declarators[0].Ancestors().OfType<BlockSyntax>().LastOrDefault() as SyntaxNode
                                 ?? declarators[0].Ancestors().OfType<MemberDeclarationSyntax>().FirstOrDefault()!;
-                    var assigned = scope.DescendantNodes().OfType<AssignmentExpressionSyntax>()
-                        .Where(a => a.Left is IdentifierNameSyntax left
-                                    && SymbolEqualityComparer.Default.Equals(ModelOf(a).GetSymbolInfo(left).Symbol, symbol))
-                        .Select(a => a.Right);
+                    bool Same(IdentifierNameSyntax other) =>
+                        SymbolEqualityComparer.Default.Equals(ModelOf(other).GetSymbolInfo(other).Symbol, symbol);
+
+                    // Every value the variable is given: `x = v`, `(x, _) = (v, 1)`. A deconstruction of anything but a
+                    // tuple of the same size, and an `out` argument, give it a value that is not followed.
+                    var assigned = new List<ExpressionSyntax>();
+                    var opaque = false;
+                    foreach (var assignment in scope.DescendantNodes().OfType<AssignmentExpressionSyntax>())
+                    {
+                        if (assignment.Left is IdentifierNameSyntax left && Same(left))
+                        {
+                            assigned.Add(assignment.Right);
+                        }
+                        else if (assignment.Left is TupleExpressionSyntax targets)
+                        {
+                            var at = targets.Arguments.ToList().FindIndex(x => x.Expression is IdentifierNameSyntax id && Same(id));
+                            if (at < 0) continue;
+                            if (assignment.Right is TupleExpressionSyntax values && values.Arguments.Count == targets.Arguments.Count)
+                                assigned.Add(values.Arguments[at].Expression);
+                            else
+                                opaque = true;
+                        }
+                    }
+
+                    opaque |= scope.DescendantNodes().OfType<ArgumentSyntax>()
+                        .Any(a => a.RefKindKeyword.IsKind(SyntaxKind.OutKeyword) && a.Expression is IdentifierNameSyntax id && Same(id));
+
                     var initial = declarators.Select(d => d.Initializer?.Value).OfType<ExpressionSyntax>();
                     var found = initial.Concat(assigned).Select(e => Unsafe(e, seen, depth + 1)).FirstOrDefault(x => x is not null);
                     if (found is not null) return found;
-                    return declarators.Any(d => d.Initializer is null) && !assigned.Any() ? Flag(identifier) : null;
+                    if (opaque) return Flag(identifier, "  (given a value by an out argument or a deconstruction)");
+                    return declarators.Any(d => d.Initializer is null) && assigned.Count == 0 ? Flag(identifier) : null;
                 }
             }
 
@@ -588,15 +675,22 @@ public sealed class EchoScanTests
 
     private static List<InvocationExpressionSyntax> BuildLogCalls() => Trees(_ => true)
         .SelectMany(t => t.GetRoot().DescendantNodes().OfType<InvocationExpressionSyntax>())
-        .Where(i =>
-        {
-            var method = MethodOf(i);
-            if (method is null) return i.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "LogInformation" or "LogWarning" or "LogError" or "LogDebug" or "LogCritical" or "LogTrace" };
+        .Where(IsLogCall).ToList();
 
-            return (method.ContainingType.Name is "LoggerExtensions" or "ILogger" && method.Name.StartsWith("Log", StringComparison.Ordinal))
-                   || (method.ContainingType is { Name: "Log", ContainingNamespace.Name: "Serilog" }
-                       && method.Name is "Verbose" or "Debug" or "Information" or "Warning" or "Error" or "Fatal" or "Write");
-        }).ToList();
+    /// <summary>
+    /// A call of the <c>ILogger</c> extension methods (<c>LogWarning</c> and the others), of Serilog's static
+    /// <c>Log</c>, or of a Serilog <c>ILogger</c> instance (<c>Log.Logger.Warning</c>).
+    /// </summary>
+    private static bool IsLogCall(InvocationExpressionSyntax call)
+    {
+        var method = MethodOf(call);
+        if (method is null)
+            return call.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "LogInformation" or "LogWarning" or "LogError" or "LogDebug" or "LogCritical" or "LogTrace" };
+
+        return (method.ContainingType.Name is "LoggerExtensions" or "ILogger" && method.Name.StartsWith("Log", StringComparison.Ordinal))
+               || (method.ContainingType is { Name: "Log" or "ILogger" or "Logger", ContainingNamespace.Name: "Serilog" }
+                   && method.Name is "Verbose" or "Debug" or "Information" or "Warning" or "Error" or "Fatal" or "Write");
+    }
 
     private static void ReadLogCall(Scanner scanner, InvocationExpressionSyntax call, List<string> found)
     {
@@ -618,12 +712,14 @@ public sealed class EchoScanTests
             ModelOf(s.Read).GetTypeInfo(s.Read).Type is null or IErrorTypeSymbol
             && s.Read is not LiteralExpressionSyntax { RawKind: (int)SyntaxKind.NullLiteralExpression }).Select(s => $"{Where(s.Node)} {s.Read}").ToList();
 
-        sites.Count(s => s.What == "hole").ShouldBeGreaterThan(150, "the scan has to have found the interpolations it checks");
-        sites.Count(s => s.What == "McpException").ShouldBeGreaterThan(25);
-        sites.Count(s => s.What == "returned by a tool").ShouldBeGreaterThan(8);
-        sites.Count(s => s.What.StartsWith("StringBuilder.", StringComparison.Ordinal)).ShouldBeGreaterThan(30);
+        // About 70% of what the scan found when these were set (260, 38, 19, 93, 18 and 40).
+        sites.Count(s => s.What == "hole").ShouldBeGreaterThan(180, "the scan has to have found the interpolations it checks");
+        sites.Count(s => s.What == "McpException").ShouldBeGreaterThan(26);
+        sites.Count(s => s.What == "returned by a tool").ShouldBeGreaterThan(12);
+        sites.Count(s => s.What.StartsWith("StringBuilder.", StringComparison.Ordinal)).ShouldBeGreaterThan(64);
+        sites.Count(s => s.What is "Join" or "Concat" or "Format").ShouldBeGreaterThan(12);
         unresolved.ShouldBeEmpty("every expression the scan reads has to resolve to a type");
-        LogCalls().Count.ShouldBeGreaterThan(20, "the scan has to have found the log calls it checks");
+        LogCalls().Count.ShouldBeGreaterThan(27, "the scan has to have found the log calls it checks");
     }
 
     [Fact]
@@ -661,6 +757,118 @@ public sealed class EchoScanTests
         Allowed.Keys.Except(scanner.Used).ShouldBeEmpty("these allowed entries excuse no expression the scan reads");
     }
 
+    /// <summary>The expressions in an interpolation of a snippet that no wrapper holds, read as a file named Probe.cs.</summary>
+    private static List<string> ProbeFlags(string code, Dictionary<string, string>? allowed = null)
+    {
+        var compilation = ProbeCompilation(code);
+        var scanner = new Scanner(allowed ?? []);
+        return [.. compilation.SyntaxTrees[0].GetRoot().DescendantNodes().OfType<InterpolationSyntax>()
+            .Select(h => scanner.Unsafe(h.Expression)).OfType<string>()];
+    }
+
+    /// <summary>The string arguments of the log calls in a snippet that no wrapper holds.</summary>
+    private static List<string> ProbeLogFlags(string code)
+    {
+        var tree = ProbeCompilation(code).SyntaxTrees[0];
+        var found = new List<string>();
+        var calls = tree.GetRoot().DescendantNodes().OfType<InvocationExpressionSyntax>().Where(IsLogCall).ToList();
+        calls.ShouldNotBeEmpty("the snippet has to hold a call that the scan takes for a log call");
+        foreach (var call in calls) ReadLogCall(new Scanner([]), call, found);
+        return found;
+    }
+
+    private static CSharpCompilation ProbeCompilation(string code)
+    {
+        var tree = CSharpSyntaxTree.ParseText(code, new CSharpParseOptions(LanguageVersion.Latest), "Probe.cs");
+        var compilation = CSharpCompilation.Create(
+            "Probe" + Guid.NewGuid().ToString("N"), [tree], Source.Value.References,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+        Owners[tree] = compilation;
+        compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ShouldBeEmpty("the snippet has to compile");
+        return compilation;
+    }
+
+    [Fact]
+    public void AnEntryForAParameterDoesNotExcuseALocalOfTheSameNameInTheSameMember()
+    {
+        const string code = """
+            class Probe
+            {
+                string Audit(string action) => $"{action}";
+                string Run(string description) { var action = description ?? ""; return $"{action}"; }
+            }
+            """;
+        var allowed = new Dictionary<string, string> { ["Probe.cs|Audit|declared: string action"] = "a verb written at each call" };
+
+        ProbeFlags(code).Count.ShouldBe(2, "with no entry both are reported");
+        var flags = ProbeFlags(code, allowed);
+
+        flags.ShouldHaveSingleItem().ShouldStartWith("Probe.cs|Run|declared: string description");
+    }
+
+    [Fact]
+    public void AnEntryForAPropertyExcusesThatPropertyOfThatTypeAndNoOther()
+    {
+        const string code = """
+            class Job { public string Id = ""; public string Name = ""; }
+            class Probe
+            {
+                string A(Job j) => $"{j.Id}";
+                string B(Job j) => $"{j.Name}";
+                string C(Job k) => $"{k.Id}";
+            }
+            """;
+        var allowed = new Dictionary<string, string> { ["Probe.cs|A|Job.Id"] = "an id the catalogue generated" };
+
+        var flags = ProbeFlags(code, allowed);
+
+        flags.Count.ShouldBe(2);
+        flags.ShouldContain(f => f.StartsWith("Probe.cs|B|Job.Name", StringComparison.Ordinal));
+        flags.ShouldContain(f => f.StartsWith("Probe.cs|C|Job.Id", StringComparison.Ordinal), "the entry is for member A");
+    }
+
+    [Theory]
+    [InlineData("""$"{"lit".Replace("a", v)}" """, true)]
+    [InlineData("""$"{"lit".Replace("a", "b")}" """, false)]
+    [InlineData("""$"{"lit".Insert(1, v)}" """, true)]
+    [InlineData("""$"{"lit".PadLeft(9, 'x')}" """, false)]
+    [InlineData("""$"{v.Trim().ToLowerInvariant()}" """, true)]
+    [InlineData("""$"{string.Concat("a", v)}" """, true)]
+    [InlineData("""$"{string.Format("{0}", v)}" """, true)]
+    [InlineData("""$"{(object)v}" """, true)]
+    [InlineData("""$"{string.Join(",", new[] { v })}" """, true)]
+    public void AValueIsFoundWhereverTheCallPutsIt(string expression, bool flagged)
+    {
+        var code = "class Probe { string Run(string v) => " + expression + "; }";
+
+        ProbeFlags(code).Count.ShouldBe(flagged ? 1 : 0);
+    }
+
+    [Theory]
+    [InlineData("string t; (t, _) = (v, 1); return $\"{t}\";")]
+    [InlineData("string t; (t, var n) = Pair(v); return $\"{t}\";")]
+    [InlineData("string t; Fill(out t, v); return $\"{t}\";")]
+    [InlineData("var t = \"\"; t = v; return $\"{t}\";")]
+    public void AValueGivenToALocalByAssignmentDeconstructionOrOutIsFound(string body)
+    {
+        var code = "class Probe { static void Fill(out string t, string v) { t = v; } static (string, int) Pair(string v) => (v, 1); "
+                   + "string Run(string v) { " + body + " } }";
+
+        ProbeFlags(code).ShouldHaveSingleItem();
+    }
+
+    [Theory]
+    [InlineData("Serilog.Log.Warning(\"x {V}\", v);")]
+    [InlineData("Serilog.Log.Logger.Warning(v);")]
+    [InlineData("Serilog.Log.Logger.Information(v);")]
+    [InlineData("Serilog.ILogger l = Serilog.Log.Logger; l.Error(v);")]
+    [InlineData("Serilog.Log.Fatal(new System.Exception(), v);")]
+    public void ASerilogCallThroughTheStaticClassOrAnInstanceIsAlsoRead(string statement)
+    {
+        var code = "class Probe { void Run(string v) { " + statement + " } }";
+
+        ProbeLogFlags(code).ShouldNotBeEmpty();
+    }
     [Fact]
     public void EveryAllowedEntryStatesItsReason()
     {
