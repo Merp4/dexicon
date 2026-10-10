@@ -1,6 +1,7 @@
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
+using Dexicon.Core.Documents;
 using Dexicon.Core.Embedding;
 using Dexicon.Core.Indexing;
 using Dexicon.Core.Vectors;
@@ -16,7 +17,12 @@ namespace Dexicon.Api;
 /// What an MCP tool says instead of <paramref name="Detail"/>, when <paramref name="Detail"/> carries text the
 /// repository did not write, such as a provider's error. Null where <paramref name="Detail"/> is safe to show.
 /// </param>
-public sealed record ConfigRefusal(string Title, string Detail, int Status, string? AgentDetail = null)
+/// <param name="KeptSetId">
+/// A chunk set a removal refused to delete after its vectors were deleted. The caller queues a refresh of it
+/// (<see cref="CorpusConfiguration.FollowUpAsync"/>) once the refusal is decided, and not before: queuing saves
+/// the context, which a proposal being approved shares with the removal.
+/// </param>
+public sealed record ConfigRefusal(string Title, string Detail, int Status, string? AgentDetail = null, string? KeptSetId = null)
 {
     /// <summary>
     /// The problem response. A detail that only repeats the title is left out, because the UI joins the two
@@ -506,12 +512,7 @@ public sealed class CorpusConfiguration(
             return new ConfigRefusal("Invalid size cap",
                 "maxFileBytes must be greater than zero. Name it in `clear` to inherit the corpus default.", 400);
 
-        if (CorpusEndpoints.UnknownClearName(body.Clear) is { } unknown)
-            return new ConfigRefusal(
-                "Unknown filter",
-                $"'{unknown}' is not a filter that can be cleared. "
-                + $"Name one of: {string.Join(", ", CorpusEndpoints.ClearableFilters)}.",
-                400);
+        if (CorpusEndpoints.UnknownClearName(body.Clear) is { } unknown) return unknown;
 
         if (CorpusEndpoints.FileOnlySettingsFor(source.Kind, body.UseGitignore, body.MaxFileBytes, body.ExcludeGlobs)
             is { } inapplicable)
@@ -573,8 +574,22 @@ public sealed class CorpusConfiguration(
 
         // The file rows and their per-set chunk states go with it: both cascade from
         // Source, so removing it is the whole of the catalogue side.
-        db.Sources.Remove(source);
-        await db.SaveChangesAsync(ct);
+        //
+        // Under the attachment lock, for the delete only: an attachment that has found this source adds a
+        // file that names it, and the delete would remove the row that file is saved against. A file
+        // attached after the paths above were read goes with the source, and points a running pass wrote
+        // for it in that time stay in the vector store.
+        using (await DocumentService.HoldAttachmentsAsync(ct))
+        {
+            // Read again under the lock: a request that removed this source first has deleted the row the
+            // entity above was loaded from, and the delete here would find nothing to delete.
+            if (!await db.Sources.AsNoTracking().AnyAsync(s => s.Id == source.Id, ct))
+                return new ConfigRefusal("No such source",
+                    $"Corpus '{corpus.Name}' has no source '{sourceId}': it was removed while this request waited.", 404);
+
+            db.Sources.Remove(source);
+            await db.SaveChangesAsync(ct);
+        }
 
         return true;
     }
@@ -593,16 +608,7 @@ public sealed class CorpusConfiguration(
             return new ConfigRefusal("Unknown chunk set",
                 $"Corpus '{corpus.Name}' has no chunk set named '{setName}'.", 404);
 
-        // A corpus with no sets is a corpus nothing can search. Refuse rather than
-        // leave it in a state whose only exit is creating a set by hand.
-        if (corpus.ChunkSets.Count == 1)
-            return new ConfigRefusal("Cannot delete the only chunk set",
-                $"'{set.Name}' is the only way '{corpus.Name}' is indexed. Delete the corpus instead, " +
-                "or add another set and promote it first.", 409);
-
-        if (set.IsDefault)
-            return new ConfigRefusal("Cannot delete the default chunk set",
-                "Promote another set first; search would otherwise have nothing to fall back to.", 409);
+        if (SetRemovalRefusal(corpus, set, corpus.ChunkSets.Count, set.IsDefault) is { } refusal) return refusal;
 
         // A job that names this set, or names none, is working on it. Deleting the row under
         // a job scoped to it nulls the job's ChunkSetId, which reads as every set of the
@@ -615,10 +621,59 @@ public sealed class CorpusConfiguration(
         // Vectors first: if the row went first and this threw, the collection would
         // keep points that nothing in the catalogue can name or clean up.
         await vectors.DeleteChunkSetAsync(set.CollectionName, set.Id, ct);
-        db.ChunkSets.Remove(set);
-        await db.SaveChangesAsync(ct);
+
+        // Under the attachment lock for the delete only: an attachment that has loaded the corpus's sets
+        // saves a chunk state for each, and the delete would remove the row one of them is saved against.
+        using (await DocumentService.HoldAttachmentsAsync(ct))
+        {
+            // Read again under the lock. Another request can have removed this set, or promoted it to the
+            // default, or removed the other sets, while the vectors were being deleted. A job that started
+            // meanwhile is not read again: its outcome is recorded whatever happens to the rows it holds.
+            var now = await db.ChunkSets.AsNoTracking().Where(s => s.CorpusId == corpus.Id)
+                .Select(s => new { s.Id, s.IsDefault }).ToListAsync(ct);
+            var current = now.Find(s => s.Id == set.Id);
+
+            if (current is null)
+                return new ConfigRefusal("Unknown chunk set",
+                    $"Corpus '{corpus.Name}' has no chunk set '{set.Name}': it was removed while this request waited.", 404);
+
+            // The set stays and its vectors are gone. A refresh of the set indexes it again, which the caller
+            // queues once it has decided the refusal.
+            if (SetRemovalRefusal(corpus, set, now.Count, current.IsDefault) is { } changed)
+                return changed with { KeptSetId = set.Id };
+
+            db.ChunkSets.Remove(set);
+            await db.SaveChangesAsync(ct);
+        }
 
         return true;
+    }
+
+    /// <summary>
+    /// What a caller does after it has decided a refusal: queues the refresh of a set that was kept without its
+    /// vectors. Not part of the removal, because queuing saves the context the removal ran on.
+    /// </summary>
+    public async Task FollowUpAsync(Corpus corpus, ConfigRefusal refusal)
+    {
+        if (refusal.KeptSetId is { } setId)
+            await queue.EnqueueAsync(corpus.Id, JobKind.Refresh, setId, CancellationToken.None);
+    }
+
+    /// <summary>The refusal for removing the only set or the default set, or null when the set may go.</summary>
+    private static ConfigRefusal? SetRemovalRefusal(Corpus corpus, ChunkSet set, int setCount, bool isDefault)
+    {
+        // A corpus with no sets is a corpus nothing can search. Refuse rather than
+        // leave it in a state whose only exit is creating a set by hand.
+        if (setCount == 1)
+            return new ConfigRefusal("Cannot delete the only chunk set",
+                $"'{set.Name}' is the only way '{corpus.Name}' is indexed. Delete the corpus instead, " +
+                "or add another set and promote it first.", 409);
+
+        if (isDefault)
+            return new ConfigRefusal("Cannot delete the default chunk set",
+                "Promote another set first; search would otherwise have nothing to fall back to.", 409);
+
+        return null;
     }
 
     /// <summary>
@@ -635,8 +690,15 @@ public sealed class CorpusConfiguration(
         foreach (var collection in collections)
             await vectors.DeleteCorpusAsync(collection, corpus.Id, ct);
 
-        db.Corpora.Remove(corpus);
-        await db.SaveChangesAsync(ct);
+        // Under the attachment lock for the delete only, as RemoveSourceAsync does.
+        using (await DocumentService.HoldAttachmentsAsync(ct))
+        {
+            if (!await db.Corpora.AsNoTracking().AnyAsync(c => c.Id == corpus.Id, ct))
+                return new ConfigRefusal("No such corpus", $"Corpus '{corpus.Name}' was removed while this request waited.", 404);
+
+            db.Corpora.Remove(corpus);
+            await db.SaveChangesAsync(ct);
+        }
 
         return true;
     }

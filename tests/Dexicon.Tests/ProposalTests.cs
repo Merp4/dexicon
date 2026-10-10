@@ -608,6 +608,33 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AChunkSetKeptByAnApprovalIsRefusedAndTheProposalStaysWaiting()
+    {
+        // The set becomes the default while its vectors are being deleted, so the removal is refused after
+        // the vectors are gone. The refresh it asks for is queued on the context the approval shares, and
+        // that must not save the proposal as approved.
+        await using var db = _harness.NewContext();
+        var proposal = await AskAsync(db, ProposalKind.ChunkSet, "alt-1");
+        _harness.Vectors.OnDeleteAsync = async () =>
+        {
+            await using var other = _harness.NewContext();
+            await other.ChunkSets.Where(s => s.Id == "set-2").ExecuteUpdateAsync(u => u.SetProperty(s => s.IsDefault, true));
+            await other.ChunkSets.Where(s => s.Id == "set-1").ExecuteUpdateAsync(u => u.SetProperty(s => s.IsDefault, false));
+        };
+        await using var approver = _harness.NewContext();
+
+        var decided = await _harness.NewProposals(approver).ApproveAsync(proposal.Id, default);
+
+        decided.Refusal.ShouldNotBeNull().Status.ShouldBe(409);
+        var stored = await StoredAsync(proposal.Id);
+        (stored.Status, stored.DecidedUtc).ShouldBe((ProposalStatus.Pending, null));
+        await using var check = _harness.NewContext();
+        (await check.ChunkSets.CountAsync()).ShouldBe(2);
+        var queued = await check.Jobs.SingleAsync();
+        (queued.Kind, queued.ChunkSetId).ShouldBe((JobKind.Refresh, "set-2"));
+    }
+
+    [Fact]
     public async Task ADocumentIsDetachedOnApprovalAndItsBlobStays()
     {
         await using var uploads = await IndexingHarness.StartAsync();

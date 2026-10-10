@@ -139,6 +139,32 @@ describe('approving', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
+  it('says an uploaded document stays stored and can be attached again, not that it is indexed again', async () => {
+    listProposals.mockResolvedValue([
+      proposal({ kind: 'document', target: 'paper.md', facts: { sources: 1, files: 1, chunks: 12, chunkSets: 2, blocker: null } }),
+    ]);
+    const user = userEvent.setup();
+    show();
+
+    await user.click(await screen.findByRole('button', { name: /Approve: Detach the document/ }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(within(dialog).getByText(/This takes 12 chunks, across 2 chunk sets/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/document stays stored and can be attached again from the Documents page/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/files on disk/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/indexing it again/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the files-on-disk wording for a source', async () => {
+    const user = userEvent.setup();
+    show();
+
+    await user.click(await screen.findByRole('button', { name: /Approve: Remove the source/ }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(within(dialog).getByText(/The files on disk are untouched/)).toBeInTheDocument();
+  });
+
   it('shows a refusal in the dialog and leaves the dialog open to be read', async () => {
     const user = userEvent.setup();
     approveProposal.mockRejectedValue(new ApiError(

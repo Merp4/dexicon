@@ -107,14 +107,16 @@ public sealed record GitHistoryOptions
     /// The resolved include filters. They are passed to git, so they decide which files
     /// the stat lists and which hunks the patch holds: the same commit under a narrower
     /// filter is a different document, and leaving them out left old commits skipped
-    /// with a stat cut to paths nobody had selected any more.
+    /// with a stat cut to paths nobody had selected any more. Fingerprinted as
+    /// <see cref="GitHistory.Pathspecs"/> gives them to git, so <c>/docs</c> and <c>docs</c>, which select the
+    /// same commits, are one filter; a list without a leading slash is fingerprinted as it always was.
     /// </param>
     public string ContentFingerprint(IReadOnlyList<string>? pathspecs = null) => string.Join(
         '|',
         IncludeMessage ? "m" : "-",
         IncludeStat ? "s" : "-",
         IncludeDiff ? "d" + MaxDiffBytes.ToString(CultureInfo.InvariantCulture) : "-",
-        Encode(pathspecs));
+        Encode(GitHistory.Pathspecs(pathspecs)));
 
     /// <summary>
     /// The pathspecs as one string that only one list can produce.
@@ -482,6 +484,38 @@ public static partial class GitHistory
                           || c is '/' or '_' or '-' or '.' or '~' or '^' or '@' or '{' or '}');
 
     /// <summary>
+    /// The include list as the arguments given to git after <c>--</c>. Git reads a pathspec relative to the
+    /// repository root and rejects a leading <c>/</c> as a path outside the repository, while an include pattern
+    /// with a leading <c>/</c> is gitignore's anchor at the root of the source. One leading slash is removed,
+    /// which gives the same path, matched by git's rules, which are not the walk's: an unglobbed name is
+    /// anchored at the root (<c>docs</c> does not select <c>a/docs/x.txt</c>), <c>*</c> crosses <c>/</c>
+    /// (<c>/docs/*.md</c> selects commits touching <c>docs/sub/b.md</c>), and without <c>:(glob)</c> a
+    /// <c>**/*.md</c> needs a <c>/</c> in the path, so it does not select a root-level <c>README.md</c>. The
+    /// slash is kept when an element starts with <c>//</c> or <c>/:</c>, so that no literal name becomes
+    /// pathspec magic (<c>/:(exclude)docs</c> would otherwise exclude <c>docs</c>); such elements are refused
+    /// where a list is saved and reach git as written if one was stored earlier. An element that was only <c>/</c> is dropped: the walk compiles it to no rule, so it filters
+    /// nothing, and git would otherwise be handed an empty pathspec, which it rejects. A list of only such
+    /// elements gives no pathspec, which is every path. Everything else, including pathspec magic, goes to git
+    /// as written.
+    /// </summary>
+    internal static List<string> Pathspecs(IReadOnlyList<string>? includes)
+    {
+        var specs = new List<string>(includes?.Count ?? 0);
+
+        foreach (var include in includes ?? [])
+        {
+            if (include == "/") continue;
+
+            var rooted = include.StartsWith('/')
+                && !include.StartsWith("//", StringComparison.Ordinal)
+                && !include.StartsWith("/:", StringComparison.Ordinal);
+            specs.Add(rooted ? include[1..] : include);
+        }
+
+        return specs;
+    }
+
+    /// <summary>
     /// Every commit the settings select, newest first, as shas and dates. With
     /// <see cref="GitHistoryOptions.KeepIndexed"/> the commit limit is not applied here,
     /// and <see cref="Select"/> applies it.
@@ -526,10 +560,10 @@ public static partial class GitHistory
         args.Add(options.Ref);
 
         // And after it, so a pathspec cannot be read as a ref.
-        if (pathspecs is { Count: > 0 })
+        if (Pathspecs(pathspecs) is { Count: > 0 } specs)
         {
             args.Add("--");
-            args.AddRange(pathspecs);
+            args.AddRange(specs);
         }
 
         var (ok, stdout, stderr) = await RunAsync(repo, args, ct);
@@ -843,10 +877,10 @@ public static partial class GitHistory
         if (options.IncludeStat) args.Add("--stat=80");
         if (!options.IncludeDiff && !options.IncludeStat) args.Add("--no-patch");
 
-        if (pathspecs is { Count: > 0 })
+        if (Pathspecs(pathspecs) is { Count: > 0 } specs)
         {
             args.Add("--");
-            args.AddRange(pathspecs);
+            args.AddRange(specs);
         }
 
         var (ok, stdout, stderr) = await RunAsync(
@@ -1223,9 +1257,20 @@ public static partial class GitHistory
         // which the first proves only that the probe missed. A NON-builtin subcommand
         // added here later would be expandable, and would need the alias disabled.
         info.ArgumentList.Insert(0, "--no-pager");
+        // No variable of the service's own reaches git. Git reads GIT_* variables from the environment, and
+        // several of them change what a call returns or whether it works at all, none of which the pins
+        // above or the fingerprint cover. Measured on git 2.54.0: GIT_DIFF_OPTS=--unified=9 made a one-line
+        // change print 25 lines of patch where `-c diff.context=3` gave 13, GIT_DIR=/nonexistent made every
+        // call fail, GIT_LITERAL_PATHSPECS=1 made `:(glob)docs` match nothing, GIT_NOGLOB_PATHSPECS=1 made
+        // `docs/*.md` match nothing, and GIT_ICASE_PATHSPECS=1 made `DOCS` match `docs`. GIT_CONFIG_COUNT
+        // with GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n sets any key that `-c` does not pin. All are removed,
+        // whatever their case, and none needs to survive: HOME and the other variables that locate global
+        // configuration do not start with GIT_.
+        foreach (var name in info.Environment.Keys.Where(k => k.StartsWith("GIT_", StringComparison.OrdinalIgnoreCase)).ToList())
+            info.Environment.Remove(name);
+
         info.Environment["GIT_TERMINAL_PROMPT"] = "0";
         info.Environment["GIT_OPTIONAL_LOCKS"] = "0";
-
         // The C locale, so what git prints does not depend on the process's language.
         // The stat's summary line (" 1 file changed") is translated where git has
         // translations, and it goes into a commit's document, which the fingerprint does

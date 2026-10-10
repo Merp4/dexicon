@@ -459,8 +459,9 @@ public sealed class ProposalService(
     }
 
     [SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", MessageId = "FailAsync", Justification =
-        "FailAsync follows a refused removal, and every refusal is returned before the removal writes to "
-        + "the catalogue.")]
+        "FailAsync follows a refused removal. A refusal is returned before the removal writes to the "
+        + "catalogue, and the refresh it asks for is queued by FollowUpAsync after the proposal is put back, "
+        + "without the token.")]
     private async Task<ConfigOutcome<ProposalView>> ApproveHeldAsync(string id, CancellationToken ct)
     {
         var p = await db.Proposals.FirstOrDefaultAsync(x => x.Id == id, ct);
@@ -504,16 +505,20 @@ public sealed class ProposalService(
 
         Undecide(p);
         // Nothing to remove is a fact about the target; anything else is about now, and is told to the
-        // person who asked to approve it.
-        return refusal.Status == 404 ? await FailAsync(p, refusal.Detail, ct) : refusal;
+        // person who asked to approve it. The refresh a refusal asks for is queued after the proposal is put
+        // back, because queuing saves this context and the proposal would be saved as approved.
+        if (refusal.Status == 404) return await FailAsync(p, refusal.Detail, ct);
+
+        await config.FollowUpAsync(corpus, refusal);
+        return refusal;
     }
 
     /// <summary>
-    /// The approval's save conflicted. Either the proposal was decided by another request, or the target
-    /// was removed by a direct DELETE between the read and the save (those endpoints do not take the
-    /// decision lock), and the removal's own delete found nothing to delete. The stored status says which:
-    /// in the second case the proposal is still waiting for a target that has gone, and is recorded as
-    /// failed like any other.
+    /// The approval's save conflicted. The proposal row carries a concurrency token, so another request
+    /// deciding it makes the save fail. The removals read their target again under the attachment lock and
+    /// answer 404 when a direct DELETE removed it first, which is recorded by <see cref="FailAsync"/>, so a
+    /// conflict on the target's own row is not expected. The stored status says which case this is: a
+    /// proposal that is still waiting is recorded as failed like any other.
     /// </summary>
     private async Task<ConfigOutcome<ProposalView>> ConflictAsync(string id, CancellationToken ct)
     {
