@@ -8,10 +8,11 @@ namespace Dexicon.Tests;
 
 /// <summary>
 /// An ignore file the walk cannot read as text, or cannot read at all. A <c>.dexiconignore</c> is written to keep
-/// content out of the index, so one that is a link, is locked, is a pipe, holds a NUL or is not valid UTF-8 fails the
-/// walk with the reason. The same in a <c>.gitignore</c> or <c>.git/info/exclude</c> is skipped, the file whole or the
-/// lines that cannot be decoded, with a warning. A byte order mark for UTF-8, UTF-16 or UTF-32 is honoured as
-/// <c>File.ReadAllLines</c> honours it. Also the scope of the warnings: a directory another source owns is not read.
+/// content out of the index, so one that is a link, is locked (Windows) or unreadable by permission (Linux), is a pipe,
+/// holds a NUL or is not valid UTF-8 fails the walk with the reason. The same in a <c>.gitignore</c> or
+/// <c>.git/info/exclude</c> is skipped, the file whole or the lines that cannot be decoded, with a warning. A byte
+/// order mark for UTF-8, UTF-16 or UTF-32 is honoured as <c>File.ReadAllLines</c> honours it. Also the scope of the
+/// warnings: a directory another source owns is not read.
 /// </summary>
 public sealed class IgnoreFileReadabilityTests : IDisposable
 {
@@ -71,7 +72,7 @@ public sealed class IgnoreFileReadabilityTests : IDisposable
             .Message.ShouldBe("sub/.dexiconignore is a link, and links are not followed");
     }
 
-    [Fact]
+    [WindowsFact]
     public void ADexiconignoreThatCannotBeOpenedFailsTheWalkWithoutNamingTheHostPath()
     {
         Write(".dexiconignore", "secret.txt\n");
@@ -84,13 +85,42 @@ public sealed class IgnoreFileReadabilityTests : IDisposable
         thrown.Message.ShouldNotContain(_root);
     }
 
-    [Fact]
+    [WindowsFact]
     public void ALockedGitignoreIsSkippedWholeWithAWarning()
     {
         Write(".gitignore", "secret.txt\n");
         using var held = new FileStream(FullPath(".gitignore"), FileMode.Open, FileAccess.Read, FileShare.None);
 
         Walk().Warnings.ShouldBe([".gitignore cannot be read; the file was skipped"]);
+    }
+
+    [UnprivilegedLinuxFact]
+    public void ADexiconignoreWithNoReadPermissionFailsTheWalkWithoutNamingTheHostPath()
+    {
+        Write(".dexiconignore", "secret.txt\n");
+        Write("secret.txt");
+        DenyRead(".dexiconignore");
+
+        var thrown = Should.Throw<IgnorePatternException>(() => Walk());
+
+        thrown.Message.ShouldBe(".dexiconignore cannot be read (permission denied)");
+        thrown.Message.ShouldNotContain(_root);
+    }
+
+    [UnprivilegedLinuxFact]
+    public void AGitignoreWithNoReadPermissionIsSkippedWholeWithAWarning()
+    {
+        Write(".gitignore", "secret.txt\n");
+        DenyRead(".gitignore");
+
+        Walk().Warnings.ShouldBe([".gitignore cannot be read (permission denied); the file was skipped"]);
+    }
+
+    private void DenyRead(string relative)
+    {
+        if (OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("permission bits refuse a read on Linux only");
+
+        File.SetUnixFileMode(FullPath(relative), UnixFileMode.None);
     }
 
     // ---- named pipes, on Linux ---------------------------------------------------------------------------------------
@@ -149,13 +179,16 @@ public sealed class IgnoreFileReadabilityTests : IDisposable
         made.ExitCode.ShouldBe(0, made.StandardError.ReadToEnd());
     }
 
-    /// <summary>Runs <paramref name="action"/> on another thread and fails if it has not finished, since a walk that blocks cannot fail itself.</summary>
+    /// <summary>
+    /// Runs <paramref name="action"/> on another thread and fails if it has not finished, since a walk that blocks cannot fail itself.
+    /// An exception the action throws reaches the caller as thrown, not wrapped in an <see cref="AggregateException"/>.
+    /// </summary>
     private static T RunWithinTimeout<T>(Func<T> action)
     {
         var task = Task.Factory.StartNew(action, TaskCreationOptions.LongRunning);
         if (!task.Wait(TimeSpan.FromSeconds(20))) throw new TimeoutException("the walk blocked");
 
-        return task.Result;
+        return task.GetAwaiter().GetResult();
     }
 
     // ---- encodings ---------------------------------------------------------------------------------------------------
@@ -509,5 +542,27 @@ public sealed class LinuxFactAttribute : FactAttribute
     {
         if (!OperatingSystem.IsLinux()) Skip = "named pipes are made with mkfifo, which is only used on Linux";
         else if (!File.Exists("/usr/bin/mkfifo") && !File.Exists("/bin/mkfifo")) Skip = "mkfifo was not found in /usr/bin or /bin";
+    }
+}
+
+/// <summary>
+/// A fact for a read refused by permission bits: Linux, and not root, which opens any file. A file opened through
+/// <c>open(2)</c> on Linux is not held back by another stream's <c>FileShare.None</c>, so a lock cannot refuse the read there.
+/// </summary>
+public sealed class UnprivilegedLinuxFactAttribute : FactAttribute
+{
+    public UnprivilegedLinuxFactAttribute()
+    {
+        if (!OperatingSystem.IsLinux()) Skip = "a read is refused by permission bits on Linux; Windows refuses it by a file lock";
+        else if (Environment.IsPrivilegedProcess) Skip = "root opens a file whatever its permission bits";
+    }
+}
+
+/// <summary>A fact that runs on Windows, where <c>FileShare.None</c> keeps another open from reading the file.</summary>
+public sealed class WindowsFactAttribute : FactAttribute
+{
+    public WindowsFactAttribute()
+    {
+        if (!OperatingSystem.IsWindows()) Skip = "a file lock refuses a read on Windows only";
     }
 }
