@@ -1,7 +1,9 @@
 using System.IO.Compression;
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using AngleSharp.Dom;
+using AngleSharp.Html.Dom;
 using AngleSharp.Html.Parser;
 using DocumentFormat.OpenXml.Packaging;
 using UglyToad.PdfPig;
@@ -80,7 +82,17 @@ public class ExtractionFailedException(string message, Exception? inner = null)
 /// from an I/O error, so it chooses which to throw (<see cref="ExtractionFailures.Of"/>).
 /// </summary>
 public sealed class UnreadableDocumentException(string message, Exception? inner = null)
-    : ExtractionFailedException(message, inner);
+    : ExtractionFailedException(message, inner)
+{
+    /// <summary>
+    /// Set by <see cref="ExtractionFailures.Of"/> when the verdict was made from an exception type that
+    /// signals a fault in the code that read the file (such as a null reference, an invalid operation, an
+    /// argument) and not a malformed file. A new upload still records the verdict. A stored document
+    /// that has good cached text keeps it instead, because a fault in a library says nothing certain
+    /// about bytes that read well before.
+    /// </summary>
+    public bool Unexpected { get; init; }
+}
 
 internal static class ExtractionFailures
 {
@@ -90,10 +102,21 @@ internal static class ExtractionFailures
     /// Whatever else a parser throws while reading bytes it has been given is, however it is
     /// worded: an invalid colour space, a page it could not parse, a distance that overflows.
     ///
-    /// Looked for anywhere in the chain of causes, not only the top. A parser catches what the
-    /// stream throws and rethrows its own, and the extraction deadline throws from a read: a
-    /// timeout that arrived wrapped as "failed to parse the page" would otherwise be taken for
-    /// a corrupt file, and a file that was only slow would stay failed.
+    /// Every exception in the tree of causes is looked at, not only the top: a parser catches what the
+    /// stream throws and rethrows its own, and the extraction deadline throws from a read, so a
+    /// timeout that arrived wrapped as "failed to parse the page" would otherwise be taken for a
+    /// corrupt file, and a file that was only slow would stay failed. An <see cref="AggregateException"/>
+    /// is walked through all its members. The rule, in order:
+    /// <list type="number">
+    /// <item>A timeout (<see cref="ExtractionTimeoutException"/> or <see cref="TimeoutException"/>)
+    /// anywhere makes it environmental.</item>
+    /// <item>An <see cref="UnreadableDocumentException"/> anywhere is an explicit verdict from code that
+    /// read the file, and makes it a verdict.</item>
+    /// <item>Otherwise any environmental member makes it environmental: an I/O error other than
+    /// <see cref="EndOfStreamException"/>, a refused permission, memory, or another extraction failure.
+    /// End of stream while reading a stored blob means the bytes end early, which is a verdict.</item>
+    /// <item>Otherwise it is a verdict.</item>
+    /// </list>
     ///
     /// The cost of being wrong in each direction is not the same, and this chooses the cheaper
     /// one for the cases it can see. A mount that returns short reads could make a good file
@@ -102,12 +125,82 @@ internal static class ExtractionFailures
     /// </summary>
     public static ExtractionFailedException Of(string message, Exception cause)
     {
-        for (var e = cause; e is not null; e = e.InnerException)
-            if (e is IOException or UnauthorizedAccessException or OutOfMemoryException
-                or TimeoutException or ExtractionFailedException)
-                return new ExtractionFailedException(message, cause);
+        bool timeout = false, verdict = false, environmental = false;
+        foreach (var member in Members(cause))
+        {
+            switch (member)
+            {
+                case ExtractionTimeoutException or TimeoutException:
+                    timeout = true;
+                    break;
+                case UnreadableDocumentException:
+                    verdict = true;
+                    break;
+                case EndOfStreamException:
+                    break;
+                case OperationCanceledException:
+                    // A cancellation says nothing about the bytes: a library gave up, or the caller did.
+                    environmental = true;
+                    break;
+                case IOException or UnauthorizedAccessException or OutOfMemoryException or ExtractionFailedException:
+                    environmental = true;
+                    break;
+            }
+        }
 
-        return new UnreadableDocumentException(message, cause);
+        if (timeout || (environmental && !verdict))
+            return new ExtractionFailedException(message, cause);
+
+        return new UnreadableDocumentException(message, cause) { Unexpected = !verdict && IsFault(cause) };
+    }
+
+    /// <summary>The exception, then everything under it, an aggregate's members included.</summary>
+    private static IEnumerable<Exception> Members(Exception root)
+    {
+        var pending = new Stack<Exception>();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            var current = pending.Pop();
+            yield return current;
+            if (current is AggregateException aggregate)
+                foreach (var inner in aggregate.InnerExceptions) pending.Push(inner);
+            else if (current.InnerException is { } next)
+                pending.Push(next);
+        }
+    }
+
+    /// <summary>
+    /// Whether what the code caught is a type that points at a fault in the code that read the file. A
+    /// parser's own exception for a malformed file (an invalid-data, format or parser-specific type) is
+    /// not one. A wrapper that only carries another exception (<see cref="TargetInvocationException"/>,
+    /// <see cref="TypeInitializationException"/>, <see cref="AggregateException"/>) is taken apart, and
+    /// any member that is a fault makes it one: keeping the text of a stored document is the cheaper
+    /// mistake.
+    /// </summary>
+    private static bool IsFault(Exception cause)
+    {
+        var pending = new Stack<Exception>();
+        pending.Push(cause);
+        while (pending.Count > 0)
+        {
+            var caught = pending.Pop();
+            switch (caught)
+            {
+                case AggregateException aggregate:
+                    foreach (var inner in aggregate.InnerExceptions) pending.Push(inner);
+                    break;
+                case TargetInvocationException or TypeInitializationException when caught.InnerException is { } carried:
+                    pending.Push(carried);
+                    break;
+                case NullReferenceException or InvalidOperationException or ArgumentException
+                    or IndexOutOfRangeException or KeyNotFoundException or InvalidCastException
+                    or ArithmeticException or NotImplementedException or NotSupportedException:
+                    return true;
+            }
+        }
+
+        return false;
     }
 }
 
@@ -392,6 +485,8 @@ public sealed class DocxTextExtractor : ITextExtractor
     {
         try
         {
+            // The package is read through the extraction clock already: content is the DeadlineStream.
+            XmlNesting.RequireShallowParts(content, fileName);
             using var doc = WordprocessingDocument.Open(content, false);
             var body = doc.MainDocumentPart?.Document?.Body;
             if (body is null) return ExtractedText.Empty;
@@ -420,6 +515,7 @@ public sealed class PptxTextExtractor : ITextExtractor
     {
         try
         {
+            XmlNesting.RequireShallowParts(content, fileName);
             using var doc = PresentationDocument.Open(content, false);
             var parts = doc.PresentationPart?.SlideParts?.ToList();
             if (parts is null or { Count: 0 }) return ExtractedText.Empty;
@@ -450,7 +546,8 @@ public sealed class PptxTextExtractor : ITextExtractor
     }
 }
 
-public sealed class EpubTextExtractor : ITextExtractor
+/// <param name="maxTags">The most tags a chapter may hold; see <see cref="HtmlText.MaxTags"/>.</param>
+public sealed class EpubTextExtractor(int maxTags = HtmlText.MaxTags) : ITextExtractor
 {
     public bool CanHandle(string extension) => extension == ".epub";
 
@@ -463,11 +560,13 @@ public sealed class EpubTextExtractor : ITextExtractor
         // stream it is given on some failure paths, so reusing one means the fallback
         // reads a closed stream and reports ObjectDisposedException instead of the book.
         var bytes = buffer.ToArray();
+        var deadline = content as DeadlineStream;
+        XmlNesting.RequireShallowParts(new MemoryStream(bytes), fileName, deadline);
 
         try
         {
             using var forManifest = new MemoryStream(bytes);
-            return ReadWithManifest(forManifest);
+            return ReadWithManifest(forManifest, deadline, maxTags);
         }
         catch (Exception ex) when (ex is not ExtractionFailedException)
         {
@@ -476,12 +575,12 @@ public sealed class EpubTextExtractor : ITextExtractor
             // file that is not there. Falling back to the archive reads those, in a worse
             // order and without chapter titles, which is enormously better than not at all.
             using var forArchive = new MemoryStream(bytes);
-            return ReadFromArchive(forArchive, fileName, ex);
+            return ReadFromArchive(forArchive, fileName, ex, deadline, maxTags);
         }
     }
 
     /// <summary>The good path: the manifest gives real reading order and a title.</summary>
-    private static ExtractedText ReadWithManifest(MemoryStream buffer)
+    private static ExtractedText ReadWithManifest(MemoryStream buffer, DeadlineStream? deadline, int maxTags)
     {
         var book = VersOne.Epub.EpubReader.ReadBook(buffer);
         var sb = new StringBuilder();
@@ -492,7 +591,8 @@ public sealed class EpubTextExtractor : ITextExtractor
         foreach (var file in book.ReadingOrder)
         {
             units.Add(new ExtractedUnit(number, sb.Length, $"Chapter {number}"));
-            using var doc = parser.ParseDocument(file.Content);
+            HtmlText.RequireFewTags(file.Content, $"Chapter {number}", maxTags);
+            using var doc = HtmlText.Parse(parser, file.Content, deadline);
             HtmlText.AppendBlocks(doc.Body, sb);
             number++;
         }
@@ -505,7 +605,8 @@ public sealed class EpubTextExtractor : ITextExtractor
     /// the manifest that failed to parse. Entry order stands in for reading order: it is
     /// usually the authoring order and is nearly always alphabetical by chapter.
     /// </summary>
-    private static ExtractedText ReadFromArchive(MemoryStream buffer, string fileName, Exception cause)
+    private static ExtractedText ReadFromArchive(
+        MemoryStream buffer, string fileName, Exception cause, DeadlineStream? deadline, int maxTags)
     {
         using var zip = OpenArchive(buffer, fileName, cause);
 
@@ -526,20 +627,33 @@ public sealed class EpubTextExtractor : ITextExtractor
         var parser = new HtmlParser();
         var number = 1;
 
-        foreach (var entry in documents)
+        try
         {
-            using var stream = entry.Open();
-            using var doc = parser.ParseDocument(stream);
-            var before = sb.Length;
-            HtmlText.AppendBlocks(doc.Body, sb);
-
-            // A cover page or a stylesheet wrapper contributes nothing; recording a unit
-            // for it would put chapter markers where there is no text.
-            if (sb.Length > before)
+            foreach (var entry in documents)
             {
-                units.Add(new ExtractedUnit(number, before, Path.GetFileNameWithoutExtension(entry.Name)));
-                number++;
+                using var bytes = new MemoryStream();
+                using (var stream = entry.Open()) stream.CopyTo(bytes);
+                HtmlText.RequireFewTags(bytes.GetBuffer().AsSpan(0, (int)bytes.Length), entry.FullName, maxTags);
+                bytes.Position = 0;
+                using var doc = HtmlText.Parse(parser, bytes, deadline);
+                var before = sb.Length;
+                HtmlText.AppendBlocks(doc.Body, sb);
+
+                // A cover page or a stylesheet wrapper contributes nothing; recording a unit
+                // for it would put chapter markers where there is no text.
+                if (sb.Length > before)
+                {
+                    units.Add(new ExtractedUnit(number, before, Path.GetFileNameWithoutExtension(entry.Name)));
+                    number++;
+                }
             }
+        }
+        catch (Exception ex) when (ex is not ExtractionFailedException)
+        {
+            // An archive whose directory reads and whose entry data does not (a damaged deflate block,
+            // a failed checksum) throws InvalidDataException from the entry stream, outside the
+            // handler that wraps the other formats.
+            throw ExtractionFailures.Of($"'{fileName}' is not a readable .epub: {ex.Message}", ex);
         }
 
         if (sb.Length == 0)
@@ -566,7 +680,8 @@ public sealed class EpubTextExtractor : ITextExtractor
     }
 }
 
-public sealed class HtmlTextExtractor : ITextExtractor
+/// <param name="maxTags">The most tags a document may hold; see <see cref="HtmlText.MaxTags"/>.</param>
+public sealed class HtmlTextExtractor(int maxTags = HtmlText.MaxTags) : ITextExtractor
 {
     public bool CanHandle(string extension) => extension is ".html" or ".htm";
 
@@ -575,13 +690,23 @@ public sealed class HtmlTextExtractor : ITextExtractor
         // Every .html and .htm file reaches this extractor, from an upload or from a
         // workspace tree (ExtractorRegistry.For). The text is chunked as prose; the
         // language-aware boundary patterns in LanguageMap apply to Razor, Vue and Svelte.
-        using var reader = new StreamReader(content, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        var parser = new HtmlParser();
-        using var doc = parser.ParseDocument(reader.ReadToEnd());
+        try
+        {
+            using var reader = new StreamReader(content, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            var parser = new HtmlParser();
+            var markup = reader.ReadToEnd();
+            HtmlText.RequireFewTags(markup, fileName, maxTags);
+            using var doc = HtmlText.Parse(parser, markup, content as DeadlineStream);
 
-        var sb = new StringBuilder();
-        HtmlText.AppendBlocks(doc.Body, sb);
-        return new ExtractedText(sb.ToString().Trim(), [], doc.Title);
+            var sb = new StringBuilder();
+            HtmlText.AppendBlocks(doc.Body, sb);
+            return new ExtractedText(sb.ToString().Trim(), [], doc.Title);
+        }
+        catch (Exception ex) when (ex is not ExtractionFailedException)
+        {
+            // An I/O error reading the file reaches the caller as a failure that is not a verdict on it.
+            throw ExtractionFailures.Of($"'{fileName}' is not a readable HTML document: {ex.Message}", ex);
+        }
     }
 }
 
@@ -601,6 +726,75 @@ public sealed class HtmlTextExtractor : ITextExtractor
 /// </summary>
 internal static class HtmlText
 {
+    /// <summary>
+    /// The most tags a document or a chapter may hold. The parser is bounded in time by the extraction clock
+    /// and in memory by this: a parse costs 290 to 560 bytes of working set per tag (measured on flat
+    /// paragraphs, spans, list items and anchors with four attributes: 361 to 769 MB at the limit, with the
+    /// markup itself), 100 MB of paragraphs reached 10 GB before the clock ended it, and a
+    /// real 12 MB single-page specification holds about 300,000 tags. Counted as the
+    /// less-than signs, which is exact for text and an upper bound for tags.
+    /// </summary>
+    public const int MaxTags = 1_000_000;
+
+    /// <summary>Refuses text with more than <paramref name="maxTags"/> tags.</summary>
+    /// <param name="what">What the message names: a file or a chapter.</param>
+    /// <exception cref="UnreadableDocumentException">There are more tags than allowed.</exception>
+    public static void RequireFewTags(string markup, string what, int maxTags)
+    {
+        if (markup.AsSpan().Count('<') > maxTags) throw TooManyTags(what, maxTags);
+    }
+
+    /// <summary>
+    /// The same for bytes, whatever their encoding: the byte 0x3C is the less-than sign in UTF-8 and the
+    /// low byte of it in UTF-16, and a byte that is part of another character only makes the count higher.
+    /// </summary>
+    public static void RequireFewTags(ReadOnlySpan<byte> markup, string what, int maxTags)
+    {
+        if (markup.Count((byte)0x3C) > maxTags) throw TooManyTags(what, maxTags);
+    }
+
+    private static UnreadableDocumentException TooManyTags(string what, int maxTags) =>
+        new($"{what} contains more than {maxTags:N0} tags, which is more than can be read.");
+
+    /// <summary>
+    /// Parses under the extraction clock. AngleSharp builds the tree in time that grows with the square
+    /// of the nesting (100,000 nested divs took 319 s here), and no count of tags taken beforehand
+    /// matches what the parser makes of them: it closes elements an end tag does not name, ignores end
+    /// tags with nothing to close, and treats attribute values, raw text and SVG by rules of its own. So
+    /// the bound is the time. The parser stops within about 50 ms of the token being cancelled, which
+    /// was measured on 100,000 and 1,000,000 levels of nesting and on a 21 MB flat document.
+    /// </summary>
+    /// <param name="deadline">
+    /// The clock of the stream the extractor was given. Without one, as when the budget is 0, the parse is
+    /// not bounded.
+    /// </param>
+    /// <exception cref="ExtractionTimeoutException">The budget passed before the tree was built.</exception>
+    public static IHtmlDocument Parse(HtmlParser parser, string markup, DeadlineStream? deadline) =>
+        Parsed(token => parser.ParseDocumentAsync(markup, token), deadline);
+
+    /// <inheritdoc cref="Parse(HtmlParser, string, DeadlineStream?)"/>
+    public static IHtmlDocument Parse(HtmlParser parser, Stream markup, DeadlineStream? deadline) =>
+        Parsed(token => parser.ParseDocumentAsync(markup, token), deadline);
+
+    private static readonly TimeSpan MaxCancelDelay = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
+
+    private static IHtmlDocument Parsed(Func<CancellationToken, Task<IHtmlDocument>> parse, DeadlineStream? deadline)
+    {
+        using var cancel = new CancellationTokenSource();
+        // CancelAfter takes no more than about 49 days. A budget longer than that is as good as none.
+        if (deadline is not null)
+            cancel.CancelAfter(deadline.Remaining > MaxCancelDelay ? Timeout.InfiniteTimeSpan : deadline.Remaining);
+
+        try
+        {
+            return parse(cancel.Token).GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException ex) when (deadline is not null && cancel.IsCancellationRequested)
+        {
+            throw deadline.TimedOut(ex);
+        }
+    }
+
     /// <summary>Elements whose text is markup machinery, not content.</summary>
     private static readonly HashSet<string> Skipped =
         new(StringComparer.Ordinal) { "script", "style", "noscript", "template", "head" };
@@ -636,14 +830,30 @@ internal static class HtmlText
     /// that way, which is why this went unnoticed, but it is unreadable in a search result
     /// and the chunker splits on lines, so a long listing was one line it could not split.
     /// </param>
-    private static void Walk(INode node, StringBuilder sb, bool preformatted)
+    private static void Walk(INode root, StringBuilder sb, bool preformatted)
     {
-        foreach (var child in node.ChildNodes)
+        // An explicit stack: a document nested a few thousand deep overflowed the call stack, which
+        // kills the process and cannot be caught. Each frame is a node, the index of the child to visit
+        // next, whether the node is inside a pre, and whether its end closes a block.
+        var stack = new Stack<(INode Node, int Next, bool Pre, bool Block)>();
+        stack.Push((root, 0, preformatted, false));
+
+        while (stack.Count > 0)
         {
-            switch (child)
+            var (node, next, pre, block) = stack.Pop();
+            var children = node.ChildNodes;
+            if (next >= children.Length)
+            {
+                if (block) EndLine(sb);
+                continue;
+            }
+
+            stack.Push((node, next + 1, pre, block));
+
+            switch (children[next])
             {
                 case IText text:
-                    if (preformatted) AppendVerbatim(text.Data, sb);
+                    if (pre) AppendVerbatim(text.Data, sb);
                     else AppendCollapsed(text.Data, sb);
                     break;
 
@@ -656,12 +866,12 @@ internal static class HtmlText
                     break;
 
                 case IElement el:
-                    var block = Blocks.Contains(el.LocalName);
-                    if (block) EndLine(sb);
+                    var isBlock = Blocks.Contains(el.LocalName);
+                    if (isBlock) EndLine(sb);
+
                     // Inherited, so the <code> inside a <pre> is preformatted too, which
                     // is how a listing is marked up nearly everywhere.
-                    Walk(el, sb, preformatted || el.LocalName == "pre");
-                    if (block) EndLine(sb);
+                    stack.Push((el, 0, pre || el.LocalName == "pre", isBlock));
                     break;
             }
         }

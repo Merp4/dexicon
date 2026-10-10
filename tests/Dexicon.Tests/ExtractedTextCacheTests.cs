@@ -87,6 +87,41 @@ public sealed class ExtractedTextCacheTests : IDisposable
         ExtractedTextCache cache, (string Full, string Relative) file, ITextExtractor? extractor) =>
         cache.ReadAsync(file.Full, file.Relative, extractor, timeoutSeconds: 300, CancellationToken.None);
 
+    /// <summary>Reads slowly, catches the timeout the deadline throws, and returns what it had.</summary>
+    private sealed class SwallowingTheTimeout : ITextExtractor
+    {
+        public bool CanHandle(string extension) => true;
+
+        public ExtractedText Extract(Stream content, string fileName)
+        {
+            try
+            {
+                var one = new byte[1];
+                while (content.Read(one, 0, 1) == 1) Thread.Sleep(20);
+            }
+            catch (ExtractionTimeoutException)
+            {
+                return new ExtractedText("partial", []);
+            }
+
+            return new ExtractedText("whole", []);
+        }
+    }
+
+    [Fact]
+    public async Task AnExtractorThatCaughtTheTimeoutAndReturnedPartialTextCachesNothing()
+    {
+        // 300 bytes at 20 ms each is six seconds of reading against a one second budget. The partial text
+        // would be stored at the current extractor version, which nothing extracts again.
+        await using var db = Db();
+        var file = File("slow.pdf", new string('x', 300));
+
+        await Should.ThrowAsync<ExtractionTimeoutException>(() =>
+            Cache(db).ReadAsync(file.Full, file.Relative, new SwallowingTheTimeout(), timeoutSeconds: 1, CancellationToken.None));
+
+        (await db.FileTexts.CountAsync()).ShouldBe(0);
+    }
+
     [Fact]
     public async Task TheSecondPassOverAnUnchangedFileDoesNotRunTheExtractor()
     {

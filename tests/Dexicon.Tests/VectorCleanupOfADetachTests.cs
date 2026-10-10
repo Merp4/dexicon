@@ -194,8 +194,17 @@ public sealed class VectorCleanupOfADetachTests
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
         var corpus = await db.Corpora.SingleAsync();
-        var stored = await documents.StoreAsync(new MemoryStream(TheBytes), fileName);
-        var attached = await documents.AttachAsync(corpus, stored.Sha256, fileName);
+        // A name that breaks the rule for names, a line break among them, can only belong to a document stored
+        // before the rule, so it is given to the row after the attachment.
+        var storedAs = DocumentService.FileNameProblem(fileName) is null ? fileName : "legacy.txt";
+        var stored = await documents.StoreAsync(new MemoryStream(TheBytes), storedAs);
+        var attached = await documents.AttachAsync(corpus, stored.Sha256, storedAs);
+        if (storedAs != fileName)
+        {
+            attached.RelativePath = fileName;
+            await db.SaveChangesAsync();
+        }
+
         var cleanup = new VectorStoreCleanup(db, harness.Vectors, logs.CreateLogger<VectorStoreCleanup>())
         {
             SecondDeleteTimeout = timeout ?? TimeSpan.FromMinutes(5),
