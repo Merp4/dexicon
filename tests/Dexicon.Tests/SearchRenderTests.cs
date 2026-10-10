@@ -43,6 +43,27 @@ public sealed class SearchRenderTests
     };
 
     [Fact]
+    public void AQueryAndAPathWithLineBreaksAndEscapesAreShownOnOneLineEach()
+    {
+        // The query is the caller's, and a path or section can come from a file name that holds a line break.
+        var forged = "[10:00:00Z INF] forged";
+        var hit = Hit($"a\n{forged}\u001B[2J.md", section: $"s\r\n{forged}", sourceRoot: $"r\n{forged}");
+        var result = new SearchResult
+        {
+            Query = $"q\n{forged}",
+            Mode = SearchMode.Hybrid,
+            Scope = [new SearchResult.ScopeEntry("c1", "library", CorpusState.Ready)],
+            Hits = [hit, Hit("b.md", sourceRoot: "other")],
+        };
+
+        var lines = DexiconTools.Render(result).Split('\n');
+
+        lines.ShouldNotContain(l => l.StartsWith(forged, StringComparison.Ordinal));
+        lines.ShouldContain(l => l.StartsWith("2 results for \"q ", StringComparison.Ordinal));
+        string.Concat(lines).ShouldNotContain("\u001B");
+    }
+
+    [Fact]
     public void ACodeHitIsCitedByLine()
     {
         var text = DexiconTools.Render(Result(Hit("src/Api/Search.cs", 228, 265)));

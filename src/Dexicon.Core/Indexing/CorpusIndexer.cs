@@ -71,6 +71,11 @@ public sealed class CorpusIndexer(
     // per chunk set, and the same skipped line is one finding.
     private readonly HashSet<string> _warned = new(StringComparer.Ordinal);
 
+    // Blobs whose re-extraction failed in this pass. A job indexes an upload source once per chunk
+    // set, and a document that times out would otherwise cost the whole budget once per set. Per
+    // indexer, which is one per job, and cleared when a run starts so that a reused indexer retries.
+    private readonly HashSet<string> _reextractionFailed = new(StringComparer.Ordinal);
+
     /// <summary>How a history source's tracking is read. Replaced in tests, to make it fail.</summary>
     internal Func<GitRepository, string, DateTime, CancellationToken, Task<GitTracking>> ReadTracking { get; init; }
         = GitHistory.TrackingAsync;
@@ -95,6 +100,7 @@ public sealed class CorpusIndexer(
         _unreachable = false;
         _tracked.Clear();
         _warned.Clear();
+        _reextractionFailed.Clear();
 
         // A source this pass could not reach: a mount that is away, a folder with no
         // repository in it. Not a failure of the job and not a success either.
@@ -428,7 +434,8 @@ public sealed class CorpusIndexer(
             {
                 // Re-extracts first if this text came from an older extractor, so a fix
                 // reaches documents that were ingested before it.
-                var cached = await documents.CurrentTextFor(file.BlobSha256!, file.RelativePath, ct);
+                var cached = await documents.CurrentTextFor(
+                    file.BlobSha256!, file.RelativePath, _reextractionFailed, ct);
                 var state = states[file.Id];
 
                 if (cached is null)
@@ -464,7 +471,7 @@ public sealed class CorpusIndexer(
                     file.ExtractedChars = 0;
                     // Hash IS recorded: an empty extraction is a settled outcome, not a
                     // failure to retry. Re-uploading the file is what changes it.
-                    state.ContentHash = ChunkingFingerprint(set, cached.Sha256, templates, chunking);
+                    state.ContentHash = ChunkingFingerprint(set, TextKey(cached), templates, chunking);
                     state.IndexedUtc = DateTime.UtcNow;
                     Count(file, Tally.Skipped);
                     continue;
@@ -473,7 +480,7 @@ public sealed class CorpusIndexer(
                 // The fingerprint mixes the blob hash WITH the corpus's chunk settings,
                 // so changing chunk size or boundary mode makes every attachment look
                 // changed and re-chunks it, without touching the bytes.
-                var fingerprint = ChunkingFingerprint(set, cached.Sha256, templates, chunking);
+                var fingerprint = ChunkingFingerprint(set, TextKey(cached), templates, chunking);
                 if (!full && state.ContentHash == fingerprint && state.Status == FileStatus.Indexed)
                 {
                     Count(file, Tally.Skipped);
@@ -941,6 +948,19 @@ public sealed class CorpusIndexer(
         symbols.Count == 0
             ? symbols
             : [.. symbols.Where(s => half.Contains(s, StringComparison.Ordinal))];
+
+    /// <summary>
+    /// What an upload's fingerprint is built on in place of the blob hash: the hash alone when the row's
+    /// text is current and reads back whole, and otherwise the hash with the extractor version and length
+    /// of the text that was in hand. A pass that has to chunk older or damaged text, because
+    /// re-extracting it failed, stamps the state with that, so the state never equals the fingerprint of
+    /// the text a later pass reads, whichever job rewrote the row in between. The plain form for current
+    /// text is what every state written so far holds, so nothing is chunked again because of this.
+    /// </summary>
+    internal static string TextKey(BlobText text) =>
+        text.ExtractorVersion < ExtractorVersions.Current || text.Text.Length != text.ExtractedChars
+            ? $"{text.Sha256}|text-v{text.ExtractorVersion}|{text.Text.Length}"
+            : text.Sha256;
 
     /// <summary>
     /// The set's own settings, with no model measurement to reconcile them against. The

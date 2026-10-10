@@ -291,11 +291,16 @@ internal sealed class IndexingHarness : IAsyncDisposable
     /// The leases the pass takes the corpus with. A test that has the pass lose its lease
     /// gives it ones that renew often enough to notice within the test.
     /// </param>
+    /// <param name="documentsFor">
+    /// The document service the pass reads stored text through, built over the pass's own context,
+    /// for a test that replaces how an upload is extracted.
+    /// </param>
     /// <param name="cancel">The caller's token, for a test that stops the pass the way a caller does.</param>
     public async Task<IndexJob> RunIndexAsync(JobKind kind = JobKind.Refresh,
         Func<GitRepository, string, DateTime, CancellationToken, Task<GitTracking>>? readTracking = null,
         ILogger<CorpusIndexer>? log = null, TimeSpan? saveRetryDelay = null, Action? beforePass = null,
-        CorpusLeases? leases = null, CancellationToken cancel = default)
+        CorpusLeases? leases = null, Func<CatalogDbContext, DocumentService>? documentsFor = null,
+        CancellationToken cancel = default)
     {
         string jobId;
         await using (var db = NewContext())
@@ -327,7 +332,7 @@ internal sealed class IndexingHarness : IAsyncDisposable
             Vectors,
             Embedder,
             new RawProfiles(),
-            new DocumentService(runDb, options, NullLogger<DocumentService>.Instance),
+            documentsFor?.Invoke(runDb) ?? new DocumentService(runDb, options, NullLogger<DocumentService>.Instance),
             leases ?? new CorpusLeases(scopes, NullLogger<CorpusLeases>.Instance),
             options,
             log ?? NullLogger<CorpusIndexer>.Instance)
@@ -337,6 +342,56 @@ internal sealed class IndexingHarness : IAsyncDisposable
         };
 
         return await indexer.RunAsync(jobId, null, cancel);
+    }
+
+    /// <summary>
+    /// Runs two jobs, one after the other, on the one indexer, for a test of what an indexer keeps from
+    /// one job to the next. <paramref name="betweenJobs"/> runs after the first.
+    /// </summary>
+    public async Task<IndexJob> RunTwoJobsOnOneIndexerAsync(
+        Func<CatalogDbContext, DocumentService> documentsFor, Action betweenJobs)
+    {
+        var options = _services.GetRequiredService<IOptions<DexiconOptions>>();
+        var scopes = _services.GetRequiredService<IServiceScopeFactory>();
+        await using var runDb = NewContext();
+        var indexer = new CorpusIndexer(
+            runDb,
+            new WorkspaceFileReader(scopes, options),
+            Vectors,
+            Embedder,
+            new RawProfiles(),
+            documentsFor(runDb),
+            new CorpusLeases(scopes, NullLogger<CorpusLeases>.Instance),
+            options,
+            NullLogger<CorpusIndexer>.Instance)
+        {
+            SaveRetryDelay = TimeSpan.Zero,
+        };
+
+        IndexJob last = null!;
+        for (var run = 0; run < 2; run++)
+        {
+            string jobId;
+            await using (var db = NewContext())
+            {
+                var job = new IndexJob
+                {
+                    Id = Ulid.NewUlid().ToString(),
+                    CorpusId = CorpusId,
+                    Kind = JobKind.Refresh,
+                    State = JobState.Queued,
+                    QueuedUtc = DateTime.UtcNow,
+                };
+                db.Jobs.Add(job);
+                await db.SaveChangesAsync(CancellationToken.None);
+                jobId = job.Id;
+            }
+
+            last = await indexer.RunAsync(jobId, null, CancellationToken.None);
+            if (run == 0) betweenJobs();
+        }
+
+        return last;
     }
 
     /// <summary>

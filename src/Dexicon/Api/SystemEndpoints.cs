@@ -348,6 +348,19 @@ public static class SystemEndpoints
     }
 
     /// <summary>
+    /// A stored measurement as the models list shows it, with the recommended chunk size held to the range a
+    /// chunk set accepts (<see cref="CodeChunker.WithinChunkRange"/>). A row measured before that clamp
+    /// existed can hold more than 8192 tokens. The stored value is not rewritten, and this mapping clamps it
+    /// each time the list is read.
+    /// </summary>
+    internal static ModelMeasurement? MeasurementOf(EmbeddingModelMeasurement? facts) =>
+        facts is null
+            ? null
+            : new ModelMeasurement(
+                facts.MaxInputChars, facts.TruncatesSilently, CodeChunker.WithinChunkRange(facts.RecommendedChunkTokens),
+                facts.CharsPerToken, facts.MeasuredUtc);
+
+    /// <summary>
     /// The folders directly in <paramref name="full"/>, an already-resolved directory under
     /// the workspace, as the folder picker and <c>list_folders</c> both show them. Hidden
     /// folders are left out except <c>.github</c>. A child count stops at 500, so a folder
@@ -798,9 +811,7 @@ public static class SystemEndpoints
                     m.Dimensions ?? facts?.Dimensions,
                     inUse.Contains(ModelNames.Normalise(m.Name)),
                     templates.Document, templates.Query, templates.Origin.ToString().ToLowerInvariant(),
-                    facts is null ? null : new ModelMeasurement(
-                        facts.MaxInputChars, facts.TruncatesSilently,
-                        facts.RecommendedChunkTokens, facts.CharsPerToken, facts.MeasuredUtc)));
+                    MeasurementOf(facts)));
             }
 
             return Results.Ok(new EmbeddingModelList(
@@ -861,19 +872,20 @@ public static class SystemEndpoints
                     await http.Response.Body.FlushAsync(ct);
                 }
 
-                log.LogInformation("Pulled {Model} into provider {Provider}", model, provider);
+                log.LogInformation("Pulled {Model} into provider {Provider}",
+                    DexiconAuthMiddleware.OneLine(model), DexiconAuthMiddleware.OneLine(provider));
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 // The client navigated away. Ollama keeps the partial download and
                 // resumes next time, so there is nothing to clean up.
-                log.LogInformation("Pull of {Model} was cancelled by the client", model);
+                log.LogInformation("Pull of {Model} was cancelled by the client", DexiconAuthMiddleware.OneLine(model));
             }
             catch (Exception ex) when (ex is EmbeddingUnavailableException
                                           or UnknownEmbeddingProviderException
                                           or InvalidOperationException)
             {
-                log.LogWarning(ex, "Pull of {Model} failed", model);
+                log.LogWarning(ex, "Pull of {Model} failed", DexiconAuthMiddleware.OneLine(model));
                 var json = JsonSerializer.Serialize(new { model, provider, error = ex.Message }, JsonOptions.Web);
                 await http.Response.WriteAsync($"data: {json}\n\n", CancellationToken.None);
             }

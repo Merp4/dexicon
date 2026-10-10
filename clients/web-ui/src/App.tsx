@@ -41,6 +41,7 @@ const sameModelName = (a: string, b: string) =>
 
 import { DocumentsView } from './Documents';
 import { ChunkSetsPanel, ModelsView } from './ChunkSets';
+import { suggestedOverlap, usableChunkTokens } from './chunkLimits';
 import { ApprovalsView } from './Approvals';
 
 // The list and the parsing live in route.ts, so the URL and the switch below cannot
@@ -1005,8 +1006,8 @@ function CreateCorpusModal({ onClose, onCreated }: { onClose: () => void; onCrea
         embeddingModel: model || undefined,
         // Only when the model has been measured. Sending a guess would pin a size into
         // the one property of a chunk set nobody can edit afterwards.
-        chunkSize: measured?.recommendedChunkTokens,
-        chunkOverlap: measured ? Math.max(1, Math.round(measured.recommendedChunkTokens / 8)) : undefined,
+        chunkSize: measured ? usableChunkTokens(measured.recommendedChunkTokens) : undefined,
+        chunkOverlap: measured ? suggestedOverlap(usableChunkTokens(measured.recommendedChunkTokens)) : undefined,
       });
       await onCreated();
     } catch (err) {
@@ -1038,7 +1039,7 @@ function CreateCorpusModal({ onClose, onCreated }: { onClose: () => void; onCrea
             measured
               ? `Measured at ${measured.maxInputChars?.toLocaleString() ?? 'no'} chars` +
                 `${measured.charsPerToken ? ` · ${measured.charsPerToken} chars/token` : ''}` +
-                ` · chunks of ${measured.recommendedChunkTokens.toLocaleString()} tokens`
+                ` · chunks of ${usableChunkTokens(measured.recommendedChunkTokens).toLocaleString()} tokens`
               : 'Fixed once the corpus exists: a different model is a different vector space, so changing it later means a new chunk set. Test limits on Models measures one.'
           }
         >
@@ -1047,7 +1048,7 @@ function CreateCorpusModal({ onClose, onCreated }: { onClose: () => void; onCrea
               {models.map((m) => (
                 <SelectItem key={m.name} value={m.name}>
                   {m.name} ({formatBytes(m.sizeBytes)})
-                  {m.measured ? ` · ${m.measured.recommendedChunkTokens.toLocaleString()} tokens` : ''}
+                  {m.measured ? ` · ${usableChunkTokens(m.measured.recommendedChunkTokens).toLocaleString()} tokens` : ''}
                 </SelectItem>
               ))}
             </Select>

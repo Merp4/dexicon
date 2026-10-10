@@ -471,4 +471,153 @@ public sealed class MalformedRequestTests
         thrown.Message.ShouldBe("A file name is required.");
         (await db.Files.CountAsync()).ShouldBe(0);
     }
+
+    public static TheoryData<string> UnacceptableFileNames() => new()
+    {
+        "line\nbreak.txt",
+        "carriage\r\nreturn.txt",
+        "tab\there.txt",
+        "nul\0.txt",
+        "next\u0085line.txt",
+        "line\u2028separator.txt",
+        "paragraph\u2029separator.txt",
+        "delete\u007f.txt",
+        "reversed\u202Egpj.txt",
+        "embedded\u202Aname.txt",
+        "isolated\u2069name.txt",
+        new string('n', 257) + ".txt",
+    };
+
+    /// <summary>A stream that counts what is read from it.</summary>
+    private sealed class CountingStream(byte[] bytes) : MemoryStream(bytes)
+    {
+        public int Reads { get; private set; }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            Reads++;
+            return base.ReadAsync(buffer, cancellationToken);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(UnacceptableFileNames))]
+    public async Task TheServiceRefusesAStoredNameWithAControlCharacterOrOver260CharactersBeforeReadingTheBytes(string name)
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var content = new CountingStream("a document"u8.ToArray());
+
+        var thrown = await Should.ThrowAsync<ArgumentException>(() => documents.StoreAsync(content, name));
+
+        thrown.ParamName.ShouldBeNull("the upload endpoint lists the message for whoever sent the file");
+        thrown.Message.ShouldNotContain(name, Case.Sensitive);
+        thrown.Message.ShouldMatch("control character|260 characters");
+        content.Reads.ShouldBe(0, "the name was refused before the upload was copied anywhere");
+        (await db.Blobs.CountAsync()).ShouldBe(0);
+    }
+
+    [Theory]
+    [MemberData(nameof(UnacceptableFileNames))]
+    public async Task TheServiceRefusesAnAttachmentNameWithAControlCharacterOrOver260Characters(string name)
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), "a.txt");
+        var corpus = await db.Corpora.SingleAsync();
+
+        var thrown = await Should.ThrowAsync<ArgumentException>(() => documents.AttachAsync(corpus, stored.Sha256, name));
+
+        thrown.ParamName.ShouldBeNull();
+        thrown.Message.ShouldNotContain(name, Case.Sensitive);
+        thrown.Message.ShouldMatch("control character|260 characters");
+        (await db.Files.CountAsync()).ShouldBe(0);
+        (await db.Sources.CountAsync(s => s.Kind == SourceKind.Upload)).ShouldBe(1, "no upload source was added for it");
+    }
+
+    [Theory]
+    [InlineData("emoji\u200Dzwj.txt")]
+    [InlineData("\u0645\u200C\u06A9.txt")]
+    public async Task ANameWithAJoinerOrAnotherFormatCharacterIsStoredAndAttached(string name)
+    {
+        // Only the bidirectional overrides and isolates are refused: U+200C and U+200D are part of Persian and of emoji.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var corpus = await db.Corpora.SingleAsync();
+
+        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), name);
+        var file = await documents.AttachAsync(corpus, stored.Sha256, name);
+
+        file.RelativePath.ShouldBe(name);
+    }
+
+    [Fact]
+    public async Task ANameOf260CharactersIsStoredAndAttached()
+    {
+        // The boundary: 260 is the longest name accepted.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var name = new string('n', 256) + ".txt";
+        var corpus = await db.Corpora.SingleAsync();
+
+        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), name);
+        var file = await documents.AttachAsync(corpus, stored.Sha256, name);
+
+        name.Length.ShouldBe(260);
+        file.RelativePath.ShouldBe(name);
+    }
+
+    [Theory]
+    [MemberData(nameof(UnacceptableFileNames))]
+    public async Task AttachingUnderAnUnacceptableNameIsAnswered400AndChangesNothing(string name)
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), "a.txt");
+        var queue = new IndexJobQueue(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance);
+
+        var result = await DocumentEndpoints.AttachAsync(
+            IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256, name), AsIngester(), new ScopeResolver(db),
+            documents, db, queue, default);
+
+        var problem = result.ShouldBeOfType<ProblemHttpResult>();
+        problem.StatusCode.ShouldBe(400);
+        problem.ProblemDetails.Title.ShouldBe("Invalid file name");
+        problem.ProblemDetails.Detail.ShouldNotBeNull().ShouldNotContain(name, Case.Sensitive);
+        (await db.Files.CountAsync()).ShouldBe(0);
+        (await db.Jobs.CountAsync()).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task AttachingWithNoNameToADocumentStoredUnderAnUnacceptableNameIsAnswered400()
+    {
+        // A name stored before names were checked. Left out, the attachment would take it as its path.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), "a.txt");
+        (await db.Blobs.SingleAsync()).OriginalFileName = "old\nname.txt";
+        await db.SaveChangesAsync();
+        var queue = new IndexJobQueue(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance);
+
+        var result = await DocumentEndpoints.AttachAsync(
+            IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256), AsIngester(), new ScopeResolver(db),
+            documents, db, queue, default);
+
+        var problem = result.ShouldBeOfType<ProblemHttpResult>();
+        problem.StatusCode.ShouldBe(400);
+        problem.ProblemDetails.Title.ShouldBe("Invalid file name");
+        problem.ProblemDetails.Detail.ShouldNotBeNull().ShouldContain("fileName");
+        (await db.Files.CountAsync()).ShouldBe(0);
+    }
 }

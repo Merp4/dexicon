@@ -93,7 +93,7 @@ tool advertises.
 | `mode` | string | `hybrid` | hybrid blends meaning with exact terms; semantic is meaning only; keyword is exact-match only and keeps working when embeddings are unavailable. |
 | `limit` | integer | 10 | Maximum results, 1-50. |
 | `pathPrefix` | string | none | Restrict to files under this path, e.g. src/Auth/. Relative to the source root, not the corpus. Use `source` to narrow by folder instead. |
-| `source` | string | none | Restrict to one source, by the root path a search result cites, e.g. books/manuals/Architecture. A parent matches everything beneath it, so books/manuals covers every topic folder under it. list_corpora does not list these; run a search first, or pass a wrong one and the error names them all. |
+| `source` | string | none | Restrict to one source, by the root path a search result cites, e.g. books/manuals/Architecture. A parent matches everything beneath it, so books/manuals covers every topic folder under it. list_corpora does not list these; run a search first, or pass a wrong one and the error lists them, up to 1,500 characters and then how many more. |
 | `language` | string | none | Restrict to one language, e.g. csharp, python, typescript. |
 | `symbol` | string | none | Restrict to chunks declaring this symbol, e.g. TokenService. |
 | `maxCharsPerHit` | integer | 1500 | Characters of each result to return, centred on the matching passage. The default is enough to read the match in context; raise it when a hit is clearly the right passage and you need more of it, or use get_context. 0 returns whole chunks, which on a book corpus is about 8,000 characters each. |

@@ -221,37 +221,31 @@ public sealed class DexiconAuthMiddleware(
     /// Replaced rather than removed, and with U+FFFD, so a path that was odd still reads
     /// as odd rather than as a path somebody sent.
     ///
-    /// The two line breaks go through <see cref="string.Replace(string, string)"/> by
-    /// name. Written as one pass over <see cref="char.IsControl"/> it reads better and
-    /// does the same thing, but CodeQL's <c>cs/log-forging</c> recognises the Replace
-    /// form as the barrier and nothing else, so folding these two lines into the loop
-    /// below reopens the alert without changing the behaviour.
+    /// The line breaks go through <see cref="string.Replace(string, string)"/> by
+    /// name, and a CRLF is one line break with one marker. Written as one pass over code
+    /// points it reads better and does the same thing, but CodeQL's <c>cs/log-forging</c>
+    /// recognises the Replace form as the barrier and nothing else, so folding these lines
+    /// into the pass below reopens the alert without changing the behaviour.
     ///
-    /// The loop then takes the rest of the control range, which the Replace calls do not
-    /// cover: an escape sequence reaching a terminal that tails the log is the same trick
-    /// by another route, and <c>\u001B[2J</c> clears its screen.
+    /// <see cref="LogText.Neutralise"/> then takes the rest, which the Replace calls do not
+    /// cover: the other control characters (an escape sequence reaching a terminal that
+    /// tails the log is the same trick by another route, and <c>\u001B[2J</c> clears its
+    /// screen), the C1 controls, and the format characters that hide text or reverse its
+    /// direction. Each code point is one marker, a tab included.
     /// </summary>
     internal static string OneLine(string value)
     {
-        // U+2028 and U+2029 end a line for many readers and are not control characters,
-        // so the loop below would pass them.
-        var held = value.Replace("\r", ReplacementText, StringComparison.Ordinal)
+        // U+2028 and U+2029 end a line for many readers; they are replaced here by name so that the
+        // barrier above covers every line break, and again by the pass below as separators.
+        var held = value.Replace("\r\n", ReplacementText, StringComparison.Ordinal)
+                        .Replace("\r", ReplacementText, StringComparison.Ordinal)
                         .Replace("\n", ReplacementText, StringComparison.Ordinal)
                         .Replace("\u2028", ReplacementText, StringComparison.Ordinal)
                         .Replace("\u2029", ReplacementText, StringComparison.Ordinal);
 
-        var at = 0;
-        while (at < held.Length && !char.IsControl(held[at])) at++;
-        if (at == held.Length) return held;
-
-        return string.Create(held.Length, held, static (span, source) =>
-        {
-            for (var i = 0; i < source.Length; i++)
-                span[i] = char.IsControl(source[i]) ? Replacement : source[i];
-        });
+        return LogText.Neutralise(held, includeC0: true);
     }
 
-    private const char Replacement = '�';
     private const string ReplacementText = "�";
 
     private static Task Problem(HttpContext ctx, int status, string title, string detail)

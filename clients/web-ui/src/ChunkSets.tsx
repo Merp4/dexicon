@@ -17,6 +17,7 @@ import {
 import { ChevronRight, Trash2, TriangleAlert } from 'lucide-react';
 import { cn } from 'cn';
 import { count, unitFor } from './lib/units';
+import { suggestedOverlap, usableChunkTokens } from './chunkLimits';
 
 /** `nomic-embed-text` and `nomic-embed-text:latest` are the same model; only :latest is implicit. */
 const bareName = (m: string) => m.replace(/:latest$/i, '');
@@ -388,15 +389,19 @@ function ChunkSetModal({
     setError(null);
     try {
       if (existing) {
+        // Only what was changed. A set stored before a rule existed (a size over 8,192) can then be saved
+        // after editing its description, and a save that changes nothing re-chunks nothing.
+        const changed = <T,>(next: T, was: T): T | undefined => (next === was ? undefined : next);
         await api.updateChunkSet(corpus.name, existing.name, {
-          description,
-          chunkSize,
-          chunkOverlap,
-          boundaryMode,
-          customBoundaryPattern: boundaryMode === 'custom' ? pattern : null,
-          unitAware,
-          sentenceAware,
-          headingContext,
+          description: changed(description, existing.description ?? ''),
+          chunkSize: changed(chunkSize, existing.chunkSize),
+          chunkOverlap: changed(chunkOverlap, existing.chunkOverlap),
+          boundaryMode: changed(boundaryMode, existing.boundaryMode),
+          customBoundaryPattern:
+            boundaryMode === 'custom' ? changed(pattern, existing.customBoundaryPattern ?? '') : undefined,
+          unitAware: changed(unitAware, existing.unitAware),
+          sentenceAware: changed(sentenceAware, existing.sentenceAware),
+          headingContext: changed(headingContext, existing.headingContext),
         });
       } else {
         await api.createChunkSet(corpus.name, {
@@ -442,8 +447,9 @@ function ChunkSetModal({
     // never been probed has nothing to suggest, so the field keeps the inherited value
     // rather than snapping to a guess.
     if (!sizeIsOurs || existing || !measured) return;
-    setChunkSize(measured.recommendedChunkTokens);
-    setChunkOverlap(Math.max(1, Math.round(measured.recommendedChunkTokens / 8)));
+    const size = usableChunkTokens(measured.recommendedChunkTokens);
+    setChunkSize(size);
+    setChunkOverlap(suggestedOverlap(size));
   }, [measured, sizeIsOurs, existing]);
 
   return (
@@ -514,7 +520,7 @@ function ChunkSetModal({
             measured
               ? `${chosenModel?.name.split(':')[0]} was measured at ${measured.maxInputChars?.toLocaleString() ?? 'no'} chars` +
                 `${measured.charsPerToken ? ` · ${measured.charsPerToken} chars/token` : ''}` +
-                ` · suggested ${measured.recommendedChunkTokens.toLocaleString()}`
+                ` · suggested ${usableChunkTokens(measured.recommendedChunkTokens).toLocaleString()}`
               : 'Budgeted as four characters a token. Run Test limits on Models to measure this one.'
           }
         >
@@ -1005,7 +1011,7 @@ export function ModelsView() {
                         <strong>{caps.maxInputChars ? caps.maxInputChars.toLocaleString() : 'unbounded'}</strong> chars
                       </span>
                       <span>
-                        suggested chunk size <strong>{caps.recommendedChunkTokens.toLocaleString()}</strong> tokens
+                        suggested chunk size <strong>{usableChunkTokens(caps.recommendedChunkTokens).toLocaleString()}</strong> tokens
                       </span>
                       {/* The number that makes the one above mean anything. The chunker
                           budgets in characters at a flat 4 per token; this is what this

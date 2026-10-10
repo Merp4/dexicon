@@ -23,6 +23,7 @@ const listEmbeddingModels = vi.fn();
 const probeEmbeddingModel = vi.fn();
 const listEmbeddingProviders = vi.fn();
 const promoteChunkSet = vi.fn();
+const updateChunkSet = vi.fn();
 
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
@@ -31,6 +32,7 @@ vi.mock('./api', async (importOriginal) => ({
     probeEmbeddingModel: (...args: unknown[]) => probeEmbeddingModel(...args),
     listEmbeddingProviders: (...args: unknown[]) => listEmbeddingProviders(...args),
     promoteChunkSet: (...args: unknown[]) => promoteChunkSet(...args),
+    updateChunkSet: (...args: unknown[]) => updateChunkSet(...args),
   },
 }));
 
@@ -207,6 +209,77 @@ describe('the Add a chunk set form', () => {
 
     await waitFor(() =>
       expect(within(dialog).getByLabelText('Chunk size (tokens)')).toHaveValue(665));
+  });
+
+  it('suggests no more than a chunk set accepts for a model with a very long context', async () => {
+    // 0.9 of a 32k context is 29,491 tokens, and the server refuses a size over 8,192. The size, the
+    // overlap derived from it and the hint all go through the same limit.
+    listEmbeddingModels.mockResolvedValue({
+      provider: 'ollama', managed: true, configured: 'qwen3-embedding', note: null,
+      models: [model('qwen3-embedding:latest', {
+        measured: {
+          maxInputChars: 131_072, truncatesSilently: false, recommendedChunkTokens: 29_491,
+          charsPerToken: 4, measuredUtc: new Date().toISOString(),
+        },
+      })],
+    });
+
+    const { dialog } = await openAddModal([chunkSet({ embeddingModel: 'qwen3-embedding' })]);
+
+    await waitFor(() =>
+      expect(within(dialog).getByLabelText('Chunk size (tokens)')).toHaveValue(8192));
+    expect(within(dialog).getByLabelText('Overlap (tokens)')).toHaveValue(1024);
+    expect(within(dialog).getByText(/suggested 8,192$/)).toBeInTheDocument();
+  });
+
+  it('sends only what was changed, so a set stored with an old size can still be edited', async () => {
+    // The corpus dialog used to send 29,491 tokens for a 32k model, and the server now refuses a size over
+    // 8,192. Sending the stored size back with every save made every edit of such a set a 400.
+    updateChunkSet.mockResolvedValue({});
+    const user = userEvent.setup();
+    const onChanged = vi.fn();
+    render(
+      <ChunkSetsPanel
+        corpus={corpus([chunkSet({ chunkSize: 29_491, chunkOverlap: 3_686, description: 'old' })])}
+        onChanged={onChanged}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    const dialog = await screen.findByRole('dialog');
+    const description = within(dialog).getByLabelText('Description');
+    await user.clear(description);
+    await user.type(description, 'read for the fine search');
+    await user.click(within(dialog).getByRole('button', { name: 'Save and re-chunk' }));
+
+    await waitFor(() => expect(updateChunkSet).toHaveBeenCalled());
+    const sent = updateChunkSet.mock.calls[0][2];
+    expect(sent).toEqual({ description: 'read for the fine search' });
+    expect(Object.keys(sent).filter((k) => sent[k] !== undefined)).toEqual(['description']);
+  });
+
+  it('leaves the description out of the request when only another setting was edited', async () => {
+    updateChunkSet.mockResolvedValue({});
+    const user = userEvent.setup();
+    render(
+      <ChunkSetsPanel
+        corpus={corpus([chunkSet({ chunkSize: 29_491, chunkOverlap: 3_686, description: 'old', headingContext: false })])}
+        onChanged={vi.fn()}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByLabelText('Heading context'));
+    await user.click(within(dialog).getByRole('button', { name: 'Save and re-chunk' }));
+
+    await waitFor(() => expect(updateChunkSet).toHaveBeenCalled());
+    const sent = updateChunkSet.mock.calls[0][2];
+    expect(Object.keys(sent).filter((k) => sent[k] !== undefined)).toEqual(['headingContext']);
   });
 
   it('leaves the size alone for a model that has never been probed', async () => {
@@ -532,6 +605,19 @@ describe('measuring a model', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('suggests no more than a chunk set accepts after measuring a model with a very long context', async () => {
+    probeEmbeddingModel.mockResolvedValue({
+      model: 'nomic-embed-text:latest', dimensions: 1024, maxInputChars: 131_072, truncatesSilently: false,
+      recommendedChunkChars: 117_964, recommendedChunkTokens: 29_491, charsPerToken: 4, contextTokens: 32_768,
+      embedCalls: 24, tookMs: 1500, summary: 'accepts everything we tried',
+    });
+
+    const user = await openModels();
+    await user.click(testLimits());
+
+    expect(await screen.findByText(/suggested chunk size/)).toHaveTextContent('suggested chunk size 8,192 tokens');
   });
 
   it('can be stopped, and stopping is not reported as a failure', async () => {

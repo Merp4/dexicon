@@ -54,6 +54,7 @@ public sealed class DocumentService(
 {
     private readonly StorageOptions _storage = options.Value.Storage;
     private readonly UploadOptions _upload = options.Value.Upload;
+    private readonly IndexingOptions _indexing = options.Value.Indexing;
 
     /// <summary>
     /// Orders the writes to a corpus's attachment rows, which an attachment reads and then saves against.
@@ -91,6 +92,34 @@ public sealed class DocumentService(
     /// </summary>
     private static readonly SemaphoreSlim Attaching = new(1, 1);
 
+    /// <summary>The longest file name stored, in UTF-16 characters.</summary>
+    public const int MaxFileNameLength = 260;
+
+    /// <summary>
+    /// Why <paramref name="fileName"/> cannot be stored as a file's path, or null when it can: it is
+    /// blank, longer than <see cref="MaxFileNameLength"/>, or holds a control character (a line break
+    /// among them, including U+2028 and U+2029) or a bidirectional override. A listing, a search hit and a log line show the name.
+    /// The text does not repeat the name, because the upload endpoint reports it to whoever sent the
+    /// file and the attach endpoint puts it in a problem detail.
+    /// </summary>
+    public static string? FileNameProblem(string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName)) return "A file name is required.";
+        if (fileName.Length > MaxFileNameLength)
+            return $"A file name is limited to {MaxFileNameLength} characters.";
+        if (fileName.Any(c => char.IsControl(c) || c is '\u2028' or '\u2029' || IsBidirectionalOverride(c)))
+            return "A file name cannot hold a control character, such as a line break, or a bidirectional override.";
+
+        return null;
+    }
+
+    /// <summary>
+    /// The embedding and override characters U+202A to U+202E and the isolates U+2066 to U+2069, which
+    /// reorder the text around them and so can make a name read as another in a listing. Other format
+    /// characters stay allowed: U+200C and U+200D are part of Persian and of emoji sequences.
+    /// </summary>
+    private static bool IsBidirectionalOverride(char c) => c is >= '\u202a' and <= '\u202e' or >= '\u2066' and <= '\u2069';
+
     /// <summary>
     /// Takes the lock attachments hold, for a writer that deletes a source, a chunk set or a corpus. Dispose
     /// it as soon as the catalogue delete is saved, and call nothing slow, such as the vector store, while
@@ -122,8 +151,8 @@ public sealed class DocumentService(
     /// </summary>
     public async Task<StoredDocument> StoreAsync(Stream content, string fileName, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(fileName))
-            throw new ArgumentException("A file name is required.");
+        // Before the bytes are read: a refused name costs the upload nothing. No paramName, as below.
+        if (FileNameProblem(fileName) is { } problem) throw new ArgumentException(problem);
 
         // Buffer to a temp file rather than memory: a 200 MB upload should not be a
         // 200 MB allocation, and the hash is only known after the whole stream is read.
@@ -182,9 +211,52 @@ public sealed class DocumentService(
             OriginalFileName = fileName,
             CreatedUtc = DateTime.UtcNow,
         };
-        db.Blobs.Add(blob);
 
-        var text = await ExtractAsync(sha, fileName, ct);
+        // Extracted before either row is added to the context. A timeout, or another failure that is not
+        // a verdict on the bytes, leaves nothing tracked, so the save of the next file's attachment, or
+        // the one that queues the job, cannot write a blob that has no text. No document record is
+        // created: the bytes stay in the blob store, which a concurrent upload of the same bytes may
+        // be relying on, and a later upload of them extracts again.
+        BlobText text;
+        try
+        {
+            text = await ExtractAsync(sha, fileName, ct);
+        }
+        catch (ExtractionFailedException ex)
+        {
+            // The same bytes were uploaded at the same moment and the other upload saved its blob while
+            // this one was extracting. This upload reports that blob and is not told to send the file again.
+            // Not cancellable, as for the duplicate key below: the read only decides the reply. A lookup
+            // that fails (a busy catalogue) is logged and the extraction failure stays the answer, so a
+            // file's failure does not become the batch's.
+            StoredDocument? saved = null;
+            try
+            {
+                saved = await ExistingAsync(sha, fileName, CancellationToken.None);
+            }
+            catch (Exception lookup)
+            {
+                log.LogWarning(lookup,
+                    "Looking for a blob of {Sha} saved by another upload failed after the extraction of uploaded '{File}' failed",
+                    sha[..12], fileName);
+            }
+
+            if (saved is null)
+            {
+                log.LogWarning(ex, "Extraction of uploaded '{File}' {Outcome}; no document record was created",
+                    fileName,
+                    ex is ExtractionTimeoutException
+                        ? $"did not finish within {_indexing.ExtractionTimeoutSeconds} s"
+                        : "failed for a reason that is not a verdict on the file");
+                throw;
+            }
+
+            log.LogInformation("Upload '{File}' of {Sha} was saved by another upload while this one failed to extract it",
+                fileName, sha[..12]);
+            return saved;
+        }
+
+        db.Blobs.Add(blob);
         db.BlobTexts.Add(text);
         try
         {
@@ -266,10 +338,23 @@ public sealed class DocumentService(
         }
     }
 
-    private async Task<BlobText> ExtractAsync(string sha, string fileName, CancellationToken ct)
+    /// <summary>
+    /// The extractor for a file name, <see cref="ExtractorRegistry.For"/> unless a test replaces it:
+    /// the registered extractors read a file in a few milliseconds and cannot be made slow.
+    /// </summary>
+    internal Func<string, ITextExtractor?> ExtractorFor { get; init; } = ExtractorRegistry.For;
+
+    /// <param name="keepOnUnexpected">
+    /// Whether a verdict made from an exception type that points at a fault in the extractor is thrown
+    /// and not recorded. A stored document being extracted again has good cached text, which such a
+    /// fault should not replace.
+    /// </param>
+    private async Task<BlobText> ExtractAsync(string sha, string fileName, CancellationToken ct,
+        bool keepOnUnexpected = false)
     {
-        var extractor = ExtractorRegistry.For(fileName);
+        var extractor = ExtractorFor(fileName);
         var path = PathFor(sha);
+        DeadlineStream? deadline = null;
 
         try
         {
@@ -283,7 +368,23 @@ public sealed class DocumentService(
             else
             {
                 await using var stream = File.OpenRead(path);
-                extracted = extractor.Extract(stream, fileName);
+
+                // The deadline the indexing path puts on a workspace file (ExtractedTextCache.ParseAsync):
+                // without it a file that keeps reading holds the request, and the files after it in an
+                // upload, for as long as it takes. 0 disables it, as there.
+                var timeoutSeconds = _indexing.ExtractionTimeoutSeconds;
+                if (timeoutSeconds > 0)
+                {
+                    deadline = new DeadlineStream(stream, TimeSpan.FromSeconds(timeoutSeconds), fileName);
+                    extracted = extractor.Extract(deadline, fileName);
+
+                    // An extractor that caught the timeout and went on has read part of the file.
+                    if (deadline.Expired) throw deadline.TimedOut();
+                }
+                else
+                {
+                    extracted = extractor.Extract(stream, fileName);
+                }
             }
 
             // Whatever produced it. A repair that wrote the same NUL-bearing text back would
@@ -312,11 +413,46 @@ public sealed class DocumentService(
                 EmptyReason = emptyReason,
             };
         }
-        catch (ExtractionFailedException ex)
+        // A timeout says how busy the host was when it ran, not what is in the document, so it is not
+        // recorded as the blob's text: a row at the current extractor version is never extracted
+        // again, and the same bytes uploaded again would reuse it. It reaches the caller, which
+        // leaves what it has. An extractor may wrap the exception in its own, or fail with another one
+        // after the deadline passed, so the deadline's own flag is read as well as the type.
+        // A cancellation the caller asked for is theirs and passes. One raised after the budget ran out, by
+        // the parse that the clock cancelled, is the timeout.
+        catch (Exception ex) when ((ex is not OperationCanceledException || !ct.IsCancellationRequested)
+                                   && (ex is ExtractionTimeoutException || deadline is { Expired: true }))
         {
+            if (ex is ExtractionTimeoutException) throw;
+            throw deadline!.TimedOut(ex);
+        }
+        // Whatever an extractor or the read of the blob throws is classified as the indexing path
+        // classifies a parser's exception (ExtractionFailures.Of). Only the verdict on the bytes is
+        // recorded: a file that is encrypted or corrupt reads the same way every time, so the row says
+        // why it is empty. Every other failure (an I/O error, a refused permission, a shortage of
+        // memory, a TimeoutException, or an extraction failure that wraps one of those) says how the
+        // host was when it ran, so it reaches the caller as a timeout does and no row is written.
+        // A cancellation the caller did not ask for is how a library reports a timeout of its own, so it
+        // is a failure that is not a verdict on the file. One the caller asked for is theirs and
+        // propagates.
+        catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
+        {
+            throw new ExtractionFailedException($"'{fileName}' could not be read: {ex.Message}", ex);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            var failure = ex as ExtractionFailedException
+                ?? ExtractionFailures.Of($"'{fileName}' could not be read: {ex.Message}", ex);
+            if (failure is not UnreadableDocumentException { } verdict
+                || (keepOnUnexpected && verdict.Unexpected))
+            {
+                if (ReferenceEquals(failure, ex)) throw;
+                throw failure;
+            }
+
             // Recorded rather than thrown away: the blob exists, so the UI can show it
             // as failed with a reason instead of the upload appearing to have worked.
-            log.LogWarning(ex, "Extraction failed for uploaded '{File}'", fileName);
+            log.LogWarning(failure, "Extraction failed for uploaded '{File}'", fileName);
             return new BlobText
             {
                 Sha256 = sha,
@@ -325,7 +461,7 @@ public sealed class DocumentService(
                 Extractor = extractor?.GetType().Name ?? "PlainText",
                 ExtractorVersion = ExtractorVersions.Current,
                 ExtractedUtc = DateTime.UtcNow,
-                EmptyReason = ex.Message,
+                EmptyReason = failure.Message,
             };
         }
     }
@@ -349,7 +485,7 @@ public sealed class DocumentService(
         CancellationToken ct = default)
     {
         // As StoreAsync: no paramName, so the message reads the same to whoever is told it.
-        if (string.IsNullOrWhiteSpace(fileName)) throw new ArgumentException("A file name is required.");
+        if (FileNameProblem(fileName) is { } problem) throw new ArgumentException(problem);
 
         await Attaching.WaitAsync(ct);
         try { return await AttachHeldAsync(corpus, sha256, fileName, ct); }
@@ -543,8 +679,19 @@ public sealed class DocumentService(
     /// extractor or no longer reads back as long as it was written. Called on the indexing
     /// path, so an extractor fix reaches a library that was ingested before it without
     /// anyone re-uploading anything.
+    ///
+    /// A re-extraction that fails for a reason that is not a verdict on the bytes (a timeout, an I/O
+    /// error, a refused permission, a shortage of memory, or an extraction failure that wraps one of
+    /// those), or whose exception points at a fault in the extractor (such as a null reference, an invalid
+    /// operation), leaves the row as it was and returns it, so a later pass tries again.
     /// </summary>
-    public async Task<BlobText?> CurrentTextFor(string sha256, string fileName, CancellationToken ct = default)
+    /// <param name="failedThisPass">
+    /// Hashes whose re-extraction has failed in this pass. The indexer calls this once per chunk set for
+    /// every attachment, so a slow document would cost its whole time budget once per set. A hash that
+    /// fails is added here, and one already here is not extracted again.
+    /// </param>
+    public async Task<BlobText?> CurrentTextFor(string sha256, string fileName,
+        ISet<string>? failedThisPass = null, CancellationToken ct = default)
     {
         // Check the version alone before loading anything. Extracted text runs to
         // hundreds of thousands of characters, and the usual answer is "already current"
@@ -578,34 +725,56 @@ public sealed class DocumentService(
             return cached;
         }
 
-        var fresh = await ExtractAsync(sha256, fileName, ct);
-        if (damaged)
-            log.LogWarning(
-                "Cached text for {Sha} reads back {Read:N0} of the {Written:N0} characters stored with it; extracted again",
-                sha256[..12], cached.Text.Length, cached.ExtractedChars);
-        else
-            log.LogInformation(
-                "Re-extracted {Sha} with extractor v{Version}: {Before:N0} -> {After:N0} chars",
-                sha256[..12], ExtractorVersions.Current, cached.ExtractedChars, fresh.ExtractedChars);
+        // Already failed in this pass, for another chunk set: the cost of a slow document is paid once.
+        if (failedThisPass?.Contains(sha256) == true) return cached;
 
-        cached.Text = fresh.Text;
-        cached.UnitsJson = fresh.UnitsJson;
-        cached.Title = fresh.Title;
-        cached.ExtractedChars = fresh.ExtractedChars;
-        cached.Extractor = fresh.Extractor;
-        cached.ExtractorVersion = fresh.ExtractorVersion;
-        cached.ExtractedUtc = fresh.ExtractedUtc;
-        cached.EmptyReason = fresh.EmptyReason;
+        BlobText fresh;
+        try
+        {
+            fresh = await ExtractAsync(sha256, fileName, ct, keepOnUnexpected: true);
+        }
+        catch (ExtractionFailedException ex)
+        {
+            // A timeout, an I/O error, a refused permission, a shortage of memory or a failure that wraps
+            // one of those says how the host was and not what the document holds, and a fault in the
+            // extractor says nothing certain about bytes that read well before. The row stays as it was,
+            // version included, so a later pass extracts again, and the caller carries on with the text it
+            // had.
+            failedThisPass?.Add(sha256);
+            var outcome = ex switch
+            {
+                ExtractionTimeoutException => "timed out",
+                UnreadableDocumentException { Unexpected: true } =>
+                    $"hit an unexpected {ex.GetBaseException().GetType().Name} in {ExtractorFor(fileName)?.GetType().Name ?? "the reader"}",
+                _ => "failed",
+            };
+            log.LogWarning(ex,
+                "Re-extraction of {File} ({Sha}) {Outcome}; keeping the cached v{Version} text and trying again on a later pass",
+                fileName, sha256[..12], outcome, cached.ExtractorVersion);
+            return cached;
+        }
+
+        // A pass cancelled while the extraction ran does not go on to rewrite the row. The extraction is
+        // synchronous and takes no token, so this is the first point at which the token is looked at.
+        ct.ThrowIfCancellationRequested();
 
         if (damaged)
         {
-            // An upload's chunk state is fingerprinted by the blob hash and the chunk settings,
-            // not by the text, so a repaired text changes nothing the skip check compares and
-            // the head of the document would stay searchable. Cleared the way the indexer clears
-            // a file it is about to redo, in every set that holds this blob, and in the same save
-            // as the text so a crash leaves neither half.
+            log.LogWarning(
+                "Cached text for {Sha} reads back {Read:N0} of the {Written:N0} characters stored with it; extracted again",
+                sha256[..12], cached.Text.Length, cached.ExtractedChars);
+
+            // A state chunked from this text before the repair is stamped with the plain fingerprint, which
+            // the repaired text also has, so the skip check would pass it and the head of the document would
+            // stay searchable. Cleared the way the indexer clears a file it is about to redo, in every set
+            // that holds this blob, and in the same save as the text so a crash leaves neither half. Read
+            // before the row is changed: a token cancelled during the read then leaves the tracked row as it
+            // was, and the save that records the job's outcome does not write half of this. A pass that
+            // chunks the damaged text from here on is stamped with a fingerprint that names the damage
+            // (CorpusIndexer.TextKey), so it does not need this.
             var attached = await db.FileChunkStates
                 .Where(s => s.File!.BlobSha256 == sha256).ToListAsync(ct);
+            Rewrite(cached, fresh);
             foreach (var state in attached)
             {
                 state.ContentHash = null;
@@ -613,10 +782,32 @@ public sealed class DocumentService(
                 state.StatusDetail = null;
             }
         }
+        else
+        {
+            log.LogInformation(
+                "Re-extracted {Sha} with extractor v{Version}: {Before:N0} -> {After:N0} chars",
+                sha256[..12], ExtractorVersions.Current, cached.ExtractedChars, fresh.ExtractedChars);
+
+            // A state chunked from the older text is stamped with a fingerprint that names its version
+            // (CorpusIndexer.TextKey), which the rewritten row does not have, so each set chunks it again.
+            Rewrite(cached, fresh);
+        }
 
         await db.SaveChangesAsync(ct);
 
         return cached;
+    }
+
+    private static void Rewrite(BlobText row, BlobText fresh)
+    {
+        row.Text = fresh.Text;
+        row.UnitsJson = fresh.UnitsJson;
+        row.Title = fresh.Title;
+        row.ExtractedChars = fresh.ExtractedChars;
+        row.Extractor = fresh.Extractor;
+        row.ExtractorVersion = fresh.ExtractorVersion;
+        row.ExtractedUtc = fresh.ExtractedUtc;
+        row.EmptyReason = fresh.EmptyReason;
     }
 
     public static IReadOnlyList<ExtractedUnit> UnitsFrom(BlobText? text) =>
