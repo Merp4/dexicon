@@ -2363,6 +2363,12 @@
             "items": {
               "type": "string"
             }
+          },
+          "allCorpora": {
+            "type": [
+              "null",
+              "boolean"
+            ]
           }
         }
       },
@@ -4091,7 +4097,8 @@
           "lastUsedUtc",
           "expiresUtc",
           "revokedUtc",
-          "corpusIds"
+          "corpusIds",
+          "allCorpora"
         ],
         "type": "object",
         "properties": {
@@ -4134,6 +4141,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "allCorpora": {
+            "type": "boolean"
           }
         }
       },
@@ -4269,16 +4279,22 @@
         }
       },
       "UpdateTokenCorporaRequest": {
-        "required": [
-          "corpusIds"
-        ],
         "type": "object",
         "properties": {
           "corpusIds": {
-            "type": "array",
+            "type": [
+              "null",
+              "array"
+            ],
             "items": {
               "type": "string"
             }
+          },
+          "allCorpora": {
+            "type": [
+              "null",
+              "boolean"
+            ]
           }
         }
       },

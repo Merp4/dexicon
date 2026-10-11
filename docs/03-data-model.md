@@ -94,13 +94,15 @@ CREATE TABLE tokens (
   created_utc   TEXT NOT NULL,
   last_used_utc TEXT,
   expires_utc   TEXT,
-  revoked_utc   TEXT
+  revoked_utc   TEXT,
+  all_corpora   INTEGER NOT NULL DEFAULT 0  -- 1: reaches every corpus, including ones made later
 );
 
--- What a key reaches. NO ROWS MEANS EVERY CORPUS, which is what keeps a single-user
--- install from having to configure anything; a key that should reach nothing is
--- revoked instead. Read per request rather than cached on the principal, so an edit
--- in the UI reaches the agent on its next call.
+-- What a key reaches when all_corpora is 0: the corpora named here, and no corpus
+-- when there are no rows. Removing a corpus deletes its rows, which leaves a key
+-- restricted to that corpus reaching nothing; it does not lift the restriction.
+-- Read per request rather than cached on the principal, so an edit in the UI reaches
+-- the agent on its next call.
 CREATE TABLE token_corpora (
   token_id   TEXT NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
   corpus_id  TEXT NOT NULL REFERENCES corpora(id) ON DELETE CASCADE,
@@ -528,7 +530,7 @@ built from uploads may have no file to open.
 | Delete file from disk | Next reconcile deletes its chunks (`chunk_set_id`, `source_id`, `file_path`) and its state row, per set. The `files` row survives until the LAST set has let go of it — removing it earlier would strand the other sets' vectors with nothing left to name them. |
 | Delete source | Chunks deleted per file, once per chunk set (`chunk_set_id`, `source_id`, `file_path`); the source's files and their state rows cascade. |
 | Delete chunk set | Chunks deleted by `chunk_set_id` filter; state rows cascade. Refused for the default set, for the only set (a corpus with no sets is a corpus nothing can search) and while a job is working on the set. |
-| Delete corpus | Chunks deleted by `corpus_id` filter, once per distinct collection its sets occupy. Cascades to its sources, files, chunk sets, jobs and the rows mapping keys to it. A key mapped only to that corpus is left mapped to nothing, which means every corpus; revoke it instead if that is not wanted. |
+| Delete corpus | Chunks deleted by `corpus_id` filter, once per distinct collection its sets occupy. Cascades to its sources, files, chunk sets, jobs and the rows mapping keys to it. A key restricted only to that corpus is left restricted to nothing and reaches no corpus (`can reach no corpora`); map it to another corpus under Access, or revoke it. A key set to every corpus is unchanged. |
 | Change embedding model | Not an edit, and not a corpus-level act at all. Add a chunk set on the new model; it backfills while the live set keeps serving; promote when complete; drop the old set. See [D-21](decisions.md#d-21-chunk-sets-not-corpus-level-chunking). |
 
 ## Storage budget

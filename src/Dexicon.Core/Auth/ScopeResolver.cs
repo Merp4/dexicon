@@ -279,16 +279,17 @@ public sealed class ScopeResolver(CatalogDbContext db)
     /// The corpora this principal may reach.
     ///
     /// An admin session reaches everything: it is the operator, and the UI has to list a
-    /// corpus in order to map a key to it. A key reaches the corpora mapped to it, or
-    /// everything when nothing is mapped, which is what keeps a single-user install from
-    /// having to configure anything.
+    /// corpus in order to map a key to it. A key whose <see cref="ApiToken.AllCorpora"/> is
+    /// set reaches everything, which is what keeps a single-user install from having to
+    /// configure anything. Any other key reaches the corpora mapped to it, and nothing when
+    /// none is mapped or when the key does not exist.
     ///
     /// Read from the catalogue on every call. Caching this on the principal would put it
     /// behind that cache's 60-second TTL, and an operator who ticks a corpus and watches an
     /// agent keep missing it for a minute concludes the feature is broken.
     /// </summary>
     public async Task<List<Corpus>> VisibleAsync(Principal principal, CancellationToken ct = default) =>
-        await (await VisibleQueryAsync(principal, ct)).Include(c => c.ChunkSets)
+        await VisibleQuery(principal).Include(c => c.ChunkSets)
             .OrderBy(c => c.Name).ToListAsync(ct);
 
     /// <summary>
@@ -296,19 +297,20 @@ public sealed class ScopeResolver(CatalogDbContext db)
     /// caller that asks again and again: the progress stream re-reads it while it is open.
     /// </summary>
     public async Task<HashSet<string>> VisibleIdsAsync(Principal principal, CancellationToken ct = default) =>
-        (await (await VisibleQueryAsync(principal, ct)).AsNoTracking().Select(c => c.Id).ToListAsync(ct))
+        (await VisibleQuery(principal).AsNoTracking().Select(c => c.Id).ToListAsync(ct))
             .ToHashSet(StringComparer.Ordinal);
 
-    private async Task<IQueryable<Corpus>> VisibleQueryAsync(Principal principal, CancellationToken ct)
+    /// <summary>
+    /// One query, so the setting and the mapping are read together. A key that has no row in
+    /// <c>tokens</c> matches nothing.
+    /// </summary>
+    private IQueryable<Corpus> VisibleQuery(Principal principal)
     {
         if (principal.Has(Scopes.Admin)) return db.Corpora;
 
-        var mapped = await db.TokenCorpora
-            .Where(tc => tc.TokenId == principal.TokenId)
-            .Select(tc => tc.CorpusId)
-            .ToListAsync(ct);
-
-        return mapped.Count > 0 ? db.Corpora.Where(c => mapped.Contains(c.Id)) : db.Corpora;
+        var tokenId = principal.TokenId;
+        return db.Corpora.Where(c => db.Tokens.Any(t =>
+            t.Id == tokenId && (t.AllCorpora || t.Corpora.Any(tc => tc.CorpusId == c.Id))));
     }
 
     /// <summary>

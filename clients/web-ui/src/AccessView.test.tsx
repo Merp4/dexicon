@@ -13,6 +13,7 @@ const listCorpora = vi.fn();
 const revokeToken = vi.fn();
 const setTokenScopes = vi.fn();
 const createToken = vi.fn();
+const setTokenCorpora = vi.fn();
 
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
@@ -22,6 +23,7 @@ vi.mock('./api', async (importOriginal) => ({
     revokeToken: (...a: unknown[]) => revokeToken(...a),
     setTokenScopes: (...a: unknown[]) => setTokenScopes(...a),
     createToken: (...a: unknown[]) => createToken(...a),
+    setTokenCorpora: (...a: unknown[]) => setTokenCorpora(...a),
   },
 }));
 
@@ -35,6 +37,7 @@ function token(over: Partial<TokenSummary> = {}): TokenSummary {
     expiresUtc: null,
     revokedUtc: null,
     corpusIds: [],
+    allCorpora: true,
     ...over,
   };
 }
@@ -46,6 +49,7 @@ beforeEach(() => {
   revokeToken.mockResolvedValue(undefined);
   setTokenScopes.mockResolvedValue(token());
   createToken.mockResolvedValue({ token: token(), secret: 'dex_a_b', mcpAddCommand: 'claude mcp add' });
+  setTokenCorpora.mockResolvedValue(token());
 });
 
 describe('the key list', () => {
@@ -158,7 +162,7 @@ describe("a key's scopes", () => {
     await user.click(within(dialog).getByRole('button', { name: 'configure' }));
     await user.click(within(dialog).getByRole('button', { name: /Create/ }));
 
-    expect(createToken).toHaveBeenCalledWith('setup-agent', ['search', 'configure'], []);
+    expect(createToken).toHaveBeenCalledWith('setup-agent', ['search', 'configure'], { all: true });
   });
 
   /**
@@ -181,7 +185,7 @@ describe("a key's scopes", () => {
     expect(configure).toHaveAttribute('aria-pressed', 'false');
     await user.click(within(dialog).getByRole('button', { name: /Create/ }));
 
-    expect(createToken).toHaveBeenCalledWith('reviewer', ['search', 'propose'], []);
+    expect(createToken).toHaveBeenCalledWith('reviewer', ['search', 'propose'], { all: true });
   });
 
   /**
@@ -207,7 +211,7 @@ describe("a key's scopes", () => {
     expect(within(dialog).getByText(/nothing asks first. The document stays in the library/)).toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: /Create/ }));
 
-    expect(createToken).toHaveBeenCalledWith('cleaner', ['search', 'destroy'], []);
+    expect(createToken).toHaveBeenCalledWith('cleaner', ['search', 'destroy'], { all: true });
   });
 
   it('can give an existing key destroy, and the key keeps what it held', async () => {
@@ -221,5 +225,105 @@ describe("a key's scopes", () => {
     await user.click(within(dialog).getByRole('button', { name: /Save/ }));
 
     expect(setTokenScopes).toHaveBeenCalledWith('t1', ['search', 'ingest', 'destroy']);
+  });
+});
+
+/**
+ * What a key reaches is every corpus, some, or none, and the three look different. A key left
+ * with no corpus (the one it was restricted to was removed) is shown as such, and ticking nothing
+ * is never a way to say "every corpus".
+ */
+describe('what a key reaches', () => {
+  const corpora = [{ id: 'c1', name: 'books' }, { id: 'c2', name: 'docs' }];
+
+  beforeEach(() => {
+    listCorpora.mockResolvedValue(corpora);
+  });
+
+  it('names every corpus, the corpora ticked, or no corpus', async () => {
+    listTokens.mockResolvedValue([
+      token({ id: 'a', name: 'wide' }),
+      token({ id: 'b', name: 'narrow', allCorpora: false, corpusIds: ['c1'] }),
+      token({ id: 'c', name: 'stranded', allCorpora: false, corpusIds: [] }),
+    ]);
+    render(<AccessView onError={vi.fn()} />);
+
+    expect(await screen.findByText('every corpus')).toBeInTheDocument();
+    expect(screen.getByText('books')).toBeInTheDocument();
+    expect(screen.getByText('no corpus')).toBeInTheDocument();
+  });
+
+  it('starts an existing key on what it reaches', async () => {
+    listTokens.mockResolvedValue([token({ allCorpora: false, corpusIds: ['c1'] })]);
+    const user = userEvent.setup();
+    render(<AccessView onError={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Change what laptop-agent reaches' }));
+    const dialog = await screen.findByRole('dialog', { name: 'What laptop-agent can reach' });
+
+    expect(within(dialog).getByRole('radio', { name: 'Only these' })).toBeChecked();
+    expect(within(dialog).getByRole('button', { name: 'books' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(dialog).getByRole('button', { name: 'docs' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('saves nothing ticked as no corpus, and says so first', async () => {
+    const user = userEvent.setup();
+    render(<AccessView onError={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Change what laptop-agent reaches' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('radio', { name: 'Every corpus' })).toBeChecked();
+    await user.click(within(dialog).getByRole('radio', { name: 'Only these' }));
+    expect(within(dialog).getByText(/this key reaches no corpus/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: /Save/ }));
+
+    expect(setTokenCorpora).toHaveBeenCalledWith('t1', { all: false, corpusIds: [] });
+  });
+
+  it('saves the corpora ticked', async () => {
+    const user = userEvent.setup();
+    render(<AccessView onError={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Change what laptop-agent reaches' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('radio', { name: 'Only these' }));
+    await user.click(within(dialog).getByRole('button', { name: 'docs' }));
+    await user.click(within(dialog).getByRole('button', { name: /Save/ }));
+
+    expect(setTokenCorpora).toHaveBeenCalledWith('t1', { all: false, corpusIds: ['c2'] });
+  });
+
+  it('saves every corpus only when it is chosen', async () => {
+    listTokens.mockResolvedValue([token({ allCorpora: false, corpusIds: [] })]);
+    const user = userEvent.setup();
+    render(<AccessView onError={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Change what laptop-agent reaches' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: /Save/ }));
+    expect(setTokenCorpora).toHaveBeenLastCalledWith('t1', { all: false, corpusIds: [] });
+
+    await user.click(await screen.findByRole('button', { name: 'Change what laptop-agent reaches' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('radio', { name: 'Every corpus' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /Save/ }));
+    expect(setTokenCorpora).toHaveBeenLastCalledWith('t1', { all: true });
+  });
+
+  it('is not offered as nothing ticked when a key is created', async () => {
+    const user = userEvent.setup();
+    render(<AccessView onError={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: /New key/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'New key' });
+    await user.type(within(dialog).getByPlaceholderText('claude-code'), 'project-agent');
+    expect(within(dialog).getByRole('radio', { name: 'Every corpus' })).toBeChecked();
+
+    await user.click(within(dialog).getByRole('radio', { name: 'Only these' }));
+    expect(within(dialog).getByRole('button', { name: /Create/ })).toBeDisabled();
+
+    await user.click(within(dialog).getByRole('button', { name: 'books' }));
+    await user.click(within(dialog).getByRole('button', { name: /Create/ }));
+
+    expect(createToken).toHaveBeenCalledWith('project-agent', ['search'], { all: false, corpusIds: ['c1'] });
   });
 });

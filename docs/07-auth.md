@@ -91,20 +91,32 @@ belongs to the key.
 
 ### What a key reaches
 
-Rows in `token_corpora`, edited in the UI under **Access**.
+The `AllCorpora` column of `tokens`, and rows in `token_corpora`. Both are edited in the UI
+under **Access**.
 
-| Mapping | Reaches |
-|---|---|
-| no rows | every corpus, including ones created later |
-| one or more | exactly those |
+| `AllCorpora` | Rows | Reaches |
+|---|---|---|
+| true | none | every corpus, including ones created later |
+| false | one or more | exactly those |
+| false | none | no corpus |
 
-Empty means everything rather than nothing, which is what keeps a single-user install from
-having to configure anything. A key that should reach nothing is **revoked**, not emptied.
+Reaching every corpus is a setting on the key and is not read from the absence of rows, which
+is what keeps a single-user install from having to configure anything and still lets a key be
+restricted to nothing. Removing a corpus deletes the rows that name it, so a key restricted to
+one corpus is left restricted to nothing and does not start reaching every corpus. Such a key
+is refused with `can reach no corpora`; give it a corpus under **Access**, or revoke it.
+
+A key is created reaching every corpus unless the request restricts it. `PUT
+/api/tokens/{id}/corpora` has to say which it means: `allCorpora: true`, or `corpusIds` as the
+whole set, with an empty list reaching no corpus. A request with neither, or with an empty
+`corpusIds` and no `allCorpora`, is refused and changes nothing. A principal whose key has no
+row reaches no corpus.
 
 The mapping does not limit `configure`. A key holding it can add any mounted folder to a
 corpus it reaches, or create a corpus over that folder, and then search it, so it reaches the
 whole workspace; the Access page says so when the scope is ticked. A corpus the key creates
-is added to its mapping when it has one, so that it can reach what it made.
+is added to its mapping when the key is restricted, so that it can reach what it made, and
+that includes a key restricted to nothing.
 
 The mapping is read from the catalogue on every request and is deliberately not carried on
 the cached principal: that cache has a 60-second TTL, and an operator who ticks a corpus and
@@ -145,8 +157,8 @@ Task<ResolvedScope> ResolveReadableAsync(Principal principal, IReadOnlyList<stri
 
 Rules:
 
-1. Start from: every corpus for an admin session; for a key, the corpora mapped to it, or
-   every corpus when nothing is mapped.
+1. Start from: every corpus for an admin session; for a key, every corpus when its
+   `AllCorpora` is set, otherwise the corpora mapped to it, which may be none.
 2. If `requested` is non-empty, intersect with it. A requested corpus that is not in the
    reachable set produces a **named error** (`Unknown corpus 'x'. Corpora this key can
    reach: …`) rather than being dropped. Dropping it would return incomplete results without
@@ -175,9 +187,12 @@ key can hold, so a key that asked cannot also approve.
 
 `KeyScopingTests`, named so nobody deletes them by accident. A key mapped to one corpus sees
 only that one; naming another, by name or by guessed id, is a `ScopeResolutionException` and
-not an empty list; an unmapped key sees everything; editing a mapping changes what the same
-principal resolves to without the key being reissued; an empty scope throws; and the vector
-store refuses a query with no corpus filter.
+not an empty list; a key set to every corpus sees everything, including a corpus made later;
+a key restricted to nothing, or with no row, sees nothing; removing the corpus a key was
+restricted to leaves it seeing nothing; editing a mapping changes what the same principal
+resolves to without the key being reissued; an empty scope throws; and the vector store
+refuses a query with no corpus filter. `KeyReachTests` holds the requests that set a key's
+reach and the migration that gave existing keys the setting.
 
 `AdminPasswordTests` covers the password round trip, that changing it invalidates the old
 one, that a key requesting `admin` does not get it, and that the throttle doubles, caps and

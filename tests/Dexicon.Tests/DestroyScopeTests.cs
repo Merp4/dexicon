@@ -97,7 +97,7 @@ public sealed class DestroyScopeTests
             id, scopes, revoked ? "2026-10-02 00:00:00" : null!);
 
     private static async Task<Dictionary<string, string>> ScopesOfEveryKeyAsync(CatalogDbContext db) =>
-        await db.Tokens.AsNoTracking().ToDictionaryAsync(t => t.Id, t => t.Scopes);
+        await db.Tokens.AsNoTracking().Select(t => new { t.Id, t.Scopes }).ToDictionaryAsync(t => t.Id, t => t.Scopes);
 
     [Fact]
     public async Task TheMigrationGivesDestroyToEveryKeyHoldingIngestAndToNoOther()

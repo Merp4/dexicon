@@ -548,10 +548,12 @@ public static class SystemEndpoints
         if (UnissuableScopes(requested) is { } unissuable) return unissuable;
 
         // Checked before the key exists and saved with it. Mapped by a second save, the key was saved
-        // first, so a refusal here, or a cancel between the two saves, left a key with no mapping, which
-        // reaches every corpus.
-        var corpusIds = (body.CorpusIds ?? []).Distinct(StringComparer.Ordinal).ToList();
-        if (await UnknownCorporaAsync(db, corpusIds, "The key was not created.", ct) is { } unknown) return unknown;
+        // first, so a refusal here, or a cancel between the two saves, left a key reaching every corpus
+        // that was meant to reach some.
+        if (ReadReach(body.AllCorpora, body.CorpusIds, omittedIsEvery: true, "The key was not created.", out var corpusIds)
+            is { } unclear) return unclear;
+        if (corpusIds is not null
+            && await UnknownCorporaAsync(db, corpusIds, "The key was not created.", ct) is { } unknown) return unknown;
 
         var expires = body.ExpiresInDays is { } d and > 0 ? DateTime.UtcNow.AddDays(d) : (DateTime?)null;
         var (row, issued) = await tokens.CreateAsync(body.Name.Trim(), requested, expires, corpusIds, ct);
@@ -566,18 +568,15 @@ public static class SystemEndpoints
     {
         if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
 
-        // An empty list lifts the restriction, so a request that leaves the field out is refused, not
-        // read as one.
-        if (body.CorpusIds is null)
-            return Results.Problem(
-                title: "Corpus ids are required",
-                detail: "Send corpusIds: an empty list lets the key reach every corpus. The mapping was not changed.",
-                statusCode: 400);
+        // A request that does not say whether the key reaches every corpus or only some is refused and
+        // changes nothing, rather than read as either.
+        if (ReadReach(body.AllCorpora, body.CorpusIds, omittedIsEvery: false, "The mapping was not changed.", out var wanted)
+            is { } unclear) return unclear;
 
         var token = await db.Tokens.Include(x => x.Corpora).FirstOrDefaultAsync(x => x.Id == id, ct);
         if (token is null) return Results.NotFound();
 
-        var refused = await MapCorporaAsync(db, id, body.CorpusIds, ct);
+        var refused = await MapCorporaAsync(db, id, wanted, ct);
         if (refused is not null) return refused;
 
         // The tracked key already holds the saved mapping: the save fixes up its collection.
@@ -639,32 +638,86 @@ public static class SystemEndpoints
     }
 
     /// <summary>
-    /// Replace a key's corpus mapping. Returns a problem result when an id does not exist,
-    /// and null on success.
+    /// The reach a request asks for: null for every corpus, otherwise the corpora named, which may
+    /// be none. Returns a problem result when the request does not say which it means, and null
+    /// when <paramref name="wanted"/> holds the answer.
+    ///
+    /// <paramref name="allCorpora"/> decides when it is sent: true takes no ids, and false needs the
+    /// list, an empty one meaning none. Without it, ids restrict the key to them. An omitted or empty
+    /// list is every corpus when <paramref name="omittedIsEvery"/> is set, which a new key's
+    /// documented default needs, and is refused otherwise: on a key that exists it would lift a
+    /// restriction by omission.
+    /// </summary>
+    internal static IResult? ReadReach(
+        bool? allCorpora, IReadOnlyList<string>? corpusIds, bool omittedIsEvery, string outcome, out List<string>? wanted)
+    {
+        wanted = null;
+        if (allCorpora == true)
+        {
+            if (corpusIds is { Count: > 0 })
+                return Results.Problem(
+                    title: "Conflicting corpus reach",
+                    detail: "allCorpora: true lets the key reach every corpus, so corpusIds must be empty or left out. "
+                            + outcome,
+                    statusCode: 400);
+            return null;
+        }
+
+        if (allCorpora == false && corpusIds is null)
+            return Results.Problem(
+                title: "Corpus ids are required",
+                detail: "allCorpora: false restricts the key to corpusIds, so send them: an empty list reaches no corpus. "
+                        + outcome,
+                statusCode: 400);
+
+        if (corpusIds is { Count: > 0 } || allCorpora == false)
+        {
+            wanted = [.. corpusIds!.Distinct(StringComparer.Ordinal)];
+            return null;
+        }
+
+        if (omittedIsEvery) return null;
+
+        return Results.Problem(
+            title: "Say which corpora",
+            detail: "An empty or missing corpusIds does not say whether the key reaches every corpus or none. "
+                    + "Send allCorpora: true for every corpus, or allCorpora: false with corpusIds for those only; "
+                    + "an empty list then reaches none. " + outcome,
+            statusCode: 400);
+    }
+
+    /// <summary>
+    /// Replace which corpora a key reaches: <paramref name="corpusIds"/> null for every corpus,
+    /// otherwise exactly those, and none for an empty list. Returns a problem result when an id does
+    /// not exist, and null on success.
     ///
     /// An unknown id is refused rather than dropped. Silently ignoring one would leave the
-    /// key mapped to fewer corpora than the operator ticked, and an empty mapping means
-    /// every corpus, so the failure mode of dropping the last one is the opposite of what
-    /// was asked for.
+    /// key mapped to fewer corpora than the operator ticked, and dropping the last one would
+    /// leave it reaching nothing.
     ///
-    /// Under the lock a corpus's creation takes, so that a key creating a corpus and the admin
-    /// replacing its mapping cannot interleave: the creation reads whether there is a mapping
-    /// and adds to it, and a replacement between the two left the key reaching only the new
-    /// corpus.
+    /// The setting and the rows are saved together. Under the lock a corpus's creation takes, so
+    /// that a key creating a corpus and the admin replacing its reach cannot interleave: the
+    /// creation reads whether the key reaches every corpus and adds the new one to its mapping if
+    /// not, and a replacement between the two left a key that reaches every corpus holding a row.
     /// </summary>
     internal static async Task<IResult?> MapCorporaAsync(
-        CatalogDbContext db, string tokenId, IReadOnlyList<string> corpusIds, CancellationToken ct)
+        CatalogDbContext db, string tokenId, IReadOnlyList<string>? corpusIds, CancellationToken ct)
     {
         await CorpusConfiguration.Naming.WaitAsync(ct);
         try
         {
-            var wanted = corpusIds.Distinct(StringComparer.Ordinal).ToList();
-            if (await UnknownCorporaAsync(db, wanted, "The mapping was not changed.", ct) is { } unknown) return unknown;
+            var wanted = corpusIds?.Distinct(StringComparer.Ordinal).ToList();
+            if (wanted is not null
+                && await UnknownCorporaAsync(db, wanted, "The mapping was not changed.", ct) is { } unknown) return unknown;
+
+            var token = await db.Tokens.FirstOrDefaultAsync(t => t.Id == tokenId, ct);
+            if (token is null) return Results.NotFound();
 
             var existing = await db.TokenCorpora.Where(tc => tc.TokenId == tokenId).ToListAsync(ct);
             db.TokenCorpora.RemoveRange(existing);
-            foreach (var corpusId in wanted)
+            foreach (var corpusId in wanted ?? [])
                 db.TokenCorpora.Add(new TokenCorpus { TokenId = tokenId, CorpusId = corpusId });
+            token.AllCorpora = wanted is null;
 
             await db.SaveChangesAsync(ct);
             return null;

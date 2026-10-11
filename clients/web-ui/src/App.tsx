@@ -17,6 +17,7 @@ import {
   type Progress,
   type SearchResult,
   type TokenSummary,
+  type CorpusReach,
 } from './api';
 import {
   Badge, Button, CardButton, Checkbox, Chip, CopyButton, Empty, ErrorBanner, Field, Input, Modal,
@@ -2454,14 +2455,17 @@ export function AccessView({ onError }: { onError: (e: unknown) => void }) {
                   )}
                 </div>
 
-                {/* Its own row, because it is the thing that changes most often. No rows
-                    means every corpus, which is not the same as none: a key that should
-                    reach nothing is revoked. */}
+                {/* Its own row, because it is the thing that changes most often. A key
+                    reaches every corpus, some, or none. None is what a key is left with
+                    when the corpus it was restricted to is removed, so it is shown as a
+                    warning, not as the absence of a restriction. */}
                 <div className="basis-[100%] flex flex-wrap items-center gap-1.5 text-xs">
                   <span className="dim">Reaches</span>
-                  {t.corpusIds.length === 0
+                  {t.allCorpora
                     ? <Badge>every corpus</Badge>
-                    : t.corpusIds.map((id) => <Badge key={id}>{nameOf(id)}</Badge>)}
+                    : t.corpusIds.length === 0
+                      ? <Badge tone="warn">no corpus</Badge>
+                      : t.corpusIds.map((id) => <Badge key={id}>{nameOf(id)}</Badge>)}
                   {!t.revokedUtc && (
                     <Button aria-label={`Change what ${t.name} reaches`} onClick={() => setMapping(t)}>Change</Button>
                   )}
@@ -2646,9 +2650,70 @@ function ScopesModal({ token, onClose, onSaved }: {
 }
 
 /**
+ * Which corpora a key reaches: every corpus, or only the ones ticked.
+ *
+ * The choice is its own control, and nothing ticked is not a way to say "every corpus". A key
+ * restricted to nothing reaches nothing, which is what it is left with when the corpus it was
+ * restricted to is removed, and ticking nothing used to lift the restriction.
+ */
+function CorpusReachField({ corpora, all, picked, onAll, onPicked }: {
+  corpora: Corpus[];
+  all: boolean;
+  picked: string[];
+  onAll: (all: boolean) => void;
+  onPicked: (picked: string[]) => void;
+}) {
+  return (
+    <>
+      <Segmented
+        label="Corpora this key reaches"
+        value={all ? 'all' : 'some'}
+        onChange={(v) => onAll(v === 'all')}
+        options={[
+          { value: 'all', label: 'Every corpus', title: 'Includes corpora created later' },
+          { value: 'some', label: 'Only these', title: 'Only the corpora ticked below' },
+        ]}
+      />
+
+      {all ? (
+        <p className="dim text-xs mt-3 mb-0">Includes corpora created later.</p>
+      ) : (
+        <>
+          {corpora.length === 0 ? (
+            <p className="dim text-xs mt-3 mb-0">No corpora yet.</p>
+          ) : (
+            <div className="flex gap-1.5 flex-wrap mt-3">
+              {corpora.map((c) => (
+                <Chip
+                  key={c.id}
+                  type="button"
+                  active={picked.includes(c.id)}
+                  onClick={() => onPicked(
+                    picked.includes(c.id) ? picked.filter((x) => x !== c.id) : [...picked, c.id])}
+                >
+                  {picked.includes(c.id) && <Check />}
+                  {c.name}
+                </Chip>
+              ))}
+            </div>
+          )}
+          <p className="dim text-xs mt-3 mb-0">
+            {picked.length === 0
+              ? 'Nothing is ticked, so this key reaches no corpus. It reaches the ones ticked, and not ones created later.'
+              : `${picked.length} of ${corpora.length}. Not ones created later.`}
+          </p>
+        </>
+      )}
+    </>
+  );
+}
+
+const reachOf = (all: boolean, picked: string[]): CorpusReach => all ? { all: true } : { all: false, corpusIds: picked };
+
+/**
  * Which corpora a key may reach.
  *
- * Replaces the mapping outright rather than patching it, because the whole set of ticks is
+ * Replaces the reach outright rather than patching it, because the whole set of ticks is
  * edited at once and a partial update would need a way to say "leave that one alone" that
  * is indistinguishable from "untick it".
  */
@@ -2659,6 +2724,7 @@ function CorpusMappingModal({ token, corpora, onClose, onSaved }: {
   onSaved: () => Promise<void>;
 }) {
   const [error, setError] = useState<unknown>(null);
+  const [all, setAll] = useState(token.allCorpora);
   const [picked, setPicked] = useState<string[]>(token.corpusIds);
   const [busy, setBusy] = useState(false);
 
@@ -2670,34 +2736,12 @@ function CorpusMappingModal({ token, corpora, onClose, onSaved }: {
           e.preventDefault();
           setBusy(true);
           setError(null);
-          try { await api.setTokenCorpora(token.id, picked); await onSaved(); }
+          try { await api.setTokenCorpora(token.id, reachOf(all, picked)); await onSaved(); }
           catch (err) { setError(err); setBusy(false); }
         }}
       >
-        {corpora.length === 0 ? (
-          <Empty title="No corpora" hint="Create one first, then come back and tick it." />
-        ) : (
-          <div className="flex gap-1.5 flex-wrap">
-            {corpora.map((c) => (
-              <Chip
-                key={c.id}
-                type="button"
-                active={picked.includes(c.id)}
-                onClick={() => setPicked((prev) =>
-                  prev.includes(c.id) ? prev.filter((x) => x !== c.id) : [...prev, c.id])}
-              >
-                {picked.includes(c.id) && <Check />}
-                {c.name}
-              </Chip>
-            ))}
-          </div>
-        )}
-
-        <p className="dim text-xs mt-3 mb-0">
-          {picked.length === 0
-            ? 'Nothing ticked means every corpus, including ones created later. To stop a key reaching anything, revoke it.'
-            : `${picked.length} of ${corpora.length}. The agent sees the change on its next call.`}
-        </p>
+        <CorpusReachField corpora={corpora} all={all} picked={picked} onAll={setAll} onPicked={setPicked} />
+        <p className="dim text-xs mt-1 mb-0">The agent sees the change on its next call.</p>
 
         <div className="flex gap-2 justify-end mt-4">
           <Button type="button" onClick={onClose}>Cancel</Button>
@@ -2718,8 +2762,13 @@ function CreateTokenModal({ onClose, onCreated, corpora }: {
   const [error, setError] = useState<unknown>(null);
   const [name, setName] = useState('');
   const [scopes, setScopes] = useState<string[]>(['search']);
+  const [all, setAll] = useState(true);
   const [picked, setPicked] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+
+  // Restricted to nothing is a state a key reaches when its corpus is removed. Issuing one that
+  // way is a key that cannot do anything, so it is not offered.
+  const reachesNothing = !all && picked.length === 0;
 
   return (
     <Modal title="New key" onClose={onClose}>
@@ -2729,7 +2778,7 @@ function CreateTokenModal({ onClose, onCreated, corpora }: {
           e.preventDefault();
           setBusy(true);
           setError(null);
-          try { await onCreated(await api.createToken(name, scopes, picked)); }
+          try { await onCreated(await api.createToken(name, scopes, reachOf(all, picked))); }
           catch (err) { setError(err); setBusy(false); }
         }}
       >
@@ -2739,30 +2788,22 @@ function CreateTokenModal({ onClose, onCreated, corpora }: {
         <ScopeField value={scopes} onChange={setScopes} />
         <Field
           label="Corpora"
-          hint="What this agent can search. Tick none for every corpus. Changeable afterwards without reissuing the key."
+          hint="What this agent can search. Changeable afterwards without reissuing the key."
         >
           {corpora.length === 0 ? (
             <p className="dim text-xs m-0">No corpora yet. The key will reach every corpus you create.</p>
           ) : (
-            <div className="flex gap-1.5 flex-wrap">
-              {corpora.map((c) => (
-                <Chip
-                  key={c.id}
-                  type="button"
-                  active={picked.includes(c.id)}
-                  onClick={() => setPicked((prev) =>
-                    prev.includes(c.id) ? prev.filter((x) => x !== c.id) : [...prev, c.id])}
-                >
-                  {picked.includes(c.id) && <Check />}
-                  {c.name}
-                </Chip>
-              ))}
-            </div>
+            <CorpusReachField corpora={corpora} all={all} picked={picked} onAll={setAll} onPicked={setPicked} />
           )}
         </Field>
         <div className="flex gap-2 justify-end mt-4">
           <Button type="button" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" type="submit" disabled={!name.trim() || scopes.length === 0 || busy}>
+          <Button
+            variant="primary"
+            type="submit"
+            disabled={!name.trim() || scopes.length === 0 || reachesNothing || busy}
+            title={reachesNothing ? 'Tick a corpus, or choose every corpus' : undefined}
+          >
             {busy ? <Spinner /> : null} Create
           </Button>
         </div>

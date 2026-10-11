@@ -128,9 +128,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     {
         await using var db = _harness.NewContext();
         var (row, _) = await new TokenService(db, TimeProvider.System)
-            .CreateAsync("mapped", [Scopes.Search, Scopes.Configure], null);
-        db.TokenCorpora.Add(new TokenCorpus { TokenId = row.Id, CorpusId = IndexingHarness.CorpusId });
-        await db.SaveChangesAsync();
+            .CreateAsync("mapped", [Scopes.Search, Scopes.Configure], null, [IndexingHarness.CorpusId]);
         var rc = As(row.Id, Scopes.Search, Scopes.Configure);
 
         (await Should.ThrowAsync<McpException>(() => CorpusAsync(db, rc, "papers"))).Message.ShouldContain("create: true");
@@ -668,9 +666,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
 
         // A key mapped elsewhere is not told which corpus reads the folder.
         var papers = (await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("papers"), default)).Value!;
-        var (row, _) = await new TokenService(db, TimeProvider.System).CreateAsync("elsewhere", [Scopes.Configure], null);
-        db.TokenCorpora.Add(new TokenCorpus { TokenId = row.Id, CorpusId = papers.Id });
-        await db.SaveChangesAsync();
+        var (row, _) = await new TokenService(db, TimeProvider.System).CreateAsync("elsewhere", [Scopes.Configure], null, [papers.Id]);
 
         var mapped = await FoldersAsync(db, As(row.Id, Scopes.Configure));
         mapped.ShouldContain("  notes/  0 entries\n");

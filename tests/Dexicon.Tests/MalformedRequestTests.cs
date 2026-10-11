@@ -40,8 +40,8 @@ public sealed class MalformedRequestTests
     [Fact]
     public async Task AMappingReplacementWithNoCorpusIdsIsRefusedAndTheMappingKept()
     {
-        // The field is a list and an empty list lifts the restriction. Left out, it was null, and the
-        // handler threw on it: a 500 where a caller who forgot the field needed to be told.
+        // The field is a list. Left out, it was null, and the handler threw on it: a 500 where a caller
+        // who forgot the field needed to be told.
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await using var db = harness.NewContext();
@@ -49,12 +49,13 @@ public sealed class MalformedRequestTests
             .CreateAsync("agent", [Scopes.Search], null, [IndexingHarness.CorpusId]);
         db.ChangeTracker.Clear();
 
-        var result = await SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest(null!), AsAdmin(), db, default);
+        var result = await SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest(), AsAdmin(), db, default);
 
         StatusOf(result).ShouldBe(400);
         await using var check = harness.NewContext();
         (await check.TokenCorpora.Where(tc => tc.TokenId == key.Id).Select(tc => tc.CorpusId).ToListAsync())
             .ShouldBe([IndexingHarness.CorpusId], "a refused replacement leaves the mapping as it was");
+        (await check.Tokens.SingleAsync(t => t.Id == key.Id)).AllCorpora.ShouldBeFalse();
     }
 
     [Fact]
@@ -63,25 +64,9 @@ public sealed class MalformedRequestTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await using var db = harness.NewContext();
 
-        var result = await SystemEndpoints.ReplaceCorporaAsync("any", new UpdateTokenCorporaRequest(null!), AsIngester(), db, default);
+        var result = await SystemEndpoints.ReplaceCorporaAsync("any", new UpdateTokenCorporaRequest(), AsIngester(), db, default);
 
         StatusOf(result).ShouldBe(403);
-    }
-
-    [Fact]
-    public async Task AnEmptyCorpusListStillLiftsTheRestriction()
-    {
-        // The control for the test above: what an empty list means has not changed.
-        await using var harness = await IndexingHarness.StartAsync("notes");
-        await harness.SeedCorpusAsync(SourceKind.Workspace);
-        await using var db = harness.NewContext();
-        var (key, _) = await new TokenService(db, TimeProvider.System)
-            .CreateAsync("agent", [Scopes.Search], null, [IndexingHarness.CorpusId]);
-        db.ChangeTracker.Clear();
-
-        var result = await SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest([]), AsAdmin(), db, default);
-
-        result.ShouldBeOfType<Ok<TokenSummary>>().Value!.CorpusIds.ShouldBeEmpty();
     }
 
     [Theory]

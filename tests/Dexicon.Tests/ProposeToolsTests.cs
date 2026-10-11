@@ -192,9 +192,8 @@ public sealed class ProposeToolsTests : IAsyncLifetime
         await using var db = _harness.NewContext();
         db.Corpora.Add(new Corpus { Id = "corpus-2", Name = "papers", State = CorpusState.Ready, CreatedUtc = DateTime.UtcNow });
         await db.SaveChangesAsync();
-        var (row, _) = await new TokenService(db, TimeProvider.System).CreateAsync("mapped", [Scopes.Search, Scopes.Propose], null);
-        db.TokenCorpora.Add(new TokenCorpus { TokenId = row.Id, CorpusId = "corpus-2" });
-        await db.SaveChangesAsync();
+        var (row, _) = await new TokenService(db, TimeProvider.System)
+            .CreateAsync("mapped", [Scopes.Search, Scopes.Propose], null, ["corpus-2"]);
 
         var ex = await Should.ThrowAsync<McpException>(
             () => ProposeAsync(db, As(row.Id, Scopes.Search, Scopes.Propose), "corpus", corpus: "notes"));
