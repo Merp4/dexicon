@@ -48,9 +48,9 @@ corpus pointing at a directory under `./workspaces`. That folder is `WORKSPACE_R
 `.env`, mounted read-only at `/workspaces`. Set `DEXICON_ADMIN_PASSWORD` in `.env` to choose
 your own password instead; a value set there is applied on every start.
 
-To connect an agent, issue a key under **Access** and tick which corpora it may reach.
-Leaving them all unticked means every corpus, and the ticks can be changed later without
-restarting the agent:
+To connect an agent, issue a key under **Access** and choose which corpora it may reach:
+every corpus, or only the ones you tick. The choice can be changed later without restarting the
+agent:
 
 ```bash
 claude mcp add --transport http dexicon http://localhost:8477/mcp \

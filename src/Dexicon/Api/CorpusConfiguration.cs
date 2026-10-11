@@ -80,10 +80,10 @@ public sealed class CorpusConfiguration(
     /// both pass it. Dexicon is one process owning its catalogue (D-01), and this is blind to
     /// a second process writing the same file.
     ///
-    /// Also held while a key's mapping is replaced. A creation reads whether its key has a
-    /// mapping and adds the new corpus to it, and the admin could clear that mapping, which
-    /// means every corpus, between the two: the key would be left reaching only the corpus it
-    /// just made.
+    /// Also held while a key's reach is replaced. A creation reads whether its key reaches every
+    /// corpus and adds the new corpus to its mapping if not, and the admin could set the key to
+    /// every corpus between the two: the key would be left with a mapping to the corpus it just
+    /// made, which an unrestricted key does not keep.
     /// </summary>
     internal static readonly SemaphoreSlim Naming = new(1, 1);
 
@@ -120,10 +120,10 @@ public sealed class CorpusConfiguration(
     }
 
     /// <param name="grantToKeyId">
-    /// A key that is to reach the corpus it is creating. When it is mapped to corpora, the new
-    /// one joins its mapping in the same save as the corpus, so a failure between the two
-    /// cannot leave a corpus its creator cannot reach, and one it cannot create again by name.
-    /// A key with no mapping already reaches every corpus.
+    /// A key that is to reach the corpus it is creating. When the key is restricted to a
+    /// mapping, the new corpus joins that mapping in the same save as the corpus, so a failure
+    /// between the two cannot leave a corpus its creator cannot reach, and one it cannot create
+    /// again by name. A key that reaches every corpus already reaches the new one.
     /// </param>
     /// <param name="committed">
     /// Called once the corpus is saved and before the work that can still fail after it, so a
@@ -283,7 +283,7 @@ public sealed class CorpusConfiguration(
         {
             if (await TakenAsync(name, ct) is { } taken) return taken;
             db.Corpora.Add(corpus);
-            if (grantToKeyId is not null && await db.TokenCorpora.AnyAsync(tc => tc.TokenId == grantToKeyId, ct))
+            if (grantToKeyId is not null && await db.Tokens.AnyAsync(t => t.Id == grantToKeyId && !t.AllCorpora, ct))
                 db.TokenCorpora.Add(new TokenCorpus { TokenId = grantToKeyId, CorpusId = corpus.Id });
             await db.SaveChangesAsync(ct);
         }

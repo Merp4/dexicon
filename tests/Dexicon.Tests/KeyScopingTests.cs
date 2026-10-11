@@ -17,7 +17,7 @@ namespace Dexicon.Tests;
 /// <summary>
 /// The scoping guarantee, which replaced the tenant isolation one when D-28 removed
 /// tenants. The promise is narrower and it is still worth a test nobody deletes by
-/// accident: a key reaches the corpora it is mapped to and no others, and every failure is
+/// accident: a key not set to every corpus reaches the corpora it is mapped to and no others, and every failure is
 /// an authorization error naming the problem rather than an empty result, because an empty
 /// result is indistinguishable from "that content does not exist" and a caller acts on it.
 /// </summary>
@@ -85,6 +85,17 @@ public sealed class KeyScopingTests : IAsyncLifetime
     /// </summary>
     private async Task MapAsync(string tokenName, params string[] corpusIds)
     {
+        var id = await AddKeyAsync(tokenName, allCorpora: false);
+
+        foreach (var corpusId in corpusIds)
+            _db.TokenCorpora.Add(new TokenCorpus { TokenId = id, CorpusId = corpusId });
+
+        await _db.SaveChangesAsync();
+    }
+
+    /// <summary>Add the key's row if it is not there yet, and return its id.</summary>
+    private async Task<string> AddKeyAsync(string tokenName, bool allCorpora)
+    {
         var id = $"tok-{tokenName}";
         if (!await _db.Tokens.AnyAsync(t => t.Id == id))
         {
@@ -96,13 +107,12 @@ public sealed class KeyScopingTests : IAsyncLifetime
                 TokenSalt = [2],
                 Scopes = Scopes.Search,
                 CreatedUtc = DateTime.UtcNow,
+                AllCorpora = allCorpora,
             });
+            await _db.SaveChangesAsync();
         }
 
-        foreach (var corpusId in corpusIds)
-            _db.TokenCorpora.Add(new TokenCorpus { TokenId = id, CorpusId = corpusId });
-
-        await _db.SaveChangesAsync();
+        return id;
     }
 
     [Fact]
@@ -125,13 +135,61 @@ public sealed class KeyScopingTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AnUnmappedKeyReachesEverything()
+    public async Task AKeyThatReachesEveryCorpusReachesOnesMadeLater()
     {
-        // No rows means every corpus, which is what keeps a single-user install from
-        // having to configure anything. Distinct from reaching nothing, which is a revoked
-        // key rather than an empty mapping.
-        var visible = await _scopes.VisibleAsync(Key("unmapped"));
-        visible.Select(c => c.Name).ShouldBe(["books", "code", "private-notes"]);
+        // The setting, not an absence of rows, is what keeps a single-user install from having
+        // to configure anything.
+        await AddKeyAsync("everything", allCorpora: true);
+
+        (await _scopes.VisibleAsync(Key("everything"))).Select(c => c.Name)
+            .ShouldBe(["books", "code", "private-notes"]);
+
+        _db.Corpora.Add(Corpus("later"));
+        await _db.SaveChangesAsync();
+
+        (await _scopes.VisibleAsync(Key("everything"))).Select(c => c.Name)
+            .ShouldBe(["books", "code", "later", "private-notes"]);
+    }
+
+    [Fact]
+    public async Task AKeyRestrictedToNothingReachesNothing()
+    {
+        await AddKeyAsync("none", allCorpora: false);
+
+        (await _scopes.VisibleAsync(Key("none"))).ShouldBeEmpty();
+        (await _scopes.VisibleIdsAsync(Key("none"))).ShouldBeEmpty();
+        var ex = await Should.ThrowAsync<ScopeResolutionException>(
+            () => _scopes.ResolveReadableAsync(Key("none"), null));
+        ex.Message.ShouldContain("can reach no corpora");
+    }
+
+    [Fact]
+    public async Task APrincipalWithNoKeyRowReachesNothing()
+    {
+        // The row is what says what a key reaches, so a principal built without one is not
+        // taken for an unrestricted key.
+        (await _scopes.VisibleAsync(Key("ghost"))).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task RemovingTheLastCorpusOfAKeyLeavesItReachingNothing()
+    {
+        await MapAsync("project", "id-books");
+        await AddKeyAsync("everything", allCorpora: true);
+        (await _scopes.VisibleAsync(Key("project"))).Select(c => c.Name).ShouldBe(["books"]);
+
+        // What removing a corpus does: the corpus goes and the foreign key takes the mapping row with it.
+        _db.Corpora.Remove(await _db.Corpora.SingleAsync(c => c.Name == "books"));
+        await _db.SaveChangesAsync();
+
+        (await _db.TokenCorpora.CountAsync(tc => tc.TokenId == "tok-project")).ShouldBe(0, "the row went with the corpus");
+        (await _scopes.VisibleAsync(Key("project"))).ShouldBeEmpty();
+        var ex = await Should.ThrowAsync<ScopeResolutionException>(
+            () => _scopes.ResolveReadableAsync(Key("project"), null));
+        ex.Message.ShouldContain("can reach no corpora");
+
+        // A key that reaches every corpus is not narrowed by the same removal.
+        (await _scopes.VisibleAsync(Key("everything"))).Select(c => c.Name).ShouldBe(["code", "private-notes"]);
     }
 
     [Fact]
@@ -161,8 +219,8 @@ public sealed class KeyScopingTests : IAsyncLifetime
     [Fact]
     public async Task AnEmptyScopeNeverBecomesSearchEverything()
     {
-        // A key mapped only to a corpus that has since been deleted. The mapping row goes
-        // with it, so this is the same shape as a catalogue with no corpora at all.
+        // Every corpus deleted, for a key that reached every corpus: a catalogue with no corpora at all.
+        await AddKeyAsync("agent", allCorpora: true);
         _db.Corpora.RemoveRange(_db.Corpora);
         await _db.SaveChangesAsync();
 
@@ -397,7 +455,32 @@ public sealed class AdminPasswordTests : IAsyncLifetime
         await Bootstrapper.EnsureBootstrapTokenAsync(services, _db, NullLogger.Instance, options);
 
         _db.ChangeTracker.Clear();
-        (await _db.Tokens.AsNoTracking().SingleAsync()).Scopes.ShouldBe("search,ingest");
+        var adopted = await _db.Tokens.AsNoTracking().SingleAsync();
+        adopted.Scopes.ShouldBe("search,ingest");
+        adopted.AllCorpora.ShouldBeTrue("a key with no row in the mapping would reach nothing");
+    }
+
+    [Fact]
+    public async Task AdoptingAKeyAgainLeavesWhatItReaches()
+    {
+        const string presented = "dex_01JBXQZ9K7MNPRSTVWXYZ01234_a-secret-nobody-should-read";
+        await _tokens.AdoptAsync("bootstrap", Scopes.Bootstrap, presented);
+        (await _db.Tokens.AsNoTracking().SingleAsync()).AllCorpora.ShouldBeTrue("adopted reaching every corpus");
+
+        // The operator restricted it on the Access page, then the value in .env was set again.
+        _db.Corpora.Add(new Corpus { Id = "c1", Name = "one", CreatedUtc = DateTime.UtcNow });
+        await _db.SaveChangesAsync();
+        var key = await _db.Tokens.SingleAsync();
+        key.AllCorpora = false;
+        _db.TokenCorpora.Add(new TokenCorpus { TokenId = key.Id, CorpusId = "c1" });
+        await _db.SaveChangesAsync();
+        _db.ChangeTracker.Clear();
+
+        await _tokens.AdoptAsync("bootstrap", Scopes.Bootstrap, presented);
+
+        _db.ChangeTracker.Clear();
+        (await _db.Tokens.AsNoTracking().SingleAsync()).AllCorpora.ShouldBeFalse();
+        (await _db.TokenCorpora.CountAsync()).ShouldBe(1);
     }
 
     [Fact]

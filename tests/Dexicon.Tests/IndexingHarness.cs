@@ -1,3 +1,4 @@
+using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
 using Dexicon.Core.Documents;
@@ -29,6 +30,14 @@ internal sealed class IndexingHarness : IAsyncDisposable
     public const string Collection = $"dexicon__{Model}__768";
     public const string CorpusId = "corpus-1";
     public const string SourceId = "source-1";
+
+    /// <summary>
+    /// The ids of the key rows every harness starts with, each reaching every corpus: <c>k</c>, then
+    /// <c>k1</c> to <c>k9</c>. Tests build a principal under one of these by hand without issuing a
+    /// key, and the resolver takes a principal with no row for a key that reaches nothing. A test
+    /// that needs a key restricted to some corpora issues one with its corpus ids.
+    /// </summary>
+    public static readonly IReadOnlyList<string> DefaultKeyIds = ["k", .. Enumerable.Range(1, 9).Select(i => $"k{i}")];
 
     private readonly string _dataPath;
     private readonly ServiceProvider _services;
@@ -116,7 +125,9 @@ internal sealed class IndexingHarness : IAsyncDisposable
             provider.GetRequiredService<DbContextOptions<CatalogDbContext>>()))
             await db.Database.EnsureCreatedAsync();
 
-        return new IndexingHarness(dataPath, sourceRoots, sourceDirectories, provider);
+        var harness = new IndexingHarness(dataPath, sourceRoots, sourceDirectories, provider);
+        await harness.SeedKeysAsync();
+        return harness;
     }
 
     public async ValueTask DisposeAsync()
@@ -210,6 +221,22 @@ internal sealed class IndexingHarness : IAsyncDisposable
     public DocumentService NewDocumentService(CatalogDbContext db) =>
         new(db, _services.GetRequiredService<IOptions<DexiconOptions>>(),
             NullLogger<DocumentService>.Instance);
+
+    private async Task SeedKeysAsync()
+    {
+        await using var db = NewContext();
+        db.Tokens.AddRange(DefaultKeyIds.Select(id => new ApiToken
+        {
+            Id = id,
+            Name = id,
+            TokenHash = [1],
+            TokenSalt = [2],
+            Scopes = Scopes.Search,
+            CreatedUtc = DateTime.UtcNow,
+            AllCorpora = true,
+        }));
+        await db.SaveChangesAsync();
+    }
 
     /// <summary>
     /// One corpus with <paramref name="sets"/> chunk sets, over one source per root the

@@ -16,7 +16,7 @@ In PowerShell: `docker compose logs dexicon | Select-String "admin password" -Co
 
 Open http://localhost:8477, sign in with the password (without the quotes), add a corpus
 pointing at a folder under `/workspaces`, and wait for the first index. Then issue a key
-under **Access**, ticking the corpora it may reach. The dialog hands you the command:
+under **Access**, choosing the corpora it may reach. The dialog hands you the command:
 
 ```bash
 claude mcp add --transport http dexicon http://localhost:8477/mcp \

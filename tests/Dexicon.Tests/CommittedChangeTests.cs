@@ -571,7 +571,7 @@ public sealed class CommittedChangeTests
     public async Task AKeyIsNeverSavedWithoutTheCorporaItWasIssuedFor()
     {
         // The key and its corpora were two saves, and the second ran on the caller's token. A cancel between
-        // them left a key with no mapping, and no mapping means every corpus.
+        // them left a key with no mapping.
         var watcher = new CancelAfterWriteTo("tokens");
         await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
         await harness.SeedCorpusAsync(SourceKind.Workspace);
@@ -589,8 +589,8 @@ public sealed class CommittedChangeTests
 
         watcher.Fired.ShouldBeTrue("the window has to have been opened");
         await using var check = harness.NewContext();
-        (await check.Tokens.Where(t => t.Name == "agent").Select(t => t.Corpora.Count).ToListAsync())
-            .ShouldAllBe(n => n == 1, "a key that is saved reaches only the corpus it was issued for");
+        (await check.Tokens.Where(t => t.Name == "agent").Select(t => new { t.AllCorpora, t.Corpora.Count }).ToListAsync())
+            .ShouldAllBe(t => !t.AllCorpora && t.Count == 1, "a key that is saved reaches only the corpus it was issued for");
     }
 
     [Fact]
@@ -609,6 +609,7 @@ public sealed class CommittedChangeTests
 
         var created = result.ShouldBeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<CreatedTokenResponse>>().Value!;
         created.Token.CorpusIds.ShouldBe([IndexingHarness.CorpusId, papers.Id], ignoreOrder: true);
+        created.Token.AllCorpora.ShouldBeFalse();
         await using var check = harness.NewContext();
         (await check.TokenCorpora.Where(tc => tc.TokenId == created.Token.Id).Select(tc => tc.CorpusId).ToListAsync())
             .ShouldBe([IndexingHarness.CorpusId, papers.Id], ignoreOrder: true);
@@ -695,23 +696,22 @@ public sealed class CommittedChangeTests
     [Fact]
     public async Task AKeyMappingIsNotReplacedWhileACorpusIsBeingCreated()
     {
-        // A creation reads whether its key has a mapping and adds the new corpus to it. The
-        // admin clearing the mapping between the two (empty means every corpus) left the key
-        // reaching only the corpus it had just made. Both take the one lock, so while a creation
-        // holds it the replacement waits, and goes ahead when it is released.
+        // A creation reads whether its key reaches every corpus and, if not, adds the new corpus to
+        // its mapping. The admin setting the key to every corpus between the two left it holding a
+        // row for the corpus it had just made. Both take the one lock, so while a creation holds it
+        // the replacement waits, and goes ahead when it is released.
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await using var db = harness.NewContext();
-        var (key, _) = await new TokenService(db, TimeProvider.System).CreateAsync("mapped", [Scopes.Configure], null);
-        db.TokenCorpora.Add(new TokenCorpus { TokenId = key.Id, CorpusId = IndexingHarness.CorpusId });
-        await db.SaveChangesAsync();
+        var (key, _) = await new TokenService(db, TimeProvider.System)
+            .CreateAsync("mapped", [Scopes.Configure], null, [IndexingHarness.CorpusId]);
         await using var admin = harness.NewContext();
 
-        Task<Microsoft.AspNetCore.Http.IResult?> replacement;
+        Task<(Microsoft.AspNetCore.Http.IResult? Refusal, ApiToken? Key)> replacement;
         await CorpusConfiguration.Naming.WaitAsync();
         try
         {
-            replacement = SystemEndpoints.MapCorporaAsync(admin, key.Id, [], default);
+            replacement = SystemEndpoints.MapCorporaAsync(admin, key.Id, null, default);
             await Task.Delay(300);
             replacement.IsCompleted.ShouldBeFalse("the replacement waits for the creation to finish");
         }
@@ -720,29 +720,32 @@ public sealed class CommittedChangeTests
             CorpusConfiguration.Naming.Release();
         }
 
-        (await replacement.WaitAsync(TimeSpan.FromSeconds(10))).ShouldBeNull();
-        (await db.TokenCorpora.CountAsync(tc => tc.TokenId == key.Id)).ShouldBe(0, "cleared, which means every corpus");
+        (await replacement.WaitAsync(TimeSpan.FromSeconds(10))).Refusal.ShouldBeNull();
+        (await db.TokenCorpora.CountAsync(tc => tc.TokenId == key.Id)).ShouldBe(0, "cleared when the key is set to every corpus");
+        (await db.Tokens.AsNoTracking().SingleAsync(t => t.Id == key.Id)).AllCorpora.ShouldBeTrue();
     }
 
     [Fact]
-    public async Task ACorpusMadeForAMappedKeyJoinsItsMappingAndOneMadeForAnUnmappedKeyDoesNot()
+    public async Task ACorpusMadeForARestrictedKeyJoinsItsMappingAndOneMadeForAKeyReachingEveryCorpusDoesNot()
     {
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await using var db = harness.NewContext();
         var tokens = new TokenService(db, TimeProvider.System);
-        var (mapped, _) = await tokens.CreateAsync("mapped", [Scopes.Configure], null);
-        var (unmapped, _) = await tokens.CreateAsync("unmapped", [Scopes.Configure], null);
-        db.TokenCorpora.Add(new TokenCorpus { TokenId = mapped.Id, CorpusId = IndexingHarness.CorpusId });
-        await db.SaveChangesAsync();
+        var (mapped, _) = await tokens.CreateAsync("mapped", [Scopes.Configure], null, [IndexingHarness.CorpusId]);
+        var (nothing, _) = await tokens.CreateAsync("nothing", [Scopes.Configure], null, []);
+        var (everything, _) = await tokens.CreateAsync("everything", [Scopes.Configure], null);
         var config = harness.NewConfiguration(db);
 
         var forMapped = (await config.CreateCorpusAsync(new CreateCorpusRequest("papers"), default, mapped.Id)).Value!;
-        await config.CreateCorpusAsync(new CreateCorpusRequest("books"), default, unmapped.Id);
+        var forNothing = (await config.CreateCorpusAsync(new CreateCorpusRequest("notebooks"), default, nothing.Id)).Value!;
+        await config.CreateCorpusAsync(new CreateCorpusRequest("books"), default, everything.Id);
         await config.CreateCorpusAsync(new CreateCorpusRequest("misc"), default);
 
         (await db.TokenCorpora.Where(tc => tc.TokenId == mapped.Id).Select(tc => tc.CorpusId).ToListAsync())
             .ShouldBe([IndexingHarness.CorpusId, forMapped.Id], ignoreOrder: true);
-        (await db.TokenCorpora.CountAsync(tc => tc.TokenId == unmapped.Id)).ShouldBe(0, "no mapping means every corpus");
+        (await db.TokenCorpora.Where(tc => tc.TokenId == nothing.Id).Select(tc => tc.CorpusId).ToListAsync())
+            .ShouldBe([forNothing.Id], "a key restricted to nothing reaches the corpus it made, and no other");
+        (await db.TokenCorpora.CountAsync(tc => tc.TokenId == everything.Id)).ShouldBe(0, "it reaches every corpus without a row");
     }
 }

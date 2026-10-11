@@ -875,6 +875,9 @@ corpus. The mapping is read per request rather than cached into the principal, w
 reach nothing is revoked, not mapped to an empty set. `X-Dexicon-Tenant` goes, and no header
 replaces it.
 
+**Amended by** [D-42](#d-42-whether-a-key-reaches-every-corpus-is-a-setting-on-the-key) (2026-10-11): every
+corpus is a setting on the key and is no longer read from the absence of rows, and a key can be restricted to nothing.
+
 **Why.** The tenant did two things: it was the isolation boundary [07](07-auth.md)
 describes, and it was how several agents were to share one endpoint and see different
 material, chosen by header. The second never worked: `ApiToken.TenantId` is a single column,
@@ -993,7 +996,7 @@ at its cap and make the owner wait that long to sign in. [07](07-auth.md) defers
 limiting per token as something to add when someone reports a problem; that stays true of
 keys and stops being true of the password.
 
-A key with no mapping reads every corpus, and a leaked key reads whatever it is mapped to,
+A key set to every corpus reads every corpus, and a leaked key reads whatever it is mapped to,
 where tenancy confined a leak to one tenant. For one operator on one machine that is the
 right trade, and the mapping is the mitigation when it stops being. Writes lose their owner:
 `ingest` alone governs reindexing. `POST /api/corpora/{id}/documents` stops being reachable
@@ -1907,8 +1910,8 @@ what the UI would refuse, and each is logged with the key's name.
 **What it reaches.** The corpus mapping does not limit `configure`. A key mapped to one
 corpus can add any mounted folder to it, or create another corpus over that folder, and then
 search it: `configure` reaches the whole workspace. The Access page says so when the scope is
-ticked. A corpus the key creates is added to its mapping when it has one, since otherwise the
-key could not reach what it made; an unmapped key already reaches every corpus. For the
+ticked. A corpus the key creates is added to its mapping when the key is restricted, since otherwise the
+key could not reach what it made; a key set to every corpus already reaches it. For the
 same reason the key adopted from `DEXICON__BOOTSTRAP__TOKEN` holds `search` and `ingest`
 only: `configure` is granted on the Access page, never by a value in `.env`.
 
@@ -2234,6 +2237,55 @@ line feed in a name is an ordinary character. A source whose lists or ignore fil
 before this decision it was indexed with the rules past the limit skipped. A list stored before the limits existed
 fails its source's pass on the first pass after an upgrade if it goes past one. The differences from git that remain
 are listed in [04](04-ingestion.md), under "Where the matching differs from git".
+
+---
+
+### D-42 Whether a key reaches every corpus is a setting on the key
+
+**Status.** Accepted and implemented, 2026-10-11. Amends [D-28](#d-28-an-admin-password-and-scoped-api-keys) and
+[D-36](#d-36-a-configure-scope-agents-set-up-what-is-indexed).
+
+**Decision.** `tokens.AllCorpora` says whether a key reaches every corpus, including ones created later. When it is
+false the key reaches the corpora in `token_corpora` and no others, and a key with no rows reaches nothing. A
+principal whose key has no row reaches nothing. The resolver reads both in one query (`ScopeResolver.VisibleQuery`).
+A key is created with the setting on when the request names neither `allCorpora` nor `corpusIds`. `POST /api/tokens`
+and `PUT /api/tokens/{id}/corpora` take `allCorpora: true` or `corpusIds` as the whole set, and refuse an empty
+`corpusIds` without `allCorpora`, since the empty list does not say whether it means none or every corpus. `PUT` also
+refuses a request with neither field. A request names at most 1,000 corpora. `TokenSummary` carries `allCorpora`, so a
+client can tell a key that reaches every corpus from one that reaches none. The Access page offers **Every corpus**
+and **Only these** as a choice and does not read nothing ticked as every corpus.
+
+**Why.** D-28 read "every corpus" from the absence of rows. Removing a corpus deletes the rows that name it
+(`ON DELETE CASCADE` on `token_corpora.CorpusId`), so a key restricted to one corpus had no rows once that corpus was
+removed, and from then on reached every corpus. That held for an administrator's delete and for an approved removal
+([D-39](#d-39-agents-ask-for-removals-and-a-person-decides)) alike, and a key holding `propose` could then ask for the
+removal of any corpus it could name. Found on 2026-10-11 by approving the removal of a corpus that a test key was
+restricted to, then listing what the key reached.
+
+**Migration.** `KeyReachIsExplicit` adds the column and sets it to true for every key with no rows at that moment,
+which is what those keys reached. A key with rows stays restricted to them. A key that a removal had already emptied
+before the upgrade has no rows and is made one that reaches every corpus: the catalogue does not record that it was
+ever restricted. After the upgrade a removal can no longer do that. The column defaults to false, so a row written
+without it is a key that reaches nothing. Going back to a version that reads the absence of rows makes a key
+restricted to nothing reach every corpus again. That version also ignores the column: a key it creates has the column
+at 0 with no rows, a key it restricts to some corpora keeps the column it had, and a key it sets to every corpus keeps
+the column it had and loses its rows. Upgrading again does not repeat the backfill, so the first and third of those
+keys reach nothing and a key that was set to every corpus and restricted meanwhile reaches every corpus. Restoring the
+backup taken before the upgrade avoids all three.
+
+**Cost.** A script that sends `corpusIds: []` to `POST /api/tokens` to create a key for every corpus is answered `400`
+and has to send `allCorpora: true` or leave the field out. `PUT /api/tokens/{id}/corpora` with `{"corpusIds": []}` is
+answered `400` where it was a `200` that lifted the restriction, and with `{}` its title changed from `Corpus ids are
+required` to `Say which corpora`. A request that names more than 1,000 distinct corpora is answered `400`. In
+`GET /api/tokens` and the other replies that carry a `TokenSummary`, `corpusIds` is empty both for a key that reaches
+every corpus and for one restricted to nothing. A client written against the earlier API reads an empty list as every
+corpus, so it misreads the second and has to read `allCorpora`.
+
+**Rejected.** Revoking a key whose last corpus is removed. It ends the key's other uses and leaves no way to point it at
+another corpus, and a revoked key is not repaired from the UI. Keeping the absence of rows as the meaning and adding a
+guard in each removal path: a third route to the same state would have been a third place to add it. Keeping an empty
+`corpusIds` as every corpus on `POST /api/tokens`, as the field was documented: it is the ambiguity `PUT` refuses, and a
+script that builds the list from a filter and finds nothing would create a key that reaches every corpus.
 
 ---
 

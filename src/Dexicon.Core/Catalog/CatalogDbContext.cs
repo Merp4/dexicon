@@ -75,8 +75,8 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             e.HasOne(x => x.Token).WithMany(t => t.Corpora)
                 .HasForeignKey(x => x.TokenId).OnDelete(DeleteBehavior.Cascade);
             // Cascade, so deleting a corpus does not leave a key mapped to a corpus that
-            // no longer exists, which would read as "restricted to nothing" and is instead
-            // indistinguishable from "mapped to everything" once the last row goes.
+            // no longer exists. The key keeps AllCorpora false, so losing its last row leaves
+            // it reaching nothing and does not lift the restriction.
             e.HasOne(x => x.Corpus).WithMany()
                 .HasForeignKey(x => x.CorpusId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(x => x.CorpusId);

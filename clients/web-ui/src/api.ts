@@ -149,6 +149,16 @@ export type {
 } from './generated';
 
 /**
+ * Which corpora a key reaches: every corpus, including ones created later, or exactly the ones
+ * listed. A list may be empty, which is a key that reaches nothing. The two are different on the
+ * server, so a request always says which it means.
+ */
+export type CorpusReach = { all: true } | { all: false; corpusIds: string[] };
+
+const reachBody = (reach: CorpusReach) =>
+  reach.all ? { allCorpora: true } : { allCorpora: false, corpusIds: reach.corpusIds };
+
+/**
  * Model pull progress. Hand-written because it arrives as server-sent events rather than
  * a response body, so the OpenAPI document describes the request and nothing else.
  */
@@ -437,9 +447,9 @@ export const api = {
 
   listTokens: () => call(() => getApiTokens()),
 
-  createToken: (name: string, scopes: string[], corpusIds?: string[], expiresInDays?: number) =>
+  createToken: (name: string, scopes: string[], reach: CorpusReach, expiresInDays?: number) =>
     call(() => postApiTokens({
-      body: { name, scopes, corpusIds, expiresInDays } satisfies CreateTokenRequest,
+      body: { name, scopes, ...reachBody(reach), expiresInDays } satisfies CreateTokenRequest,
     })),
 
   revokeToken: (id: string) => call(() => deleteApiTokensById({ path: { id } })),
@@ -480,16 +490,17 @@ export const api = {
   },
 
   /**
-   * Replace which corpora a key may reach. An empty list means every corpus.
+   * Replace which corpora a key may reach: every corpus, or exactly the ones listed, where an
+   * empty list is a key that reaches nothing.
    *
    * Read per request on the server, so this reaches a running agent on its next call
    * without it reconnecting. That is the whole reason the mapping lives here rather than
    * in a header in the agent's own configuration.
    */
-  setTokenCorpora: (id: string, corpusIds: string[]) =>
+  setTokenCorpora: (id: string, reach: CorpusReach) =>
     call(() => putApiTokensByIdCorpora({
       path: { id },
-      body: { corpusIds } satisfies UpdateTokenCorporaRequest,
+      body: reachBody(reach) satisfies UpdateTokenCorporaRequest,
     })),
 
   /**

@@ -37,7 +37,7 @@ public static class OpenApiDocuments
 
             Describe(o, "Dexicon", version,
                 "Semantic indexing and search. Every endpoint except sign-in requires a "
-                + "bearer: an agent's API key, which reaches the corpora it is mapped to, or an "
+                + "bearer: an agent's API key, which reaches every corpus or only the corpora it is mapped to, or an "
                 + "admin session obtained by posting the password to /api/session.");
         });
 

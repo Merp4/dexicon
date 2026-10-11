@@ -22,9 +22,22 @@ public sealed class ApiToken
     public DateTime? RevokedUtc { get; set; }
 
     /// <summary>
-    /// The corpora this key may reach. No rows means every corpus, which is what a
+    /// Whether the key reaches every corpus, including ones created later. This is what a
     /// single-user install wants and what keeps the mapping optional rather than a step in
-    /// issuing a key. A key that should reach nothing is revoked, not emptied.
+    /// issuing a key. When false the key reaches the corpora in <see cref="Corpora"/> and no
+    /// others, and an empty list reaches nothing.
+    ///
+    /// Stored as a setting of its own. Read from the absence of rows instead, a corpus
+    /// removal that took a key's last row (the join row is deleted with the corpus) turned a
+    /// key restricted to that corpus into one that reached every corpus.
+    ///
+    /// False for a row built without it, so a key someone forgets to configure reaches nothing.
+    /// </summary>
+    public bool AllCorpora { get; set; }
+
+    /// <summary>
+    /// The corpora this key may reach when <see cref="AllCorpora"/> is false, and ignored when
+    /// it is true. A corpus removal deletes its row, which leaves the key with one corpus fewer.
     ///
     /// Resolved per request rather than carried on the cached principal: the principal
     /// cache has a 60-second TTL, and caching the mapping there would make that TTL decide

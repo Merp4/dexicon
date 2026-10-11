@@ -88,8 +88,9 @@ public sealed class TokenService(CatalogDbContext db, TimeProvider clock)
     /// <c>POST /api/tokens</c>, refuses a request that names it before it reaches this method.
     /// </summary>
     /// <param name="corpusIds">
-    /// The corpora the key may reach, saved with it in one save. None means every corpus. The caller
-    /// checks that they exist.
+    /// The corpora the key may reach, saved with it in one save. Null means every corpus
+    /// (<see cref="ApiToken.AllCorpora"/>). A list, including an empty one, restricts the key to
+    /// those corpora, and an empty list reaches none. The caller checks that they exist.
     /// </param>
     public async Task<(ApiToken Row, IssuedToken Issued)> CreateAsync(
         string name, IEnumerable<string> scopes, DateTime? expiresUtc,
@@ -108,6 +109,7 @@ public sealed class TokenService(CatalogDbContext db, TimeProvider clock)
             Scopes = KeyScopes(scopes),
             CreatedUtc = clock.GetUtcNow().UtcDateTime,
             ExpiresUtc = expiresUtc,
+            AllCorpora = corpusIds is null,
         };
 
         foreach (var corpusId in (corpusIds ?? []).Distinct(StringComparer.Ordinal))
@@ -161,6 +163,8 @@ public sealed class TokenService(CatalogDbContext db, TimeProvider clock)
     /// The value must still be a well-formed <c>dex_&lt;id&gt;_&lt;secret&gt;</c>, so the
     /// same parser serves both paths and an operator cannot accidentally create a token
     /// the verifier will never recognise.
+    ///
+    /// A new key reaches every corpus. Re-adopting an id leaves its reach as it was.
     /// </summary>
     public async Task<ApiToken> AdoptAsync(string name, IEnumerable<string> scopes,
         string presented, CancellationToken ct = default)
@@ -198,6 +202,7 @@ public sealed class TokenService(CatalogDbContext db, TimeProvider clock)
             TokenSalt = salt,
             Scopes = KeyScopes(scopes),
             CreatedUtc = clock.GetUtcNow().UtcDateTime,
+            AllCorpora = true,
         };
 
         db.Tokens.Add(row);
