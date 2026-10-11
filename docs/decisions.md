@@ -2248,11 +2248,12 @@ are listed in [04](04-ingestion.md), under "Where the matching differs from git"
 **Decision.** `tokens.AllCorpora` says whether a key reaches every corpus, including ones created later. When it is
 false the key reaches the corpora in `token_corpora` and no others, and a key with no rows reaches nothing. A
 principal whose key has no row reaches nothing. The resolver reads both in one query (`ScopeResolver.VisibleQuery`).
-A key is created with the setting on unless the request restricts it. `PUT /api/tokens/{id}/corpora` takes
-`allCorpora: true` or `corpusIds` as the whole set, and refuses a request that does not say which, including an empty
-`corpusIds` without `allCorpora`, since that would lift a restriction by omission. `TokenSummary` carries
-`allCorpora`, so a client can tell a key that reaches every corpus from one that reaches none. The Access page offers
-**Every corpus** and **Only these** as a choice and does not read nothing ticked as every corpus.
+A key is created with the setting on when the request names neither `allCorpora` nor `corpusIds`. `POST /api/tokens`
+and `PUT /api/tokens/{id}/corpora` take `allCorpora: true` or `corpusIds` as the whole set, and refuse an empty
+`corpusIds` without `allCorpora`, since the empty list does not say whether it means none or every corpus. `PUT` also
+refuses a request with neither field. A request names at most 1,000 corpora. `TokenSummary` carries `allCorpora`, so a
+client can tell a key that reaches every corpus from one that reaches none. The Access page offers **Every corpus**
+and **Only these** as a choice and does not read nothing ticked as every corpus.
 
 **Why.** D-28 read "every corpus" from the absence of rows. Removing a corpus deletes the rows that name it
 (`ON DELETE CASCADE` on `token_corpora.CorpusId`), so a key restricted to one corpus had no rows once that corpus was
@@ -2266,12 +2267,21 @@ which is what those keys reached. A key with rows stays restricted to them. A ke
 before the upgrade has no rows and is made one that reaches every corpus: the catalogue does not record that it was
 ever restricted. After the upgrade a removal can no longer do that. The column defaults to false, so a row written
 without it is a key that reaches nothing. Going back to a version that reads the absence of rows makes a key
-restricted to nothing reach every corpus again.
+restricted to nothing reach every corpus again. That version also ignores the column: a key it creates has the column
+at 0 with no rows, and a key it restricts to some corpora keeps the column it had. Upgrading again does not repeat the
+backfill, so the first of those keys reaches nothing and a key that was set to every corpus and restricted meanwhile
+reaches every corpus. Restoring the backup taken before the upgrade avoids both.
+
+**Cost.** A script that sends `corpusIds: []` to `POST /api/tokens` to create a key for every corpus is answered `400`
+and has to send `allCorpora: true` or leave the field out. `PUT /api/tokens/{id}/corpora` with `{"corpusIds": []}` is
+answered `400` where it was a `200` that lifted the restriction, and with `{}` its title changed from `Corpus ids are
+required` to `Say which corpora`.
 
 **Rejected.** Revoking a key whose last corpus is removed. It ends the key's other uses and leaves no way to point it at
-another corpus, and a revoked key cannot be repaired. Keeping the absence of rows as the meaning and adding a guard in
-each removal path: a third route to the same state would have been a third place to add it. Refusing a creation request
-that sends an empty `corpusIds`, which every script written against the earlier API sends to mean every corpus.
+another corpus, and a revoked key is not repaired from the UI. Keeping the absence of rows as the meaning and adding a
+guard in each removal path: a third route to the same state would have been a third place to add it. Keeping an empty
+`corpusIds` as every corpus on `POST /api/tokens`, as the field was documented: it is the ambiguity `PUT` refuses, and a
+script that builds the list from a filter and finds nothing would create a key that reaches every corpus.
 
 ---
 

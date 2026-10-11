@@ -242,7 +242,6 @@ internal sealed class IndexingHarness : IAsyncDisposable
     /// One corpus with <paramref name="sets"/> chunk sets, over one source per root the
     /// harness was started with. An upload corpus gets a single source with no root.
     /// </summary>
-
     public async Task SeedCorpusAsync(SourceKind kind, int sets = 1, string? gitOptions = null)
     {
         await using var db = NewContext();

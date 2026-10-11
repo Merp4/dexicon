@@ -121,16 +121,50 @@ public sealed class KeyReachTests
     }
 
     [Fact]
-    public async Task AnEmptyListOnANewKeyStillMeansEveryCorpus()
+    public async Task AnEmptyListOnANewKeyIsRefusedAndNoKeyIsSaved()
     {
-        // What the field has always meant when a key is issued, kept for the scripts that send it.
+        // The list does not say whether it means none or every corpus, so a script that builds it from a
+        // filter and finds nothing does not mint a key that reaches every corpus.
         await using var harness = await StartAsync();
         await using var db = harness.NewContext();
 
         var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", CorpusIds: []), AsAdmin(),
             new TokenService(db, TimeProvider.System), db, default);
 
+        StatusOf(result).ShouldBe(400);
+        (await db.Tokens.CountAsync(t => t.Name == "agent")).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task AnEmptyListBesideEveryCorpusIsAKeyThatReachesEveryCorpus()
+    {
+        await using var harness = await StartAsync();
+        await using var db = harness.NewContext();
+
+        var result = await SystemEndpoints.CreateTokenAsync(
+            new CreateTokenRequest("agent", CorpusIds: [], AllCorpora: true), AsAdmin(),
+            new TokenService(db, TimeProvider.System), db, default);
+
         result.ShouldBeOfType<Ok<CreatedTokenResponse>>().Value!.Token.AllCorpora.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task AListOfMoreThanTheMostCorporaIsRefusedBeforeItReachesAQuery()
+    {
+        // SQLite refuses a query with too many parameters, which was a 500 for a request of 200,000 ids.
+        await using var harness = await StartAsync();
+        await using var db = harness.NewContext();
+        var ids = Enumerable.Range(0, SystemEndpoints.MaxReachIds + 1).Select(i => $"id-{i}").ToList();
+
+        var create = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", CorpusIds: ids), AsAdmin(),
+            new TokenService(db, TimeProvider.System), db, default);
+        var (key, _) = await new TokenService(db, TimeProvider.System).CreateAsync("other", [Scopes.Search], null);
+        db.ChangeTracker.Clear();
+        var replace = await SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest(ids), AsAdmin(), db, default);
+
+        StatusOf(create).ShouldBe(400);
+        StatusOf(replace).ShouldBe(400);
+        (await StoredAsync(harness, key.Id)).ShouldBe("every corpus; rows: []");
     }
 
     [Fact]
@@ -285,6 +319,117 @@ public sealed class KeyReachTests
 
         StatusOf(result).ShouldBe(400);
         (await StoredAsync(harness, key.Id)).ShouldBe($"restricted; rows: [{papers.Id}]");
+    }
+
+    [Fact]
+    public async Task AReplacementThatWaitedForTheLockWritesWhatItWasAskedFor()
+    {
+        // The key was read before the wait, so a change made meanwhile by the request that held the lock
+        // went unseen: the setting assigned equalled the stale one, no update was sent, and the rows were
+        // replaced beside a setting that no longer matched them.
+        await using var harness = await StartAsync();
+        await using var db = harness.NewContext();
+        var (key, _) = await new TokenService(db, TimeProvider.System).CreateAsync("agent", [Scopes.Search], null);
+        db.ChangeTracker.Clear();
+        await using var other = harness.NewContext();
+
+        Task<IResult> everyCorpus;
+        await CorpusConfiguration.Naming.WaitAsync();
+        try
+        {
+            everyCorpus = SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest(AllCorpora: true),
+                AsAdmin(), db, default);
+            await Task.Delay(300);
+            everyCorpus.IsCompleted.ShouldBeFalse("the replacement waits for the lock, which is the window");
+
+            var held = await other.Tokens.SingleAsync(t => t.Id == key.Id);
+            held.AllCorpora = false;
+            other.TokenCorpora.Add(new TokenCorpus { TokenId = key.Id, CorpusId = IndexingHarness.CorpusId });
+            await other.SaveChangesAsync();
+        }
+        finally
+        {
+            CorpusConfiguration.Naming.Release();
+        }
+
+        var summary = (await everyCorpus.WaitAsync(TimeSpan.FromSeconds(10))).ShouldBeOfType<Ok<TokenSummary>>().Value!;
+        summary.AllCorpora.ShouldBeTrue();
+        summary.CorpusIds.ShouldBeEmpty();
+        (await StoredAsync(harness, key.Id)).ShouldBe("every corpus; rows: []", "the last request decides");
+    }
+
+    [Fact]
+    public async Task TheSettingIsWrittenEvenWhenTheContextHoldsAStaleCopyOfTheKey()
+    {
+        await using var harness = await StartAsync();
+        await using var db = harness.NewContext();
+        var (key, _) = await new TokenService(db, TimeProvider.System).CreateAsync("agent", [Scopes.Search], null);
+        db.ChangeTracker.Clear();
+        var stale = await db.Tokens.SingleAsync(t => t.Id == key.Id);
+        stale.AllCorpora.ShouldBeTrue();
+        await using var other = harness.NewContext();
+        var held = await other.Tokens.SingleAsync(t => t.Id == key.Id);
+        held.AllCorpora = false;
+        other.TokenCorpora.Add(new TokenCorpus { TokenId = key.Id, CorpusId = IndexingHarness.CorpusId });
+        await other.SaveChangesAsync();
+
+        var (refusal, _) = await SystemEndpoints.MapCorporaAsync(db, key.Id, null, default);
+
+        refusal.ShouldBeNull();
+        (await StoredAsync(harness, key.Id)).ShouldBe("every corpus; rows: []");
+    }
+
+    [Fact]
+    public async Task ReplacingTheReachOfAKeyThatDoesNotExistIsA404()
+    {
+        await using var harness = await StartAsync();
+        await using var db = harness.NewContext();
+
+        var result = await SystemEndpoints.ReplaceCorporaAsync("missing", new UpdateTokenCorporaRequest(AllCorpora: true),
+            AsAdmin(), db, default);
+
+        StatusOf(result).ShouldBe(404);
+    }
+
+    [Fact]
+    public async Task ARowSavedWithoutTheSettingIsAKeyThatReachesNothing()
+    {
+        // The default of the property, which is what a row built without it gets.
+        await using var harness = await StartAsync();
+        await using var db = harness.NewContext();
+        db.Tokens.Add(new ApiToken
+        {
+            Id = "unset",
+            Name = "unset",
+            TokenHash = [1],
+            TokenSalt = [2],
+            Scopes = Scopes.Search,
+            CreatedUtc = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        (await StoredAsync(harness, "unset")).ShouldBe("restricted; rows: []");
+        (await new ScopeResolver(db).VisibleAsync(new Principal("unset", "unset", new HashSet<string>(StringComparer.Ordinal) { Scopes.Search })))
+            .ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ARowLeftBesideTheSettingIsNotListedAsWhatTheKeyReaches()
+    {
+        // The rows are ignored while the key reaches every corpus, and the summary says so.
+        await using var harness = await StartAsync();
+        await using var db = harness.NewContext();
+        var (key, _) = await new TokenService(db, TimeProvider.System).CreateAsync("agent", [Scopes.Search], null);
+        db.TokenCorpora.Add(new TokenCorpus { TokenId = key.Id, CorpusId = IndexingHarness.CorpusId });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        var summary = (await db.Tokens.Include(t => t.Corpora).SingleAsync(t => t.Id == key.Id)).ToSummary();
+
+        summary.AllCorpora.ShouldBeTrue();
+        summary.CorpusIds.ShouldBeEmpty();
+        (await new ScopeResolver(db).VisibleAsync(Agent(key))).Select(c => c.Name).ShouldBe(["notes"]);
     }
 
     // ---- the migration ----------------------------------------------------------------------------

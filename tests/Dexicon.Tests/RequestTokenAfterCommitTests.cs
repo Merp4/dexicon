@@ -11,7 +11,7 @@ namespace Dexicon.Tests;
 ///
 /// A write commits on its own, and what follows it in the same request (the job that applies it, its
 /// collection, the audit line, the reply) is what makes it take effect or says that it happened. On the
-/// caller's token a cancel between the two left a saved change with no job, a key mapped to nothing, or
+/// caller's token a cancel between the two left a saved change with no job, a key saved without its corpora, or
 /// a saved change answered with an error. Review raised that in eight inline comments across PRs #174,
 /// #195, #212 and #214, and again in review summaries. Each fix was made at the site named, and the next
 /// new path missed it again.

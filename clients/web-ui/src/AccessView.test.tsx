@@ -251,6 +251,7 @@ describe('what a key reaches', () => {
     expect(await screen.findByText('every corpus')).toBeInTheDocument();
     expect(screen.getByText('books')).toBeInTheDocument();
     expect(screen.getByText('no corpus')).toBeInTheDocument();
+    expect(screen.getByText('no corpus').className).toMatch(/warn/);
   });
 
   it('starts an existing key on what it reaches', async () => {

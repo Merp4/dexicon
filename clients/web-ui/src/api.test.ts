@@ -478,3 +478,44 @@ describe('uploading many files', () => {
     expect(result.job).toEqual({ id: 'job-1' });
   });
 });
+
+/**
+ * What a key's reach looks like on the wire. The server tells "every corpus" from "no corpus" by
+ * `allCorpora`, so a body that left it out, or sent an empty list for either, would be refused.
+ */
+describe("a key's reach on the wire", () => {
+  const ok = () => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+  const sentBody = async () => (await (fetchMock.mock.calls[0][0] as Request).json()) as Record<string, unknown>;
+
+  it('says every corpus when a key is created for all of them', async () => {
+    fetchMock.mockResolvedValue(ok());
+
+    await api.createToken('agent', ['search'], { all: true });
+
+    expect(await sentBody()).toEqual({ name: 'agent', scopes: ['search'], allCorpora: true });
+  });
+
+  it('says none when a key is restricted to an empty list', async () => {
+    fetchMock.mockResolvedValue(ok());
+
+    await api.setTokenCorpora('t1', { all: false, corpusIds: [] });
+
+    expect(await sentBody()).toEqual({ allCorpora: false, corpusIds: [] });
+  });
+
+  it('lists the corpora a key is restricted to', async () => {
+    fetchMock.mockResolvedValue(ok());
+
+    await api.setTokenCorpora('t1', { all: false, corpusIds: ['c1', 'c2'] });
+
+    expect(await sentBody()).toEqual({ allCorpora: false, corpusIds: ['c1', 'c2'] });
+  });
+
+  it('sends no list when a key is set to every corpus', async () => {
+    fetchMock.mockResolvedValue(ok());
+
+    await api.setTokenCorpora('t1', { all: true });
+
+    expect(await sentBody()).toEqual({ allCorpora: true });
+  });
+});

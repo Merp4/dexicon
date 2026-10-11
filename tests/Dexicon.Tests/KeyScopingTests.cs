@@ -17,7 +17,7 @@ namespace Dexicon.Tests;
 /// <summary>
 /// The scoping guarantee, which replaced the tenant isolation one when D-28 removed
 /// tenants. The promise is narrower and it is still worth a test nobody deletes by
-/// accident: a key reaches the corpora it is mapped to and no others, and every failure is
+/// accident: a key not set to every corpus reaches the corpora it is mapped to and no others, and every failure is
 /// an authorization error naming the problem rather than an empty result, because an empty
 /// result is indistinguishable from "that content does not exist" and a caller acts on it.
 /// </summary>
@@ -455,7 +455,32 @@ public sealed class AdminPasswordTests : IAsyncLifetime
         await Bootstrapper.EnsureBootstrapTokenAsync(services, _db, NullLogger.Instance, options);
 
         _db.ChangeTracker.Clear();
-        (await _db.Tokens.AsNoTracking().SingleAsync()).Scopes.ShouldBe("search,ingest");
+        var adopted = await _db.Tokens.AsNoTracking().SingleAsync();
+        adopted.Scopes.ShouldBe("search,ingest");
+        adopted.AllCorpora.ShouldBeTrue("a key with no row in the mapping would reach nothing");
+    }
+
+    [Fact]
+    public async Task AdoptingAKeyAgainLeavesWhatItReaches()
+    {
+        const string presented = "dex_01JBXQZ9K7MNPRSTVWXYZ01234_a-secret-nobody-should-read";
+        await _tokens.AdoptAsync("bootstrap", Scopes.Bootstrap, presented);
+        (await _db.Tokens.AsNoTracking().SingleAsync()).AllCorpora.ShouldBeTrue("adopted reaching every corpus");
+
+        // The operator restricted it on the Access page, then the value in .env was set again.
+        _db.Corpora.Add(new Corpus { Id = "c1", Name = "one", CreatedUtc = DateTime.UtcNow });
+        await _db.SaveChangesAsync();
+        var key = await _db.Tokens.SingleAsync();
+        key.AllCorpora = false;
+        _db.TokenCorpora.Add(new TokenCorpus { TokenId = key.Id, CorpusId = "c1" });
+        await _db.SaveChangesAsync();
+        _db.ChangeTracker.Clear();
+
+        await _tokens.AdoptAsync("bootstrap", Scopes.Bootstrap, presented);
+
+        _db.ChangeTracker.Clear();
+        (await _db.Tokens.AsNoTracking().SingleAsync()).AllCorpora.ShouldBeFalse();
+        (await _db.TokenCorpora.CountAsync()).ShouldBe(1);
     }
 
     [Fact]

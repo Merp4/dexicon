@@ -573,14 +573,12 @@ public static class SystemEndpoints
         if (ReadReach(body.AllCorpora, body.CorpusIds, omittedIsEvery: false, "The mapping was not changed.", out var wanted)
             is { } unclear) return unclear;
 
-        var token = await db.Tokens.Include(x => x.Corpora).FirstOrDefaultAsync(x => x.Id == id, ct);
-        if (token is null) return Results.NotFound();
-
-        var refused = await MapCorporaAsync(db, id, wanted, ct);
+        var (refused, token) = await MapCorporaAsync(db, id, wanted, ct);
         if (refused is not null) return refused;
 
-        // The tracked key already holds the saved mapping: the save fixes up its collection.
-        return Results.Ok(token.ToSummary());
+        // The key was read under the lock and the save fixed up its collection, so the reply needs no
+        // read after the save.
+        return Results.Ok(token!.ToSummary());
     }
 
     /// <summary>
@@ -637,16 +635,20 @@ public static class SystemEndpoints
                 statusCode: 400);
     }
 
+    /// <summary>The most corpora one request can name. The ids reach a query as parameters, which SQLite limits.</summary>
+    internal const int MaxReachIds = 1_000;
+
     /// <summary>
     /// The reach a request asks for: null for every corpus, otherwise the corpora named, which may
     /// be none. Returns a problem result when the request does not say which it means, and null
     /// when <paramref name="wanted"/> holds the answer.
     ///
     /// <paramref name="allCorpora"/> decides when it is sent: true takes no ids, and false needs the
-    /// list, an empty one meaning none. Without it, ids restrict the key to them. An omitted or empty
-    /// list is every corpus when <paramref name="omittedIsEvery"/> is set, which a new key's
-    /// documented default needs, and is refused otherwise: on a key that exists it would lift a
-    /// restriction by omission.
+    /// list, an empty one meaning none. Without it, ids restrict the key to them, and an empty list is
+    /// refused because it does not say whether it means none or every corpus. A request that sends
+    /// neither field is every corpus when <paramref name="omittedIsEvery"/> is set, which is a new key's
+    /// documented default, and is refused otherwise: on a key that exists it would lift a restriction
+    /// by omission.
     /// </summary>
     internal static IResult? ReadReach(
         bool? allCorpora, IReadOnlyList<string>? corpusIds, bool omittedIsEvery, string outcome, out List<string>? wanted)
@@ -672,11 +674,18 @@ public static class SystemEndpoints
 
         if (corpusIds is { Count: > 0 } || allCorpora == false)
         {
-            wanted = [.. corpusIds!.Distinct(StringComparer.Ordinal)];
+            var distinct = corpusIds!.Distinct(StringComparer.Ordinal).ToList();
+            if (distinct.Count > MaxReachIds)
+                return Results.Problem(
+                    title: "Too many corpus ids",
+                    detail: $"A request names at most {MaxReachIds:N0} corpora. " + outcome,
+                    statusCode: 400);
+
+            wanted = distinct;
             return null;
         }
 
-        if (omittedIsEvery) return null;
+        if (omittedIsEvery && corpusIds is null) return null;
 
         return Results.Problem(
             title: "Say which corpora",
@@ -689,7 +698,7 @@ public static class SystemEndpoints
     /// <summary>
     /// Replace which corpora a key reaches: <paramref name="corpusIds"/> null for every corpus,
     /// otherwise exactly those, and none for an empty list. Returns a problem result when an id does
-    /// not exist, and null on success.
+    /// not exist and a 404 when the key does not, and otherwise the key as saved.
     ///
     /// An unknown id is refused rather than dropped. Silently ignoring one would leave the
     /// key mapped to fewer corpora than the operator ticked, and dropping the last one would
@@ -699,8 +708,14 @@ public static class SystemEndpoints
     /// that a key creating a corpus and the admin replacing its reach cannot interleave: the
     /// creation reads whether the key reaches every corpus and adds the new one to its mapping if
     /// not, and a replacement between the two left a key that reaches every corpus holding a row.
+    ///
+    /// The key is read under the lock, by a context that has not read it before. A key read before
+    /// the wait holds the values of before it: a change made meanwhile by the request that held the
+    /// lock is not seen, the setting assigned here equals the stale one, no update is sent, and the
+    /// rows are replaced beside a setting that no longer matches them. The setting is also marked
+    /// modified, so that it is written whatever the context believed it was.
     /// </summary>
-    internal static async Task<IResult?> MapCorporaAsync(
+    internal static async Task<(IResult? Refusal, ApiToken? Key)> MapCorporaAsync(
         CatalogDbContext db, string tokenId, IReadOnlyList<string>? corpusIds, CancellationToken ct)
     {
         await CorpusConfiguration.Naming.WaitAsync(ct);
@@ -708,19 +723,20 @@ public static class SystemEndpoints
         {
             var wanted = corpusIds?.Distinct(StringComparer.Ordinal).ToList();
             if (wanted is not null
-                && await UnknownCorporaAsync(db, wanted, "The mapping was not changed.", ct) is { } unknown) return unknown;
+                && await UnknownCorporaAsync(db, wanted, "The mapping was not changed.", ct) is { } unknown) return (unknown, null);
 
-            var token = await db.Tokens.FirstOrDefaultAsync(t => t.Id == tokenId, ct);
-            if (token is null) return Results.NotFound();
+            var token = await db.Tokens.Include(t => t.Corpora).FirstOrDefaultAsync(t => t.Id == tokenId, ct);
+            if (token is null) return (Results.NotFound(), null);
 
             var existing = await db.TokenCorpora.Where(tc => tc.TokenId == tokenId).ToListAsync(ct);
             db.TokenCorpora.RemoveRange(existing);
             foreach (var corpusId in wanted ?? [])
                 db.TokenCorpora.Add(new TokenCorpus { TokenId = tokenId, CorpusId = corpusId });
             token.AllCorpora = wanted is null;
+            db.Entry(token).Property(t => t.AllCorpora).IsModified = true;
 
             await db.SaveChangesAsync(ct);
-            return null;
+            return (null, token);
         }
         finally
         {

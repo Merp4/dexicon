@@ -2654,7 +2654,7 @@ function ScopesModal({ token, onClose, onSaved }: {
  *
  * The choice is its own control, and nothing ticked is not a way to say "every corpus". A key
  * restricted to nothing reaches nothing, which is what it is left with when the corpus it was
- * restricted to is removed, and ticking nothing used to lift the restriction.
+ * restricted to is removed.
  */
 function CorpusReachField({ corpora, all, picked, onAll, onPicked }: {
   corpora: Corpus[];
@@ -2699,7 +2699,7 @@ function CorpusReachField({ corpora, all, picked, onAll, onPicked }: {
           )}
           <p className="dim text-xs mt-3 mb-0">
             {picked.length === 0
-              ? 'Nothing is ticked, so this key reaches no corpus. It reaches the ones ticked, and not ones created later.'
+              ? 'Nothing is ticked, so this key reaches no corpus.'
               : `${picked.length} of ${corpora.length}. Not ones created later.`}
           </p>
         </>

@@ -19,15 +19,15 @@ namespace Dexicon.Core.Catalog.Migrations
     /// already emptied, is indistinguishable from an unrestricted key and is made one.
     ///
     /// <c>Down</c> drops the column. An earlier version reads a key with no rows as unrestricted, so
-    /// a key restricted to nothing then reaches every corpus again.
+    /// a key restricted to nothing then reaches every corpus again. It also ignores the column: a key
+    /// it creates has <c>AllCorpora = 0</c> and no rows, and a key it restricts keeps its old value.
+    /// Upgrading again does not repeat the backfill, so a key created or changed in between has to be
+    /// checked on the Access page. Restoring the backup taken before the upgrade avoids that.
     /// </summary>
     public partial class KeyReachIsExplicit : Migration
     {
-        /// <summary>
-        /// The statement that sets the column for the keys that exist, named so a test can run the
-        /// text this migration runs.
-        /// </summary>
-        internal const string BackfillSql = @"
+        /// <summary>The statement that sets the column for the keys that exist.</summary>
+        private const string BackfillSql = @"
                 UPDATE tokens
                 SET AllCorpora = 1
                 WHERE NOT EXISTS (SELECT 1 FROM token_corpora WHERE token_corpora.TokenId = tokens.Id);";

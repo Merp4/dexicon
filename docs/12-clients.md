@@ -18,7 +18,7 @@ for a query. See [13](13-integration.md).
 `./scripts/install-mcp.ps1` generates any of these; see [Installer](#installer).
 
 > **Where the key comes from.** Issue it on the **Access** screen, which is also where
-> you tick the corpora it may reach and copy the command below. Nothing is minted for you
+> you choose the corpora it may reach and copy the command below. Nothing is minted for you
 > on first run: what is printed once is the admin password, which signs you in
 > (`docker compose logs dexicon | grep -A 2 "admin password"`; it is the quoted value on the
 > third line, and the quotes are not part of it).

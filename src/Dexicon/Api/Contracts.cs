@@ -541,10 +541,11 @@ public sealed record ContextApiRequest(
 /// not expire, and a negative number is refused.
 /// </param>
 /// <param name="CorpusIds">
-/// Corpus ids this key may reach. With <paramref name="AllCorpora"/> omitted, a list of ids
-/// restricts the key to them, and an omitted or empty list means every corpus, which is what a
-/// single-user install wants. Editable afterwards, and read per request, so a change
-/// here reaches the agent on its next call without it reconnecting.
+/// Corpus ids this key may reach, at most 1,000. With <paramref name="AllCorpora"/> omitted, a list of
+/// ids restricts the key to them, an omitted list means every corpus, which is what a single-user
+/// install wants, and an empty list is refused because it does not say whether it means none or every
+/// corpus. Editable afterwards, and read per request, so a change here reaches the agent on its next
+/// call without it reconnecting.
 /// </param>
 /// <param name="AllCorpora">
 /// True lets the key reach every corpus, including ones created later, and <c>corpusIds</c> must
@@ -561,10 +562,10 @@ public sealed record CreateTokenRequest(
 /// <summary>
 /// Replaces which corpora a key reaches outright. Send <c>allCorpora: true</c> for every corpus,
 /// including ones created later, with <c>corpusIds</c> empty or left out. Send the corpora the key
-/// may reach as <c>corpusIds</c> to restrict it to them, with <c>allCorpora: false</c> or left out;
-/// an empty list with <c>allCorpora: false</c> reaches no corpus. A request that does not say which
-/// of the two is meant, an empty or missing <c>corpusIds</c> without <c>allCorpora</c>, is refused
-/// and changes nothing.
+/// may reach as <c>corpusIds</c>, at most 1,000, to restrict it to them, with <c>allCorpora: false</c>
+/// or left out; an empty list with <c>allCorpora: false</c> reaches no corpus. A request that does not
+/// say which of the two is meant, an empty or missing <c>corpusIds</c> without <c>allCorpora</c>, is
+/// refused and changes nothing.
 /// </summary>
 public sealed record UpdateTokenCorporaRequest(
     IReadOnlyList<string>? CorpusIds = null,

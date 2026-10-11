@@ -145,7 +145,7 @@ public sealed class ConfigureTools
         {
             if (resets.Count > 0) throw new McpException("reset applies to a corpus that exists. Leave it out when creating one.");
 
-            // A mapped key reaches only its corpora, so the corpus it makes joins its mapping in
+            // A restricted key, including one restricted to nothing, reaches only its corpora, so the corpus it makes joins its mapping in
             // the same save as the corpus: otherwise a failure between the two leaves one it
             // cannot reach, and cannot create again, since the name is taken.
             //

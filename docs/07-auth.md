@@ -3,8 +3,8 @@
 ## What this is, and what it is not
 
 Dexicon is a local developer tool that may be shared by a small team. What the auth model
-gives you is **scoping**, not **separation**. A key reaches the corpora it is mapped to, and
-naming one it cannot reach is a named error rather than an empty result. But anyone who can
+gives you is **scoping**, not **separation**. A key reaches every corpus or the corpora it is
+mapped to, and naming one it cannot reach is a named error rather than an empty result. But anyone who can
 reach the Docker socket, the Qdrant port, or the data volume reads everything, and no amount
 of application-layer work changes that. The admin password reaches every corpus by design,
 because the UI has to list one in order to map a key to it.
@@ -106,11 +106,13 @@ restricted to nothing. Removing a corpus deletes the rows that name it, so a key
 one corpus is left restricted to nothing and does not start reaching every corpus. Such a key
 is refused with `can reach no corpora`; give it a corpus under **Access**, or revoke it.
 
-A key is created reaching every corpus unless the request restricts it. `PUT
-/api/tokens/{id}/corpora` has to say which it means: `allCorpora: true`, or `corpusIds` as the
-whole set, with an empty list reaching no corpus. A request with neither, or with an empty
-`corpusIds` and no `allCorpora`, is refused and changes nothing. A principal whose key has no
-row reaches no corpus.
+A key is created reaching every corpus when the request names neither `allCorpora` nor
+`corpusIds`. A request that sets a key's reach says which it means: `allCorpora: true`, or
+`corpusIds` as the whole set, with an empty list reaching no corpus only beside `allCorpora:
+false`. `PUT /api/tokens/{id}/corpora` with neither field, and either endpoint with an empty
+`corpusIds` and no `allCorpora`, is refused and changes nothing, since the empty list does not
+say whether it means none or every corpus. A request names at most 1,000 corpora. A principal
+whose key has no row reaches no corpus.
 
 The mapping does not limit `configure`. A key holding it can add any mounted folder to a
 corpus it reaches, or create a corpus over that folder, and then search it, so it reaches the

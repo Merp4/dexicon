@@ -707,7 +707,7 @@ public sealed class CommittedChangeTests
             .CreateAsync("mapped", [Scopes.Configure], null, [IndexingHarness.CorpusId]);
         await using var admin = harness.NewContext();
 
-        Task<Microsoft.AspNetCore.Http.IResult?> replacement;
+        Task<(Microsoft.AspNetCore.Http.IResult? Refusal, ApiToken? Key)> replacement;
         await CorpusConfiguration.Naming.WaitAsync();
         try
         {
@@ -720,7 +720,7 @@ public sealed class CommittedChangeTests
             CorpusConfiguration.Naming.Release();
         }
 
-        (await replacement.WaitAsync(TimeSpan.FromSeconds(10))).ShouldBeNull();
+        (await replacement.WaitAsync(TimeSpan.FromSeconds(10))).Refusal.ShouldBeNull();
         (await db.TokenCorpora.CountAsync(tc => tc.TokenId == key.Id)).ShouldBe(0, "cleared when the key is set to every corpus");
         (await db.Tokens.AsNoTracking().SingleAsync(t => t.Id == key.Id)).AllCorpora.ShouldBeTrue();
     }

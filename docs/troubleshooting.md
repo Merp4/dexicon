@@ -27,8 +27,8 @@ Three causes, in the order to check:
 1. **The key has no `search` scope.** `list_corpora` returns
    `This key has scopes [ingest] and needs 'search'`. Issue one that does.
 2. **The key is not mapped to them.** A key reaches every corpus when it is set to under
-   Access, and otherwise only the corpora ticked against it, which is none after the corpus it
-   was restricted to is removed. `list_corpora` says `Key 'x' can reach no corpora`. Choose
+   Access, and otherwise only the corpora ticked against it, which is none when the corpus it
+   was restricted to was its only one and has been removed. `list_corpora` says `Key 'x' can reach no corpora`. Choose
    every corpus or tick one, and the next call sees it.
 3. **There genuinely are none yet**, because the first index has not run. The UI shows the
    job; `index_status` reports it too.
