@@ -18,11 +18,15 @@ namespace Dexicon.Core.Catalog.Migrations
     /// migration history. A key with no rows at that moment, including one that a removal had
     /// already emptied, is indistinguishable from an unrestricted key and is made one.
     ///
-    /// <c>Down</c> drops the column. An earlier version reads a key with no rows as unrestricted, so
-    /// a key restricted to nothing then reaches every corpus again. It also ignores the column: a key
-    /// it creates has <c>AllCorpora = 0</c> and no rows, and a key it restricts keeps its old value.
-    /// Upgrading again does not repeat the backfill, so a key created or changed in between has to be
-    /// checked on the Access page. Restoring the backup taken before the upgrade avoids that.
+    /// <c>Down</c> drops the column, and the next <c>Up</c> runs the backfill again.
+    ///
+    /// A version that runs against the migrated catalogue without this migration reads a key with no
+    /// rows as unrestricted, so a key restricted to nothing then reaches every corpus again. It also
+    /// ignores the column: a key it creates has <c>AllCorpora = 0</c> and no rows, a key it restricts
+    /// keeps the value it had, and a key it sets to every corpus has the value it had and no rows. The
+    /// backfill does not run again when that catalogue is upgraded, so a key created or changed in
+    /// between has to be checked on the Access page. Restoring the backup taken before the upgrade
+    /// avoids that.
     /// </summary>
     public partial class KeyReachIsExplicit : Migration
     {

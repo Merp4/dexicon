@@ -2268,14 +2268,18 @@ before the upgrade has no rows and is made one that reaches every corpus: the ca
 ever restricted. After the upgrade a removal can no longer do that. The column defaults to false, so a row written
 without it is a key that reaches nothing. Going back to a version that reads the absence of rows makes a key
 restricted to nothing reach every corpus again. That version also ignores the column: a key it creates has the column
-at 0 with no rows, and a key it restricts to some corpora keeps the column it had. Upgrading again does not repeat the
-backfill, so the first of those keys reaches nothing and a key that was set to every corpus and restricted meanwhile
-reaches every corpus. Restoring the backup taken before the upgrade avoids both.
+at 0 with no rows, a key it restricts to some corpora keeps the column it had, and a key it sets to every corpus keeps
+the column it had and loses its rows. Upgrading again does not repeat the backfill, so the first and third of those
+keys reach nothing and a key that was set to every corpus and restricted meanwhile reaches every corpus. Restoring the
+backup taken before the upgrade avoids all three.
 
 **Cost.** A script that sends `corpusIds: []` to `POST /api/tokens` to create a key for every corpus is answered `400`
 and has to send `allCorpora: true` or leave the field out. `PUT /api/tokens/{id}/corpora` with `{"corpusIds": []}` is
 answered `400` where it was a `200` that lifted the restriction, and with `{}` its title changed from `Corpus ids are
-required` to `Say which corpora`.
+required` to `Say which corpora`. A request that names more than 1,000 distinct corpora is answered `400`. In
+`GET /api/tokens` and the other replies that carry a `TokenSummary`, `corpusIds` is empty both for a key that reaches
+every corpus and for one restricted to nothing. A client written against the earlier API reads an empty list as every
+corpus, so it misreads the second and has to read `allCorpora`.
 
 **Rejected.** Revoking a key whose last corpus is removed. It ends the key's other uses and leaves no way to point it at
 another corpus, and a revoked key is not repaired from the UI. Keeping the absence of rows as the meaning and adding a

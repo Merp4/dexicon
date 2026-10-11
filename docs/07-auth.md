@@ -4,10 +4,10 @@
 
 Dexicon is a local developer tool that may be shared by a small team. What the auth model
 gives you is **scoping**, not **separation**. A key reaches every corpus or the corpora it is
-mapped to, and naming one it cannot reach is a named error rather than an empty result. But anyone who can
-reach the Docker socket, the Qdrant port, or the data volume reads everything, and no amount
-of application-layer work changes that. The admin password reaches every corpus by design,
-because the UI has to list one in order to map a key to it.
+mapped to, and naming one it cannot reach is a named error rather than an empty result. But
+anyone who can reach the Docker socket, the Qdrant port, or the data volume reads everything,
+and no amount of application-layer work changes that. The admin password reaches every corpus
+by design, because the UI has to list one in order to map a key to it.
 
 This is stated explicitly because a model described as "isolation" invites uses it cannot
 support. See the deployment notes in [09](09-deployment.md) for closing the infrastructure

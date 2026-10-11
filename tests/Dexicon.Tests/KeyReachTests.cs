@@ -389,6 +389,13 @@ public sealed class KeyReachTests
             AsAdmin(), db, default);
 
         StatusOf(result).ShouldBe(404);
+
+        // The key is looked up first, as it was before the lock moved, so a missing key beside a missing
+        // corpus is still the key's 404.
+        var both = await SystemEndpoints.ReplaceCorporaAsync("missing", new UpdateTokenCorporaRequest(["no-such-corpus"]),
+            AsAdmin(), db, default);
+
+        StatusOf(both).ShouldBe(404);
     }
 
     [Fact]

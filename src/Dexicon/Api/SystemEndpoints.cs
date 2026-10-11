@@ -721,12 +721,12 @@ public static class SystemEndpoints
         await CorpusConfiguration.Naming.WaitAsync(ct);
         try
         {
+            var token = await db.Tokens.Include(t => t.Corpora).FirstOrDefaultAsync(t => t.Id == tokenId, ct);
+            if (token is null) return (Results.NotFound(), null);
+
             var wanted = corpusIds?.Distinct(StringComparer.Ordinal).ToList();
             if (wanted is not null
                 && await UnknownCorporaAsync(db, wanted, "The mapping was not changed.", ct) is { } unknown) return (unknown, null);
-
-            var token = await db.Tokens.Include(t => t.Corpora).FirstOrDefaultAsync(t => t.Id == tokenId, ct);
-            if (token is null) return (Results.NotFound(), null);
 
             var existing = await db.TokenCorpora.Where(tc => tc.TokenId == tokenId).ToListAsync(ct);
             db.TokenCorpora.RemoveRange(existing);
