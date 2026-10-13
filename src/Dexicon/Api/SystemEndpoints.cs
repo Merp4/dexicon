@@ -175,7 +175,7 @@ public static class SystemEndpoints
     public static void MapEventEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/events", async (HttpContext ctx, RequestContext rc, ScopeResolver scopes,
-            IndexProgressBroadcaster broadcaster, CancellationToken ct) =>
+            AdminSessions sessions, IndexProgressBroadcaster broadcaster, CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is not null)
             {
@@ -184,6 +184,7 @@ public static class SystemEndpoints
             }
 
             var principal = rc.RequirePrincipal();
+            var visible = StreamVisibility(scopes, sessions, principal, DexiconAuthMiddleware.BearerOf(ctx.Request));
 
             ctx.Response.Headers.ContentType = "text/event-stream";
             ctx.Response.Headers.CacheControl = "no-cache";
@@ -195,13 +196,24 @@ public static class SystemEndpoints
 
             try
             {
-                await StreamProgressAsync(ctx.Response, reader,
-                    async token => await scopes.VisibleIdsAsync(principal, token),
+                await StreamProgressAsync(ctx.Response, reader, visible,
                     TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(2), ct);
             }
             catch (OperationCanceledException) { /* client went away — normal */ }
         }).WithTags("Events");
     }
+
+    /// <summary>
+    /// What an open progress stream may show: the corpora its principal reaches, read again on every
+    /// heartbeat, and nothing once the credential it was opened with is no longer valid. A key's
+    /// revocation and expiry are read by the resolver. An administrator's session lives in memory and
+    /// is checked here, so a stream left open by a session that has signed out stops showing reports.
+    /// </summary>
+    internal static Func<CancellationToken, Task<HashSet<string>>> StreamVisibility(
+        ScopeResolver scopes, AdminSessions sessions, Principal principal, string? presented) =>
+        async ct => principal.Has(Scopes.Admin) && sessions.Verify(presented) is null
+            ? new HashSet<string>(StringComparer.Ordinal)
+            : await scopes.VisibleIdsAsync(principal, ct);
 
     /// <summary>
     /// Writes every report the caller can see, and a ping whenever <paramref name="interval"/>
@@ -553,6 +565,11 @@ public static class SystemEndpoints
         if (ReadReach(body.AllCorpora, body.CorpusIds, omittedIsEvery: true, "The key was not created.", out var corpusIds)
             is { } unclear) return unclear;
 
+        // The secret is hashed first: the lock below is held against every corpus creation, removal and
+        // upload that waits behind a removal, and the hash takes a few hundred milliseconds.
+        var expires = body.ExpiresInDays is { } d and > 0 ? DateTime.UtcNow.AddDays(d) : (DateTime?)null;
+        var (row, issued) = tokens.Build(body.Name.Trim(), requested, expires, corpusIds);
+
         // Under the naming lock for a key restricted to corpora, from the check that they exist to the save
         // of its rows: a corpus removed between the two was a foreign key failure and a 500.
         var restricted = corpusIds is not null;
@@ -562,16 +579,15 @@ public static class SystemEndpoints
             if (corpusIds is not null
                 && await UnknownCorporaAsync(db, corpusIds, "The key was not created.", ct) is { } unknown) return unknown;
 
-            var expires = body.ExpiresInDays is { } d and > 0 ? DateTime.UtcNow.AddDays(d) : (DateTime?)null;
-            var (row, issued) = await tokens.CreateAsync(body.Name.Trim(), requested, expires, corpusIds, ct);
-
-            // The highest-value thing on the page: the step between installed and working.
-            return Results.Ok(new CreatedTokenResponse(row.ToSummary(), issued.Presented, McpAddCommand(issued.Presented)));
+            await tokens.SaveAsync(row, ct);
         }
         finally
         {
             if (restricted) CorpusConfiguration.Naming.Release();
         }
+
+        // The highest-value thing on the page: the step between installed and working.
+        return Results.Ok(new CreatedTokenResponse(row.ToSummary(), issued.Presented, McpAddCommand(issued.Presented)));
     }
 
     /// <summary>The handler of <c>PUT /api/tokens/{id}/corpora</c>, a method so a test can call it without a server.</summary>
@@ -1041,13 +1057,8 @@ public static class SystemEndpoints
             catch (Exception ex) when (ex is EmbeddingUnavailableException or UnknownEmbeddingProviderException)
             { embeddingError = ex.Message; }
 
-            // A Running row whose lease has lapsed is a job that stopped without saying so, and
-            // is not active. Only a job in a corpus the caller reaches: the count of corpora and the
-            // job are what a key would otherwise learn about the ones it does not.
             var visibleIds = visible.Select(c => c.Id).ToList();
-            var activeJob = await IndexingActivity.LiveJobs(db, DateTime.UtcNow)
-                .Where(j => j.State == JobState.Running && visibleIds.Contains(j.CorpusId))
-                .OrderByDescending(j => j.StartedUtc).FirstOrDefaultAsync(ct);
+            var (corpora, activeJob) = await ReachableActivityAsync(db, visibleIds, ct);
 
             return Results.Ok(new HealthResponse(
                 qdrant ? "ok" : "degraded",
@@ -1055,7 +1066,7 @@ public static class SystemEndpoints
                 new EmbeddingHealth(
                     embeddingError is null, EndpointOf(factory, opts.Value, target.Provider),
                     target.Provider, target.Model, dims, embeddingError),
-                visible.Count,
+                corpora,
                 activeJob?.ToSummary(),
                 await MissingModelsAsync(db, catalog, cache, visibleIds,
                     rc.RequirePrincipal().TokenId, ct),
@@ -1064,6 +1075,22 @@ public static class SystemEndpoints
                     ? await db.Proposals.CountAsync(p => p.Status == ProposalStatus.Pending, ct)
                     : null));
         }).Produces<HealthResponse>().WithTags("Health");
+    }
+
+    /// <summary>
+    /// The number of corpora a caller reaches and the newest running job in one of them, which is what
+    /// <c>/healthz</c> reports of the catalogue. A count of every corpus and a job in any of them are what
+    /// a key would otherwise learn about the ones it does not reach. A Running row whose lease has lapsed
+    /// is a job that stopped without saying so, and is not active.
+    /// </summary>
+    internal static async Task<(int Corpora, IndexJob? ActiveJob)> ReachableActivityAsync(
+        CatalogDbContext db, IReadOnlyCollection<string> visibleIds, CancellationToken ct)
+    {
+        var activeJob = await IndexingActivity.LiveJobs(db, DateTime.UtcNow)
+            .Where(j => j.State == JobState.Running && visibleIds.Contains(j.CorpusId))
+            .OrderByDescending(j => j.StartedUtc).FirstOrDefaultAsync(ct);
+
+        return (visibleIds.Count, activeJob);
     }
 
     /// <summary>
@@ -1255,9 +1282,8 @@ public static class SystemEndpoints
     /// <summary>
     /// Chunk sets whose model the provider no longer has.
     ///
-    /// Scoped to what the caller can reach: the corpora count above is a number and gives
-    /// away nothing, but a set names its corpus, and a corpus a key is not mapped to is not
-    /// that key's to see.
+    /// Scoped to what the caller can reach, as the count of corpora and the running job are: a set
+    /// names its corpus, and a corpus a key is not mapped to is not that key's to see.
     ///
     /// Cached, because <c>/healthz</c> is polled every fifteen seconds per open tab and
     /// this costs a listing per provider. A minute is short enough that pulling a model

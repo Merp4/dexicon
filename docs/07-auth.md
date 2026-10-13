@@ -190,8 +190,9 @@ document, and attaches it to another corpus, only when a corpus the key reaches 
 is another corpus's is answered `404` as one that does not exist. An administrator attaches any stored
 document, including one that no corpus holds.
 
-A key that is revoked or has expired reaches no corpus from then on, including through a progress stream
-that was opened before. The name of a corpus is global, so a key that creates one learns that a name is
+A key that is revoked or has expired reaches no corpus from then on, and a session that has signed out
+reaches none, including through a progress stream that was opened before: it shows nothing from its next
+heartbeat. The name of a corpus is global, so a key that creates one learns that a name is
 taken, and is not told the stored name of the corpus that holds it. `/healthz` counts the corpora a key
 reaches, and reports a running job only in one of them.
 

@@ -72,6 +72,90 @@ public sealed class KeyVisibilityTests
         (await scopes.VisibleIdsAsync(Agent(current))).ShouldBe([IndexingHarness.CorpusId]);
     }
 
+    [Fact]
+    public async Task AProgressStreamOfASessionThatHasSignedOutShowsNothingFromThen()
+    {
+        await using var harness = await StartAsync();
+        await using var db = harness.NewContext();
+        using var sessions = new AdminSessions(TimeProvider.System);
+        var session = sessions.Issue();
+        var principal = sessions.Verify(session.Presented).ShouldNotBeNull();
+        var visible = SystemEndpoints.StreamVisibility(new ScopeResolver(db), sessions, principal, session.Presented);
+        (await visible(default)).ShouldBe([IndexingHarness.CorpusId]);
+
+        sessions.Revoke(session.Presented);
+
+        (await visible(default)).ShouldBeEmpty();
+    }
+
+    private sealed class FixedClock(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    [Fact]
+    public async Task AKeyReachesNothingFromTheInstantItExpires()
+    {
+        // Held to ApiToken.IsActive, which is active while the expiry is later than now.
+        await using var harness = await StartAsync();
+        await using var db = harness.NewContext();
+        var instant = new DateTime(2026, 10, 13, 12, 0, 0, DateTimeKind.Utc);
+        var (key, _) = await new TokenService(db, TimeProvider.System).CreateAsync("agent", [Scopes.Search], instant);
+
+        (await new ScopeResolver(db, new FixedClock(instant.AddTicks(-1))).VisibleIdsAsync(Agent(key)))
+            .ShouldBe([IndexingHarness.CorpusId]);
+        (await new ScopeResolver(db, new FixedClock(instant)).VisibleIdsAsync(Agent(key))).ShouldBeEmpty();
+        key.IsActive(instant).ShouldBeFalse();
+    }
+
+    // ---- what /healthz reports of the catalogue ----------------------------------------------------
+
+    private static async Task StartRunningJobAsync(IndexingHarness harness, string corpusId)
+    {
+        await using var db = harness.NewContext();
+        var id = Ulid.NewUlid().ToString();
+        db.Jobs.Add(new IndexJob
+        {
+            Id = id,
+            CorpusId = corpusId,
+            Kind = JobKind.Refresh,
+            State = JobState.Running,
+            QueuedUtc = DateTime.UtcNow,
+            StartedUtc = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+
+        // A running job counts as active while its corpus is held under the job's lease.
+        await db.Corpora.Where(c => c.Id == corpusId).ExecuteUpdateAsync(u => u
+            .SetProperty(c => c.HeldBy, IndexingActivity.HolderPrefix + id)
+            .SetProperty(c => c.HeldUntilUtc, DateTime.UtcNow.AddMinutes(5)));
+    }
+
+    [Fact]
+    public async Task HealthCountsTheCorporaAKeyReachesAndReportsOnlyAJobInOneOfThem()
+    {
+        await using var harness = await StartAsync();
+        await using var db = harness.NewContext();
+        var papers = await AddCorpusAsync(harness, db, "papers");
+        await StartRunningJobAsync(harness, papers.Id);
+        var scopes = new ScopeResolver(db);
+        var (key, _) = await new TokenService(db, TimeProvider.System)
+            .CreateAsync("agent", [Scopes.Search], null, [IndexingHarness.CorpusId]);
+
+        var forKey = await SystemEndpoints.ReachableActivityAsync(db, await scopes.VisibleIdsAsync(Agent(key)), default);
+        var forAdmin = await SystemEndpoints.ReachableActivityAsync(
+            db, await scopes.VisibleIdsAsync(AsAdmin().Principal!), default);
+
+        forKey.Corpora.ShouldBe(1, "the corpus the key does not reach is not counted");
+        forKey.ActiveJob.ShouldBeNull("the job runs in a corpus the key does not reach");
+        forAdmin.Corpora.ShouldBe(2);
+        forAdmin.ActiveJob.ShouldNotBeNull().CorpusId.ShouldBe(papers.Id);
+
+        await StartRunningJobAsync(harness, IndexingHarness.CorpusId);
+        (await SystemEndpoints.ReachableActivityAsync(db, await scopes.VisibleIdsAsync(Agent(key)), default))
+            .ActiveJob.ShouldNotBeNull().CorpusId.ShouldBe(IndexingHarness.CorpusId);
+    }
+
     // ---- attaching a stored document -------------------------------------------------------------
 
     private static async Task<IResult> AttachAsync(

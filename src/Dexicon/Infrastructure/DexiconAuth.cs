@@ -59,6 +59,15 @@ public sealed class DexiconAuthMiddleware(
         || AnonymousExact.Contains(path, StringComparer.OrdinalIgnoreCase)
         || AnonymousPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>The credential in the request's <c>Authorization: Bearer</c> header, or null.</summary>
+    internal static string? BearerOf(HttpRequest request)
+    {
+        var header = request.Headers.Authorization.FirstOrDefault();
+        return header is not null && header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+            ? header["Bearer ".Length..].Trim()
+            : null;
+    }
+
     public async Task InvokeAsync(
         HttpContext ctx, TokenService tokens, AdminSessions sessions, RequestContext request)
     {
@@ -70,10 +79,7 @@ public sealed class DexiconAuthMiddleware(
             return;
         }
 
-        var header = ctx.Request.Headers.Authorization.FirstOrDefault();
-        var presented = header is not null && header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
-            ? header["Bearer ".Length..].Trim()
-            : null;
+        var presented = BearerOf(ctx.Request);
 
         if (string.IsNullOrEmpty(presented))
         {
