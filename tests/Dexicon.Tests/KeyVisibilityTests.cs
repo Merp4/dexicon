@@ -1,0 +1,218 @@
+using Dexicon.Api;
+using Dexicon.Core.Auth;
+using Dexicon.Core.Catalog;
+using Dexicon.Core.Indexing;
+using Dexicon.Infrastructure;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+
+namespace Dexicon.Tests;
+
+/// <summary>
+/// What a key can learn about, and attach, in corpora it does not reach, and what a revoked key still
+/// reaches. Each case here was a way a caller learned that a corpus or a document exists, or kept
+/// seeing a corpus, beyond what its key allowed.
+/// </summary>
+public sealed class KeyVisibilityTests
+{
+    private static RequestContext AsAdmin() => new()
+    {
+        Principal = new Principal("admin-session", "admin", new HashSet<string>(StringComparer.Ordinal) { Scopes.Admin }),
+    };
+
+    private static Principal Agent(ApiToken key) =>
+        new(key.Id, key.Name, new HashSet<string>(StringComparer.Ordinal) { Scopes.Search, Scopes.Ingest, Scopes.Configure });
+
+    private static async Task<IndexingHarness> StartAsync()
+    {
+        var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        return harness;
+    }
+
+    private static async Task<Corpus> AddCorpusAsync(IndexingHarness harness, CatalogDbContext db, string name)
+    {
+        var made = (await harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest(name), default)).Value!;
+        return await db.Corpora.SingleAsync(c => c.Id == made.Id);
+    }
+
+    // ---- a key that is revoked or expired --------------------------------------------------------
+
+    [Fact]
+    public async Task AKeyRevokedWhileItsPrincipalIsHeldReachesNothingFromThen()
+    {
+        // The progress stream opens with a principal and reads what it reaches on every heartbeat. A
+        // request is refused for a revoked key when it is verified, and the stream is not a request.
+        await using var harness = await StartAsync();
+        await using var db = harness.NewContext();
+        var tokens = new TokenService(db, TimeProvider.System);
+        var (key, _) = await tokens.CreateAsync("agent", [Scopes.Search], null);
+        var scopes = new ScopeResolver(db);
+        (await scopes.VisibleIdsAsync(Agent(key))).ShouldBe([IndexingHarness.CorpusId]);
+
+        (await tokens.RevokeAsync(key.Id)).ShouldBeTrue();
+
+        (await scopes.VisibleIdsAsync(Agent(key))).ShouldBeEmpty();
+        (await scopes.VisibleAsync(Agent(key))).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AKeyThatHasExpiredReachesNothingAndOneThatHasNotDoes()
+    {
+        await using var harness = await StartAsync();
+        await using var db = harness.NewContext();
+        var tokens = new TokenService(db, TimeProvider.System);
+        var (expired, _) = await tokens.CreateAsync("expired", [Scopes.Search], DateTime.UtcNow.AddMinutes(-1));
+        var (current, _) = await tokens.CreateAsync("current", [Scopes.Search], DateTime.UtcNow.AddMinutes(5));
+        var scopes = new ScopeResolver(db);
+
+        (await scopes.VisibleIdsAsync(Agent(expired))).ShouldBeEmpty();
+        (await scopes.VisibleIdsAsync(Agent(current))).ShouldBe([IndexingHarness.CorpusId]);
+    }
+
+    // ---- attaching a stored document -------------------------------------------------------------
+
+    private static async Task<IResult> AttachAsync(
+        IndexingHarness harness, CatalogDbContext db, RequestContext rc, string corpus, string sha256)
+    {
+        var queue = new IndexJobQueue(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance);
+        return await DocumentEndpoints.AttachAsync(corpus, new AttachDocumentRequest(sha256), rc, new ScopeResolver(db),
+            harness.NewDocumentService(db), db, queue, default);
+    }
+
+    [Fact]
+    public async Task AKeyCannotAttachADocumentThatNoCorpusItReachesHolds()
+    {
+        await using var harness = await StartAsync();
+        await using var db = harness.NewContext();
+        var papers = await AddCorpusAsync(harness, db, "papers");
+        var documents = harness.NewDocumentService(db);
+        var stored = await documents.StoreAsync(new MemoryStream("held by notes only"u8.ToArray()), "a.txt");
+        await documents.AttachAsync(await db.Corpora.SingleAsync(c => c.Id == IndexingHarness.CorpusId), stored.Sha256, "a.txt");
+        var (key, _) = await new TokenService(db, TimeProvider.System)
+            .CreateAsync("agent", [Scopes.Search, Scopes.Ingest], null, [papers.Id]);
+        var rc = new RequestContext { Principal = Agent(key) };
+
+        var hidden = await AttachAsync(harness, db, rc, "papers", stored.Sha256);
+        var missing = await AttachAsync(harness, db, rc, "papers", new string('0', 64));
+
+        var refused = hidden.ShouldBeOfType<ProblemHttpResult>();
+        refused.StatusCode.ShouldBe(404);
+        missing.ShouldBeOfType<ProblemHttpResult>().ProblemDetails.Title.ShouldBe(refused.ProblemDetails.Title,
+            "a document that is another corpus's and one that does not exist are answered alike");
+        (await db.Files.CountAsync(f => f.Source!.CorpusId == papers.Id)).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task AKeyAttachesADocumentACorpusItReachesHolds()
+    {
+        await using var harness = await StartAsync();
+        await using var db = harness.NewContext();
+        var papers = await AddCorpusAsync(harness, db, "papers");
+        var documents = harness.NewDocumentService(db);
+        var stored = await documents.StoreAsync(new MemoryStream("held by notes"u8.ToArray()), "a.txt");
+        await documents.AttachAsync(await db.Corpora.SingleAsync(c => c.Id == IndexingHarness.CorpusId), stored.Sha256, "a.txt");
+        var (key, _) = await new TokenService(db, TimeProvider.System)
+            .CreateAsync("agent", [Scopes.Search, Scopes.Ingest], null, [IndexingHarness.CorpusId, papers.Id]);
+
+        var result = await AttachAsync(harness, db, new RequestContext { Principal = Agent(key) }, "papers", stored.Sha256);
+
+        result.ShouldBeOfType<Accepted<DocumentAttached>>();
+        (await db.Files.CountAsync(f => f.Source!.CorpusId == papers.Id && f.BlobSha256 == stored.Sha256)).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task OnlyAnAdministratorAttachesADocumentNoCorpusHolds()
+    {
+        await using var harness = await StartAsync();
+        await using var db = harness.NewContext();
+        var stored = await harness.NewDocumentService(db).StoreAsync(new MemoryStream("held by no corpus"u8.ToArray()), "a.txt");
+        var (key, _) = await new TokenService(db, TimeProvider.System).CreateAsync("agent", [Scopes.Search, Scopes.Ingest], null);
+
+        var byKey = await AttachAsync(harness, db, new RequestContext { Principal = Agent(key) }, "notes", stored.Sha256);
+        var byAdmin = await AttachAsync(harness, db, AsAdmin(), "notes", stored.Sha256);
+
+        byKey.ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(404);
+        byAdmin.ShouldBeOfType<Accepted<DocumentAttached>>();
+    }
+
+    // ---- creating a corpus whose name is taken ---------------------------------------------------
+
+    [Fact]
+    public async Task ARefusedNameDoesNotRepeatTheOtherCorporasStoredName()
+    {
+        await using var harness = await StartAsync();
+        await using var db = harness.NewContext();
+        var config = harness.NewConfiguration(db);
+        var hidden = await AddCorpusAsync(harness, db, "Quarterly-Results");
+
+        var sameNameOtherCase = await config.CreateCorpusAsync(new CreateCorpusRequest("quarterly-results"), default);
+        var anotherCorpusId = await config.CreateCorpusAsync(new CreateCorpusRequest(hidden.Id), default);
+
+        var byName = sameNameOtherCase.Refusal.ShouldNotBeNull();
+        byName.Status.ShouldBe(409);
+        byName.Detail.ShouldNotContain("Quarterly-Results", Case.Sensitive);
+        var byId = anotherCorpusId.Refusal.ShouldNotBeNull();
+        byId.Status.ShouldBe(409);
+        byId.Detail.ShouldNotContain("Quarterly-Results", Case.Insensitive);
+    }
+
+    // ---- removing a corpus while a key is created for corpora ------------------------------------
+
+    [Fact]
+    public async Task ACorpusRemovalWaitsForTheNamingLock()
+    {
+        await using var harness = await StartAsync();
+        await using var db = harness.NewContext();
+        var papers = await AddCorpusAsync(harness, db, "papers");
+        await using var other = harness.NewContext();
+        var config = harness.NewConfiguration(other);
+
+        Task<ConfigOutcome<bool>> removal;
+        await CorpusConfiguration.Naming.WaitAsync();
+        try
+        {
+            removal = config.RemoveCorpusAsync(await other.Corpora.SingleAsync(c => c.Id == papers.Id), default);
+            await Task.Delay(300);
+            removal.IsCompleted.ShouldBeFalse("the removal waits for a key being created or its reach replaced");
+        }
+        finally
+        {
+            CorpusConfiguration.Naming.Release();
+        }
+
+        (await removal.WaitAsync(TimeSpan.FromSeconds(10))).Refusal.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AKeyCreatedForCorporaWaitsForTheNamingLockAndOneForEveryCorpusDoesNot()
+    {
+        await using var harness = await StartAsync();
+        await using var db = harness.NewContext();
+
+        Task<IResult> restricted;
+        await CorpusConfiguration.Naming.WaitAsync();
+        try
+        {
+            restricted = SystemEndpoints.CreateTokenAsync(
+                new CreateTokenRequest("restricted", CorpusIds: [IndexingHarness.CorpusId]), AsAdmin(),
+                new TokenService(db, TimeProvider.System), db, default);
+            await Task.Delay(300);
+            restricted.IsCompleted.ShouldBeFalse("the creation waits from the check of its corpora to the save of its rows");
+
+            await using var other = harness.NewContext();
+            var everyCorpus = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("everything"), AsAdmin(),
+                new TokenService(other, TimeProvider.System), other, default)
+                .WaitAsync(TimeSpan.FromSeconds(30));
+            everyCorpus.ShouldBeOfType<Ok<CreatedTokenResponse>>("a key that names no corpus has nothing to check");
+        }
+        finally
+        {
+            CorpusConfiguration.Naming.Release();
+        }
+
+        (await restricted.WaitAsync(TimeSpan.FromSeconds(30))).ShouldBeOfType<Ok<CreatedTokenResponse>>();
+    }
+}

@@ -226,6 +226,7 @@ media type should accept both.
 | 401 | `Missing credentials` | `Provide a key: Authorization: Bearer dex_…, or sign in at / for the UI.` |
 | 401 | `Invalid credentials` | `The credential was not recognised, or it has been revoked or has expired.` |
 | 403 | `Insufficient scope` | `This key has [search] and needs 'ingest'. Whoever runs Dexicon can grant it on the Access page.` |
+| 404 | `No such document` | None. `POST /api/corpora/{x}/documents/attach` with a `sha256` that no stored document has, or, from a key, one that no corpus the key reaches holds. An administrator attaches any stored document. |
 | 404 | `Not Found` | None. `GET /api/jobs/{id}` for an unknown job, or one in a corpus the key cannot reach. The handler returns an empty 404 and the status-code middleware fills the body with problem details (`title`, `status`, `traceId`). |
 | 409 | `Name already used` | The message says which name is taken. `POST /api/corpora/{x}/documents/attach` with bytes the corpus already holds under another name, sent under a name that a different one of its documents holds. An upload lists that file under `failed` instead. |
 | 409 | `Embedding dimension mismatch` | `Collection '<collection>' was indexed with 768-dimension vectors but the configured model produces 1024. Rebuild the corpus with the current model, or restore the original one.` |

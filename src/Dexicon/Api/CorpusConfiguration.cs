@@ -84,6 +84,9 @@ public sealed class CorpusConfiguration(
     /// corpus and adds the new corpus to its mapping if not, and the admin could set the key to
     /// every corpus between the two: the key would be left with a mapping to the corpus it just
     /// made, which an unrestricted key does not keep.
+    ///
+    /// Held too while a key is created for chosen corpora, from the check that they exist to the save
+    /// of its rows, and while a corpus is removed, so that the two cannot interleave.
     /// </summary>
     internal static readonly SemaphoreSlim Naming = new(1, 1);
 
@@ -102,17 +105,19 @@ public sealed class CorpusConfiguration(
     {
         var corpora = await db.Corpora.Select(c => new { c.Id, c.Name }).ToListAsync(ct);
 
-        if (corpora.Find(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)) is { } named)
+        // The refusals do not repeat the other corpus's stored name. The caller may be a key that does not
+        // reach that corpus, and names are global, so that the name is taken is all it is told.
+        if (corpora.Exists(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)))
             return new ConfigRefusal(
                 "Corpus already exists",
-                $"A corpus named '{named.Name}' already exists. Names are unique, ignoring case, " +
+                "A corpus with that name already exists. Names are unique, ignoring case, " +
                 "because the name is what an agent passes to search_index.",
                 409);
 
-        if (corpora.Find(c => string.Equals(c.Id, name, StringComparison.Ordinal)) is { } identified)
+        if (corpora.Exists(c => string.Equals(c.Id, name, StringComparison.Ordinal)))
             return new ConfigRefusal(
                 "Name is another corpus's id",
-                $"'{name}' is the id of corpus '{identified.Name}', and a corpus is addressed by its " +
+                $"'{name}' is the id of a corpus, and a corpus is addressed by its " +
                 "name or its id, so the name would reach either of them.",
                 409);
 
@@ -693,11 +698,22 @@ public sealed class CorpusConfiguration(
         // Under the attachment lock for the delete only, as RemoveSourceAsync does.
         using (await DocumentService.HoldAttachmentsAsync(ct))
         {
-            if (!await db.Corpora.AsNoTracking().AnyAsync(c => c.Id == corpus.Id, ct))
-                return new ConfigRefusal("No such corpus", $"Corpus '{corpus.Name}' was removed while this request waited.", 404);
+            // And under the naming lock, which a key's creation for chosen corpora and a replacement of its
+            // reach hold from the check that the corpora exist to the save of their rows. A removal between
+            // the two left a row for a corpus that was gone, a foreign key failure and a 500.
+            await Naming.WaitAsync(ct);
+            try
+            {
+                if (!await db.Corpora.AsNoTracking().AnyAsync(c => c.Id == corpus.Id, ct))
+                    return new ConfigRefusal("No such corpus", $"Corpus '{corpus.Name}' was removed while this request waited.", 404);
 
-            db.Corpora.Remove(corpus);
-            await db.SaveChangesAsync(ct);
+                db.Corpora.Remove(corpus);
+                await db.SaveChangesAsync(ct);
+            }
+            finally
+            {
+                Naming.Release();
+            }
         }
 
         return true;

@@ -552,14 +552,26 @@ public static class SystemEndpoints
         // that was meant to reach some.
         if (ReadReach(body.AllCorpora, body.CorpusIds, omittedIsEvery: true, "The key was not created.", out var corpusIds)
             is { } unclear) return unclear;
-        if (corpusIds is not null
-            && await UnknownCorporaAsync(db, corpusIds, "The key was not created.", ct) is { } unknown) return unknown;
 
-        var expires = body.ExpiresInDays is { } d and > 0 ? DateTime.UtcNow.AddDays(d) : (DateTime?)null;
-        var (row, issued) = await tokens.CreateAsync(body.Name.Trim(), requested, expires, corpusIds, ct);
+        // Under the naming lock for a key restricted to corpora, from the check that they exist to the save
+        // of its rows: a corpus removed between the two was a foreign key failure and a 500.
+        var restricted = corpusIds is not null;
+        if (restricted) await CorpusConfiguration.Naming.WaitAsync(ct);
+        try
+        {
+            if (corpusIds is not null
+                && await UnknownCorporaAsync(db, corpusIds, "The key was not created.", ct) is { } unknown) return unknown;
 
-        // The highest-value thing on the page: the step between installed and working.
-        return Results.Ok(new CreatedTokenResponse(row.ToSummary(), issued.Presented, McpAddCommand(issued.Presented)));
+            var expires = body.ExpiresInDays is { } d and > 0 ? DateTime.UtcNow.AddDays(d) : (DateTime?)null;
+            var (row, issued) = await tokens.CreateAsync(body.Name.Trim(), requested, expires, corpusIds, ct);
+
+            // The highest-value thing on the page: the step between installed and working.
+            return Results.Ok(new CreatedTokenResponse(row.ToSummary(), issued.Presented, McpAddCommand(issued.Presented)));
+        }
+        finally
+        {
+            if (restricted) CorpusConfiguration.Naming.Release();
+        }
     }
 
     /// <summary>The handler of <c>PUT /api/tokens/{id}/corpora</c>, a method so a test can call it without a server.</summary>
@@ -1030,9 +1042,11 @@ public static class SystemEndpoints
             { embeddingError = ex.Message; }
 
             // A Running row whose lease has lapsed is a job that stopped without saying so, and
-            // is not active.
+            // is not active. Only a job in a corpus the caller reaches: the count of corpora and the
+            // job are what a key would otherwise learn about the ones it does not.
+            var visibleIds = visible.Select(c => c.Id).ToList();
             var activeJob = await IndexingActivity.LiveJobs(db, DateTime.UtcNow)
-                .Where(j => j.State == JobState.Running)
+                .Where(j => j.State == JobState.Running && visibleIds.Contains(j.CorpusId))
                 .OrderByDescending(j => j.StartedUtc).FirstOrDefaultAsync(ct);
 
             return Results.Ok(new HealthResponse(
@@ -1041,9 +1055,9 @@ public static class SystemEndpoints
                 new EmbeddingHealth(
                     embeddingError is null, EndpointOf(factory, opts.Value, target.Provider),
                     target.Provider, target.Model, dims, embeddingError),
-                await db.Corpora.CountAsync(ct),
+                visible.Count,
                 activeJob?.ToSummary(),
-                await MissingModelsAsync(db, catalog, cache, visible.Select(c => c.Id).ToList(),
+                await MissingModelsAsync(db, catalog, cache, visibleIds,
                     rc.RequirePrincipal().TokenId, ct),
                 // The UI polls this, and what it shows beside the Approvals link is the count.
                 rc.RequirePrincipal().Scopes.Contains(Scopes.Admin)

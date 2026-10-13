@@ -533,6 +533,10 @@ attached to the corpus under another name, sent under the name of a third docume
 attach endpoint answers `409` "Name already used" for the same case. Bytes that are not attached
 to the corpus yet, sent under a name it holds, replace that document.
 
+The attach endpoint takes a stored document by its hash. A key attaches it only when a corpus the key
+reaches holds it, and is answered `404` otherwise, as for a hash no document has. An administrator
+attaches any stored document, one that no corpus holds included ([07](07-auth.md)).
+
 The request as a whole is bounded at ten files at the cap plus 1 MiB of multipart framing,
 which is 2,098,200,576 bytes at the default and follows `DEXICON__UPLOAD__MAXFILEBYTES`.
 The web UI sends a drop of more than ten files as several requests of at most ten, one after

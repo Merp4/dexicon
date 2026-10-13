@@ -209,8 +209,8 @@ Two properties this depends on, both of which should be re-checked:
   compose, so the developer exception page is never added. Setting it to `Development` to
   debug something also turns stack traces on for every REST caller.
 
-The detailed health endpoint (internal endpoints, model, dimensions, corpus count and the
-running job) is behind auth. The anonymous ones answer `{"status":"ok"}` and
+The detailed health endpoint (internal endpoints, model, dimensions, the count of corpora the key
+reaches and the running job in one of them) is behind auth. The anonymous ones answer `{"status":"ok"}` and
 `{"status":"ready","qdrant":true,"catalogue":true}`: enough for a container healthcheck and
 a load balancer, and nothing about what is inside.
 

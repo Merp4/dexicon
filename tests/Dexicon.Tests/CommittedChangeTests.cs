@@ -331,7 +331,7 @@ public sealed class CommittedChangeTests
         var stored = await documents.StoreAsync(new MemoryStream("some text to index"u8.ToArray()), "doc.txt");
         var rc = new RequestContext
         {
-            Principal = new Principal("k", "agent", new HashSet<string>(StringComparer.Ordinal) { Scopes.Search, Scopes.Ingest }),
+            Principal = new Principal("k", "admin", new HashSet<string>(StringComparer.Ordinal) { Scopes.Admin }),
         };
         watcher.Armed = true;
 

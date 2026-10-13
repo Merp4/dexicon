@@ -317,6 +317,15 @@ public static class DocumentEndpoints
         var blob = await db.Blobs.FirstOrDefaultAsync(b => b.Sha256 == body.Sha256, ct);
         if (blob is null) return Results.Problem(title: "No such document", statusCode: 404);
 
+        // Authorisation is by attachment, as for the text of a document: a key attaches a stored document
+        // only if a corpus the key reaches holds it. A bare hash grants nothing, and the answer is the same
+        // 404 whether the document does not exist or is another corpus's. An administrator reaches every
+        // corpus, and may attach any stored document, one that no corpus holds included.
+        var principal = rc.RequirePrincipal();
+        if (!principal.Has(Scopes.Admin)
+            && !await AttachedToACorpusAsync(db, [.. await scopes.VisibleIdsAsync(principal, ct)], body.Sha256, ct))
+            return Results.Problem(title: "No such document", statusCode: 404);
+
         // This is the point of the whole design: the same bytes, chunked this
         // corpus's way, without re-uploading or re-extracting anything.
         var name = body.FileName ?? blob.OriginalFileName ?? body.Sha256[..12];
@@ -350,6 +359,11 @@ public static class DocumentEndpoints
                 s.Name, s.ChunkSize, s.ChunkOverlap, s.BoundaryMode, s.EmbeddingModel))],
             job.ToSummary()));
     }
+
+    /// <summary>Whether a document is attached to one of these corpora.</summary>
+    private static Task<bool> AttachedToACorpusAsync(
+        CatalogDbContext db, IReadOnlyCollection<string> corpusIds, string sha256, CancellationToken ct) =>
+        db.Files.AnyAsync(f => f.BlobSha256 == sha256 && corpusIds.Contains(f.Source!.CorpusId), ct);
 
     /// <summary>
     /// The multipart boundary, or null when the request is not <c>multipart/form-data</c> or names
@@ -522,11 +536,7 @@ public static class DocumentEndpoints
             // Authorisation is by attachment: you can read the text of a document only
             // if it is attached to a corpus you can see. A bare hash grants nothing.
             var visible = (await scopes.VisibleAsync(rc.RequirePrincipal(), ct)).Select(c => c.Id).ToList();
-            var attached = await db.Files
-                .Include(f => f.Source)
-                .AnyAsync(f => f.BlobSha256 == sha256 && visible.Contains(f.Source!.CorpusId), ct);
-
-            if (!attached) return Results.NotFound();
+            if (!await AttachedToACorpusAsync(db, visible, sha256, ct)) return Results.NotFound();
 
             var text = await db.BlobTexts.AsNoTracking().FirstOrDefaultAsync(t => t.Sha256 == sha256, ct);
             if (text is null) return Results.NotFound();

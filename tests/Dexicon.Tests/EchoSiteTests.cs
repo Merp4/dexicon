@@ -32,12 +32,10 @@ public sealed class EchoSiteTests : IAsyncLifetime
 
     /// <summary>
     /// The site, and the longest message it may show. A caller's value is cut at 200 characters where it is
-    /// repeated, so those sites stay short. The first quotes a stored name through the service's own message,
-    /// which only the refusal helper cuts, at 4,000.
+    /// repeated, so those sites stay short.
     /// </summary>
     public static TheoryData<string, int> Sites => new()
     {
-        { "configure_corpus: a refusal from the service names a stored corpus", DexiconTools.MessageMax + 100 },
         { "configure_corpus: the failure after the corpus is saved", 1_200 },
         { "search_index: the resolver refuses the corpus", 1_200 },
         { "get_context: the document has no such line", 1_200 },
@@ -70,7 +68,6 @@ public sealed class EchoSiteTests : IAsyncLifetime
 
     private Task<McpException> ThrownAtAsync(string site) => site switch
     {
-        "configure_corpus: a refusal from the service names a stored corpus" => CreateRefusalAsync(),
         "configure_corpus: the failure after the corpus is saved" => PostSaveAsync(),
         "search_index: the resolver refuses the corpus" => SearchAsync(),
         "get_context: the document has no such line" => ContextAsync("manual.html"),
@@ -79,16 +76,6 @@ public sealed class EchoSiteTests : IAsyncLifetime
         "propose_removal: the service refuses the target" => ProposeAsync(),
         _ => throw new ArgumentOutOfRangeException(nameof(site), site, "no driver"),
     };
-
-    private async Task<McpException> CreateRefusalAsync()
-    {
-        // A name equal to another corpus's id is refused, and the refusal quotes that corpus's stored name.
-        await RenameTheCorpusAsync(StoredHostile);
-        await using var db = _harness.NewContext();
-        return await Should.ThrowAsync<McpException>(() => ConfigureTools.ConfigureCorpusAsync(
-            Holding(Scopes.Configure), new ScopeResolver(db), db, _harness.NewConfiguration(db),
-            new RecordingLoggerFactory(), IndexingHarness.CorpusId, create: true));
-    }
 
     private async Task<McpException> PostSaveAsync()
     {

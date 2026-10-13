@@ -49,8 +49,10 @@ public sealed record ResolvedScope(IReadOnlyList<ScopedCorpus> Targets)
 /// See docs/07-auth.md. This is the application-level guard; the repository refuses an
 /// unfiltered query, and the storage layout makes one useless.
 /// </summary>
-public sealed class ScopeResolver(CatalogDbContext db)
+public sealed class ScopeResolver(CatalogDbContext db, TimeProvider? clock = null)
 {
+    private readonly TimeProvider _clock = clock ?? TimeProvider.System;
+
     /// <summary>
     /// The most characters of a name or path a caller sent that an error repeats. A corpus name is at most
     /// 200 characters, so one that exists is shown whole.
@@ -282,7 +284,7 @@ public sealed class ScopeResolver(CatalogDbContext db)
     /// corpus in order to map a key to it. A key whose <see cref="ApiToken.AllCorpora"/> is
     /// set reaches everything, which is what keeps a single-user install from having to
     /// configure anything. Any other key reaches the corpora mapped to it, and nothing when
-    /// none is mapped or when the key does not exist.
+    /// none is mapped or when the key does not exist, is revoked or has expired.
     ///
     /// Read from the catalogue on every call. Caching this on the principal would put it
     /// behind that cache's 60-second TTL, and an operator who ticks a corpus and watches an
@@ -302,15 +304,20 @@ public sealed class ScopeResolver(CatalogDbContext db)
 
     /// <summary>
     /// One query, so the setting and the mapping are read together. A key that has no row in
-    /// <c>tokens</c> matches nothing.
+    /// <c>tokens</c>, or that is revoked or expired, matches nothing. A request is refused for such a
+    /// key when it is verified, but the progress stream holds the principal it was opened with and
+    /// reads this on every heartbeat, so a key revoked while it is open stops receiving reports.
     /// </summary>
     private IQueryable<Corpus> VisibleQuery(Principal principal)
     {
         if (principal.Has(Scopes.Admin)) return db.Corpora;
 
         var tokenId = principal.TokenId;
+        var now = _clock.GetUtcNow().UtcDateTime;
         return db.Corpora.Where(c => db.Tokens.Any(t =>
-            t.Id == tokenId && (t.AllCorpora || t.Corpora.Any(tc => tc.CorpusId == c.Id))));
+            t.Id == tokenId
+            && t.RevokedUtc == null && (t.ExpiresUtc == null || t.ExpiresUtc > now)
+            && (t.AllCorpora || t.Corpora.Any(tc => tc.CorpusId == c.Id))));
     }
 
     /// <summary>
