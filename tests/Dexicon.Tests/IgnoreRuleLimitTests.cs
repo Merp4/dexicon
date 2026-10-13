@@ -593,9 +593,19 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         for (var i = 0; i < 6_000; i++) File.WriteAllText(Path.Combine(_root, $"f{i:D5}.txt"), "x");
         var rulesThatMatchNothing = Enumerable.Range(0, 1_000).Select(i => $"x*x*x*x*y{i}").ToArray();
         using var cts = new CancellationTokenSource();
-        cts.CancelAfter(TimeSpan.FromMilliseconds(5));
+
+        // Cancelled from a thread of its own. CancelAfter runs its callback on the thread pool, and on a runner
+        // with two cores that runs tests in parallel every pool thread can be busy for longer than the walk lasts:
+        // this test failed once on CI with the walk finished before the cancel arrived.
+        var canceller = new Thread(() =>
+        {
+            Thread.Sleep(5);
+            cts.Cancel();
+        }) { IsBackground = true };
+        canceller.Start();
 
         Should.Throw<OperationCanceledException>(() => Walk(exclude: rulesThatMatchNothing, ct: cts.Token));
+        canceller.Join();
     }
 
     // ---- reporting ---------------------------------------------------------------------------------------------------
