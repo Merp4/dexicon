@@ -185,6 +185,17 @@ which corpus they meant, within what they can reach. None substitutes for anothe
 request is administration: the endpoints that approve or reject it require `admin`, which no
 key can hold, so a key that asked cannot also approve.
 
+A stored document is authorised by attachment, and its hash grants nothing. A key reads the text of a
+document, and attaches it to another corpus, only when a corpus the key reaches holds it. A document that
+is another corpus's is answered `404` as one that does not exist. An administrator attaches any stored
+document, including one that no corpus holds.
+
+A key that is revoked or has expired reaches no corpus from then on, and a session that has signed out
+reaches none, including through a progress stream that was opened before: it shows nothing from its next
+heartbeat. The name of a corpus is global, so a key that creates one learns that a name is
+taken, and is not told the stored name of the corpus that holds it. `/healthz` counts the corpora a key
+reaches, and reports a running job only in one of them.
+
 ### The tests that prove it
 
 `KeyScopingTests`, named so nobody deletes them by accident. A key mapped to one corpus sees

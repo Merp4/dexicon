@@ -467,7 +467,7 @@ gh attestation verify oci://ghcr.io/<owner>/dexicon:0.6.1 --owner <owner>
 |---|---|
 | `/healthz/live` | The process is up. Used by the container healthcheck. |
 | `/healthz/ready` | Qdrant answers and the catalogue accepts a connection: 200 `ready`, otherwise 503 `not-ready`, each with both results. Ollama being down does **not** make the service unready: keyword search still works, and taking the whole service down because embeddings are unavailable would be a worse outage than the one being reported. |
-| `/healthz` | Needs a key with `search`. Returns the status (`ok`, or `degraded` when Qdrant is unreachable), Qdrant reachability and endpoint, the embedding provider, model, dimensions, endpoint and error (under the field name `ollama`), the corpus count, the running job, the chunk sets whose model the provider no longer lists, and, for the administrator, the number of pending proposals. |
+| `/healthz` | Needs a key with `search`. Returns the status (`ok`, or `degraded` when Qdrant is unreachable), Qdrant reachability and endpoint, the embedding provider, model, dimensions, endpoint and error (under the field name `ollama`), the number of corpora the key reaches, the running job in one of them, the chunk sets whose model the provider no longer lists, and, for the administrator, the number of pending proposals. |
 
 ## Backup and recovery
 

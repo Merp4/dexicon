@@ -434,7 +434,7 @@ public sealed class MalformedRequestTests
         var queue = new IndexJobQueue(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance);
 
         var result = await DocumentEndpoints.AttachAsync(
-            IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256), AsIngester(), new ScopeResolver(db),
+            IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256), AsAdmin(), new ScopeResolver(db),
             documents, db, queue, default);
 
         result.ShouldBeOfType<Accepted<DocumentAttached>>().Value!.FileName.ShouldBe("a.txt");
@@ -596,7 +596,7 @@ public sealed class MalformedRequestTests
         var queue = new IndexJobQueue(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance);
 
         var result = await DocumentEndpoints.AttachAsync(
-            IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256), AsIngester(), new ScopeResolver(db),
+            IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256), AsAdmin(), new ScopeResolver(db),
             documents, db, queue, default);
 
         var problem = result.ShouldBeOfType<ProblemHttpResult>();

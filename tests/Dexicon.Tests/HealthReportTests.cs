@@ -174,8 +174,7 @@ public sealed class HealthReportTests : IAsyncLifetime
     [Fact]
     public async Task ACorpusOutsideTheScopeIsNeverNamed()
     {
-        // The corpora count above this is a number and gives nothing away. A set names its
-        // corpus, and that name is not this caller's to see.
+        // A set names its corpus, and that name is not this caller's to see.
         await AddSet("s1", "default", "gone-model", corpusId: "c2");
 
         (await Missing(_db, new StubCatalog("embeddinggemma"))).ShouldBeEmpty();

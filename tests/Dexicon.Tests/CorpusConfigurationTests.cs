@@ -118,7 +118,8 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
 
         var refusal = second.Refusal.ShouldNotBeNull();
         refusal.Status.ShouldBe(409);
-        refusal.Detail.ShouldContain("'Ångström'", Case.Sensitive, "the refusal names the corpus that holds it");
+        refusal.Detail.ShouldContain("already exists");
+        refusal.Detail.ShouldNotContain("Ångström", Case.Sensitive, "the caller may not reach the corpus that holds it");
         (await db.Corpora.CountAsync(c => c.Name != "notes")).ShouldBe(1);
     }
 
@@ -179,7 +180,8 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
 
         var refusal = created.Refusal.ShouldNotBeNull();
         refusal.Status.ShouldBe(409);
-        refusal.Detail.ShouldContain("'notes'");
+        refusal.Detail.ShouldContain("is the id of a corpus");
+        refusal.Detail.ShouldNotContain("'notes'", Case.Sensitive, "the caller may not reach that corpus");
         (await db.Corpora.CountAsync()).ShouldBe(1);
     }
 

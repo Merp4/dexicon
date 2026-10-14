@@ -86,7 +86,7 @@ public sealed class RemovedCorpusEndpointTests
         {
             attachment = Task.Run(() => DocumentEndpoints.AttachAsync(
                 IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256, "doc.txt"),
-                As(Scopes.Search, Scopes.Ingest), new ScopeResolver(db), documents, db,
+                As(Scopes.Admin), new ScopeResolver(db), documents, db,
                 new IndexJobQueue(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance), default));
             await using var removing = harness.NewContext();
             await removing.Corpora.ExecuteDeleteAsync();
@@ -120,7 +120,7 @@ public sealed class RemovedCorpusEndpointTests
         request.HttpContext.RequestServices = new ServiceCollection().AddSingleton<ILoggerFactory>(logs).BuildServiceProvider();
 
         var refused = await Should.ThrowAsync<ScopeResolutionException>(() => DocumentEndpoints.UploadAsync(
-            IndexingHarness.CorpusId, request, As(Scopes.Search, Scopes.Ingest), new ScopeResolver(db),
+            IndexingHarness.CorpusId, request, As(Scopes.Admin), new ScopeResolver(db),
             new DocumentService(db, options, NullLogger<DocumentService>.Instance),
             new IndexJobQueue(db, new WorkScheduler(options), NullLogger<IndexJobQueue>.Instance),
             options, default)).FinishesAsync("the upload");
@@ -147,7 +147,7 @@ public sealed class RemovedCorpusEndpointTests
         {
             attachment = Task.Run(() => DocumentEndpoints.AttachAsync(
                 IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256, "doc.txt"),
-                As(Scopes.Search, Scopes.Ingest), new ScopeResolver(db), documents, db,
+                As(Scopes.Admin), new ScopeResolver(db), documents, db,
                 new IndexJobQueue(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance), default));
             await using var removing = harness.NewContext();
             await removing.ChunkSets.Where(s => s.Id == "set-2").ExecuteDeleteAsync();

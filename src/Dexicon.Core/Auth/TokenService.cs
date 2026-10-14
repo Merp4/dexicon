@@ -96,6 +96,26 @@ public sealed class TokenService(CatalogDbContext db, TimeProvider clock)
         string name, IEnumerable<string> scopes, DateTime? expiresUtc,
         IReadOnlyCollection<string>? corpusIds = null, CancellationToken ct = default)
     {
+        var built = Build(name, scopes, expiresUtc, corpusIds);
+        await SaveAsync(built.Row, ct);
+        return built;
+    }
+
+    /// <summary>Saves a key made by <see cref="Build"/>, with its corpora, in one save.</summary>
+    public async Task SaveAsync(ApiToken row, CancellationToken ct = default)
+    {
+        db.Tokens.Add(row);
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// A key and its secret, not yet saved. Hashing the secret is the cost of issuing a key, 600,000
+    /// iterations, so a caller that has to hold a lock from checking the corpora to saving the key does
+    /// the hashing here, before it takes the lock.
+    /// </summary>
+    public (ApiToken Row, IssuedToken Issued) Build(
+        string name, IEnumerable<string> scopes, DateTime? expiresUtc, IReadOnlyCollection<string>? corpusIds = null)
+    {
         var id = Ulid.NewUlid().ToString();
         var secret = Base64Url(RandomNumberGenerator.GetBytes(SecretBytes));
         var salt = RandomNumberGenerator.GetBytes(SaltBytes);
@@ -115,8 +135,6 @@ public sealed class TokenService(CatalogDbContext db, TimeProvider clock)
         foreach (var corpusId in (corpusIds ?? []).Distinct(StringComparer.Ordinal))
             row.Corpora.Add(new TokenCorpus { TokenId = id, CorpusId = corpusId });
 
-        db.Tokens.Add(row);
-        await db.SaveChangesAsync(ct);
         return (row, new IssuedToken(id, secret));
     }
 
