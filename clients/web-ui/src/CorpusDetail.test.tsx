@@ -2411,6 +2411,25 @@ describe('deleting a corpus', () => {
     expect(within(screen.getByRole('dialog')).getByText(/This removes 475 chunks across its 2 chunk sets from the vector store/))
       .toBeInTheDocument();
   });
+
+  it('says that uploaded documents no other corpus holds are deleted, and only for a corpus that has an upload source', async () => {
+    // Removing a corpus releases its uploaded documents the way a last detach does. A corpus of folders has none.
+    getCorpus.mockResolvedValue(corpus({
+      sources: [source({ id: 's2', kind: 'upload', rootPath: null, useGitignore: false, maxFileBytes: 2_147_483_647, fileCount: 3 })],
+    }));
+    const { unmount } = render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+    expect(within(screen.getByRole('dialog')).getByText(/Uploaded documents that no other corpus holds are deleted/))
+      .toBeInTheDocument();
+    unmount();
+
+    getCorpus.mockResolvedValue(corpus({ sources: [source()] }));
+    render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+    expect(within(screen.getByRole('dialog')).getByText(/The files on disk are untouched/)).toBeInTheDocument();
+    expect(within(screen.getByRole('dialog')).queryByText(/Uploaded documents that no other corpus holds/))
+      .not.toBeInTheDocument();
+  });
 });
 
 describe('the full reindex', () => {

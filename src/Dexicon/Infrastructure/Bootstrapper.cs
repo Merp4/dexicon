@@ -115,9 +115,9 @@ public static class Bootstrapper
 
     /// <summary>
     /// Deletes the stored documents that no corpus holds. A detach, a replacement and the removal of a source or a
-    /// corpus delete a document when its last attachment goes, so this takes the ones that an earlier version, or a
-    /// stop between the two steps, left behind. Nothing is being uploaded at startup, so there is no document stored
-    /// and not yet attached to spare.
+    /// corpus delete a document when its last attachment goes, so this takes the ones that an earlier version, a
+    /// stop between the two steps, or an upload that stored a blob and could not attach it left behind. Nothing is
+    /// being uploaded at startup, so there is no document stored and not yet attached to spare.
     /// </summary>
     internal static async Task ReleaseUnheldDocumentsAsync(CatalogDbContext db, DexiconOptions options, ILogger log)
     {
@@ -129,7 +129,7 @@ public static class Bootstrapper
             if (unheld.Count == 0) return;
 
             var deleted = await DocumentService.ReleaseAsync(db, options.Storage.BlobRoot, unheld, log);
-            log.LogInformation("Deleted {Count} stored document(s) that no corpus holds", deleted);
+            log.LogInformation("Deleted {Deleted} of {Count} stored document(s) that no corpus holds", deleted, unheld.Count);
         }
         catch (Exception ex)
         {

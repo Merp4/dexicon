@@ -65,10 +65,13 @@ public sealed class DocumentService(
     /// corpus's sets, and looks for the upload source and the document's existing attachment, so two
     /// attachments cannot both find none (a corpus has one upload source and holds a blob once, and no
     /// unique index says so);</item>
-    /// <item>a detach, for the lookup and the delete of the row (<see cref="DetachFileAsync"/>);</item>
+    /// <item>a detach, for the lookup, the delete of the row and the release of the document
+    /// (<see cref="DetachFileAsync"/>, <see cref="ReleaseAsync"/>), so an attachment that read the blob does not
+    /// save a file row for one the release has since deleted;</item>
     /// <item>the removal of a source, a chunk set or a corpus, for the delete of its row
     /// (<see cref="HoldAttachmentsAsync"/>), because an attachment saves a file row that names a source and
-    /// a chunk state that names each set, and a removal checks its target again under the lock;</item>
+    /// a chunk state that names each set, and a removal checks its target again under the lock; the removal of a
+    /// source or a corpus also reads its documents and releases them there;</item>
     /// <item>the promotion of a chunk set to the default, which reads the sets and writes the flag, so that a
     /// removal cannot delete a set that has just become the default.</item>
     /// </list>
@@ -697,6 +700,21 @@ public sealed class DocumentService(
                          .ToList())
                 entry.State = EntityState.Detached;
 
+            // An upload of the same bytes stores no file when the bytes are in place (StoreAsync takes no lock),
+            // and saves a new blob row. The bytes are then that blob's.
+            bool stored;
+            try
+            {
+                stored = await db.Blobs.AsNoTracking().AnyAsync(b => b.Sha256 == sha, CancellationToken.None);
+            }
+            catch (DbException ex)
+            {
+                log?.LogWarning(ex, "Could not check whether document {Sha} was stored again; its bytes are left", sha[..12]);
+                continue;
+            }
+
+            if (stored) continue;
+
             var path = Path.Combine(blobRoot, sha[..2], sha);
             try { File.Delete(path); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -762,6 +780,9 @@ public sealed class DocumentService(
     /// error, a refused permission, a shortage of memory, or an extraction failure that wraps one of
     /// those), or whose exception points at a fault in the extractor (such as a null reference, an invalid
     /// operation), leaves the row as it was and returns it, so a later pass tries again.
+    ///
+    /// Null when the blob has no text row, including when the document was deleted
+    /// (<see cref="ReleaseAsync"/>) while it was being extracted again.
     /// </summary>
     /// <param name="failedThisPass">
     /// Hashes whose re-extraction has failed in this pass. The indexer calls this once per chunk set for
@@ -871,7 +892,22 @@ public sealed class DocumentService(
             Rewrite(cached, fresh);
         }
 
-        await db.SaveChangesAsync(ct);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException) when (db.Entry(cached).State == EntityState.Modified)
+        {
+            // The text row is gone if the last corpus holding the document detached it while this extracted, and
+            // ReleaseAsync deleted it. That is the document being gone and not a failure of the extraction, so
+            // the caller is told there is no text, and the pass drops the file it read, which a detach leaves
+            // without a row. Any other cause of the conflict is thrown.
+            if (await db.Blobs.AsNoTracking().AnyAsync(b => b.Sha256 == sha256, ct)) throw;
+
+            foreach (var entry in db.ChangeTracker.Entries().Where(e => e.Entity is BlobText t && t.Sha256 == sha256).ToList())
+                entry.State = EntityState.Detached;
+            return null;
+        }
 
         return cached;
     }

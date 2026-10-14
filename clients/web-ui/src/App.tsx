@@ -1991,6 +1991,8 @@ function DeleteCorpusModal({ corpus, onClose, onDeleted }: { corpus: Corpus; onC
         This removes {count(chunks, 'chunk')}
         {sets.length > 1 && ` across its ${sets.length} chunk sets`} from the vector store and the corpus from the
         catalogue. The files on disk are untouched. Re-indexing it again may take a while.
+        {corpus.sources.some((s) => s.kind === 'upload')
+          && ' Uploaded documents that no other corpus holds are deleted, and uploading them again is the way back.'}
       </p>
       {/* Typing the name, because this destroys an index that may have taken an hour. */}
       <Field label={`Type "${corpus.name}" to confirm`}>
@@ -2565,7 +2567,8 @@ const KEY_SCOPES: { id: string; does: string }[] = [
   },
   {
     id: 'destroy',
-    does: 'detach an uploaded document from a corpus over the API. Nothing asks first. '
+    does: 'detach an uploaded document from a corpus over the API, which deletes it when no other corpus holds it. '
+      + 'Nothing asks first. '
       + 'Sources, chunk sets and corpora are never removed by a key: it asks with propose. '
       + 'Independent of ingest',
   },

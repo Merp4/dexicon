@@ -255,7 +255,11 @@ function ApproveModal({ proposal: p, onClose, onApproved }: {
                 // An uploaded document has no file on disk to index again. Its bytes and extracted
                 // text are deleted with its last attachment, and getting it back means uploading it.
                 ? 'The document is deleted from storage when no other corpus holds it, and getting it back means uploading it again. It cannot be undone from here.'
-                : 'The files on disk are untouched. It cannot be undone from here; getting it back means indexing it again.'}
+                : p.kind === 'corpus'
+                  // Removing a corpus releases its uploaded documents the way a last detach does.
+                  ? 'The files on disk are untouched. Uploaded documents that no other corpus holds are deleted. '
+                    + 'It cannot be undone from here; getting it back means indexing the folders again and uploading the documents again.'
+                  : 'The files on disk are untouched. It cannot be undone from here; getting it back means indexing it again.'}
             </>}
       </p>
       <div className="flex justify-end gap-2">

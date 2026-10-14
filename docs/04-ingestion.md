@@ -480,14 +480,17 @@ different bytes under its name releases the bytes it replaced.
 A document is released by deleting its blob row only where no file row references it, in one
 statement, so a document that another corpus attached in the meantime is kept. The bytes are
 deleted after the row; a failure to delete them is logged and leaves a file under the blob root
-that no row names, which nothing removes. At startup the server releases every blob row that no
-file row references. That removes the documents an earlier version left stored after a detach,
-and any whose detach stopped before its release.
+that no row names, which nothing removes. An upload stores the blob row before it attaches the
+file, so an upload whose attachment then fails (a name another document holds) leaves a blob row
+that no file references. At startup the server releases every blob row that no file row references.
+That removes the documents an earlier version left stored after a detach, any whose detach stopped
+before its release, and the blobs of uploads that failed to attach.
 
 One lock in the process orders the writes to a corpus's attachment rows. An attachment holds it
-from its entry to its save, and a detach for the lookup and the delete of the row. Removing a
-source, a chunk set or a corpus holds it for the delete of the row, after its vector calls, and
-reads its target again under it. Promoting a chunk set holds it while it reads the sets and writes
+from its entry to its save, and a detach for the lookup, the delete of the row and the release of
+the document. Removing a source, a chunk set or a corpus holds it for the delete of the row, after
+its vector calls, and reads its target again under it. The removal of a source or a corpus also
+reads its documents and releases them under it. Promoting a chunk set holds it while it reads the sets and writes
 the default flag. None of them holds it across a vector-store call. An indexing pass does not take
 it. Adding a source or a chunk set does not take it either: their rows name a corpus, and the
 removal of that corpus at the same moment fails their save with a foreign-key error. Dexicon is
@@ -546,8 +549,11 @@ to the corpus yet, sent under a name it holds, replace that document.
 
 The attach endpoint takes a stored document by its hash. It attaches the document only when a
 corpus the caller reaches holds it, for an administrator and a key alike, and answers `404`
-otherwise, as for a hash no document has. A document that no corpus holds does not exist, because
-the last detach deleted it ([07](07-auth.md)).
+otherwise, as for a hash no document has. The last detach of a document deletes it, so a hash that
+no corpus holds is, from the caller's side, a hash no document has ([07](07-auth.md)). An
+attachment that finds the document deleted after that check, because its last holder detached it
+meanwhile, is answered `404` the same way, and an upload lists the file under `failed` with "The
+document was deleted while it waited to be attached ... Upload it again."
 
 The request as a whole is bounded at ten files at the cap plus 1 MiB of multipart framing,
 which is 2,098,200,576 bytes at the default and follows `DEXICON__UPLOAD__MAXFILEBYTES`.

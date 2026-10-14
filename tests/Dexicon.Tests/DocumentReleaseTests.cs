@@ -1,7 +1,10 @@
 using Dexicon.Api;
+using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Documents;
+using Dexicon.Core.Indexing;
 using Dexicon.Infrastructure;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -14,6 +17,7 @@ namespace Dexicon.Tests;
 /// when the last attachment goes (a detach, a replacement by name, the removal of an upload source or a
 /// corpus) and once at startup for any left over.
 /// </summary>
+[Collection(nameof(AttachmentLockCollection))]
 public sealed class DocumentReleaseTests
 {
     private static async Task<IndexingHarness> StartAsync()
@@ -159,11 +163,100 @@ public sealed class DocumentReleaseTests
         var documents = harness.NewDocumentService(db);
         var sha = await StoreAsync(documents, "held");
         await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), sha, "a.txt");
+        var logs = new RecordingLoggerFactory();
 
-        var deleted = await DocumentService.ReleaseAsync(db, harness.Settings.Value.Storage.BlobRoot, [sha, "no-such-hash"]);
+        // A hash shorter than the fan-out folder is skipped, and one no blob has deletes nothing.
+        var deleted = await DocumentService.ReleaseAsync(
+            db, harness.Settings.Value.Storage.BlobRoot, [sha, "no-such-hash", "a"], logs.CreateLogger("release"));
 
         deleted.ShouldBe(0);
         (await HeldAsync(harness, documents, sha)).ShouldBe((true, true, true));
+        // The foreign key would refuse the delete of a held blob and be logged. The condition in the statement
+        // is what stops it before then.
+        logs.Lines.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ReleasingSeveralDocumentsDeletesEachOneNothingHoldsAndCountsThem()
+    {
+        await using var harness = await StartAsync();
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var shas = new List<string>();
+        foreach (var text in new[] { "first leftover", "second leftover", "third leftover" })
+            shas.Add(await StoreAsync(documents, text, $"{text}.txt"));
+        var held = await StoreAsync(documents, "held by notes", "held.txt");
+        await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), held, "held.txt");
+
+        var deleted = await DocumentService.ReleaseAsync(
+            db, harness.Settings.Value.Storage.BlobRoot, [.. shas, held, shas[0]]);
+
+        deleted.ShouldBe(3, "each unheld document once, the repeated one not twice");
+        foreach (var sha in shas) (await HeldAsync(harness, documents, sha)).ShouldBe((false, false, false));
+        (await HeldAsync(harness, documents, held)).ShouldBe((true, true, true));
+    }
+
+    [Fact]
+    public async Task BytesThatCannotBeDeletedAreLoggedAndTheDetachStands()
+    {
+        await using var harness = await StartAsync();
+        await using var db = harness.NewContext();
+        var logs = new RecordingLoggerFactory();
+        var documents = harness.NewDocumentService(db, new Logger<DocumentService>(logs));
+        var sha = await StoreAsync(documents, "bytes that cannot be deleted");
+        var file = await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), sha, "a.txt");
+        // A directory where the bytes were: File.Delete refuses it on every platform.
+        File.Delete(documents.PathFor(sha));
+        Directory.CreateDirectory(documents.PathFor(sha));
+
+        (await documents.DetachAsync(IndexingHarness.CorpusId, file.Id)).ShouldBeTrue();
+
+        (await HeldAsync(harness, documents, sha)).Blob.ShouldBeFalse("the rows went");
+        Directory.Exists(documents.PathFor(sha)).ShouldBeTrue("the path was left as it was");
+        logs.Levels.Count(level => level == LogLevel.Warning).ShouldBe(1);
+        (logs.Exceptions.ShouldHaveSingleItem() is IOException or UnauthorizedAccessException).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task TheAttachEndpointAnswers404WhenTheLastHolderDetachesTheDocumentAfterItsChecks()
+    {
+        // The endpoint has found the document held and the corpus writable. It waits for the lock, and the last
+        // holder goes in the meantime: the attachment finds no blob. Held at its check of the corpus, which runs
+        // under the lock and before it reads the blob.
+        var hold = new HoldOneLookup(sql =>
+            sql.Contains("FROM \"corpora\"", StringComparison.Ordinal) && sql.Contains("EXISTS", StringComparison.Ordinal));
+        await using var harness = await IndexingHarness.StartAsync(hold, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var papers = await AddCorpusAsync(harness, db, "papers");
+        var sha = await StoreAsync(documents, "detached while it waited to be attached");
+        await documents.AttachAsync(papers, sha, "a.txt");
+        await using var requestDb = harness.NewContext();
+        var queue = new IndexJobQueue(requestDb, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance);
+        var admin = new RequestContext
+        {
+            Principal = new Principal("admin-session", "admin", new HashSet<string>(StringComparer.Ordinal) { Scopes.Admin }),
+        };
+        hold.Armed = true;
+
+        var request = Task.Run(() => DocumentEndpoints.AttachAsync(
+            "notes", new AttachDocumentRequest(sha), admin, new ScopeResolver(requestDb),
+            harness.NewDocumentService(requestDb), requestDb, queue, default));
+        try
+        {
+            await Gates.ReachedAsync(hold.Reached, "the attachment's check of its corpus");
+            await using var other = harness.NewContext();
+            await other.Files.Where(f => f.BlobSha256 == sha).ExecuteDeleteAsync();
+            await other.Blobs.Where(b => b.Sha256 == sha).ExecuteDeleteAsync();
+        }
+        finally { hold.Release(); }
+
+        var result = await request.FinishesAsync("the attach request");
+
+        result.ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(404);
+        await using var check = harness.NewContext();
+        (await check.Files.CountAsync(f => f.BlobSha256 == sha)).ShouldBe(0);
     }
 
     [Fact]

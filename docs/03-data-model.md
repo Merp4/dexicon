@@ -236,9 +236,10 @@ CREATE INDEX ix_file_chunk_states_status ON file_chunk_states(chunk_set_id, stat
 -- Blob store for uploads. Content lives at /data/blobs/<sha256[0:2]>/<sha256>.
 -- Carries no name: the same PDF can be attached to different corpora under
 -- different names, so the name belongs to the attachment, not the bytes.
--- A blob lives while a file row references it: the detach, replacement or removal
--- that takes the last such row also deletes the blob, its text and its bytes
--- (D-43), and startup deletes any blob that no file references.
+-- A blob is kept while a file row references it: the detach, replacement or removal
+-- that drops the last reference deletes the blob, its text and its bytes (D-43).
+-- Startup deletes any blob that no file references, such as the one an upload
+-- left when its attachment failed.
 CREATE TABLE blobs (
   sha256             TEXT PRIMARY KEY,
   size_bytes         INTEGER NOT NULL,
@@ -531,9 +532,10 @@ built from uploads may have no file to open.
 | Action | Effect |
 |---|---|
 | Delete file from disk | Next reconcile deletes its chunks (`chunk_set_id`, `source_id`, `file_path`) and its state row, per set. The `files` row survives until the LAST set has let go of it — removing it earlier would strand the other sets' vectors with nothing left to name them. |
-| Delete source | Chunks deleted per file, once per chunk set (`chunk_set_id`, `source_id`, `file_path`); the source's files and their state rows cascade. |
+| Detach document | Chunks deleted per set, then the `files` row (its state rows cascade). When no other `files` row references the blob, the blob row, its `blob_texts` row and its bytes are deleted too ([D-43](decisions.md#d-43-detaching-a-document-deletes-it-when-no-corpus-holds-it)). |
+| Delete source | Chunks deleted per file, once per chunk set (`chunk_set_id`, `source_id`, `file_path`); the source's files and their state rows cascade. For an upload source, each blob that no other `files` row references is then deleted as for a detach. |
 | Delete chunk set | Chunks deleted by `chunk_set_id` filter; state rows cascade. Refused for the default set, for the only set (a corpus with no sets is a corpus nothing can search) and while a job is working on the set. |
-| Delete corpus | Chunks deleted by `corpus_id` filter, once per distinct collection its sets occupy. Cascades to its sources, files, chunk sets, jobs and the rows mapping keys to it. A key restricted only to that corpus is left restricted to nothing and reaches no corpus (`can reach no corpora`); map it to another corpus under Access, or revoke it. A key set to every corpus is unchanged. |
+| Delete corpus | Chunks deleted by `corpus_id` filter, once per distinct collection its sets occupy. Cascades to its sources, files, chunk sets, jobs and the rows mapping keys to it; each blob that no other `files` row references is then deleted as for a detach. A key restricted only to that corpus is left restricted to nothing and reaches no corpus (`can reach no corpora`); map it to another corpus under Access, or revoke it. A key set to every corpus is unchanged. |
 | Change embedding model | Not an edit, and not a corpus-level act at all. Add a chunk set on the new model; it backfills while the live set keeps serving; promote when complete; drop the old set. See [D-21](decisions.md#d-21-chunk-sets-not-corpus-level-chunking). |
 
 ## Storage budget

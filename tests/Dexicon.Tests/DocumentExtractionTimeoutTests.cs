@@ -807,6 +807,42 @@ public sealed class DocumentExtractionTimeoutTests
     }
 
     [Fact]
+    public async Task ADocumentDeletedWhileItIsExtractedAgainHasNoTextAndTheRewriteIsNotSaved()
+    {
+        // The last corpus holding the document detaches it while a pass extracts it again. The release deletes
+        // the text row the pass is about to rewrite, and the save would otherwise fail the pass.
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        string fileId;
+        await using (var setup = harness.NewContext())
+        {
+            var corpus = await setup.Corpora.SingleAsync();
+            var documents = ServiceWith(harness, setup, Fast('g'));
+            var stored = await documents.StoreAsync(new MemoryStream(Bytes), "doc.slow");
+            fileId = (await documents.AttachAsync(corpus, stored.Sha256, "doc.slow")).Id;
+            await setup.BlobTexts.ExecuteUpdateAsync(s => s.SetProperty(t => t.ExtractorVersion, 0));
+        }
+
+        var sha = ShaOf(Bytes);
+        await using var otherDb = harness.NewContext();
+        var detaching = ServiceWith(harness, otherDb, Fast('n'));
+        var extractor = new ReadingExtractor
+        {
+            Marker = 'n',
+            OnStart = () => detaching.DetachAsync(IndexingHarness.CorpusId, fileId).GetAwaiter().GetResult(),
+        };
+
+        await using var db = harness.NewContext();
+        var returned = await ServiceWith(harness, db, extractor).CurrentTextFor(sha, "doc.slow");
+
+        extractor.Calls.ShouldBe(1, "the text was stale, so it was extracted again");
+        returned.ShouldBeNull();
+        db.ChangeTracker.Entries<BlobText>().ShouldBeEmpty("nothing is left to be saved later");
+        await using var check = harness.NewContext();
+        (await check.Blobs.AnyAsync(b => b.Sha256 == sha)).ShouldBeFalse("the detach released the document");
+    }
+
+    [Fact]
     public async Task ADamagedRowThatIsRepairedIsChunkedAgainInEveryChunkSet()
     {
         // Both sets were chunked from the whole text before the row was damaged, so their states carry the

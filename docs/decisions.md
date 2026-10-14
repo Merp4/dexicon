@@ -2298,11 +2298,12 @@ script that builds the list from a filter and finds nothing would create a key t
 
 **Decision.** A detach deletes the corpus's file row and chunks, and then the document, if no other file row
 references its blob: the blob row, its extracted text (`ON DELETE CASCADE`) and its bytes under the blob root.
-The same release runs for each document that a replacement by name (different bytes under a name the corpus
-holds), the removal of an upload source and the removal of a corpus took a file row from. The blob row is deleted
-by one statement that carries the condition (no file row has its hash), so a document that another corpus
-attached after the check is kept. The bytes are deleted after the row. At startup the server releases every blob
-row that no file row references. The attach endpoint attaches a document only when a corpus the caller reaches
+The same release runs for each document that stops being referenced by a replacement by name (different bytes
+under a name the corpus holds), the removal of an upload source and the removal of a corpus, under the attachment
+lock that the attachment itself takes. The blob row is deleted by one statement that carries the condition (no
+file row has its hash), so a document that another corpus attached after the check is kept. The bytes are deleted
+after the row, and only if no blob row with the hash has been stored again meanwhile. At startup the server
+releases every blob row that no file row references. The attach endpoint attaches a document only when a corpus the caller reaches
 holds it, for an administrator and a key alike. An attachment that finds its blob gone, because the last holder
 detached it after the lookup, fails with `DocumentGoneException`: the attach endpoint answers `404` "No such
 document" and an upload lists the file under `failed`. The Documents page asks before a detach and says whether
@@ -2311,23 +2312,28 @@ uploaded-documents source say that the document is deleted.
 
 **Why.** A detach used to leave the document stored. Under D-40's rule that a hash grants nothing, a key could
 attach it again only through a corpus it reached that held it, so a document detached from every corpus could be
-attached by an administrator alone, was listed nowhere, and kept its bytes and extracted text indefinitely. An
-agent that administers a corpus over the API met this directly: after a detach it could not undo its own mistake.
-Treating the last detach as a delete removes the state in which a document exists and no one can reach it. A
+attached by an administrator alone, was listed nowhere, and kept its bytes and extracted text indefinitely. A key
+that administers a corpus over the API could not undo its own detach. Treating the last detach as a delete
+removes the state in which a document exists and no one can reach it. A
 document exists while a corpus holds it, and uploading it again, which any key with `ingest` can do, is the way
 back. No record of who uploaded a document is kept.
 
 **Properties.**
 - No migration. A catalogue with documents that nothing holds, from an earlier version, loses them at the first
-  start.
+  start, and going back to the earlier version does not bring them back. An upload stores its blob row before it
+  attaches the file, so one whose attachment fails (a name another document holds) leaves a blob row that no
+  file references, which the next start deletes.
 - Uploading the same bytes again stores and extracts them again. On a 1.5 MB, ~400-page PDF that is 1.823 s where
   an upload of stored bytes takes 0.119 s ([04](04-ingestion.md)).
 - An upload of bytes at the moment the last holder of the same bytes detaches them can find its blob gone. That
   upload fails with the `DocumentGoneException` message, or with the extraction failure when the bytes were deleted
   while it read them, and uploading again stores the bytes. An upload that stores a new blob row between the
-  release's row delete and its byte delete keeps its text and loses its bytes. Such a document searches as any
-  other and is not extracted again after an extractor change, which keeps the old text
-  (`DocumentService.CurrentTextFor`).
+  release's check for one and its byte delete keeps its text and loses its bytes. That window is two statements
+  wide. Such a document searches as any other and is not extracted again after an extractor change, which keeps
+  the old text (`DocumentService.CurrentTextFor`).
+- A pass that is extracting a document again when its last holder detaches it finds its text row gone.
+  `CurrentTextFor` then returns null and does not save the rewrite, and the pass drops the file it read, which the
+  detach left without a row.
 - A failure to delete the bytes is logged and leaves a file under the blob root that no row names. A stop between
   the row delete and the byte delete leaves the same file. Nothing removes either.
 - EF Core's `ExecuteDeleteAsync` bypasses the change tracker, so the release detaches the `Blob` and `BlobText`

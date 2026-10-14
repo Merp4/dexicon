@@ -27,10 +27,10 @@ public static class Scopes
 
     /// <summary>
     /// Detach an uploaded document from a corpus over the API, which is the one removal a key can
-    /// make without a person deciding. Sources, chunk sets and corpora stay the administrator's,
-    /// and an agent reaches them through <see cref="Propose"/>. Independent of
-    /// <see cref="Ingest"/>: adding and attaching documents does not carry it. See
-    /// docs/decisions.md D-40.
+    /// make without a person deciding. The document is deleted when no other corpus holds it.
+    /// Sources, chunk sets and corpora stay the administrator's, and an agent reaches them through
+    /// <see cref="Propose"/>. Independent of <see cref="Ingest"/>: adding and attaching documents
+    /// does not carry it. See docs/decisions.md D-40 and D-43.
     /// </summary>
     public const string Destroy = "destroy";
 

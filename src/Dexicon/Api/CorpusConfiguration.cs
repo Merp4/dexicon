@@ -567,10 +567,6 @@ public sealed class CorpusConfiguration(
         var paths = await db.Files.Where(f => f.SourceId == source.Id)
             .Select(f => f.RelativePath).ToListAsync(ct);
 
-        // The documents it holds, which go with it when no other corpus holds them.
-        var documents = await db.Files.Where(f => f.SourceId == source.Id && f.BlobSha256 != null)
-            .Select(f => f.BlobSha256!).Distinct().ToListAsync(ct);
-
         // Vectors first, for the same reason RemoveAttachmentAsync does it: if the
         // catalogue row went first and this threw, the corpus would keep returning
         // hits for files it no longer lists.
@@ -598,11 +594,20 @@ public sealed class CorpusConfiguration(
                 return new ConfigRefusal("No such source",
                     $"Corpus '{corpus.Name}' has no source '{sourceId}': it was removed while this request waited.", 404);
 
+            // The documents it holds, which go with it when no other corpus holds them. Read here, so that a
+            // file attached while the request waited is included.
+            var documents = await db.Files.Where(f => f.SourceId == source.Id && f.BlobSha256 != null)
+                .Select(f => f.BlobSha256!).Distinct().ToListAsync(ct);
+
             db.Sources.Remove(source);
             await db.SaveChangesAsync(ct);
+
+            // Still under the lock: an attachment queued behind this removal reads its blob under the lock, so
+            // it finds the document held or gone, and does not insert a file row for a blob deleted after it
+            // read it.
+            await DocumentService.ReleaseAsync(db, opts.Value.Storage.BlobRoot, documents, log);
         }
 
-        await DocumentService.ReleaseAsync(db, opts.Value.Storage.BlobRoot, documents, log);
         return true;
     }
 
@@ -702,11 +707,7 @@ public sealed class CorpusConfiguration(
         foreach (var collection in collections)
             await vectors.DeleteCorpusAsync(collection, corpus.Id, ct);
 
-        // The documents it holds, which go with it when no other corpus holds them.
-        var documents = await db.Files.Where(f => f.Source!.CorpusId == corpus.Id && f.BlobSha256 != null)
-            .Select(f => f.BlobSha256!).Distinct().ToListAsync(ct);
-
-        // Under the attachment lock for the delete only, as RemoveSourceAsync does.
+        // Under the attachment lock for the delete and the release of its documents, as RemoveSourceAsync does.
         using (await DocumentService.HoldAttachmentsAsync(ct))
         {
             // And under the naming lock, which a key's creation for chosen corpora and a replacement of its
@@ -718,8 +719,16 @@ public sealed class CorpusConfiguration(
                 if (!await db.Corpora.AsNoTracking().AnyAsync(c => c.Id == corpus.Id, ct))
                     return new ConfigRefusal("No such corpus", $"Corpus '{corpus.Name}' was removed while this request waited.", 404);
 
+                // The documents it holds, which go with it when no other corpus holds them. Read here, so that a
+                // file attached while the request waited is included.
+                var documents = await db.Files.Where(f => f.Source!.CorpusId == corpus.Id && f.BlobSha256 != null)
+                    .Select(f => f.BlobSha256!).Distinct().ToListAsync(ct);
+
                 db.Corpora.Remove(corpus);
                 await db.SaveChangesAsync(ct);
+
+                // Under the attachment lock, for the reason given in RemoveSourceAsync.
+                await DocumentService.ReleaseAsync(db, opts.Value.Storage.BlobRoot, documents, log);
             }
             finally
             {
@@ -727,7 +736,6 @@ public sealed class CorpusConfiguration(
             }
         }
 
-        await DocumentService.ReleaseAsync(db, opts.Value.Storage.BlobRoot, documents, log);
         return true;
     }
 }
