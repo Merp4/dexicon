@@ -601,7 +601,8 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         {
             Thread.Sleep(5);
             cts.Cancel();
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
         canceller.Start();
 
         Should.Throw<OperationCanceledException>(() => Walk(exclude: rulesThatMatchNothing, ct: cts.Token));
