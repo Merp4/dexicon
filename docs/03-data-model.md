@@ -239,7 +239,8 @@ CREATE INDEX ix_file_chunk_states_status ON file_chunk_states(chunk_set_id, stat
 -- A blob is kept while a file row references it: the detach, replacement or removal
 -- that drops the last reference deletes the blob, its text and its bytes (D-43).
 -- Startup deletes any blob that no file references, such as the one an upload
--- left when its attachment failed.
+-- left when its attachment failed, and then any file under the blob root that
+-- no blob row names (D-43).
 CREATE TABLE blobs (
   sha256             TEXT PRIMARY KEY,
   size_bytes         INTEGER NOT NULL,

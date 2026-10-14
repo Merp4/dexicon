@@ -480,11 +480,26 @@ different bytes under its name releases the bytes it replaced.
 A document is released by deleting its blob row only where no file row references it, in one
 statement, so a document that another corpus attached in the meantime is kept. The bytes are
 deleted after the row; a failure to delete them is logged and leaves a file under the blob root
-that no row names, which nothing removes. An upload stores the blob row before it attaches the
-file, so an upload whose attachment then fails (a name another document holds) leaves a blob row
-that no file references. At startup the server releases every blob row that no file row references.
-That removes the documents an earlier version left stored after a detach, any whose detach stopped
-before its release, and the blobs of uploads that failed to attach.
+that no row names. An upload stores the blob row before it attaches the file, so an upload whose
+attachment then fails (a name another document holds) leaves a blob row that no file references.
+At startup the server releases every blob row that no file row references. That removes the
+documents an earlier version left stored after a detach, any whose detach stopped before its
+release, and the blobs of uploads that failed to attach.
+
+It then sweeps the blob root for files that no document names: the temporary file of an upload that
+a crash cut short (`.incoming-` and 32 lowercase hex digits, directly under the root), and bytes
+whose blob row is gone (a file named by 64 lowercase hex digits in the folder named by its first
+two, with no blob row of that hash). Nothing else under the root is touched, a link is neither
+followed nor deleted, and the log says how many files and bytes went and how many could not be
+deleted. A folder that cannot be listed is logged and skipped, and the others are still swept.
+
+The sweep takes every file with no row for a leak, so it assumes that one process owns the data
+folder ([D-01](decisions.md#d-01-single-container)) and that the catalogue and the blob root are restored together. A
+catalogue restored alone, older than the files beside it, makes the newer files look stray. The
+one check against that is a catalogue with no blob row at all: the hash-named files are then left
+in place and a warning is logged, since an empty catalogue next to a populated blob root points to
+a restored or replaced catalogue. A catalogue emptied by detaching every document keeps any leaked
+bytes the same way, until a document is stored.
 
 One lock in the process orders the writes to a corpus's attachment rows. An attachment holds it
 from its entry to its save, and a detach for the lookup, the delete of the row and the release of

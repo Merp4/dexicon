@@ -661,8 +661,8 @@ public sealed class DocumentService(
     /// uploading the same bytes again stores and extracts them again.
     ///
     /// A file that cannot be deleted is logged and left. Nothing refers to it, and a later upload of the same
-    /// bytes finds it in place and uses it. The same holds when the check for a blob stored again is refused,
-    /// and no start deletes such a file. A catalogue that refuses the delete of the blob row (a locked or full
+    /// bytes finds it in place and uses it. The same holds when the check for a blob stored again is refused.
+    /// The sweep at the next start (<see cref="StrayBlobBytes"/>) deletes such a file. A catalogue that refuses the delete of the blob row (a locked or full
     /// database) is logged and the document is left: the caller's change has been saved by then, and the next
     /// start deletes the document.
     ///
