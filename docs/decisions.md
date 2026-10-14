@@ -2295,6 +2295,7 @@ script that builds the list from a filter and finds nothing would create a key t
 ### D-43 Detaching a document deletes it when no corpus holds it
 
 **Status.** Accepted and implemented, 2026-10-14. Amends [D-40](#d-40-detaching-a-document-has-a-scope-of-its-own).
+Amended 2026-10-15: files under the blob root that no document names are deleted at startup (last property below).
 
 **Decision.** A detach deletes the corpus's file row and chunks, and then the document, if no other file row
 references its blob: the blob row, its extracted text (`ON DELETE CASCADE`) and its bytes under the blob root.
@@ -2336,7 +2337,13 @@ back. No record of who uploaded a document is kept.
   detach left without a row.
 - A failure to delete the bytes, or to check for a blob stored again before deleting them, is logged and leaves a
   file under the blob root that no row names. A stop between the row delete and the byte delete leaves the same
-  file. Nothing removes any of them.
+  file, and a crash during an upload leaves its temporary file. At startup `StrayBlobBytes.SweepAsync` deletes
+  two shapes of file and nothing else: a regular file directly under the root named `.incoming-` and 32 lowercase
+  hex digits, and a regular file named by 64 lowercase hex digits in the folder named by the first two, when no
+  blob row has that hash. Links are not followed or deleted, and nothing deeper than the fan-out folder is read.
+  When the catalogue holds no blob row at all, the hash-named files are left and a warning says so, because a
+  restored or replaced catalogue next to a populated blob root is not a leak, and those files may be the only copy.
+  Temporary files are deleted in either case. A sweep that fails is logged and the next start tries again.
 - EF Core's `ExecuteDeleteAsync` bypasses the change tracker, so the release detaches the `Blob` and `BlobText`
   entries it deleted from the context that called it. A later upload of the same bytes in that context would
   otherwise fail with "Blob cannot be tracked".

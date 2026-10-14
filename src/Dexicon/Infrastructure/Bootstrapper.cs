@@ -55,6 +55,7 @@ public static class Bootstrapper
         CheckChunkDefaults(log, options);
         await ReconcileOrphanedJobsAsync(db, log);
         await ReleaseUnheldDocumentsAsync(db, options, log);
+        await SweepStrayBlobBytesAsync(db, options, log);
         await VerifyDependenciesAsync(sp, log, options);
         await EnsureAdminPasswordAsync(sp, log, options);
         await EnsureBootstrapTokenAsync(sp, db, log, options);
@@ -135,6 +136,26 @@ public static class Bootstrapper
         {
             // Not fatal: they are unlisted garbage, and the next start tries again.
             log.LogWarning(ex, "Could not delete the stored documents that no corpus holds; will retry on next start");
+        }
+    }
+
+    /// <summary>
+    /// Deletes the files under the blob root that no document names (<see cref="StrayBlobBytes"/>). After the release
+    /// of unheld documents, which deletes the bytes of the rows it removes. Nothing is being uploaded at startup.
+    /// </summary>
+    internal static async Task SweepStrayBlobBytesAsync(CatalogDbContext db, DexiconOptions options, ILogger log)
+    {
+        try
+        {
+            var swept = await StrayBlobBytes.SweepAsync(db, options.Storage.BlobRoot, log);
+            if (swept.Deleted > 0)
+                log.LogInformation("Deleted {Count} stray file(s), {Bytes:N0} bytes, under the blob root that no document names",
+                    swept.Deleted, swept.Bytes);
+        }
+        catch (Exception ex)
+        {
+            // Not fatal: they are unlisted garbage, and the next start tries again.
+            log.LogWarning(ex, "Could not sweep the blob root for stray files; will retry on next start");
         }
     }
 

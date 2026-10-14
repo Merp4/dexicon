@@ -102,6 +102,8 @@ public sealed class HostLoggingTests : IDisposable
         var bytes = Path.Combine(storage.BlobRoot, sha[..2], sha);
         Directory.CreateDirectory(Path.GetDirectoryName(bytes)!);
         await File.WriteAllTextAsync(bytes, "left by an earlier version");
+        var partialUpload = Path.Combine(storage.BlobRoot, $".incoming-{Guid.NewGuid():N}");
+        await File.WriteAllTextAsync(partialUpload, "a crash left this");
         var options = new DbContextOptionsBuilder<CatalogDbContext>()
             .UseSqlite($"Data Source={storage.CatalogPath};Pooling=False").Options;
         await using (var seed = new CatalogDbContext(options))
@@ -118,8 +120,10 @@ public sealed class HostLoggingTests : IDisposable
         await using var check = new CatalogDbContext(options);
         (await check.Blobs.CountAsync(b => b.Sha256 == sha)).ShouldBe(0);
         File.Exists(bytes).ShouldBeFalse();
-        TestText.Lines(captured.ToString())
-            .ShouldContain(l => l.Contains("Deleted 1 of 1 stored document(s) that no corpus holds", StringComparison.Ordinal));
+        File.Exists(partialUpload).ShouldBeFalse("the sweep of the blob root runs at startup too");
+        var lines = TestText.Lines(captured.ToString());
+        lines.ShouldContain(l => l.Contains("Deleted 1 of 1 stored document(s) that no corpus holds", StringComparison.Ordinal));
+        lines.ShouldContain(l => l.Contains("Deleted 1 stray file(s), 17 bytes, under the blob root", StringComparison.Ordinal));
     }
 
     [Fact]
