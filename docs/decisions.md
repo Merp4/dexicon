@@ -2338,12 +2338,18 @@ back. No record of who uploaded a document is kept.
 - A failure to delete the bytes, or to check for a blob stored again before deleting them, is logged and leaves a
   file under the blob root that no row names. A stop between the row delete and the byte delete leaves the same
   file, and a crash during an upload leaves its temporary file. At startup `StrayBlobBytes.SweepAsync` deletes
-  two shapes of file and nothing else: a regular file directly under the root named `.incoming-` and 32 lowercase
-  hex digits, and a regular file named by 64 lowercase hex digits in the folder named by the first two, when no
-  blob row has that hash. Links are not followed or deleted, and nothing deeper than the fan-out folder is read.
-  When the catalogue holds no blob row at all, the hash-named files are left and a warning says so, because a
-  restored or replaced catalogue next to a populated blob root is not a leak, and those files may be the only copy.
-  Temporary files are deleted in either case. A sweep that fails is logged and the next start tries again.
+  two shapes of file and nothing else: a file directly under the root named `.incoming-` and 32 lowercase hex
+  digits, and a file named by 64 lowercase hex digits in the folder named by the first two, when no blob row has
+  that hash. Links are not followed or deleted, and nothing deeper than the fan-out folder is read. A folder that
+  cannot be listed is logged and skipped. A sweep that fails is logged and the next start tries again.
+- The sweep takes every file with no row for a leak. It assumes one process owns the data folder (D-01), so that no
+  upload is storing a file whose row is not saved yet, and that the catalogue and the blob root are restored
+  together (`scripts/backup.sh` archives the volume as a whole). A catalogue restored alone, older than the files
+  beside it, makes the newer files look stray, and the sweep deletes them. The one check is a catalogue with no
+  blob row at all: the hash-named files are left and a warning says so, because a restored or replaced catalogue
+  next to a populated blob root is not a leak and the files may be the only copy. Temporary files are deleted in
+  either case. A catalogue emptied by detaching every document keeps its leaked bytes the same way until a document
+  is stored.
 - EF Core's `ExecuteDeleteAsync` bypasses the change tracker, so the release detaches the `Blob` and `BlobText`
   entries it deleted from the context that called it. A later upload of the same bytes in that context would
   otherwise fail with "Blob cannot be tracked".

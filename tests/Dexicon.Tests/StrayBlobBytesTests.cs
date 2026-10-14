@@ -147,35 +147,68 @@ public sealed class StrayBlobBytesTests
     }
 
     [Fact]
-    public async Task AFileThatCannotBeDeletedIsCountedAndTheRestAreStillDeleted()
+    public async Task FilesThatCannotBeDeletedAreCountedAndLoggedOnceAndTheRestAreStillDeleted()
     {
         var (harness, root, db) = await StartWithADocumentAsync();
         await using var _ = harness;
         await using var __ = db;
-        var locked = Temporary(root, "locked");
+        var first = Temporary(root, "locked");
+        var second = Temporary(root, "locked too");
         var other = Temporary(root, "other");
         var logs = new RecordingLoggerFactory();
 
         // An open handle without share-delete refuses a delete on Windows. On Linux the delete succeeds, so there
         // the assertion is only that nothing is reported as failed.
-        await using var handle = new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.Read);
+        await using var handle1 = new FileStream(first, FileMode.Open, FileAccess.Read, FileShare.Read);
+        await using var handle2 = new FileStream(second, FileMode.Open, FileAccess.Read, FileShare.Read);
         var swept = await StrayBlobBytes.SweepAsync(db, root, logs.CreateLogger("sweep"));
 
         File.Exists(other).ShouldBeFalse();
         if (OperatingSystem.IsWindows())
         {
-            swept.Failed.ShouldBe(1);
+            swept.Failed.ShouldBe(2);
             swept.Deleted.ShouldBe(1);
-            File.Exists(locked).ShouldBeTrue();
-            logs.Levels.ShouldBe([LogLevel.Warning]);
+            File.Exists(first).ShouldBeTrue();
+            File.Exists(second).ShouldBeTrue();
+            logs.Levels.ShouldBe([LogLevel.Warning], "one line for the run, not one for each file");
         }
         else
         {
             swept.Failed.ShouldBe(0);
-            swept.Deleted.ShouldBe(2);
+            swept.Deleted.ShouldBe(3);
         }
     }
 
+    [UnprivilegedLinuxFact]
+    public async Task AFolderThatCannotBeListedIsLoggedOnceAndTheOthersAreStillSwept()
+    {
+        if (OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("permission bits refuse a listing on Linux only");
+
+        var (harness, root, db) = await StartWithADocumentAsync();
+        await using var _ = harness;
+        await using var __ = db;
+        var hidden = HashFile(root, "aa" + new string('0', 62));
+        var readable = HashFile(root, "bb" + new string('0', 62));
+        var temporary = Temporary(root);
+        var logs = new RecordingLoggerFactory();
+        var hiddenFolder = Path.GetDirectoryName(hidden)!;
+        File.SetUnixFileMode(hiddenFolder, UnixFileMode.None);
+        try
+        {
+            var swept = await StrayBlobBytes.SweepAsync(db, root, logs.CreateLogger("sweep"));
+
+            swept.Deleted.ShouldBe(2);
+            File.Exists(readable).ShouldBeFalse();
+            File.Exists(temporary).ShouldBeFalse();
+            logs.Levels.ShouldBe([LogLevel.Warning]);
+        }
+        finally
+        {
+            File.SetUnixFileMode(hiddenFolder, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+
+        File.Exists(hidden).ShouldBeTrue("a folder that could not be listed is left as it was");
+    }
     [LinuxFact]
     public async Task ALinkIsNeitherFollowedNorDeleted()
     {

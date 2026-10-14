@@ -124,6 +124,9 @@ public sealed class HostLoggingTests : IDisposable
         var lines = TestText.Lines(captured.ToString());
         lines.ShouldContain(l => l.Contains("Deleted 1 of 1 stored document(s) that no corpus holds", StringComparison.Ordinal));
         lines.ShouldContain(l => l.Contains("Deleted 1 stray file(s), 17 bytes, under the blob root", StringComparison.Ordinal));
+        Array.FindIndex(lines, l => l.Contains("stored document(s) that no corpus holds", StringComparison.Ordinal))
+            .ShouldBeLessThan(Array.FindIndex(lines, l => l.Contains("stray file(s)", StringComparison.Ordinal)),
+                "the release of unheld documents runs first, since it deletes the bytes of the rows it removes");
     }
 
     [Fact]

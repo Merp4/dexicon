@@ -17,16 +17,20 @@ public readonly record struct StraySweep(int Deleted, long Bytes, int Failed, in
 /// a delete of the bytes that failed after the blob row went (<see cref="DocumentService.ReleaseAsync"/>), and
 /// the refusal of its check for a blob stored again. Nothing else removes them.
 ///
-/// Only two shapes are touched: a regular file directly under the root named as an upload's temporary file, and
-/// a regular file named by 64 lowercase hex digits in the directory named by its first two. Anything else under
-/// the root is left, as is a link, and nothing deeper is read.
+/// Only two shapes are touched: a file directly under the root named as an upload's temporary file, and a file
+/// named by 64 lowercase hex digits in the directory named by its first two. Anything else under the root is
+/// left, as is a link, and nothing deeper is read.
 ///
 /// Meant for startup, when nothing is being uploaded: a file that an upload has stored and not yet saved a row
-/// for would look like one nothing names.
+/// for would look like one nothing names. That holds while one process owns the data folder (D-01). A second
+/// process writing to it, such as an old container still serving, is not covered.
 ///
-/// A catalogue with no blob row at all next to hash-named files is not a catalogue that lost its documents one
-/// at a time. It is a restored or replaced catalogue, or one pointed at another data folder, and the files may be
-/// the only copy of what it held. Those files are left and reported. Temporary files are deleted either way.
+/// Every file with no row is taken for a leak, so the catalogue and the blob root have to be restored together.
+/// A catalogue restored alone, older than the files beside it, makes their newer files look stray. The one check
+/// against that is a catalogue with no blob row at all next to hash-named files: it is a restored or replaced
+/// catalogue, or one pointed at another data folder, and the files may be the only copy of what it held. Those
+/// files are left and reported, and temporary files are deleted either way. A catalogue emptied by detaching
+/// every document keeps any leaked bytes the same way, until a document is stored.
 /// </summary>
 public static class StrayBlobBytes
 {
@@ -49,17 +53,27 @@ public static class StrayBlobBytes
                 temporary.Add(path);
         }
 
+        var unreadable = 0;
         foreach (var directory in Directory.EnumerateDirectories(blobRoot))
         {
             var fanOut = Path.GetFileName(directory);
             if (fanOut.Length != 2 || !IsLowerHex(fanOut) || IsLink(directory)) continue;
 
-            foreach (var path in Directory.EnumerateFiles(directory))
+            try
             {
-                var name = Path.GetFileName(path);
-                if (name.Length == 64 && IsLowerHex(name) && name.StartsWith(fanOut, StringComparison.Ordinal)
-                    && !IsLink(path))
-                    named.Add((name, path));
+                foreach (var path in Directory.EnumerateFiles(directory))
+                {
+                    var name = Path.GetFileName(path);
+                    if (name.Length == 64 && IsLowerHex(name) && name.StartsWith(fanOut, StringComparison.Ordinal)
+                        && !IsLink(path))
+                        named.Add((name, path));
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // The files of the folders that can be read are still swept. Its own are found by a later start.
+                if (unreadable++ == 0)
+                    log?.LogWarning(ex, "Could not list the stored files in folder {Folder} of the blob root", fanOut);
             }
         }
 

@@ -148,9 +148,10 @@ public static class Bootstrapper
         try
         {
             var swept = await StrayBlobBytes.SweepAsync(db, options.Storage.BlobRoot, log);
-            if (swept.Deleted > 0)
-                log.LogInformation("Deleted {Count} stray file(s), {Bytes:N0} bytes, under the blob root that no document names",
-                    swept.Deleted, swept.Bytes);
+            if (swept.Deleted > 0 || swept.Failed > 0)
+                log.LogInformation(
+                    "Deleted {Count} stray file(s), {Bytes:N0} bytes, under the blob root that no document names ({Failed} could not be deleted)",
+                    swept.Deleted, swept.Bytes, swept.Failed);
         }
         catch (Exception ex)
         {
