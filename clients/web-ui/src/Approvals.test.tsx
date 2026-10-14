@@ -139,7 +139,7 @@ describe('approving', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('says an uploaded document stays stored and can be attached again, not that it is indexed again', async () => {
+  it('says an uploaded document is deleted with its last attachment, not that it is indexed again', async () => {
     listProposals.mockResolvedValue([
       proposal({ kind: 'document', target: 'paper.md', facts: { sources: 1, files: 1, chunks: 12, chunkSets: 2, blocker: null } }),
     ]);
@@ -150,7 +150,7 @@ describe('approving', () => {
     const dialog = await screen.findByRole('dialog');
 
     expect(within(dialog).getByText(/This takes 12 chunks, across 2 chunk sets/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/document stays stored and can be attached again from the Documents page/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/deleted from storage when no other corpus holds it, and getting it back means uploading it again/)).toBeInTheDocument();
     expect(within(dialog).queryByText(/files on disk/)).not.toBeInTheDocument();
     expect(within(dialog).queryByText(/indexing it again/)).not.toBeInTheDocument();
   });

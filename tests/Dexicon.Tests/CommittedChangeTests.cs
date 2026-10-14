@@ -25,6 +25,7 @@ namespace Dexicon.Tests;
 /// same save, so a failure between the two cannot leave one the key can neither reach nor
 /// create again.
 /// </summary>
+[Collection(nameof(AttachmentLockCollection))]
 public sealed class CommittedChangeTests
 {
     /// <summary>
@@ -329,6 +330,7 @@ public sealed class CommittedChangeTests
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
         var stored = await documents.StoreAsync(new MemoryStream("some text to index"u8.ToArray()), "doc.txt");
+        await harness.HoldElsewhereAsync(stored.Sha256);
         var rc = new RequestContext
         {
             Principal = new Principal("k", "admin", new HashSet<string>(StringComparer.Ordinal) { Scopes.Admin }),
@@ -341,7 +343,7 @@ public sealed class CommittedChangeTests
 
         watcher.Fired.ShouldBeTrue("the window has to have been opened");
         result.ShouldBeOfType<Accepted<DocumentAttached>>();
-        (await db.Files.CountAsync()).ShouldBe(1);
+        (await db.Files.CountAsync(f => f.Source!.CorpusId == IndexingHarness.CorpusId)).ShouldBe(1);
         (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh)).ShouldBe(1, "the attached document has its job");
     }
 

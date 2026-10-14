@@ -167,7 +167,8 @@ internal sealed class IndexingHarness : IAsyncDisposable
         var options = _services.GetRequiredService<IOptions<DexiconOptions>>();
         var scheduler = new WorkScheduler(options);
         return new Dexicon.Api.CorpusConfiguration(db, vectors ?? Vectors, Embedder, options,
-            new IndexJobQueue(db, scheduler, NullLogger<IndexJobQueue>.Instance), new SweepQueue(scheduler));
+            new IndexJobQueue(db, scheduler, NullLogger<IndexJobQueue>.Instance), new SweepQueue(scheduler),
+            NullLogger<Dexicon.Api.CorpusConfiguration>.Instance);
     }
 
     /// <summary>
@@ -218,9 +219,22 @@ internal sealed class IndexingHarness : IAsyncDisposable
     /// will look for them. Building one from fresh options puts them somewhere else and
     /// the pass then reports every attachment as having no stored text.
     /// </summary>
-    public DocumentService NewDocumentService(CatalogDbContext db) =>
+    public DocumentService NewDocumentService(CatalogDbContext db, ILogger<DocumentService>? log = null) =>
         new(db, _services.GetRequiredService<IOptions<DexiconOptions>>(),
-            NullLogger<DocumentService>.Instance);
+            log ?? NullLogger<DocumentService>.Instance);
+
+    /// <summary>
+    /// A corpus that holds a stored document, so that the attach endpoint, which takes only a document that a
+    /// corpus the caller reaches holds, can attach it to another corpus. The corpus has no chunk sets.
+    /// </summary>
+    public async Task HoldElsewhereAsync(string sha256)
+    {
+        await using var db = NewContext();
+        var holder = new Corpus { Id = "holder", Name = "holder", State = CorpusState.Ready, CreatedUtc = DateTime.UtcNow };
+        db.Corpora.Add(holder);
+        await db.SaveChangesAsync();
+        await NewDocumentService(db).AttachAsync(holder, sha256, "held.txt");
+    }
 
     private async Task SeedKeysAsync()
     {

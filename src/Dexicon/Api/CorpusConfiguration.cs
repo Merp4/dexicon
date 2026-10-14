@@ -7,6 +7,7 @@ using Dexicon.Core.Indexing;
 using Dexicon.Core.Vectors;
 using Dexicon.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Dexicon.Api;
@@ -56,7 +57,8 @@ public sealed class CorpusConfiguration(
     IEmbeddingService embedder,
     IOptions<DexiconOptions> opts,
     IndexJobQueue queue,
-    SweepQueue sweeps)
+    SweepQueue sweeps,
+    ILogger<CorpusConfiguration> log)
 {
     private IndexingOptions Indexing => opts.Value.Indexing;
 
@@ -565,6 +567,10 @@ public sealed class CorpusConfiguration(
         var paths = await db.Files.Where(f => f.SourceId == source.Id)
             .Select(f => f.RelativePath).ToListAsync(ct);
 
+        // The documents it holds, which go with it when no other corpus holds them.
+        var documents = await db.Files.Where(f => f.SourceId == source.Id && f.BlobSha256 != null)
+            .Select(f => f.BlobSha256!).Distinct().ToListAsync(ct);
+
         // Vectors first, for the same reason RemoveAttachmentAsync does it: if the
         // catalogue row went first and this threw, the corpus would keep returning
         // hits for files it no longer lists.
@@ -596,6 +602,7 @@ public sealed class CorpusConfiguration(
             await db.SaveChangesAsync(ct);
         }
 
+        await DocumentService.ReleaseAsync(db, opts.Value.Storage.BlobRoot, documents, log);
         return true;
     }
 
@@ -695,6 +702,10 @@ public sealed class CorpusConfiguration(
         foreach (var collection in collections)
             await vectors.DeleteCorpusAsync(collection, corpus.Id, ct);
 
+        // The documents it holds, which go with it when no other corpus holds them.
+        var documents = await db.Files.Where(f => f.Source!.CorpusId == corpus.Id && f.BlobSha256 != null)
+            .Select(f => f.BlobSha256!).Distinct().ToListAsync(ct);
+
         // Under the attachment lock for the delete only, as RemoveSourceAsync does.
         using (await DocumentService.HoldAttachmentsAsync(ct))
         {
@@ -716,6 +727,7 @@ public sealed class CorpusConfiguration(
             }
         }
 
+        await DocumentService.ReleaseAsync(db, opts.Value.Storage.BlobRoot, documents, log);
         return true;
     }
 }

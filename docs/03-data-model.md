@@ -236,6 +236,9 @@ CREATE INDEX ix_file_chunk_states_status ON file_chunk_states(chunk_set_id, stat
 -- Blob store for uploads. Content lives at /data/blobs/<sha256[0:2]>/<sha256>.
 -- Carries no name: the same PDF can be attached to different corpora under
 -- different names, so the name belongs to the attachment, not the bytes.
+-- A blob lives while a file row references it: the detach, replacement or removal
+-- that takes the last such row also deletes the blob, its text and its bytes
+-- (D-43), and startup deletes any blob that no file references.
 CREATE TABLE blobs (
   sha256             TEXT PRIMARY KEY,
   size_bytes         INTEGER NOT NULL,

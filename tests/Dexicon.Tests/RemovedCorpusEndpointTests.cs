@@ -80,6 +80,7 @@ public sealed class RemovedCorpusEndpointTests
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
         var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt");
+        await harness.HoldElsewhereAsync(stored.Sha256);
 
         Task<IResult> attachment;
         using (await DocumentService.HoldAttachmentsAsync().FinishesAsync("taking the lock"))
@@ -88,8 +89,10 @@ public sealed class RemovedCorpusEndpointTests
                 IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256, "doc.txt"),
                 As(Scopes.Admin), new ScopeResolver(db), documents, db,
                 new IndexJobQueue(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance), default));
+            // Only the corpus being attached to: the one that holds the document has to stay, or the attach is
+            // answered as a document nobody holds before it reaches the lock.
             await using var removing = harness.NewContext();
-            await removing.Corpora.ExecuteDeleteAsync();
+            await removing.Corpora.Where(c => c.Id == IndexingHarness.CorpusId).ExecuteDeleteAsync();
         }
 
         var refused = await Should.ThrowAsync<ScopeResolutionException>(() => attachment.FinishesAsync("the attachment"));
@@ -141,6 +144,7 @@ public sealed class RemovedCorpusEndpointTests
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
         var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt");
+        await harness.HoldElsewhereAsync(stored.Sha256);
 
         Task<IResult> attachment;
         using (await DocumentService.HoldAttachmentsAsync().FinishesAsync("taking the lock"))

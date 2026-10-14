@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Data.Common;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -475,12 +476,16 @@ public sealed class DocumentService(
     /// The bytes are already attached to the corpus under another name, and the name asked for is another
     /// document's.
     /// </exception>
+    /// <exception cref="DocumentGoneException">
+    /// No blob has the hash: the last corpus that held the document detached it, which deletes it.
+    /// </exception>
     public async Task<IndexedFile> AttachAsync(Corpus corpus, string sha256, string fileName,
         CancellationToken ct = default) =>
         (await AttachWithSetsAsync(corpus, sha256, fileName, ct)).File;
 
     /// <summary><see cref="AttachAsync"/>, answering also with the chunk sets the attachment was given states for.</summary>
     /// <exception cref="NameTakenException">As <see cref="AttachAsync"/>.</exception>
+    /// <exception cref="DocumentGoneException">As <see cref="AttachAsync"/>.</exception>
     public async Task<Attachment> AttachWithSetsAsync(Corpus corpus, string sha256, string fileName,
         CancellationToken ct = default)
     {
@@ -503,7 +508,9 @@ public sealed class DocumentService(
                 $"Corpus '{corpus.Name}' was removed while this request waited.", []);
 
         var blob = await db.Blobs.FirstOrDefaultAsync(b => b.Sha256 == sha256, ct)
-            ?? throw new InvalidOperationException($"No stored document with hash {sha256}.");
+            ?? throw new DocumentGoneException(
+                "The document was deleted while it waited to be attached, because the last corpus that held it detached it. "
+                + "Upload it again.");
 
         // Needed to give the new attachment a state row per set. Read here, under the lock, and not from
         // corpus.ChunkSets: a corpus resolved with its sets included holds them as they were when the request
@@ -552,10 +559,14 @@ public sealed class DocumentService(
         {
             // Same name, different bytes: a replacement. The fingerprint changes, so
             // the incremental pass sees it as changed and re-chunks it.
+            var replaced = existing.BlobSha256;
             existing.BlobSha256 = sha256;
             existing.SizeBytes = blob.SizeBytes;
             await InvalidateAsync(existing.Id, ct);
             await db.SaveChangesAsync(ct);
+
+            // The bytes it replaced are held by no corpus unless another one has them.
+            if (replaced is not null && replaced != sha256) await ReleaseAsync(db, _storage.BlobRoot, [replaced], log);
             return new Attachment(existing, sets);
         }
 
@@ -636,8 +647,72 @@ public sealed class DocumentService(
     }
 
     /// <summary>
-    /// Detach an uploaded document from one corpus. The blob survives, since other corpora may still
-    /// use it. A file a source read from a folder or a commit is not a document and is not detached.
+    /// Deletes the stored documents among <paramref name="shas"/> that no corpus holds: the blob row, its
+    /// extracted text, which cascades from it, and the bytes under <paramref name="blobRoot"/>. A document is
+    /// held while any file row points at it, and the delete is one statement that says so, so an attachment
+    /// that saved first keeps the document and one that comes after finds none. Returns how many were
+    /// deleted.
+    ///
+    /// Called when a file row goes (a detach, a replacement, the removal of an upload source or a corpus), and
+    /// at startup for any that an earlier version left behind. A document is not kept for a later attachment:
+    /// uploading the same bytes again stores and extracts them again.
+    ///
+    /// A file that cannot be deleted is logged and left. Nothing refers to it, and a later upload of the same
+    /// bytes finds it in place and uses it. A catalogue that refuses the delete (a locked or full database) is
+    /// logged and the document is left too: the caller's change has been saved by then, and the next start
+    /// deletes the document.
+    ///
+    /// Takes no cancellation token. It runs after the rows that held the documents are gone, and a stop part
+    /// way would leave documents that nothing lists.
+    /// </summary>
+    public static async Task<int> ReleaseAsync(
+        CatalogDbContext db, string blobRoot, IEnumerable<string> shas, ILogger? log = null)
+    {
+        var deleted = 0;
+        foreach (var sha in shas.Distinct(StringComparer.Ordinal))
+        {
+            if (sha.Length < 3) continue;
+
+            int removed;
+            try
+            {
+                removed = await db.Blobs
+                    .Where(b => b.Sha256 == sha && !db.Files.Any(f => f.BlobSha256 == sha))
+                    .ExecuteDeleteAsync(CancellationToken.None);
+            }
+            catch (DbException ex)
+            {
+                log?.LogWarning(ex, "Could not delete document {Sha} after its last attachment went; "
+                                    + "the next start deletes it", sha[..12]);
+                continue;
+            }
+
+            if (removed == 0) continue;
+            deleted++;
+
+            // The delete went straight to the catalogue. The context can still track the rows it read, and a
+            // later upload of the same bytes in the same request adds a blob with the same key.
+            foreach (var entry in db.ChangeTracker.Entries()
+                         .Where(e => e.Entity is Blob b && b.Sha256 == sha || e.Entity is BlobText t && t.Sha256 == sha)
+                         .ToList())
+                entry.State = EntityState.Detached;
+
+            var path = Path.Combine(blobRoot, sha[..2], sha);
+            try { File.Delete(path); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                log?.LogWarning(ex, "Could not delete the bytes of document {Sha} after its last attachment went; "
+                                    + "nothing refers to them", sha[..12]);
+            }
+        }
+
+        return deleted;
+    }
+
+    /// <summary>
+    /// Detach an uploaded document from one corpus, and delete it when no other corpus holds it
+    /// (<see cref="ReleaseAsync"/>). A file a source read from a folder or a commit is not a document and is
+    /// not detached.
     /// Answers with the file as it was when its row was deleted: an attachment can have renamed or replaced
     /// it since the caller last read it, and the name here is the one a pass may have written vectors
     /// under. Null when there was no such file.
@@ -660,8 +735,11 @@ public sealed class DocumentService(
             var current = await db.Files.AsNoTracking().Where(f => f.Id == fileId)
                 .Select(f => new DetachedFile(f.SourceId, f.RelativePath)).SingleAsync(ct);
 
+            var sha = file.BlobSha256;
             db.Files.Remove(file);
             await db.SaveChangesAsync(ct);
+
+            if (sha is not null) await ReleaseAsync(db, _storage.BlobRoot, [sha], log);
             return current;
         }
         finally { Attaching.Release(); }

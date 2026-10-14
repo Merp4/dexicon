@@ -56,7 +56,8 @@ public sealed class ServerChunkDefaultsTests : IAsyncLifetime
         });
         var scheduler = new WorkScheduler(options);
         return new CorpusConfiguration(db, _harness.Vectors, _harness.Embedder, options,
-            new IndexJobQueue(db, scheduler, NullLogger<IndexJobQueue>.Instance), new SweepQueue(scheduler));
+            new IndexJobQueue(db, scheduler, NullLogger<IndexJobQueue>.Instance), new SweepQueue(scheduler),
+            NullLogger<CorpusConfiguration>.Instance);
     }
 
     private static async Task NothingWasCreatedAsync(CatalogDbContext db)

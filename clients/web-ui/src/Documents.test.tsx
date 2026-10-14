@@ -19,6 +19,7 @@ const listDocuments = vi.fn();
 const uploadDocuments = vi.fn();
 const attachDocument = vi.fn();
 const documentText = vi.fn();
+const detachDocument = vi.fn();
 
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
@@ -26,7 +27,7 @@ vi.mock('./api', async (importOriginal) => ({
     listDocuments: (...a: unknown[]) => listDocuments(...a),
     uploadDocuments: (...a: unknown[]) => uploadDocuments(...a),
     attachDocument: (...a: unknown[]) => attachDocument(...a),
-    detachDocument: vi.fn(),
+    detachDocument: (...a: unknown[]) => detachDocument(...a),
     documentText: (...a: unknown[]) => documentText(...a),
   },
 }));
@@ -92,6 +93,7 @@ const doc: LibraryDocument = {
       fileId: 'f1',
       corpusId: 'id-library',
       corpusName: 'library',
+      fileName: 'moby-dick.epub',
       status: 'indexed',
       chunkCount: 980,
       chunkSize: 768,
@@ -102,6 +104,7 @@ const doc: LibraryDocument = {
       fileId: 'f2',
       corpusId: 'id-fine',
       corpusName: 'fine',
+      fileName: 'moby-dick.epub',
       status: 'indexed',
       chunkCount: 2940,
       chunkSize: 256,
@@ -388,5 +391,60 @@ describe('uploading a batch', () => {
     await user.upload(input, new File(['x'], 'c.txt'));
 
     await waitFor(() => expect(screen.queryByText(/not stored/)).not.toBeInTheDocument());
+  });
+});
+
+/**
+ * Detaching deletes a document that no other corpus holds, bytes and extracted text included, and it was one
+ * click. It asks first, and says which of the two it is about to do.
+ */
+describe('detaching a document', () => {
+  it('asks first, names what stays, and calls nothing on cancel', async () => {
+    const user = userEvent.setup();
+    render(<DocumentsView corpora={[corpus('library'), corpus('fine')]} {...noop} />);
+
+    await user.click((await screen.findAllByRole('button', { name: 'Detach' }))[0]);
+    const dialog = await screen.findByRole('dialog', { name: 'Detach moby-dick.epub from library?' });
+
+    expect(dialog).toHaveTextContent('It stays stored for 1 other corpus');
+    expect(detachDocument).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(detachDocument).not.toHaveBeenCalled();
+  });
+
+  it('detaches once confirmed, and reloads the library', async () => {
+    const user = userEvent.setup();
+    detachDocument.mockResolvedValue(undefined);
+    render(<DocumentsView corpora={[corpus('library'), corpus('fine')]} {...noop} />);
+
+    await user.click((await screen.findAllByRole('button', { name: 'Detach' }))[0]);
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Detach' }));
+
+    expect(detachDocument).toHaveBeenCalledWith('library', 'f1');
+    await waitFor(() => expect(listDocuments).toHaveBeenCalledTimes(2));
+  });
+
+  it('says the document is deleted when no other corpus holds it', async () => {
+    const user = userEvent.setup();
+    listDocuments.mockResolvedValue([{ ...doc, attachments: [doc.attachments[0]] }]);
+    render(<DocumentsView corpora={[corpus('library')]} {...noop} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Detach' }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(dialog).toHaveTextContent(/No other corpus holds this document, so it is deleted/);
+    expect(dialog).toHaveTextContent(/Upload it again to get it back/);
+  });
+
+  it('shows a refusal in the dialog that asked', async () => {
+    const user = userEvent.setup();
+    detachDocument.mockRejectedValue(new ApiError(403, 'Insufficient scope', 'This key needs destroy.'));
+    render(<DocumentsView corpora={[corpus('library'), corpus('fine')]} {...noop} />);
+
+    await user.click((await screen.findAllByRole('button', { name: 'Detach' }))[0]);
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Detach' }));
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/needs destroy/);
   });
 });

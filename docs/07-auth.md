@@ -187,8 +187,9 @@ key can hold, so a key that asked cannot also approve.
 
 A stored document is authorised by attachment, and its hash grants nothing. A key reads the text of a
 document, and attaches it to another corpus, only when a corpus the key reaches holds it. A document that
-is another corpus's is answered `404` as one that does not exist. An administrator attaches any stored
-document, including one that no corpus holds.
+is another corpus's is answered `404` as one that does not exist. An administrator reaches every corpus, so
+the same rule lets an administrator attach any document a corpus holds. A document that no corpus holds
+has been deleted by its last detach, so there is none to attach.
 
 A key that is revoked or has expired reaches no corpus from then on, and a session that has signed out
 reaches none, including through a progress stream that was opened before: it shows nothing from its next

@@ -253,8 +253,8 @@ function ApproveModal({ proposal: p, onClose, onApproved }: {
               {amount ? <>This takes {amount}. </> : null}
               {p.kind === 'document'
                 // An uploaded document has no file on disk to index again. Its bytes and extracted
-                // text stay in the library, and attaching it chunks that text afresh.
-                ? 'The document stays stored and can be attached again from the Documents page. It cannot be undone from here.'
+                // text are deleted with its last attachment, and getting it back means uploading it.
+                ? 'The document is deleted from storage when no other corpus holds it, and getting it back means uploading it again. It cannot be undone from here.'
                 : 'The files on disk are untouched. It cannot be undone from here; getting it back means indexing it again.'}
             </>}
       </p>

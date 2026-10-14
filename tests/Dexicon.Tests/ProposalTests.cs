@@ -635,7 +635,7 @@ public sealed class ProposalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ADocumentIsDetachedOnApprovalAndItsBlobStays()
+    public async Task ADocumentIsDetachedOnApprovalAndDeletedWithItsLastAttachment()
     {
         await using var uploads = await IndexingHarness.StartAsync();
         await uploads.SeedCorpusAsync(SourceKind.Upload);
@@ -660,7 +660,8 @@ public sealed class ProposalTests : IAsyncLifetime
         uploads.Vectors.CountFor("paper.md").ShouldBe(0);
         await using var fresh = uploads.NewContext();
         (await fresh.Files.AnyAsync(f => f.Id == file.Id)).ShouldBeFalse("detached from the corpus");
-        (await fresh.Blobs.AnyAsync(b => b.Sha256 == stored.Sha256)).ShouldBeTrue("another corpus may still hold the document");
+        (await fresh.Blobs.AnyAsync(b => b.Sha256 == stored.Sha256)).ShouldBeFalse("no other corpus holds the document");
+        File.Exists(documents.PathFor(stored.Sha256)).ShouldBeFalse("its bytes go with it");
         (await fresh.Proposals.AsNoTracking().SingleAsync()).Status.ShouldBe(ProposalStatus.Approved);
     }
 

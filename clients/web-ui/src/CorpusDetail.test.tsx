@@ -837,7 +837,8 @@ describe('removing a source', () => {
 
   it('says what removing the upload source does, not what removing a folder does', async () => {
     // Removing it detaches every uploaded document of the corpus and deletes their chunks in every
-    // chunk set. The documents stay stored, and the next attachment creates the source again.
+    // chunk set. The documents are deleted unless another corpus holds them, and the next upload
+    // creates the source again.
     // There is no folder and nothing to index again from scratch.
     const user = userEvent.setup();
     getCorpus.mockResolvedValue(corpus({
@@ -849,7 +850,7 @@ describe('removing a source', () => {
     const dialog = await screen.findByRole('dialog');
 
     expect(within(dialog).getByText(/3 documents leave the index immediately, in every chunk set of docs/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/uploaded documents stay stored and can be attached again from the Documents page/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/uploaded documents are deleted unless another corpus holds them/)).toBeInTheDocument();
     expect(within(dialog).queryByText(/folder/)).not.toBeInTheDocument();
     expect(within(dialog).queryByText(/from scratch/)).not.toBeInTheDocument();
   });
