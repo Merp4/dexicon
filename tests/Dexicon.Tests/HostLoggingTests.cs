@@ -94,11 +94,10 @@ public sealed class HostLoggingTests : IDisposable
     [Fact]
     public async Task StartupDeletesAStoredDocumentThatNoCorpusHolds()
     {
-        // The only path that deletes the documents an earlier version left stored. The first start creates the
-        // catalogue, a blob row and its bytes are added to it, and the second start finds them.
+        // The only path that deletes the documents an earlier version left stored. The catalogue is created and a
+        // blob row and its bytes are added to it before the one start, which finds them.
         Isolate();
         var storage = new StorageOptions { DataPath = _data };
-        await using (var first = new WebApplicationFactory<Program>()) _ = first.Services;
         const string sha = "ab00000000000000000000000000000000000000000000000000000000000001";
         var bytes = Path.Combine(storage.BlobRoot, sha[..2], sha);
         Directory.CreateDirectory(Path.GetDirectoryName(bytes)!);
@@ -107,13 +106,14 @@ public sealed class HostLoggingTests : IDisposable
             .UseSqlite($"Data Source={storage.CatalogPath};Pooling=False").Options;
         await using (var seed = new CatalogDbContext(options))
         {
+            await seed.Database.MigrateAsync();
             seed.Blobs.Add(new Blob { Sha256 = sha, SizeBytes = 26, CreatedUtc = DateTime.UtcNow });
             await seed.SaveChangesAsync();
         }
 
         var captured = new StringWriter();
         Console.SetOut(captured);
-        await using (var second = new WebApplicationFactory<Program>()) _ = second.Services;
+        await using (var factory = new WebApplicationFactory<Program>()) _ = factory.Services;
 
         await using var check = new CatalogDbContext(options);
         (await check.Blobs.CountAsync(b => b.Sha256 == sha)).ShouldBe(0);

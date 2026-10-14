@@ -661,9 +661,10 @@ public sealed class DocumentService(
     /// uploading the same bytes again stores and extracts them again.
     ///
     /// A file that cannot be deleted is logged and left. Nothing refers to it, and a later upload of the same
-    /// bytes finds it in place and uses it. A catalogue that refuses the delete (a locked or full database) is
-    /// logged and the document is left too: the caller's change has been saved by then, and the next start
-    /// deletes the document.
+    /// bytes finds it in place and uses it. The same holds when the check for a blob stored again is refused,
+    /// and no start deletes such a file. A catalogue that refuses the delete of the blob row (a locked or full
+    /// database) is logged and the document is left: the caller's change has been saved by then, and the next
+    /// start deletes the document.
     ///
     /// Takes no cancellation token. It runs after the rows that held the documents are gone, and a stop part
     /// way would leave documents that nothing lists.
@@ -701,7 +702,9 @@ public sealed class DocumentService(
                 entry.State = EntityState.Detached;
 
             // An upload of the same bytes stores no file when the bytes are in place (StoreAsync takes no lock),
-            // and saves a new blob row. The bytes are then that blob's.
+            // and saves a new blob row. The bytes are then that blob's. This narrows the window and does not close
+            // it: the upload saves its row after it has extracted, so one that has found the bytes and not yet
+            // saved is not seen here.
             bool stored;
             try
             {

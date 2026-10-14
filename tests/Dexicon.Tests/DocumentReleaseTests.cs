@@ -217,6 +217,124 @@ public sealed class DocumentReleaseTests
         (logs.Exceptions.ShouldHaveSingleItem() is IOException or UnauthorizedAccessException).ShouldBeTrue();
     }
 
+    /// <summary>
+    /// The release's check for a blob stored again, which runs after its blob row is deleted and before the
+    /// bytes are. Held, it lets a test act inside the release.
+    /// </summary>
+    private static HoldOneLookup HoldTheCheckForABlobStoredAgain() =>
+        new(sql => sql.Contains("FROM \"blobs\"", StringComparison.Ordinal));
+
+    /// <summary>
+    /// Whether another request could take the attachment lock while the release was held at its check. A
+    /// release that runs under the lock keeps it for the three seconds, and one that runs after the lock is
+    /// dropped lets the other request take it at once.
+    /// </summary>
+    private static async Task<bool> LockWasTakenWhileHeldAsync(HoldOneLookup hold)
+    {
+        Task<IDisposable>? other = null;
+        try
+        {
+            await Gates.ReachedAsync(hold.Reached, "the release's check for a blob stored again");
+            other = DocumentService.HoldAttachmentsAsync();
+            return await Task.WhenAny(other, Task.Delay(TimeSpan.FromSeconds(3))) == other;
+        }
+        finally
+        {
+            hold.Release();
+            if (other is not null)
+            {
+                using var taken = await other.FinishesAsync("taking the lock once the release had finished");
+            }
+        }
+    }
+
+    [Fact]
+    public async Task TheReleaseOfADetachedDocumentRunsUnderTheAttachmentLock()
+    {
+        var hold = HoldTheCheckForABlobStoredAgain();
+        await using var harness = await IndexingHarness.StartAsync(hold, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var sha = await StoreAsync(documents, "released under the lock");
+        var file = await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), sha, "a.txt");
+        hold.Armed = true;
+
+        var detaching = Task.Run(() => documents.DetachAsync(IndexingHarness.CorpusId, file.Id));
+        var taken = await LockWasTakenWhileHeldAsync(hold);
+
+        (await detaching.FinishesAsync("the detach")).ShouldBeTrue();
+        taken.ShouldBeFalse("an attachment that read the blob before the release must not save against a deleted one");
+    }
+
+    [Fact]
+    public async Task TheReleaseOfARemovedSourceRunsUnderTheAttachmentLock()
+    {
+        var hold = HoldTheCheckForABlobStoredAgain();
+        await using var harness = await IndexingHarness.StartAsync(hold, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var notes = await CorpusAsync(db, IndexingHarness.CorpusId);
+        await documents.AttachAsync(notes, await StoreAsync(documents, "released under the lock"), "a.txt");
+        var source = await db.Sources.SingleAsync(s => s.CorpusId == notes.Id && s.Kind == SourceKind.Upload);
+        hold.Armed = true;
+
+        var removing = Task.Run(() => harness.NewConfiguration(db).RemoveSourceAsync(notes, source.Id, default));
+        var taken = await LockWasTakenWhileHeldAsync(hold);
+
+        (await removing.FinishesAsync("the removal")).Refusal.ShouldBeNull();
+        taken.ShouldBeFalse("the release of a removed source's documents runs before the lock is dropped");
+    }
+
+    [Fact]
+    public async Task TheReleaseOfARemovedCorpusRunsUnderTheAttachmentLock()
+    {
+        var hold = HoldTheCheckForABlobStoredAgain();
+        await using var harness = await IndexingHarness.StartAsync(hold, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var notes = await CorpusAsync(db, IndexingHarness.CorpusId);
+        await documents.AttachAsync(notes, await StoreAsync(documents, "released under the lock"), "a.txt");
+        hold.Armed = true;
+
+        var removing = Task.Run(() => harness.NewConfiguration(db).RemoveCorpusAsync(notes, default));
+        var taken = await LockWasTakenWhileHeldAsync(hold);
+
+        (await removing.FinishesAsync("the removal")).Refusal.ShouldBeNull();
+        taken.ShouldBeFalse("the release of a removed corpus's documents runs before the lock is dropped");
+    }
+
+    [Fact]
+    public async Task BytesStoredAgainAfterTheBlobRowWentAreKept()
+    {
+        // An upload of the same bytes finds them in place, so it keeps no copy of its own, and saves a new blob
+        // row. If that lands between the release's row delete and its byte delete, the bytes are that row's.
+        var hold = HoldTheCheckForABlobStoredAgain();
+        await using var harness = await IndexingHarness.StartAsync(hold, "notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        await using var db = harness.NewContext();
+        var documents = harness.NewDocumentService(db);
+        var sha = await StoreAsync(documents, "stored again meanwhile");
+        var file = await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), sha, "a.txt");
+        hold.Armed = true;
+
+        var detaching = Task.Run(() => documents.DetachAsync(IndexingHarness.CorpusId, file.Id));
+        try
+        {
+            await Gates.ReachedAsync(hold.Reached, "the release's check for a blob stored again");
+            await using var upload = harness.NewContext();
+            upload.Blobs.Add(new Blob { Sha256 = sha, SizeBytes = 1, CreatedUtc = DateTime.UtcNow });
+            await upload.SaveChangesAsync();
+        }
+        finally { hold.Release(); }
+
+        (await detaching.FinishesAsync("the detach")).ShouldBeTrue();
+        File.Exists(documents.PathFor(sha)).ShouldBeTrue("the bytes belong to the blob stored again");
+        (await HeldAsync(harness, documents, sha)).Blob.ShouldBeTrue();
+    }
+
     [Fact]
     public async Task TheAttachEndpointAnswers404WhenTheLastHolderDetachesTheDocumentAfterItsChecks()
     {

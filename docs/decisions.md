@@ -2334,8 +2334,9 @@ back. No record of who uploaded a document is kept.
 - A pass that is extracting a document again when its last holder detaches it finds its text row gone.
   `CurrentTextFor` then returns null and does not save the rewrite, and the pass drops the file it read, which the
   detach left without a row.
-- A failure to delete the bytes is logged and leaves a file under the blob root that no row names. A stop between
-  the row delete and the byte delete leaves the same file. Nothing removes either.
+- A failure to delete the bytes, or to check for a blob stored again before deleting them, is logged and leaves a
+  file under the blob root that no row names. A stop between the row delete and the byte delete leaves the same
+  file. Nothing removes any of them.
 - EF Core's `ExecuteDeleteAsync` bypasses the change tracker, so the release detaches the `Blob` and `BlobText`
   entries it deleted from the context that called it. A later upload of the same bytes in that context would
   otherwise fail with "Blob cannot be tracked".
@@ -2350,7 +2351,9 @@ adds one.
 
 **Cost.** A detach of the last attachment cannot be undone by the service. Getting the document back means
 uploading it and extracting it again. A script that attached an unheld document as an administrator is answered
-`404`.
+`404`. The removal of an upload source or a corpus releases its documents one at a time (a delete, a check and a
+file delete each) under the attachment lock, and for a corpus under the naming lock too, so attachments, detaches
+and key creation wait for as long as that takes. It was not measured for a corpus of thousands of documents.
 
 ---
 
