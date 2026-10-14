@@ -1935,17 +1935,18 @@ function RemoveSourceModal({ corpus, source, onClose, onRemoved }: {
   return (
     <Modal title={`Remove ${where}?`} onClose={onClose}>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
-      {/* No typed confirmation, unlike deleting a corpus: this is recoverable by adding
-          the folder back (or attaching the documents again), and the cost of getting it
-          wrong is a reindex rather than an index that no longer exists. Say what it costs
-          and take one click. */}
+      {/* No typed confirmation, unlike deleting a corpus: a folder is recoverable by adding
+          it back, and the cost of getting it wrong is a reindex rather than an index that no
+          longer exists. Uploaded documents are not: they are deleted unless another corpus
+          holds them, and uploading them again is the way back. Say what it costs and take one
+          click. */}
       <p className="mt-0 text-sm">
         {source.fileCount
           ? `Its ${source.fileCount.toLocaleString()} ${unit(source.fileCount)} ${source.fileCount === 1 ? 'leaves' : 'leave'} the index immediately, in every chunk set of ${corpus.name}.`
           : `It has no indexed ${unit(0)}, so nothing leaves the index.`}
         {source.kind === 'upload'
           // Its files are the corpus's attachments of uploaded documents, not files in a folder.
-          ? ' The uploaded documents stay stored and can be attached again from the Documents page, which creates this source again.'
+          ? ' The uploaded documents are deleted unless another corpus holds them. Uploading one again creates this source again.'
           : ' The folder on disk is untouched; Dexicon only ever reads it. Adding it again re-indexes from scratch.'}
       </p>
       <div className="flex gap-2 justify-end">
@@ -1990,6 +1991,8 @@ function DeleteCorpusModal({ corpus, onClose, onDeleted }: { corpus: Corpus; onC
         This removes {count(chunks, 'chunk')}
         {sets.length > 1 && ` across its ${sets.length} chunk sets`} from the vector store and the corpus from the
         catalogue. The files on disk are untouched. Re-indexing it again may take a while.
+        {corpus.sources.some((s) => s.kind === 'upload')
+          && ' Uploaded documents that no other corpus holds are deleted, and uploading them again is the way back.'}
       </p>
       {/* Typing the name, because this destroys an index that may have taken an hour. */}
       <Field label={`Type "${corpus.name}" to confirm`}>
@@ -2564,7 +2567,8 @@ const KEY_SCOPES: { id: string; does: string }[] = [
   },
   {
     id: 'destroy',
-    does: 'detach an uploaded document from a corpus over the API. Nothing asks first. '
+    does: 'detach an uploaded document from a corpus over the API, which deletes it when no other corpus holds it. '
+      + 'Nothing asks first. '
       + 'Sources, chunk sets and corpora are never removed by a key: it asks with propose. '
       + 'Independent of ingest',
   },
@@ -2600,7 +2604,7 @@ function ScopeField({ value, onChange }: { value: string[]; onChange: (scopes: s
       {value.includes('destroy') && (
         <Notice tone="warn">
           With destroy, the agent can detach any document from the corpora it reaches, and nothing
-          asks first. The document stays in the library, and attaching it again indexes it again.
+          asks first. A document no other corpus holds is deleted, and uploading it again indexes it again.
         </Notice>
       )}
     </Field>

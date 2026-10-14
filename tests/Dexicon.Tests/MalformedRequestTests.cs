@@ -431,6 +431,7 @@ public sealed class MalformedRequestTests
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
         var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), "a.txt");
+        await harness.HoldElsewhereAsync(stored.Sha256);
         var queue = new IndexJobQueue(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance);
 
         var result = await DocumentEndpoints.AttachAsync(
@@ -593,6 +594,7 @@ public sealed class MalformedRequestTests
         var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), "a.txt");
         (await db.Blobs.SingleAsync()).OriginalFileName = "old\nname.txt";
         await db.SaveChangesAsync();
+        await harness.HoldElsewhereAsync(stored.Sha256);
         var queue = new IndexJobQueue(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance);
 
         var result = await DocumentEndpoints.AttachAsync(
@@ -603,6 +605,6 @@ public sealed class MalformedRequestTests
         problem.StatusCode.ShouldBe(400);
         problem.ProblemDetails.Title.ShouldBe("Invalid file name");
         problem.ProblemDetails.Detail.ShouldNotBeNull().ShouldContain("fileName");
-        (await db.Files.CountAsync()).ShouldBe(0);
+        (await db.Files.CountAsync(f => f.Source!.CorpusId == IndexingHarness.CorpusId)).ShouldBe(0);
     }
 }

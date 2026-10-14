@@ -203,12 +203,12 @@ describe("a key's scopes", () => {
     const destroy = within(dialog).getByRole('button', { name: 'destroy' });
     expect(destroy).toHaveAttribute('aria-pressed', 'false');
     expect(within(dialog).getByText(/It cannot detach one: that is destroy/)).toBeInTheDocument();
-    expect(within(dialog).queryByText(/nothing asks first. The document stays in the library/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/nothing asks first. A document no other corpus holds is deleted/)).not.toBeInTheDocument();
 
     await user.type(within(dialog).getByPlaceholderText('claude-code'), 'cleaner');
     await user.click(destroy);
     expect(ingest).toHaveAttribute('aria-pressed', 'false');
-    expect(within(dialog).getByText(/nothing asks first. The document stays in the library/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/nothing asks first. A document no other corpus holds is deleted/)).toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: /Create/ }));
 
     expect(createToken).toHaveBeenCalledWith('cleaner', ['search', 'destroy'], { all: true });

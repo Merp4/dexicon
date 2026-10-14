@@ -51,7 +51,7 @@ public static class DocumentEndpoints
     private const string TruncatedBodyMessage = "Unexpected end of Stream";
 
     /// <summary>
-    /// Detach an uploaded document from a corpus (the blob survives; other corpora may still use it).
+    /// Detach an uploaded document from a corpus. The document itself is deleted when no other corpus holds it.
     /// A method of its own, and the one the route is mapped to, so a test calls the handler that
     /// runs and sees its scope check and its refusals.
     /// </summary>
@@ -317,13 +317,11 @@ public static class DocumentEndpoints
         var blob = await db.Blobs.FirstOrDefaultAsync(b => b.Sha256 == body.Sha256, ct);
         if (blob is null) return Results.Problem(title: "No such document", statusCode: 404);
 
-        // Authorisation is by attachment, as for the text of a document: a key attaches a stored document
-        // only if a corpus the key reaches holds it. A bare hash grants nothing, and the answer is the same
-        // 404 whether the document does not exist or is another corpus's. An administrator reaches every
-        // corpus, and may attach any stored document, one that no corpus holds included.
-        var principal = rc.RequirePrincipal();
-        if (!principal.Has(Scopes.Admin)
-            && !await AttachedToACorpusAsync(db, [.. await scopes.VisibleIdsAsync(principal, ct)], body.Sha256, ct))
+        // Authorisation is by attachment, as for the text of a document: a caller attaches a stored document
+        // only if a corpus it reaches holds it. A bare hash grants nothing, and the answer is the same 404
+        // whether the document does not exist or is another corpus's. A document that no corpus holds is
+        // deleted (DocumentService.ReleaseAsync), so there is none to attach.
+        if (!await AttachedToACorpusAsync(db, [.. await scopes.VisibleIdsAsync(rc.RequirePrincipal(), ct)], body.Sha256, ct))
             return Results.Problem(title: "No such document", statusCode: 404);
 
         // This is the point of the whole design: the same bytes, chunked this
@@ -346,6 +344,11 @@ public static class DocumentEndpoints
         catch (NameTakenException ex)
         {
             return Results.Problem(title: "Name already used", detail: ex.Message, statusCode: 409);
+        }
+        catch (DocumentGoneException)
+        {
+            // The last holder detached it after the lookup above: the same answer as for a hash nothing holds.
+            return Results.Problem(title: "No such document", statusCode: 404);
         }
 
         // Not cancellable, as in UploadAsync: the attachment is saved and the job indexes it.
@@ -459,7 +462,7 @@ public static class DocumentEndpoints
         g.MapPost("/corpora/{nameOrId}/documents/attach", AttachAsync)
             .Produces<DocumentAttached>(StatusCodes.Status202Accepted);
 
-        // ── Detach (the blob survives; other corpora may still use it) ──────
+        // ── Detach (deletes the document when no other corpus holds it) ─────
         g.MapDelete("/corpora/{nameOrId}/documents/{fileId}", DetachAsync).Produces(StatusCodes.Status204NoContent);
 
         // ── The library: every stored document, and where it is attached ────

@@ -837,7 +837,8 @@ describe('removing a source', () => {
 
   it('says what removing the upload source does, not what removing a folder does', async () => {
     // Removing it detaches every uploaded document of the corpus and deletes their chunks in every
-    // chunk set. The documents stay stored, and the next attachment creates the source again.
+    // chunk set. The documents are deleted unless another corpus holds them, and the next upload
+    // creates the source again.
     // There is no folder and nothing to index again from scratch.
     const user = userEvent.setup();
     getCorpus.mockResolvedValue(corpus({
@@ -849,7 +850,7 @@ describe('removing a source', () => {
     const dialog = await screen.findByRole('dialog');
 
     expect(within(dialog).getByText(/3 documents leave the index immediately, in every chunk set of docs/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/uploaded documents stay stored and can be attached again from the Documents page/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/uploaded documents are deleted unless another corpus holds them/)).toBeInTheDocument();
     expect(within(dialog).queryByText(/folder/)).not.toBeInTheDocument();
     expect(within(dialog).queryByText(/from scratch/)).not.toBeInTheDocument();
   });
@@ -2409,6 +2410,25 @@ describe('deleting a corpus', () => {
 
     expect(within(screen.getByRole('dialog')).getByText(/This removes 475 chunks across its 2 chunk sets from the vector store/))
       .toBeInTheDocument();
+  });
+
+  it('says that uploaded documents no other corpus holds are deleted, and only for a corpus that has an upload source', async () => {
+    // Removing a corpus releases its uploaded documents the way a last detach does. A corpus of folders has none.
+    getCorpus.mockResolvedValue(corpus({
+      sources: [source({ id: 's2', kind: 'upload', rootPath: null, useGitignore: false, maxFileBytes: 2_147_483_647, fileCount: 3 })],
+    }));
+    const { unmount } = render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+    expect(within(screen.getByRole('dialog')).getByText(/Uploaded documents that no other corpus holds are deleted/))
+      .toBeInTheDocument();
+    unmount();
+
+    getCorpus.mockResolvedValue(corpus({ sources: [source()] }));
+    render(<CorpusDetail {...props} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+    expect(within(screen.getByRole('dialog')).getByText(/The files on disk are untouched/)).toBeInTheDocument();
+    expect(within(screen.getByRole('dialog')).queryByText(/Uploaded documents that no other corpus holds/))
+      .not.toBeInTheDocument();
   });
 });
 

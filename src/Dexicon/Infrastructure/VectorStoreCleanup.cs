@@ -8,8 +8,9 @@ namespace Dexicon.Infrastructure;
 
 /// <summary>
 /// Detaching a document removes its chunks from THIS corpus only. The blob and its
-/// cached extraction survive, because another corpus may still hold the same document
-/// chunked its own way, which is the point of separating bytes from chunking.
+/// cached extraction survive while another corpus still holds the same document chunked
+/// its own way, which is the point of separating bytes from chunking. The detach of the
+/// last attachment deletes them (<see cref="DocumentService.ReleaseAsync"/>).
 /// </summary>
 public sealed class VectorStoreCleanup(CatalogDbContext db, IVectorStore vectors, ILogger<VectorStoreCleanup> log)
     : IVectorStoreCleanup

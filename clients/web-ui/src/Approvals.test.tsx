@@ -139,7 +139,7 @@ describe('approving', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('says an uploaded document stays stored and can be attached again, not that it is indexed again', async () => {
+  it('says an uploaded document is deleted with its last attachment, not that it is indexed again', async () => {
     listProposals.mockResolvedValue([
       proposal({ kind: 'document', target: 'paper.md', facts: { sources: 1, files: 1, chunks: 12, chunkSets: 2, blocker: null } }),
     ]);
@@ -150,7 +150,7 @@ describe('approving', () => {
     const dialog = await screen.findByRole('dialog');
 
     expect(within(dialog).getByText(/This takes 12 chunks, across 2 chunk sets/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/document stays stored and can be attached again from the Documents page/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/deleted from storage when no other corpus holds it, and getting it back means uploading it again/)).toBeInTheDocument();
     expect(within(dialog).queryByText(/files on disk/)).not.toBeInTheDocument();
     expect(within(dialog).queryByText(/indexing it again/)).not.toBeInTheDocument();
   });
@@ -163,6 +163,21 @@ describe('approving', () => {
     const dialog = await screen.findByRole('dialog');
 
     expect(within(dialog).getByText(/The files on disk are untouched/)).toBeInTheDocument();
+  });
+
+  it('says removing a corpus deletes the uploaded documents no other corpus holds', async () => {
+    listProposals.mockResolvedValue([
+      proposal({ kind: 'corpus', target: 'notes', facts: { sources: 2, files: 9, chunks: 40, chunkSets: 1, blocker: null } }),
+    ]);
+    const user = userEvent.setup();
+    show();
+
+    await user.click(await screen.findByRole('button', { name: /Approve: Delete the corpus notes/ }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(within(dialog).getByText(/The files on disk are untouched\. Uploaded documents that no other corpus holds are deleted/))
+      .toBeInTheDocument();
+    expect(within(dialog).getByText(/indexing the folders again and uploading the documents again/)).toBeInTheDocument();
   });
 
   it('shows a refusal in the dialog and leaves the dialog open to be read', async () => {

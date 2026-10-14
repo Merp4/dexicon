@@ -60,7 +60,7 @@ public sealed class DocumentDetachEndpointTests
     }
 
     [Fact]
-    public async Task AKeyHoldingDestroyDetachesTheDocumentFromTheCorpusAndKeepsTheBlob()
+    public async Task AKeyHoldingDestroyDetachesTheDocumentFromTheCorpusAndItIsDeletedWithItsLastAttachment()
     {
         await using var harness = await IndexingHarness.StartAsync();
         await using var db = harness.NewContext();
@@ -72,7 +72,7 @@ public sealed class DocumentDetachEndpointTests
         await using var fresh = harness.NewContext();
         (await fresh.Files.AnyAsync(f => f.Id == fileId)).ShouldBeFalse("detached from the corpus");
         harness.Vectors.CountFor("paper.md").ShouldBe(0, "its vectors go with it");
-        (await fresh.Blobs.AnyAsync()).ShouldBeTrue("another corpus may still hold the document");
+        (await fresh.Blobs.AnyAsync()).ShouldBeFalse("no other corpus holds the document");
     }
 
     [Fact]

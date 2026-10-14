@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
+using Dexicon.Core.Documents;
 using Dexicon.Core.Embedding;
 using Dexicon.Core.Vectors;
 using Microsoft.EntityFrameworkCore;
@@ -53,6 +54,7 @@ public static class Bootstrapper
 
         CheckChunkDefaults(log, options);
         await ReconcileOrphanedJobsAsync(db, log);
+        await ReleaseUnheldDocumentsAsync(db, options, log);
         await VerifyDependenciesAsync(sp, log, options);
         await EnsureAdminPasswordAsync(sp, log, options);
         await EnsureBootstrapTokenAsync(sp, db, log, options);
@@ -108,6 +110,31 @@ public static class Bootstrapper
             // Not fatal. Qdrant may simply not be up yet, and unreachable points are a
             // waste of space rather than a correctness problem: they match no query.
             log.LogWarning(ex, "Could not sweep pre-chunk-set vectors; will retry on next start");
+        }
+    }
+
+    /// <summary>
+    /// Deletes the stored documents that no corpus holds. A detach, a replacement and the removal of a source or a
+    /// corpus delete a document when its last attachment goes, so this takes the ones that an earlier version, a
+    /// stop between the two steps, or an upload that stored a blob and could not attach it left behind. Nothing is
+    /// being uploaded at startup, so there is no document stored and not yet attached to spare.
+    /// </summary>
+    internal static async Task ReleaseUnheldDocumentsAsync(CatalogDbContext db, DexiconOptions options, ILogger log)
+    {
+        try
+        {
+            var unheld = await db.Blobs.AsNoTracking()
+                .Where(b => !db.Files.Any(f => f.BlobSha256 == b.Sha256))
+                .Select(b => b.Sha256).ToListAsync();
+            if (unheld.Count == 0) return;
+
+            var deleted = await DocumentService.ReleaseAsync(db, options.Storage.BlobRoot, unheld, log);
+            log.LogInformation("Deleted {Deleted} of {Count} stored document(s) that no corpus holds", deleted, unheld.Count);
+        }
+        catch (Exception ex)
+        {
+            // Not fatal: they are unlisted garbage, and the next start tries again.
+            log.LogWarning(ex, "Could not delete the stored documents that no corpus holds; will retry on next start");
         }
     }
 

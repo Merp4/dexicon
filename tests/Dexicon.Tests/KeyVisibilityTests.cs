@@ -15,6 +15,7 @@ namespace Dexicon.Tests;
 /// reaches. Each case here was a way a caller learned that a corpus or a document exists, or kept
 /// seeing a corpus, beyond what its key allowed.
 /// </summary>
+[Collection(nameof(AttachmentLockCollection))]
 public sealed class KeyVisibilityTests
 {
     private static RequestContext AsAdmin() => new()
@@ -208,7 +209,7 @@ public sealed class KeyVisibilityTests
     }
 
     [Fact]
-    public async Task OnlyAnAdministratorAttachesADocumentNoCorpusHolds()
+    public async Task NobodyAttachesADocumentNoCorpusHolds()
     {
         await using var harness = await StartAsync();
         await using var db = harness.NewContext();
@@ -219,7 +220,7 @@ public sealed class KeyVisibilityTests
         var byAdmin = await AttachAsync(harness, db, AsAdmin(), "notes", stored.Sha256);
 
         byKey.ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(404);
-        byAdmin.ShouldBeOfType<Accepted<DocumentAttached>>();
+        byAdmin.ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(404);
     }
 
     // ---- creating a corpus whose name is taken ---------------------------------------------------

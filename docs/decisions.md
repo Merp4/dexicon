@@ -2123,6 +2123,9 @@ detach should leave `ingest` for a scope of its own was left to a separate decis
 
 **Status.** Accepted and implemented, 2026-10-08. Follows [D-39](#d-39-agents-ask-for-removals-and-a-person-decides).
 
+**Amended by** [D-43](#d-43-detaching-a-document-deletes-it-when-no-corpus-holds-it) (2026-10-14): a detach also
+deletes the document when it removes the last attachment.
+
 **Decision.** `DELETE /api/corpora/{id}/documents/{fileId}` requires `destroy`. `ingest` keeps upload,
 attach and reindex. The two are independent: a key can add documents without being able to remove them,
 and the other way round. Migration `GrantDestroyToIngestKeys` appends `destroy` once to every key that
@@ -2286,6 +2289,71 @@ another corpus, and a revoked key is not repaired from the UI. Keeping the absen
 guard in each removal path: a third route to the same state would have been a third place to add it. Keeping an empty
 `corpusIds` as every corpus on `POST /api/tokens`, as the field was documented: it is the ambiguity `PUT` refuses, and a
 script that builds the list from a filter and finds nothing would create a key that reaches every corpus.
+
+---
+
+### D-43 Detaching a document deletes it when no corpus holds it
+
+**Status.** Accepted and implemented, 2026-10-14. Amends [D-40](#d-40-detaching-a-document-has-a-scope-of-its-own).
+
+**Decision.** A detach deletes the corpus's file row and chunks, and then the document, if no other file row
+references its blob: the blob row, its extracted text (`ON DELETE CASCADE`) and its bytes under the blob root.
+The same release runs for each document that stops being referenced by a replacement by name (different bytes
+under a name the corpus holds), the removal of an upload source and the removal of a corpus, under the attachment
+lock that the attachment itself takes. The blob row is deleted by one statement that carries the condition (no
+file row has its hash), so a document that another corpus attached after the check is kept. The bytes are deleted
+after the row, and only if no blob row with the hash has been stored again meanwhile. At startup the server
+releases every blob row that no file row references. The attach endpoint attaches a document only when a corpus the caller reaches
+holds it, for an administrator and a key alike. An attachment that finds its blob gone, because the last holder
+detached it after the lookup, fails with `DocumentGoneException`: the attach endpoint answers `404` "No such
+document" and an upload lists the file under `failed`. The Documents page asks before a detach and says whether
+another corpus holds the document. The Approvals dialog for a document and the confirmation for removing the
+uploaded-documents source say that the document is deleted.
+
+**Why.** A detach used to leave the document stored. Under D-40's rule that a hash grants nothing, a key could
+attach it again only through a corpus it reached that held it, so a document detached from every corpus could be
+attached by an administrator alone, was listed nowhere, and kept its bytes and extracted text indefinitely. A key
+that administers a corpus over the API could not undo its own detach. Treating the last detach as a delete
+removes the state in which a document exists and no one can reach it. A
+document exists while a corpus holds it, and uploading it again, which any key with `ingest` can do, is the way
+back. No record of who uploaded a document is kept.
+
+**Properties.**
+- No migration. A catalogue with documents that nothing holds, from an earlier version, loses them at the first
+  start, and going back to the earlier version does not bring them back. An upload stores its blob row before it
+  attaches the file, so one whose attachment fails (a name another document holds) leaves a blob row that no
+  file references, which the next start deletes.
+- Uploading the same bytes again stores and extracts them again. On a 1.5 MB, ~400-page PDF that is 1.823 s where
+  an upload of stored bytes takes 0.119 s ([04](04-ingestion.md)).
+- An upload of bytes at the moment the last holder of the same bytes detaches them can find its blob gone. That
+  upload fails with the `DocumentGoneException` message, or with the extraction failure when the bytes were deleted
+  while it read them, and uploading again stores the bytes. An upload that stores a new blob row between the
+  release's check for one and its byte delete keeps its text and loses its bytes. That window is two statements
+  wide. Such a document searches as any other and is not extracted again after an extractor change, which keeps
+  the old text (`DocumentService.CurrentTextFor`).
+- A pass that is extracting a document again when its last holder detaches it finds its text row gone.
+  `CurrentTextFor` then returns null and does not save the rewrite, and the pass drops the file it read, which the
+  detach left without a row.
+- A failure to delete the bytes, or to check for a blob stored again before deleting them, is logged and leaves a
+  file under the blob root that no row names. A stop between the row delete and the byte delete leaves the same
+  file. Nothing removes any of them.
+- EF Core's `ExecuteDeleteAsync` bypasses the change tracker, so the release detaches the `Blob` and `BlobText`
+  entries it deleted from the context that called it. A later upload of the same bytes in that context would
+  otherwise fail with "Blob cannot be tracked".
+
+**Rejected.** Recording the uploader of a document so that it can attach the document again: it needs an owner
+column and a rule for a key that is revoked or whose reach changes. Letting any key that can search attach a
+document that no corpus holds: a hash would then grant access to the content, against D-40. Keeping the
+administrator's exception to attach an unheld document: it keeps unlisted bytes that only an administrator
+reaches. A timer that deletes unheld documents after a delay: nothing needs the delay, and it keeps the unreachable
+state for as long as it runs. An MCP tool to add a document: an agent that can call the upload endpoint already
+adds one.
+
+**Cost.** A detach of the last attachment cannot be undone by the service. Getting the document back means
+uploading it and extracting it again. A script that attached an unheld document as an administrator is answered
+`404`. The removal of an upload source or a corpus releases its documents one at a time (a delete, a check and a
+file delete each) under the attachment lock, and for a corpus under the naming lock too, so attachments, detaches
+and key creation wait for as long as that takes. It was not measured for a corpus of thousands of documents.
 
 ---
 

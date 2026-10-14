@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, type Corpus, type DocumentText, type LibraryDocument, type UploadFailure } from './api';
+import {
+  api, type Corpus, type DocumentText, type LibraryAttachment, type LibraryDocument, type UploadFailure,
+} from './api';
 import {
   Badge, Button, CopyButton, Empty, ErrorBanner, Field, Modal, Notice, Select, SelectItem, Spinner,
   formatBytes, localTime, relativeTime, stateTone,
@@ -30,6 +32,7 @@ export function DocumentsView({
   const [uploadTo, setUploadTo] = useState<string>('');
   const [attaching, setAttaching] = useState<LibraryDocument | null>(null);
   const [inspecting, setInspecting] = useState<LibraryDocument | null>(null);
+  const [detaching, setDetaching] = useState<{ document: LibraryDocument; attachment: LibraryAttachment } | null>(null);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [lastUpload, setLastUpload] = useState<string | null>(null);
@@ -244,13 +247,7 @@ export function DocumentsView({
                     <Button
                       variant="danger"
                       size="xs"
-                      onClick={async () => {
-                        try {
-                          await api.detachDocument(a.corpusName, a.fileId);
-                          await load();
-                          await onRefresh();
-                        } catch (e) { onError(e); }
-                      }}
+                      onClick={() => setDetaching({ document: d, attachment: a })}
                     >
                       Detach
                     </Button>
@@ -280,7 +277,65 @@ export function DocumentsView({
       )}
 
       {inspecting && <ExtractedTextModal document={inspecting} onClose={() => setInspecting(null)} />}
+
+      {detaching && (
+        <DetachModal
+          document={detaching.document}
+          attachment={detaching.attachment}
+          onClose={() => setDetaching(null)}
+          onDetached={async () => { setDetaching(null); await load(); await onRefresh(); }}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * Detaching deletes the document's chunks in that corpus, and the document itself when no other corpus holds it:
+ * its extracted text and its bytes go too, and getting it back means uploading it again. So it asks first, and
+ * says which of the two it is about to do.
+ */
+function DetachModal({
+  document: doc,
+  attachment,
+  onClose,
+  onDetached,
+}: {
+  document: LibraryDocument;
+  attachment: LibraryAttachment;
+  onClose: () => void;
+  onDetached: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const others = doc.attachments.filter((a) => a.fileId !== attachment.fileId);
+
+  return (
+    <Modal title={`Detach ${attachment.fileName} from ${attachment.corpusName}?`} onClose={onClose}>
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
+      <p className="mt-0 text-sm">
+        {others.length === 0
+          ? 'No other corpus holds this document, so it is deleted: its extracted text and its bytes go with its '
+            + 'chunks. Upload it again to get it back.'
+          : `It stays stored for ${count(others.length, 'other corpus', 'other corpora')}. `
+            + `Its chunks in ${attachment.corpusName} are deleted.`}
+      </p>
+      <div className="flex gap-2 justify-end">
+        <Button onClick={onClose}>Cancel</Button>
+        <Button
+          variant="danger"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setError(null);
+            try { await api.detachDocument(attachment.corpusName, attachment.fileId); await onDetached(); }
+            catch (e) { setError(e); setBusy(false); }
+          }}
+        >
+          {busy ? 'Detaching…' : 'Detach'}
+        </Button>
+      </div>
+    </Modal>
   );
 }
 

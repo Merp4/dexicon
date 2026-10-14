@@ -3,8 +3,9 @@ using System.Text.RegularExpressions;
 namespace Dexicon.Tests;
 
 /// <summary>
-/// A test class that holds the attachment lock, or holds a lookup open inside code that holds it, makes every
-/// other class that attaches or removes wait, and is itself delayed by them. Those classes run in
+/// A test class that holds the attachment lock, or holds a lookup open inside code that holds it, or holds the
+/// naming lock, which a corpus removal takes inside the attachment lock, makes every other class that attaches or
+/// removes wait, and is itself delayed by them. Those classes run in
 /// <see cref="AttachmentLockCollection"/>, which runs alone. Nothing but this scan enforces the membership, and
 /// it names the classes that are missing from it.
 ///
@@ -13,7 +14,7 @@ namespace Dexicon.Tests;
 /// </summary>
 public sealed class AttachmentLockConventionTests
 {
-    private static readonly string[] Holders = ["HoldAttachmentsAsync", "HoldOneLookup", "HoldTheLookup"];
+    private static readonly string[] Holders = ["HoldAttachmentsAsync", "HoldOneLookup", "HoldTheLookup", "Naming.WaitAsync"];
 
     private static readonly Regex Declaration = new(
         @"^(?<attrs>(\[[^\n]*\]\s*\n)*)(public|internal)\s+(sealed\s+)?class\s+(?<name>\w+)",

@@ -18,6 +18,7 @@ namespace Dexicon.Tests;
 /// Held here: removing a corpus leaves a restricted key restricted, the requests that set a key's
 /// reach say which of the two they mean, and the migration gives existing keys what they reached.
 /// </summary>
+[Collection(nameof(AttachmentLockCollection))]
 public sealed class KeyReachTests
 {
     private static RequestContext AsAdmin() => new()

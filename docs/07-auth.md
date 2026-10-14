@@ -68,7 +68,9 @@ belongs to the key.
   then approves or rejects, and removes nothing itself
   ([D-39](decisions.md#d-39-agents-ask-for-removals-and-a-person-decides)); `destroy` permits
   detaching an uploaded document from a corpus over the API, the one removal a key makes with no
-  one deciding ([D-40](decisions.md#d-40-detaching-a-document-has-a-scope-of-its-own)). The scopes
+  one deciding, and which deletes the document when no other corpus holds it
+  ([D-40](decisions.md#d-40-detaching-a-document-has-a-scope-of-its-own),
+  [D-43](decisions.md#d-43-detaching-a-document-deletes-it-when-no-corpus-holds-it)). The scopes
   are independent, and a key holds the ones it is given: `propose` is neither implied by
   `configure` nor required for it, and `ingest` does not carry `destroy`. A key adopted from the
   environment starts with `search` and `ingest` only, and the others can be added afterwards.
@@ -187,8 +189,10 @@ key can hold, so a key that asked cannot also approve.
 
 A stored document is authorised by attachment, and its hash grants nothing. A key reads the text of a
 document, and attaches it to another corpus, only when a corpus the key reaches holds it. A document that
-is another corpus's is answered `404` as one that does not exist. An administrator attaches any stored
-document, including one that no corpus holds.
+is another corpus's is answered `404` as one that does not exist. An administrator reaches every corpus, so
+the same rule lets an administrator attach any document a corpus holds. A document that no corpus holds
+is deleted by the last detach, or at the next start when an upload stored it and could not attach it, and
+an attach of its hash is answered `404`.
 
 A key that is revoked or has expired reaches no corpus from then on, and a session that has signed out
 reaches none, including through a progress stream that was opened before: it shows nothing from its next

@@ -466,17 +466,31 @@ So:
 - Changing a corpus's chunk settings re-chunks and re-embeds from cached text. Only
   embedding is repeated, and embedding is the slow part.
 
-A corpus gets at most one upload source, created on first attachment. Detaching removes
-that corpus's chunks only; the blob survives, because another corpus may still hold it.
+A corpus gets at most one upload source, created on first attachment. Detaching removes that
+corpus's chunks and its file row. When no other corpus holds the document the detach also deletes
+the document: its blob row, its extracted text and its bytes under the blob root. Uploading the
+same bytes again stores and extracts them again. A document another corpus holds is left as it is.
 Removing the upload source itself (`DELETE /api/corpora/{name}/sources/{id}`, or the Remove
 button beside it in the corpus's source list) deletes the vectors of every document attached to
-the corpus, in every chunk set, and the source takes its file rows with it. The blobs stay, and
-the next attachment creates the source again.
+the corpus, in every chunk set, and the source takes its file rows with it. Each of those
+documents is then released by the same rule as a detach, and the next upload creates the source
+again. Removing a corpus releases its documents the same way. Replacing a document by uploading
+different bytes under its name releases the bytes it replaced.
+
+A document is released by deleting its blob row only where no file row references it, in one
+statement, so a document that another corpus attached in the meantime is kept. The bytes are
+deleted after the row; a failure to delete them is logged and leaves a file under the blob root
+that no row names, which nothing removes. An upload stores the blob row before it attaches the
+file, so an upload whose attachment then fails (a name another document holds) leaves a blob row
+that no file references. At startup the server releases every blob row that no file row references.
+That removes the documents an earlier version left stored after a detach, any whose detach stopped
+before its release, and the blobs of uploads that failed to attach.
 
 One lock in the process orders the writes to a corpus's attachment rows. An attachment holds it
-from its entry to its save, and a detach for the lookup and the delete of the row. Removing a
-source, a chunk set or a corpus holds it for the delete of the row, after its vector calls, and
-reads its target again under it. Promoting a chunk set holds it while it reads the sets and writes
+from its entry to its save, and a detach for the lookup, the delete of the row and the release of
+the document. Removing a source, a chunk set or a corpus holds it for the delete of the row, after
+its vector calls, and reads its target again under it. The removal of a source or a corpus also
+reads its documents and releases them under it. Promoting a chunk set holds it while it reads the sets and writes
 the default flag. None of them holds it across a vector-store call. An indexing pass does not take
 it. Adding a source or a chunk set does not take it either: their rows name a corpus, and the
 removal of that corpus at the same moment fails their save with a foreign-key error. Dexicon is
@@ -533,9 +547,13 @@ attached to the corpus under another name, sent under the name of a third docume
 attach endpoint answers `409` "Name already used" for the same case. Bytes that are not attached
 to the corpus yet, sent under a name it holds, replace that document.
 
-The attach endpoint takes a stored document by its hash. A key attaches it only when a corpus the key
-reaches holds it, and is answered `404` otherwise, as for a hash no document has. An administrator
-attaches any stored document, one that no corpus holds included ([07](07-auth.md)).
+The attach endpoint takes a stored document by its hash. It attaches the document only when a
+corpus the caller reaches holds it, for an administrator and a key alike, and answers `404`
+otherwise, as for a hash no document has. The last detach of a document deletes it, so a hash that
+no corpus holds is, from the caller's side, a hash no document has ([07](07-auth.md)). An
+attachment that finds the document deleted after that check, because its last holder detached it
+meanwhile, is answered `404` the same way, and an upload lists the file under `failed` with "The
+document was deleted while it waited to be attached ... Upload it again."
 
 The request as a whole is bounded at ten files at the cap plus 1 MiB of multipart framing,
 which is 2,098,200,576 bytes at the default and follows `DEXICON__UPLOAD__MAXFILEBYTES`.

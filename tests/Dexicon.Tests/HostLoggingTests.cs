@@ -1,6 +1,8 @@
+using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -87,6 +89,37 @@ public sealed class HostLoggingTests : IDisposable
         lines.ShouldContain(l => l.StartsWith("    " + ForgedLine, StringComparison.Ordinal), "the exception's forged line, indented");
         captured.ToString().ShouldNotContain(TestText.Csi);
         lines.ShouldContain(l => l.Contains("ERR] Refused \"a\\n" + ForgedLine, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task StartupDeletesAStoredDocumentThatNoCorpusHolds()
+    {
+        // The only path that deletes the documents an earlier version left stored. The catalogue is created and a
+        // blob row and its bytes are added to it before the one start, which finds them.
+        Isolate();
+        var storage = new StorageOptions { DataPath = _data };
+        const string sha = "ab00000000000000000000000000000000000000000000000000000000000001";
+        var bytes = Path.Combine(storage.BlobRoot, sha[..2], sha);
+        Directory.CreateDirectory(Path.GetDirectoryName(bytes)!);
+        await File.WriteAllTextAsync(bytes, "left by an earlier version");
+        var options = new DbContextOptionsBuilder<CatalogDbContext>()
+            .UseSqlite($"Data Source={storage.CatalogPath};Pooling=False").Options;
+        await using (var seed = new CatalogDbContext(options))
+        {
+            await seed.Database.MigrateAsync();
+            seed.Blobs.Add(new Blob { Sha256 = sha, SizeBytes = 26, CreatedUtc = DateTime.UtcNow });
+            await seed.SaveChangesAsync();
+        }
+
+        var captured = new StringWriter();
+        Console.SetOut(captured);
+        await using (var factory = new WebApplicationFactory<Program>()) _ = factory.Services;
+
+        await using var check = new CatalogDbContext(options);
+        (await check.Blobs.CountAsync(b => b.Sha256 == sha)).ShouldBe(0);
+        File.Exists(bytes).ShouldBeFalse();
+        TestText.Lines(captured.ToString())
+            .ShouldContain(l => l.Contains("Deleted 1 of 1 stored document(s) that no corpus holds", StringComparison.Ordinal));
     }
 
     [Fact]
