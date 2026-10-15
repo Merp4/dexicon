@@ -10,7 +10,9 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Qdrant.Client;
 using Qdrant.Client.Grpc;
+using GrpcStatusCode = Grpc.Core.StatusCode;
 using QdrantVectors = Qdrant.Client.Grpc.Vectors;
+using RpcException = Grpc.Core.RpcException;
 using SearchResponse = Dexicon.Core.Search.SearchResponse;
 // Qdrant's generated gRPC types collide by name with ours. Alias rather than
 // fully-qualify at every use site, so the domain names stay readable.
@@ -105,6 +107,13 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
             port: uri.Port > 0 ? uri.Port : 6334,
             https: uri.Scheme == "https",
             apiKey: options.Value.Qdrant.ApiKey);
+    }
+
+    /// <summary>The store over a client the caller made, so that a test can put a fake gRPC invoker under it.</summary>
+    internal QdrantVectorStore(QdrantClient client, ILogger<QdrantVectorStore> log)
+    {
+        _client = client;
+        _log = log;
     }
 
     /// <summary>
@@ -297,10 +306,31 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
         return new Guid(guid).ToString();
     }
 
+    // Debug and not Information: a source removal calls this once per file in each chunk set.
     public Task DeleteFileChunksAsync(string collection, string chunkSetId, string sourceId, string filePath,
         CancellationToken ct = default)
-        => _client.DeleteAsync(collection, FileChunksFilter(chunkSetId, sourceId, filePath),
-            cancellationToken: ct);
+        => DeleteWhereAsync(collection, FileChunksFilter(chunkSetId, sourceId, filePath),
+            $"file {filePath} of chunk set {chunkSetId}", LogLevel.Debug, ct);
+
+    /// <summary>
+    /// Deletes the points that match a filter. A collection that does not exist holds none, so the delete has
+    /// nothing to do and is not a failure: Qdrant answers NotFound for it, and that stopped a corpus, a source or a
+    /// chunk set from being removed once its collection was gone (a Qdrant volume lost or replaced, or a catalogue
+    /// restored beside an empty Qdrant), while the catalogue still named it. Any other failure is thrown.
+    /// </summary>
+    private async Task DeleteWhereAsync(string collection, Filter filter, string what, LogLevel whenMissing,
+        CancellationToken ct)
+    {
+        try
+        {
+            await _client.DeleteAsync(collection, filter, cancellationToken: ct);
+        }
+        catch (RpcException ex) when (ex.StatusCode == GrpcStatusCode.NotFound)
+        {
+            _log.Log(whenMissing, "Collection {Collection} does not exist, so there are no points of {What} to delete",
+                collection, what);
+        }
+    }
 
     /// <summary>
     /// Distinct file_path values one facet call will report. Above this the answer is
@@ -356,7 +386,7 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
     {
         var filter = new Filter();
         filter.Must.Add(Keyword("chunk_set_id", chunkSetId));
-        return _client.DeleteAsync(collection, filter, cancellationToken: ct);
+        return DeleteWhereAsync(collection, filter, $"chunk set {chunkSetId}", LogLevel.Information, ct);
     }
 
     public async Task<int> PurgeUnsetChunksAsync(CancellationToken ct = default)
@@ -385,7 +415,7 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
     {
         var filter = new Filter();
         filter.Must.Add(Keyword("corpus_id", corpusId));
-        return _client.DeleteAsync(collection, filter, cancellationToken: ct);
+        return DeleteWhereAsync(collection, filter, $"corpus {corpusId}", LogLevel.Information, ct);
     }
 
     public async Task<IReadOnlyList<SearchHit>> GetFileChunksAsync(string collection, string chunkSetId,

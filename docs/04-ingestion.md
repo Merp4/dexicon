@@ -442,7 +442,7 @@ reading and not a single read that never returns ([09](09-deployment.md)).
 Bytes are content-addressed into `/data/blobs/<sha256[0:2]>/<sha256>` and recorded in
 `blobs` once their text is extracted. Two uploads of the same file store one blob. An upload whose
 extraction times out or fails for a reason on the server leaves its bytes in `/data/blobs` with no
-`blobs` row (see the paragraph on extraction below).
+`blobs` row, which the sweep at the next start deletes (see the paragraph on extraction below).
 
 **Extraction is cached against the blob hash, and chunking is not.** That split is the
 whole design, and it is what makes the same document cheap to hold several ways:
@@ -476,6 +476,13 @@ the corpus, in every chunk set, and the source takes its file rows with it. Each
 documents is then released by the same rule as a detach, and the next upload creates the source
 again. Removing a corpus releases its documents the same way. Replacing a document by uploading
 different bytes under its name releases the bytes it replaced.
+
+A delete of vectors from a collection that does not exist deletes nothing and is not a failure. It
+happens when a Qdrant volume was lost or replaced, or a catalogue was restored beside an empty
+Qdrant ([09](09-deployment.md)). Removing a corpus, a source, a chunk set or a document then goes on to
+the catalogue, and the log says that the collection was not there (at Information for a corpus or a
+chunk set, at Debug for the files of a source). Any other failure of the vector store still stops
+the removal.
 
 A document is released by deleting its blob row only where no file row references it, in one
 statement, so a document that another corpus attached in the meantime is kept. The bytes are
@@ -619,8 +626,8 @@ that is an I/O error, a refused permission, a shortage of memory, a `TimeoutExce
 extraction failure that wraps one of those, says how the host was and not what the document holds,
 so no document record is created. So is a cancellation that the caller did not ask for, which is how
 a library reports a timeout of its own. The file is listed under `failed` (the timeout names the
-setting), the files beside it in the request are stored, the bytes stay in the blob store, and
-sending the file again extracts it again. When another upload of the same bytes saved its blob
+setting), the files beside it in the request are stored, the bytes stay in the blob store until the
+next start deletes them, and sending the file again extracts it again. When another upload of the same bytes saved its blob
 meanwhile, the file is reported as stored. An extraction failure that is a verdict on the bytes, an
 encrypted or corrupt file, is stored with its message as the document's empty reason.
 
