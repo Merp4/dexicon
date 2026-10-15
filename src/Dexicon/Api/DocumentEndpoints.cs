@@ -398,7 +398,7 @@ public static class DocumentEndpoints
         $"{UploadOptions.MaxSections} were processed and the rest were not. Send the files in another request.";
 
     private const string NoRecordSentence =
-        "No document record was created; the bytes stay in the blob store, and sending the file again extracts it again.";
+        "No document record was created, and sending the file again extracts it again.";
 
     /// <summary>Does not name the file: it is listed beside it, and the message reaches whoever sent it.</summary>
     private static string ExtractionTimedOutMessage(int seconds) =>
