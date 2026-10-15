@@ -16,6 +16,103 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## 0.6.10 — 2026-10-15
+
+### ⚠️ Upgrading
+
+- **One migration, `KeyReachIsExplicit`, adds `tokens.AllCorpora`.** Whether a key reaches every
+  corpus is now a setting on the key. The migration sets it for every key that has no corpus rows
+  at that moment, which is what those keys reached, and leaves a key that has rows restricted to
+  them. A key that the removal of its only corpus had already emptied, in an earlier version, has
+  no rows either and becomes a key that reaches every corpus: the catalogue does not record that
+  it was restricted. Before upgrading, read `GET /api/tokens` and look for a key with an empty
+  `corpusIds` that should not reach every corpus; restrict it again with
+  `PUT /api/tokens/{id}/corpora` (`{"allCorpora": false, "corpusIds": [...]}`) or revoke it.
+  Going back to 0.6.9 without restoring the backup taken before the upgrade makes a key
+  restricted to nothing reach every corpus again, and upgrading a second time does not repeat the
+  backfill ([D-42](docs/decisions.md#d-42-whether-a-key-reaches-every-corpus-is-a-setting-on-the-key)).
+- **Key requests that answered `200` or `500` are refused.** `PUT /api/tokens/{id}/corpora` with
+  `{"corpusIds": []}` is `400` (it was a `200` that lifted the restriction), and so is `POST
+  /api/tokens` with an empty `corpusIds` and no `allCorpora`; send `allCorpora: true` or leave the
+  field out. `PUT` with `{}` is `400` titled `Say which corpora` (it was `Corpus ids are
+  required`). A request that names more than 1,000 distinct corpora is `400` (a very long list was
+  a `500`). `corpusIds` is empty both for a key that reaches every corpus and for one restricted
+  to nothing, so a client reads `allCorpora`. An Access page opened before the upgrade sends the
+  old request and gets `400` until it is reloaded.
+- **Detaching the last attachment of an uploaded document deletes the document**
+  ([D-43](docs/decisions.md#d-43-detaching-a-document-deletes-it-when-no-corpus-holds-it)): its
+  blob row, its extracted text and its bytes under `/data/blobs`. The same happens when a
+  replacement by name, the removal of an upload source or the removal of a corpus takes the last
+  reference. Uploading the same bytes again stores and extracts them again. The first start after
+  the upgrade also deletes every stored document that no corpus holds (what 0.6.9 and earlier left
+  after a detach), and then the files under the blob root that no document names: the bytes of an
+  upload whose extraction failed or timed out, which 0.6.9 listed as kept and listed nowhere, the
+  temporary file of an upload that a crash cut short, and bytes whose delete failed. Going back to 0.6.9
+  does not restore them. Count the documents nothing holds before upgrading:
+  `SELECT COUNT(*) FROM blobs b WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.BlobSha256 = b.Sha256)`.
+  Restore the catalogue and `/data/blobs` together: a catalogue restored alone, older than the
+  files beside it, makes the newer files look stray, and the sweep deletes them.
+- **Attaching a stored document by its hash needs a corpus the caller reaches that holds it.**
+  `POST /api/corpora/{x}/documents/attach` answers `404 No such document` otherwise, for a key and
+  for an administrator, since a document that no corpus holds no longer exists. A key could attach
+  any stored document by its hash before; it now sees only the documents of corpora it reaches.
+- A key that is revoked or has expired, and an administrator session that has signed out, stop
+  receiving progress events from the next heartbeat. `/healthz` counts the corpora a key reaches
+  and reports a running job only in one of them (it counted every corpus for any key).
+
+### Fixed
+
+- **A key restricted to a corpus reached every corpus once that corpus was removed.** Removing a
+  corpus deleted the key's rows, and a key with no rows reached every corpus. That held for an
+  administrator's delete and for an approved removal, and a key holding `propose` could then ask
+  for the removal of any corpus it could name. It dates from the first scoped keys. A key restricted
+  to a removed corpus now reaches nothing. The Access page offers **Every corpus** and **Only
+  these**, and does not read nothing ticked as every corpus.
+- **Removing a corpus while a key was being created for it, or while its reach was being
+  replaced, answered `500`** on a foreign key. The removal and those two requests now wait for each
+  other.
+- **Removing a corpus, a source, a chunk set or a document answered `500` when the Qdrant
+  collection holding its vectors did not exist**, as after a lost or replaced Qdrant volume or a
+  catalogue restored beside an empty Qdrant. A delete in a missing collection has nothing to do and
+  succeeds, and the log says the collection was not there. Any other failure of the vector store
+  still stops the removal.
+- A dialog whose title names a file with no space to break at no longer scrolls sideways at phone
+  width.
+- The message for an upload whose extraction failed on the server no longer says the bytes stay in
+  the blob store. They stay until the next start, which deletes them.
+
+### Changed
+
+- The Documents page asks before a detach and says whether another corpus holds the document. The
+  Approvals dialog for a document or a corpus, the confirmation for deleting a corpus and for
+  removing the uploaded-documents source, and the `destroy` scope description say that documents
+  no other corpus holds are deleted.
+- The 409 answer for a corpus name that is taken, or that is another corpus's id, no longer repeats
+  the stored name of the corpus that holds it. That a name is taken is still told, since names are
+  global.
+- The skill is unchanged (`dexicon-skill-version: 7`).
+- Dependency updates: AngleSharp 1.8.4, radix-ui 1.7.0, lucide-react 1.55.0, and two groups of
+  build and test dependencies.
+- The PDF limit in `docs/10-security-secrets.md` no longer gives the per-platform depths measured
+  in probes, and advises indexing and uploading PDFs only from sources you trust.
+
+### Known limits
+
+- An upload of bytes at the moment the last holder of the same bytes detaches them can fail once,
+  with a `404` from attach, or with an extraction failure when the bytes were deleted while it read
+  them; uploading again works. A blob row stored between the release's check and its byte delete
+  keeps its text and loses its bytes, so it searches as any other document and is not extracted
+  again after an extractor change.
+- The sweep of `/data/blobs` assumes one process owns the data folder. A catalogue with no document
+  at all leaves hash-named files in place and logs a warning, so a catalogue emptied by detaching
+  every document keeps any leaked bytes until a document is stored.
+- The removal of an upload source or a corpus releases its documents one at a time, under the
+  attachment lock and, for a corpus, the naming lock. The time for a corpus of thousands of
+  uploaded documents was not measured.
+- An upload of bytes that a key already has still answers `deduplicated: true` and the title of a
+  document that another corpus holds, so it tells the key that those bytes are stored there. It
+  needs the bytes.
+
 ## 0.6.9 — 2026-10-10
 
 ### ⚠️ Upgrading
