@@ -653,7 +653,9 @@ export function Modal({
         }}
       >
         <DialogHeader>
-          <DialogTitle className="text-base">{title}</DialogTitle>
+          {/* anywhere, not break-word: only anywhere lowers the title's minimum width, and a title that names a
+              file ("Detach d4-5233e77aa081472cb568b933ae1a3add.txt from books?") has no space to break at. */}
+          <DialogTitle className="text-base [overflow-wrap:anywhere]">{title}</DialogTitle>
         </DialogHeader>
         {children}
       </DialogContent>
