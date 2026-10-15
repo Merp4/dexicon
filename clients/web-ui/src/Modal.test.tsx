@@ -32,6 +32,20 @@ describe('Modal', () => {
     expect(dialog).toHaveAccessibleName('Add a chunk set');
   });
 
+  it('lets a title that names a file break anywhere, so a phone-width dialog does not scroll sideways', () => {
+    // jsdom does no layout, so this pins the class and not the measurement. Measured in a browser at 375 px, a dialog
+    // titled "Detach d4-5233e77aa081472cb568b933ae1a3add.txt from dexhistory?" scrolled 8 px sideways with
+    // `overflow-wrap: break-word` and not at all with `anywhere`.
+    render(
+      <Modal title="Detach d4-5233e77aa081472cb568b933ae1a3add.txt from dexhistory?" onClose={vi.fn()}>
+        <Button>Cancel</Button>
+      </Modal>,
+    );
+
+    expect(screen.getByRole('heading', { name: /Detach d4-5233e77aa081472cb568b933ae1a3add\.txt/ }).className)
+      .toContain('[overflow-wrap:anywhere]');
+  });
+
   it('hides the rest of the page while it is open', () => {
     // Modality, by the mechanism that actually delivers it: everything outside is marked
     // aria-hidden, so `getByRole` cannot reach it either. Without this a screen reader
