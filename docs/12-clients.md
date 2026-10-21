@@ -46,8 +46,9 @@ A key holds the scopes ticked for it on the **Access** screen, and a new key sta
 
 A key with `configure` can add any mounted folder to a corpus, so the key's corpus mapping
 does not limit what it can reach ([07](07-auth.md#what-a-key-reaches)). The key adopted from
-`DEXICON_BOOTSTRAP_TOKEN` is named `bootstrap (pinned)`, the name `list_corpora` prints in its
-first line, and holds `search` and `ingest`.
+`DEXICON_BOOTSTRAP_TOKEN` is adopted as `bootstrap (pinned)`, the name `list_corpora` prints
+in its first line, with `search` and `ingest`. Other scopes are ticked for it on the **Access**
+screen like any key's.
 
 A scope removed is refused from the key's next call. A scope added reaches the agent's tool
 list only when its client connects, because the server is stateless and sends no
