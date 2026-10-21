@@ -971,7 +971,7 @@ See [D-34](decisions.md#d-34-a-commit-is-a-document).
 | Format | Extensions | Library | Licence | Provenance unit | Notes |
 |---|---|---|---|---|---|
 | Plain text | `.txt`, `.log`, code | — | — | line | Encoding-detected |
-| Markdown | `.md`, `.markdown` | — | — | line + heading | Plain text, no extractor. ATX headings outside code fences become `section` and the heading trail |
+| Markdown | `.md`, `.markdown` | — | — | line + heading | Plain text, no extractor. ATX headings outside code fences become the heading trail and `section`, which is the heading in effect on the chunk's first line |
 | HTML | `.html`, `.htm` | AngleSharp | MIT | line | One line per block element; `script`/`style` skipped; `<title>` kept |
 | PDF | `.pdf` | PdfPig | Apache-2.0 | **page** | Text layer only — no OCR |
 | DOCX | `.docx` | DocumentFormat.OpenXml | MIT | none | One line per non-empty paragraph; headings are not detected |
@@ -1109,6 +1109,14 @@ an incremental refresh does.
 | 6 | The ratio is measured per file as well as per model |
 | 7 | A chunk aims at 90% of the model's context rather than all of it |
 | 8 | Per-file density is gone; the model's refusal corrects the cut |
+
+A Markdown file also carries `CodeChunker.MarkdownVersion` in its key, so its chunker part reads `8.md1` where every
+other file's reads `8`. A change that alters only the chunks of Markdown files bumps that number, which re-chunks
+Markdown files and leaves every other file settled ([D-44](decisions.md#d-44-the-chunker-version-has-a-part-for-markdown)).
+
+| Markdown version | Change |
+|---|---|
+| 1 | `section` is the heading in effect on the chunk's first line |
 
 ### A note on OCR
 
@@ -1409,11 +1417,24 @@ and what a `dexicon://` resource read reconstructs a file from, and prepending w
 lines the file never had. Heading context applies to Markdown files, the only format whose
 headings are detected.
 
-The trail is resolved per line, up front. Reading a running cursor when a chunk is emitted
-looks equivalent but is not: the accumulator fills *past* a boundary before backing up to
-it, so the cursor is ahead of the chunk being flushed. This labelled chunks with a heading
-from further down the file, which is worse than no label, because retrieval then places
-them under a section they are not in.
+The trail and the `section` label are resolved per line, up front, and read at the line a
+chunk starts on. Reading a running cursor when a chunk is emitted looks equivalent but is
+not: the accumulator fills *past* a boundary before backing up to it, so the cursor is ahead
+of the chunk being flushed, and the overlap rewind moves the next chunk's start back without
+winding back the heading the scan had reached. This labelled chunks with a heading from
+further down the file, which is worse than no label, because retrieval then places them under
+a section they are not in. Only the trail was resolved per line when heading context was
+added. `section` was read from the cursor until it was changed to match. Measured on the 16
+files of `docs/` before that change (267 chunks at 768 tokens, 100 overlap and 3.8 characters
+per token), 24.0% carried the heading in effect at their first line, 42.3% the next section's
+heading, 26.2% a heading from inside the chunk and 7.5% a heading above the first line that
+was no longer in effect. The last group comes from the rewind reading a fence delimiter a
+second time, which inverts the fence state: 3 of its 20 chunks took a comment inside a fenced
+block for a heading.
+
+`section` is therefore the heading above `start_line`, not the section most of the chunk
+belongs to. On the same files 65% of chunks hold a heading after their first line, and in 61%
+the heading at the first line covers under half of the chunk.
 
 **Unit-aware boundaries.** Page for PDF, chapter for EPUB, slide for PPTX. These *force* a
 split rather than offering a place for one: under the usual rule a chapter shorter than the
@@ -1590,7 +1611,7 @@ the job history.
 
 `file_chunk_states.settled_for` is a hash of the file's size, its modified time as the walk
 saw them, and the chunking settings (the fingerprint of an empty content hash, which carries
-the extractor and chunker versions). A pass that finds the same key on a file's row skips
+the extractor and chunker versions, and for a Markdown file its own chunker version). A pass that finds the same key on a file's row skips
 it: the file is not read, hashed or compared. A document (PDF, DOCX, PPTX, EPUB or HTML) is
 not opened at all. Any other file is still opened by the walk, which reads its first 8 KB for
 a NUL byte before the key is compared, so for those files, code among them, a pass saves the
@@ -1617,7 +1638,7 @@ refused permission, out-of-memory or timeout anywhere in it makes the failure re
 Every pass that touches a row clears the key, and the passes that settle it set it again, so
 a code path that forgets to settle costs a read and nothing else. A change of size or
 modified time, of a chunking setting, of the extractor version or of the chunker version
-changes the key. A `Full` or `Rebuild` job ignores the key and reads everything. Uploads
+(for a Markdown file, of the Markdown chunker version) changes the key. A `Full` or `Rebuild` job ignores the key and reads everything. Uploads
 and git commits have no file to stat and are keyed as before.
 
 A key written for a file whose bytes change without changing size or modified time is not

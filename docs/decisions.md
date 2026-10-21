@@ -2016,6 +2016,9 @@ migration. A new chunk set is stored `degraded`, which is what it reads if its j
 
 **Status.** Accepted and implemented, 2026-10-07.
 
+**Amended by** [D-44](#d-44-the-chunker-version-has-a-part-for-markdown) (2026-10-21): for a Markdown file the chunker
+version in the key also carries `CodeChunker.MarkdownVersion`.
+
 **Decision.** Each file's row keeps `settled_for`, a hash of the file's size, its modified time
 as the walk saw them, and the chunking settings (extractor and chunker versions included). A
 pass that finds the same key skips the file: it is not read, hashed or compared. The key is
@@ -2367,6 +2370,45 @@ uploading it and extracting it again. A script that attached an unheld document 
 `404`. The removal of an upload source or a corpus releases its documents one at a time (a delete, a check and a
 file delete each) under the attachment lock, and for a corpus under the naming lock too, so attachments, detaches
 and key creation wait for as long as that takes. It was not measured for a corpus of thousands of documents.
+
+### D-44 The chunker version has a part for Markdown
+
+**Status.** Accepted and implemented, 2026-10-21.
+
+**Decision.** `CodeChunker.MarkdownVersion` enters the chunking fingerprint and the settle key of a Markdown file
+(`.md`, `.markdown`) next to `CodeChunker.Version`, so the chunker part of its key reads `8.md1` where every other
+file's reads `8`. A file that is not Markdown has the key it had before, and is not chunked again. A change that
+alters only the chunks of Markdown files bumps `MarkdownVersion`. A change to any other format, or to all of them,
+bumps `Version`. `CorpusIndexer.ChunkingFingerprint` takes the file's path to choose between them.
+
+**Why.** `TextChunk.Section` was the heading the scan had reached when a chunk was emitted, not the heading in effect
+on the chunk's first line, and 76% of the chunks of `docs/` carried the wrong one ([04](04-ingestion.md)). Correcting
+it moves no chunk boundary and no vector. It changes one payload field of Markdown chunks. `Version` is in the key of
+every file, so bumping it to 9 would re-chunk and re-embed every file of every corpus to correct that field on some
+of them.
+
+The live instance listed 240,659 chunks across its chunk sets on 2026-10-21, in five corpora. Its Markdown is the 16
+files of one documentation corpus (257 chunks in one chunk set, 341 in another) and the 1,755 tracked Markdown files,
+under 256 KB, of a code repository, which chunk to 4,004 at that corpus's settings (1,843 tokens, 230 overlap, an assumed
+3.8 characters per token, `language-aware`): about 4,600 chunks, or 1.9%. At the 0.5 to 2 chunks per second that
+[09](09-deployment.md) gives for CPU Ollama, that is 38 minutes to 2.6 hours against 33 to 134 hours for the bump. The
+rate of the live host was not measured.
+
+**Rejected.** Bumping `Version`: it costs 52 times as many chunks for the same correction. Leaving the version alone:
+stored Markdown files keep their keys, so a refresh skips them and their chunks keep the old label until the file
+changes or a full pass runs, and one corpus holds both labellings. A migration that resets the state of Markdown files,
+as `ChunkSetEmbeddingProvider` did for a rename: it records `Pending` over chunks that still answer searches, and a
+chunker change already has the version as its mechanism. A payload-only update of `section` on the stored points: the
+point ids are deterministic, so it could work without embedding, but `IVectorStore` has no such call, and it would add
+a store method, a test double and a one-off repair pass to save about 4,600 embeddings.
+
+**Consequences.** The first pass after the upgrade re-chunks the Markdown files of every corpus, in every chunk set, and
+nothing else. A Markdown file that an earlier pass settled as failed or empty is read and tried once more. A file's
+chunks are deleted before its new ones are embedded, so each Markdown file is missing from search while it embeds.
+Returning to an earlier build re-chunks the Markdown files again, with the earlier labels, because that build computes a
+key without the Markdown part, and upgrading again repeats it: each switch in either direction costs the same pass. The
+key now carries two chunker numbers. A third format that needs its own re-chunk is the point to replace both with a table
+keyed by language.
 
 ---
 

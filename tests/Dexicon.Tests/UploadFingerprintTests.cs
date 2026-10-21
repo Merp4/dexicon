@@ -96,7 +96,7 @@ public sealed class UploadFingerprintTests
             var state = await check.FileChunkStates.AsNoTracking().SingleAsync();
             var row = await check.BlobTexts.AsNoTracking().SingleAsync();
             CorpusIndexer.TextKey(row).ShouldBe(row.Sha256);
-            state.ContentHash.ShouldBe(CorpusIndexer.ChunkingFingerprint(set, sha, ModelTemplates.Raw),
+            state.ContentHash.ShouldBe(CorpusIndexer.ChunkingFingerprint(set, sha, ModelTemplates.Raw, "doc.txt"),
                 "the stamp of a current row is the fingerprint built on the hash alone");
         }
 

@@ -259,9 +259,10 @@ public sealed class ModelProfileTests : IAsyncLifetime
             CreatedUtc = DateTime.UtcNow,
         };
 
-        var raw = CorpusIndexer.ChunkingFingerprint(set, "blob", ModelTemplates.Raw);
+        var raw = CorpusIndexer.ChunkingFingerprint(set, "blob", ModelTemplates.Raw, "doc.txt");
         var framed = CorpusIndexer.ChunkingFingerprint(
-            set, "blob", new ModelTemplates("search_document: {text}", "search_query: {text}", TemplateOrigin.BuiltIn));
+            set, "blob", new ModelTemplates("search_document: {text}", "search_query: {text}", TemplateOrigin.BuiltIn),
+            "doc.txt");
 
         framed.ShouldNotBe(raw, "text framed differently is a different vector, so it is stale");
     }
@@ -290,7 +291,7 @@ public sealed class ModelProfileTests : IAsyncLifetime
         var b = new ModelTemplates("search_document: {text}", "search_query: {text}", TemplateOrigin.Configured);
 
         // Origin differs: where it came from is not part of what it does.
-        CorpusIndexer.ChunkingFingerprint(set, "blob", a)
-            .ShouldBe(CorpusIndexer.ChunkingFingerprint(set, "blob", b));
+        CorpusIndexer.ChunkingFingerprint(set, "blob", a, "doc.txt")
+            .ShouldBe(CorpusIndexer.ChunkingFingerprint(set, "blob", b, "doc.txt"));
     }
 }
