@@ -1470,9 +1470,12 @@ zero-length chunk.
 
 ### Documents — unit-aware overlapping
 
-Splits at the format's natural unit first (page, slide, chapter, heading), then
-size-chunks within the unit. `page` / `section` are carried into the payload so a citation
-can say *"p. 34"* rather than *"chunk 87"*.
+A chunk set with unit-aware boundaries on (off by default) splits at each page of a PDF,
+slide of a PPTX or chapter of an EPUB first, then size-chunks within the unit. A Markdown
+heading is not a unit: under `boundary_mode: language-aware` (above) it is a preferred place
+to cut, which the chunker backs up to when the budget fills, and it never forces a split.
+`page` / `section` are carried into the payload so a citation can say *"p. 34"* rather than
+*"chunk 87"*.
 
 ### Defaults
 

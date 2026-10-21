@@ -31,6 +31,34 @@ for a query. See [13](13-integration.md).
 
 ---
 
+## Key scopes
+
+A key holds the scopes ticked for it on the **Access** screen, and a new key starts with
+`search` alone. The scopes decide which tools the server lists to the key:
+
+| Scope | Tools listed | Also permits |
+|---|---|---|
+| `search` | `search_index`, `get_context`, `index_status`, `list_corpora` | Reading the `dexicon://` resources |
+| `ingest` | `index_refresh` | Uploading and attaching documents over the HTTP API |
+| `configure` | `list_folders`, `configure_corpus`, `configure_source` | Creating corpora and adding sources and filters |
+| `propose` | `propose_removal`, `removal_status` | Asking for a removal, which the administrator approves or rejects |
+| `destroy` | none | Detaching an uploaded document over the HTTP API |
+
+A key with `configure` can add any mounted folder to a corpus, so the key's corpus mapping
+does not limit what it can reach ([07](07-auth.md#what-a-key-reaches)). The key adopted from
+`DEXICON_BOOTSTRAP_TOKEN` is named `bootstrap (pinned)`, the name `list_corpora` prints in its
+first line, and holds `search` and `ingest`.
+
+A scope removed is refused from the key's next call. A scope added reaches the agent's tool
+list only when its client connects, because the server is stateless and sends no
+`notifications/tools/list_changed` ([07](07-auth.md#the-mcp-tool-list-is-not-live)). After
+ticking a scope, restart the client session; whether a reconnect command lists the tools
+again depends on the client. Which corpora a key reaches is read on every call and needs no
+restart. For a missing tool, see
+[troubleshooting](troubleshooting.md#the-agent-lacks-index_refresh-or-the-configure-tools).
+
+---
+
 ## Claude Code
 
 No config file; the CLI writes it. Use `--scope user` so every project's session has it,

@@ -48,9 +48,12 @@ corpus pointing at a directory under `./workspaces`. That folder is `WORKSPACE_R
 `.env`, mounted read-only at `/workspaces`. Set `DEXICON_ADMIN_PASSWORD` in `.env` to choose
 your own password instead; a value set there is applied on every start.
 
-To connect an agent, issue a key under **Access** and choose which corpora it may reach:
-every corpus, or only the ones you tick. The choice can be changed later without restarting the
-agent:
+To connect an agent, issue a key under **Access** and choose which corpora it may reach (every
+corpus, or only the ones you tick) and which scopes it holds. A new key holds `search`, which
+lists the four tools that read the index. `ingest` adds `index_refresh` and `configure` adds
+the tools that create corpora and sources ([scopes](docs/12-clients.md#key-scopes)). The corpora
+can be changed later without restarting the agent; a scope added later reaches its tool list
+when its client reconnects:
 
 ```bash
 claude mcp add --transport http dexicon http://localhost:8477/mcp \
