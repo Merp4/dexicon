@@ -16,6 +16,9 @@ updates:
         patterns:
           - "Microsoft.Extensions.*"
           - "Microsoft.EntityFrameworkCore*"
+          # Microsoft.Extensions.ApiDescription.Server writes the OpenAPI document and failed
+          # against a Microsoft.AspNetCore.OpenApi one release behind it (#257).
+          - "Microsoft.AspNetCore.*"
       ai:
         patterns:
           - "Microsoft.Extensions.AI*"
