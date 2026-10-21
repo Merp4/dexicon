@@ -143,12 +143,12 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         var fine = AddCorpus("fine", 256, 40);
         const string blob = "abc123";
 
-        var a = CorpusIndexer.ChunkingFingerprint(DefaultSet(coarse), blob, ModelTemplates.Raw);
-        var b = CorpusIndexer.ChunkingFingerprint(DefaultSet(fine), blob, ModelTemplates.Raw);
+        var a = CorpusIndexer.ChunkingFingerprint(DefaultSet(coarse), blob, ModelTemplates.Raw, "doc.txt");
+        var b = CorpusIndexer.ChunkingFingerprint(DefaultSet(fine), blob, ModelTemplates.Raw, "doc.txt");
         a.ShouldNotBe(b, "two chunk sets must not mistake each other's chunking for their own");
 
         DefaultSet(coarse).ChunkSize = 512;
-        CorpusIndexer.ChunkingFingerprint(DefaultSet(coarse), blob, ModelTemplates.Raw).ShouldNotBe(a,
+        CorpusIndexer.ChunkingFingerprint(DefaultSet(coarse), blob, ModelTemplates.Raw, "doc.txt").ShouldNotBe(a,
             "changing a chunk setting must invalidate the existing chunks");
     }
 
@@ -216,8 +216,8 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         states.ShouldAllBe(s => s.Status == FileStatus.Pending);
 
         // And the two sets must not mistake each other's chunking for their own.
-        CorpusIndexer.ChunkingFingerprint(DefaultSet(corpus), stored.Sha256, ModelTemplates.Raw)
-            .ShouldNotBe(CorpusIndexer.ChunkingFingerprint(fine, stored.Sha256, ModelTemplates.Raw));
+        CorpusIndexer.ChunkingFingerprint(DefaultSet(corpus), stored.Sha256, ModelTemplates.Raw, "doc.txt")
+            .ShouldNotBe(CorpusIndexer.ChunkingFingerprint(fine, stored.Sha256, ModelTemplates.Raw, "doc.txt"));
     }
 
     [Fact]
@@ -228,8 +228,8 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         var corpus = AddCorpus("library", 768, 100);
         var other = AddSet(corpus, "gemma", 768, 100, model: "embeddinggemma");
 
-        CorpusIndexer.ChunkingFingerprint(DefaultSet(corpus), "abc", ModelTemplates.Raw)
-            .ShouldNotBe(CorpusIndexer.ChunkingFingerprint(other, "abc", ModelTemplates.Raw));
+        CorpusIndexer.ChunkingFingerprint(DefaultSet(corpus), "abc", ModelTemplates.Raw, "doc.txt")
+            .ShouldNotBe(CorpusIndexer.ChunkingFingerprint(other, "abc", ModelTemplates.Raw, "doc.txt"));
     }
 
     [Fact]

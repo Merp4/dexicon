@@ -165,9 +165,9 @@ public sealed class ChunkBudgetTests
         var set = Set(2065);
 
         var before = CorpusIndexer.ChunkingFingerprint(
-            set, "blob", ModelTemplates.Raw, set.Options(Measured(2048, 3.8)));
+            set, "blob", ModelTemplates.Raw, set.Options(Measured(2048, 3.8)), "notes.txt");
         var after = CorpusIndexer.ChunkingFingerprint(
-            set, "blob", ModelTemplates.Raw, set.Options(Measured(1024, 3.8)));
+            set, "blob", ModelTemplates.Raw, set.Options(Measured(1024, 3.8)), "notes.txt");
 
         after.ShouldNotBe(before);
     }
@@ -177,9 +177,9 @@ public sealed class ChunkBudgetTests
     {
         var set = Set(768);
 
-        CorpusIndexer.ChunkingFingerprint(set, "blob", ModelTemplates.Raw, set.Options(Measured(2048, 3.8)))
+        CorpusIndexer.ChunkingFingerprint(set, "blob", ModelTemplates.Raw, set.Options(Measured(2048, 3.8)), "notes.txt")
             .ShouldNotBe(CorpusIndexer.ChunkingFingerprint(
-                set, "blob", ModelTemplates.Raw, set.Options(Measured(2048, 4.2))));
+                set, "blob", ModelTemplates.Raw, set.Options(Measured(2048, 4.2)), "notes.txt"));
     }
 
     /// <summary>Prose in paragraphs, so the blank-line boundary mode has somewhere to cut.</summary>

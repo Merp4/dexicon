@@ -158,6 +158,32 @@ public static class CodeChunker
     /// </summary>
     public const int Version = 8;
 
+    /// <summary>
+    /// Bumped when the chunks of Markdown files change and the chunks of every other format
+    /// do not. It enters the fingerprint of a Markdown file only (see <see cref="VersionFor"/>),
+    /// so the bump re-chunks and re-embeds Markdown files and leaves the rest of every corpus
+    /// alone. A change to any other format, or to all of them, bumps <see cref="Version"/>.
+    ///
+    /// 1: <see cref="TextChunk.Section"/> is the heading in effect at the chunk's first line,
+    ///    where it had been the heading the scan had reached by the time the chunk was emitted.
+    ///    Boundaries and vectors do not move, so the stored chunks differ only in that payload
+    ///    field. The vector store has no payload-only update, so the file is embedded again.
+    ///    See D-44 in docs/decisions.md for what that costs against a bump of <see cref="Version"/>.
+    /// </summary>
+    public const int MarkdownVersion = 1;
+
+    /// <summary>
+    /// The chunker version a file is chunked under, as it enters the chunking fingerprint:
+    /// <see cref="Version"/> alone for most files, and <see cref="Version"/> with
+    /// <see cref="MarkdownVersion"/> for Markdown. A file that is not Markdown keeps the
+    /// string it had before <see cref="MarkdownVersion"/> existed, so its fingerprint did not
+    /// change and it is not chunked again.
+    /// </summary>
+    public static string VersionFor(string relativePath) =>
+        IsMarkdown(LanguageMap.Detect(relativePath)) ? $"{Version}.md{MarkdownVersion}" : $"{Version}";
+
+    private static bool IsMarkdown(string language) => string.Equals(language, "markdown", StringComparison.Ordinal);
+
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(500);
 
     /// <summary>Convenience overload for the common case and for tests.</summary>
@@ -217,18 +243,17 @@ public static class CodeChunker
         foreach (var line in unitBoundaries) boundaries.Add(line);
 
         var symbolPattern = LanguageMap.SymbolPattern(language);
-        var isMarkdown = string.Equals(language, "markdown", StringComparison.Ordinal);
 
-        // Resolved per LINE, up front, and read at the line a chunk STARTS on. Reading a
-        // running cursor at the moment a chunk was emitted looked equivalent and was not:
-        // the accumulator fills PAST a boundary before backing up to it, so the cursor is
-        // always ahead of the chunk being flushed, and the overlap rewind moves the next
-        // chunk's start back without moving the cursor. A chunk from the "Point payload"
-        // section came out labelled with a heading from further down the file, which is
-        // worse than no label, because retrieval then places it under a section it is not
-        // in. This applies to the section label as well as to the trail: 24% of the chunks
-        // of docs/ carried the section at their first line when it was read from the cursor.
-        var headings = isMarkdown ? ResolveHeadings(lines, options.HeadingContext) : null;
+        // Resolved per LINE, up front, and read at the line a chunk STARTS on, for the
+        // section label as well as the trail. Reading a running cursor at the moment a
+        // chunk was emitted looked equivalent and was not: the accumulator fills PAST a
+        // boundary before backing up to it, so the cursor is always ahead of the chunk
+        // being flushed, and the overlap rewind moves the next chunk's start back without
+        // winding back the heading the scan had reached. A chunk from the "Point payload" section came out labelled
+        // with a heading from further down the file, which is worse than no label, because
+        // retrieval then places it under a section it is not in. docs/04-ingestion.md has
+        // the measurement.
+        var headings = IsMarkdown(language) ? ResolveHeadings(lines, options.HeadingContext) : null;
 
         var chunks = new List<TextChunk>();
         var index = 0;
@@ -572,7 +597,7 @@ public static class CodeChunker
         return true;
     }
 
-    /// <param name="startLine">0-based. The section and the heading trail are those in effect on this line.</param>
+    // startLine is 0-based, and the section and the heading trail are those in effect on it.
     private static TextChunk Build(string content, int startLine, int endLine, string? symbolPattern,
         LineHeadings? headings)
     {

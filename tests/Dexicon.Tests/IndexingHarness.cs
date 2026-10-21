@@ -612,6 +612,7 @@ internal sealed class IndexingHarness : IAsyncDisposable
                     EndLine = p.EndLine,
                     ChunkIndex = p.ChunkIndex,
                     Content = p.Content,
+                    Section = p.Section,
                 })]);
 
         public Task UpsertAsync(string collection, IReadOnlyList<Chunk> chunks,

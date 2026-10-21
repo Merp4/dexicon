@@ -471,7 +471,7 @@ public sealed class CorpusIndexer(
                     file.ExtractedChars = 0;
                     // Hash IS recorded: an empty extraction is a settled outcome, not a
                     // failure to retry. Re-uploading the file is what changes it.
-                    state.ContentHash = ChunkingFingerprint(set, TextKey(cached), templates, chunking);
+                    state.ContentHash = ChunkingFingerprint(set, TextKey(cached), templates, chunking, file.RelativePath);
                     state.IndexedUtc = DateTime.UtcNow;
                     Count(file, Tally.Skipped);
                     continue;
@@ -480,7 +480,7 @@ public sealed class CorpusIndexer(
                 // The fingerprint mixes the blob hash WITH the corpus's chunk settings,
                 // so changing chunk size or boundary mode makes every attachment look
                 // changed and re-chunks it, without touching the bytes.
-                var fingerprint = ChunkingFingerprint(set, TextKey(cached), templates, chunking);
+                var fingerprint = ChunkingFingerprint(set, TextKey(cached), templates, chunking, file.RelativePath);
                 if (!full && state.ContentHash == fingerprint && state.Status == FileStatus.Indexed)
                 {
                     Count(file, Tally.Skipped);
@@ -968,8 +968,10 @@ public sealed class CorpusIndexer(
     /// a set. If the two ever disagree the effect is a file that looks changed and is
     /// chunked again, never a stale chunk kept as current.
     /// </summary>
-    internal static string ChunkingFingerprint(ChunkSet set, string blobSha, ModelTemplates templates) =>
-        ChunkingFingerprint(set, blobSha, templates, set.Options());
+    /// <param name="relativePath">The file's path, which decides its chunker version (<see cref="CodeChunker.VersionFor"/>).</param>
+    internal static string ChunkingFingerprint(
+        ChunkSet set, string blobSha, ModelTemplates templates, string relativePath) =>
+        ChunkingFingerprint(set, blobSha, templates, set.Options(), relativePath);
 
     /// <summary>
     /// Identity of "this blob, chunked THIS way". Two corpora holding the same document
@@ -990,13 +992,17 @@ public sealed class CorpusIndexer(
     /// existing chunk in place while every new query used the new framing, leaving the
     /// two sides of a retrieval disagreeing with no error raised.
     /// </param>
+    /// <param name="relativePath">
+    /// The file's path, which decides the chunker version in the key (<see cref="CodeChunker.VersionFor"/>):
+    /// Markdown files carry a version of their own, so a change to Markdown output re-chunks only Markdown.
+    /// </param>
     internal static string ChunkingFingerprint(
-        ChunkSet set, string blobSha, ModelTemplates templates, ChunkOptions chunking) =>
+        ChunkSet set, string blobSha, ModelTemplates templates, ChunkOptions chunking, string relativePath) =>
         HashContent($"{blobSha}|{chunking.ChunkSizeTokens}|{chunking.OverlapTokens}|" +
                     $"{chunking.CharsPerToken}|{set.BoundaryMode}|" +
                     $"{set.CustomBoundaryPattern}|{set.UnitAware}|{set.SentenceAware}|{set.HeadingContext}|" +
                     $"{set.EmbeddingProvider}|{set.EmbeddingModel}|t{templates.Fingerprint}|" +
-                    $"x{ExtractorVersions.Current}|c{CodeChunker.Version}");
+                    $"x{ExtractorVersions.Current}|c{CodeChunker.VersionFor(relativePath)}");
 
     /// <summary>
     /// Get-or-create the per-set state for a batch of files, in one round trip. A file
@@ -1387,11 +1393,12 @@ public sealed class CorpusIndexer(
         //
         // The settings are the chunking fingerprint of an empty content hash, so the
         // extractor and chunker versions are in it: a fix to either unsettles every file
-        // once, as it already re-chunks them.
-        var settings = ChunkingFingerprint(set, string.Empty, templates, chunking);
+        // once, as it already re-chunks them. Taken per path, because a Markdown file has
+        // a chunker version of its own.
         string? SettledKeyOf(WorkspaceWalker.Candidate c) =>
             fingerprintOf is null && c.ModifiedTicks != 0
-                ? HashContent($"{c.SizeBytes}|{c.ModifiedTicks}|{settings}")
+                ? HashContent($"{c.SizeBytes}|{c.ModifiedTicks}|" +
+                              ChunkingFingerprint(set, string.Empty, templates, chunking, c.RelativePath))
                 : null;
 
         // Every path below that records a file as having no chunks has to drop the
@@ -1491,7 +1498,7 @@ public sealed class CorpusIndexer(
 
             foreach (var candidate in files)
             {
-                var hash = ChunkingFingerprint(set, fingerprintOf(candidate), templates, chunking);
+                var hash = ChunkingFingerprint(set, fingerprintOf(candidate), templates, chunking, candidate.RelativePath);
 
                 if (states.TryGetValue(candidate.RelativePath, out var existing)
                     && existing.ContentHash == hash && existing.Status == FileStatus.Indexed)
@@ -1569,7 +1576,8 @@ public sealed class CorpusIndexer(
                 // conclude nothing had changed. The counters could not show it, because
                 // the in-loop check below then skipped every one of them.
                 var hash = ChunkingFingerprint(
-                    set, fingerprintOf?.Invoke(candidate) ?? HashContent(content), templates, chunking);
+                    set, fingerprintOf?.Invoke(candidate) ?? HashContent(content), templates, chunking,
+                    candidate.RelativePath);
 
                 if (!full && states.TryGetValue(candidate.RelativePath, out var existing)
                           && existing.ContentHash == hash && existing.Status == FileStatus.Indexed)

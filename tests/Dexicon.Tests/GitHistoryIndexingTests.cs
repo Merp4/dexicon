@@ -161,7 +161,8 @@ public sealed class GitHistoryIndexingTests
         var expected = CorpusIndexer.ChunkingFingerprint(
             set,
             CorpusIndexer.HashContent(full.Sha + '|' + options.ContentFingerprint(null)),
-            Dexicon.Core.Embedding.ModelTemplates.Raw);
+            Dexicon.Core.Embedding.ModelTemplates.Raw,
+            file.RelativePath);
 
         state.ContentHash.ShouldBe(expected,
             "a stored hash in any other shape is one the pre-read check can never match");

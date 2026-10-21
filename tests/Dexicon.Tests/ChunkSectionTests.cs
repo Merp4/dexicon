@@ -7,7 +7,8 @@ namespace Dexicon.Tests;
 /// <see cref="TextChunk.Section"/> for Markdown: the heading in effect at the chunk's first line, the line
 /// <see cref="TextChunk.StartLine"/> names. The chunker used to read it from a cursor that had already passed the
 /// end of the chunk, so a chunk ending before a heading carried that heading and a chunk straddling one carried the
-/// later heading. On the 16 files of docs/ chunked at 768 tokens, 24% of 267 chunks carried the right section.
+/// later heading. On the 16 files of docs/ (267 chunks at 768 tokens, 100 overlap and 3.8 characters per token)
+/// 24% carried the right section.
 ///
 /// Small budgets throughout: with 4 characters per token, 25 tokens is 100 characters, which is five 19-character
 /// lines, so the line each chunk ends on can be worked out by hand.
