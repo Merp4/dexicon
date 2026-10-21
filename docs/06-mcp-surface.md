@@ -318,7 +318,7 @@ can reach it.
 `gitignore` takes `true` only: `.gitignore` is what keeps a file such as Dexicon's own `.env`
 out of the index, so turning it off is the UI's. A source cannot be added to a corpus whose
 default the UI turned off without passing `gitignore: true`, nor reset to follow that default. A `description` is one line of at most 500
-characters.
+characters. `maxFileKb` is in kilobytes, where the UI's size limit is in megabytes.
 
 `configure_source(corpus, folder, kind?, create?, include?, exclude?, gitignore?,
 maxFileKb?, history?, reset?)`: adds a folder when `create` is true, and otherwise changes

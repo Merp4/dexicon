@@ -35,6 +35,27 @@ Three causes, in the order to check:
 
 ---
 
+## "The agent lacks `index_refresh` or the configure tools"
+
+A key is listed only the tools its scopes allow ([12](12-clients.md#key-scopes)). Two causes,
+in the order to check:
+
+1. **The key lacks the scope.** `ingest` lists `index_refresh`, `configure` lists
+   `list_folders`, `configure_corpus` and `configure_source`, and `propose` lists
+   `propose_removal` and `removal_status`. A key adopted from `DEXICON_BOOTSTRAP_TOKEN` starts
+   with `search` and `ingest` only, so it has no configure tools until you tick `configure`
+   for it under Access.
+2. **The client has not listed the tools again.** The server sends no notification when a
+   key's scopes change, and a client lists tools when it connects and keeps the list. After
+   ticking a scope, restart the client session; whether a reconnect command lists the tools
+   again depends on the client.
+
+A tool called without its scope is refused with `This key has scopes [search] and needs
+'ingest'. Whoever runs Dexicon can grant it on the Access page.`, where the brackets hold
+the scopes the key has.
+
+---
+
 ## "Search returns nothing, but the corpus says it is indexed"
 
 Check `/healthz` or the Settings → **Check connectivity** button.
