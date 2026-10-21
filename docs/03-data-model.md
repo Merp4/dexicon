@@ -495,7 +495,7 @@ overwrite each other, without error, and only for the paths they share.
   "start_line":  120,                // text sources
   "end_line":    168,
   "page":        3,                  // page (PDF), slide (PPTX) or chapter (EPUB); omitted for line-addressed content
-  "section":     "Retry policy",     // Markdown heading, or the page, slide or chapter label
+  "section":     "Retry policy",     // Markdown heading at start_line, or the page, slide or chapter label
   "symbols":     ["TokenService", "Refresh"],
   "chunk_index": 7,
   "content":     "…the chunk text…",  // stored: results must be usable without a file read
@@ -505,6 +505,11 @@ overwrite each other, without error, and only for the paths they share.
 
 `media_type`, `language`, `page`, `section` and `symbols` are written only when the chunk
 has a value; the other fields are always present.
+
+For a Markdown file, `section` is the innermost ATX heading in effect on the chunk's
+`start_line`, outside code fences, whatever headings the chunk goes on to contain. It is
+absent above the first heading. A chunk that opens with overlap carried from the section
+before it takes that section's heading, as `page` takes the page of the chunk's first line.
 
 Point id is a deterministic UUID derived from a SHA-256 of
 `chunk_set_id | source_id | file_path | chunk_index`: the first 16 bytes of the hash with

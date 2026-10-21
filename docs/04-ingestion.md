@@ -971,7 +971,7 @@ See [D-34](decisions.md#d-34-a-commit-is-a-document).
 | Format | Extensions | Library | Licence | Provenance unit | Notes |
 |---|---|---|---|---|---|
 | Plain text | `.txt`, `.log`, code | — | — | line | Encoding-detected |
-| Markdown | `.md`, `.markdown` | — | — | line + heading | Plain text, no extractor. ATX headings outside code fences become `section` and the heading trail |
+| Markdown | `.md`, `.markdown` | — | — | line + heading | Plain text, no extractor. ATX headings outside code fences become the heading trail and `section`, which is the heading in effect on the chunk's first line |
 | HTML | `.html`, `.htm` | AngleSharp | MIT | line | One line per block element; `script`/`style` skipped; `<title>` kept |
 | PDF | `.pdf` | PdfPig | Apache-2.0 | **page** | Text layer only — no OCR |
 | DOCX | `.docx` | DocumentFormat.OpenXml | MIT | none | One line per non-empty paragraph; headings are not detected |
@@ -1409,11 +1409,22 @@ and what a `dexicon://` resource read reconstructs a file from, and prepending w
 lines the file never had. Heading context applies to Markdown files, the only format whose
 headings are detected.
 
-The trail is resolved per line, up front. Reading a running cursor when a chunk is emitted
-looks equivalent but is not: the accumulator fills *past* a boundary before backing up to
-it, so the cursor is ahead of the chunk being flushed. This labelled chunks with a heading
-from further down the file, which is worse than no label, because retrieval then places
-them under a section they are not in.
+The trail and the `section` label are resolved per line, up front, and read at the line a
+chunk starts on. Reading a running cursor when a chunk is emitted looks equivalent but is
+not: the accumulator fills *past* a boundary before backing up to it, so the cursor is ahead
+of the chunk being flushed, and the overlap rewind moves the next chunk's start back without
+moving the cursor. This labelled chunks with a heading from further down the file, which is
+worse than no label, because retrieval then places them under a section they are not in. The
+trail was resolved per line from the start, and `section` was read from the cursor. On the 267
+chunks of `docs/` (768 tokens, 100 overlap) 24.0% carried the heading in effect at their first
+line, 42.3% the next section's heading, 26.2% a heading from inside the chunk and 7.5% a
+heading above the first line that was no longer in effect. The last group comes from the
+rewind reading a fence delimiter a second time, which inverts the fence state: 3 of its 20
+chunks took a comment inside a fenced block for a heading.
+
+`section` is therefore the heading above `start_line`, not the section most of the chunk
+belongs to. On the same files 65% of chunks hold a heading after their first line, and in 61%
+the heading at the first line covers under half of the chunk.
 
 **Unit-aware boundaries.** Page for PDF, chapter for EPUB, slide for PPTX. These *force* a
 split rather than offering a place for one: under the usual rule a chapter shorter than the
