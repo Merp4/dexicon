@@ -252,6 +252,10 @@ Covered operationally in [09](09-deployment.md); the security-relevant points:
 
 - Central package management (`Directory.Packages.props`); one version per dependency.
 - Dependabot for NuGet, npm, Docker base images, and GitHub Actions.
+- A Dependabot pull request with a patch or minor update, or a Docker digest refresh, gets
+  GitHub auto-merge from `.github/workflows/dependabot-automerge.yml` and merges when the
+  required checks pass. A major update stays open for review. The workflow reads only the
+  structured output of `dependabot/fetch-metadata`, never pull request text.
 - CI: `dotnet list package --vulnerable --include-transitive` and `npm audit`, both failing
   the build on high severity.
 - CodeQL for C# and TypeScript on pull requests, on `main`, and weekly.
