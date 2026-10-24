@@ -1,0 +1,54 @@
+name: Dependabot auto-merge
+
+# Enables GitHub auto-merge on Dependabot pull requests. GitHub merges each one once the
+# required status checks on main pass (branch protection lists them), so this workflow
+# makes no judgement about whether the code is good.
+#
+# What it does decide is which updates skip human review: semver patch and minor updates,
+# and Docker digest refreshes. A major update, or metadata it cannot read, leaves the pull
+# request open.
+#
+# It reads dependabot/fetch-metadata's structured outputs and no pull request text. The
+# values reach the script through environment variables, never interpolated into it,
+# because dependency names and release notes come from package authors.
+on: pull_request
+
+permissions: {}
+
+jobs:
+  auto-merge:
+    name: Enable auto-merge
+    # The pull request author, not github.actor: the actor changes when someone else
+    # re-runs the workflow or pushes to the branch. Forks skip it.
+    if: github.repository == 'Merp4/dexicon' && github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - id: metadata
+        uses: dependabot/fetch-metadata@v3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # A Docker digest refresh carries no update-type, so an empty value passes for the
+      # docker ecosystem only. Empty anywhere else is unknown and stays open.
+      - id: gate
+        env:
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+          ECOSYSTEM: ${{ steps.metadata.outputs.package-ecosystem }}
+        run: |
+          merge=false
+          case "$UPDATE_TYPE" in
+            version-update:semver-patch | version-update:semver-minor) merge=true ;;
+            '') if [ "$ECOSYSTEM" = docker ]; then merge=true; fi ;;
+          esac
+          echo "merge=$merge" >> "$GITHUB_OUTPUT"
+          echo "Auto-merge decision: $merge"
+
+      - if: steps.gate.outputs.merge == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash "$PR_URL"
