@@ -5,50 +5,89 @@ name: Dependabot auto-merge
 # makes no judgement about whether the code is good.
 #
 # What it does decide is which updates skip human review: semver patch and minor updates,
-# and Docker digest refreshes. A major update, or metadata it cannot read, leaves the pull
-# request open.
+# and Docker digest refreshes. A major update, metadata it cannot read, or a bump of one of
+# the two actions below leaves the pull request open.
 #
-# It reads dependabot/fetch-metadata's structured outputs and no pull request text. The
-# values reach the script through environment variables, never interpolated into it,
+# Auto-merge is enabled with a GitHub App token. A merge made on behalf of GITHUB_TOKEN
+# starts no push-triggered workflows, so the commits it landed on main had no CI run
+# (#266, and six pull requests merged on 26 October 2026). A merge made on behalf of an
+# App token starts them as an ordinary push does.
+#
+# Two jobs, so the App's private key never reaches code that a Dependabot branch can change.
+# Under `pull_request` the workflow file comes from the pull request's merge commit, and a
+# Dependabot bump of an action used here rewrites it. `decide` runs fetch-metadata with a
+# read-only token and no secrets. `merge` runs on a fresh runner, holds the key, and reads
+# one string from `decide`.
+#
+# Both jobs read only fetch-metadata's structured outputs and no pull request text. The
+# values reach the scripts through environment variables, never interpolated into them,
 # because dependency names and release notes come from package authors.
+#
+# Secrets (Dependabot secrets, not Actions secrets, because Dependabot runs read those):
+# AUTOMERGE_APP_CLIENT_ID and AUTOMERGE_APP_PRIVATE_KEY, from the dexicon-automerge App.
 on: pull_request
 
 permissions: {}
 
 jobs:
-  auto-merge:
-    name: Enable auto-merge
+  decide:
+    name: Decide
     # The pull request author, not github.actor: the actor changes when someone else
     # re-runs the workflow or pushes to the branch. Forks skip it.
     if: github.repository == 'Merp4/dexicon' && github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
+      pull-requests: read
+    outputs:
+      merge: ${{ steps.gate.outputs.merge }}
     steps:
       - id: metadata
-        uses: dependabot/fetch-metadata@v3
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # A Docker digest refresh carries no update-type, so an empty value passes for the
-      # docker ecosystem only. Empty anywhere else is unknown and stays open.
+      # docker ecosystem only. Empty anywhere else is unknown and stays open. A bump of an
+      # action used by this workflow is reviewed by a person, since it changes the code
+      # that runs here.
       - id: gate
         env:
           UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
           ECOSYSTEM: ${{ steps.metadata.outputs.package-ecosystem }}
+          NAMES: ${{ steps.metadata.outputs.dependency-names }}
         run: |
           merge=false
           case "$UPDATE_TYPE" in
             version-update:semver-patch | version-update:semver-minor) merge=true ;;
             '') if [ "$ECOSYSTEM" = docker ]; then merge=true; fi ;;
           esac
+          names=",$(printf '%s' "$NAMES" | tr -d ' '),"
+          case "$names" in
+            *,actions/create-github-app-token,* | *,dependabot/fetch-metadata,*) merge=false ;;
+          esac
           echo "merge=$merge" >> "$GITHUB_OUTPUT"
           echo "Auto-merge decision: $merge"
 
-      - if: steps.gate.outputs.merge == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  merge:
+    name: Enable auto-merge
+    needs: decide
+    if: needs.decide.outputs.merge == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      # Scoped to this repository and to the two permissions auto-merge needs.
+      - id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.AUTOMERGE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: gh pr merge --auto --squash "$PR_URL"
