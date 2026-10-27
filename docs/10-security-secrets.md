@@ -254,8 +254,12 @@ Covered operationally in [09](09-deployment.md); the security-relevant points:
 - Dependabot for NuGet, npm, Docker base images, and GitHub Actions.
 - A Dependabot pull request with a patch or minor update, or a Docker digest refresh, gets
   GitHub auto-merge from `.github/workflows/dependabot-automerge.yml` and merges when the
-  required checks pass. A major update stays open for review. The workflow reads only the
-  structured output of `dependabot/fetch-metadata`, never pull request text.
+  required checks pass. A major update, or a bump of an action that workflow uses, stays
+  open for review. The workflow reads only the structured output of
+  `dependabot/fetch-metadata`, never pull request text. It enables auto-merge with a GitHub
+  App token (the `AUTOMERGE_APP_CLIENT_ID` and `AUTOMERGE_APP_PRIVATE_KEY` Dependabot
+  secrets), because a merge made on behalf of `GITHUB_TOKEN` starts no push-triggered
+  workflows. The key sits in a second job that runs no code a Dependabot branch can change.
 - CI: `dotnet list package --vulnerable --include-transitive` and `npm audit`, both failing
   the build on high severity.
 - CodeQL for C# and TypeScript on pull requests, on `main`, and weekly.
