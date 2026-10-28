@@ -347,7 +347,7 @@ from `appsettings.json`. See [10](10-security-secrets.md).
 Multi-stage, two builders:
 
 ```dockerfile
-FROM node:25-alpine AS ui
+FROM node:22-alpine AS ui
 # npm ci && npm run build -> /ui/dist
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS build
