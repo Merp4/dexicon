@@ -70,3 +70,10 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    ignore:
+      # The UI build stage follows the Node line CI uses (node-version in ci.yml). #79 moved
+      # it from 22 to 25, a non-LTS line that reached end of life in June 2026, because
+      # Dependabot proposes the next major whatever its support status. Digest and patch
+      # updates still arrive. Move to a newer LTS by hand, in the Dockerfile and CI together.
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]

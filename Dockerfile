@@ -14,7 +14,10 @@
 # each one is there to be read by people, not by the builder.
 
 # ── UI ────────────────────────────────────────────────────────────────────────
-FROM --platform=$BUILDPLATFORM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS ui
+# Node 22 is the line CI tests with, and its npm 10 is the one package-lock.json is written
+# by. Another major here builds a bundle that CI never built. Dependabot skips Node majors
+# (.github/dependabot.yml), so a move to a newer LTS is made here and in CI together.
+FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS ui
 WORKDIR /ui
 
 # Dependencies first, so a source-only change does not re-run npm ci.
