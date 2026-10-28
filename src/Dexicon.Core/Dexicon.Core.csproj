@@ -7,6 +7,15 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Caching.Memory, DependencyInjection.Abstractions, Hosting.Abstractions, Http and
+         Logging.Abstractions come from the ASP.NET Core shared framework in the runtime image,
+         so there is no package or pin for them. Separate pins that disagreed after a servicing
+         release failed restore with NU1109 (#257, #276). Only the web host and the tests
+         consume this library. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="AngleSharp" />
     <PackageReference Include="DocumentFormat.OpenXml" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
@@ -15,11 +24,6 @@
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
     <PackageReference Include="OllamaSharp" />
-    <PackageReference Include="Microsoft.Extensions.Caching.Memory" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
-    <PackageReference Include="Microsoft.Extensions.Http" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="PdfPig" />
     <PackageReference Include="Qdrant.Client" />
     <PackageReference Include="Ulid" />

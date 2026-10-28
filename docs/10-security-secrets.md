@@ -261,7 +261,10 @@ Covered operationally in [09](09-deployment.md); the security-relevant points:
   secrets), because a merge made on behalf of `GITHUB_TOKEN` starts no push-triggered
   workflows. The key sits in a second job that runs no code a Dependabot branch can change.
 - CI: `dotnet list package --vulnerable --include-transitive` and `npm audit`, both failing
-  the build on high severity.
+  the build on high severity. `Dexicon.Core` takes `Microsoft.Extensions.Caching.Memory`,
+  `DependencyInjection.Abstractions`, `Hosting.Abstractions`, `Http` and `Logging.Abstractions`
+  from the ASP.NET Core shared framework, so `dotnet list package` does not report them; they
+  update with the digest of the `aspnet` base image.
 - CodeQL for C# and TypeScript on pull requests, on `main`, and weekly.
 - Release builds publish an SBOM (BuildKit, `sbom: true`) and pin base images by digest.
 - Every third-party extraction library is permissively licensed and listed with its licence
