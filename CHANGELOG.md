@@ -16,6 +16,52 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## 0.6.11 — 2026-10-28
+
+### ⚠️ Upgrading
+
+- **No migration.** The next refresh of each corpus re-chunks and re-embeds its Markdown files
+  (`.md` and `.markdown`) in every chunk set. Other files keep their chunks. On the maintainer's
+  catalogue that is about 4,600 of 240,659 chunks, roughly 2% of the work that a bump of
+  `CodeChunker.Version` costs. The embedding provider has to be reachable for it. Going back to
+  0.6.10 re-chunks Markdown again
+  ([D-44](docs/decisions.md#d-44-the-chunker-version-has-a-part-for-markdown)).
+
+### Fixed
+
+- **A Markdown chunk carried the wrong section heading.** The section was read from a running
+  heading position that had already passed the end of the chunk, so a chunk that ended before a
+  heading carried that heading, a chunk that straddled one carried the later heading, and the
+  overlap rewind could invert the state of a code fence. On the 267 chunks of this repository's
+  `docs/` at 768 tokens with 100 overlap, the share with the right section went from 24.0% to
+  100%, with the same line ranges. The section is now the heading in effect on the chunk's first
+  line.
+
+### Changed
+
+- The skill is unchanged (`dexicon-skill-version: 7`).
+- The image builds its web UI on Node 22, the line CI tests with. Every release from 0.6.0 to
+  0.6.10 built it on Node 25.
+- `Microsoft.Extensions.Caching.Memory`, `DependencyInjection.Abstractions`,
+  `Hosting.Abstractions`, `Http` and `Logging.Abstractions` come from the ASP.NET Core runtime in
+  the `aspnet` base image (10.0.14) and are no longer shipped in the app folder. They update with
+  that image's digest, and `dotnet list package` no longer reports them.
+- Dependency updates: Entity Framework Core and the ASP.NET Core packages 10.0.14; the `aspnet`
+  base image (ASP.NET Core 10.0.14) and the `sdk` base image (SDK 10.0.403); `Qdrant.Client`
+  1.20.0; `ModelContextProtocol.AspNetCore` 2.3.0;
+  `Microsoft.Extensions.AI` 10.11.0; AngleSharp 1.8.6; and in the web UI react 19.3.1, radix-ui
+  1.8.1, lucide-react 1.61.0, cn 0.5.0, vite 8.3.5 and the test tooling.
+- The client guide lists the key scopes and the tool each one unlocks, and troubleshooting covers
+  an agent that lacks `index_refresh` or the `configure` tools. The unit-aware split description
+  (PDF pages, PPTX slides, EPUB chapters) and the units of `maxFileKb` (kilobytes) and of the UI
+  size limit (megabytes) are corrected.
+
+### Known limits
+
+- The Qdrant client is 1.20.0 and the server pinned in `docker-compose.yml` and `.env.example` is
+  v1.16.3. That is the server 0.6.9 and 0.6.10 ran against with client 1.19.0. The server pin has
+  not moved.
+
 ## 0.6.10 — 2026-10-15
 
 ### ⚠️ Upgrading
