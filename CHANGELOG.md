@@ -39,8 +39,9 @@ with no section here fails its release rather than publishing an undescribed one
 - The Qdrant client (1.20.0) and the default Qdrant server (`v1.20.0`) are the same version.
 - `docs/09` "Upgrading" describes how to upgrade Qdrant and Ollama, with the measurements from
   moving a live deployment from Qdrant 1.16.3 to 1.20.0 and Ollama 0.40.4 to 0.40.12. After the
-  Qdrant move, 23 of 25 test queries returned the same top ten in the same order; the other two
-  (corpus `tpn`) shared nine of ten hits, and the largest score difference was 0.0003. Ollama
+  Qdrant move, 23 of 25 test queries returned the same top ten in the same order; the other two,
+  both in the largest corpus, shared nine of ten hits, and the largest score difference was
+  0.0003. Ollama
   0.40.12 returns vectors that differ from 0.40.4 by a cosine similarity of at least 0.99997 for
   the same model files; stored vectors are not re-made.
 - Dependabot ignores TypeScript 7 and later. It used to ignore every TypeScript major.
