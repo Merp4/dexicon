@@ -49,12 +49,14 @@ jobs:
         id: version
         # The git tag without its `v`, stamped into the assembly so the OpenAPI document
         # and the MCP server report the same number as the image tag. An untagged build
-        # of main is not a release and says so.
+        # of main is not a release and says so. The `g` before the hash is `git describe`'s:
+        # a hash of seven digits that starts with 0 is not a valid SemVer prerelease
+        # identifier, and NuGet then fails the restore without saying why (#289).
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             echo "value=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
           else
-            echo "value=0.0.0-edge.${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "value=0.0.0-edge.g${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Release notes
