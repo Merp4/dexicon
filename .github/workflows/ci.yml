@@ -241,7 +241,7 @@ jobs:
         run: |
           docker network create dexicon-ci
           docker run -d --name qdrant --network dexicon-ci \
-            -e QDRANT__SERVICE__API_KEY=ci-key qdrant/qdrant:v1.16.3
+            -e QDRANT__SERVICE__API_KEY=ci-key qdrant/qdrant:v1.20.0
           docker run -d --name dexicon --network dexicon-ci -p 8477:8477 \
             -e DEXICON__QDRANT__ENDPOINT=http://qdrant:6334 \
             -e DEXICON__QDRANT__APIKEY=ci-key \
