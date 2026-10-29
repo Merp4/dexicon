@@ -82,7 +82,7 @@ services:
     cap_drop: [ALL]
 
   dexicon-qdrant:
-    image: qdrant/qdrant:${QDRANT_TAG:-v1.16.3}
+    image: qdrant/qdrant:${QDRANT_TAG:-v1.20.0}
     restart: unless-stopped
     volumes:
       - qdrant_data:/qdrant/storage
@@ -97,7 +97,7 @@ services:
     # no ports: — container-network only. Never publish; docs/09-deployment.md.
 
   dexicon-ollama:
-    image: ollama/ollama:${OLLAMA_TAG:-0.32.14}
+    image: ollama/ollama:${OLLAMA_TAG:-0.40.12}
     restart: unless-stopped
     volumes:
       - ollama_data:/root/.ollama

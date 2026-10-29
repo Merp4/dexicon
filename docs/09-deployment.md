@@ -75,7 +75,7 @@ services:
     cap_drop: [ALL]
 
   dexicon-qdrant:
-    image: qdrant/qdrant:${QDRANT_TAG:-v1.16.3}     # pinned, not :latest
+    image: qdrant/qdrant:${QDRANT_TAG:-v1.20.0}     # pinned, not :latest
     restart: unless-stopped
     volumes:
       - qdrant_data:/qdrant/storage
@@ -90,7 +90,7 @@ services:
     # no ports: — container-network only. Never publish; see "Exposure".
 
   dexicon-ollama:
-    image: ollama/ollama:${OLLAMA_TAG:-0.32.14}
+    image: ollama/ollama:${OLLAMA_TAG:-0.40.12}
     restart: unless-stopped
     volumes:
       - ollama_data:/root/.ollama
@@ -316,7 +316,7 @@ in `.env` has no effect. Every setting has a working default; `WORKSPACE_ROOT` d
 | `DEXICON_BOOTSTRAP_TOKEN` | `DEXICON__BOOTSTRAP__TOKEN` | *(empty)* | Blank mints nothing; keys are created under Access. Set, it must read `dex_<id>_<secret>` and is adopted as a key holding `search` and `ingest`. A malformed value fails the start (`A bootstrap token must start with 'dex_'.`) and the container restarts in a loop. |
 | `DEXICON_LOG_LEVEL` | `DEXICON__LOG__LEVEL` | `Information` | |
 | `DEXICON_TAG`, `DEXICON_OWNER` | | `latest`, `merp4` | Which Dexicon image: `ghcr.io/<owner>/dexicon:<tag>`. See "Image tags". |
-| `QDRANT_TAG`, `OLLAMA_TAG` | | `v1.16.3`, `0.32.14` | Which Qdrant and Ollama images. |
+| `QDRANT_TAG`, `OLLAMA_TAG` | | `v1.20.0`, `0.40.12` | Which Qdrant and Ollama images. |
 | `DEXICON_GPU_DEVICE_IDS` | | `0` | Which GPU the embedder uses, as `nvidia-smi -L` numbers them. Read only when `docker-compose.gpu.yml` is applied. |
 
 The table lists what `docker-compose.yml` and its overlays pass. Any other option binds the
@@ -573,6 +573,25 @@ The warnings are left in the log because they describe a real, if unlikely, fail
 whose image or configuration changed, and the volumes are kept: corpora, keys, documents and
 the admin password carry over. The first start of a new version can mark files `pending`
 when an extractor, chunker or framing version changed. The next refresh reprocesses those files.
+
+Qdrant and Ollama are upgraded on their own. A Dexicon release changes the defaults in
+`docker-compose.yml`; a deployment that pins `QDRANT_TAG` or `OLLAMA_TAG` in `.env` keeps what
+it pins until the pin is edited.
+
+- **Qdrant:** move one minor version at a time (for example 1.16, 1.17, 1.18, 1.19, 1.20),
+  each time to the latest patch of that minor. Archive the `qdrant_data` volume and the Dexicon
+  data volume together first, stop the app, edit `QDRANT_TAG`, run
+  `docker compose up -d --no-deps dexicon-qdrant`, wait for the container to be healthy and
+  compare the point count of every collection before the next hop. The archive is the way back.
+  Measured on 2026-10-29 on 2 collections holding 253,101 points (3.7 GB): the hops to 1.17.1,
+  1.18.3, 1.19.2 and 1.20.0 each became healthy within about 10 s, and every collection kept its
+  point count, vector configuration and payload indexes. The data directory did not change in
+  size.
+- **Ollama:** edit `OLLAMA_TAG` and run `docker compose up -d --no-deps dexicon-ollama` while no
+  index job runs, because an embed call during the restart fails. For the same model files,
+  0.40.12 returns vectors that differ from 0.40.4 by a cosine similarity of at least 0.99997
+  over 24 texts, so a query vector and a stored vector made by different versions are close but
+  not identical.
 
 ## Sizing
 

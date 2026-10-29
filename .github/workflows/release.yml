@@ -126,7 +126,7 @@ jobs:
         run: |
           docker network create dexicon-verify
           docker run -d --name qdrant --network dexicon-verify \
-            -e QDRANT__SERVICE__API_KEY=verify-key qdrant/qdrant:v1.16.3
+            -e QDRANT__SERVICE__API_KEY=verify-key qdrant/qdrant:v1.20.0
           docker run -d --name dexicon --network dexicon-verify -p 8477:8477 \
             -e DEXICON__QDRANT__ENDPOINT=http://qdrant:6334 \
             -e DEXICON__QDRANT__APIKEY=verify-key \
