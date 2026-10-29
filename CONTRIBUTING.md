@@ -18,7 +18,7 @@ headed `Dexicon admin password`. Copy it without the quotes and sign in at
 http://127.0.0.1:8477, then create an API key under Access. On PowerShell:
 `docker compose logs dexicon | Select-String "admin password" -Context 0,2`.
 
-Toolchain: .NET SDK 10 (CI uses `10.0.x`) and, for the web UI in `clients/web-ui`, Node 24
+Toolchain: .NET SDK 10 (CI uses `10.0.x`) and, for the web UI in `clients/web-ui`, Node 26
 (the version CI uses). For a UI change, run what CI runs from that directory:
 
 ```bash
