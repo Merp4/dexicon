@@ -119,7 +119,7 @@ public sealed class ExtractedTextCacheTests : IDisposable
         await Should.ThrowAsync<ExtractionTimeoutException>(() =>
             Cache(db).ReadAsync(file.Full, file.Relative, new SwallowingTheTimeout(), timeoutSeconds: 1, CancellationToken.None));
 
-        (await db.FileTexts.CountAsync()).ShouldBe(0);
+        (await db.FileTexts.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]
@@ -163,7 +163,7 @@ public sealed class ExtractedTextCacheTests : IDisposable
         second.Text.Text[second.Text.Units[1].StartOffset].ShouldBe('t');
 
         await using var check = Db();
-        var row = await check.FileTexts.AsNoTracking().SingleAsync();
+        var row = await check.FileTexts.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         row.Text.Length.ShouldBe(row.ExtractedChars);
     }
 
@@ -198,7 +198,7 @@ public sealed class ExtractedTextCacheTests : IDisposable
         await Read(cache, File("c.pdf", "two"), extractor);
 
         extractor.Calls.ShouldBe(2);
-        (await db.FileTexts.CountAsync()).ShouldBe(2);
+        (await db.FileTexts.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2);
     }
 
     [Fact]
@@ -212,7 +212,7 @@ public sealed class ExtractedTextCacheTests : IDisposable
         await Read(cache, File("e.pdf", "identical"), extractor);
 
         extractor.Calls.ShouldBe(1);
-        (await db.FileTexts.CountAsync()).ShouldBe(1);
+        (await db.FileTexts.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     /// <summary>
@@ -238,7 +238,7 @@ public sealed class ExtractedTextCacheTests : IDisposable
 
         docx.Calls.ShouldBe(1);   // not served the epub's text
         second.Text.Text.ShouldBe("read as a docx");
-        (await db.FileTexts.CountAsync()).ShouldBe(2);
+        (await db.FileTexts.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2);
     }
 
     /// <summary>
@@ -255,9 +255,9 @@ public sealed class ExtractedTextCacheTests : IDisposable
 
         await Read(cache, file, new Counting("current text"));
 
-        var ahead = await db.FileTexts.SingleAsync();
+        var ahead = await db.FileTexts.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         ahead.ExtractorVersion = ExtractorVersions.Current + 1;
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         db.ChangeTracker.Clear();
 
         var older = new Counting("would be a downgrade");
@@ -281,9 +281,9 @@ public sealed class ExtractedTextCacheTests : IDisposable
 
         await Read(cache, file, new Counting("old text"));
 
-        var stale = await db.FileTexts.SingleAsync();
+        var stale = await db.FileTexts.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         stale.ExtractorVersion = ExtractorVersions.Current - 1;
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         db.ChangeTracker.Clear();
 
         var fresh = new Counting("new text");
@@ -292,7 +292,7 @@ public sealed class ExtractedTextCacheTests : IDisposable
         fresh.Calls.ShouldBe(1);
         result.Text.Text.ShouldBe("new text");
 
-        var rows = await db.FileTexts.AsNoTracking().ToListAsync();
+        var rows = await db.FileTexts.AsNoTracking().ToListAsync(cancellationToken: TestContext.Current.CancellationToken);
         rows.Count.ShouldBe(1);   // overwritten, not added beside
         rows[0].Text.ShouldBe("new text");
         rows[0].ExtractorVersion.ShouldBe(ExtractorVersions.Current);
@@ -316,7 +316,7 @@ public sealed class ExtractedTextCacheTests : IDisposable
         await Read(cache, file, extractor);
 
         extractor.Calls.ShouldBe(1);
-        var row = await db.FileTexts.AsNoTracking().SingleAsync();
+        var row = await db.FileTexts.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         row.EmptyReason.ShouldBe("no extractable text content");
         row.ExtractedChars.ShouldBe(3);
     }
@@ -397,7 +397,7 @@ public sealed class ExtractedTextCacheTests : IDisposable
         extractor.Calls.ShouldBe(1);
         read.Text.Text.ShouldBe("text of the read that lost");
         await using var check = Db();
-        var rows = await check.FileTexts.AsNoTracking().ToListAsync();
+        var rows = await check.FileTexts.AsNoTracking().ToListAsync(cancellationToken: TestContext.Current.CancellationToken);
         rows.Count.ShouldBe(1, "one row for one set of bytes under one extractor");
         rows[0].Text.ShouldBe("text of the read that won", "the row that was there first is kept");
         db.ChangeTracker.Entries<FileText>().ShouldBeEmpty("the loser's row is not left to fail the next save");
@@ -436,7 +436,7 @@ public sealed class ExtractedTextCacheTests : IDisposable
         read.Text.Text.ShouldBe("class A { }");
         read.Extractor.ShouldBeNull();
         read.Sha256.Length.ShouldBe(64);
-        (await db.FileTexts.CountAsync()).ShouldBe(0);
+        (await db.FileTexts.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     /// <summary>
@@ -459,7 +459,7 @@ public sealed class ExtractedTextCacheTests : IDisposable
         var cache = new ExtractedTextCache(db, limits, NullLogger<ExtractedTextCache>.Instance);
 
         // The only permit, held by something else for the duration.
-        await limits.Extractions.WaitAsync();
+        await limits.Extractions.WaitAsync(TestContext.Current.CancellationToken);
 
         using var stopping = new CancellationTokenSource();
         var extractor = new Counting("never reached");
@@ -471,14 +471,14 @@ public sealed class ExtractedTextCacheTests : IDisposable
         // is parked on the permit. Without this the cancellation lands on the catalogue
         // query instead, and the test passes with the blocking wait still in place -
         // which it did, until the control showed it.
-        await Task.Delay(500);
+        await Task.Delay(500, TestContext.Current.CancellationToken);
         extractor.Calls.ShouldBe(0, "the permit should not have been granted");
 
         await stopping.CancelAsync();
 
         // WHICH task finished, not that one did: an elapsed timeout completes
         // successfully too, so only comparing identities can fail.
-        var finished = await Task.WhenAny(reading, Task.Delay(TimeSpan.FromSeconds(15)));
+        var finished = await Task.WhenAny(reading, Task.Delay(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken));
         finished.ShouldBeSameAs(reading, "the wait for a permit has to carry the job's token");
         await Should.ThrowAsync<OperationCanceledException>(async () => await reading);
 

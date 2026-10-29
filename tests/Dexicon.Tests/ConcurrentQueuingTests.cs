@@ -44,8 +44,8 @@ public sealed class ConcurrentQueuingTests
         gate.Armed = true;
 
         var found = await Task.WhenAll(
-            first.Jobs.FirstOrDefaultAsync(j => j.State == JobState.Queued),
-            second.Jobs.FirstOrDefaultAsync(j => j.State == JobState.Queued));
+            first.Jobs.FirstOrDefaultAsync(j => j.State == JobState.Queued, TestContext.Current.CancellationToken),
+            second.Jobs.FirstOrDefaultAsync(j => j.State == JobState.Queued, TestContext.Current.CancellationToken));
 
         gate.Met.ShouldBeTrue("the gate has to have held both lookups at once");
         found.ShouldAllBe(j => j == null);
@@ -64,13 +64,13 @@ public sealed class ConcurrentQueuingTests
         gate.Armed = true;
 
         var queued = await Task.WhenAll(
-            firstQueue.EnqueueAsync(IndexingHarness.CorpusId, JobKind.Refresh),
-            secondQueue.EnqueueAsync(IndexingHarness.CorpusId, JobKind.Refresh));
+            firstQueue.EnqueueAsync(IndexingHarness.CorpusId, JobKind.Refresh, ct: TestContext.Current.CancellationToken),
+            secondQueue.EnqueueAsync(IndexingHarness.CorpusId, JobKind.Refresh, ct: TestContext.Current.CancellationToken));
 
         gate.Arrivals.ShouldBeGreaterThanOrEqualTo(2, "both requests have to have looked for a queued job");
         gate.Met.ShouldBeFalse("the second request was held back until the first had saved its job");
         await using var check = harness.NewContext();
-        (await check.Jobs.CountAsync(j => j.State == JobState.Queued)).ShouldBe(1, "one queued job for one corpus");
+        (await check.Jobs.CountAsync(j => j.State == JobState.Queued, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "one queued job for one corpus");
         queued[1].Id.ShouldBe(queued[0].Id, "the request that lost is answered with the job that won");
     }
 
@@ -89,18 +89,18 @@ public sealed class ConcurrentQueuingTests
                 State = CorpusState.Ready,
                 CreatedUtc = DateTime.UtcNow,
             });
-            await seeding.SaveChangesAsync();
+            await seeding.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var first = harness.NewContext();
         await using var second = harness.NewContext();
 
         var queued = await Task.WhenAll(
-            QueueOn(harness, first).EnqueueAsync(IndexingHarness.CorpusId, JobKind.Refresh),
-            QueueOn(harness, second).EnqueueAsync("corpus-2", JobKind.Refresh));
+            QueueOn(harness, first).EnqueueAsync(IndexingHarness.CorpusId, JobKind.Refresh, ct: TestContext.Current.CancellationToken),
+            QueueOn(harness, second).EnqueueAsync("corpus-2", JobKind.Refresh, ct: TestContext.Current.CancellationToken));
 
         queued[1].Id.ShouldNotBe(queued[0].Id);
         await using var check = harness.NewContext();
-        (await check.Jobs.CountAsync()).ShouldBe(2);
+        (await check.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2);
     }
 }

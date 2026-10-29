@@ -138,7 +138,7 @@ public sealed class SourceRootLinkTests : IDisposable
         Directory.CreateSymbolicLink(Path.Combine(_workspace, "inward"), Path.Combine(_workspace, "keep"));
         Directory.CreateSymbolicLink(Path.Combine(_workspace, "outward"), _outside);
 
-        var walked = WorkspaceWalker.Walk(_workspace, true, null, null, 1_000_000);
+        var walked = WorkspaceWalker.Walk(_workspace, true, null, null, 1_000_000, ct: TestContext.Current.CancellationToken);
 
         walked.Files.Select(f => f.RelativePath).ShouldBe(["keep/app.cs"]);
         walked.SkippedFiles
@@ -155,7 +155,7 @@ public sealed class SourceRootLinkTests : IDisposable
         File.CreateSymbolicLink(Path.Combine(_workspace, "alias.cs"), Path.Combine(_workspace, "app.cs"));
         File.CreateSymbolicLink(Path.Combine(_workspace, "link.txt"), Path.Combine(_outside, "secret.txt"));
 
-        var walked = WorkspaceWalker.Walk(_workspace, true, null, null, 1_000_000);
+        var walked = WorkspaceWalker.Walk(_workspace, true, null, null, 1_000_000, ct: TestContext.Current.CancellationToken);
 
         walked.Files.Select(f => f.RelativePath).ShouldBe(["app.cs"]);
         walked.SkippedFiles
@@ -172,8 +172,7 @@ public sealed class SourceRootLinkTests : IDisposable
         File.WriteAllText(Path.Combine(_workspace, ".gitignore"), "vendor/\n");
         Directory.CreateSymbolicLink(Path.Combine(_workspace, "vendor"), Path.Combine(_workspace, "real"));
 
-        WorkspaceWalker.Walk(_workspace, true, null, null, 1_000_000)
-            .SkippedFiles.ShouldNotContain(s => s.RelativePath == "vendor");
+        WorkspaceWalker.Walk(_workspace, true, null, null, 1_000_000, ct: TestContext.Current.CancellationToken).SkippedFiles.ShouldNotContain(s => s.RelativePath == "vendor");
     }
 
     [Fact]
@@ -189,8 +188,7 @@ public sealed class SourceRootLinkTests : IDisposable
         Directory.CreateSymbolicLink(
             Path.Combine(_workspace, "link"), Path.Combine(_workspace, "alias", "..", "hostdir"));
 
-        WorkspaceWalker.Walk(_workspace, true, null, null, 1_000_000)
-            .Files.ShouldBeEmpty();
+        WorkspaceWalker.Walk(_workspace, true, null, null, 1_000_000, ct: TestContext.Current.CancellationToken).Files.ShouldBeEmpty();
 
         Should.Throw<UnauthorizedAccessException>(() => WorkspaceDiscovery.Resolve(_workspace, "link"));
     }
@@ -204,8 +202,7 @@ public sealed class SourceRootLinkTests : IDisposable
         File.WriteAllText(Path.Combine(_workspace, "app.cs"), "class A {}");
         Directory.CreateSymbolicLink(Path.Combine(_workspace, "loop"), _workspace);
 
-        WorkspaceWalker.Walk(_workspace, true, null, null, 1_000_000)
-            .Files.Select(f => f.RelativePath).ShouldBe(["app.cs"]);
+        WorkspaceWalker.Walk(_workspace, true, null, null, 1_000_000, ct: TestContext.Current.CancellationToken).Files.Select(f => f.RelativePath).ShouldBe(["app.cs"]);
     }
 
     [Fact]
@@ -240,7 +237,7 @@ public sealed class SourceRootLinkTests : IDisposable
         var gaps = SourceCoverage.Find(_workspace, [
             new SourceCoverage.SourceRoot("link/a", 262_144),
             new SourceCoverage.SourceRoot("link/b", 262_144),
-        ]);
+        ], ct: TestContext.Current.CancellationToken);
 
         gaps.ShouldBeEmpty();
     }

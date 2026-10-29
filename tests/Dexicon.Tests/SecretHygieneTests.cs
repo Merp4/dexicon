@@ -122,14 +122,14 @@ public sealed class SecretHygieneTests
     public async Task TokenIsVerifiableOnceAndNeverRecoverable()
     {
         await using var conn = new SqliteConnection("Data Source=:memory:");
-        await conn.OpenAsync();
+        await conn.OpenAsync(TestContext.Current.CancellationToken);
         await using var db = new CatalogDbContext(
             new DbContextOptionsBuilder<CatalogDbContext>().UseSqlite(conn).Options);
-        await db.Database.EnsureCreatedAsync();
-        await db.SaveChangesAsync();
+        await db.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var service = new TokenService(db, TimeProvider.System);
-        var (row, issued) = await service.CreateAsync("test", [Scopes.Search], null);
+        var (row, issued) = await service.CreateAsync("test", [Scopes.Search], null, ct: TestContext.Current.CancellationToken);
 
         issued.Presented.ShouldStartWith("dex_");
 
@@ -139,32 +139,31 @@ public sealed class SecretHygieneTests
         row.TokenHash.Length.ShouldBe(32);
         row.TokenSalt.Length.ShouldBe(32);
 
-        (await service.VerifyAsync(issued.Presented)).ShouldNotBeNull();
-        (await service.VerifyAsync(issued.Presented + "x")).ShouldBeNull();
-        (await service.VerifyAsync("dex_wrong_secret")).ShouldBeNull();
-        (await service.VerifyAsync(null)).ShouldBeNull();
-        (await service.VerifyAsync("not-a-dexicon-token")).ShouldBeNull();
+        (await service.VerifyAsync(issued.Presented, TestContext.Current.CancellationToken)).ShouldNotBeNull();
+        (await service.VerifyAsync(issued.Presented + "x", TestContext.Current.CancellationToken)).ShouldBeNull();
+        (await service.VerifyAsync("dex_wrong_secret", TestContext.Current.CancellationToken)).ShouldBeNull();
+        (await service.VerifyAsync(null, TestContext.Current.CancellationToken)).ShouldBeNull();
+        (await service.VerifyAsync("not-a-dexicon-token", TestContext.Current.CancellationToken)).ShouldBeNull();
     }
 
     [Fact]
     public async Task TokenRevokedAndExpiredStopVerifying()
     {
         await using var conn = new SqliteConnection("Data Source=:memory:");
-        await conn.OpenAsync();
+        await conn.OpenAsync(TestContext.Current.CancellationToken);
         await using var db = new CatalogDbContext(
             new DbContextOptionsBuilder<CatalogDbContext>().UseSqlite(conn).Options);
-        await db.Database.EnsureCreatedAsync();
-        await db.SaveChangesAsync();
+        await db.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var service = new TokenService(db, TimeProvider.System);
 
-        var (_, live) = await service.CreateAsync("live", [Scopes.Search], null);
-        (await service.RevokeAsync((await service.VerifyAsync(live.Presented))!.TokenId)).ShouldBeTrue();
-        (await service.VerifyAsync(live.Presented)).ShouldBeNull("a revoked token must stop working");
+        var (_, live) = await service.CreateAsync("live", [Scopes.Search], null, ct: TestContext.Current.CancellationToken);
+        (await service.RevokeAsync((await service.VerifyAsync(live.Presented, TestContext.Current.CancellationToken))!.TokenId, TestContext.Current.CancellationToken)).ShouldBeTrue();
+        (await service.VerifyAsync(live.Presented, TestContext.Current.CancellationToken)).ShouldBeNull("a revoked token must stop working");
 
-        var (_, expired) = await service.CreateAsync("expired", [Scopes.Search],
-            DateTime.UtcNow.AddSeconds(-1));
-        (await service.VerifyAsync(expired.Presented)).ShouldBeNull("an expired token must stop working");
+        var (_, expired) = await service.CreateAsync("expired", [Scopes.Search], DateTime.UtcNow.AddSeconds(-1), ct: TestContext.Current.CancellationToken);
+        (await service.VerifyAsync(expired.Presented, TestContext.Current.CancellationToken)).ShouldBeNull("an expired token must stop working");
     }
 
     [Fact]
@@ -174,20 +173,20 @@ public sealed class SecretHygieneTests
         // be disabled, and revocation is now the only way a live key stops working, so it
         // is the path worth holding down.
         await using var conn = new SqliteConnection("Data Source=:memory:");
-        await conn.OpenAsync();
+        await conn.OpenAsync(TestContext.Current.CancellationToken);
         await using var db = new CatalogDbContext(
             new DbContextOptionsBuilder<CatalogDbContext>().UseSqlite(conn).Options);
-        await db.Database.EnsureCreatedAsync();
-        await db.SaveChangesAsync();
+        await db.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var service = new TokenService(db, TimeProvider.System);
-        var (row, issued) = await service.CreateAsync("x", [Scopes.Search], null);
-        (await service.VerifyAsync(issued.Presented)).ShouldNotBeNull();
+        var (row, issued) = await service.CreateAsync("x", [Scopes.Search], null, ct: TestContext.Current.CancellationToken);
+        (await service.VerifyAsync(issued.Presented, TestContext.Current.CancellationToken)).ShouldNotBeNull();
 
-        (await service.RevokeAsync(row.Id)).ShouldBeTrue();
+        (await service.RevokeAsync(row.Id, TestContext.Current.CancellationToken)).ShouldBeTrue();
         db.ChangeTracker.Clear();
 
-        (await service.VerifyAsync(issued.Presented)).ShouldBeNull();
+        (await service.VerifyAsync(issued.Presented, TestContext.Current.CancellationToken)).ShouldBeNull();
     }
 
     [Fact]

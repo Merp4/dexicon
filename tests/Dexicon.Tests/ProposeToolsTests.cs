@@ -22,13 +22,13 @@ public sealed class ProposeToolsTests : IAsyncLifetime
 {
     private IndexingHarness _harness = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _harness = await IndexingHarness.StartAsync("notes", "docs");
         await _harness.SeedCorpusAsync(SourceKind.Workspace, sets: 2);
     }
 
-    public async Task DisposeAsync() => await _harness.DisposeAsync();
+    public async ValueTask DisposeAsync() => await _harness.DisposeAsync();
 
     private static RequestContext As(string tokenId, params string[] scopes) =>
         new() { Principal = new Principal(tokenId, "agent-" + tokenId, scopes.ToHashSet(StringComparer.Ordinal)) };
@@ -74,7 +74,7 @@ public sealed class ProposeToolsTests : IAsyncLifetime
                 .Message.ShouldContain("'propose'");
         }
 
-        (await db.Proposals.AnyAsync()).ShouldBeFalse();
+        (await db.Proposals.AnyAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 
     [Fact]
@@ -129,10 +129,10 @@ public sealed class ProposeToolsTests : IAsyncLifetime
         text.ShouldContain("remove the source files:docs from corpus 'notes'");
         text.ShouldContain("removal_status shows how it is decided");
         text.ShouldNotContain("UI", Case.Sensitive, "an agent cannot open a screen, so it is pointed to the tool");
-        var row = await db.Proposals.SingleAsync();
+        var row = await db.Proposals.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         text.ShouldContain(row.Id);
         (row.Status, row.TokenId, row.Reason).ShouldBe((ProposalStatus.Pending, "k1", "superseded"));
-        (await db.Sources.CountAsync()).ShouldBe(2);
+        (await db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2);
     }
 
     [Fact]
@@ -152,7 +152,7 @@ public sealed class ProposeToolsTests : IAsyncLifetime
         other.ShouldNotContain("shows how it is decided", Case.Sensitive, "removal_status lists a key's own requests and would not show this one");
         other.ShouldContain("lists only this key's own requests");
         other.ShouldNotContain("agent-k1", Case.Insensitive, "another key's name is not this key's to read");
-        (await db.Proposals.CountAsync()).ShouldBe(1);
+        (await db.Proposals.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]
@@ -168,7 +168,7 @@ public sealed class ProposeToolsTests : IAsyncLifetime
 
         var noReason = await Should.ThrowAsync<McpException>(() => ProposeAsync(db, Proposer(), "source", target: "docs", reason: ""));
         noReason.Message.ShouldContain("why");
-        (await db.Proposals.AnyAsync()).ShouldBeFalse();
+        (await db.Proposals.AnyAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 
     [Theory]
@@ -183,7 +183,7 @@ public sealed class ProposeToolsTests : IAsyncLifetime
 
         refused.Message.ShouldContain("is not a folder path");
         refused.Message.ShouldContain("files:docs, files:notes");
-        (await db.Proposals.AnyAsync()).ShouldBeFalse();
+        (await db.Proposals.AnyAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 
     [Fact]
@@ -191,15 +191,15 @@ public sealed class ProposeToolsTests : IAsyncLifetime
     {
         await using var db = _harness.NewContext();
         db.Corpora.Add(new Corpus { Id = "corpus-2", Name = "papers", State = CorpusState.Ready, CreatedUtc = DateTime.UtcNow });
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         var (row, _) = await new TokenService(db, TimeProvider.System)
-            .CreateAsync("mapped", [Scopes.Search, Scopes.Propose], null, ["corpus-2"]);
+            .CreateAsync("mapped", [Scopes.Search, Scopes.Propose], null, ["corpus-2"], TestContext.Current.CancellationToken);
 
         var ex = await Should.ThrowAsync<McpException>(
             () => ProposeAsync(db, As(row.Id, Scopes.Search, Scopes.Propose), "corpus", corpus: "notes"));
 
         ex.Message.ShouldContain("papers", Case.Insensitive, "it is told what it does reach");
-        (await db.Proposals.AnyAsync()).ShouldBeFalse();
+        (await db.Proposals.AnyAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 
     [Fact]
@@ -210,8 +210,8 @@ public sealed class ProposeToolsTests : IAsyncLifetime
         await ProposeAsync(db, Proposer("k1"), "chunk_set", target: "alt-1");
         await ProposeAsync(db, Proposer("k2"), "source", target: "notes", reason: "the other key's");
         var svc = _harness.NewProposals(db);
-        var ids = await db.Proposals.Where(p => p.TokenId == "k1").OrderBy(p => p.CreatedUtc).Select(p => p.Id).ToListAsync();
-        (await svc.RejectAsync(ids[0], default)).Refusal.ShouldBeNull();
+        var ids = await db.Proposals.Where(p => p.TokenId == "k1").OrderBy(p => p.CreatedUtc).Select(p => p.Id).ToListAsync(cancellationToken: TestContext.Current.CancellationToken);
+        (await svc.RejectAsync(ids[0], TestContext.Current.CancellationToken)).Refusal.ShouldBeNull();
 
         var k1 = await StatusAsync(db, Proposer("k1"));
         var k2 = await StatusAsync(db, Proposer("k2"));
@@ -226,7 +226,7 @@ public sealed class ProposeToolsTests : IAsyncLifetime
         k2.ShouldNotContain("chunk set alt-1", Case.Sensitive, "the other key's request; the set itself is listed for everyone");
         cannotAsk.ShouldNotContain("removals this key has asked for");
 
-        await svc.ApproveAsync(ids[1], default);
+        await svc.ApproveAsync(ids[1], TestContext.Current.CancellationToken);
         (await StatusAsync(db, Proposer("k1"))).ShouldContain("approved");
         (await StatusAsync(db, Proposer("k1"))).ShouldContain("it has been removed");
     }
@@ -241,7 +241,7 @@ public sealed class ProposeToolsTests : IAsyncLifetime
 
         var text = await RemovalStatusAsync(db, asker);
 
-        var id = await db.Proposals.Where(p => p.TokenId == "k1").Select(p => p.Id).SingleAsync();
+        var id = await db.Proposals.Where(p => p.TokenId == "k1").Select(p => p.Id).SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         text.ShouldContain($"{id}  chunk set alt-1 in notes  waiting since");
         text.ShouldNotContain("files:docs", Case.Sensitive, "the other key's request");
         (await Should.ThrowAsync<McpException>(() => StatusAsync(db, asker))).Message.ShouldContain("'search'");
@@ -253,8 +253,8 @@ public sealed class ProposeToolsTests : IAsyncLifetime
     {
         await using var db = _harness.NewContext();
         await ProposeAsync(db, Proposer(), "corpus", reason: "a duplicate of docs");
-        var id = await db.Proposals.Select(p => p.Id).SingleAsync();
-        (await _harness.NewProposals(db).ApproveAsync(id, default)).Refusal.ShouldBeNull();
+        var id = await db.Proposals.Select(p => p.Id).SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
+        (await _harness.NewProposals(db).ApproveAsync(id, TestContext.Current.CancellationToken)).Refusal.ShouldBeNull();
 
         // index_status needs the corpus, which is the thing that was removed.
         await Should.ThrowAsync<McpException>(() => StatusAsync(db, Proposer()));
@@ -273,7 +273,7 @@ public sealed class ProposeToolsTests : IAsyncLifetime
         db.Proposals.AddRange(Enumerable.Range(0, 25)
             .Select(i => Stored($"r{i:00}", "k1", ProposalStatus.Rejected, start.AddMinutes(i))));
         db.Proposals.Add(Stored("other", "k2", ProposalStatus.Pending, start));
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var lines = (await RemovalStatusAsync(db, Proposer("k1"))).Split('\n', StringSplitOptions.RemoveEmptyEntries);
 
@@ -293,10 +293,9 @@ public sealed class ProposeToolsTests : IAsyncLifetime
         await using var db = _harness.NewContext();
         await ProposeAsync(db, Proposer(), "source", target: "docs");
         await using (var admin = _harness.NewContext())
-            await _harness.NewConfiguration(admin).RemoveSourceAsync(
-                await admin.Corpora.SingleAsync(c => c.Id == IndexingHarness.CorpusId), "source-2", default);
-        var id = await db.Proposals.Select(p => p.Id).SingleAsync();
-        await _harness.NewProposals(db).ApproveAsync(id, default);
+            await _harness.NewConfiguration(admin).RemoveSourceAsync(await admin.Corpora.SingleAsync(c => c.Id == IndexingHarness.CorpusId, cancellationToken: TestContext.Current.CancellationToken), "source-2", TestContext.Current.CancellationToken);
+        var id = await db.Proposals.Select(p => p.Id).SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
+        await _harness.NewProposals(db).ApproveAsync(id, TestContext.Current.CancellationToken);
 
         var text = await StatusAsync(db, Proposer());
 
@@ -310,7 +309,7 @@ public sealed class ProposeToolsTests : IAsyncLifetime
         await using var db = _harness.NewContext();
         var tokens = new TokenService(db, TimeProvider.System);
 
-        var (row, _) = await tokens.CreateAsync("asker", [Scopes.Propose], null);
+        var (row, _) = await tokens.CreateAsync("asker", [Scopes.Propose], null, ct: TestContext.Current.CancellationToken);
 
         row.Scopes.Split(',').ShouldBe([Scopes.Propose]);
         Scopes.Issuable.ShouldContain(Scopes.Propose);

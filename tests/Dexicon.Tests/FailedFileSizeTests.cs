@@ -36,17 +36,16 @@ public sealed class FailedFileSizeTests
 
         await using var harness = await IndexingHarness.StartAsync();
         await harness.SeedCorpusAsync(SourceKind.Workspace);
-        await File.WriteAllBytesAsync(
-            Path.Combine(harness.SourceDirectory, "report.pdf"), TruncatedPdf(Size));
+        await File.WriteAllBytesAsync(Path.Combine(harness.SourceDirectory, "report.pdf"), TruncatedPdf(Size), TestContext.Current.CancellationToken);
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         job.FilesFailed.ShouldBe(1, "the file must actually have failed to read");
 
         var state = await harness.StateOfAsync("report.pdf");
         state.Status.ShouldBe(FileStatus.Failed);
 
         await using var db = harness.NewContext();
-        var file = await db.Files.SingleAsync(f => f.RelativePath == "report.pdf");
+        var file = await db.Files.SingleAsync(f => f.RelativePath == "report.pdf", cancellationToken: TestContext.Current.CancellationToken);
         file.SizeBytes.ShouldBe(Size,
             "the walk measured the file before the read was attempted");
     }
@@ -63,17 +62,16 @@ public sealed class FailedFileSizeTests
 
         await using var harness = await IndexingHarness.StartAsync();
         await harness.SeedCorpusAsync(SourceKind.Workspace);
-        await File.WriteAllTextAsync(
-            Path.Combine(harness.SourceDirectory, "dump.txt"), new string('x', Size));
+        await File.WriteAllTextAsync(Path.Combine(harness.SourceDirectory, "dump.txt"), new string('x', Size), TestContext.Current.CancellationToken);
 
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var state = await harness.StateOfAsync("dump.txt");
         state.Status.ShouldBe(FileStatus.Skipped);
         state.StatusDetail.ShouldNotBeNull().ShouldContain("size cap");
 
         await using var db = harness.NewContext();
-        var file = await db.Files.SingleAsync(f => f.RelativePath == "dump.txt");
+        var file = await db.Files.SingleAsync(f => f.RelativePath == "dump.txt", cancellationToken: TestContext.Current.CancellationToken);
         file.SizeBytes.ShouldBe(Size);
     }
 }

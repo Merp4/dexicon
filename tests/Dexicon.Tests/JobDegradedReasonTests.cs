@@ -22,7 +22,7 @@ public sealed class JobDegradedReasonTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         harness.Embedder = new FailsOn("unembeddable");
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.State.ShouldBe(JobState.Degraded);
         job.Error.ShouldNotBeNull();
@@ -32,7 +32,7 @@ public sealed class JobDegradedReasonTests
         // The source that needs someone to look at a mount outranks files that are retried
         // on their own next run.
         await using var db = harness.NewContext();
-        (await db.Corpora.FirstAsync()).State.ShouldBe(CorpusState.Unavailable);
+        (await db.Corpora.FirstAsync(cancellationToken: TestContext.Current.CancellationToken)).State.ShouldBe(CorpusState.Unavailable);
     }
 
     [Fact]
@@ -43,7 +43,7 @@ public sealed class JobDegradedReasonTests
         Directory.Delete(harness.SourceDirectories[1]);
         await harness.SeedCorpusAsync(SourceKind.Workspace);
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.Error.ShouldNotBeNull();
         job.Error.ShouldContain("'first' is not available");
@@ -59,7 +59,7 @@ public sealed class JobDegradedReasonTests
         Directory.Delete(harness.SourceDirectory);
         await harness.SeedCorpusAsync(SourceKind.Workspace, sets: 2);
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.Error.ShouldNotBeNull();
         job.Error.Split("'gone' is not available").Length.ShouldBe(2);
@@ -73,7 +73,7 @@ public sealed class JobDegradedReasonTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await AddSourceOfUnknownKindAsync(harness);
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.State.ShouldBe(JobState.Failed);
         job.Error.ShouldNotBeNull();
@@ -81,7 +81,7 @@ public sealed class JobDegradedReasonTests
         job.Error.ShouldContain("does not know how to index");
 
         await using var check = harness.NewContext();
-        (await check.Corpora.FirstAsync()).State.ShouldBe(CorpusState.Unavailable);
+        (await check.Corpora.FirstAsync(cancellationToken: TestContext.Current.CancellationToken)).State.ShouldBe(CorpusState.Unavailable);
     }
 
     [Fact]
@@ -94,7 +94,7 @@ public sealed class JobDegradedReasonTests
         await AddSourceOfUnknownKindAsync(harness);
         harness.Embedder = new FailsOn("unembeddable");
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.State.ShouldBe(JobState.Failed);
         job.Error.ShouldNotBeNull();

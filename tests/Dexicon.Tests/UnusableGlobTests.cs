@@ -436,19 +436,17 @@ public sealed class UnusableGlobTests
     public async Task ASourceAddedWithAnUnusableIncludeOrExcludeGlobIsRefusedAndNothingIsSaved()
     {
         await using var s = await Seeded.StartAsync();
-        var before = await s.Db.Sources.CountAsync();
+        var before = await s.Db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-        var include = await s.Config.AddSourceAsync(
-            s.Corpus, new AddSourceRequest("", IncludeGlobs: ["**/*.md", "[z-a]"]), default);
-        var exclude = await s.Config.AddSourceAsync(
-            s.Corpus, new AddSourceRequest("", ExcludeGlobs: NullAmongPatterns), default);
+        var include = await s.Config.AddSourceAsync(s.Corpus, new AddSourceRequest("", IncludeGlobs: ["**/*.md", "[z-a]"]), TestContext.Current.CancellationToken);
+        var exclude = await s.Config.AddSourceAsync(s.Corpus, new AddSourceRequest("", ExcludeGlobs: NullAmongPatterns), TestContext.Current.CancellationToken);
 
         include.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
         include.Refusal.Detail.ShouldContain("includeGlobs[1]");
         include.Refusal.Detail.ShouldContain("include[1] for the configure tools");
         exclude.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
         exclude.Refusal.Detail.ShouldContain("excludeGlobs[1]");
-        (await s.Db.Sources.CountAsync()).ShouldBe(before, "a refused source is not saved");
+        (await s.Db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(before, "a refused source is not saved");
     }
 
     [Fact]
@@ -456,8 +454,7 @@ public sealed class UnusableGlobTests
     {
         await using var s = await Seeded.StartAsync();
 
-        var added = await s.Config.AddSourceAsync(
-            s.Corpus, new AddSourceRequest("", IncludeGlobs: ["**/*.md", "[a-c]*.txt"], ExcludeGlobs: ["!drafts/"]), default);
+        var added = await s.Config.AddSourceAsync(s.Corpus, new AddSourceRequest("", IncludeGlobs: ["**/*.md", "[a-c]*.txt"], ExcludeGlobs: ["!drafts/"]), TestContext.Current.CancellationToken);
 
         added.Refusal.ShouldBeNull();
         added.Value!.Source.IncludeGlobs.ShouldBe(["**/*.md", "[a-c]*.txt"]);
@@ -469,8 +466,8 @@ public sealed class UnusableGlobTests
         // The glob check comes before the check that the folder is a repository, so which refusal comes back says which rule ran.
         await using var s = await Seeded.StartAsync();
 
-        var empty = await s.Config.AddSourceAsync(s.Corpus, new AddSourceRequest("", GitHistory: true, IncludeGlobs: [""]), default);
-        var oddClass = await s.Config.AddSourceAsync(s.Corpus, new AddSourceRequest("", GitHistory: true, IncludeGlobs: ["[z-a]"]), default);
+        var empty = await s.Config.AddSourceAsync(s.Corpus, new AddSourceRequest("", GitHistory: true, IncludeGlobs: [""]), TestContext.Current.CancellationToken);
+        var oddClass = await s.Config.AddSourceAsync(s.Corpus, new AddSourceRequest("", GitHistory: true, IncludeGlobs: ["[z-a]"]), TestContext.Current.CancellationToken);
 
         empty.Refusal.ShouldNotBeNull().Title.ShouldBe("Unusable glob");
         (oddClass.Refusal?.Title).ShouldNotBe("Unusable glob", "git reads the list as pathspecs, so the walk's parser does not judge it");
@@ -483,8 +480,7 @@ public sealed class UnusableGlobTests
     {
         await using var s = await Seeded.StartAsync();
 
-        var outcome = await s.Config.UpdateSourceAsync(s.Corpus, IndexingHarness.SourceIdFor(0),
-            new UpdateSourceRequest(IncludeGlobs: ["[z-a]"], Clear: [name]), default);
+        var outcome = await s.Config.UpdateSourceAsync(s.Corpus, IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(IncludeGlobs: ["[z-a]"], Clear: [name]), TestContext.Current.CancellationToken);
 
         outcome.Refusal.ShouldBeNull();
     }
@@ -496,10 +492,8 @@ public sealed class UnusableGlobTests
         await using var s = await Seeded.StartAsync();
         var id = IndexingHarness.SourceIdFor(0);
 
-        var excludeCleared = await s.Config.UpdateSourceAsync(s.Corpus, id,
-            new UpdateSourceRequest(ExcludeGlobs: ["[z-a]"], Clear: ["excludeGlobs"]), default);
-        var includeStillJudged = await s.Config.UpdateSourceAsync(s.Corpus, id,
-            new UpdateSourceRequest(IncludeGlobs: ["[z-a]"], Clear: ["excludeGlobs"]), default);
+        var excludeCleared = await s.Config.UpdateSourceAsync(s.Corpus, id, new UpdateSourceRequest(ExcludeGlobs: ["[z-a]"], Clear: ["excludeGlobs"]), TestContext.Current.CancellationToken);
+        var includeStillJudged = await s.Config.UpdateSourceAsync(s.Corpus, id, new UpdateSourceRequest(IncludeGlobs: ["[z-a]"], Clear: ["excludeGlobs"]), TestContext.Current.CancellationToken);
 
         excludeCleared.Refusal.ShouldBeNull();
         includeStillJudged.Refusal.ShouldNotBeNull().Detail.ShouldContain("includeGlobs[0]");
@@ -514,12 +508,11 @@ public sealed class UnusableGlobTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await using var db = harness.NewContext();
 
-        var outcome = await harness.NewConfiguration(db).CreateCorpusAsync(
-            new CreateCorpusRequest("papers"), default, defaults: DefaultsWith("includeGlobs", pattern));
+        var outcome = await harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("papers"), TestContext.Current.CancellationToken, defaults: DefaultsWith("includeGlobs", pattern));
 
         outcome.Refusal.ShouldNotBeNull().Detail.ShouldContain("includeGlobs[0]");
         outcome.Refusal.Detail.ShouldContain(reason);
-        (await db.Corpora.AnyAsync(c => c.Name == "papers")).ShouldBeFalse();
+        (await db.Corpora.AnyAsync(c => c.Name == "papers", cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 
     [Fact]
@@ -527,12 +520,12 @@ public sealed class UnusableGlobTests
     {
         await using var s = await Seeded.StartAsync();
 
-        var update = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("includeGlobs", "")), default);
-        var create = await s.Config.CreateCorpusAsync(new CreateCorpusRequest("papers"), default, defaults: DefaultsWith("includeGlobs", ""));
+        var update = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("includeGlobs", "")), TestContext.Current.CancellationToken);
+        var create = await s.Config.CreateCorpusAsync(new CreateCorpusRequest("papers"), TestContext.Current.CancellationToken, defaults: DefaultsWith("includeGlobs", ""));
 
         update.Refusal.ShouldNotBeNull().Detail.ShouldContain("includeGlobs[0]");
         create.Refusal.ShouldNotBeNull().Detail.ShouldContain("includeGlobs[0]");
-        (await s.Db.Corpora.AnyAsync(c => c.Name == "papers")).ShouldBeFalse();
+        (await s.Db.Corpora.AnyAsync(c => c.Name == "papers", cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 
     private static CorpusDefaults DefaultsWith(string field, params string[] globs) => field == "includeGlobs"
@@ -548,17 +541,17 @@ public sealed class UnusableGlobTests
         var id = IndexingHarness.SourceIdFor(0);
         (await s.Config.UpdateSourceAsync(s.Corpus, id, field == "includeGlobs"
             ? new UpdateSourceRequest(IncludeGlobs: ["**/*.md"])
-            : new UpdateSourceRequest(ExcludeGlobs: ["**/*.md"]), default)).Refusal.ShouldBeNull();
+            : new UpdateSourceRequest(ExcludeGlobs: ["**/*.md"]), TestContext.Current.CancellationToken)).Refusal.ShouldBeNull();
 
         var outcome = await s.Config.UpdateSourceAsync(s.Corpus, id, field == "includeGlobs"
             ? new UpdateSourceRequest(IncludeGlobs: ["[z-a]"])
-            : new UpdateSourceRequest(ExcludeGlobs: ["[z-a]"]), default);
+            : new UpdateSourceRequest(ExcludeGlobs: ["[z-a]"]), TestContext.Current.CancellationToken);
 
         outcome.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
         outcome.Refusal.Detail.ShouldContain($"{field}[0]");
         outcome.Refusal.Detail.ShouldContain("does not compile", Case.Sensitive, "a file source's list is read by the walk's parser");
         s.Db.ChangeTracker.Clear();
-        var saved = await s.Db.Sources.AsNoTracking().FirstAsync(x => x.Id == id);
+        var saved = await s.Db.Sources.AsNoTracking().FirstAsync(x => x.Id == id, cancellationToken: TestContext.Current.CancellationToken);
         SourceFilters.Globs(field == "includeGlobs" ? saved.IncludeGlobs : saved.ExcludeGlobs)
             .ShouldBe(["**/*.md"], "the refused list is not saved over the one the source has");
     }
@@ -570,12 +563,11 @@ public sealed class UnusableGlobTests
         await using var s = await Seeded.StartAsync();
         var id = IndexingHarness.SourceIdFor(0);
 
-        var outcome = await s.Config.UpdateSourceAsync(s.Corpus, id,
-            new UpdateSourceRequest(IncludeGlobs: ["[z-a]"], Clear: ["includeGlobs"]), default);
+        var outcome = await s.Config.UpdateSourceAsync(s.Corpus, id, new UpdateSourceRequest(IncludeGlobs: ["[z-a]"], Clear: ["includeGlobs"]), TestContext.Current.CancellationToken);
 
         outcome.Refusal.ShouldBeNull();
         s.Db.ChangeTracker.Clear();
-        (await s.Db.Sources.AsNoTracking().FirstAsync(x => x.Id == id)).IncludeGlobs.ShouldBeNull();
+        (await s.Db.Sources.AsNoTracking().FirstAsync(x => x.Id == id, cancellationToken: TestContext.Current.CancellationToken)).IncludeGlobs.ShouldBeNull();
     }
 
     [Fact]
@@ -584,13 +576,13 @@ public sealed class UnusableGlobTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.GitHistory);
         await using var db = harness.NewContext();
-        var corpus = await db.Corpora.SingleAsync();
+        var corpus = await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         var config = harness.NewConfiguration(db);
         var id = IndexingHarness.SourceIdFor(0);
 
-        (await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["[z-a]"]), default))
+        (await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["[z-a]"]), TestContext.Current.CancellationToken))
             .Refusal.ShouldBeNull();
-        var blank = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["docs/", ""]), default);
+        var blank = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["docs/", ""]), TestContext.Current.CancellationToken);
 
         blank.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
         blank.Refusal.Detail.ShouldContain("includeGlobs[1]");
@@ -604,15 +596,15 @@ public sealed class UnusableGlobTests
     public async Task CorpusDefaultsWithAnUnusableGlobAreRefusedAndTheOldOnesKept(string field)
     {
         await using var s = await Seeded.StartAsync();
-        (await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith(field, "**/*.md")), default))
+        (await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith(field, "**/*.md")), TestContext.Current.CancellationToken))
             .Refusal.ShouldBeNull();
 
-        var outcome = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith(field, "[z-a]")), default);
+        var outcome = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith(field, "[z-a]")), TestContext.Current.CancellationToken);
 
         outcome.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
         outcome.Refusal.Detail.ShouldContain($"{field}[0]");
         s.Db.ChangeTracker.Clear();
-        var saved = await s.Db.Corpora.AsNoTracking().SingleAsync();
+        var saved = await s.Db.Corpora.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         SourceFilters.Globs(field == "includeGlobs" ? saved.DefaultIncludeGlobs : saved.DefaultExcludeGlobs).ShouldBe(["**/*.md"]);
     }
 
@@ -624,12 +616,11 @@ public sealed class UnusableGlobTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await using var db = harness.NewContext();
 
-        var outcome = await harness.NewConfiguration(db).CreateCorpusAsync(
-            new CreateCorpusRequest("papers"), default, defaults: DefaultsWith(field, "**/*.md", null!));
+        var outcome = await harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("papers"), TestContext.Current.CancellationToken, defaults: DefaultsWith(field, "**/*.md", null!));
 
         outcome.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
         outcome.Refusal.Detail.ShouldContain($"{field}[1]");
-        (await db.Corpora.AnyAsync(c => c.Name == "papers")).ShouldBeFalse();
+        (await db.Corpora.AnyAsync(c => c.Name == "papers", cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 
     private static string[] OverTheCap() =>
@@ -642,17 +633,17 @@ public sealed class UnusableGlobTests
     {
         await using var s = await Seeded.StartAsync();
         var id = IndexingHarness.SourceIdFor(0);
-        var sources = await s.Db.Sources.CountAsync();
+        var sources = await s.Db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken);
         var over = OverTheCap();
 
         var added = await s.Config.AddSourceAsync(s.Corpus, field == "includeGlobs"
             ? new AddSourceRequest("", IncludeGlobs: over)
-            : new AddSourceRequest("", ExcludeGlobs: over), default);
+            : new AddSourceRequest("", ExcludeGlobs: over), TestContext.Current.CancellationToken);
         var updated = await s.Config.UpdateSourceAsync(s.Corpus, id, field == "includeGlobs"
             ? new UpdateSourceRequest(IncludeGlobs: over)
-            : new UpdateSourceRequest(ExcludeGlobs: over), default);
-        var corpusUpdated = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith(field, over)), default);
-        var corpusCreated = await s.Config.CreateCorpusAsync(new CreateCorpusRequest("papers"), default, defaults: DefaultsWith(field, over));
+            : new UpdateSourceRequest(ExcludeGlobs: over), TestContext.Current.CancellationToken);
+        var corpusUpdated = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith(field, over)), TestContext.Current.CancellationToken);
+        var corpusCreated = await s.Config.CreateCorpusAsync(new CreateCorpusRequest("papers"), TestContext.Current.CancellationToken, defaults: DefaultsWith(field, over));
 
         foreach (var (site, outcome) in new[]
                  {
@@ -666,11 +657,11 @@ public sealed class UnusableGlobTests
             outcome.Detail.ShouldContain($"more than {SourceFilters.MaxGlobsPerList} patterns", Case.Sensitive, site);
         }
 
-        (await s.Db.Sources.CountAsync()).ShouldBe(sources, "a refused source is not saved");
-        (await s.Db.Corpora.AnyAsync(c => c.Name == "papers")).ShouldBeFalse();
+        (await s.Db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(sources, "a refused source is not saved");
+        (await s.Db.Corpora.AnyAsync(c => c.Name == "papers", cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
         s.Db.ChangeTracker.Clear();
-        (await s.Db.Sources.AsNoTracking().FirstAsync(x => x.Id == id)).IncludeGlobs.ShouldBeNull();
-        (await s.Db.Corpora.AsNoTracking().SingleAsync()).DefaultIncludeGlobs.ShouldBeNull();
+        (await s.Db.Sources.AsNoTracking().FirstAsync(x => x.Id == id, cancellationToken: TestContext.Current.CancellationToken)).IncludeGlobs.ShouldBeNull();
+        (await s.Db.Corpora.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).DefaultIncludeGlobs.ShouldBeNull();
     }
 
     [Fact]
@@ -679,8 +670,8 @@ public sealed class UnusableGlobTests
         await using var s = await Seeded.StartAsync();
         var atCap = OverTheCap()[..SourceFilters.MaxGlobsPerList];
 
-        var updated = await s.Config.UpdateSourceAsync(s.Corpus, IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(IncludeGlobs: atCap), default);
-        var corpus = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("excludeGlobs", atCap)), default);
+        var updated = await s.Config.UpdateSourceAsync(s.Corpus, IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(IncludeGlobs: atCap), TestContext.Current.CancellationToken);
+        var corpus = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("excludeGlobs", atCap)), TestContext.Current.CancellationToken);
 
         updated.Refusal.ShouldBeNull();
         corpus.Refusal.ShouldBeNull();
@@ -692,16 +683,16 @@ public sealed class UnusableGlobTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.GitHistory);
         await using var db = harness.NewContext();
-        var corpus = await db.Corpora.SingleAsync();
+        var corpus = await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         var config = harness.NewConfiguration(db);
         var id = IndexingHarness.SourceIdFor(0);
 
-        var rooted = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["/docs", "/"]), default);
-        var inside = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["/docs", "/", "a/../b", "docs/.."]), default);
-        var parent = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["docs/", "LEAKED/../../x"]), default);
-        var doubled = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["//docs"]), default);
-        var magicRooted = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: [":(glob)/docs"]), default);
-        var slashMagic = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["/:(exclude)docs"]), default);
+        var rooted = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["/docs", "/"]), TestContext.Current.CancellationToken);
+        var inside = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["/docs", "/", "a/../b", "docs/.."]), TestContext.Current.CancellationToken);
+        var parent = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["docs/", "LEAKED/../../x"]), TestContext.Current.CancellationToken);
+        var doubled = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["//docs"]), TestContext.Current.CancellationToken);
+        var magicRooted = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: [":(glob)/docs"]), TestContext.Current.CancellationToken);
+        var slashMagic = await config.UpdateSourceAsync(corpus, id, new UpdateSourceRequest(IncludeGlobs: ["/:(exclude)docs"]), TestContext.Current.CancellationToken);
 
         rooted.Refusal.ShouldBeNull();
         inside.Refusal.ShouldBeNull("git resolves a/../b inside the repository, so a list holding it must still save");
@@ -714,7 +705,7 @@ public sealed class UnusableGlobTests
         magicRooted.Refusal.Detail.ShouldContain("pathspec magic");
         slashMagic.Refusal.ShouldNotBeNull().Detail.ShouldContain("'/:'");
         db.ChangeTracker.Clear();
-        SourceFilters.Globs((await db.Sources.AsNoTracking().FirstAsync(x => x.Id == id)).IncludeGlobs)
+        SourceFilters.Globs((await db.Sources.AsNoTracking().FirstAsync(x => x.Id == id, cancellationToken: TestContext.Current.CancellationToken)).IncludeGlobs)
             .ShouldBe(["/docs", "/", "a/../b", "docs/.."], "the refused lists are not saved over the accepted one");
     }
 
@@ -723,7 +714,7 @@ public sealed class UnusableGlobTests
     {
         await using var s = await Seeded.StartAsync();
 
-        var outcome = await s.Config.UpdateSourceAsync(s.Corpus, IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(IncludeGlobs: ["../x"]), default);
+        var outcome = await s.Config.UpdateSourceAsync(s.Corpus, IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(IncludeGlobs: ["../x"]), TestContext.Current.CancellationToken);
 
         outcome.Refusal.ShouldBeNull();
     }
@@ -733,14 +724,14 @@ public sealed class UnusableGlobTests
     {
         await using var s = await Seeded.StartAsync();
 
-        var parent = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("includeGlobs", "docs/", "a/../../x")), default);
-        var created = await s.Config.CreateCorpusAsync(new CreateCorpusRequest("papers"), default, defaults: DefaultsWith("includeGlobs", ":!../b"));
-        var rooted = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("includeGlobs", "/build", "/docs", "a/../b")), default);
+        var parent = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("includeGlobs", "docs/", "a/../../x")), TestContext.Current.CancellationToken);
+        var created = await s.Config.CreateCorpusAsync(new CreateCorpusRequest("papers"), TestContext.Current.CancellationToken, defaults: DefaultsWith("includeGlobs", ":!../b"));
+        var rooted = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("includeGlobs", "/build", "/docs", "a/../b")), TestContext.Current.CancellationToken);
 
         parent.Refusal.ShouldNotBeNull().Detail.ShouldContain("includeGlobs[1]");
         parent.Refusal.Detail.ShouldContain("'..'");
         created.Refusal.ShouldNotBeNull().Detail.ShouldContain("includeGlobs[0]");
-        (await s.Db.Corpora.AnyAsync(c => c.Name == "papers")).ShouldBeFalse();
+        (await s.Db.Corpora.AnyAsync(c => c.Name == "papers", cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
         rooted.Refusal.ShouldBeNull("a leading slash is valid in a default: the walk anchors it and the git boundary removes it");
     }
 
@@ -751,9 +742,9 @@ public sealed class UnusableGlobTests
         await using var s = await Seeded.StartAsync();
         string[] excludes = ["", "../x", "//x", "/:x", ":(bad)x"];
 
-        var updated = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("excludeGlobs", excludes)), default);
-        var created = await s.Config.CreateCorpusAsync(new CreateCorpusRequest("papers"), default, defaults: DefaultsWith("excludeGlobs", excludes));
-        var source = await s.Config.UpdateSourceAsync(s.Corpus, IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(ExcludeGlobs: excludes), default);
+        var updated = await s.Config.UpdateCorpusAsync(s.Corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("excludeGlobs", excludes)), TestContext.Current.CancellationToken);
+        var created = await s.Config.CreateCorpusAsync(new CreateCorpusRequest("papers"), TestContext.Current.CancellationToken, defaults: DefaultsWith("excludeGlobs", excludes));
+        var source = await s.Config.UpdateSourceAsync(s.Corpus, IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(ExcludeGlobs: excludes), TestContext.Current.CancellationToken);
 
         updated.Refusal.ShouldBeNull();
         created.Refusal.ShouldBeNull();
@@ -771,13 +762,13 @@ public sealed class UnusableGlobTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.GitHistory);
         await using var db = harness.NewContext();
-        var corpus = await db.Corpora.SingleAsync();
+        var corpus = await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         var config = harness.NewConfiguration(db);
 
-        var source = await config.UpdateSourceAsync(corpus, IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(IncludeGlobs: [element]), default);
-        var added = await config.AddSourceAsync(corpus, new AddSourceRequest("", GitHistory: true, IncludeGlobs: [element]), default);
-        var updated = await config.UpdateCorpusAsync(corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("includeGlobs", element)), default);
-        var created = await config.CreateCorpusAsync(new CreateCorpusRequest("papers"), default, defaults: DefaultsWith("includeGlobs", element));
+        var source = await config.UpdateSourceAsync(corpus, IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(IncludeGlobs: [element]), TestContext.Current.CancellationToken);
+        var added = await config.AddSourceAsync(corpus, new AddSourceRequest("", GitHistory: true, IncludeGlobs: [element]), TestContext.Current.CancellationToken);
+        var updated = await config.UpdateCorpusAsync(corpus, new UpdateCorpusRequest(Defaults: DefaultsWith("includeGlobs", element)), TestContext.Current.CancellationToken);
+        var created = await config.CreateCorpusAsync(new CreateCorpusRequest("papers"), TestContext.Current.CancellationToken, defaults: DefaultsWith("includeGlobs", element));
 
         foreach (var (site, refusal) in new[]
                  {
@@ -796,10 +787,10 @@ public sealed class UnusableGlobTests
     {
         await using var s = await Seeded.StartAsync();
         var id = IndexingHarness.SourceIdFor(0);
-        (await s.Config.UpdateSourceAsync(s.Corpus, id, new UpdateSourceRequest(MaxFileBytes: 4096), default)).Refusal.ShouldBeNull();
+        (await s.Config.UpdateSourceAsync(s.Corpus, id, new UpdateSourceRequest(MaxFileBytes: 4096), TestContext.Current.CancellationToken)).Refusal.ShouldBeNull();
 
-        var alone = await s.Config.UpdateSourceAsync(s.Corpus, id, new UpdateSourceRequest(Clear: [null!]), default);
-        var beside = await s.Config.UpdateSourceAsync(s.Corpus, id, new UpdateSourceRequest(Clear: ["maxFileBytes", null!]), default);
+        var alone = await s.Config.UpdateSourceAsync(s.Corpus, id, new UpdateSourceRequest(Clear: [null!]), TestContext.Current.CancellationToken);
+        var beside = await s.Config.UpdateSourceAsync(s.Corpus, id, new UpdateSourceRequest(Clear: ["maxFileBytes", null!]), TestContext.Current.CancellationToken);
 
         foreach (var outcome in new[] { alone, beside })
         {
@@ -812,7 +803,7 @@ public sealed class UnusableGlobTests
         }
 
         s.Db.ChangeTracker.Clear();
-        (await s.Db.Sources.AsNoTracking().FirstAsync(x => x.Id == id)).MaxFileBytes.ShouldBe(4096, "a refused request clears nothing");
+        (await s.Db.Sources.AsNoTracking().FirstAsync(x => x.Id == id, cancellationToken: TestContext.Current.CancellationToken)).MaxFileBytes.ShouldBe(4096, "a refused request clears nothing");
     }
 
     [Fact]
@@ -821,7 +812,7 @@ public sealed class UnusableGlobTests
         await using var s = await Seeded.StartAsync();
         var name = "first\r\nsecond\u001b[2J" + new string('x', 500) + "TAILMARKER";
 
-        var outcome = await s.Config.UpdateSourceAsync(s.Corpus, IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(Clear: [name]), default);
+        var outcome = await s.Config.UpdateSourceAsync(s.Corpus, IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(Clear: [name]), TestContext.Current.CancellationToken);
 
         var detail = outcome.Refusal.ShouldNotBeNull().Detail;
         detail.ShouldContain("Name one of: useGitignore, maxFileBytes, includeGlobs, excludeGlobs", Case.Sensitive, "an unknown name is answered with the names it could have been");

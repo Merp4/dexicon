@@ -28,8 +28,8 @@ public sealed class DetachingWhileAttachingTests
         gate.Armed = true;
 
         await Task.WhenAll(
-            first.Files.FirstOrDefaultAsync(f => f.SourceId == "s" && f.BlobSha256 == "abc"),
-            second.Files.Include(f => f.Source).FirstOrDefaultAsync(f => f.Id == "x" && f.Source!.CorpusId == "c"));
+            first.Files.FirstOrDefaultAsync(f => f.SourceId == "s" && f.BlobSha256 == "abc", TestContext.Current.CancellationToken),
+            second.Files.Include(f => f.Source).FirstOrDefaultAsync(f => f.Id == "x" && f.Source!.CorpusId == "c", TestContext.Current.CancellationToken));
 
         gate.Met.ShouldBeTrue("the gate has to have held both lookups at once");
     }
@@ -44,15 +44,15 @@ public sealed class DetachingWhileAttachingTests
         await using var second = harness.NewContext();
         var attaching = harness.NewDocumentService(first);
         var detaching = harness.NewDocumentService(second);
-        var stored = await attaching.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt");
-        var corpus = await first.Corpora.SingleAsync();
-        var attached = await attaching.AttachAsync(corpus, stored.Sha256, "doc.txt");
+        var stored = await attaching.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt", TestContext.Current.CancellationToken);
+        var corpus = await first.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var attached = await attaching.AttachAsync(corpus, stored.Sha256, "doc.txt", TestContext.Current.CancellationToken);
         gate.Armed = true;
 
         // Attached under another name is the rename an attachment saves against the row it found.
         await Task.WhenAll(
-            attaching.AttachAsync(corpus, stored.Sha256, "renamed.txt"),
-            detaching.DetachAsync(IndexingHarness.CorpusId, attached.Id));
+            attaching.AttachAsync(corpus, stored.Sha256, "renamed.txt", TestContext.Current.CancellationToken),
+            detaching.DetachAsync(IndexingHarness.CorpusId, attached.Id, TestContext.Current.CancellationToken));
 
         gate.Arrivals.ShouldBeGreaterThanOrEqualTo(2, "both have to have looked for the file");
         gate.Met.ShouldBeFalse("the second of the two was held back until the first had finished");

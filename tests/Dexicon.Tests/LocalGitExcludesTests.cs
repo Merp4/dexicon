@@ -160,8 +160,7 @@ public sealed class LocalGitExcludesTests : IDisposable
         Write(".dexiconignore", "!.git\n!.git/config\n");
         File.WriteAllText(Path.Combine(_root, ".git"), "gitdir: ../../.git/worktrees/feature\n");
 
-        var pointer = WorkspaceWalker.Walk(_root, useGitignore: true, null, ["!.git"], 1_000_000)
-            .Files.Select(f => f.RelativePath).ToList();
+        var pointer = WorkspaceWalker.Walk(_root, useGitignore: true, null, ["!.git"], 1_000_000, ct: TestContext.Current.CancellationToken).Files.Select(f => f.RelativePath).ToList();
 
         pointer.ShouldNotContain(".git");
 
@@ -175,8 +174,7 @@ public sealed class LocalGitExcludesTests : IDisposable
         // The ignore files themselves are candidates like any other text file, as
         // AGitignoreInTheDirectoryIsObeyed records. What matters is that nothing under
         // `.git/` came back.
-        WorkspaceWalker.Walk(_root, useGitignore: true, null, ["!.git"], 1_000_000)
-            .Files.Select(f => f.RelativePath)
+        WorkspaceWalker.Walk(_root, useGitignore: true, null, ["!.git"], 1_000_000, ct: TestContext.Current.CancellationToken).Files.Select(f => f.RelativePath)
             .ShouldNotContain(p => p.StartsWith(".git/", StringComparison.Ordinal));
     }
 
@@ -192,8 +190,7 @@ public sealed class LocalGitExcludesTests : IDisposable
         Write("repo/docs/notes.md");
 
         var docs = Path.Combine(_root, "repo", "docs");
-        var files = WorkspaceWalker.Walk(docs, useGitignore: true, null, null, 1_000_000)
-            .Files.Select(f => f.RelativePath).ToList();
+        var files = WorkspaceWalker.Walk(docs, useGitignore: true, null, null, 1_000_000, ct: TestContext.Current.CancellationToken).Files.Select(f => f.RelativePath).ToList();
 
         files.ShouldBe(["notes.md"]);
     }

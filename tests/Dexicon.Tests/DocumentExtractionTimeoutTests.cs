@@ -144,9 +144,9 @@ public sealed class DocumentExtractionTimeoutTests
 
         slow.BytesRead.ShouldBeLessThan(Bytes.Length, "the exception came from the deadline cutting the reading short");
         db.ChangeTracker.Entries().ShouldBeEmpty("a tracked blob would be saved by the next save on this context");
-        (await db.SaveChangesAsync()).ShouldBe(0);
-        (await db.Blobs.CountAsync()).ShouldBe(0);
-        (await db.BlobTexts.CountAsync()).ShouldBe(0);
+        (await db.SaveChangesAsync(TestContext.Current.CancellationToken)).ShouldBe(0);
+        (await db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
+        (await db.BlobTexts.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
         File.Exists(documents.PathFor(ShaOf(Bytes))).ShouldBeTrue("the bytes stay in the blob store, and a retry reuses them");
     }
 
@@ -157,15 +157,15 @@ public sealed class DocumentExtractionTimeoutTests
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using var db = harness.NewContext();
         var documents = ServiceWith(harness, db, Slow());
-        var corpus = await db.Corpora.SingleAsync();
+        var corpus = await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         await Should.ThrowAsync<ExtractionTimeoutException>(
             () => documents.StoreAsync(new MemoryStream(Bytes), "stuck.slow"));
 
-        var stored = await documents.StoreAsync(new MemoryStream("another document"u8.ToArray()), "next.txt");
-        await documents.AttachAsync(corpus, stored.Sha256, "next.txt");
+        var stored = await documents.StoreAsync(new MemoryStream("another document"u8.ToArray()), "next.txt", TestContext.Current.CancellationToken);
+        await documents.AttachAsync(corpus, stored.Sha256, "next.txt", TestContext.Current.CancellationToken);
 
-        (await db.Blobs.Select(b => b.Sha256).ToListAsync()).ShouldBe([stored.Sha256]);
-        (await db.BlobTexts.Select(t => t.Sha256).ToListAsync()).ShouldBe([stored.Sha256]);
+        (await db.Blobs.Select(b => b.Sha256).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe([stored.Sha256]);
+        (await db.BlobTexts.Select(t => t.Sha256).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe([stored.Sha256]);
     }
 
     [Fact]
@@ -180,7 +180,7 @@ public sealed class DocumentExtractionTimeoutTests
 
         thrown.InnerException.ShouldBeOfType<ExtractionFailedException>().Message.ShouldBe("could not be read as a document");
         db.ChangeTracker.Entries().ShouldBeEmpty();
-        (await db.Blobs.CountAsync()).ShouldBe(0);
+        (await db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]
@@ -193,8 +193,8 @@ public sealed class DocumentExtractionTimeoutTests
         await Should.ThrowAsync<ExtractionTimeoutException>(
             () => documents.StoreAsync(new MemoryStream(Bytes), "stuck.slow"));
 
-        (await db.Blobs.CountAsync()).ShouldBe(0);
-        (await db.BlobTexts.CountAsync()).ShouldBe(0);
+        (await db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
+        (await db.BlobTexts.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]
@@ -205,10 +205,10 @@ public sealed class DocumentExtractionTimeoutTests
         await using var db = harness.NewContext();
         var documents = ServiceWith(harness, db, new BrokenExtractor());
 
-        var stored = await documents.StoreAsync(new MemoryStream(Bytes), "broken.slow");
+        var stored = await documents.StoreAsync(new MemoryStream(Bytes), "broken.slow", TestContext.Current.CancellationToken);
 
         stored.EmptyReason.ShouldBe("could not be read as a document");
-        (await db.BlobTexts.SingleAsync()).EmptyReason.ShouldBe("could not be read as a document");
+        (await db.BlobTexts.SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).EmptyReason.ShouldBe("could not be read as a document");
     }
 
     [Fact]
@@ -219,12 +219,12 @@ public sealed class DocumentExtractionTimeoutTests
         await Should.ThrowAsync<ExtractionTimeoutException>(
             () => ServiceWith(harness, db, Slow()).StoreAsync(new MemoryStream(Bytes), "stuck.slow"));
 
-        var again = await ServiceWith(harness, db, Fast()).StoreAsync(new MemoryStream(Bytes), "stuck.slow");
+        var again = await ServiceWith(harness, db, Fast()).StoreAsync(new MemoryStream(Bytes), "stuck.slow", TestContext.Current.CancellationToken);
 
         again.AlreadyExisted.ShouldBeFalse("the first upload stored nothing to reuse");
         again.EmptyReason.ShouldBeNull();
         again.ExtractedChars.ShouldBe(Bytes.Length);
-        (await db.BlobTexts.SingleAsync()).Text.ShouldBe(new string('g', Bytes.Length));
+        (await db.BlobTexts.SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).Text.ShouldBe(new string('g', Bytes.Length));
     }
 
     /// <summary>A stored document whose row was written by an older extractor, so the next read extracts it again.</summary>
@@ -245,11 +245,11 @@ public sealed class DocumentExtractionTimeoutTests
         var log = new RecordingLog();
         await using var db = harness.NewContext();
 
-        var returned = await ServiceWith(harness, db, Slow('n'), log).CurrentTextFor(sha, "doc.slow");
+        var returned = await ServiceWith(harness, db, Slow('n'), log).CurrentTextFor(sha, "doc.slow", ct: TestContext.Current.CancellationToken);
 
         returned.ShouldNotBeNull().Text.ShouldBe(new string('g', Bytes.Length), "the caller carries on with the text it had");
         await using var check = harness.NewContext();
-        var row = await check.BlobTexts.AsNoTracking().SingleAsync();
+        var row = await check.BlobTexts.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         row.Text.ShouldBe(new string('g', Bytes.Length));
         row.ExtractorVersion.ShouldBe(0, "still stale, so a later pass tries again");
         row.EmptyReason.ShouldBeNull();
@@ -266,16 +266,16 @@ public sealed class DocumentExtractionTimeoutTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         var sha = await StoreStaleAsync(harness);
         await using (var slowDb = harness.NewContext())
-            await ServiceWith(harness, slowDb, Slow('n')).CurrentTextFor(sha, "doc.slow");
+            await ServiceWith(harness, slowDb, Slow('n')).CurrentTextFor(sha, "doc.slow", ct: TestContext.Current.CancellationToken);
         await using var db = harness.NewContext();
 
-        var returned = await ServiceWith(harness, db, Fast('n')).CurrentTextFor(sha, "doc.slow");
+        var returned = await ServiceWith(harness, db, Fast('n')).CurrentTextFor(sha, "doc.slow", ct: TestContext.Current.CancellationToken);
 
         var text = returned.ShouldNotBeNull();
         text.Text.ShouldBe(new string('n', Bytes.Length));
         text.ExtractorVersion.ShouldBe(ExtractorVersions.Current);
         await using var check = harness.NewContext();
-        (await check.BlobTexts.AsNoTracking().SingleAsync()).ExtractorVersion.ShouldBe(ExtractorVersions.Current);
+        (await check.BlobTexts.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).ExtractorVersion.ShouldBe(ExtractorVersions.Current);
     }
 
     [Fact]
@@ -314,8 +314,8 @@ public sealed class DocumentExtractionTimeoutTests
         thrown.ShouldNotBeOfType<ExtractionTimeoutException>();
         thrown.ShouldNotBeOfType<UnreadableDocumentException>();
         db.ChangeTracker.Entries().ShouldBeEmpty();
-        (await db.Blobs.CountAsync()).ShouldBe(0);
-        (await db.BlobTexts.CountAsync()).ShouldBe(0);
+        (await db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
+        (await db.BlobTexts.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]
@@ -326,14 +326,14 @@ public sealed class DocumentExtractionTimeoutTests
         var log = new RecordingLog();
         await using var db = harness.NewContext();
 
-        var returned = await ServiceWith(harness, db, new EnvironmentFailingExtractor(), log).CurrentTextFor(sha, "doc.slow");
+        var returned = await ServiceWith(harness, db, new EnvironmentFailingExtractor(), log).CurrentTextFor(sha, "doc.slow", ct: TestContext.Current.CancellationToken);
 
         var warning = log.Entries.Where(e => e.Level == LogLevel.Warning).ShouldHaveSingleItem();
         warning.Message.ShouldContain("failed; keeping");
         warning.Message.ShouldNotContain("timed out");
         returned.ShouldNotBeNull().Text.ShouldBe(new string('g', Bytes.Length));
         await using var check = harness.NewContext();
-        var row = await check.BlobTexts.AsNoTracking().SingleAsync();
+        var row = await check.BlobTexts.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         row.Text.ShouldBe(new string('g', Bytes.Length));
         row.ExtractorVersion.ShouldBe(0, "still stale, so a later pass tries again");
         row.EmptyReason.ShouldBeNull();
@@ -347,11 +347,11 @@ public sealed class DocumentExtractionTimeoutTests
         var sha = await StoreStaleAsync(harness);
         await using var db = harness.NewContext();
 
-        var returned = await ServiceWith(harness, db, new BrokenExtractor()).CurrentTextFor(sha, "doc.slow");
+        var returned = await ServiceWith(harness, db, new BrokenExtractor()).CurrentTextFor(sha, "doc.slow", ct: TestContext.Current.CancellationToken);
 
         returned.ShouldNotBeNull().EmptyReason.ShouldBe("could not be read as a document");
         await using var check = harness.NewContext();
-        (await check.BlobTexts.AsNoTracking().SingleAsync()).ExtractorVersion.ShouldBe(ExtractorVersions.Current);
+        (await check.BlobTexts.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).ExtractorVersion.ShouldBe(ExtractorVersions.Current);
     }
 
     [Fact]
@@ -368,12 +368,12 @@ public sealed class DocumentExtractionTimeoutTests
             OnStart = () => other.StoreAsync(new MemoryStream(Bytes), "stuck.slow").GetAwaiter().GetResult(),
         };
 
-        var stored = await ServiceWith(harness, db, slow).StoreAsync(new MemoryStream(Bytes), "stuck.slow");
+        var stored = await ServiceWith(harness, db, slow).StoreAsync(new MemoryStream(Bytes), "stuck.slow", TestContext.Current.CancellationToken);
 
         slow.BytesRead.ShouldBeLessThan(Bytes.Length, "this upload did time out");
         stored.AlreadyExisted.ShouldBeTrue();
         stored.ExtractedChars.ShouldBe(Bytes.Length);
-        (await db.Blobs.CountAsync()).ShouldBe(1);
+        (await db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     /// <summary>An extractor whose every attempt fails: by the deadline, or by an I/O error that is not a verdict on the file.</summary>
@@ -401,8 +401,8 @@ public sealed class DocumentExtractionTimeoutTests
         var documents = ServiceWith(harness, db, extractor);
         var failedThisPass = new HashSet<string>();
 
-        await documents.CurrentTextFor(sha, "doc.slow", failedThisPass);
-        var again = await documents.CurrentTextFor(sha, "doc.slow", failedThisPass);
+        await documents.CurrentTextFor(sha, "doc.slow", failedThisPass, TestContext.Current.CancellationToken);
+        var again = await documents.CurrentTextFor(sha, "doc.slow", failedThisPass, TestContext.Current.CancellationToken);
 
         calls().ShouldBe(1, "the second chunk set did not pay for the extraction again");
         again.ShouldNotBeNull().Text.ShouldBe(new string('g', Bytes.Length));
@@ -419,8 +419,8 @@ public sealed class DocumentExtractionTimeoutTests
         var slow = Slow('n');
         var documents = ServiceWith(harness, db, slow);
 
-        await documents.CurrentTextFor(sha, "doc.slow");
-        await documents.CurrentTextFor(sha, "doc.slow");
+        await documents.CurrentTextFor(sha, "doc.slow", ct: TestContext.Current.CancellationToken);
+        await documents.CurrentTextFor(sha, "doc.slow", ct: TestContext.Current.CancellationToken);
 
         slow.Calls.ShouldBe(2);
     }
@@ -447,11 +447,11 @@ public sealed class DocumentExtractionTimeoutTests
         await using var harness = await StartWithAStaleDocumentAsync();
         var (extractor, calls) = Failing(ioError);
 
-        await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, extractor));
+        await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, extractor), cancel: TestContext.Current.CancellationToken);
 
         calls().ShouldBe(1, "two chunk sets read the same stale document in one job");
         await using var check = harness.NewContext();
-        (await check.BlobTexts.AsNoTracking().SingleAsync()).ExtractorVersion.ShouldBe(0);
+        (await check.BlobTexts.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).ExtractorVersion.ShouldBe(0);
     }
 
     [Fact]
@@ -467,7 +467,7 @@ public sealed class DocumentExtractionTimeoutTests
 
         extractor.Calls.ShouldBe(2, "the first job timed out, the second extracted again");
         await using var check = harness.NewContext();
-        (await check.BlobTexts.AsNoTracking().SingleAsync()).ExtractorVersion.ShouldBe(ExtractorVersions.Current);
+        (await check.BlobTexts.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).ExtractorVersion.ShouldBe(ExtractorVersions.Current);
     }
 
     [Fact]
@@ -490,7 +490,7 @@ public sealed class DocumentExtractionTimeoutTests
 
         extractor.Calls.ShouldBe(1, "the token was cancelled during the extraction");
         await using var check = harness.NewContext();
-        var row = await check.BlobTexts.AsNoTracking().SingleAsync();
+        var row = await check.BlobTexts.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         row.ExtractorVersion.ShouldBe(0);
         row.Text.ShouldBe(new string('g', Bytes.Length));
     }
@@ -508,7 +508,7 @@ public sealed class DocumentExtractionTimeoutTests
         };
         var log = new RecordingLog();
 
-        var stored = await ServiceWith(harness, db, failing, log).StoreAsync(new MemoryStream(Bytes), "stuck.slow");
+        var stored = await ServiceWith(harness, db, failing, log).StoreAsync(new MemoryStream(Bytes), "stuck.slow", TestContext.Current.CancellationToken);
 
         stored.AlreadyExisted.ShouldBeTrue();
         stored.ExtractedChars.ShouldBe(Bytes.Length);
@@ -553,21 +553,21 @@ public sealed class DocumentExtractionTimeoutTests
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using (var setup = harness.NewContext())
         {
-            var corpus = await setup.Corpora.SingleAsync();
+            var corpus = await setup.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
             var documents = ServiceWith(harness, setup, Fast('g'));
-            var stored = await documents.StoreAsync(new MemoryStream(Bytes), "doc.slow");
-            await documents.AttachAsync(corpus, stored.Sha256, "doc.slow");
-            await setup.BlobTexts.ExecuteUpdateAsync(s => s.SetProperty(t => t.ExtractorVersion, 0));
+            var stored = await documents.StoreAsync(new MemoryStream(Bytes), "doc.slow", TestContext.Current.CancellationToken);
+            await documents.AttachAsync(corpus, stored.Sha256, "doc.slow", TestContext.Current.CancellationToken);
+            await setup.BlobTexts.ExecuteUpdateAsync(s => s.SetProperty(t => t.ExtractorVersion, 0), cancellationToken: TestContext.Current.CancellationToken);
         }
 
-        var failed = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, Slow('n')));
-        var later = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, Fast('n')));
+        var failed = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, Slow('n')), cancel: TestContext.Current.CancellationToken);
+        var later = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, Fast('n')), cancel: TestContext.Current.CancellationToken);
 
         failed.FilesDone.ShouldBe(1, "the pass with the failed re-extraction chunks the text it had");
         later.FilesDone.ShouldBe(1, "the pass that extracts again chunks the new text");
         later.FilesSkipped.ShouldBe(0);
         await using var check = harness.NewContext();
-        var row = await check.BlobTexts.AsNoTracking().SingleAsync();
+        var row = await check.BlobTexts.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         row.Text.ShouldBe(new string('n', Bytes.Length));
         row.ExtractorVersion.ShouldBe(ExtractorVersions.Current);
     }
@@ -591,10 +591,10 @@ public sealed class DocumentExtractionTimeoutTests
         await using var db = harness.NewContext();
         var documents = ServiceWith(harness, db, null, registry: ExtractorRegistry.For);
 
-        var stored = await documents.StoreAsync(new MemoryStream(TestEpubs.WithADamagedEntry()), "broken.epub");
+        var stored = await documents.StoreAsync(new MemoryStream(TestEpubs.WithADamagedEntry()), "broken.epub", TestContext.Current.CancellationToken);
 
         stored.EmptyReason.ShouldNotBeNull().ShouldContain("not a readable .epub");
-        (await db.BlobTexts.SingleAsync()).Extractor.ShouldBe(nameof(EpubTextExtractor));
+        (await db.BlobTexts.SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).Extractor.ShouldBe(nameof(EpubTextExtractor));
     }
 
     [Fact]
@@ -606,13 +606,13 @@ public sealed class DocumentExtractionTimeoutTests
         await using (var setup = harness.NewContext())
         {
             var stored = await ServiceWith(harness, setup, null, registry: _ => null)
-                .StoreAsync(new MemoryStream(TestEpubs.WithADamagedEntry()), "broken.epub");
+                .StoreAsync(new MemoryStream(TestEpubs.WithADamagedEntry()), "broken.epub", TestContext.Current.CancellationToken);
             sha = stored.Sha256;
-            await setup.BlobTexts.ExecuteUpdateAsync(s => s.SetProperty(t => t.ExtractorVersion, 0));
+            await setup.BlobTexts.ExecuteUpdateAsync(s => s.SetProperty(t => t.ExtractorVersion, 0), cancellationToken: TestContext.Current.CancellationToken);
         }
 
         await using var db = harness.NewContext();
-        var returned = await ServiceWith(harness, db, null, registry: ExtractorRegistry.For).CurrentTextFor(sha, "broken.epub");
+        var returned = await ServiceWith(harness, db, null, registry: ExtractorRegistry.For).CurrentTextFor(sha, "broken.epub", ct: TestContext.Current.CancellationToken);
 
         returned.ShouldNotBeNull().EmptyReason.ShouldNotBeNull().ShouldContain("not a readable .epub");
         returned.ExtractorVersion.ShouldBe(ExtractorVersions.Current);
@@ -640,7 +640,7 @@ public sealed class DocumentExtractionTimeoutTests
         thrown.ShouldNotBeOfType<UnreadableDocumentException>();
         thrown.InnerException.ShouldBeAssignableTo<IOException>();
         db.ChangeTracker.Entries().ShouldBeEmpty();
-        (await db.Blobs.CountAsync()).ShouldBe(0);
+        (await db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     /// <summary>Fails the nth SELECT from <c>blobs</c>, as a busy catalogue fails a lookup.</summary>
@@ -744,11 +744,11 @@ public sealed class DocumentExtractionTimeoutTests
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using (var setup = harness.NewContext())
         {
-            var corpus = await setup.Corpora.SingleAsync();
+            var corpus = await setup.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
             var documents = ServiceWith(harness, setup, Fast('g'));
-            var stored = await documents.StoreAsync(new MemoryStream(Bytes), "doc.slow");
-            await documents.AttachAsync(corpus, stored.Sha256, "doc.slow");
-            await setup.BlobTexts.ExecuteUpdateAsync(s => s.SetProperty(t => t.ExtractorVersion, 0));
+            var stored = await documents.StoreAsync(new MemoryStream(Bytes), "doc.slow", TestContext.Current.CancellationToken);
+            await documents.AttachAsync(corpus, stored.Sha256, "doc.slow", TestContext.Current.CancellationToken);
+            await setup.BlobTexts.ExecuteUpdateAsync(s => s.SetProperty(t => t.ExtractorVersion, 0), cancellationToken: TestContext.Current.CancellationToken);
         }
 
         var sha = ShaOf(Bytes);
@@ -759,16 +759,16 @@ public sealed class DocumentExtractionTimeoutTests
             OnStart = () => other.CurrentTextFor(sha, "doc.slow").GetAwaiter().GetResult(),
         };
 
-        var first = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, failing));
+        var first = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, failing), cancel: TestContext.Current.CancellationToken);
         await AssertTheOtherJobRewroteTheRowAsync(harness);
         var fast = Fast('n');
-        var later = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, fast));
+        var later = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, fast), cancel: TestContext.Current.CancellationToken);
 
         first.FilesDone.ShouldBe(1, "the first job chunked the text it had");
         later.FilesDone.ShouldBe(1, "the later pass chunks the text the other job wrote");
         later.FilesSkipped.ShouldBe(0);
         await using var check = harness.NewContext();
-        var row = await check.BlobTexts.AsNoTracking().SingleAsync();
+        var row = await check.BlobTexts.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         row.Text.ShouldBe(new string('n', Bytes.Length));
         row.ExtractorVersion.ShouldBe(ExtractorVersions.Current);
     }
@@ -782,11 +782,11 @@ public sealed class DocumentExtractionTimeoutTests
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using (var setup = harness.NewContext())
         {
-            var corpus = await setup.Corpora.SingleAsync();
+            var corpus = await setup.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
             var documents = ServiceWith(harness, setup, Fast('g'));
-            var stored = await documents.StoreAsync(new MemoryStream(Bytes), "doc.slow");
-            await documents.AttachAsync(corpus, stored.Sha256, "doc.slow");
-            await setup.BlobTexts.ExecuteUpdateAsync(s => s.SetProperty(t => t.Text, new string('g', 100)));
+            var stored = await documents.StoreAsync(new MemoryStream(Bytes), "doc.slow", TestContext.Current.CancellationToken);
+            await documents.AttachAsync(corpus, stored.Sha256, "doc.slow", TestContext.Current.CancellationToken);
+            await setup.BlobTexts.ExecuteUpdateAsync(s => s.SetProperty(t => t.Text, new string('g', 100)), cancellationToken: TestContext.Current.CancellationToken);
         }
 
         var sha = ShaOf(Bytes);
@@ -797,9 +797,9 @@ public sealed class DocumentExtractionTimeoutTests
             OnStart = () => other.CurrentTextFor(sha, "doc.slow").GetAwaiter().GetResult(),
         };
 
-        var first = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, failing));
+        var first = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, failing), cancel: TestContext.Current.CancellationToken);
         await AssertTheOtherJobRewroteTheRowAsync(harness);
-        var later = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, Fast('n')));
+        var later = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, Fast('n')), cancel: TestContext.Current.CancellationToken);
 
         first.FilesDone.ShouldBe(1, "the first job chunked the head it had");
         later.FilesDone.ShouldBe(1, "the later pass chunks the repaired text");
@@ -816,11 +816,11 @@ public sealed class DocumentExtractionTimeoutTests
         string fileId;
         await using (var setup = harness.NewContext())
         {
-            var corpus = await setup.Corpora.SingleAsync();
+            var corpus = await setup.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
             var documents = ServiceWith(harness, setup, Fast('g'));
-            var stored = await documents.StoreAsync(new MemoryStream(Bytes), "doc.slow");
-            fileId = (await documents.AttachAsync(corpus, stored.Sha256, "doc.slow")).Id;
-            await setup.BlobTexts.ExecuteUpdateAsync(s => s.SetProperty(t => t.ExtractorVersion, 0));
+            var stored = await documents.StoreAsync(new MemoryStream(Bytes), "doc.slow", TestContext.Current.CancellationToken);
+            fileId = (await documents.AttachAsync(corpus, stored.Sha256, "doc.slow", TestContext.Current.CancellationToken)).Id;
+            await setup.BlobTexts.ExecuteUpdateAsync(s => s.SetProperty(t => t.ExtractorVersion, 0), cancellationToken: TestContext.Current.CancellationToken);
         }
 
         var sha = ShaOf(Bytes);
@@ -833,13 +833,13 @@ public sealed class DocumentExtractionTimeoutTests
         };
 
         await using var db = harness.NewContext();
-        var returned = await ServiceWith(harness, db, extractor).CurrentTextFor(sha, "doc.slow");
+        var returned = await ServiceWith(harness, db, extractor).CurrentTextFor(sha, "doc.slow", ct: TestContext.Current.CancellationToken);
 
         extractor.Calls.ShouldBe(1, "the text was stale, so it was extracted again");
         returned.ShouldBeNull();
         db.ChangeTracker.Entries<BlobText>().ShouldBeEmpty("nothing is left to be saved later");
         await using var check = harness.NewContext();
-        (await check.Blobs.AnyAsync(b => b.Sha256 == sha)).ShouldBeFalse("the detach released the document");
+        (await check.Blobs.AnyAsync(b => b.Sha256 == sha, cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse("the detach released the document");
     }
 
     [Fact]
@@ -851,22 +851,22 @@ public sealed class DocumentExtractionTimeoutTests
         await harness.SeedCorpusAsync(SourceKind.Upload, sets: 2);
         await using (var setup = harness.NewContext())
         {
-            var corpus = await setup.Corpora.SingleAsync();
+            var corpus = await setup.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
             var documents = ServiceWith(harness, setup, Fast('g'));
-            var stored = await documents.StoreAsync(new MemoryStream(Bytes), "doc.slow");
-            await documents.AttachAsync(corpus, stored.Sha256, "doc.slow");
+            var stored = await documents.StoreAsync(new MemoryStream(Bytes), "doc.slow", TestContext.Current.CancellationToken);
+            await documents.AttachAsync(corpus, stored.Sha256, "doc.slow", TestContext.Current.CancellationToken);
         }
 
-        var first = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, Fast('g')));
+        var first = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, Fast('g')), cancel: TestContext.Current.CancellationToken);
         await using (var damage = harness.NewContext())
-            await damage.BlobTexts.ExecuteUpdateAsync(s => s.SetProperty(t => t.Text, new string('g', 100)));
-        var later = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, Fast('n')));
+            await damage.BlobTexts.ExecuteUpdateAsync(s => s.SetProperty(t => t.Text, new string('g', 100)), cancellationToken: TestContext.Current.CancellationToken);
+        var later = await harness.RunIndexAsync(documentsFor: db => ServiceWith(harness, db, Fast('n')), cancel: TestContext.Current.CancellationToken);
 
         first.FilesDone.ShouldBe(2);
         later.FilesDone.ShouldBe(2, "the repair has to reach the state of every set that holds the blob");
         later.FilesSkipped.ShouldBe(0);
         await using var check = harness.NewContext();
-        (await check.BlobTexts.AsNoTracking().SingleAsync()).Text.ShouldBe(new string('n', Bytes.Length));
+        (await check.BlobTexts.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).Text.ShouldBe(new string('n', Bytes.Length));
     }
 
     [Fact]
@@ -879,7 +879,7 @@ public sealed class DocumentExtractionTimeoutTests
         await using var db = harness.NewContext();
         var faulty = new ThrowingExtractor(Activator.CreateInstance<NullReferenceException>);
 
-        var returned = await ServiceWith(harness, db, faulty, log).CurrentTextFor(sha, "doc.slow", failedThisPass);
+        var returned = await ServiceWith(harness, db, faulty, log).CurrentTextFor(sha, "doc.slow", failedThisPass, TestContext.Current.CancellationToken);
 
         returned.ShouldNotBeNull().Text.ShouldBe(new string('g', Bytes.Length));
         failedThisPass.ShouldBe([sha]);
@@ -887,7 +887,7 @@ public sealed class DocumentExtractionTimeoutTests
         warning.Message.ShouldContain("unexpected NullReferenceException");
         warning.Message.ShouldContain(nameof(ThrowingExtractor));
         await using var check = harness.NewContext();
-        var row = await check.BlobTexts.AsNoTracking().SingleAsync();
+        var row = await check.BlobTexts.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         row.Text.ShouldBe(new string('g', Bytes.Length));
         row.ExtractorVersion.ShouldBe(0);
         row.EmptyReason.ShouldBeNull();
@@ -902,7 +902,7 @@ public sealed class DocumentExtractionTimeoutTests
         var faulty = new ThrowingExtractor(
             () => ExtractionFailures.Of("could not be read as a document", new InvalidOperationException("bad state")));
 
-        var returned = await ServiceWith(harness, db, faulty).CurrentTextFor(sha, "doc.slow");
+        var returned = await ServiceWith(harness, db, faulty).CurrentTextFor(sha, "doc.slow", ct: TestContext.Current.CancellationToken);
 
         returned.ShouldNotBeNull().Text.ShouldBe(new string('g', Bytes.Length));
         returned.ExtractorVersion.ShouldBe(0);
@@ -917,7 +917,7 @@ public sealed class DocumentExtractionTimeoutTests
         await using var db = harness.NewContext();
         var parser = new ThrowingExtractor(() => new InvalidDataException("bad block"));
 
-        var returned = await ServiceWith(harness, db, parser).CurrentTextFor(sha, "doc.slow");
+        var returned = await ServiceWith(harness, db, parser).CurrentTextFor(sha, "doc.slow", ct: TestContext.Current.CancellationToken);
 
         returned.ShouldNotBeNull().EmptyReason.ShouldNotBeNull().ShouldContain("bad block");
         returned.ExtractorVersion.ShouldBe(ExtractorVersions.Current);
@@ -930,10 +930,10 @@ public sealed class DocumentExtractionTimeoutTests
         await using var db = harness.NewContext();
         var faulty = new ThrowingExtractor(Activator.CreateInstance<NullReferenceException>);
 
-        var stored = await ServiceWith(harness, db, faulty).StoreAsync(new MemoryStream(Bytes), "doc.slow");
+        var stored = await ServiceWith(harness, db, faulty).StoreAsync(new MemoryStream(Bytes), "doc.slow", TestContext.Current.CancellationToken);
 
         stored.EmptyReason.ShouldNotBeNull().ShouldContain("could not be read");
-        (await db.BlobTexts.SingleAsync()).ExtractorVersion.ShouldBe(ExtractorVersions.Current);
+        (await db.BlobTexts.SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).ExtractorVersion.ShouldBe(ExtractorVersions.Current);
     }
 
     [Fact]
@@ -950,7 +950,7 @@ public sealed class DocumentExtractionTimeoutTests
 
         thrown.ShouldNotBeOfType<UnreadableDocumentException>();
         thrown.InnerException.ShouldBeOfType<OperationCanceledException>();
-        (await db.Blobs.CountAsync()).ShouldBe(0);
+        (await db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]
@@ -968,7 +968,7 @@ public sealed class DocumentExtractionTimeoutTests
         await Should.ThrowAsync<OperationCanceledException>(
             () => ServiceWith(harness, db, cancelling, log).StoreAsync(new MemoryStream(Bytes), "doc.slow", cts.Token));
 
-        (await db.Blobs.CountAsync()).ShouldBe(0);
+        (await db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
         log.Entries.ShouldNotContain(e => e.Level == LogLevel.Warning, "it was not recorded as a verdict on the file");
     }
 
@@ -980,7 +980,7 @@ public sealed class DocumentExtractionTimeoutTests
         await using var db = harness.NewContext();
         var cancelling = new ThrowingExtractor(() => new OperationCanceledException("the library gave up"));
 
-        var returned = await ServiceWith(harness, db, cancelling).CurrentTextFor(sha, "doc.slow");
+        var returned = await ServiceWith(harness, db, cancelling).CurrentTextFor(sha, "doc.slow", ct: TestContext.Current.CancellationToken);
 
         returned.ShouldNotBeNull().Text.ShouldBe(new string('g', Bytes.Length));
         returned.ExtractorVersion.ShouldBe(0);
@@ -1002,7 +1002,7 @@ public sealed class DocumentExtractionTimeoutTests
         thrown.ShouldNotBeNull();
         var warning = log.Entries.Where(e => e.Level == LogLevel.Warning).ShouldHaveSingleItem();
         warning.Message.ShouldContain("did not finish within 1 s");
-        (await db.Blobs.CountAsync()).ShouldBe(0);
+        (await db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     /// <summary>Reads until the extraction clock has run out, then reports a cancellation as a library whose token was cancelled does.</summary>
@@ -1064,6 +1064,6 @@ public sealed class DocumentExtractionTimeoutTests
         await Should.ThrowAsync<ExtractionTimeoutException>(
             () => ServiceWith(harness, db, new SwallowingTheParseTimeout()).StoreAsync(new MemoryStream(Bytes), "doc.slow"));
 
-        (await db.Blobs.CountAsync()).ShouldBe(0);
+        (await db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 }

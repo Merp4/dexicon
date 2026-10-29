@@ -59,8 +59,8 @@ public sealed class ConcurrentStoreOfOneDocumentTests
         gate.Armed = true;
 
         var stored = await Task.WhenAll(
-            firstDocuments.StoreAsync(new MemoryStream(TheSameBytes), "one.txt"),
-            secondDocuments.StoreAsync(new MemoryStream(TheSameBytes), "two.txt"));
+            firstDocuments.StoreAsync(new MemoryStream(TheSameBytes), "one.txt", TestContext.Current.CancellationToken),
+            secondDocuments.StoreAsync(new MemoryStream(TheSameBytes), "two.txt", TestContext.Current.CancellationToken));
 
         gate.Met.ShouldBeTrue("both uploads have to have looked before either saved");
         stored.Count(s => s.AlreadyExisted).ShouldBe(1, "the upload that lost reports the blob it found");
@@ -73,8 +73,8 @@ public sealed class ConcurrentStoreOfOneDocumentTests
         OnlyOneBlobFileIsLeft(firstDocuments, stored[0].Sha256);
 
         await using var check = harness.NewContext();
-        (await check.Blobs.CountAsync()).ShouldBe(1, "one blob for one set of bytes");
-        (await check.BlobTexts.CountAsync()).ShouldBe(1, "one text row is kept");
+        (await check.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "one blob for one set of bytes");
+        (await check.BlobTexts.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "one text row is kept");
         foreach (var context in new[] { first, second })
             context.ChangeTracker.Entries().ShouldNotContain(
                 e => e.State != EntityState.Unchanged, "the loser's pending rows are dropped, not left to fail the next save");
@@ -97,8 +97,8 @@ public sealed class ConcurrentStoreOfOneDocumentTests
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
 
-        var first = await documents.StoreAsync(new MemoryStream(TheSameBytes), "one.txt");
-        var again = await documents.StoreAsync(new MemoryStream(TheSameBytes), "two.txt");
+        var first = await documents.StoreAsync(new MemoryStream(TheSameBytes), "one.txt", TestContext.Current.CancellationToken);
+        var again = await documents.StoreAsync(new MemoryStream(TheSameBytes), "two.txt", TestContext.Current.CancellationToken);
 
         first.AlreadyExisted.ShouldBeFalse();
         again.AlreadyExisted.ShouldBeTrue();
@@ -127,7 +127,7 @@ public sealed class ConcurrentStoreOfOneDocumentTests
         var root = Path.GetDirectoryName(Path.GetDirectoryName(documents.PathFor(sha)))!;
         Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
             .ShouldBeEmpty("the upload's temp copy is removed");
-        (await db.Blobs.CountAsync()).ShouldBe(0, "no blob is recorded for bytes that were not stored");
+        (await db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0, "no blob is recorded for bytes that were not stored");
     }
 
     /// <summary>
@@ -245,8 +245,8 @@ public sealed class ConcurrentStoreOfOneDocumentTests
         await using var second = harness.NewContext();
         var firstDocuments = harness.NewDocumentService(first);
         var secondDocuments = harness.NewDocumentService(second);
-        var firstCorpus = await first.Corpora.SingleAsync();
-        var secondCorpus = await second.Corpora.SingleAsync();
+        var firstCorpus = await first.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var secondCorpus = await second.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         gate.Armed = true;
 
         async Task UploadAsync(DocumentService documents, Corpus corpus, string name)
@@ -259,8 +259,8 @@ public sealed class ConcurrentStoreOfOneDocumentTests
 
         gate.Met.ShouldBeTrue("both uploads have to have looked before either saved");
         await using var check = harness.NewContext();
-        (await check.Blobs.CountAsync()).ShouldBe(1);
-        (await check.Files.CountAsync()).ShouldBe(1, "one corpus holds one blob once, whatever name it came under");
+        (await check.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
+        (await check.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "one corpus holds one blob once, whatever name it came under");
     }
 
     [Theory]

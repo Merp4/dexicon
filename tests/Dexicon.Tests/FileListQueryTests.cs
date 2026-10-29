@@ -25,7 +25,7 @@ public sealed class FileListQueryTests : IAsyncLifetime
     private readonly List<string> _sources = ["s1"];
     private const string Set = "set1";
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _connection = new SqliteConnection("Data Source=:memory:");
         await _connection.OpenAsync();
@@ -49,7 +49,7 @@ public sealed class FileListQueryTests : IAsyncLifetime
         await _db.SaveChangesAsync();
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await _db.DisposeAsync();
         await _connection.DisposeAsync();
@@ -216,7 +216,7 @@ public sealed class FileListQueryTests : IAsyncLifetime
         await Add("a.pdf");
         await Add("b.pdf");
 
-        (await Query().CountAsync()).ShouldBe(2);
-        (await Query(name: "a").CountAsync()).ShouldBe(1);
+        (await Query().CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2);
+        (await Query(name: "a").CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 }

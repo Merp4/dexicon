@@ -444,7 +444,7 @@ public sealed class GitRefsTests : IDisposable
         Git(Clone, "checkout", "--quiet", "-b", "newer");
         CreateRefs("refs/heads/many/", GitHistory.RefsPerGroup + 5, CommitLater(Clone, "newer than old"));
 
-        var refs = await GitHistory.RefsAsync(Repo(), default, "old");
+        var refs = await GitHistory.RefsAsync(Repo(), TestContext.Current.CancellationToken, "old");
 
         refs.Followed.ShouldNotBeNull().Name.ShouldBe("refs/heads/old");
         refs.Local.Refs.ShouldContain(r => r.Name == "refs/heads/old");
@@ -453,7 +453,7 @@ public sealed class GitRefsTests : IDisposable
         // A tag of the same name takes the name, and the branch it hides is still listed, so
         // the picker can offer it in the tag's place.
         Git(Clone, "tag", "old");
-        var shadowed = await GitHistory.RefsAsync(Repo(), default, "old");
+        var shadowed = await GitHistory.RefsAsync(Repo(), TestContext.Current.CancellationToken, "old");
         shadowed.Followed.ShouldNotBeNull().Name.ShouldBe("refs/tags/old");
         shadowed.Followed.Shadowed.ShouldBe(["refs/heads/old"]);
         shadowed.Local.Refs.ShouldContain(r => r.Name == "refs/heads/old");
@@ -486,7 +486,7 @@ public sealed class GitRefsTests : IDisposable
         Git(Clone, "fetch", "--quiet");
         var at = DateTime.UtcNow;
 
-        var tracking = await GitHistory.TrackingAsync(Repo(), "HEAD", at, default);
+        var tracking = await GitHistory.TrackingAsync(Repo(), "HEAD", at, TestContext.Current.CancellationToken);
 
         tracking.Ref.ShouldBe("HEAD");
         tracking.Branch.ShouldBe("refs/heads/main");
@@ -494,8 +494,8 @@ public sealed class GitRefsTests : IDisposable
         tracking.LastFetchUtc.ShouldNotBeNull();
         tracking.ObservedUtc.ShouldBe(at);
 
-        (await GitHistory.TrackingAsync(Repo(), "refs/heads/main", at, default)).Upstream.ShouldNotBeNull().Behind.ShouldBe(2);
-        (await GitHistory.TrackingAsync(Repo(), "main", at, default)).Branch.ShouldBe("refs/heads/main");
+        (await GitHistory.TrackingAsync(Repo(), "refs/heads/main", at, TestContext.Current.CancellationToken)).Upstream.ShouldNotBeNull().Behind.ShouldBe(2);
+        (await GitHistory.TrackingAsync(Repo(), "main", at, TestContext.Current.CancellationToken)).Branch.ShouldBe("refs/heads/main");
     }
 
     [Fact]
@@ -505,7 +505,7 @@ public sealed class GitRefsTests : IDisposable
 
         foreach (var @ref in new[] { "refs/remotes/origin/main", "origin/main" })
         {
-            var tracking = await GitHistory.TrackingAsync(Repo(), @ref, DateTime.UtcNow, default);
+            var tracking = await GitHistory.TrackingAsync(Repo(), @ref, DateTime.UtcNow, TestContext.Current.CancellationToken);
             tracking.Branch.ShouldBeNull(@ref);
             tracking.Upstream.ShouldBeNull(@ref);
             tracking.LastFetchUtc.ShouldNotBeNull(@ref);
@@ -522,7 +522,7 @@ public sealed class GitRefsTests : IDisposable
     {
         Git(Clone, "tag", "main");
 
-        var tracking = await GitHistory.TrackingAsync(Repo(), "main", DateTime.UtcNow, default);
+        var tracking = await GitHistory.TrackingAsync(Repo(), "main", DateTime.UtcNow, TestContext.Current.CancellationToken);
 
         tracking.Branch.ShouldBeNull();
         tracking.Upstream.ShouldBeNull();
@@ -549,26 +549,26 @@ public sealed class GitRefsTests : IDisposable
     [Fact]
     public async Task TheEndpointAnswersForAFolderAsASourceWouldResolveIt()
     {
-        var listed = await SystemEndpoints.RepositoryRefsAsync(_root, "repo", default);
+        var listed = await SystemEndpoints.RepositoryRefsAsync(_root, "repo", TestContext.Current.CancellationToken);
         var ok = listed.ShouldBeOfType<Ok<GitRefsResponse>>().Value.ShouldNotBeNull();
         ok.IsRepository.ShouldBeTrue();
         ok.Path.ShouldBe("repo");
         ok.Listing.ShouldNotBeNull().Head.Branch.ShouldBe("refs/heads/main");
 
-        var asked = (await SystemEndpoints.RepositoryRefsAsync(_root, "repo", default, "origin/main"))
+        var asked = (await SystemEndpoints.RepositoryRefsAsync(_root, "repo", TestContext.Current.CancellationToken, "origin/main"))
             .ShouldBeOfType<Ok<GitRefsResponse>>().Value.ShouldNotBeNull();
         var followed = asked.Listing.ShouldNotBeNull().Followed.ShouldNotBeNull();
         (followed.Ref, followed.Name).ShouldBe(("origin/main", "refs/remotes/origin/main"));
 
         Directory.CreateDirectory(Path.Combine(Clone, "src"));
-        var sub = (await SystemEndpoints.RepositoryRefsAsync(_root, "repo/src", default))
+        var sub = (await SystemEndpoints.RepositoryRefsAsync(_root, "repo/src", TestContext.Current.CancellationToken))
             .ShouldBeOfType<Ok<GitRefsResponse>>().Value.ShouldNotBeNull();
         sub.IsRepository.ShouldBeFalse("a source there would walk the whole repository");
         sub.Listing.ShouldBeNull();
 
-        (await SystemEndpoints.RepositoryRefsAsync(_root, "missing", default))
+        (await SystemEndpoints.RepositoryRefsAsync(_root, "missing", TestContext.Current.CancellationToken))
             .ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(404);
-        (await SystemEndpoints.RepositoryRefsAsync(_root, "../elsewhere", default))
+        (await SystemEndpoints.RepositoryRefsAsync(_root, "../elsewhere", TestContext.Current.CancellationToken))
             .ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(400);
     }
 

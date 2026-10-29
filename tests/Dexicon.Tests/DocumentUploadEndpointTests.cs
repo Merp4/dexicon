@@ -85,7 +85,7 @@ public sealed class DocumentUploadEndpointTests
         await using var harness = await StartAsync();
         var body = new MultipartBody().File("files", "huge.bin", 3 * Megabyte);
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var refused = posted.Result.ShouldBeOfType<ProblemHttpResult>();
         refused.StatusCode.ShouldBe(400);
@@ -94,7 +94,7 @@ public sealed class DocumentUploadEndpointTests
         posted.BufferedToATempFile.ShouldBeFalse(
             "the body was spooled to a temp file (a tmpfs, in the container) before the cap was applied");
         await using var db = harness.NewContext();
-        (await db.Blobs.AnyAsync()).ShouldBeFalse("nothing over the cap is stored");
+        (await db.Blobs.AnyAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse("nothing over the cap is stored");
     }
 
     [Fact]
@@ -103,17 +103,17 @@ public sealed class DocumentUploadEndpointTests
         // a.txt's bytes sent as "b.txt", which another document holds: the rename onto that path failed on
         // the source's unique key and the whole request answered 500, losing c.txt beside it.
         await using var harness = await StartAsync();
-        await PostAsync(harness, new MultipartBody().File("files", "a.txt", 200, 'a').File("files", "b.txt", 300, 'b'));
+        await PostAsync(harness, new MultipartBody().File("files", "a.txt", 200, 'a').File("files", "b.txt", 300, 'b'), ct: TestContext.Current.CancellationToken);
         var again = new MultipartBody().File("files", "b.txt", 200, 'a').File("files", "c.txt", 100, 'c');
 
-        var posted = await PostAsync(harness, again);
+        var posted = await PostAsync(harness, again, ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Select(s => s.FileName).ShouldBe(["c.txt"]);
         accepted.Failed.Select(f => f.File).ShouldBe(["b.txt"]);
         accepted.Failed[0].Error.ShouldContain("'a.txt'");
         await using var db = harness.NewContext();
-        (await db.Files.Select(f => f.RelativePath).ToListAsync()).ShouldBe(["a.txt", "b.txt", "c.txt"], ignoreOrder: true);
+        (await db.Files.Select(f => f.RelativePath).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(["a.txt", "b.txt", "c.txt"], ignoreOrder: true);
     }
 
     [Fact]
@@ -125,7 +125,7 @@ public sealed class DocumentUploadEndpointTests
             .File("files", "huge.bin", 3 * Megabyte)
             .File("files", "after.txt", 300, 'c');
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Select(s => s.FileName).ShouldBe(["before.txt", "after.txt"]);
@@ -133,8 +133,8 @@ public sealed class DocumentUploadEndpointTests
         accepted.Failed[0].Error.ShouldContain("DEXICON__UPLOAD__MAXFILEBYTES");
         posted.BufferedToATempFile.ShouldBeFalse();
         await using var db = harness.NewContext();
-        (await db.Blobs.CountAsync()).ShouldBe(2);
-        (await db.Files.CountAsync()).ShouldBe(2, "and both are attached to the corpus");
+        (await db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2);
+        (await db.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2, "and both are attached to the corpus");
     }
 
     [Fact]
@@ -144,7 +144,7 @@ public sealed class DocumentUploadEndpointTests
         var bound = Limits.MaxRequestBytes;
         var body = new MultipartBody().File("files", "a.txt", bound);
 
-        var posted = await PostAsync(harness, body, declareLength: true);
+        var posted = await PostAsync(harness, body, declareLength: true, ct: TestContext.Current.CancellationToken);
 
         var refused = posted.Result.ShouldBeOfType<ProblemHttpResult>();
         refused.StatusCode.ShouldBe(413);
@@ -160,7 +160,7 @@ public sealed class DocumentUploadEndpointTests
         var bound = Limits.MaxRequestBytes;
         var body = new MultipartBody().File("files", "a.txt", bound + 4 * Megabyte);
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var refused = posted.Result.ShouldBeOfType<ProblemHttpResult>();
         refused.StatusCode.ShouldBe(413);
@@ -179,7 +179,7 @@ public sealed class DocumentUploadEndpointTests
             .File("files", "first.txt", 200, 'b')
             .File("files", "huge.bin", bound + 4 * Megabyte);
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Select(s => s.FileName).ShouldBe(["first.txt"]);
@@ -196,7 +196,7 @@ public sealed class DocumentUploadEndpointTests
         for (var i = 0; i < UploadOptions.BatchFiles; i++)
             body.File("files", $"f{i}.txt", Cap, (char)('a' + i));
 
-        var posted = await PostAsync(harness, body, declareLength: true);
+        var posted = await PostAsync(harness, body, declareLength: true, ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Count.ShouldBe(UploadOptions.BatchFiles);
@@ -213,7 +213,7 @@ public sealed class DocumentUploadEndpointTests
             body.File("files", $"f{i}.txt", 100, (char)('a' + i));
         body.File("files", "eleventh.txt", 3 * Megabyte, 'z').File("files", "twelfth.txt", 100, 'y');
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Count.ShouldBe(UploadOptions.BatchFiles);
@@ -223,9 +223,9 @@ public sealed class DocumentUploadEndpointTests
         failure.Error.ShouldContain("another request");
         posted.BytesRead.ShouldBeLessThan(64 * 1024, "the body past the tenth file was read instead of being left unread");
         await using var db = harness.NewContext();
-        (await db.Blobs.CountAsync()).ShouldBe(UploadOptions.BatchFiles);
-        (await db.Files.CountAsync()).ShouldBe(UploadOptions.BatchFiles);
-        (await db.Jobs.CountAsync()).ShouldBe(1, "the stored files are queued for indexing");
+        (await db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(UploadOptions.BatchFiles);
+        (await db.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(UploadOptions.BatchFiles);
+        (await db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "the stored files are queued for indexing");
     }
 
     [Fact]
@@ -236,7 +236,7 @@ public sealed class DocumentUploadEndpointTests
         for (var i = 0; i < UploadOptions.BatchFiles; i++)
             body.File("files", $"f{i}.txt", 100, (char)('a' + i)).Field($"note{i}", "text");
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Count.ShouldBe(UploadOptions.BatchFiles);
@@ -252,7 +252,7 @@ public sealed class DocumentUploadEndpointTests
             body.File("files", $"f{i}.txt", 100, (char)('a' + i));
         body.Field("note", "between").File("files", "eleventh.txt", 100, 'z');
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Select(s => s.FileName).ShouldNotContain("eleventh.txt");
@@ -268,15 +268,15 @@ public sealed class DocumentUploadEndpointTests
             body.File("files", $"empty{i}.txt", 0);
         body.File("files", "eleventh.txt", 100, 'z');
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var refused = posted.Result.ShouldBeOfType<ProblemHttpResult>();
         refused.StatusCode.ShouldBe(400);
         refused.ProblemDetails.Title.ShouldBe("No files could be stored");
         refused.ProblemDetails.Detail.ShouldNotBeNull().ShouldContain($"more than {UploadOptions.BatchFiles} files");
         await using var db = harness.NewContext();
-        (await db.Blobs.AnyAsync()).ShouldBeFalse();
-        (await db.Jobs.CountAsync()).ShouldBe(0);
+        (await db.Blobs.AnyAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
+        (await db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]
@@ -286,7 +286,7 @@ public sealed class DocumentUploadEndpointTests
         var body = new MultipartBody();
         for (var i = 0; i < 5_000; i++) body.Field($"f{i}", "v");
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var refused = posted.Result.ShouldBeOfType<ProblemHttpResult>();
         refused.StatusCode.ShouldBe(400);
@@ -308,7 +308,7 @@ public sealed class DocumentUploadEndpointTests
             for (var j = 0; j < 9; j++) body.Field($"n{i}-{j}", "v");
         }
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Count.ShouldBe(UploadOptions.BatchFiles);
@@ -326,7 +326,7 @@ public sealed class DocumentUploadEndpointTests
         for (var j = 0; j < UploadOptions.MaxSections - UploadOptions.BatchFiles + 1; j++)
             body.Field($"n{j}", "v");
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Count.ShouldBe(UploadOptions.BatchFiles);
@@ -345,7 +345,7 @@ public sealed class DocumentUploadEndpointTests
         for (var i = 0; i <= UploadOptions.BatchFiles; i++)
             body.File("files", $"f{i}.txt", 100, (char)('a' + i));
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Count.ShouldBe(UploadOptions.BatchFiles);
@@ -361,7 +361,7 @@ public sealed class DocumentUploadEndpointTests
         for (var i = 0; i < UploadOptions.BatchFiles; i++)
             body.File("files", $"f{i}.txt", 100, (char)('a' + i)).File("files", "", 50, 'z');
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Count.ShouldBe(UploadOptions.BatchFiles);
@@ -375,7 +375,7 @@ public sealed class DocumentUploadEndpointTests
         var body = new MultipartBody();
         for (var i = 0; i <= UploadOptions.MaxSections; i++) body.File("files", "", 50, 'z');
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var refused = posted.Result.ShouldBeOfType<ProblemHttpResult>();
         refused.StatusCode.ShouldBe(400);
@@ -417,8 +417,7 @@ public sealed class DocumentUploadEndpointTests
             .File("files", "stuck.slow", 300, 's')
             .File("files", "after.txt", 200, 'c');
 
-        var posted = await PostAsync(
-            harness, body, indexing: new IndexingOptions { ExtractionTimeoutSeconds = 1 }, extractorFor: Registry(slow));
+        var posted = await PostAsync(harness, body, indexing: new IndexingOptions { ExtractionTimeoutSeconds = 1 }, extractorFor: Registry(slow), ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Select(s => s.FileName).ShouldBe(["before.txt", "after.txt"]);
@@ -432,11 +431,11 @@ public sealed class DocumentUploadEndpointTests
         slow.BytesRead.ShouldBeLessThan(300, "the deadline has to cut the extractor's reading short");
         await using var db = harness.NewContext();
         var stored = accepted.Stored.Select(s => s.Sha256).ToList();
-        (await db.Blobs.Select(b => b.Sha256).ToListAsync()).ShouldBe(stored, ignoreOrder: true,
+        (await db.Blobs.Select(b => b.Sha256).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(stored, ignoreOrder: true,
             "the file after the timeout is attached and the job is queued, and neither saves a blob for the one that timed out");
-        (await db.BlobTexts.Select(t => t.Sha256).ToListAsync()).ShouldBe(stored, ignoreOrder: true);
-        (await db.Files.CountAsync()).ShouldBe(2);
-        (await db.Jobs.CountAsync()).ShouldBe(1);
+        (await db.BlobTexts.Select(t => t.Sha256).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(stored, ignoreOrder: true);
+        (await db.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2);
+        (await db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]
@@ -445,17 +444,15 @@ public sealed class DocumentUploadEndpointTests
         await using var harness = await StartAsync();
         var body = new MultipartBody().File("files", "stuck.slow", 300, 's');
 
-        var posted = await PostAsync(
-            harness, body, indexing: new IndexingOptions { ExtractionTimeoutSeconds = 1 },
-            extractorFor: Registry(new SlowReadingExtractor(TimeSpan.FromMilliseconds(20))));
+        var posted = await PostAsync(harness, body, indexing: new IndexingOptions { ExtractionTimeoutSeconds = 1 }, extractorFor: Registry(new SlowReadingExtractor(TimeSpan.FromMilliseconds(20))), ct: TestContext.Current.CancellationToken);
 
         var refused = posted.Result.ShouldBeOfType<ProblemHttpResult>();
         refused.StatusCode.ShouldBe(503, "the host could not extract it, which is not the caller's error");
         refused.ProblemDetails.Title.ShouldBe("No files could be stored");
         refused.ProblemDetails.Detail.ShouldNotBeNull().ShouldContain("DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS");
         await using var db = harness.NewContext();
-        (await db.Blobs.AnyAsync()).ShouldBeFalse();
-        (await db.Jobs.CountAsync()).ShouldBe(0);
+        (await db.Blobs.AnyAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
+        (await db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]
@@ -463,16 +460,12 @@ public sealed class DocumentUploadEndpointTests
     {
         await using var harness = await StartAsync();
         var body = () => new MultipartBody().File("files", "stuck.slow", 300, 's');
-        var first = await PostAsync(
-            harness, body(), indexing: new IndexingOptions { ExtractionTimeoutSeconds = 1 },
-            extractorFor: Registry(new SlowReadingExtractor(TimeSpan.FromMilliseconds(20))));
+        var first = await PostAsync(harness, body(), indexing: new IndexingOptions { ExtractionTimeoutSeconds = 1 }, extractorFor: Registry(new SlowReadingExtractor(TimeSpan.FromMilliseconds(20))), ct: TestContext.Current.CancellationToken);
         first.Result.ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(503);
 
         // The second post reads with no delay, so its timeout is set well past anything but a stalled machine: with 1 s
         // it timed out in a full-suite run on a loaded host (5 s for the test), which says nothing about re-extraction.
-        var posted = await PostAsync(
-            harness, body(), indexing: new IndexingOptions { ExtractionTimeoutSeconds = 30 },
-            extractorFor: Registry(new SlowReadingExtractor(TimeSpan.Zero)));
+        var posted = await PostAsync(harness, body(), indexing: new IndexingOptions { ExtractionTimeoutSeconds = 30 }, extractorFor: Registry(new SlowReadingExtractor(TimeSpan.Zero)), ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         var stored = accepted.Stored.ShouldHaveSingleItem();
@@ -502,8 +495,7 @@ public sealed class DocumentUploadEndpointTests
             .File("files", "flaky.flaky", 100, 'f')
             .File("files", "after.txt", 100, 'c');
 
-        var posted = await PostAsync(
-            harness, body, extractorFor: name => name.EndsWith(".flaky", StringComparison.Ordinal) ? new DiskFaultExtractor() : null);
+        var posted = await PostAsync(harness, body, extractorFor: name => name.EndsWith(".flaky", StringComparison.Ordinal) ? new DiskFaultExtractor() : null, ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Select(s => s.FileName).ShouldBe(["before.txt", "after.txt"]);
@@ -513,10 +505,10 @@ public sealed class DocumentUploadEndpointTests
         failure.Error.ShouldNotContain("/data/blobs", Case.Sensitive);
         failure.Error.ShouldNotContain("DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS", Case.Sensitive);
         await using var db = harness.NewContext();
-        (await db.Blobs.CountAsync()).ShouldBe(2);
-        (await db.BlobTexts.CountAsync()).ShouldBe(2);
-        (await db.Files.CountAsync()).ShouldBe(2);
-        (await db.Jobs.CountAsync()).ShouldBe(1);
+        (await db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2);
+        (await db.BlobTexts.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2);
+        (await db.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2);
+        (await db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]
@@ -527,8 +519,7 @@ public sealed class DocumentUploadEndpointTests
             .File("files", "empty.txt", 0)
             .File("files", "flaky.flaky", 100, 'f');
 
-        var posted = await PostAsync(
-            harness, body, extractorFor: name => name.EndsWith(".flaky", StringComparison.Ordinal) ? new DiskFaultExtractor() : null);
+        var posted = await PostAsync(harness, body, extractorFor: name => name.EndsWith(".flaky", StringComparison.Ordinal) ? new DiskFaultExtractor() : null, ct: TestContext.Current.CancellationToken);
 
         var refused = posted.Result.ShouldBeOfType<ProblemHttpResult>();
         refused.StatusCode.ShouldBe(503, "one file failed for a reason on the server, so retrying can succeed");
@@ -542,7 +533,7 @@ public sealed class DocumentUploadEndpointTests
         // The control for the 503 above.
         await using var harness = await StartAsync();
 
-        var posted = await PostAsync(harness, new MultipartBody().File("files", "empty.txt", 0));
+        var posted = await PostAsync(harness, new MultipartBody().File("files", "empty.txt", 0), ct: TestContext.Current.CancellationToken);
 
         posted.Result.ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(400);
     }
@@ -558,7 +549,7 @@ public sealed class DocumentUploadEndpointTests
             .File("files", "broken.epub", TestEpubs.WithADamagedEntry())
             .File("files", "after.txt", 100, 'c');
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Select(s => s.FileName).ShouldBe(["before.txt", "broken.epub", "after.txt"]);
@@ -587,7 +578,7 @@ public sealed class DocumentUploadEndpointTests
                     System.IO.File.Delete(file);
 
             return null;
-        });
+        }, ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Select(s => s.FileName).ShouldBe(["before.txt", "after.txt"]);
@@ -595,7 +586,7 @@ public sealed class DocumentUploadEndpointTests
         failure.File.ShouldBe("gone.txt");
         failure.Error.ShouldContain("No document record was created");
         await using var db = harness.NewContext();
-        (await db.Blobs.CountAsync()).ShouldBe(2);
+        (await db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2);
     }
 
     [Theory]
@@ -608,9 +599,7 @@ public sealed class DocumentUploadEndpointTests
         var slow = new SlowReadingExtractor(TimeSpan.FromMilliseconds(5));
         var body = new MultipartBody().File("files", "slow.slow", 100, 's');
 
-        var posted = await PostAsync(
-            harness, body, indexing: new IndexingOptions { ExtractionTimeoutSeconds = timeoutSeconds },
-            extractorFor: Registry(slow));
+        var posted = await PostAsync(harness, body, indexing: new IndexingOptions { ExtractionTimeoutSeconds = timeoutSeconds }, extractorFor: Registry(slow), ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         var stored = accepted.Stored.ShouldHaveSingleItem();
@@ -641,7 +630,7 @@ public sealed class DocumentUploadEndpointTests
             .File("files", name, 100, 'n')
             .File("files", "after.txt", 100, 'c');
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Select(s => s.FileName).ShouldBe(["before.txt", "after.txt"]);
@@ -650,8 +639,8 @@ public sealed class DocumentUploadEndpointTests
         failure.Error.ShouldNotContain(name, Case.Sensitive);
         failure.Error.ShouldMatch("control character|260 characters");
         await using var db = harness.NewContext();
-        (await db.Blobs.CountAsync()).ShouldBe(2, "a refused name stores no bytes");
-        (await db.Files.Select(f => f.RelativePath).ToListAsync()).ShouldBe(["before.txt", "after.txt"], ignoreOrder: true);
+        (await db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2, "a refused name stores no bytes");
+        (await db.Files.Select(f => f.RelativePath).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(["before.txt", "after.txt"], ignoreOrder: true);
     }
 
     [Fact]
@@ -662,7 +651,7 @@ public sealed class DocumentUploadEndpointTests
             .Field("note", "not a document")
             .File("attachment", "Résumé & notes (1).txt", 120, 'b');
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Select(s => s.FileName).ShouldBe(["Résumé & notes (1).txt"]);
@@ -677,7 +666,7 @@ public sealed class DocumentUploadEndpointTests
             .File("files", "empty.txt", 0)
             .File("files", "full.txt", 100, 'b');
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Select(s => s.FileName).ShouldBe(["full.txt"]);
@@ -695,7 +684,7 @@ public sealed class DocumentUploadEndpointTests
             .File("files", "(request)", 0)
             .File("files", "full.txt", 100, 'b');
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Failed.Select(f => f.File).ShouldBe(["(request)"]);
@@ -706,7 +695,7 @@ public sealed class DocumentUploadEndpointTests
     {
         await using var harness = await StartAsync();
 
-        var posted = await PostAsync(harness, new MultipartBody().Field("note", "text only"));
+        var posted = await PostAsync(harness, new MultipartBody().Field("note", "text only"), ct: TestContext.Current.CancellationToken);
 
         var refused = posted.Result.ShouldBeOfType<ProblemHttpResult>();
         refused.StatusCode.ShouldBe(400);
@@ -721,7 +710,7 @@ public sealed class DocumentUploadEndpointTests
             .File("files", "before.txt", 100, 'b')
             .Field(new string('x', MultipartReader.DefaultHeadersLengthLimit + 1), "value");
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Select(s => s.FileName).ShouldBe(["before.txt"]);
@@ -735,7 +724,7 @@ public sealed class DocumentUploadEndpointTests
         var body = new MultipartBody()
             .Field(new string('x', MultipartReader.DefaultHeadersLengthLimit + 1), "value");
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var refused = posted.Result.ShouldBeOfType<ProblemHttpResult>();
         refused.StatusCode.ShouldBe(400);
@@ -749,14 +738,14 @@ public sealed class DocumentUploadEndpointTests
         // mistake.
         await using var harness = await StartAsync();
 
-        var posted = await PostAsync(harness, new MultipartBody().File("files", "only.txt", 100, 'a').Truncated());
+        var posted = await PostAsync(harness, new MultipartBody().File("files", "only.txt", 100, 'a').Truncated(), ct: TestContext.Current.CancellationToken);
 
         var refused = posted.Result.ShouldBeOfType<ProblemHttpResult>();
         refused.StatusCode.ShouldBe(400);
         refused.ProblemDetails.Title.ShouldBe("Malformed multipart upload");
         refused.ProblemDetails.Detail.ShouldBe("The body ended before its closing boundary.");
         await using var db = harness.NewContext();
-        (await db.Jobs.CountAsync()).ShouldBe(0);
+        (await db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]
@@ -767,14 +756,14 @@ public sealed class DocumentUploadEndpointTests
         await using var harness = await StartAsync();
         var body = new MultipartBody().File("files", "first.txt", 100, 'a').File("files", "second.txt", 100, 'b').Truncated();
 
-        var posted = await PostAsync(harness, body);
+        var posted = await PostAsync(harness, body, ct: TestContext.Current.CancellationToken);
 
         var accepted = posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull();
         accepted.Stored.Select(s => s.FileName).ShouldBe(["first.txt"]);
         accepted.Failed.Select(f => f.File).ShouldBe([null]);
         accepted.Failed[0].Error.ShouldContain("closing boundary");
         await using var db = harness.NewContext();
-        (await db.Jobs.CountAsync()).ShouldBe(1);
+        (await db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]
@@ -797,7 +786,7 @@ public sealed class DocumentUploadEndpointTests
         posted.Result.ShouldBeOfType<Accepted<UploadResponse>>().Value.ShouldNotBeNull()
             .Stored.Select(s => s.FileName).ShouldBe(["one.txt"]);
         await using var db = harness.NewContext();
-        (await db.Jobs.CountAsync()).ShouldBe(1, "the attached file has its job");
+        (await db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "the attached file has its job");
     }
 
     [Fact]
@@ -817,7 +806,7 @@ public sealed class DocumentUploadEndpointTests
         accepted.Failed.Select(f => f.File).ShouldBe([null]);
         accepted.Failed[0].Error.ShouldContain("connection closed");
         await using var db = harness.NewContext();
-        (await db.Jobs.CountAsync()).ShouldBe(1);
+        (await db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     /// <summary>
@@ -879,9 +868,9 @@ public sealed class DocumentUploadEndpointTests
         accepted.Stored.Select(s => s.FileName).ShouldBe(["first.txt"]);
         accepted.Failed.Select(f => f.File).ShouldBe([null]);
         await using var db = harness.NewContext();
-        (await db.Files.Select(f => f.RelativePath).ToListAsync()).ShouldBe(["first.txt"], "only the reported file is attached");
-        (await db.FileChunkStates.CountAsync()).ShouldBe(1);
-        (await db.Jobs.CountAsync()).ShouldBe(1);
+        (await db.Files.Select(f => f.RelativePath).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(["first.txt"], "only the reported file is attached");
+        (await db.FileChunkStates.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
+        (await db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]
@@ -896,8 +885,8 @@ public sealed class DocumentUploadEndpointTests
             harness, new MultipartBody().File("files", "a.txt", 100, 'a'), ct: cts.Token));
 
         await using var db = harness.NewContext();
-        (await db.Jobs.CountAsync()).ShouldBe(0);
-        (await db.Files.CountAsync()).ShouldBe(0);
+        (await db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
+        (await db.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]
@@ -913,8 +902,8 @@ public sealed class DocumentUploadEndpointTests
 
         thrown.Message.ShouldBe("the disk is full");
         await using var db = harness.NewContext();
-        (await db.Files.Select(f => f.RelativePath).ToListAsync()).ShouldBe(["first.txt"]);
-        (await db.Jobs.CountAsync()).ShouldBe(1, "the attached file has its job");
+        (await db.Files.Select(f => f.RelativePath).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(["first.txt"]);
+        (await db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "the attached file has its job");
     }
 
     /// <summary>Fails the <paramref name="nth"/> INSERT into <paramref name="table"/> with an error that is not a cancel.</summary>
@@ -983,9 +972,9 @@ public sealed class DocumentUploadEndpointTests
         watcher.Fired.ShouldBeTrue("the window has to have been opened");
         thrown.InnerException.ShouldNotBeNull().Message.ShouldBe("the catalogue refused the write");
         await using var db = harness.NewContext();
-        (await db.Files.Select(f => f.RelativePath).ToListAsync()).ShouldBe(["first.txt"], "only the attached file is saved");
-        (await db.FileChunkStates.CountAsync()).ShouldBe(1);
-        (await db.Jobs.CountAsync()).ShouldBe(1);
+        (await db.Files.Select(f => f.RelativePath).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(["first.txt"], "only the attached file is saved");
+        (await db.FileChunkStates.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
+        (await db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]
@@ -1011,11 +1000,7 @@ public sealed class DocumentUploadEndpointTests
         http.Request.ContentType = "application/json";
         http.Request.Body = new UnreadableStream();
 
-        var result = await DocumentEndpoints.UploadAsync(
-            "notes", http.Request, As(Scopes.Ingest), new ScopeResolver(db),
-            new DocumentService(db, options, NullLogger<DocumentService>.Instance),
-            new IndexJobQueue(db, new WorkScheduler(options), NullLogger<IndexJobQueue>.Instance),
-            options, default);
+        var result = await DocumentEndpoints.UploadAsync("notes", http.Request, As(Scopes.Ingest), new ScopeResolver(db), new DocumentService(db, options, NullLogger<DocumentService>.Instance), new IndexJobQueue(db, new WorkScheduler(options), NullLogger<IndexJobQueue>.Instance), options, TestContext.Current.CancellationToken);
 
         result.ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(415);
     }
@@ -1026,12 +1011,12 @@ public sealed class DocumentUploadEndpointTests
         await using var harness = await StartAsync();
         var body = new MultipartBody().File("files", "a.txt", 100);
 
-        var posted = await PostAsync(harness, body, As(Scopes.Search), declareLength: true);
+        var posted = await PostAsync(harness, body, As(Scopes.Search), declareLength: true, ct: TestContext.Current.CancellationToken);
 
         posted.Result.ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(403);
         posted.BytesRead.ShouldBe(0);
         await using var db = harness.NewContext();
-        (await db.Blobs.AnyAsync()).ShouldBeFalse();
+        (await db.Blobs.AnyAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 
     [Fact]

@@ -70,12 +70,12 @@ public sealed class DestroyScopeTests
         await using var db = harness.NewContext();
         var tokens = new TokenService(db, TimeProvider.System);
 
-        var (alone, _) = await tokens.CreateAsync("remover", [Scopes.Destroy], null);
-        var (reader, _) = await tokens.CreateAsync("reader", [Scopes.Search], null);
-        (await tokens.SetScopesAsync(reader.Id, [Scopes.Search, Scopes.Destroy])).ShouldBeTrue();
+        var (alone, _) = await tokens.CreateAsync("remover", [Scopes.Destroy], null, ct: TestContext.Current.CancellationToken);
+        var (reader, _) = await tokens.CreateAsync("reader", [Scopes.Search], null, ct: TestContext.Current.CancellationToken);
+        (await tokens.SetScopesAsync(reader.Id, [Scopes.Search, Scopes.Destroy], TestContext.Current.CancellationToken)).ShouldBeTrue();
 
         alone.Scopes.Split(',').ShouldBe([Scopes.Destroy]);
-        (await db.Tokens.AsNoTracking().SingleAsync(t => t.Id == reader.Id)).Scopes.Split(',')
+        (await db.Tokens.AsNoTracking().SingleAsync(t => t.Id == reader.Id, cancellationToken: TestContext.Current.CancellationToken)).Scopes.Split(',')
             .ShouldBe([Scopes.Search, Scopes.Destroy]);
     }
 
@@ -114,7 +114,7 @@ public sealed class DestroyScopeTests
             await SeedKeyAsync(db, "k-has", "search,ingest,destroy");
             await SeedKeyAsync(db, "k-word", "search,reingest");
 
-            await db.GetService<IMigrator>().MigrateAsync(TheMigration);
+            await db.GetService<IMigrator>().MigrateAsync(TheMigration, TestContext.Current.CancellationToken);
 
             var after = await ScopesOfEveryKeyAsync(db);
             after.ShouldBe(new Dictionary<string, string>
@@ -143,10 +143,10 @@ public sealed class DestroyScopeTests
         try
         {
             await SeedKeyAsync(db, "k-ingest", "search,ingest");
-            await db.GetService<IMigrator>().MigrateAsync(TheMigration);
+            await db.GetService<IMigrator>().MigrateAsync(TheMigration, TestContext.Current.CancellationToken);
             var once = await ScopesOfEveryKeyAsync(db);
 
-            await db.Database.ExecuteSqlRawAsync(GrantDestroyToIngestKeys.GrantSql);
+            await db.Database.ExecuteSqlRawAsync(GrantDestroyToIngestKeys.GrantSql, cancellationToken: TestContext.Current.CancellationToken);
 
             (await ScopesOfEveryKeyAsync(db)).ShouldBe(once);
             once["k-ingest"].ShouldBe("search,ingest,destroy", "granted once, and not twice");
@@ -167,10 +167,10 @@ public sealed class DestroyScopeTests
             await using var db = new CatalogDbContext(new DbContextOptionsBuilder<CatalogDbContext>()
                 .UseSqlite($"Data Source={path};Pooling=False").Options);
 
-            await db.Database.MigrateAsync();
+            await db.Database.MigrateAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-            (await db.Database.GetAppliedMigrationsAsync()).ShouldContain(TheMigration);
-            (await db.Database.GetPendingMigrationsAsync()).ShouldBeEmpty();
+            (await db.Database.GetAppliedMigrationsAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldContain(TheMigration);
+            (await db.Database.GetPendingMigrationsAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeEmpty();
             db.Database.HasPendingModelChanges().ShouldBeFalse();
         }
         finally

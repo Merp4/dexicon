@@ -78,7 +78,7 @@ public sealed class IgnorePatternMessageTests : IDisposable
     {
         File.WriteAllText(Path.Combine(_root, ".gitignore"), "[z-a]\u202E\u2028x\n");
 
-        WorkspaceWalker.Walk(_root, true, null, null, 1_000_000).Warnings.ShouldBe(
+        WorkspaceWalker.Walk(_root, true, null, null, 1_000_000, ct: TestContext.Current.CancellationToken).Warnings.ShouldBe(
             [".gitignore line 1 ('[z-a]??x') cannot be compiled (reversed character range); the line was skipped"]);
     }
 
@@ -165,7 +165,7 @@ public sealed class IgnorePatternMessageTests : IDisposable
     {
         File.WriteAllText(Path.Combine(_root, ".gitignore"), $"[z-a]{char.ConvertFromUtf32(codePoint)}x\n");
 
-        WorkspaceWalker.Walk(_root, true, null, null, 1_000_000).Warnings.ShouldBe(
+        WorkspaceWalker.Walk(_root, true, null, null, 1_000_000, ct: TestContext.Current.CancellationToken).Warnings.ShouldBe(
             [".gitignore line 1 ('[z-a]??x') cannot be compiled (reversed character range); the line was skipped"], name);
     }
 

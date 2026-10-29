@@ -27,13 +27,13 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     private IndexingHarness _harness = null!;
     private readonly RecordingLoggerFactory _logs = new();
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _harness = await IndexingHarness.StartAsync("notes", "docs");
         await _harness.SeedCorpusAsync(SourceKind.Workspace);
     }
 
-    public async Task DisposeAsync() => await _harness.DisposeAsync();
+    public async ValueTask DisposeAsync() => await _harness.DisposeAsync();
 
     private string Workspace => Path.Combine(_harness.DataPath, "workspace");
 
@@ -69,8 +69,8 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
         (await Should.ThrowAsync<McpException>(() => SourceAsync(db, searcher, "docs", exclude: ["x"])))
             .Message.ShouldContain("'configure'");
 
-        (await db.Corpora.CountAsync()).ShouldBe(1);
-        (await db.Jobs.AnyAsync()).ShouldBeFalse();
+        (await db.Corpora.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
+        (await db.Jobs.AnyAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 
     [Fact]
@@ -106,7 +106,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
         var replies = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => Task.Run(Add)));
 
         await using var check = _harness.NewContext();
-        (await check.Sources.CountAsync(s => s.RootPath == "papers")).ShouldBe(1);
+        (await check.Sources.CountAsync(s => s.RootPath == "papers", cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
         replies.Count(r => r.StartsWith("Added a source", StringComparison.Ordinal)).ShouldBe(1);
         replies.Count(r => r.Contains("already has a source")).ShouldBe(3);
     }
@@ -128,18 +128,18 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     {
         await using var db = _harness.NewContext();
         var (row, _) = await new TokenService(db, TimeProvider.System)
-            .CreateAsync("mapped", [Scopes.Search, Scopes.Configure], null, [IndexingHarness.CorpusId]);
+            .CreateAsync("mapped", [Scopes.Search, Scopes.Configure], null, [IndexingHarness.CorpusId], TestContext.Current.CancellationToken);
         var rc = As(row.Id, Scopes.Search, Scopes.Configure);
 
         (await Should.ThrowAsync<McpException>(() => CorpusAsync(db, rc, "papers"))).Message.ShouldContain("create: true");
-        (await db.Corpora.CountAsync()).ShouldBe(1, "a name that matched nothing is not a request to create it");
+        (await db.Corpora.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "a name that matched nothing is not a request to create it");
 
         var text = await CorpusAsync(db, rc, "papers", create: true, description: "Conference papers");
 
         text.ShouldStartWith("Created corpus 'papers'");
-        var papers = await db.Corpora.SingleAsync(c => c.Name == "papers");
+        var papers = await db.Corpora.SingleAsync(c => c.Name == "papers", cancellationToken: TestContext.Current.CancellationToken);
         papers.Description.ShouldBe("Conference papers");
-        (await new ScopeResolver(db).VisibleAsync(rc.Principal!)).Select(c => c.Name)
+        (await new ScopeResolver(db).VisibleAsync(rc.Principal!, TestContext.Current.CancellationToken)).Select(c => c.Name)
             .ShouldBe(new[] { "notes", "papers" }, ignoreOrder: true, "a mapped key reaches only its corpora, so the new one joins them");
     }
 
@@ -153,7 +153,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
 
         text.ShouldContain("the filters its sources inherit");
         text.ShouldContain("A refresh is queued");
-        var defaults = (await db.Corpora.SingleAsync()).DefaultsOf();
+        var defaults = (await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).DefaultsOf();
         defaults.ShouldBe(new CorpusDefaults(null, null, ["**/*.md"], ["**/bin/**"]), new CorpusDefaultsComparer());
     }
 
@@ -161,11 +161,11 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     public async Task AFolderIsAddedOnlyIfItExistsAndTheReplyShowsItAsIndexStatusDoes()
     {
         await using var db = _harness.NewContext();
-        var before = await db.Sources.CountAsync();
+        var before = await db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         (await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, "papers", create: true)))
             .Message.ShouldContain("list_folders");
-        (await db.Sources.CountAsync()).ShouldBe(before, "a typo cannot be removed from here, so it is not added");
+        (await db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(before, "a typo cannot be removed from here, so it is not added");
 
         Directory.CreateDirectory(Path.Combine(Workspace, "papers"));
         var text = await SourceAsync(db, Configurer, "papers", create: true, exclude: ["**/draft/**"], maxFileKb: 512);
@@ -174,7 +174,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
         text.ShouldContain(
             "  files under papers: 0 files found; .gitignore respected; .dexiconignore respected; "
             + "code and text up to 512 KB; not **/draft/**\n");
-        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh)).ShouldBe(1);
+        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Theory]
@@ -186,12 +186,12 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
         // A duplicate added here could not be removed from here, and would index and embed
         // the same files twice.
         await using var db = _harness.NewContext();
-        var before = await db.Sources.CountAsync();
+        var before = await db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         (await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, spelling, create: true)))
             .Message.ShouldContain("already has a source for the files under notes");
         (await SourceAsync(db, Configurer, spelling, exclude: ["**/*.tmp"])).ShouldStartWith("Changed the source for the files under notes");
-        (await db.Sources.CountAsync()).ShouldBe(before);
+        (await db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(before);
     }
 
     [Fact]
@@ -249,16 +249,16 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
         // checkout that holds it. A key holding configure could otherwise index it and read the
         // admin password and the bootstrap token back by search.
         await using var db = _harness.NewContext();
-        var before = await db.Sources.CountAsync();
+        var before = await db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         (await Should.ThrowAsync<McpException>(() => CorpusAsync(db, Configurer, "notes", gitignore: false)))
             .Message.ShouldContain("cannot be turned off over MCP");
         (await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, "notes", gitignore: false)))
             .Message.ShouldContain("cannot be turned off over MCP");
 
-        (await db.Corpora.SingleAsync()).DefaultUseGitignore.ShouldBeNull("nothing was stored");
-        (await db.Jobs.AnyAsync()).ShouldBeFalse();
-        (await db.Sources.CountAsync()).ShouldBe(before);
+        (await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).DefaultUseGitignore.ShouldBeNull("nothing was stored");
+        (await db.Jobs.AnyAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
+        (await db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(before);
         (await SourceAsync(db, Configurer, "notes", gitignore: true)).ShouldStartWith("Changed the source");
     }
 
@@ -277,7 +277,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
         (await Should.ThrowAsync<McpException>(() => CorpusAsync(db, Configurer, "papers", create: true, description: new string('x', 501))))
             .Message.ShouldContain("at most 500");
 
-        (await db.Corpora.CountAsync()).ShouldBe(1);
+        (await db.Corpora.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
         (await CorpusAsync(db, Configurer, "notes", description: new string('x', 500))).ShouldContain("description");
     }
 
@@ -329,20 +329,20 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
         // would follow it, which is turning it off by another route: the new source indexes
         // what .gitignore keeps out, such as a .env. Resetting a source to follow it is the same.
         await using var db = _harness.NewContext();
-        await db.Corpora.ExecuteUpdateAsync(u => u.SetProperty(c => c.DefaultUseGitignore, false));
+        await db.Corpora.ExecuteUpdateAsync(u => u.SetProperty(c => c.DefaultUseGitignore, false), cancellationToken: TestContext.Current.CancellationToken);
         Directory.CreateDirectory(Path.Combine(Workspace, "papers"));
-        var before = await db.Sources.CountAsync();
+        var before = await db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         (await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, "papers", create: true)))
             .Message.ShouldContain("turns .gitignore off");
         (await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, "notes", reset: ["gitignore"])))
             .Message.ShouldContain("turns .gitignore off");
-        (await db.Sources.CountAsync()).ShouldBe(before);
-        (await db.Jobs.AnyAsync()).ShouldBeFalse();
+        (await db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(before);
+        (await db.Jobs.AnyAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
 
         // Pinned on for this one source, it is allowed.
         (await SourceAsync(db, Configurer, "papers", create: true, gitignore: true)).ShouldStartWith("Added a source");
-        (await db.Sources.SingleAsync(s => s.RootPath == "papers")).UseGitignore.ShouldBe(true);
+        (await db.Sources.SingleAsync(s => s.RootPath == "papers", cancellationToken: TestContext.Current.CancellationToken)).UseGitignore.ShouldBe(true);
     }
 
     [Fact]
@@ -372,7 +372,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     {
         // Existing catalogues can hold a name the rule now refuses.
         await using var db = _harness.NewContext();
-        await db.Corpora.ExecuteUpdateAsync(u => u.SetProperty(c => c.Name, "two\nlines"));
+        await db.Corpora.ExecuteUpdateAsync(u => u.SetProperty(c => c.Name, "two\nlines"), cancellationToken: TestContext.Current.CancellationToken);
 
         var reply = await CorpusAsync(db, Configurer, "two\nlines", description: "kept");
 
@@ -386,14 +386,14 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
         // JSON can send null whatever the signature says. A null folder read as "" would add a
         // source over the whole workspace, which nothing here can remove.
         await using var db = _harness.NewContext();
-        var before = await db.Sources.CountAsync();
+        var before = await db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         (await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, null!, create: true)))
             .Message.ShouldContain("folder is required");
         (await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, "notes", kind: null!)))
             .Message.ShouldContain("files or history");
 
-        (await db.Sources.CountAsync()).ShouldBe(before);
+        (await db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(before);
     }
 
     [Fact]
@@ -401,7 +401,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     {
         // New names cannot hold one; a corpus created before that rule can.
         await using var db = _harness.NewContext();
-        await db.Corpora.ExecuteUpdateAsync(u => u.SetProperty(c => c.Name, "two\nlines"));
+        await db.Corpora.ExecuteUpdateAsync(u => u.SetProperty(c => c.Name, "two\nlines"), cancellationToken: TestContext.Current.CancellationToken);
 
         (await FoldersAsync(db, Configurer)).ShouldContain("  notes/  0 entries; indexed by two lines (files)\n");
     }
@@ -444,17 +444,17 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
         // On Windows and macOS "NOTES" is the folder notes, and adding it would be a second
         // source over the same files. On Linux it is another folder, which is not there.
         await using var db = _harness.NewContext();
-        var before = await db.Sources.CountAsync();
+        var before = await db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         var refusal = await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, "NOTES", create: true));
 
         refusal.Message.ShouldContain(OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
             ? "already has a source"
             : "There is no folder 'NOTES'");
-        (await db.Sources.CountAsync()).ShouldBe(before);
+        (await db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(before);
 
         // And list_folders reads a source stored as NOTES as reading the folder notes, there.
-        await db.Sources.Where(s => s.RootPath == "notes").ExecuteUpdateAsync(u => u.SetProperty(s => s.RootPath, "NOTES"));
+        await db.Sources.Where(s => s.RootPath == "notes").ExecuteUpdateAsync(u => u.SetProperty(s => s.RootPath, "NOTES"), cancellationToken: TestContext.Current.CancellationToken);
         var listed = await FoldersAsync(db, Configurer);
         (listed.Contains("  notes/  0 entries; indexed by notes (files)\n"))
             .ShouldBe(OperatingSystem.IsWindows() || OperatingSystem.IsMacOS());
@@ -477,12 +477,12 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
     {
         await using var db = _harness.NewContext();
         Directory.CreateDirectory(Path.Combine(Workspace, "extra"));
-        var corpus = await db.Corpora.SingleAsync();
+        var corpus = await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-        (await _harness.NewConfiguration(db).AddSourceAsync(corpus, new AddSourceRequest("extra/./"), default))
+        (await _harness.NewConfiguration(db).AddSourceAsync(corpus, new AddSourceRequest("extra/./"), TestContext.Current.CancellationToken))
             .Refusal.ShouldBeNull();
 
-        (await db.Sources.CountAsync(s => s.RootPath == "extra")).ShouldBe(1);
+        (await db.Sources.CountAsync(s => s.RootPath == "extra", cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]
@@ -506,7 +506,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
             RootPath = "",
             CreatedUtc = DateTime.UtcNow,
         });
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var miss = await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, "notes", kind: "history"));
         miss.Message.ShouldContain("no source for the commit history of notes");
@@ -531,14 +531,14 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
             RootPath = "docs",
             CreatedUtc = DateTime.UtcNow,
         });
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         (await Should.ThrowAsync<McpException>(() => SourceAsync(db, Configurer, "docs", exclude: ["**/*.tmp"])))
             .Message.ShouldContain("has 2 sources for the files under docs");
 
-        (await db.Sources.AsNoTracking().CountAsync(s => s.RootPath == "docs" && s.ExcludeGlobs != null))
+        (await db.Sources.AsNoTracking().CountAsync(s => s.RootPath == "docs" && s.ExcludeGlobs != null, cancellationToken: TestContext.Current.CancellationToken))
             .ShouldBe(0, "neither source was changed");
-        (await db.Jobs.AnyAsync()).ShouldBeFalse();
+        (await db.Jobs.AnyAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 
     [Fact]
@@ -547,10 +547,10 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
         await using var db = _harness.NewContext();
 
         (await SourceAsync(db, Configurer, "notes", exclude: ["**/*.tmp"])).ShouldStartWith("Changed the source for the files under notes");
-        var jobs = await db.Jobs.CountAsync();
+        var jobs = await db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         (await SourceAsync(db, Configurer, "notes", exclude: ["**/*.tmp"])).ShouldStartWith("Nothing changed");
-        (await db.Jobs.CountAsync()).ShouldBe(jobs);
+        (await db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(jobs);
     }
 
     [Theory]
@@ -576,7 +576,7 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
         };
 
         (await Should.ThrowAsync<McpException>(call)).Message.ShouldContain(expected);
-        (await db.Jobs.AnyAsync()).ShouldBeFalse();
+        (await db.Jobs.AnyAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 
     [Fact]
@@ -665,8 +665,8 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
             .Message.ShouldNotBeNullOrWhiteSpace();
 
         // A key mapped elsewhere is not told which corpus reads the folder.
-        var papers = (await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("papers"), default)).Value!;
-        var (row, _) = await new TokenService(db, TimeProvider.System).CreateAsync("elsewhere", [Scopes.Configure], null, [papers.Id]);
+        var papers = (await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("papers"), TestContext.Current.CancellationToken)).Value!;
+        var (row, _) = await new TokenService(db, TimeProvider.System).CreateAsync("elsewhere", [Scopes.Configure], null, [papers.Id], TestContext.Current.CancellationToken);
 
         var mapped = await FoldersAsync(db, As(row.Id, Scopes.Configure));
         mapped.ShouldContain("  notes/  0 entries\n");

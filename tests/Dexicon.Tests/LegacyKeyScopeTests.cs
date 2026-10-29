@@ -22,7 +22,7 @@ public sealed class LegacyKeyScopeTests : IAsyncLifetime
     private SqliteConnection _connection = null!;
     private CatalogDbContext _db = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _connection = new SqliteConnection("Data Source=:memory:");
         await _connection.OpenAsync();
@@ -31,7 +31,7 @@ public sealed class LegacyKeyScopeTests : IAsyncLifetime
         await _db.Database.EnsureCreatedAsync();
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await _db.DisposeAsync();
         await _connection.DisposeAsync();
@@ -73,7 +73,7 @@ public sealed class LegacyKeyScopeTests : IAsyncLifetime
     {
         await SeedAsync("k", stored);
 
-        await _db.Database.ExecuteSqlRawAsync(StripAdminFromExistingKeys.StripAdminSql);
+        await _db.Database.ExecuteSqlRawAsync(StripAdminFromExistingKeys.StripAdminSql, cancellationToken: TestContext.Current.CancellationToken);
 
         (await ScopesOfAsync("k")).ShouldBe(expected);
     }
@@ -85,7 +85,7 @@ public sealed class LegacyKeyScopeTests : IAsyncLifetime
         await SeedAsync("modern", "search,ingest");
         await SeedAsync("reader", "search");
 
-        await _db.Database.ExecuteSqlRawAsync(StripAdminFromExistingKeys.StripAdminSql);
+        await _db.Database.ExecuteSqlRawAsync(StripAdminFromExistingKeys.StripAdminSql, cancellationToken: TestContext.Current.CancellationToken);
 
         (await ScopesOfAsync("legacy")).ShouldBe("search,ingest");
         (await ScopesOfAsync("modern")).ShouldBe("search,ingest");
@@ -99,9 +99,9 @@ public sealed class LegacyKeyScopeTests : IAsyncLifetime
         // cannot be replayed onto a catalogue restored from a backup mid-way.
         await SeedAsync("k", "search,admin,ingest");
 
-        await _db.Database.ExecuteSqlRawAsync(StripAdminFromExistingKeys.StripAdminSql);
+        await _db.Database.ExecuteSqlRawAsync(StripAdminFromExistingKeys.StripAdminSql, cancellationToken: TestContext.Current.CancellationToken);
         var once = await ScopesOfAsync("k");
-        await _db.Database.ExecuteSqlRawAsync(StripAdminFromExistingKeys.StripAdminSql);
+        await _db.Database.ExecuteSqlRawAsync(StripAdminFromExistingKeys.StripAdminSql, cancellationToken: TestContext.Current.CancellationToken);
 
         (await ScopesOfAsync("k")).ShouldBe(once);
     }

@@ -212,8 +212,7 @@ public sealed class UnusableIgnoreFileLineTests : IDisposable
         Write("b/y.md");
         var leftOut = new List<SourceCoverage.LeftOut>();
 
-        var gaps = SourceCoverage.Find(_root,
-            [new SourceCoverage.SourceRoot("a", 262_144), new SourceCoverage.SourceRoot("b", 262_144)], leftOut: leftOut);
+        var gaps = SourceCoverage.Find(_root, [new SourceCoverage.SourceRoot("a", 262_144), new SourceCoverage.SourceRoot("b", 262_144)], leftOut: leftOut, ct: TestContext.Current.CancellationToken);
 
         gaps.ShouldBeEmpty();
         leftOut.ShouldBe([new SourceCoverage.LeftOut(
@@ -228,8 +227,7 @@ public sealed class UnusableIgnoreFileLineTests : IDisposable
         Write("b/y.md");
         var leftOut = new List<SourceCoverage.LeftOut>();
 
-        SourceCoverage.Find(_root,
-            [new SourceCoverage.SourceRoot("a", 262_144), new SourceCoverage.SourceRoot("b", 262_144)], leftOut: leftOut);
+        SourceCoverage.Find(_root, [new SourceCoverage.SourceRoot("a", 262_144), new SourceCoverage.SourceRoot("b", 262_144)], leftOut: leftOut, ct: TestContext.Current.CancellationToken);
 
         leftOut.ShouldBeEmpty();
     }
@@ -242,9 +240,7 @@ public sealed class UnusableIgnoreFileLineTests : IDisposable
         Write("b/y.md");
         var recorded = new RecordingLoggerFactory();
 
-        SourceCoverage.Find(_root,
-            [new SourceCoverage.SourceRoot("a", 262_144), new SourceCoverage.SourceRoot("b", 262_144)],
-            log: recorded.CreateLogger("test"));
+        SourceCoverage.Find(_root, [new SourceCoverage.SourceRoot("a", 262_144), new SourceCoverage.SourceRoot("b", 262_144)], log: recorded.CreateLogger("test"), ct: TestContext.Current.CancellationToken);
 
         recorded.Lines.ShouldBe(["Coverage of the workspace root was left out because .dexiconignore line 1 ('[z-a]') cannot be compiled (reversed character range)"]);
     }

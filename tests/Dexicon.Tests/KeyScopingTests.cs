@@ -29,7 +29,7 @@ public sealed class KeyScopingTests : IAsyncLifetime
 
     private const string SecretString = "hunter2-globex-launch-code";
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _connection = new SqliteConnection("Data Source=:memory:");
         await _connection.OpenAsync();
@@ -43,7 +43,7 @@ public sealed class KeyScopingTests : IAsyncLifetime
         _scopes = new ScopeResolver(_db);
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await _db.DisposeAsync();
         await _connection.DisposeAsync();
@@ -120,7 +120,7 @@ public sealed class KeyScopingTests : IAsyncLifetime
     {
         await MapAsync("research", "id-books");
 
-        var visible = await _scopes.VisibleAsync(Key("research"));
+        var visible = await _scopes.VisibleAsync(Key("research"), TestContext.Current.CancellationToken);
         visible.Select(c => c.Name).ShouldBe(["books"]);
 
         // Naming one it cannot reach is an ERROR, not a silent drop.
@@ -141,13 +141,13 @@ public sealed class KeyScopingTests : IAsyncLifetime
         // to configure anything.
         await AddKeyAsync("everything", allCorpora: true);
 
-        (await _scopes.VisibleAsync(Key("everything"))).Select(c => c.Name)
+        (await _scopes.VisibleAsync(Key("everything"), TestContext.Current.CancellationToken)).Select(c => c.Name)
             .ShouldBe(["books", "code", "private-notes"]);
 
         _db.Corpora.Add(Corpus("later"));
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        (await _scopes.VisibleAsync(Key("everything"))).Select(c => c.Name)
+        (await _scopes.VisibleAsync(Key("everything"), TestContext.Current.CancellationToken)).Select(c => c.Name)
             .ShouldBe(["books", "code", "later", "private-notes"]);
     }
 
@@ -156,8 +156,8 @@ public sealed class KeyScopingTests : IAsyncLifetime
     {
         await AddKeyAsync("none", allCorpora: false);
 
-        (await _scopes.VisibleAsync(Key("none"))).ShouldBeEmpty();
-        (await _scopes.VisibleIdsAsync(Key("none"))).ShouldBeEmpty();
+        (await _scopes.VisibleAsync(Key("none"), TestContext.Current.CancellationToken)).ShouldBeEmpty();
+        (await _scopes.VisibleIdsAsync(Key("none"), TestContext.Current.CancellationToken)).ShouldBeEmpty();
         var ex = await Should.ThrowAsync<ScopeResolutionException>(
             () => _scopes.ResolveReadableAsync(Key("none"), null));
         ex.Message.ShouldContain("can reach no corpora");
@@ -168,7 +168,7 @@ public sealed class KeyScopingTests : IAsyncLifetime
     {
         // The row is what says what a key reaches, so a principal built without one is not
         // taken for an unrestricted key.
-        (await _scopes.VisibleAsync(Key("ghost"))).ShouldBeEmpty();
+        (await _scopes.VisibleAsync(Key("ghost"), TestContext.Current.CancellationToken)).ShouldBeEmpty();
     }
 
     [Fact]
@@ -176,20 +176,20 @@ public sealed class KeyScopingTests : IAsyncLifetime
     {
         await MapAsync("project", "id-books");
         await AddKeyAsync("everything", allCorpora: true);
-        (await _scopes.VisibleAsync(Key("project"))).Select(c => c.Name).ShouldBe(["books"]);
+        (await _scopes.VisibleAsync(Key("project"), TestContext.Current.CancellationToken)).Select(c => c.Name).ShouldBe(["books"]);
 
         // What removing a corpus does: the corpus goes and the foreign key takes the mapping row with it.
-        _db.Corpora.Remove(await _db.Corpora.SingleAsync(c => c.Name == "books"));
-        await _db.SaveChangesAsync();
+        _db.Corpora.Remove(await _db.Corpora.SingleAsync(c => c.Name == "books", cancellationToken: TestContext.Current.CancellationToken));
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        (await _db.TokenCorpora.CountAsync(tc => tc.TokenId == "tok-project")).ShouldBe(0, "the row went with the corpus");
-        (await _scopes.VisibleAsync(Key("project"))).ShouldBeEmpty();
+        (await _db.TokenCorpora.CountAsync(tc => tc.TokenId == "tok-project", cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0, "the row went with the corpus");
+        (await _scopes.VisibleAsync(Key("project"), TestContext.Current.CancellationToken)).ShouldBeEmpty();
         var ex = await Should.ThrowAsync<ScopeResolutionException>(
             () => _scopes.ResolveReadableAsync(Key("project"), null));
         ex.Message.ShouldContain("can reach no corpora");
 
         // A key that reaches every corpus is not narrowed by the same removal.
-        (await _scopes.VisibleAsync(Key("everything"))).Select(c => c.Name).ShouldBe(["code", "private-notes"]);
+        (await _scopes.VisibleAsync(Key("everything"), TestContext.Current.CancellationToken)).Select(c => c.Name).ShouldBe(["code", "private-notes"]);
     }
 
     [Fact]
@@ -197,22 +197,22 @@ public sealed class KeyScopingTests : IAsyncLifetime
     {
         var key = Key("agent");
         await MapAsync("agent", "id-books");
-        (await _scopes.VisibleAsync(key)).Select(c => c.Name).ShouldBe(["books"]);
+        (await _scopes.VisibleAsync(key, TestContext.Current.CancellationToken)).Select(c => c.Name).ShouldBe(["books"]);
 
         // What the operator does in the UI: replace the mapping outright.
         _db.TokenCorpora.RemoveRange(_db.TokenCorpora.Where(tc => tc.TokenId == "tok-agent"));
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
         await MapAsync("agent", "id-code");
 
         // The same principal, unchanged and never reissued, now resolves differently.
-        (await _scopes.VisibleAsync(key)).Select(c => c.Name).ShouldBe(["code"]);
+        (await _scopes.VisibleAsync(key, TestContext.Current.CancellationToken)).Select(c => c.Name).ShouldBe(["code"]);
     }
 
     [Fact]
     public async Task AnAdminSessionReachesEveryCorpus()
     {
         // The UI has to list a corpus in order to map a key to it.
-        var visible = await _scopes.VisibleAsync(AdminSession());
+        var visible = await _scopes.VisibleAsync(AdminSession(), TestContext.Current.CancellationToken);
         visible.Count.ShouldBe(3);
     }
 
@@ -222,7 +222,7 @@ public sealed class KeyScopingTests : IAsyncLifetime
         // Every corpus deleted, for a key that reached every corpus: a catalogue with no corpora at all.
         await AddKeyAsync("agent", allCorpora: true);
         _db.Corpora.RemoveRange(_db.Corpora);
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var ex = await Should.ThrowAsync<ScopeResolutionException>(
             () => _scopes.ResolveReadableAsync(Key("agent"), null));
@@ -234,7 +234,7 @@ public sealed class KeyScopingTests : IAsyncLifetime
     {
         await MapAsync("agent", "id-books");
 
-        (await _scopes.ResolveWritableAsync(Key("agent"), "books")).Name.ShouldBe("books");
+        (await _scopes.ResolveWritableAsync(Key("agent"), "books", TestContext.Current.CancellationToken)).Name.ShouldBe("books");
 
         var ex = await Should.ThrowAsync<ScopeResolutionException>(
             () => _scopes.ResolveWritableAsync(Key("agent"), "private-notes"));
@@ -276,7 +276,7 @@ public sealed class AdminPasswordTests : IAsyncLifetime
     private CatalogDbContext _db = null!;
     private TokenService _tokens = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _connection = new SqliteConnection("Data Source=:memory:");
         await _connection.OpenAsync();
@@ -286,7 +286,7 @@ public sealed class AdminPasswordTests : IAsyncLifetime
         _tokens = new TokenService(_db, TimeProvider.System);
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await _db.DisposeAsync();
         await _connection.DisposeAsync();
@@ -295,25 +295,25 @@ public sealed class AdminPasswordTests : IAsyncLifetime
     [Fact]
     public async Task ThePasswordVerifiesAndTheWrongOneDoesNot()
     {
-        (await _tokens.HasPasswordAsync()).ShouldBeFalse();
+        (await _tokens.HasPasswordAsync(TestContext.Current.CancellationToken)).ShouldBeFalse();
 
-        await _tokens.SetPasswordAsync("correct horse battery staple");
+        await _tokens.SetPasswordAsync("correct horse battery staple", TestContext.Current.CancellationToken);
 
-        (await _tokens.HasPasswordAsync()).ShouldBeTrue();
-        (await _tokens.VerifyPasswordAsync("correct horse battery staple")).ShouldBeTrue();
-        (await _tokens.VerifyPasswordAsync("Correct Horse Battery Staple")).ShouldBeFalse();
-        (await _tokens.VerifyPasswordAsync("")).ShouldBeFalse();
-        (await _tokens.VerifyPasswordAsync(null)).ShouldBeFalse();
+        (await _tokens.HasPasswordAsync(TestContext.Current.CancellationToken)).ShouldBeTrue();
+        (await _tokens.VerifyPasswordAsync("correct horse battery staple", TestContext.Current.CancellationToken)).ShouldBeTrue();
+        (await _tokens.VerifyPasswordAsync("Correct Horse Battery Staple", TestContext.Current.CancellationToken)).ShouldBeFalse();
+        (await _tokens.VerifyPasswordAsync("", TestContext.Current.CancellationToken)).ShouldBeFalse();
+        (await _tokens.VerifyPasswordAsync(null, TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 
     [Fact]
     public async Task ChangingThePasswordInvalidatesTheOldOne()
     {
-        await _tokens.SetPasswordAsync("first");
-        await _tokens.SetPasswordAsync("second");
+        await _tokens.SetPasswordAsync("first", TestContext.Current.CancellationToken);
+        await _tokens.SetPasswordAsync("second", TestContext.Current.CancellationToken);
 
-        (await _tokens.VerifyPasswordAsync("first")).ShouldBeFalse();
-        (await _tokens.VerifyPasswordAsync("second")).ShouldBeTrue();
+        (await _tokens.VerifyPasswordAsync("first", TestContext.Current.CancellationToken)).ShouldBeFalse();
+        (await _tokens.VerifyPasswordAsync("second", TestContext.Current.CancellationToken)).ShouldBeTrue();
     }
 
     [Fact]
@@ -321,11 +321,10 @@ public sealed class AdminPasswordTests : IAsyncLifetime
     {
         // Requested explicitly, and dropped. The whole point is that no credential sitting
         // in an agent's configuration can delete a corpus or mint another key.
-        var (row, _) = await _tokens.CreateAsync("agent", [Scopes.Search, Scopes.Admin], null);
+        var (row, _) = await _tokens.CreateAsync("agent", [Scopes.Search, Scopes.Admin], null, ct: TestContext.Current.CancellationToken);
         row.Scopes.ShouldBe("search");
 
-        var principal = await _tokens.VerifyAsync(
-            (await _tokens.CreateAsync("other", [Scopes.Search], null)).Issued.Presented);
+        var principal = await _tokens.VerifyAsync((await _tokens.CreateAsync("other", [Scopes.Search], null, ct: TestContext.Current.CancellationToken)).Issued.Presented, TestContext.Current.CancellationToken);
         principal.ShouldNotBeNull();
         principal.Has(Scopes.Admin).ShouldBeFalse();
     }
@@ -335,27 +334,27 @@ public sealed class AdminPasswordTests : IAsyncLifetime
     {
         // Granting configure to a working agent without issuing it another key. The stored
         // column is read, because a principal strips admin on its own and would hide it.
-        var (row, issued) = await _tokens.CreateAsync("agent", [Scopes.Search], null);
+        var (row, issued) = await _tokens.CreateAsync("agent", [Scopes.Search], null, ct: TestContext.Current.CancellationToken);
 
-        (await _tokens.SetScopesAsync(row.Id, [" Configure ", Scopes.Search, Scopes.Admin, Scopes.Search]))
+        (await _tokens.SetScopesAsync(row.Id, [" Configure ", Scopes.Search, Scopes.Admin, Scopes.Search], TestContext.Current.CancellationToken))
             .ShouldBeTrue();
 
         _db.ChangeTracker.Clear();
-        (await _db.Tokens.AsNoTracking().SingleAsync(t => t.Id == row.Id)).Scopes.ShouldBe("configure,search");
-        var principal = (await _tokens.VerifyAsync(issued.Presented)).ShouldNotBeNull();
+        (await _db.Tokens.AsNoTracking().SingleAsync(t => t.Id == row.Id, cancellationToken: TestContext.Current.CancellationToken)).Scopes.ShouldBe("configure,search");
+        var principal = (await _tokens.VerifyAsync(issued.Presented, TestContext.Current.CancellationToken)).ShouldNotBeNull();
         principal.Has(Scopes.Configure).ShouldBeTrue();
     }
 
     [Fact]
     public async Task ARevokedOrUnknownKeysScopesAreNotChanged()
     {
-        var (row, _) = await _tokens.CreateAsync("agent", [Scopes.Search], null);
-        await _tokens.RevokeAsync(row.Id);
+        var (row, _) = await _tokens.CreateAsync("agent", [Scopes.Search], null, ct: TestContext.Current.CancellationToken);
+        await _tokens.RevokeAsync(row.Id, TestContext.Current.CancellationToken);
 
-        (await _tokens.SetScopesAsync(row.Id, [Scopes.Configure])).ShouldBeFalse();
-        (await _tokens.SetScopesAsync("no-such-key", [Scopes.Configure])).ShouldBeFalse();
+        (await _tokens.SetScopesAsync(row.Id, [Scopes.Configure], TestContext.Current.CancellationToken)).ShouldBeFalse();
+        (await _tokens.SetScopesAsync("no-such-key", [Scopes.Configure], TestContext.Current.CancellationToken)).ShouldBeFalse();
         _db.ChangeTracker.Clear();
-        (await _db.Tokens.AsNoTracking().SingleAsync(t => t.Id == row.Id)).Scopes.ShouldBe("search");
+        (await _db.Tokens.AsNoTracking().SingleAsync(t => t.Id == row.Id, cancellationToken: TestContext.Current.CancellationToken)).Scopes.ShouldBe("search");
     }
 
     [Fact]
@@ -366,14 +365,13 @@ public sealed class AdminPasswordTests : IAsyncLifetime
         // until the entry expired; a test calling VerifyAsync directly never sees the cache.
         using var cache = new MemoryCache(new MemoryCacheOptions());
         var evictor = new MemoryCacheEvictor(cache);
-        var (row, issued) = await _tokens.CreateAsync("agent", [Scopes.Search, Scopes.Configure], null);
+        var (row, issued) = await _tokens.CreateAsync("agent", [Scopes.Search, Scopes.Configure], null, ct: TestContext.Current.CancellationToken);
 
         (await AuthenticateAsync(cache, evictor, issued.Presented)).ShouldNotBeNull()
             .Has(Scopes.Configure).ShouldBeTrue();
         cache.Count.ShouldBe(1, "the principal is cached");
 
-        var result = await SystemEndpoints.SetScopesAsync(row.Id, new UpdateTokenScopesRequest([Scopes.Search]),
-            _tokens, _db, evictor, NullLogger.Instance, default);
+        var result = await SystemEndpoints.SetScopesAsync(row.Id, new UpdateTokenScopesRequest([Scopes.Search]), _tokens, _db, evictor, NullLogger.Instance, TestContext.Current.CancellationToken);
 
         ((IStatusCodeHttpResult)result).StatusCode.ShouldBe(StatusCodes.Status200OK);
         (await AuthenticateAsync(cache, evictor, issued.Presented)).ShouldNotBeNull().Has(Scopes.Configure)
@@ -388,7 +386,7 @@ public sealed class AdminPasswordTests : IAsyncLifetime
         // cache. Filed under the generation it began in, no later request reads it.
         using var cache = new MemoryCache(new MemoryCacheOptions());
         var evictor = new MemoryCacheEvictor(cache);
-        var (row, issued) = await _tokens.CreateAsync("agent", [Scopes.Search], null);
+        var (row, issued) = await _tokens.CreateAsync("agent", [Scopes.Search], null, ct: TestContext.Current.CancellationToken);
         var began = evictor.Generation;
 
         evictor.EvictPrincipals();
@@ -407,12 +405,12 @@ public sealed class AdminPasswordTests : IAsyncLifetime
         // nothing cleared: a middleware that ignored the generation would serve the old entry.
         using var cache = new MemoryCache(new MemoryCacheOptions());
         var evictor = new SettableGeneration { Generation = 5 };
-        var (row, issued) = await _tokens.CreateAsync("agent", [Scopes.Search, Scopes.Configure], null);
+        var (row, issued) = await _tokens.CreateAsync("agent", [Scopes.Search, Scopes.Configure], null, ct: TestContext.Current.CancellationToken);
 
         (await AuthenticateAsync(cache, evictor, issued.Presented)).ShouldNotBeNull()
             .Has(Scopes.Configure).ShouldBeTrue();
 
-        await _tokens.SetScopesAsync(row.Id, [Scopes.Search]);
+        await _tokens.SetScopesAsync(row.Id, [Scopes.Search], TestContext.Current.CancellationToken);
         evictor.Generation = 6;
 
         (await AuthenticateAsync(cache, evictor, issued.Presented)).ShouldNotBeNull()
@@ -455,7 +453,7 @@ public sealed class AdminPasswordTests : IAsyncLifetime
         await Bootstrapper.EnsureBootstrapTokenAsync(services, _db, NullLogger.Instance, options);
 
         _db.ChangeTracker.Clear();
-        var adopted = await _db.Tokens.AsNoTracking().SingleAsync();
+        var adopted = await _db.Tokens.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         adopted.Scopes.ShouldBe("search,ingest");
         adopted.AllCorpora.ShouldBeTrue("a key with no row in the mapping would reach nothing");
     }
@@ -464,23 +462,23 @@ public sealed class AdminPasswordTests : IAsyncLifetime
     public async Task AdoptingAKeyAgainLeavesWhatItReaches()
     {
         const string presented = "dex_01JBXQZ9K7MNPRSTVWXYZ01234_a-secret-nobody-should-read";
-        await _tokens.AdoptAsync("bootstrap", Scopes.Bootstrap, presented);
-        (await _db.Tokens.AsNoTracking().SingleAsync()).AllCorpora.ShouldBeTrue("adopted reaching every corpus");
+        await _tokens.AdoptAsync("bootstrap", Scopes.Bootstrap, presented, TestContext.Current.CancellationToken);
+        (await _db.Tokens.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).AllCorpora.ShouldBeTrue("adopted reaching every corpus");
 
         // The operator restricted it on the Access page, then the value in .env was set again.
         _db.Corpora.Add(new Corpus { Id = "c1", Name = "one", CreatedUtc = DateTime.UtcNow });
-        await _db.SaveChangesAsync();
-        var key = await _db.Tokens.SingleAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        var key = await _db.Tokens.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         key.AllCorpora = false;
         _db.TokenCorpora.Add(new TokenCorpus { TokenId = key.Id, CorpusId = "c1" });
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
         _db.ChangeTracker.Clear();
 
-        await _tokens.AdoptAsync("bootstrap", Scopes.Bootstrap, presented);
+        await _tokens.AdoptAsync("bootstrap", Scopes.Bootstrap, presented, TestContext.Current.CancellationToken);
 
         _db.ChangeTracker.Clear();
-        (await _db.Tokens.AsNoTracking().SingleAsync()).AllCorpora.ShouldBeFalse();
-        (await _db.TokenCorpora.CountAsync()).ShouldBe(1);
+        (await _db.Tokens.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).AllCorpora.ShouldBeFalse();
+        (await _db.TokenCorpora.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]

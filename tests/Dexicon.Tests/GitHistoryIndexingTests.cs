@@ -87,7 +87,7 @@ public sealed class GitHistoryIndexingTests
         Commit(harness.SourceDirectory, "b.txt", "two\n", "the second change");
 
         await harness.SeedCorpusAsync(SourceKind.GitHistory);
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.State.ShouldBe(JobState.Succeeded);
         job.FilesTotal.ShouldBe(2);
@@ -114,9 +114,9 @@ public sealed class GitHistoryIndexingTests
         Commit(harness.SourceDirectory, "b.txt", "two\n", "the second change");
 
         await harness.SeedCorpusAsync(SourceKind.GitHistory);
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
-        var second = await harness.RunIndexAsync();
+        var second = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         second.State.ShouldBe(JobState.Succeeded);
         second.FilesSkipped.ShouldBe(2);
@@ -145,17 +145,17 @@ public sealed class GitHistoryIndexingTests
         Commit(harness.SourceDirectory, "a.txt", "one\n", "the first change");
 
         await harness.SeedCorpusAsync(SourceKind.GitHistory);
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         await using var db = harness.NewContext();
-        var set = await db.ChunkSets.SingleAsync();
-        var state = await db.FileChunkStates.SingleAsync(s => s.Status == FileStatus.Indexed);
-        var file = await db.Files.SingleAsync(f => f.Id == state.FileId);
+        var set = await db.ChunkSets.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var state = await db.FileChunkStates.SingleAsync(s => s.Status == FileStatus.Indexed, cancellationToken: TestContext.Current.CancellationToken);
+        var file = await db.Files.SingleAsync(f => f.Id == state.FileId, cancellationToken: TestContext.Current.CancellationToken);
 
         var sha = file.RelativePath.Split('-').Last();
         var options = new GitHistoryOptions();
         var repo = GitHistory.RepositoryIn(harness.DataPath, Path.Combine("workspace", "repo"))!;
-        var full = (await GitHistory.EnumerateAsync(repo, options, null, default))
+        var full = (await GitHistory.EnumerateAsync(repo, options, null, TestContext.Current.CancellationToken))
             .Single(c => c.Sha.StartsWith(sha, StringComparison.Ordinal));
 
         var expected = CorpusIndexer.ChunkingFingerprint(
@@ -176,10 +176,10 @@ public sealed class GitHistoryIndexingTests
         Commit(harness.SourceDirectory, "a.txt", "one\n", "the first change");
 
         await harness.SeedCorpusAsync(SourceKind.GitHistory);
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         Commit(harness.SourceDirectory, "b.txt", "two\n", "a later change");
-        var second = await harness.RunIndexAsync();
+        var second = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         second.FilesDone.ShouldBe(1, "only the commit that was not there last time");
         second.FilesSkipped.ShouldBe(1);
@@ -213,11 +213,11 @@ public sealed class GitHistoryIndexingTests
 
         await harness.SeedCorpusAsync(SourceKind.GitHistory);
         await SetOptionsAsync(harness, new GitHistoryOptions { MaxCommits = 2 });
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         (await IndexedPathsAsync(harness)).Count.ShouldBe(2);
 
         Commit(harness.SourceDirectory, "c.txt", "three\n", "the third change");
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var paths = await IndexedPathsAsync(harness);
         paths.Count.ShouldBe(2);
@@ -237,14 +237,14 @@ public sealed class GitHistoryIndexingTests
 
         await harness.SeedCorpusAsync(SourceKind.GitHistory);
         await SetOptionsAsync(harness, new GitHistoryOptions { MaxCommits = 2, KeepIndexed = true });
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var paths = await IndexedPathsAsync(harness);
         paths.Count.ShouldBe(2, "the limit still decides how far back the first pass reaches");
         paths.ShouldNotContain(p => p.EndsWith(never, StringComparison.Ordinal));
 
         Commit(harness.SourceDirectory, "d.txt", "four\n", "the fourth change");
-        var second = await harness.RunIndexAsync();
+        var second = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         second.FilesDone.ShouldBe(1, "only the new commit is read");
         second.FilesSkipped.ShouldBe(2, "both held commits stay, although one is now third from the tip");
@@ -267,15 +267,15 @@ public sealed class GitHistoryIndexingTests
 
         await harness.SeedCorpusAsync(SourceKind.GitHistory);
         await SetOptionsAsync(harness, new GitHistoryOptions { MaxCommits = 1, KeepIndexed = true });
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         Commit(harness.SourceDirectory, "c.txt", "three\n", "a change that is rewritten away");
         var rewritten = ShortHead(harness.SourceDirectory);
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         (await IndexedPathsAsync(harness)).Count.ShouldBe(2);
 
         Git(harness.SourceDirectory, "reset", "--hard", "HEAD~1");
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var paths = await IndexedPathsAsync(harness);
         paths.ShouldHaveSingleItem().ShouldEndWith(kept);
@@ -305,7 +305,7 @@ public sealed class GitHistoryIndexingTests
         result.Swept.ShouldBe(1);
         result.Added.ShouldBe(1);
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         job.FilesDone.ShouldBe(1);
         (await IndexedPathsAsync(harness)).Count.ShouldBe(1);
     }
@@ -339,12 +339,12 @@ public sealed class GitHistoryIndexingTests
         await harness.SeedCorpusAsync(SourceKind.GitHistory);
         (await NewestRecordedAsync(harness)).Sha.ShouldBeNull("nothing has read the history yet");
 
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         var first = Head(harness.SourceDirectory);
         ShouldBeTheCommit(await NewestRecordedAsync(harness), first);
 
         Commit(harness.SourceDirectory, "c.txt", "three\n", "a later change");
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var second = Head(harness.SourceDirectory);
         second.Sha.ShouldNotBe(first.Sha);
@@ -363,13 +363,13 @@ public sealed class GitHistoryIndexingTests
         Commit(harness.SourceDirectory, "a.txt", "one\n", "the first change");
 
         await harness.SeedCorpusAsync(SourceKind.GitHistory);
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         var seen = Head(harness.SourceDirectory);
 
         Directory.Move(Path.Combine(harness.SourceDirectory, ".git"),
             Path.Combine(harness.SourceDirectory, ".git-away"));
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.State.ShouldBe(JobState.Degraded, "the source could not be reached");
         ShouldBeTheCommit(await NewestRecordedAsync(harness), seen);
@@ -390,7 +390,7 @@ public sealed class GitHistoryIndexingTests
         Commit(harness.SourceDirectory, "a.txt", "one\n", "the first change");
 
         await harness.SeedCorpusAsync(SourceKind.GitHistory);
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         // The same over-large message GitHistoryTests uses to make the read refuse.
         File.WriteAllText(Path.Combine(harness.SourceDirectory, "b.txt"), "two\n");
@@ -398,7 +398,7 @@ public sealed class GitHistoryIndexingTests
         Git(harness.SourceDirectory, "add", "b.txt");
         Git(harness.SourceDirectory, "commit", "-F", Path.Combine(harness.DataPath, "msg.txt"));
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.State.ShouldBe(JobState.Degraded, "the read failed, so the source was unreachable");
         ShouldBeTheCommit(await NewestRecordedAsync(harness), Head(harness.SourceDirectory));
@@ -416,20 +416,20 @@ public sealed class GitHistoryIndexingTests
         Commit(harness.SourceDirectory, "a.txt", "one\n", "the first change");
 
         await harness.SeedCorpusAsync(SourceKind.GitHistory);
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         (await NewestRecordedAsync(harness)).Sha.ShouldNotBeNull();
 
         await using (var db = harness.NewContext())
         {
-            var source = await db.Sources.SingleAsync();
+            var source = await db.Sources.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
             source.GitOptions = new GitHistoryOptions
             {
                 Since = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(2),
             }.ToJson();
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var none = await NewestRecordedAsync(harness);
         none.Sha.ShouldBeNull();
@@ -449,16 +449,16 @@ public sealed class GitHistoryIndexingTests
         Commit(harness.SourceDirectory, "a.txt", "the quick brown fox\n", "the first change");
 
         await harness.SeedCorpusAsync(SourceKind.GitHistory);
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         await using (var db = harness.NewContext())
         {
-            var source = await db.Sources.FirstAsync();
+            var source = await db.Sources.FirstAsync(cancellationToken: TestContext.Current.CancellationToken);
             source.GitOptions = new GitHistoryOptions { IncludeDiff = true }.ToJson();
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
-        var second = await harness.RunIndexAsync();
+        var second = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         second.FilesDone.ShouldBe(1, "the document is different, so the commit is stale");
         second.FilesSkipped.ShouldBe(0);
@@ -527,7 +527,7 @@ public sealed class GitHistoryIndexingTests
         result.Added.ShouldBe(2);
 
         await using var db = harness.NewContext();
-        var states = await db.FileChunkStates.AsNoTracking().ToListAsync();
+        var states = await db.FileChunkStates.AsNoTracking().ToListAsync(cancellationToken: TestContext.Current.CancellationToken);
         states.Count.ShouldBe(2);
         states.ShouldAllBe(s => s.Status == FileStatus.Pending);
         states.ShouldAllBe(s => s.ChunkCount == 0 && s.ContentHash == null);
@@ -535,7 +535,7 @@ public sealed class GitHistoryIndexingTests
         (await IndexedPathsAsync(harness)).ShouldAllBe(p => p.StartsWith("commits/", StringComparison.Ordinal));
 
         // And indexing afterwards fills those rows in rather than duplicating them.
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         job.FilesDone.ShouldBe(2);
         (await IndexedPathsAsync(harness)).Count.ShouldBe(2);
     }
@@ -551,7 +551,7 @@ public sealed class GitHistoryIndexingTests
         await harness.WriteFileAsync("a.txt", "not a repository");
 
         await harness.SeedCorpusAsync(SourceKind.GitHistory);
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.Error.ShouldNotBeNull();
         job.Error.ShouldContain("not a git repository");
@@ -564,7 +564,7 @@ public sealed class GitHistoryIndexingTests
         job.State.ShouldBe(JobState.Degraded, "the pass ran and one source could not be reached");
 
         await using var db = harness.NewContext();
-        var corpus = await db.Corpora.FirstAsync();
+        var corpus = await db.Corpora.FirstAsync(cancellationToken: TestContext.Current.CancellationToken);
         corpus.State.ShouldBe(CorpusState.Unavailable);
         corpus.LastIndexedUtc.ShouldBeNull("nothing was indexed, so nothing was indexed at");
     }
@@ -609,7 +609,7 @@ public sealed class GitHistoryIndexingTests
         await harness.SeedCorpusAsync(SourceKind.GitHistory);
         (await TrackingRecordedAsync(harness)).ShouldBeNull("nothing has read the history yet");
 
-        (await harness.RunIndexAsync()).State.ShouldBe(JobState.Succeeded);
+        (await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken)).State.ShouldBe(JobState.Succeeded);
 
         var tracking = GitTracking.FromJson(await TrackingRecordedAsync(harness)).ShouldNotBeNull();
         tracking.Ref.ShouldBe("HEAD");
@@ -630,7 +630,7 @@ public sealed class GitHistoryIndexingTests
         await using var harness = await IndexingHarness.StartAsync("repo");
         BehindItsUpstream(harness.SourceDirectory, behind: 2);
         await harness.SeedCorpusAsync(SourceKind.GitHistory);
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         var recorded = (await TrackingRecordedAsync(harness)).ShouldNotBeNull();
 
         foreach (var failure in new Exception[]
@@ -639,7 +639,7 @@ public sealed class GitHistoryIndexingTests
                      new InvalidOperationException("anything else"),
                  })
         {
-            var job = await harness.RunIndexAsync(readTracking: (_, _, _, _) => throw failure);
+            var job = await harness.RunIndexAsync(readTracking: (_, _, _, _) => throw failure, cancel: TestContext.Current.CancellationToken);
 
             job.State.ShouldBe(JobState.Succeeded, failure.GetType().Name);
             job.Error.ShouldBeNull(failure.GetType().Name);
@@ -663,7 +663,7 @@ public sealed class GitHistoryIndexingTests
         {
             Interlocked.Increment(ref reads);
             return GitHistory.TrackingAsync(repo, @ref, at, ct);
-        });
+        }, cancel: TestContext.Current.CancellationToken);
 
         reads.ShouldBe(1);
     }

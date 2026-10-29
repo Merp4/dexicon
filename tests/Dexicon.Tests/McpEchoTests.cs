@@ -24,13 +24,13 @@ public sealed class McpEchoTests : IAsyncLifetime
     private IndexingHarness _harness = null!;
     private readonly RecordingLoggerFactory _logs = new();
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _harness = await IndexingHarness.StartAsync("notes", "docs");
         await _harness.SeedCorpusAsync(SourceKind.Workspace);
     }
 
-    public async Task DisposeAsync() => await _harness.DisposeAsync();
+    public async ValueTask DisposeAsync() => await _harness.DisposeAsync();
 
     private static RequestContext Configurer => new()
     {
@@ -126,7 +126,7 @@ public sealed class McpEchoTests : IAsyncLifetime
                 RootPath = $"folder-{i:00}-" + new string('x', 150),
                 CreatedUtc = DateTime.UtcNow,
             });
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var thrown = await Should.ThrowAsync<McpException>(() => SourceAsync(db, "nothing-here"));
 
@@ -149,7 +149,7 @@ public sealed class McpEchoTests : IAsyncLifetime
                 RootPath = folder,
                 CreatedUtc = DateTime.UtcNow,
             });
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var thrown = await Should.ThrowAsync<McpException>(() => SourceAsync(db, folder));
 
@@ -246,7 +246,7 @@ public sealed class McpEchoTests : IAsyncLifetime
 
         thrown.Message.ShouldStartWith("since is a date written yyyy-MM-dd, not 'bad");
         ShouldEchoSafely(thrown);
-        (await db.Sources.CountAsync(s => s.Kind == SourceKind.GitHistory)).ShouldBe(0, "nothing is added for a refused call");
+        (await db.Sources.CountAsync(s => s.Kind == SourceKind.GitHistory, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0, "nothing is added for a refused call");
     }
 
     [Fact]
@@ -316,7 +316,7 @@ public sealed class McpEchoTests : IAsyncLifetime
         thrown.Message.ShouldStartWith("Corpus 'papers' was created, but preparing its index failed");
         thrown.Message.ShouldNotContain("qdrant:6334");
         thrown.Message.ShouldNotContain("Unavailable");
-        (await db.Corpora.AnyAsync(c => c.Name == "papers")).ShouldBeTrue("the corpus is saved");
+        (await db.Corpora.AnyAsync(c => c.Name == "papers", cancellationToken: TestContext.Current.CancellationToken)).ShouldBeTrue("the corpus is saved");
         _logs.Exceptions.ShouldContain(e => e.Message.Contains("qdrant:6334", StringComparison.Ordinal),
             "the operator can still read the cause");
     }

@@ -62,7 +62,7 @@ public sealed class WorkspaceFileReaderTests : IDisposable
         var files = Enumerable.Range(0, 25).Select(i => Write($"f{i}.txt", $"contents {i}")).ToList();
 
         var seen = new List<string>();
-        await foreach (var read in Reader().ReadAsync(files))
+        await foreach (var read in Reader().ReadAsync(files, TestContext.Current.CancellationToken))
         {
             read.Error.ShouldBeNull();
             read.Read!.Text.Text.ShouldBe($"contents {read.Candidate.RelativePath[1..^4]}");
@@ -86,7 +86,7 @@ public sealed class WorkspaceFileReaderTests : IDisposable
         File.Delete(gone.FullPath);
 
         var reads = new List<ReadFile>();
-        await foreach (var read in Reader().ReadAsync([good, gone])) reads.Add(read);
+        await foreach (var read in Reader().ReadAsync([good, gone], TestContext.Current.CancellationToken)) reads.Add(read);
 
         reads.Count.ShouldBe(2);
         reads.Single(r => r.Candidate.RelativePath == "good.txt").Error.ShouldBeNull();
@@ -109,12 +109,12 @@ public sealed class WorkspaceFileReaderTests : IDisposable
         var reading = Task.Run(async () =>
         {
             await foreach (var _ in Reader().ReadAsync(files)) break;
-        });
+        }, TestContext.Current.CancellationToken);
 
         // WHICH task finished, not whether the one that did succeeded: a timeout that
         // elapses is a successfully completed task too, so comparing the identity is the
         // only form of this assertion that can fail.
-        var finished = await Task.WhenAny(reading, Task.Delay(TimeSpan.FromSeconds(30)));
+        var finished = await Task.WhenAny(reading, Task.Delay(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken));
 
         finished.ShouldBeSameAs(reading,
             "breaking out of the loop must stop the readers, not wait for 200 files");
@@ -125,7 +125,7 @@ public sealed class WorkspaceFileReaderTests : IDisposable
     public async Task NoFilesIsNotAnError()
     {
         var reads = 0;
-        await foreach (var _ in Reader().ReadAsync([])) reads++;
+        await foreach (var _ in Reader().ReadAsync([], TestContext.Current.CancellationToken)) reads++;
         reads.ShouldBe(0);
     }
 

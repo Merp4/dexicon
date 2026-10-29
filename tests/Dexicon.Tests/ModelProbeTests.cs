@@ -28,7 +28,7 @@ public sealed class ModelProbeTests
     {
         var model = new TruncatingModel(limit, errorsOnOverflow: false);
 
-        var capabilities = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
+        var capabilities = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target, TestContext.Current.CancellationToken);
 
         capabilities.TruncatesSilently.ShouldBeTrue();
         capabilities.MaxInputChars.ShouldNotBeNull();
@@ -45,7 +45,7 @@ public sealed class ModelProbeTests
     {
         var model = new TruncatingModel(12_000, errorsOnOverflow: false);
 
-        var capabilities = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
+        var capabilities = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target, TestContext.Current.CancellationToken);
 
         // The measurement is in characters and the model counts tokens. Headroom absorbs
         // the part of that gap a single ratio cannot describe, since prose, code and CJK
@@ -59,7 +59,7 @@ public sealed class ModelProbeTests
         // context. That is the property; it used to be bought with a third of the context
         // held back, and it is now bought by the chunker capping and converting with the
         // measured ratio, which costs nothing in retrieval.
-        var contextTokens = await model.CountTokensAsync(Target, new string('x', capabilities.MaxInputChars!.Value));
+        var contextTokens = await model.CountTokensAsync(Target, new string('x', capabilities.MaxInputChars!.Value), TestContext.Current.CancellationToken);
         capabilities.RecommendedChunkTokens.ShouldBeLessThanOrEqualTo(contextTokens!.Value);
     }
 
@@ -70,7 +70,7 @@ public sealed class ModelProbeTests
         // than surfacing months later as content that was never searchable.
         var model = new TruncatingModel(8_000, errorsOnOverflow: true);
 
-        var capabilities = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
+        var capabilities = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target, TestContext.Current.CancellationToken);
 
         capabilities.TruncatesSilently.ShouldBeFalse();
         capabilities.Summary.ShouldContain("rejects more");
@@ -81,7 +81,7 @@ public sealed class ModelProbeTests
     {
         var model = new TruncatingModel(int.MaxValue, errorsOnOverflow: false);
 
-        var capabilities = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
+        var capabilities = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target, TestContext.Current.CancellationToken);
 
         capabilities.MaxInputChars.ShouldBeNull();
         capabilities.TruncatesSilently.ShouldBeFalse();
@@ -93,7 +93,7 @@ public sealed class ModelProbeTests
     {
         var model = new TruncatingModel(8_000, errorsOnOverflow: false, dimensions: 384);
 
-        var capabilities = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
+        var capabilities = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target, TestContext.Current.CancellationToken);
 
         capabilities.Dimensions.ShouldBe(384);
 
@@ -110,7 +110,7 @@ public sealed class ModelProbeTests
         // filler: no corpus, no chunk set, no document.
         var model = new TruncatingModel(8_000, errorsOnOverflow: false);
 
-        await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
+        await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target, TestContext.Current.CancellationToken);
 
         model.Inputs.ShouldAllBe(s => s.Contains("alpha beta gamma") || s == "dimension probe");
     }
@@ -125,7 +125,7 @@ public sealed class ModelProbeTests
         // reporting it. The probe now asks the model's own tokenizer.
         var model = new TruncatingModel(limit: 4_000, errorsOnOverflow: false);
 
-        var caps = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
+        var caps = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target, TestContext.Current.CancellationToken);
 
         caps.CharsPerToken.ShouldNotBeNull();
         caps.CharsPerToken.Value.ShouldBe(3.0, 0.35);
@@ -139,12 +139,12 @@ public sealed class ModelProbeTests
         // the conversion has no business being in the middle of it.
         var model = new TruncatingModel(limit: 4_000, errorsOnOverflow: false);
 
-        var caps = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
+        var caps = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target, TestContext.Current.CancellationToken);
 
         // Most of the context, with the rest left as margin: the chunker converts to
         // characters with a measured ratio, and a chunk aimed at the ceiling goes over
         // whenever that estimate is a little high.
-        var contextTokens = (await model.CountTokensAsync(Target, new string('x', caps.MaxInputChars!.Value)))!.Value;
+        var contextTokens = (await model.CountTokensAsync(Target, new string('x', caps.MaxInputChars!.Value), TestContext.Current.CancellationToken))!.Value;
         caps.RecommendedChunkTokens.ShouldBe(Dexicon.Core.Indexing.CodeChunker.UsableContext(contextTokens));
     }
 
@@ -162,9 +162,9 @@ public sealed class ModelProbeTests
         // every input alike. A real tokenizer does not.
         var model = new WordishModel(limit: 12_000);
 
-        var caps = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
+        var caps = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target, TestContext.Current.CancellationToken);
 
-        var contextTokens = (await model.CountTokensAsync(Target, Filler(caps.MaxInputChars!.Value)))!.Value;
+        var contextTokens = (await model.CountTokensAsync(Target, Filler(caps.MaxInputChars!.Value), TestContext.Current.CancellationToken))!.Value;
 
         // The recommendation has to fit the context, whatever the text. That is what the
         // old arithmetic broke, and it is the part that matters: a recommendation above the
@@ -234,7 +234,7 @@ public sealed class ModelProbeTests
         // ratio, because a measurement and an assumption look identical once stored.
         var model = new SilentAboutTokens();
 
-        var caps = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target);
+        var caps = await new ModelProbe(model, NullLogger<ModelProbe>.Instance).RunAsync(Target, TestContext.Current.CancellationToken);
 
         caps.CharsPerToken.ShouldBeNull();
     }

@@ -17,14 +17,14 @@ public sealed class ProposalTests : IAsyncLifetime
 {
     private IndexingHarness _harness = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _harness = await IndexingHarness.StartAsync("notes", "docs");
         // Two sets, so a removal that reached only the default one would be seen.
         await _harness.SeedCorpusAsync(SourceKind.Workspace, sets: 2);
     }
 
-    public async Task DisposeAsync() => await _harness.DisposeAsync();
+    public async ValueTask DisposeAsync() => await _harness.DisposeAsync();
 
     private static Principal Key(string id = "k1", string name = "research-agent") =>
         new(id, name, new HashSet<string>(StringComparer.Ordinal) { Scopes.Search, Scopes.Propose });
@@ -80,7 +80,7 @@ public sealed class ProposalTests : IAsyncLifetime
         (stored.TokenId, stored.TokenName, stored.CorpusId, stored.CorpusName)
             .ShouldBe(("k1", "research-agent", IndexingHarness.CorpusId, "notes"));
         stored.DecidedUtc.ShouldBeNull();
-        (await db.Sources.CountAsync()).ShouldBe(2, "asking removes nothing");
+        (await db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2, "asking removes nothing");
     }
 
     [Theory]
@@ -110,7 +110,7 @@ public sealed class ProposalTests : IAsyncLifetime
             RootPath = "notes",
             CreatedUtc = DateTime.UtcNow,
         });
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var ambiguous = await TryAskAsync(db, ProposalKind.Source, "notes");
         var refusal = ambiguous.Refusal.ShouldNotBeNull();
@@ -133,7 +133,7 @@ public sealed class ProposalTests : IAsyncLifetime
         refusal.Status.ShouldBe(404);
         refusal.Detail.ShouldContain("'papers'");
         refusal.Detail.ShouldContain("files:docs, files:notes");
-        (await db.Proposals.AnyAsync()).ShouldBeFalse("a refusal records nothing");
+        (await db.Proposals.AnyAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse("a refusal records nothing");
     }
 
     [Fact]
@@ -161,7 +161,7 @@ public sealed class ProposalTests : IAsyncLifetime
         var unknown = (await TryAskAsync(db, ProposalKind.ChunkSet, "set-9")).Refusal.ShouldNotBeNull();
         unknown.Status.ShouldBe(404);
         unknown.Detail.ShouldContain("alt-1, default");
-        (await db.Proposals.AnyAsync()).ShouldBeFalse();
+        (await db.Proposals.AnyAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 
     [Fact]
@@ -171,8 +171,7 @@ public sealed class ProposalTests : IAsyncLifetime
         await single.SeedCorpusAsync(SourceKind.Workspace, sets: 1);
         await using var db = single.NewContext();
 
-        var refused = await single.NewProposals(db).ProposeAsync(
-            Key(), await CorpusAsync(db), ProposalKind.ChunkSet, "default", "unused", default);
+        var refused = await single.NewProposals(db).ProposeAsync(Key(), await CorpusAsync(db), ProposalKind.ChunkSet, "default", "unused", TestContext.Current.CancellationToken);
 
         var refusal = refused.Refusal.ShouldNotBeNull();
         refusal.Status.ShouldBe(409);
@@ -224,7 +223,7 @@ public sealed class ProposalTests : IAsyncLifetime
 
         refused.Status.ShouldBe(400);
         refused.Detail.ShouldContain("Only a corpus leaves it out");
-        (await db.Proposals.AnyAsync()).ShouldBeFalse("nothing is recorded for a request that names nothing");
+        (await db.Proposals.AnyAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse("nothing is recorded for a request that names nothing");
     }
 
     [Fact]
@@ -254,13 +253,13 @@ public sealed class ProposalTests : IAsyncLifetime
             RootPath = folder,
             CreatedUtc = DateTime.UtcNow,
         });
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var proposal = await AskAsync(db, ProposalKind.Source, label);
 
         proposal.TargetId.ShouldBe("source-long");
         (await StoredAsync(proposal.Id)).TargetLabel.ShouldBe(label);
-        (await _harness.NewProposals(db).ListAsync(decided: false, 50, default)).Single().Target.ShouldBe(label);
+        (await _harness.NewProposals(db).ListAsync(decided: false, 50, TestContext.Current.CancellationToken)).Single().Target.ShouldBe(label);
     }
 
     [Fact]
@@ -272,7 +271,7 @@ public sealed class ProposalTests : IAsyncLifetime
         (await TryAskAsync(db, ProposalKind.Source, "docs", reason: "  \n ")).Refusal.ShouldNotBeNull().Status.ShouldBe(400);
         (await TryAskAsync(db, ProposalKind.Source, "docs", reason: new string('x', 301))).Refusal
             .ShouldNotBeNull().Detail.ShouldContain("301");
-        (await db.Proposals.AnyAsync()).ShouldBeFalse();
+        (await db.Proposals.AnyAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
 
         var kept = await AskAsync(db, ProposalKind.Source, "docs", reason: "  superseded\nby the new export  ");
         kept.Reason.ShouldBe("superseded by the new export", "a line break could begin a line that reads as another entry");
@@ -290,7 +289,7 @@ public sealed class ProposalTests : IAsyncLifetime
         second.Refusal.ShouldBeNull();
         second.Value!.AlreadyPending.ShouldBeTrue();
         second.Value.Proposal.Id.ShouldBe(first.Value!.Proposal.Id);
-        (await db.Proposals.CountAsync()).ShouldBe(1);
+        (await db.Proposals.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]
@@ -306,7 +305,7 @@ public sealed class ProposalTests : IAsyncLifetime
                 RootPath = $"extra/{i}",
                 CreatedUtc = DateTime.UtcNow,
             });
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         for (var i = 0; i < ProposalService.MaxPendingPerKey; i++)
             await AskAsync(db, ProposalKind.Source, $"x{i}");
@@ -332,7 +331,7 @@ public sealed class ProposalTests : IAsyncLifetime
         await using var db = _harness.NewContext();
         var proposal = await AskAsync(db, ProposalKind.Source, "notes");
 
-        var approved = await _harness.NewProposals(db).ApproveAsync(proposal.Id, default);
+        var approved = await _harness.NewProposals(db).ApproveAsync(proposal.Id, TestContext.Current.CancellationToken);
 
         approved.Refusal.ShouldBeNull();
         approved.Value!.Status.ShouldBe("approved");
@@ -345,7 +344,7 @@ public sealed class ProposalTests : IAsyncLifetime
         stored.Status.ShouldBe(ProposalStatus.Approved);
         stored.DecidedUtc.ShouldNotBeNull();
         await using var fresh = _harness.NewContext();
-        (await fresh.Sources.AnyAsync(s => s.Id == "source-1")).ShouldBeFalse();
+        (await fresh.Sources.AnyAsync(s => s.Id == "source-1", cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 
     [Fact]
@@ -355,13 +354,13 @@ public sealed class ProposalTests : IAsyncLifetime
         await using var db = _harness.NewContext();
         var proposal = await AskAsync(db, ProposalKind.ChunkSet, "alt-1");
 
-        var approved = await _harness.NewProposals(db).ApproveAsync(proposal.Id, default);
+        var approved = await _harness.NewProposals(db).ApproveAsync(proposal.Id, TestContext.Current.CancellationToken);
 
         approved.Refusal.ShouldBeNull();
         _harness.Vectors.CountFor("a.md", "set-2").ShouldBe(0);
         _harness.Vectors.CountFor("a.md", "set-1").ShouldBeGreaterThan(0);
         await using var fresh = _harness.NewContext();
-        (await fresh.ChunkSets.Select(s => s.Id).ToListAsync()).ShouldBe(["set-1"]);
+        (await fresh.ChunkSets.Select(s => s.Id).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(["set-1"]);
         (await StoredAsync(proposal.Id)).Status.ShouldBe(ProposalStatus.Approved);
     }
 
@@ -372,15 +371,15 @@ public sealed class ProposalTests : IAsyncLifetime
         await using var db = _harness.NewContext();
         var proposal = await AskAsync(db, ProposalKind.Corpus, null);
 
-        var approved = await _harness.NewProposals(db).ApproveAsync(proposal.Id, default);
+        var approved = await _harness.NewProposals(db).ApproveAsync(proposal.Id, TestContext.Current.CancellationToken);
 
         approved.Refusal.ShouldBeNull();
         foreach (var set in new[] { "set-1", "set-2" })
             _harness.Vectors.CountFor("a.md", set).ShouldBe(0);
         await using var fresh = _harness.NewContext();
-        (await fresh.Corpora.CountAsync()).ShouldBe(0);
-        (await fresh.Sources.CountAsync()).ShouldBe(0);
-        var kept = await fresh.Proposals.AsNoTracking().SingleAsync();
+        (await fresh.Corpora.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
+        (await fresh.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
+        var kept = await fresh.Proposals.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         (kept.Status, kept.CorpusName).ShouldBe((ProposalStatus.Approved, "notes"));
     }
 
@@ -399,11 +398,11 @@ public sealed class ProposalTests : IAsyncLifetime
 
         (await StoredAsync(proposal.Id)).Status.ShouldBe(ProposalStatus.Pending);
         await using var fresh = _harness.NewContext();
-        (await fresh.Sources.AnyAsync(s => s.Id == "source-1")).ShouldBeTrue();
+        (await fresh.Sources.AnyAsync(s => s.Id == "source-1", cancellationToken: TestContext.Current.CancellationToken)).ShouldBeTrue();
 
         // And it can be approved once the store is back.
         await using var retry = _harness.NewContext();
-        (await _harness.NewProposals(retry).ApproveAsync(proposal.Id, default)).Refusal.ShouldBeNull();
+        (await _harness.NewProposals(retry).ApproveAsync(proposal.Id, TestContext.Current.CancellationToken)).Refusal.ShouldBeNull();
         (await StoredAsync(proposal.Id)).Status.ShouldBe(ProposalStatus.Approved);
     }
 
@@ -421,21 +420,21 @@ public sealed class ProposalTests : IAsyncLifetime
             State = JobState.Queued,
             QueuedUtc = DateTime.UtcNow,
         });
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var refused = await _harness.NewProposals(db).ApproveAsync(proposal.Id, default);
+        var refused = await _harness.NewProposals(db).ApproveAsync(proposal.Id, TestContext.Current.CancellationToken);
 
         refused.Refusal.ShouldNotBeNull().Status.ShouldBe(409);
         (await StoredAsync(proposal.Id)).Status.ShouldBe(ProposalStatus.Pending);
 
         // Marked decided on the tracked row before the removal ran, and put back when it was refused.
         // Any later save on the same context must not write the approval that did not happen.
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         (await StoredAsync(proposal.Id)).Status.ShouldBe(ProposalStatus.Pending, "a refused approval is not left on the row");
 
-        await db.Jobs.ExecuteUpdateAsync(u => u.SetProperty(j => j.State, JobState.Succeeded));
+        await db.Jobs.ExecuteUpdateAsync(u => u.SetProperty(j => j.State, JobState.Succeeded), cancellationToken: TestContext.Current.CancellationToken);
         await using var later = _harness.NewContext();
-        (await _harness.NewProposals(later).ApproveAsync(proposal.Id, default)).Refusal.ShouldBeNull();
+        (await _harness.NewProposals(later).ApproveAsync(proposal.Id, TestContext.Current.CancellationToken)).Refusal.ShouldBeNull();
         (await StoredAsync(proposal.Id)).Status.ShouldBe(ProposalStatus.Approved);
     }
 
@@ -447,9 +446,9 @@ public sealed class ProposalTests : IAsyncLifetime
 
         // Removed in the UI between the ask and the decision.
         await using (var admin = _harness.NewContext())
-            (await _harness.NewConfiguration(admin).RemoveSourceAsync(await CorpusAsync(admin), "source-2", default)).Refusal.ShouldBeNull();
+            (await _harness.NewConfiguration(admin).RemoveSourceAsync(await CorpusAsync(admin), "source-2", TestContext.Current.CancellationToken)).Refusal.ShouldBeNull();
 
-        var decided = await _harness.NewProposals(db).ApproveAsync(proposal.Id, default);
+        var decided = await _harness.NewProposals(db).ApproveAsync(proposal.Id, TestContext.Current.CancellationToken);
 
         decided.Refusal.ShouldBeNull("it is recorded, not refused");
         decided.Value!.Status.ShouldBe("failed");
@@ -464,9 +463,9 @@ public sealed class ProposalTests : IAsyncLifetime
         await using var db = _harness.NewContext();
         var proposal = await AskAsync(db, ProposalKind.Source, "docs");
         await using (var admin = _harness.NewContext())
-            await _harness.NewConfiguration(admin).RemoveCorpusAsync(await CorpusAsync(admin), default);
+            await _harness.NewConfiguration(admin).RemoveCorpusAsync(await CorpusAsync(admin), TestContext.Current.CancellationToken);
 
-        var decided = await _harness.NewProposals(db).ApproveAsync(proposal.Id, default);
+        var decided = await _harness.NewProposals(db).ApproveAsync(proposal.Id, TestContext.Current.CancellationToken);
 
         decided.Value!.Status.ShouldBe("failed");
         decided.Value.Error.ShouldNotBeNull().ShouldContain("corpus");
@@ -480,13 +479,13 @@ public sealed class ProposalTests : IAsyncLifetime
         var proposal = await AskAsync(db, ProposalKind.Source, "notes");
         var svc = _harness.NewProposals(db);
 
-        var rejected = await svc.RejectAsync(proposal.Id, default);
+        var rejected = await svc.RejectAsync(proposal.Id, TestContext.Current.CancellationToken);
 
         rejected.Value!.Status.ShouldBe("rejected");
         _harness.Vectors.CountFor("a.md", "set-1").ShouldBeGreaterThan(0, "rejecting removes nothing");
-        (await svc.ApproveAsync(proposal.Id, default)).Refusal.ShouldNotBeNull().Status.ShouldBe(409);
-        (await svc.RejectAsync(proposal.Id, default)).Refusal.ShouldNotBeNull().Status.ShouldBe(409);
-        (await svc.ApproveAsync("no-such", default)).Refusal.ShouldNotBeNull().Status.ShouldBe(404);
+        (await svc.ApproveAsync(proposal.Id, TestContext.Current.CancellationToken)).Refusal.ShouldNotBeNull().Status.ShouldBe(409);
+        (await svc.RejectAsync(proposal.Id, TestContext.Current.CancellationToken)).Refusal.ShouldNotBeNull().Status.ShouldBe(409);
+        (await svc.ApproveAsync("no-such", TestContext.Current.CancellationToken)).Refusal.ShouldNotBeNull().Status.ShouldBe(404);
         (await StoredAsync(proposal.Id)).Status.ShouldBe(ProposalStatus.Rejected);
     }
 
@@ -496,10 +495,10 @@ public sealed class ProposalTests : IAsyncLifetime
         await using var a = _harness.NewContext();
         await using var b = _harness.NewContext();
         var proposal = await AskAsync(a, ProposalKind.Source, "docs");
-        _ = await b.Proposals.SingleAsync();    // read while it was waiting, as a second click's request would
+        _ = await b.Proposals.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);    // read while it was waiting, as a second click's request would
 
-        (await _harness.NewProposals(a).ApproveAsync(proposal.Id, default)).Refusal.ShouldBeNull();
-        var late = await _harness.NewProposals(b).RejectAsync(proposal.Id, default);
+        (await _harness.NewProposals(a).ApproveAsync(proposal.Id, TestContext.Current.CancellationToken)).Refusal.ShouldBeNull();
+        var late = await _harness.NewProposals(b).RejectAsync(proposal.Id, TestContext.Current.CancellationToken);
 
         var refusal = late.Refusal.ShouldNotBeNull();
         refusal.Status.ShouldBe(409);
@@ -520,12 +519,12 @@ public sealed class ProposalTests : IAsyncLifetime
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _harness.Vectors.OnDeleteAsync = async () => { deleting.TrySetResult(); await release.Task; };
         await using var approver = _harness.NewContext();
-        var approval = _harness.NewProposals(approver).ApproveAsync(proposal.Id, default);
-        await deleting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var approval = _harness.NewProposals(approver).ApproveAsync(proposal.Id, TestContext.Current.CancellationToken);
+        await deleting.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
         await using var rejector = _harness.NewContext();
-        var rejection = _harness.NewProposals(rejector).RejectAsync(proposal.Id, default);
-        await Task.Delay(300);
+        var rejection = _harness.NewProposals(rejector).RejectAsync(proposal.Id, TestContext.Current.CancellationToken);
+        await Task.Delay(300, TestContext.Current.CancellationToken);
         rejection.IsCompleted.ShouldBeFalse("a rejection saved now would leave vectors gone for a proposal that reads rejected");
 
         release.SetResult();
@@ -534,7 +533,7 @@ public sealed class ProposalTests : IAsyncLifetime
         (await StoredAsync(proposal.Id)).Status.ShouldBe(ProposalStatus.Approved);
         _harness.Vectors.CountFor("a.md", chunkSetId: "set-2").ShouldBe(0);
         await using var fresh = _harness.NewContext();
-        (await fresh.ChunkSets.AnyAsync(s => s.Id == "set-2")).ShouldBeFalse();
+        (await fresh.ChunkSets.AnyAsync(s => s.Id == "set-2", cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 
     [Fact]
@@ -561,13 +560,13 @@ public sealed class ProposalTests : IAsyncLifetime
 
         // Rejected now, with the source still listed and one of its sets short of vectors.
         await using var rejector = _harness.NewContext();
-        (await _harness.NewProposals(rejector).RejectAsync(proposal.Id, default)).Refusal.ShouldBeNull();
+        (await _harness.NewProposals(rejector).RejectAsync(proposal.Id, TestContext.Current.CancellationToken)).Refusal.ShouldBeNull();
         await using (var check = _harness.NewContext())
-            (await check.Sources.AnyAsync(s => s.Id == "source-1")).ShouldBeTrue();
+            (await check.Sources.AnyAsync(s => s.Id == "source-1", cancellationToken: TestContext.Current.CancellationToken)).ShouldBeTrue();
 
         // The next pass compares each file's recorded chunk count with the store's and indexes it again.
         _harness.Vectors.OnDeleteAsync = null;
-        await _harness.RunIndexAsync(JobKind.Refresh);
+        await _harness.RunIndexAsync(JobKind.Refresh, cancel: TestContext.Current.CancellationToken);
 
         _harness.Vectors.CountFor("a.md", lostSets[0]).ShouldBeGreaterThan(0, "the pass found the deficit and indexed the file again");
     }
@@ -592,10 +591,10 @@ public sealed class ProposalTests : IAsyncLifetime
             await release.Task;
         };
         await using var approver = _harness.NewContext();
-        var approval = _harness.NewProposals(approver).ApproveAsync(proposal.Id, default);
-        await deleting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var approval = _harness.NewProposals(approver).ApproveAsync(proposal.Id, TestContext.Current.CancellationToken);
+        await deleting.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         await using (var admin = _harness.NewContext())
-            (await _harness.NewConfiguration(admin).RemoveSourceAsync(await CorpusAsync(admin), "source-2", default)).Refusal.ShouldBeNull();
+            (await _harness.NewConfiguration(admin).RemoveSourceAsync(await CorpusAsync(admin), "source-2", TestContext.Current.CancellationToken)).Refusal.ShouldBeNull();
 
         release.SetResult();
         var decided = await approval;
@@ -623,14 +622,14 @@ public sealed class ProposalTests : IAsyncLifetime
         };
         await using var approver = _harness.NewContext();
 
-        var decided = await _harness.NewProposals(approver).ApproveAsync(proposal.Id, default);
+        var decided = await _harness.NewProposals(approver).ApproveAsync(proposal.Id, TestContext.Current.CancellationToken);
 
         decided.Refusal.ShouldNotBeNull().Status.ShouldBe(409);
         var stored = await StoredAsync(proposal.Id);
         (stored.Status, stored.DecidedUtc).ShouldBe((ProposalStatus.Pending, null));
         await using var check = _harness.NewContext();
-        (await check.ChunkSets.CountAsync()).ShouldBe(2);
-        var queued = await check.Jobs.SingleAsync();
+        (await check.ChunkSets.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2);
+        var queued = await check.Jobs.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         (queued.Kind, queued.ChunkSetId).ShouldBe((JobKind.Refresh, "set-2"));
     }
 
@@ -642,27 +641,27 @@ public sealed class ProposalTests : IAsyncLifetime
         await using var db = uploads.NewContext();
         var documents = uploads.NewDocumentService(db);
         var corpus = await db.Corpora.Include(c => c.Sources).Include(c => c.ChunkSets)
-            .FirstAsync(c => c.Id == IndexingHarness.CorpusId);
+            .FirstAsync(c => c.Id == IndexingHarness.CorpusId, cancellationToken: TestContext.Current.CancellationToken);
         using var bytes = new MemoryStream(Encoding.UTF8.GetBytes(IndexingHarness.Prose("uploads")));
-        var stored = await documents.StoreAsync(bytes, "paper.md");
-        var file = await documents.AttachAsync(corpus, stored.Sha256, "paper.md");
-        await uploads.RunIndexAsync();
+        var stored = await documents.StoreAsync(bytes, "paper.md", TestContext.Current.CancellationToken);
+        var file = await documents.AttachAsync(corpus, stored.Sha256, "paper.md", TestContext.Current.CancellationToken);
+        await uploads.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         uploads.Vectors.CountFor("paper.md").ShouldBeGreaterThan(0, "the premise");
 
         var svc = uploads.NewProposals(db);
-        var asked = await svc.ProposeAsync(Key(), corpus, ProposalKind.Document, "paper.md", "obsolete", default);
+        var asked = await svc.ProposeAsync(Key(), corpus, ProposalKind.Document, "paper.md", "obsolete", TestContext.Current.CancellationToken);
         asked.Refusal.ShouldBeNull();
         asked.Value!.Proposal.TargetId.ShouldBe(file.Id);
 
-        var approved = await svc.ApproveAsync(asked.Value.Proposal.Id, default);
+        var approved = await svc.ApproveAsync(asked.Value.Proposal.Id, TestContext.Current.CancellationToken);
 
         approved.Refusal.ShouldBeNull();
         uploads.Vectors.CountFor("paper.md").ShouldBe(0);
         await using var fresh = uploads.NewContext();
-        (await fresh.Files.AnyAsync(f => f.Id == file.Id)).ShouldBeFalse("detached from the corpus");
-        (await fresh.Blobs.AnyAsync(b => b.Sha256 == stored.Sha256)).ShouldBeFalse("no other corpus holds the document");
+        (await fresh.Files.AnyAsync(f => f.Id == file.Id, cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse("detached from the corpus");
+        (await fresh.Blobs.AnyAsync(b => b.Sha256 == stored.Sha256, cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse("no other corpus holds the document");
         File.Exists(documents.PathFor(stored.Sha256)).ShouldBeFalse("its bytes go with it");
-        (await fresh.Proposals.AsNoTracking().SingleAsync()).Status.ShouldBe(ProposalStatus.Approved);
+        (await fresh.Proposals.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).Status.ShouldBe(ProposalStatus.Approved);
     }
 
     [Fact]
@@ -672,12 +671,12 @@ public sealed class ProposalTests : IAsyncLifetime
         await uploads.SeedCorpusAsync(SourceKind.Upload);
         await using var db = uploads.NewContext();
         var corpus = await db.Corpora.Include(c => c.Sources).Include(c => c.ChunkSets)
-            .FirstAsync(c => c.Id == IndexingHarness.CorpusId);
+            .FirstAsync(c => c.Id == IndexingHarness.CorpusId, cancellationToken: TestContext.Current.CancellationToken);
         using var bytes = new MemoryStream(Encoding.UTF8.GetBytes("text"));
-        var stored = await uploads.NewDocumentService(db).StoreAsync(bytes, "kept.md");
-        await uploads.NewDocumentService(db).AttachAsync(corpus, stored.Sha256, "kept.md");
+        var stored = await uploads.NewDocumentService(db).StoreAsync(bytes, "kept.md", TestContext.Current.CancellationToken);
+        await uploads.NewDocumentService(db).AttachAsync(corpus, stored.Sha256, "kept.md", TestContext.Current.CancellationToken);
 
-        var refused = await uploads.NewProposals(db).ProposeAsync(Key(), corpus, ProposalKind.Document, "other.md", "x", default);
+        var refused = await uploads.NewProposals(db).ProposeAsync(Key(), corpus, ProposalKind.Document, "other.md", "x", TestContext.Current.CancellationToken);
 
         var refusal = refused.Refusal.ShouldNotBeNull();
         refusal.Status.ShouldBe(404);
@@ -696,14 +695,14 @@ public sealed class ProposalTests : IAsyncLifetime
             SourceId = IndexingHarness.SourceId,
             RelativePath = $"doc-{i:00}.md",
         }));
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         var corpus = await db.Corpora.Include(c => c.Sources).Include(c => c.ChunkSets)
-            .FirstAsync(c => c.Id == IndexingHarness.CorpusId);
+            .FirstAsync(c => c.Id == IndexingHarness.CorpusId, cancellationToken: TestContext.Current.CancellationToken);
         var svc = uploads.NewProposals(db);
 
-        var byPath = await svc.ProposeAsync(Key(), corpus, ProposalKind.Document, "doc-07.md", "x", default);
-        var byId = await svc.ProposeAsync(Key("k2"), corpus, ProposalKind.Document, "file-12", "x", default);
-        var missing = await svc.ProposeAsync(Key(), corpus, ProposalKind.Document, "missing.md", "x", default);
+        var byPath = await svc.ProposeAsync(Key(), corpus, ProposalKind.Document, "doc-07.md", "x", TestContext.Current.CancellationToken);
+        var byId = await svc.ProposeAsync(Key("k2"), corpus, ProposalKind.Document, "file-12", "x", TestContext.Current.CancellationToken);
+        var missing = await svc.ProposeAsync(Key(), corpus, ProposalKind.Document, "missing.md", "x", TestContext.Current.CancellationToken);
 
         byPath.Value!.Proposal.TargetId.ShouldBe("file-07");
         byId.Value!.Proposal.TargetLabel.ShouldBe("doc-12.md");
@@ -722,10 +721,10 @@ public sealed class ProposalTests : IAsyncLifetime
         await IndexAsync();
         await using var db = _harness.NewContext();
         var first = await AskAsync(db, ProposalKind.Source, "notes");
-        await Task.Delay(5);
+        await Task.Delay(5, TestContext.Current.CancellationToken);
         var second = await AskAsync(db, ProposalKind.ChunkSet, "alt-1");
 
-        var waiting = await _harness.NewProposals(db).ListAsync(decided: false, 50, default);
+        var waiting = await _harness.NewProposals(db).ListAsync(decided: false, 50, TestContext.Current.CancellationToken);
 
         waiting.Select(w => w.Id).ShouldBe([first.Id, second.Id]);
         var source = waiting[0];
@@ -735,10 +734,10 @@ public sealed class ProposalTests : IAsyncLifetime
         var facts = source.Facts.ShouldNotBeNull();
         facts.Files.ShouldBe(1);
         facts.ChunkSets.ShouldBe(2);
-        facts.Chunks.ShouldBe(await db.FileChunkStates.Where(s => s.File!.SourceId == "source-1").SumAsync(s => s.ChunkCount));
+        facts.Chunks.ShouldBe(await db.FileChunkStates.Where(s => s.File!.SourceId == "source-1").SumAsync(s => s.ChunkCount, cancellationToken: TestContext.Current.CancellationToken));
         facts.Chunks.ShouldBeGreaterThan(0);
         waiting[1].Facts.ShouldNotBeNull().Chunks.ShouldBe(
-            await db.FileChunkStates.Where(s => s.ChunkSetId == "set-2").SumAsync(s => s.ChunkCount));
+            await db.FileChunkStates.Where(s => s.ChunkSetId == "set-2").SumAsync(s => s.ChunkCount, cancellationToken: TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -750,11 +749,11 @@ public sealed class ProposalTests : IAsyncLifetime
 
         // The source goes in the UI, and the set becomes the default.
         await using (var admin = _harness.NewContext())
-            await _harness.NewConfiguration(admin).RemoveSourceAsync(await CorpusAsync(admin), "source-2", default);
-        await db.ChunkSets.Where(s => s.Id == "set-1").ExecuteUpdateAsync(u => u.SetProperty(s => s.IsDefault, false));
-        await db.ChunkSets.Where(s => s.Id == "set-2").ExecuteUpdateAsync(u => u.SetProperty(s => s.IsDefault, true));
+            await _harness.NewConfiguration(admin).RemoveSourceAsync(await CorpusAsync(admin), "source-2", TestContext.Current.CancellationToken);
+        await db.ChunkSets.Where(s => s.Id == "set-1").ExecuteUpdateAsync(u => u.SetProperty(s => s.IsDefault, false), cancellationToken: TestContext.Current.CancellationToken);
+        await db.ChunkSets.Where(s => s.Id == "set-2").ExecuteUpdateAsync(u => u.SetProperty(s => s.IsDefault, true), cancellationToken: TestContext.Current.CancellationToken);
 
-        var listed = (await _harness.NewProposals(db).ListAsync(decided: false, 50, default)).ToDictionary(v => v.Id);
+        var listed = (await _harness.NewProposals(db).ListAsync(decided: false, 50, TestContext.Current.CancellationToken)).ToDictionary(v => v.Id);
 
         listed[gone.Id].Gone.ShouldBeTrue();
         listed[gone.Id].Facts.ShouldBeNull();
@@ -767,20 +766,20 @@ public sealed class ProposalTests : IAsyncLifetime
         // The first source holds more than the second, so figures read for the wrong one would differ.
         await _harness.WriteFileAsync("a.md", Long("alpha"), source: 0);
         await _harness.WriteFileAsync("b.md", IndexingHarness.Prose("beta"), source: 1);
-        await _harness.RunIndexAsync(JobKind.Full);
+        await _harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
         await using var db = _harness.NewContext();
         var notes = await AskAsync(db, ProposalKind.Source, "notes");
         var docs = await AskAsync(db, ProposalKind.Source, "docs");
         var set = await AskAsync(db, ProposalKind.ChunkSet, "alt-1");
         var corpus = await AskAsync(db, ProposalKind.Corpus, null);
 
-        var notesChunks = await db.FileChunkStates.Where(s => s.File!.SourceId == "source-1").SumAsync(s => s.ChunkCount);
-        var docsChunks = await db.FileChunkStates.Where(s => s.File!.SourceId == "source-2").SumAsync(s => s.ChunkCount);
-        var setChunks = await db.FileChunkStates.Where(s => s.ChunkSetId == "set-2").SumAsync(s => s.ChunkCount);
-        var setFiles = await db.FileChunkStates.CountAsync(s => s.ChunkSetId == "set-2" && s.ChunkCount > 0);
+        var notesChunks = await db.FileChunkStates.Where(s => s.File!.SourceId == "source-1").SumAsync(s => s.ChunkCount, cancellationToken: TestContext.Current.CancellationToken);
+        var docsChunks = await db.FileChunkStates.Where(s => s.File!.SourceId == "source-2").SumAsync(s => s.ChunkCount, cancellationToken: TestContext.Current.CancellationToken);
+        var setChunks = await db.FileChunkStates.Where(s => s.ChunkSetId == "set-2").SumAsync(s => s.ChunkCount, cancellationToken: TestContext.Current.CancellationToken);
+        var setFiles = await db.FileChunkStates.CountAsync(s => s.ChunkSetId == "set-2" && s.ChunkCount > 0, cancellationToken: TestContext.Current.CancellationToken);
         notesChunks.ShouldBeGreaterThan(docsChunks, "the premise: the two are told apart by their size");
 
-        var listed = (await _harness.NewProposals(db).ListAsync(decided: false, 50, default)).ToDictionary(v => v.Id);
+        var listed = (await _harness.NewProposals(db).ListAsync(decided: false, 50, TestContext.Current.CancellationToken)).ToDictionary(v => v.Id);
 
         listed[notes.Id].Facts.ShouldBe(new ProposalFacts(1, 1, notesChunks, 2, null));
         listed[docs.Id].Facts.ShouldBe(new ProposalFacts(1, 1, docsChunks, 2, null));
@@ -797,7 +796,7 @@ public sealed class ProposalTests : IAsyncLifetime
         await using var db = uploads.NewContext();
         var documents = uploads.NewDocumentService(db);
         var corpus = await db.Corpora.Include(c => c.Sources).Include(c => c.ChunkSets)
-            .FirstAsync(c => c.Id == IndexingHarness.CorpusId);
+            .FirstAsync(c => c.Id == IndexingHarness.CorpusId, cancellationToken: TestContext.Current.CancellationToken);
 
         async Task<string> AttachAsync(string name, string text)
         {
@@ -808,16 +807,16 @@ public sealed class ProposalTests : IAsyncLifetime
 
         var bigId = await AttachAsync("big.md", Long("one"));
         var smallId = await AttachAsync("small.md", IndexingHarness.Prose("three"));
-        await uploads.RunIndexAsync();
-        var bigChunks = await db.FileChunkStates.Where(s => s.FileId == bigId).SumAsync(s => s.ChunkCount);
-        var smallChunks = await db.FileChunkStates.Where(s => s.FileId == smallId).SumAsync(s => s.ChunkCount);
+        await uploads.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
+        var bigChunks = await db.FileChunkStates.Where(s => s.FileId == bigId).SumAsync(s => s.ChunkCount, cancellationToken: TestContext.Current.CancellationToken);
+        var smallChunks = await db.FileChunkStates.Where(s => s.FileId == smallId).SumAsync(s => s.ChunkCount, cancellationToken: TestContext.Current.CancellationToken);
         bigChunks.ShouldBeGreaterThan(smallChunks, "the premise: the two are told apart by their size");
 
         var svc = uploads.NewProposals(db);
-        var askedBig = (await svc.ProposeAsync(Key(), corpus, ProposalKind.Document, "big.md", "obsolete", default)).Value!.Proposal;
-        var askedSmall = (await svc.ProposeAsync(Key(), corpus, ProposalKind.Document, "small.md", "obsolete", default)).Value!.Proposal;
+        var askedBig = (await svc.ProposeAsync(Key(), corpus, ProposalKind.Document, "big.md", "obsolete", TestContext.Current.CancellationToken)).Value!.Proposal;
+        var askedSmall = (await svc.ProposeAsync(Key(), corpus, ProposalKind.Document, "small.md", "obsolete", TestContext.Current.CancellationToken)).Value!.Proposal;
 
-        var listed = (await svc.ListAsync(decided: false, 50, default)).ToDictionary(v => v.Id);
+        var listed = (await svc.ListAsync(decided: false, 50, TestContext.Current.CancellationToken)).ToDictionary(v => v.Id);
 
         var sets = corpus.ChunkSets.Count;
         listed[askedBig.Id].Facts.ShouldBe(new ProposalFacts(0, 1, bigChunks, sets, null));
@@ -830,7 +829,7 @@ public sealed class ProposalTests : IAsyncLifetime
         await IndexAsync();
         await using var db = _harness.NewContext();
         db.Corpora.Add(new Corpus { Id = "corpus-2", Name = "papers", State = CorpusState.Ready, CreatedUtc = DateTime.UtcNow });
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         var mine = await AskAsync(db, ProposalKind.Corpus, null);
 
         // Written by hand: the service never records a target outside the corpus it was asked about.
@@ -852,9 +851,9 @@ public sealed class ProposalTests : IAsyncLifetime
             Raw("p-empty", ProposalKind.Corpus, "corpus-2"),
             Raw("p-source", ProposalKind.Source, "source-1"),
             Raw("p-set", ProposalKind.ChunkSet, "set-2"));
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var listed = (await _harness.NewProposals(db).ListAsync(decided: false, 50, default)).ToDictionary(v => v.Id);
+        var listed = (await _harness.NewProposals(db).ListAsync(decided: false, 50, TestContext.Current.CancellationToken)).ToDictionary(v => v.Id);
 
         listed[mine.Id].Facts.ShouldNotBeNull().Sources.ShouldBe(2);
         listed["p-empty"].Facts.ShouldBe(new ProposalFacts(0, 0, 0, 0, null), "nothing of the other corpus's is counted");
@@ -878,18 +877,18 @@ public sealed class ProposalTests : IAsyncLifetime
             State = JobState.Queued,
             QueuedUtc = DateTime.UtcNow,
         });
-        await db.SaveChangesAsync();
-        (await svc.ListAsync(decided: false, 50, default)).Single().Facts.ShouldNotBeNull().Blocker.ShouldBe("a job is working on it");
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        (await svc.ListAsync(decided: false, 50, TestContext.Current.CancellationToken)).Single().Facts.ShouldNotBeNull().Blocker.ShouldBe("a job is working on it");
 
-        await db.Jobs.ExecuteUpdateAsync(u => u.SetProperty(j => j.State, JobState.Succeeded));
-        (await svc.ListAsync(decided: false, 50, default)).Single().Facts.ShouldNotBeNull().Blocker.ShouldBeNull();
+        await db.Jobs.ExecuteUpdateAsync(u => u.SetProperty(j => j.State, JobState.Succeeded), cancellationToken: TestContext.Current.CancellationToken);
+        (await svc.ListAsync(decided: false, 50, TestContext.Current.CancellationToken)).Single().Facts.ShouldNotBeNull().Blocker.ShouldBeNull();
 
         // The other set goes, after the default has moved off it, and this one is all that is left.
-        await db.ChunkSets.Where(s => s.Id == "set-1").ExecuteUpdateAsync(u => u.SetProperty(s => s.IsDefault, false));
-        await db.ChunkSets.Where(s => s.Id == "set-2").ExecuteUpdateAsync(u => u.SetProperty(s => s.IsDefault, true));
+        await db.ChunkSets.Where(s => s.Id == "set-1").ExecuteUpdateAsync(u => u.SetProperty(s => s.IsDefault, false), cancellationToken: TestContext.Current.CancellationToken);
+        await db.ChunkSets.Where(s => s.Id == "set-2").ExecuteUpdateAsync(u => u.SetProperty(s => s.IsDefault, true), cancellationToken: TestContext.Current.CancellationToken);
         await using (var admin = _harness.NewContext())
-            (await _harness.NewConfiguration(admin).RemoveChunkSetAsync(await CorpusAsync(admin), "default", default)).Refusal.ShouldBeNull();
-        (await svc.ListAsync(decided: false, 50, default)).Single(v => v.Id == set.Id)
+            (await _harness.NewConfiguration(admin).RemoveChunkSetAsync(await CorpusAsync(admin), "default", TestContext.Current.CancellationToken)).Refusal.ShouldBeNull();
+        (await svc.ListAsync(decided: false, 50, TestContext.Current.CancellationToken)).Single(v => v.Id == set.Id)
             .Facts.ShouldNotBeNull().Blocker.ShouldBe("it is the only chunk set");
     }
 
@@ -901,16 +900,16 @@ public sealed class ProposalTests : IAsyncLifetime
         var b = await AskAsync(db, ProposalKind.ChunkSet, "alt-1");
         var c = await AskAsync(db, ProposalKind.Source, "notes");
         var svc = _harness.NewProposals(db);
-        (await svc.PendingCountAsync(default)).ShouldBe(3);
+        (await svc.PendingCountAsync(TestContext.Current.CancellationToken)).ShouldBe(3);
 
-        await svc.RejectAsync(a.Id, default);
-        await Task.Delay(5);
-        await svc.RejectAsync(b.Id, default);
+        await svc.RejectAsync(a.Id, TestContext.Current.CancellationToken);
+        await Task.Delay(5, TestContext.Current.CancellationToken);
+        await svc.RejectAsync(b.Id, TestContext.Current.CancellationToken);
 
-        (await svc.PendingCountAsync(default)).ShouldBe(1);
-        var decided = await svc.ListAsync(decided: true, 50, default);
+        (await svc.PendingCountAsync(TestContext.Current.CancellationToken)).ShouldBe(1);
+        var decided = await svc.ListAsync(decided: true, 50, TestContext.Current.CancellationToken);
         decided.Select(d => d.Id).ShouldBe([b.Id, a.Id]);
         decided.ShouldAllBe(d => d.Facts == null && d.DecidedUtc != null);
-        (await svc.ListAsync(decided: false, 50, default)).Select(w => w.Id).ShouldBe([c.Id]);
+        (await svc.ListAsync(decided: false, 50, TestContext.Current.CancellationToken)).Select(w => w.Id).ShouldBe([c.Id]);
     }
 }

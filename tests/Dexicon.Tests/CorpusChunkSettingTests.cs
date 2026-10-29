@@ -20,7 +20,7 @@ public sealed class CorpusChunkSettingTests : IAsyncLifetime
     private IndexingHarness _harness = null!;
     private CountingEmbedder _embedder = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _harness = await IndexingHarness.StartAsync("notes");
         await _harness.SeedCorpusAsync(SourceKind.Workspace);
@@ -28,7 +28,7 @@ public sealed class CorpusChunkSettingTests : IAsyncLifetime
         _harness.Embedder = _embedder;
     }
 
-    public async Task DisposeAsync() => await _harness.DisposeAsync();
+    public async ValueTask DisposeAsync() => await _harness.DisposeAsync();
 
     /// <summary>Counts probes, so a test can show a refusal came before the embedding service was asked.</summary>
     private sealed class CountingEmbedder : IEmbeddingService
@@ -85,8 +85,7 @@ public sealed class CorpusChunkSettingTests : IAsyncLifetime
     {
         await using var db = _harness.NewContext();
 
-        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(
-            new CreateCorpusRequest("papers", ChunkSize: size, ChunkOverlap: overlap, BoundaryMode: mode), default);
+        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("papers", ChunkSize: size, ChunkOverlap: overlap, BoundaryMode: mode), TestContext.Current.CancellationToken);
 
         var refusal = created.Refusal.ShouldNotBeNull();
         refusal.Status.ShouldBe(400);
@@ -101,9 +100,7 @@ public sealed class CorpusChunkSettingTests : IAsyncLifetime
     {
         await using var db = _harness.NewContext();
 
-        var result = await CorpusEndpoints.CreateAsync(
-            new CreateCorpusRequest("papers", ChunkSize: size, ChunkOverlap: overlap, BoundaryMode: mode), AsAdmin(),
-            db, _harness.NewConfiguration(db), _harness.Settings, default);
+        var result = await CorpusEndpoints.CreateAsync(new CreateCorpusRequest("papers", ChunkSize: size, ChunkOverlap: overlap, BoundaryMode: mode), AsAdmin(), db, _harness.NewConfiguration(db), _harness.Settings, TestContext.Current.CancellationToken);
 
         var problem = result.ShouldBeOfType<ProblemHttpResult>().ProblemDetails;
         problem.Status.ShouldBe(400);
@@ -117,13 +114,8 @@ public sealed class CorpusChunkSettingTests : IAsyncLifetime
     {
         await using var db = _harness.NewContext();
 
-        var corpus = (await CorpusEndpoints.CreateAsync(
-            new CreateCorpusRequest("papers", ChunkSize: size, ChunkOverlap: overlap, BoundaryMode: mode), AsAdmin(),
-            db, _harness.NewConfiguration(db), _harness.Settings, default)).ShouldBeOfType<ProblemHttpResult>();
-        var set = (await ChunkSetEndpoints.CreateAsync(
-            IndexingHarness.CorpusId,
-            new CreateChunkSetRequest("second", ChunkSize: size, ChunkOverlap: overlap, BoundaryMode: mode), AsAdmin(),
-            new ScopeResolver(db), db, _harness.Vectors, _harness.Embedder, QueueOn(db), _harness.Settings, default))
+        var corpus = (await CorpusEndpoints.CreateAsync(new CreateCorpusRequest("papers", ChunkSize: size, ChunkOverlap: overlap, BoundaryMode: mode), AsAdmin(), db, _harness.NewConfiguration(db), _harness.Settings, TestContext.Current.CancellationToken)).ShouldBeOfType<ProblemHttpResult>();
+        var set = (await ChunkSetEndpoints.CreateAsync(IndexingHarness.CorpusId, new CreateChunkSetRequest("second", ChunkSize: size, ChunkOverlap: overlap, BoundaryMode: mode), AsAdmin(), new ScopeResolver(db), db, _harness.Vectors, _harness.Embedder, QueueOn(db), _harness.Settings, TestContext.Current.CancellationToken))
             .ShouldBeOfType<ProblemHttpResult>();
 
         set.ProblemDetails.Title.ShouldBe(title);
@@ -139,8 +131,7 @@ public sealed class CorpusChunkSettingTests : IAsyncLifetime
         // The size is the configured 256, so the settings that are judged are the resolved ones.
         await using var db = _harness.NewContext();
 
-        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(
-            new CreateCorpusRequest("papers", ChunkOverlap: 300), default);
+        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("papers", ChunkOverlap: 300), TestContext.Current.CancellationToken);
 
         created.Refusal.ShouldNotBeNull().Title.ShouldBe("chunkOverlap must be smaller than chunkSize");
         await NothingWasCreatedAsync(db);
@@ -154,11 +145,10 @@ public sealed class CorpusChunkSettingTests : IAsyncLifetime
     {
         await using var db = _harness.NewContext();
 
-        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(
-            new CreateCorpusRequest("papers", ChunkSize: size, ChunkOverlap: overlap, BoundaryMode: mode), default);
+        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("papers", ChunkSize: size, ChunkOverlap: overlap, BoundaryMode: mode), TestContext.Current.CancellationToken);
 
         created.Refusal.ShouldBeNull();
-        var set = await db.ChunkSets.AsNoTracking().SingleAsync(s => s.CorpusId == created.Value!.Id);
+        var set = await db.ChunkSets.AsNoTracking().SingleAsync(s => s.CorpusId == created.Value!.Id, cancellationToken: TestContext.Current.CancellationToken);
         (set.ChunkSize, set.ChunkOverlap, set.BoundaryMode, set.IsDefault).ShouldBe((size, overlap, mode, true));
         _embedder.Probes.ShouldBe(1);
     }
@@ -168,10 +158,10 @@ public sealed class CorpusChunkSettingTests : IAsyncLifetime
     {
         await using var db = _harness.NewContext();
 
-        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("papers"), default);
+        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("papers"), TestContext.Current.CancellationToken);
 
         created.Refusal.ShouldBeNull();
-        var set = await db.ChunkSets.AsNoTracking().SingleAsync(s => s.CorpusId == created.Value!.Id);
+        var set = await db.ChunkSets.AsNoTracking().SingleAsync(s => s.CorpusId == created.Value!.Id, cancellationToken: TestContext.Current.CancellationToken);
         var indexing = _harness.Settings.Value.Indexing;
         (set.ChunkSize, set.ChunkOverlap, set.BoundaryMode).ShouldBe((indexing.ChunkSize, indexing.ChunkOverlap, indexing.BoundaryMode));
     }
@@ -185,14 +175,12 @@ public sealed class CorpusChunkSettingTests : IAsyncLifetime
     {
         await using var db = _harness.NewContext();
 
-        var result = await ChunkSetEndpoints.CreateAsync(
-            IndexingHarness.CorpusId, new CreateChunkSetRequest("second", ChunkSize: 10), AsAdmin(),
-            new ScopeResolver(db), db, _harness.Vectors, _harness.Embedder, QueueOn(db), _harness.Settings, default);
+        var result = await ChunkSetEndpoints.CreateAsync(IndexingHarness.CorpusId, new CreateChunkSetRequest("second", ChunkSize: 10), AsAdmin(), new ScopeResolver(db), db, _harness.Vectors, _harness.Embedder, QueueOn(db), _harness.Settings, TestContext.Current.CancellationToken);
 
         var problem = result.ShouldBeOfType<ProblemHttpResult>().ProblemDetails;
         (problem.Status, problem.Title, problem.Detail)
             .ShouldBe((400, "chunkSize must be between 64 and 8192 tokens", null));
-        (await db.ChunkSets.CountAsync()).ShouldBe(1);
+        (await db.ChunkSets.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]
@@ -200,9 +188,7 @@ public sealed class CorpusChunkSettingTests : IAsyncLifetime
     {
         await using var db = _harness.NewContext();
 
-        var result = await ChunkSetEndpoints.CreateAsync(
-            IndexingHarness.CorpusId, new CreateChunkSetRequest("second", ChunkSize: 100, ChunkOverlap: 120), AsAdmin(),
-            new ScopeResolver(db), db, _harness.Vectors, _harness.Embedder, QueueOn(db), _harness.Settings, default);
+        var result = await ChunkSetEndpoints.CreateAsync(IndexingHarness.CorpusId, new CreateChunkSetRequest("second", ChunkSize: 100, ChunkOverlap: 120), AsAdmin(), new ScopeResolver(db), db, _harness.Vectors, _harness.Embedder, QueueOn(db), _harness.Settings, TestContext.Current.CancellationToken);
 
         var problem = result.ShouldBeOfType<ProblemHttpResult>().ProblemDetails;
         (problem.Status, problem.Title, problem.Detail).ShouldBe(
@@ -214,15 +200,12 @@ public sealed class CorpusChunkSettingTests : IAsyncLifetime
     {
         await using var db = _harness.NewContext();
 
-        var result = await ChunkSetEndpoints.CreateAsync(
-            IndexingHarness.CorpusId,
-            new CreateChunkSetRequest("second", BoundaryMode: "custom", CustomBoundaryPattern: "[z-a]"), AsAdmin(),
-            new ScopeResolver(db), db, _harness.Vectors, _harness.Embedder, QueueOn(db), _harness.Settings, default);
+        var result = await ChunkSetEndpoints.CreateAsync(IndexingHarness.CorpusId, new CreateChunkSetRequest("second", BoundaryMode: "custom", CustomBoundaryPattern: "[z-a]"), AsAdmin(), new ScopeResolver(db), db, _harness.Vectors, _harness.Embedder, QueueOn(db), _harness.Settings, TestContext.Current.CancellationToken);
 
         var problem = result.ShouldBeOfType<ProblemHttpResult>().ProblemDetails;
         (problem.Status, problem.Title).ShouldBe((400, "Invalid custom boundary pattern"));
         problem.Detail.ShouldNotBeNullOrEmpty();
-        (await db.ChunkSets.CountAsync()).ShouldBe(1);
+        (await db.ChunkSets.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]
@@ -230,16 +213,14 @@ public sealed class CorpusChunkSettingTests : IAsyncLifetime
     {
         await using var db = _harness.NewContext();
 
-        var result = await ChunkSetEndpoints.UpdateAsync(
-            IndexingHarness.CorpusId, "default", new UpdateChunkSetRequest(BoundaryMode: "paragraph"), AsAdmin(),
-            new ScopeResolver(db), db, QueueOn(db), default);
+        var result = await ChunkSetEndpoints.UpdateAsync(IndexingHarness.CorpusId, "default", new UpdateChunkSetRequest(BoundaryMode: "paragraph"), AsAdmin(), new ScopeResolver(db), db, QueueOn(db), TestContext.Current.CancellationToken);
 
         var problem = result.ShouldBeOfType<ProblemHttpResult>().ProblemDetails;
         (problem.Status, problem.Title, problem.Detail).ShouldBe(
             (400, "Unknown boundary mode", "'paragraph'. Expected none, blank-line, language-aware or custom."));
         await using var fresh = _harness.NewContext();
-        (await fresh.ChunkSets.SingleAsync()).BoundaryMode.ShouldBe("blank-line");
-        (await fresh.Jobs.CountAsync()).ShouldBe(0);
+        (await fresh.ChunkSets.SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).BoundaryMode.ShouldBe("blank-line");
+        (await fresh.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     private IndexJobQueue QueueOn(CatalogDbContext db) =>

@@ -22,7 +22,7 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     private DocumentService _documents = null!;
     private string _dataPath = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _dataPath = Path.Combine(Path.GetTempPath(), $"dexicon-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_dataPath);
@@ -39,7 +39,7 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         _documents = new DocumentService(_db, options, NullLogger<DocumentService>.Instance);
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await _db.DisposeAsync();
         await _connection.DisposeAsync();
@@ -92,14 +92,14 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     {
         var content = string.Join("\n\n", Enumerable.Range(1, 40).Select(i => $"Paragraph {i} of the document."));
 
-        var first = await _documents.StoreAsync(TextStream(content), "notes.md");
-        var second = await _documents.StoreAsync(TextStream(content), "a-different-name.md");
+        var first = await _documents.StoreAsync(TextStream(content), "notes.md", TestContext.Current.CancellationToken);
+        var second = await _documents.StoreAsync(TextStream(content), "a-different-name.md", TestContext.Current.CancellationToken);
 
         second.Sha256.ShouldBe(first.Sha256);
         second.AlreadyExisted.ShouldBeTrue();
 
-        (await _db.Blobs.CountAsync()).ShouldBe(1);
-        (await _db.BlobTexts.CountAsync()).ShouldBe(1);
+        (await _db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
+        (await _db.BlobTexts.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
 
         var onDisk = Directory.EnumerateFiles(Path.Combine(_dataPath, "blobs"), "*", SearchOption.AllDirectories).ToList();
         onDisk.Count.ShouldBe(1, "the bytes must be stored once, not once per upload");
@@ -113,15 +113,15 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         var content = string.Join("\n\n", Enumerable.Range(1, 120)
             .Select(i => $"Paragraph {i}. " + string.Join(' ', Enumerable.Repeat("word", 30))));
 
-        var stored = await _documents.StoreAsync(TextStream(content), "shared.md");
+        var stored = await _documents.StoreAsync(TextStream(content), "shared.md", TestContext.Current.CancellationToken);
 
         var coarse = AddCorpus("coarse", 768, 100);
         var fine = AddCorpus("fine", 256, 40);
 
-        await _documents.AttachAsync(coarse, stored.Sha256, "shared.md");
-        await _documents.AttachAsync(fine, stored.Sha256, "shared.md");
+        await _documents.AttachAsync(coarse, stored.Sha256, "shared.md", TestContext.Current.CancellationToken);
+        await _documents.AttachAsync(fine, stored.Sha256, "shared.md", TestContext.Current.CancellationToken);
 
-        var text = await _documents.TextFor(stored.Sha256);
+        var text = await _documents.TextFor(stored.Sha256, TestContext.Current.CancellationToken);
         text.ShouldNotBeNull();
 
         var coarseChunks = CodeChunker.Chunk("shared.md", text.Text, DefaultSet(coarse).Options());
@@ -131,9 +131,9 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
             "the same document must chunk differently under different chunk sets");
 
         // Still one blob and one extraction behind both.
-        (await _db.Blobs.CountAsync()).ShouldBe(1);
-        (await _db.BlobTexts.CountAsync()).ShouldBe(1);
-        (await _db.Files.CountAsync()).ShouldBe(2);
+        (await _db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
+        (await _db.BlobTexts.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
+        (await _db.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2);
     }
 
     [Fact]
@@ -159,37 +159,37 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         // spellings, so the content was embedded twice and every search returned each
         // hit twice. Observed with a filename mangled by one client and correct from
         // another.
-        var stored = await _documents.StoreAsync(TextStream("some content here\n\nand more"), "doc.md");
+        var stored = await _documents.StoreAsync(TextStream("some content here\n\nand more"), "doc.md", TestContext.Current.CancellationToken);
         var corpus = AddCorpus("one", 768, 100);
 
-        var first = await _documents.AttachAsync(corpus, stored.Sha256, "mangled-name.md");
-        var second = await _documents.AttachAsync(corpus, stored.Sha256, "correct-name.md");
+        var first = await _documents.AttachAsync(corpus, stored.Sha256, "mangled-name.md", TestContext.Current.CancellationToken);
+        var second = await _documents.AttachAsync(corpus, stored.Sha256, "correct-name.md", TestContext.Current.CancellationToken);
 
         second.Id.ShouldBe(first.Id, "the second attach should rename the first, not create a sibling");
         second.RelativePath.ShouldBe("correct-name.md");
         StateOf(second, corpus).ContentHash.ShouldBeNull(
             "a rename invalidates chunks keyed by the old path");
 
-        var files = await _db.Files.Where(f => f.BlobSha256 == stored.Sha256).ToListAsync();
+        var files = await _db.Files.Where(f => f.BlobSha256 == stored.Sha256).ToListAsync(cancellationToken: TestContext.Current.CancellationToken);
         files.Count.ShouldBe(1);
     }
 
     [Fact]
     public async Task DetachingFromOneCorpusLeavesTheBlobForTheOther()
     {
-        var stored = await _documents.StoreAsync(TextStream("shared content\n\nmore"), "shared.md");
+        var stored = await _documents.StoreAsync(TextStream("shared content\n\nmore"), "shared.md", TestContext.Current.CancellationToken);
         var a = AddCorpus("a", 768, 100);
         var b = AddCorpus("b", 256, 40);
 
-        await _documents.AttachAsync(a, stored.Sha256, "shared.md");
-        await _documents.AttachAsync(b, stored.Sha256, "shared.md");
+        await _documents.AttachAsync(a, stored.Sha256, "shared.md", TestContext.Current.CancellationToken);
+        await _documents.AttachAsync(b, stored.Sha256, "shared.md", TestContext.Current.CancellationToken);
 
-        (await _documents.DetachAsync(a.Id, (await _db.Files.FirstAsync(f => f.Source!.CorpusId == a.Id)).Id))
+        (await _documents.DetachAsync(a.Id, (await _db.Files.FirstAsync(f => f.Source!.CorpusId == a.Id, cancellationToken: TestContext.Current.CancellationToken)).Id, TestContext.Current.CancellationToken))
             .ShouldBeTrue();
 
-        (await _db.Blobs.CountAsync()).ShouldBe(1, "the blob survives — another corpus still holds it");
-        (await _db.BlobTexts.CountAsync()).ShouldBe(1);
-        (await _db.Files.CountAsync()).ShouldBe(1);
+        (await _db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "the blob survives — another corpus still holds it");
+        (await _db.BlobTexts.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
+        (await _db.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]
@@ -200,18 +200,17 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         var corpus = AddCorpus("library", 768, 100);
         var fine = AddSet(corpus, "fine", 256, 40);
         _db.ChunkSets.Add(fine);
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var stored = await _documents.StoreAsync(
-            TextStream(string.Join("\n\n", Enumerable.Range(1, 40).Select(i => $"Paragraph {i}."))), "doc.md");
+        var stored = await _documents.StoreAsync(TextStream(string.Join("\n\n", Enumerable.Range(1, 40).Select(i => $"Paragraph {i}."))), "doc.md", TestContext.Current.CancellationToken);
 
-        var file = await _documents.AttachAsync(corpus, stored.Sha256, "doc.md");
+        var file = await _documents.AttachAsync(corpus, stored.Sha256, "doc.md", TestContext.Current.CancellationToken);
 
         // One attachment, one blob, one extraction, but outstanding work in both sets.
-        (await _db.Files.CountAsync()).ShouldBe(1);
-        (await _db.Blobs.CountAsync()).ShouldBe(1);
+        (await _db.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
+        (await _db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
 
-        var states = await _db.FileChunkStates.Where(s => s.FileId == file.Id).ToListAsync();
+        var states = await _db.FileChunkStates.Where(s => s.FileId == file.Id).ToListAsync(cancellationToken: TestContext.Current.CancellationToken);
         states.Count.ShouldBe(2, "a new attachment is pending in every set, not just the default");
         states.ShouldAllBe(s => s.Status == FileStatus.Pending);
 
@@ -270,7 +269,7 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         // refuses the value it advertises is a limit one byte lower than documented.
         var documents = ServiceCapping(64);
 
-        var stored = await documents.StoreAsync(new MemoryStream(new byte[64]), "exact.bin");
+        var stored = await documents.StoreAsync(new MemoryStream(new byte[64]), "exact.bin", TestContext.Current.CancellationToken);
 
         stored.SizeBytes.ShouldBe(64);
     }
@@ -336,11 +335,11 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     [Fact]
     public async Task PlainTextUploadIsExtractedNotTreatedAsAnUnknownBinary()
     {
-        var stored = await _documents.StoreAsync(TextStream("# Title\n\nSome prose."), "readme.md");
+        var stored = await _documents.StoreAsync(TextStream("# Title\n\nSome prose."), "readme.md", TestContext.Current.CancellationToken);
         stored.ExtractedChars.ShouldBeGreaterThan(0);
         stored.EmptyReason.ShouldBeNull();
 
-        var text = await _documents.TextFor(stored.Sha256);
+        var text = await _documents.TextFor(stored.Sha256, TestContext.Current.CancellationToken);
         text!.Text.ShouldContain("Some prose.");
         text.Extractor.ShouldBe("PlainText");
     }
@@ -353,9 +352,9 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         // document as "indexed", next to a chunk count of 0, and a corpus whose
         // indexing job was interrupted looked finished.
         var corpus = AddCorpus("books", 512, 64);
-        var stored = await _documents.StoreAsync(TextStream("some prose to chunk"), "book.md");
+        var stored = await _documents.StoreAsync(TextStream("some prose to chunk"), "book.md", TestContext.Current.CancellationToken);
 
-        var file = await _documents.AttachAsync(corpus, stored.Sha256, "book.md");
+        var file = await _documents.AttachAsync(corpus, stored.Sha256, "book.md", TestContext.Current.CancellationToken);
 
         var state = StateOf(file, corpus);
         state.Status.ShouldBe(FileStatus.Pending);
@@ -377,16 +376,16 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         // A rename invalidates the chunks, which are keyed by file path. Leaving the
         // status at Indexed would claim chunks exist under a name nothing wrote.
         var corpus = AddCorpus("books", 512, 64);
-        var stored = await _documents.StoreAsync(TextStream("some prose to chunk"), "book.md");
+        var stored = await _documents.StoreAsync(TextStream("some prose to chunk"), "book.md", TestContext.Current.CancellationToken);
 
-        var file = await _documents.AttachAsync(corpus, stored.Sha256, "book.md");
+        var file = await _documents.AttachAsync(corpus, stored.Sha256, "book.md", TestContext.Current.CancellationToken);
         var state = StateOf(file, corpus);
         state.Status = FileStatus.Indexed;
         state.ContentHash = "whatever-the-last-index-wrote";
         state.ChunkCount = 3;
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var renamed = await _documents.AttachAsync(corpus, stored.Sha256, "better-name.md");
+        var renamed = await _documents.AttachAsync(corpus, stored.Sha256, "better-name.md", TestContext.Current.CancellationToken);
 
         renamed.Id.ShouldBe(file.Id, "a rename is a rename, not a second attachment");
         StateOf(renamed, corpus).Status.ShouldBe(FileStatus.Pending);
@@ -398,17 +397,16 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     {
         // The text of some PDFs holds U+0000 and SQLite ends a value at the first one, so a
         // row was cut there while it recorded the length of the whole.
-        var stored = await _documents.StoreAsync(
-            TextStream("first paragraph of the upload.\n\nsecond paragraph, which a cut would lose."), "notes.md");
-        var whole = (await _documents.TextFor(stored.Sha256))!.Text;
+        var stored = await _documents.StoreAsync(TextStream("first paragraph of the upload.\n\nsecond paragraph, which a cut would lose."), "notes.md", TestContext.Current.CancellationToken);
+        var whole = (await _documents.TextFor(stored.Sha256, TestContext.Current.CancellationToken))!.Text;
 
-        await _db.BlobTexts.ExecuteUpdateAsync(u => u.SetProperty(t => t.Text, "first paragraph"));
+        await _db.BlobTexts.ExecuteUpdateAsync(u => u.SetProperty(t => t.Text, "first paragraph"), cancellationToken: TestContext.Current.CancellationToken);
         _db.ChangeTracker.Clear();
 
-        var current = await _documents.CurrentTextFor(stored.Sha256, "notes.md");
+        var current = await _documents.CurrentTextFor(stored.Sha256, "notes.md", ct: TestContext.Current.CancellationToken);
 
         current!.Text.ShouldBe(whole);
-        (await _documents.TextFor(stored.Sha256))!.Text.ShouldBe(whole, "and the row was replaced, not only returned");
+        (await _documents.TextFor(stored.Sha256, TestContext.Current.CancellationToken))!.Text.ShouldBe(whole, "and the row was replaced, not only returned");
     }
 
     [Fact]
@@ -416,22 +414,21 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     {
         var first = AddCorpus("books", 512, 64);
         var second = AddCorpus("papers", 256, 32);
-        var stored = await _documents.StoreAsync(
-            TextStream("first paragraph of the upload.\n\nsecond paragraph, which a cut would lose."), "notes.md");
-        var inFirst = await _documents.AttachAsync(first, stored.Sha256, "notes.md");
-        var inSecond = await _documents.AttachAsync(second, stored.Sha256, "notes.md");
+        var stored = await _documents.StoreAsync(TextStream("first paragraph of the upload.\n\nsecond paragraph, which a cut would lose."), "notes.md", TestContext.Current.CancellationToken);
+        var inFirst = await _documents.AttachAsync(first, stored.Sha256, "notes.md", TestContext.Current.CancellationToken);
+        var inSecond = await _documents.AttachAsync(second, stored.Sha256, "notes.md", TestContext.Current.CancellationToken);
 
         // One indexed, one failed with a reason that stops being true once the text is repaired.
         var a = StateOf(inFirst, first);
         a.Status = FileStatus.Indexed; a.ContentHash = "old"; a.ChunkCount = 2;
         var b = StateOf(inSecond, second);
         b.Status = FileStatus.Failed; b.StatusDetail = "an old reason"; b.ContentHash = "old"; b.ChunkCount = 2;
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        await _db.BlobTexts.ExecuteUpdateAsync(u => u.SetProperty(t => t.Text, "first paragraph"));
+        await _db.BlobTexts.ExecuteUpdateAsync(u => u.SetProperty(t => t.Text, "first paragraph"), cancellationToken: TestContext.Current.CancellationToken);
         _db.ChangeTracker.Clear();
 
-        await _documents.CurrentTextFor(stored.Sha256, "notes.md");
+        await _documents.CurrentTextFor(stored.Sha256, "notes.md", ct: TestContext.Current.CancellationToken);
 
         foreach (var (file, corpus) in new[] { (inFirst, first), (inSecond, second) })
         {
@@ -449,25 +446,25 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         // value there. Every read then failed the length check, repaired the row with the same
         // text, and cleared the chunk states: re-embedding the upload on every pass.
         var corpus = AddCorpus("books", 512, 64);
-        var stored = await _documents.StoreAsync(TextStream("alpha\0beta\n\ngamma\0delta"), "notes.md");
-        var file = await _documents.AttachAsync(corpus, stored.Sha256, "notes.md");
+        var stored = await _documents.StoreAsync(TextStream("alpha\0beta\n\ngamma\0delta"), "notes.md", TestContext.Current.CancellationToken);
+        var file = await _documents.AttachAsync(corpus, stored.Sha256, "notes.md", TestContext.Current.CancellationToken);
 
-        var row = (await _documents.TextFor(stored.Sha256))!;
+        var row = (await _documents.TextFor(stored.Sha256, TestContext.Current.CancellationToken))!;
         row.Text.ShouldBe("alphabeta\n\ngammadelta");
         row.Text.Length.ShouldBe(row.ExtractedChars, "what the table returns is as long as what was written");
 
         var state = StateOf(file, corpus);
         state.Status = FileStatus.Indexed; state.ContentHash = "indexed"; state.ChunkCount = 2;
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
         _db.ChangeTracker.Clear();
 
-        await _documents.CurrentTextFor(stored.Sha256, "notes.md");
-        await _documents.CurrentTextFor(stored.Sha256, "notes.md");
+        await _documents.CurrentTextFor(stored.Sha256, "notes.md", ct: TestContext.Current.CancellationToken);
+        await _documents.CurrentTextFor(stored.Sha256, "notes.md", ct: TestContext.Current.CancellationToken);
 
         var after = StateOf(file, corpus);
         after.Status.ShouldBe(FileStatus.Indexed, "the text was never damaged, so nothing was invalidated");
         after.ContentHash.ShouldBe("indexed");
-        (await _documents.TextFor(stored.Sha256))!.ExtractedUtc.ShouldBe(row.ExtractedUtc);
+        (await _documents.TextFor(stored.Sha256, TestContext.Current.CancellationToken))!.ExtractedUtc.ShouldBe(row.ExtractedUtc);
     }
 
     [Fact]
@@ -475,12 +472,11 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     {
         // SQLite counts code points and .NET counts UTF-16 units, so a character outside the
         // basic plane makes a row look shorter to one and not to the other.
-        var stored = await _documents.StoreAsync(
-            TextStream("a variable \U0001D465 and another \U0001D466 in a note"), "maths.md");
-        var before = (await _documents.TextFor(stored.Sha256))!.ExtractedUtc;
+        var stored = await _documents.StoreAsync(TextStream("a variable \U0001D465 and another \U0001D466 in a note"), "maths.md", TestContext.Current.CancellationToken);
+        var before = (await _documents.TextFor(stored.Sha256, TestContext.Current.CancellationToken))!.ExtractedUtc;
         _db.ChangeTracker.Clear();
 
-        var current = await _documents.CurrentTextFor(stored.Sha256, "maths.md");
+        var current = await _documents.CurrentTextFor(stored.Sha256, "maths.md", ct: TestContext.Current.CancellationToken);
 
         current!.ExtractedUtc.ShouldBe(before, "the text is whole, so it was served and not extracted again");
     }

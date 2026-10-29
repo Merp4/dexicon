@@ -26,7 +26,7 @@ public sealed class UnusableIgnoreFileIndexingTests
         await harness.WriteFileAsync("two.md", IndexingHarness.Prose("two"), source: 1);
         await harness.SeedCorpusAsync(SourceKind.Workspace);
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.State.ShouldBe(JobState.Degraded, "one source could not be walked and the other was");
         job.Error.ShouldNotBeNull();
@@ -36,9 +36,9 @@ public sealed class UnusableIgnoreFileIndexingTests
         (await harness.StateOfAsync("two.md", sourceId: IndexingHarness.SourceIdFor(1))).Status.ShouldBe(FileStatus.Indexed);
 
         await using var db = harness.NewContext();
-        (await db.Files.CountAsync(f => f.SourceId == IndexingHarness.SourceIdFor(0)))
+        (await db.Files.CountAsync(f => f.SourceId == IndexingHarness.SourceIdFor(0), cancellationToken: TestContext.Current.CancellationToken))
             .ShouldBe(0, "nothing is indexed from a source whose exclusions cannot be read");
-        (await db.Corpora.FirstAsync()).State.ShouldBe(CorpusState.Unavailable);
+        (await db.Corpora.FirstAsync(cancellationToken: TestContext.Current.CancellationToken)).State.ShouldBe(CorpusState.Unavailable);
     }
 
     [Fact]
@@ -47,12 +47,12 @@ public sealed class UnusableIgnoreFileIndexingTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.WriteFileAsync("one.md", IndexingHarness.Prose("one"));
         await harness.SeedCorpusAsync(SourceKind.Workspace);
-        (await harness.RunIndexAsync()).State.ShouldBe(JobState.Succeeded);
+        (await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken)).State.ShouldBe(JobState.Succeeded);
         var held = harness.Vectors.CountFor("one.md");
         held.ShouldBeGreaterThan(0);
 
         await harness.WriteFileAsync(".dexiconignore", $"{Faulty}\n");
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.State.ShouldBe(JobState.Degraded);
         harness.Vectors.CountFor("one.md").ShouldBe(held, "a walk that failed is not evidence the file is gone");
@@ -69,14 +69,14 @@ public sealed class UnusableIgnoreFileIndexingTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         var log = new RecordingLoggerFactory();
 
-        var job = await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log));
+        var job = await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log), cancel: TestContext.Current.CancellationToken);
 
         job.State.ShouldBe(JobState.Succeeded);
         job.Error.ShouldBeNull();
         (await harness.StateOfAsync("kept.md")).Status.ShouldBe(FileStatus.Indexed);
 
         await using var db = harness.NewContext();
-        (await db.Files.AnyAsync(f => f.RelativePath == "skipped.md")).ShouldBeFalse("the rest of the file applied");
+        (await db.Files.AnyAsync(f => f.RelativePath == "skipped.md", cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse("the rest of the file applied");
 
         log.Lines.ShouldContain(
             "Source notes: .gitignore line 1 ('[z-a]') cannot be compiled (reversed character range); the line was skipped");
@@ -95,7 +95,7 @@ public sealed class UnusableIgnoreFileIndexingTests
 
         result.Outcome.ShouldBe(SweepOutcome.Swept);
         await using var db = harness.NewContext();
-        var swept = await db.Files.AsNoTracking().ToListAsync();
+        var swept = await db.Files.AsNoTracking().ToListAsync(cancellationToken: TestContext.Current.CancellationToken);
         swept.ShouldAllBe(f => f.SourceId == IndexingHarness.SourceIdFor(1));
         swept.Select(f => f.RelativePath).ShouldContain("two.md");
     }
@@ -109,7 +109,7 @@ public sealed class UnusableIgnoreFileIndexingTests
         await harness.SeedCorpusAsync(SourceKind.Workspace, sets: 3);
         var log = new RecordingLoggerFactory();
 
-        await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log));
+        await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log), cancel: TestContext.Current.CancellationToken);
 
         log.Lines.Count(l => l.Contains(".gitignore line 1", StringComparison.Ordinal)).ShouldBe(1);
     }
@@ -123,7 +123,7 @@ public sealed class UnusableIgnoreFileIndexingTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         var log = new RecordingLoggerFactory();
 
-        await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log));
+        await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log), cancel: TestContext.Current.CancellationToken);
 
         log.Lines.ShouldContain(
             "Source notes: .gitignore has 1,000 lines that cannot be used; the rest of the file was not read, so no rule after them applies");
@@ -139,7 +139,7 @@ public sealed class UnusableIgnoreFileIndexingTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         var log = new RecordingLoggerFactory();
 
-        await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log));
+        await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log), cancel: TestContext.Current.CancellationToken);
 
         log.Lines.ShouldContain(l => l.Contains(".gitignore line 1", StringComparison.Ordinal));
         log.Lines.ShouldNotContain(l => l.Contains("more ignore-file warnings", StringComparison.Ordinal));
@@ -155,7 +155,7 @@ public sealed class UnusableIgnoreFileIndexingTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         var log = new RecordingLoggerFactory();
 
-        var job = await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log));
+        var job = await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log), cancel: TestContext.Current.CancellationToken);
 
         job.State.ShouldBe(JobState.Succeeded);
         var reported = log.Lines.Where(l => l.Contains(".gitignore line 1", StringComparison.Ordinal)).ToList();
@@ -171,7 +171,7 @@ public sealed class UnusableIgnoreFileIndexingTests
         await harness.WriteFileAsync("deep.md", IndexingHarness.Prose("deep"), source: 1);
         await harness.SeedCorpusAsync(SourceKind.Workspace);
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.Error.ShouldNotBeNull();
         job.Error.ShouldContain("Source 'outer/inner' was not indexed because .dexiconignore line 1");
@@ -185,17 +185,17 @@ public sealed class UnusableIgnoreFileIndexingTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.WriteFileAsync("one.md", IndexingHarness.Prose("one"));
         var target = Path.Combine(harness.DataPath, "outside-rules");
-        await File.WriteAllTextAsync(target, "one.md\n");
+        await File.WriteAllTextAsync(target, "one.md\n", TestContext.Current.CancellationToken);
         File.CreateSymbolicLink(Path.Combine(harness.SourceDirectory, ".dexiconignore"), target);
         await harness.SeedCorpusAsync(SourceKind.Workspace);
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.State.ShouldBe(JobState.Degraded);
         job.Error.ShouldNotBeNull();
         job.Error.ShouldContain("Source 'notes' was not indexed because .dexiconignore is a link, and links are not followed");
         await using var db = harness.NewContext();
-        (await db.Files.CountAsync()).ShouldBe(0);
+        (await db.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]
@@ -208,12 +208,12 @@ public sealed class UnusableIgnoreFileIndexingTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         var log = new RecordingLoggerFactory();
 
-        await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log));
+        await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log), cancel: TestContext.Current.CancellationToken);
         log.Lines.Count(l => l.Contains(".gitignore line 1", StringComparison.Ordinal)).ShouldBe(2, "one for each source");
         log.Lines.ShouldContain(l => l.StartsWith("Source one: ", StringComparison.Ordinal));
         log.Lines.ShouldContain(l => l.StartsWith("Source two: ", StringComparison.Ordinal));
 
-        await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log));
+        await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log), cancel: TestContext.Current.CancellationToken);
         log.Lines.Count(l => l.Contains(".gitignore line 1", StringComparison.Ordinal)).ShouldBe(4, "the next pass reports again");
     }
 
@@ -226,7 +226,7 @@ public sealed class UnusableIgnoreFileIndexingTests
         await harness.SeedCorpusAsync(SourceKind.Workspace, sets: 3);
         var log = new RecordingLoggerFactory();
 
-        var job = await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log));
+        var job = await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log), cancel: TestContext.Current.CancellationToken);
 
         log.Lines.Count(l => l.Contains("was not indexed because", StringComparison.Ordinal)).ShouldBe(1);
         job.Error.ShouldNotBeNull();
@@ -242,7 +242,7 @@ public sealed class UnusableIgnoreFileIndexingTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         var log = new RecordingLoggerFactory();
 
-        await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log));
+        await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log), cancel: TestContext.Current.CancellationToken);
 
         log.Lines.ShouldContain(l => l.Contains(".gitignore line 1", StringComparison.Ordinal) && l.Contains("the line was skipped", StringComparison.Ordinal));
         log.Lines.ShouldContain(l => l.Contains(".dexiconignore line 1", StringComparison.Ordinal));
@@ -262,8 +262,8 @@ public sealed class UnusableIgnoreFileIndexingTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await using (var db = harness.NewContext())
         {
-            var source = await db.Sources.SingleAsync();
-            var corpus = await db.Corpora.SingleAsync();
+            var source = await db.Sources.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
+            var corpus = await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
             var faulty = SourceFilters.Store([Faulty]);
             var fine = SourceFilters.Store(["*.log"]);
             switch (holder)
@@ -283,10 +283,10 @@ public sealed class UnusableIgnoreFileIndexingTests
                 default: throw new ArgumentOutOfRangeException(nameof(holder), holder, "an unknown holder");
             }
 
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.Error.ShouldNotBeNull();
         job.Error.ShouldContain($"Source 'notes' was not indexed because {expected} ('[z-a]') cannot be compiled");

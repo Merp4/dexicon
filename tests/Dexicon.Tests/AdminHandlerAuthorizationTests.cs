@@ -33,8 +33,8 @@ public sealed class AdminHandlerAuthorizationTests
         await using var db = harness.NewContext();
         var rc = WithEveryScopeButAdmin();
         var scopes = new ScopeResolver(db);
-        var before = (Tokens: await db.Tokens.CountAsync(), Corpora: await db.Corpora.CountAsync(),
-            Sets: await db.ChunkSets.CountAsync(), Measurements: await db.ModelMeasurements.CountAsync());
+        var before = (Tokens: await db.Tokens.CountAsync(cancellationToken: TestContext.Current.CancellationToken), Corpora: await db.Corpora.CountAsync(cancellationToken: TestContext.Current.CancellationToken),
+            Sets: await db.ChunkSets.CountAsync(cancellationToken: TestContext.Current.CancellationToken), Measurements: await db.ModelMeasurements.CountAsync(cancellationToken: TestContext.Current.CancellationToken));
 
         // The dependencies that are null are never reached: the scope is checked first. A change is a
         // description, so an update that got through would show.
@@ -59,12 +59,12 @@ public sealed class AdminHandlerAuthorizationTests
         foreach (var (name, call) in handlers)
             ((IStatusCodeHttpResult)await call()).StatusCode.ShouldBe(403, $"{name} has to refuse a key without admin");
 
-        (await db.Tokens.CountAsync()).ShouldBe(before.Tokens);
-        (await db.Corpora.CountAsync()).ShouldBe(before.Corpora);
-        (await db.ChunkSets.CountAsync()).ShouldBe(before.Sets);
-        (await db.ModelMeasurements.CountAsync()).ShouldBe(before.Measurements);
-        (await db.Corpora.AsNoTracking().Select(c => c.Description).ToListAsync()).ShouldNotContain("changed");
-        (await db.ChunkSets.AsNoTracking().Select(s => s.Description).ToListAsync()).ShouldNotContain("changed");
+        (await db.Tokens.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(before.Tokens);
+        (await db.Corpora.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(before.Corpora);
+        (await db.ChunkSets.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(before.Sets);
+        (await db.ModelMeasurements.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(before.Measurements);
+        (await db.Corpora.AsNoTracking().Select(c => c.Description).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldNotContain("changed");
+        (await db.ChunkSets.AsNoTracking().Select(s => s.Description).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldNotContain("changed");
     }
 
     [Fact]
@@ -78,7 +78,7 @@ public sealed class AdminHandlerAuthorizationTests
             Principal = new Principal("k", "admin", new HashSet<string>(StringComparer.Ordinal) { Scopes.Admin }),
         };
 
-        var result = await SystemEndpoints.ProbeModelAsync(new ProbeModelRequest(" "), admin, null!, db, null!, default);
+        var result = await SystemEndpoints.ProbeModelAsync(new ProbeModelRequest(" "), admin, null!, db, null!, TestContext.Current.CancellationToken);
 
         ((IStatusCodeHttpResult)result).StatusCode.ShouldBe(400);
     }

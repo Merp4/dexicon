@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Text;
 using Dexicon.Core.Indexing;
 using Shouldly;
@@ -593,7 +594,8 @@ public sealed class IgnoreFileReadabilityTests : IDisposable
 /// </summary>
 public sealed class LinuxFactAttribute : FactAttribute
 {
-    public LinuxFactAttribute()
+    public LinuxFactAttribute([CallerFilePath] string? sourceFilePath = null, [CallerLineNumber] int sourceLineNumber = -1)
+        : base(sourceFilePath, sourceLineNumber)
     {
         if (!OperatingSystem.IsLinux()) Skip = "named pipes are made with mkfifo, which is only used on Linux";
         else if (!File.Exists("/usr/bin/mkfifo") && !File.Exists("/bin/mkfifo")) Skip = "mkfifo was not found in /usr/bin or /bin";
@@ -606,7 +608,8 @@ public sealed class LinuxFactAttribute : FactAttribute
 /// </summary>
 public sealed class UnprivilegedLinuxFactAttribute : FactAttribute
 {
-    public UnprivilegedLinuxFactAttribute()
+    public UnprivilegedLinuxFactAttribute([CallerFilePath] string? sourceFilePath = null, [CallerLineNumber] int sourceLineNumber = -1)
+        : base(sourceFilePath, sourceLineNumber)
     {
         if (!OperatingSystem.IsLinux()) Skip = "a read is refused by permission bits on Linux; Windows refuses it by a file lock";
         else if (Environment.IsPrivilegedProcess) Skip = "root opens a file whatever its permission bits";
@@ -616,7 +619,8 @@ public sealed class UnprivilegedLinuxFactAttribute : FactAttribute
 /// <summary>A fact that runs on Windows, where <c>FileShare.None</c> keeps another open from reading the file.</summary>
 public sealed class WindowsFactAttribute : FactAttribute
 {
-    public WindowsFactAttribute()
+    public WindowsFactAttribute([CallerFilePath] string? sourceFilePath = null, [CallerLineNumber] int sourceLineNumber = -1)
+        : base(sourceFilePath, sourceLineNumber)
     {
         if (!OperatingSystem.IsWindows()) Skip = "a file lock refuses a read on Windows only";
     }

@@ -66,11 +66,11 @@ public sealed class VectorCleanupOfADetachTests
         {
             var stored = await documents.StoreAsync(new MemoryStream(TheBytes), "a.txt");
             await documents.AttachAsync(corpus, stored.Sha256, "b.txt");
-        });
+        }, TestContext.Current.CancellationToken);
 
         removed.ShouldBeTrue();
         await using var check = harness.NewContext();
-        (await check.Files.CountAsync()).ShouldBe(0, "the document is detached");
+        (await check.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0, "the document is detached");
         harness.Vectors.CountFor("b.txt").ShouldBe(0, "the pass indexed it under the new name before the row went");
         harness.Vectors.CountFor("a.txt").ShouldBe(0);
     }
@@ -84,11 +84,11 @@ public sealed class VectorCleanupOfADetachTests
         {
             var stored = await documents.StoreAsync(new MemoryStream("the replacement"u8.ToArray()), "replacement.txt");
             await documents.AttachAsync(corpus, stored.Sha256, "a.txt");
-        });
+        }, TestContext.Current.CancellationToken);
 
         removed.ShouldBeTrue();
         await using var check = harness.NewContext();
-        (await check.Files.CountAsync()).ShouldBe(0);
+        (await check.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
         harness.Vectors.CountFor("a.txt").ShouldBe(0, "the pass indexed the new bytes before the row went");
     }
 
@@ -99,11 +99,11 @@ public sealed class VectorCleanupOfADetachTests
         // and writes them again before the row is deleted.
         await using var harness = await IndexingHarness.StartAsync("notes");
 
-        var removed = await DetachWhileAsync(harness, (_, _) => Task.CompletedTask);
+        var removed = await DetachWhileAsync(harness, (_, _) => Task.CompletedTask, TestContext.Current.CancellationToken);
 
         removed.ShouldBeTrue();
         await using var check = harness.NewContext();
-        (await check.Files.CountAsync()).ShouldBe(0);
+        (await check.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
         harness.Vectors.CountFor("a.txt").ShouldBe(0);
     }
 
@@ -118,11 +118,11 @@ public sealed class VectorCleanupOfADetachTests
         {
             harness.Vectors.DeletesThrow = true;
             return Task.CompletedTask;
-        });
+        }, TestContext.Current.CancellationToken);
 
         removed.ShouldBeTrue();
         await using var check = harness.NewContext();
-        (await check.Files.CountAsync()).ShouldBe(0);
+        (await check.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]
@@ -139,7 +139,7 @@ public sealed class VectorCleanupOfADetachTests
         };
 
         var removed = await new VectorStoreCleanup(db, harness.Vectors, NullLogger<VectorStoreCleanup>.Instance).RemoveAttachmentAsync(
-            await db.Corpora.SingleAsync(), "no-such-file", harness.NewDocumentService(db), CancellationToken.None);
+            await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken), "no-such-file", harness.NewDocumentService(db), CancellationToken.None);
 
         removed.ShouldBeFalse();
         deletes.ShouldBe(0);
@@ -247,7 +247,7 @@ public sealed class VectorCleanupOfADetachTests
 
         removed.ShouldBeTrue("the row was deleted");
         await using var check = harness.NewContext();
-        (await check.Files.CountAsync()).ShouldBe(0);
+        (await check.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
         harness.Vectors.DeleteTokens.Count.ShouldBe(3, "two deletes before the row and the one that timed out; the second set is not tried");
         logs.Lines.ShouldContain(l => l.Contains("timed out", StringComparison.Ordinal));
     }
@@ -293,7 +293,7 @@ public sealed class VectorCleanupOfADetachTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using (var db = harness.NewContext())
-            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.Name, "set\nname"));
+            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.Name, "set\nname"), cancellationToken: TestContext.Current.CancellationToken);
         harness.Vectors.OnFileDeleteTokenAsync = (_, deletes) =>
             deletes == 2 ? throw new InvalidOperationException("the vector store is unreachable") : Task.CompletedTask;
 

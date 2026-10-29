@@ -50,21 +50,21 @@ public sealed class UploadSourceUniquenessTests
         await using var second = harness.NewContext();
         var firstDocuments = harness.NewDocumentService(first);
         var secondDocuments = harness.NewDocumentService(second);
-        var one = await firstDocuments.StoreAsync(new MemoryStream("the first document"u8.ToArray()), "one.txt");
-        var two = await secondDocuments.StoreAsync(new MemoryStream("the second document"u8.ToArray()), "two.txt");
-        var firstCorpus = await first.Corpora.SingleAsync();
-        var secondCorpus = await second.Corpora.SingleAsync();
+        var one = await firstDocuments.StoreAsync(new MemoryStream("the first document"u8.ToArray()), "one.txt", TestContext.Current.CancellationToken);
+        var two = await secondDocuments.StoreAsync(new MemoryStream("the second document"u8.ToArray()), "two.txt", TestContext.Current.CancellationToken);
+        var firstCorpus = await first.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var secondCorpus = await second.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         gate.Armed = true;
 
         await Task.WhenAll(
-            firstDocuments.AttachAsync(firstCorpus, one.Sha256, "one.txt"),
-            secondDocuments.AttachAsync(secondCorpus, two.Sha256, "two.txt"));
+            firstDocuments.AttachAsync(firstCorpus, one.Sha256, "one.txt", TestContext.Current.CancellationToken),
+            secondDocuments.AttachAsync(secondCorpus, two.Sha256, "two.txt", TestContext.Current.CancellationToken));
 
         gate.Arrivals.ShouldBe(2, "both attachments have to have looked for the source");
         await using var check = harness.NewContext();
-        var uploads = await check.Sources.Where(s => s.Kind == SourceKind.Upload).ToListAsync();
+        var uploads = await check.Sources.Where(s => s.Kind == SourceKind.Upload).ToListAsync(cancellationToken: TestContext.Current.CancellationToken);
         uploads.Count.ShouldBe(1, "a corpus has one upload source");
-        (await check.Files.CountAsync(f => f.SourceId == uploads[0].Id)).ShouldBe(2, "both documents are attached to it");
+        (await check.Files.CountAsync(f => f.SourceId == uploads[0].Id, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2, "both documents are attached to it");
     }
 
     [Fact]
@@ -79,17 +79,17 @@ public sealed class UploadSourceUniquenessTests
         await using var second = harness.NewContext();
         var firstDocuments = harness.NewDocumentService(first);
         var secondDocuments = harness.NewDocumentService(second);
-        var stored = await firstDocuments.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt");
-        var firstCorpus = await first.Corpora.SingleAsync();
-        var secondCorpus = await second.Corpora.SingleAsync();
+        var stored = await firstDocuments.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt", TestContext.Current.CancellationToken);
+        var firstCorpus = await first.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var secondCorpus = await second.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         gate.Armed = true;
 
         await Task.WhenAll(
-            firstDocuments.AttachAsync(firstCorpus, stored.Sha256, "doc.txt"),
-            secondDocuments.AttachAsync(secondCorpus, stored.Sha256, "renamed.txt"));
+            firstDocuments.AttachAsync(firstCorpus, stored.Sha256, "doc.txt", TestContext.Current.CancellationToken),
+            secondDocuments.AttachAsync(secondCorpus, stored.Sha256, "renamed.txt", TestContext.Current.CancellationToken));
 
         gate.Arrivals.ShouldBe(2, "both attachments have to have looked for the source");
         await using var check = harness.NewContext();
-        (await check.Files.CountAsync(f => f.BlobSha256 == stored.Sha256)).ShouldBe(1, "one attachment of one blob per corpus");
+        (await check.Files.CountAsync(f => f.BlobSha256 == stored.Sha256, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "one attachment of one blob per corpus");
     }
 }

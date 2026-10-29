@@ -21,7 +21,7 @@ public sealed class RefusedSourceTests
         await harness.WriteFileAsync("b.txt", "bravo", source: 1);
         await harness.SeedCorpusAsync(SourceKind.Workspace);
 
-        (await harness.RunIndexAsync()).State.ShouldBe(JobState.Succeeded);
+        (await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken)).State.ShouldBe(JobState.Succeeded);
 
         // `a` becomes a link to the same content, as a source created through one is.
         var real = Path.Combine(harness.DataPath, "workspace", "real-a");
@@ -29,15 +29,15 @@ public sealed class RefusedSourceTests
         Directory.CreateSymbolicLink(harness.SourceDirectories[0], real);
         await harness.WriteFileAsync("b2.txt", "charlie", source: 1);
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.State.ShouldBe(JobState.Degraded);
         job.Error.ShouldNotBeNull().ShouldContain("Links are not followed");
 
         await using var db = harness.NewContext();
-        (await db.Corpora.FirstAsync()).State.ShouldBe(CorpusState.Unavailable);
+        (await db.Corpora.FirstAsync(cancellationToken: TestContext.Current.CancellationToken)).State.ShouldBe(CorpusState.Unavailable);
 
-        var states = await db.FileChunkStates.AsNoTracking().Include(s => s.File).ToListAsync();
+        var states = await db.FileChunkStates.AsNoTracking().Include(s => s.File).ToListAsync(cancellationToken: TestContext.Current.CancellationToken);
         states.Where(s => s.File!.SourceId == IndexingHarness.SourceIdFor(0))
             .ShouldHaveSingleItem().Status.ShouldBe(FileStatus.Indexed);
         states.Where(s => s.File!.SourceId == IndexingHarness.SourceIdFor(1))
@@ -55,7 +55,7 @@ public sealed class RefusedSourceTests
         Directory.CreateSymbolicLink(harness.SourceDirectory, real);
         await harness.SeedCorpusAsync(SourceKind.GitHistory);
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.State.ShouldBe(JobState.Degraded);
         job.Error.ShouldNotBeNull().ShouldContain("Links are not followed");

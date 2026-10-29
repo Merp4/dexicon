@@ -108,7 +108,7 @@ public sealed class ContextDocumentTextTests : IDisposable
         var hit = Chunk(sourceId, 0, 1, 2, "line one\nline two");
         var neighbour = Chunk(sourceId, 1, 4, 5, "line four\nline five");
 
-        var candidate = await Service(db).FromDocumentAsync(corpusId, setId, hit, [hit, neighbour]);
+        var candidate = await Service(db).FromDocumentAsync(corpusId, setId, hit, [hit, neighbour], ct: TestContext.Current.CancellationToken);
 
         candidate.ShouldNotBeNull();
         var text = string.Concat(candidate.Pieces.Select(p => p.Content));
@@ -140,7 +140,7 @@ public sealed class ContextDocumentTextTests : IDisposable
         var hit = Chunk(sourceId, 7, 1, 2, "line one\nline two");
         var neighbour = Chunk(sourceId, 8, 4, 5, "line four\nline five");
 
-        var candidate = await Service(db).FromDocumentAsync(corpusId, setId, hit, [hit, neighbour]);
+        var candidate = await Service(db).FromDocumentAsync(corpusId, setId, hit, [hit, neighbour], ct: TestContext.Current.CancellationToken);
 
         var pieces = candidate.ShouldNotBeNull().Pieces.OrderBy(p => p.ChunkIndex).ToList();
         pieces.Count.ShouldBe(2);
@@ -173,7 +173,7 @@ public sealed class ContextDocumentTextTests : IDisposable
         // sources are told apart. Only the document has the real line.
         var hit = Chunk(sourceId, 1, 2, 2, "STALE PAYLOAD");
 
-        var candidate = await Service(db).FromDocumentAsync(corpusId, setId, hit, [hit]);
+        var candidate = await Service(db).FromDocumentAsync(corpusId, setId, hit, [hit], ct: TestContext.Current.CancellationToken);
 
         candidate.ShouldNotBeNull();
         var piece = candidate.Pieces.ShouldHaveSingleItem();
@@ -189,7 +189,7 @@ public sealed class ContextDocumentTextTests : IDisposable
 
         var hit = Chunk(sourceId, 1, 3, 3, "line three");
 
-        var candidate = await Service(db).FromDocumentAsync(corpusId, setId, hit, [hit]);
+        var candidate = await Service(db).FromDocumentAsync(corpusId, setId, hit, [hit], ct: TestContext.Current.CancellationToken);
 
         var piece = candidate.ShouldNotBeNull().Pieces.ShouldHaveSingleItem();
         piece.StartLine.ShouldBe(3);
@@ -227,11 +227,11 @@ public sealed class ContextDocumentTextTests : IDisposable
         db.Sources.Add(source);
         db.ChunkSets.Add(set);
         db.Files.Add(file);
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var hit = Chunk(source.Id, 0, 1, 2, "from the chunk");
 
-        (await Service(db).FromDocumentAsync(corpus.Id, set.Id, hit, [hit])).ShouldBeNull();
+        (await Service(db).FromDocumentAsync(corpus.Id, set.Id, hit, [hit], ct: TestContext.Current.CancellationToken)).ShouldBeNull();
     }
 
     /// <summary>
@@ -248,7 +248,7 @@ public sealed class ContextDocumentTextTests : IDisposable
 
         var hit = Chunk(sourceId, 9, 40, 44, "from a longer version");
 
-        (await Service(db).FromDocumentAsync(corpusId, setId, hit, [hit])).ShouldBeNull();
+        (await Service(db).FromDocumentAsync(corpusId, setId, hit, [hit], ct: TestContext.Current.CancellationToken)).ShouldBeNull();
     }
 
     /// <summary>
@@ -267,7 +267,7 @@ public sealed class ContextDocumentTextTests : IDisposable
 
         var hit = Chunk(sourceId, 3, 4, 20, "chunks from a longer version of the file");
 
-        (await Service(db).FromDocumentAsync(corpusId, setId, hit, [hit])).ShouldBeNull(
+        (await Service(db).FromDocumentAsync(corpusId, setId, hit, [hit], ct: TestContext.Current.CancellationToken)).ShouldBeNull(
             "the window would have been 4-6 under a citation claiming 4-20");
     }
 
@@ -295,8 +295,7 @@ public sealed class ContextDocumentTextTests : IDisposable
 
         // The hit is the SECOND slice: neither the one a per-chunk loop kept nor the one
         // a merged window would have rendered from.
-        var candidate = await Service(db).FromDocumentAsync(
-            corpusId, setId, second, [first, second, third]);
+        var candidate = await Service(db).FromDocumentAsync(corpusId, setId, second, [first, second, third], ct: TestContext.Current.CancellationToken);
 
         var pieces = candidate.ShouldNotBeNull().Pieces;
         pieces.Select(p => p.ChunkIndex).ShouldBe([10, 11, 12],
@@ -322,7 +321,7 @@ public sealed class ContextDocumentTextTests : IDisposable
 
         var slice = Chunk(sourceId, 11, 2, 2, "two");   // part of "line two"
 
-        var candidate = await Service(db).FromDocumentAsync(corpusId, setId, slice, [slice]);
+        var candidate = await Service(db).FromDocumentAsync(corpusId, setId, slice, [slice], ct: TestContext.Current.CancellationToken);
 
         candidate.ShouldNotBeNull().Pieces.ShouldHaveSingleItem()
             .Content.ShouldBe("two", "the slice is what matched; the line is not");
@@ -342,7 +341,7 @@ public sealed class ContextDocumentTextTests : IDisposable
         var whole = Chunk(sourceId, 1, 2, 2, "line two");
         var next = Chunk(sourceId, 2, 4, 4, "line four");
 
-        var candidate = await Service(db).FromDocumentAsync(corpusId, setId, whole, [whole, next]);
+        var candidate = await Service(db).FromDocumentAsync(corpusId, setId, whole, [whole, next], ct: TestContext.Current.CancellationToken);
 
         var pieces = candidate.ShouldNotBeNull().Pieces;
         pieces[0].Content.ShouldBe("line two\nline three",
@@ -368,8 +367,7 @@ public sealed class ContextDocumentTextTests : IDisposable
         var second = Chunk(sourceId, 11, 2, 2, "second slice");
         var after = Chunk(sourceId, 12, 4, 4, "line four");
 
-        var candidate = await Service(db).FromDocumentAsync(
-            corpusId, setId, second, [first, second, after]);
+        var candidate = await Service(db).FromDocumentAsync(corpusId, setId, second, [first, second, after], ct: TestContext.Current.CancellationToken);
 
         var assembled = ContextAssembler.Assemble(
             [candidate.ShouldNotBeNull()], maxChars: 4_000, lineNumbers: false);
@@ -396,7 +394,7 @@ public sealed class ContextDocumentTextTests : IDisposable
         foreach (var line in new[] { 1, 2, 3, 4 })
         {
             var hit = Chunk(sourceId, line, line, line, $"chunk {line}");
-            (await service.FromDocumentAsync(corpusId, setId, hit, [hit], cache)).ShouldNotBeNull();
+            (await service.FromDocumentAsync(corpusId, setId, hit, [hit], cache, TestContext.Current.CancellationToken)).ShouldNotBeNull();
         }
 
         cache.Count.ShouldBe(1, "four hits in one file is one document, read once");

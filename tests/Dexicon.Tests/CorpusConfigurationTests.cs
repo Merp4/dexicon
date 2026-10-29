@@ -16,14 +16,14 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
 {
     private IndexingHarness _harness = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _harness = await IndexingHarness.StartAsync("notes", "docs");
         // Two sets, so a removal that cleaned only the default one would be seen.
         await _harness.SeedCorpusAsync(SourceKind.Workspace, sets: 2);
     }
 
-    public async Task DisposeAsync() => await _harness.DisposeAsync();
+    public async ValueTask DisposeAsync() => await _harness.DisposeAsync();
 
     private static async Task<Corpus> CorpusAsync(CatalogDbContext db) =>
         await db.Corpora.SingleAsync(c => c.Id == IndexingHarness.CorpusId);
@@ -34,14 +34,13 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
         await using var db = _harness.NewContext();
         Directory.CreateDirectory(Path.Combine(_harness.DataPath, "workspace", "extra"));
 
-        var added = await _harness.NewConfiguration(db).AddSourceAsync(await CorpusAsync(db),
-            new AddSourceRequest("extra"), default);
+        var added = await _harness.NewConfiguration(db).AddSourceAsync(await CorpusAsync(db), new AddSourceRequest("extra"), TestContext.Current.CancellationToken);
 
         added.Refusal.ShouldBeNull();
-        var source = await db.Sources.SingleAsync(s => s.RootPath == "extra");
+        var source = await db.Sources.SingleAsync(s => s.RootPath == "extra", cancellationToken: TestContext.Current.CancellationToken);
         (source.UseGitignore, source.MaxFileBytes, source.IncludeGlobs, source.ExcludeGlobs)
             .ShouldBe((null, null, null, null));
-        (await db.Jobs.CountAsync(j => j.CorpusId == IndexingHarness.CorpusId && j.Kind == JobKind.Refresh))
+        (await db.Jobs.CountAsync(j => j.CorpusId == IndexingHarness.CorpusId && j.Kind == JobKind.Refresh, cancellationToken: TestContext.Current.CancellationToken))
             .ShouldBe(1, "adding a folder is asking for it to be read");
     }
 
@@ -56,17 +55,15 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
         var config = _harness.NewConfiguration(db);
         var corpus = await CorpusAsync(db);
 
-        var add = await config.AddSourceAsync(corpus, new AddSourceRequest("notes/sub", MaxFileBytes: 0), default);
+        var add = await config.AddSourceAsync(corpus, new AddSourceRequest("notes/sub", MaxFileBytes: 0), TestContext.Current.CancellationToken);
         add.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
-        (await db.Sources.AnyAsync(s => s.RootPath == "notes/sub")).ShouldBeFalse("nothing is stored for a refusal");
+        (await db.Sources.AnyAsync(s => s.RootPath == "notes/sub", cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse("nothing is stored for a refusal");
 
-        var defaults = await config.UpdateCorpusAsync(corpus,
-            new UpdateCorpusRequest(Defaults: new CorpusDefaults(null, 0, null, null)), default);
+        var defaults = await config.UpdateCorpusAsync(corpus, new UpdateCorpusRequest(Defaults: new CorpusDefaults(null, 0, null, null)), TestContext.Current.CancellationToken);
         defaults.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
-        (await db.Corpora.AsNoTracking().SingleAsync(c => c.Id == corpus.Id)).DefaultMaxFileBytes.ShouldBeNull();
+        (await db.Corpora.AsNoTracking().SingleAsync(c => c.Id == corpus.Id, cancellationToken: TestContext.Current.CancellationToken)).DefaultMaxFileBytes.ShouldBeNull();
 
-        var update = await config.UpdateSourceAsync(corpus, IndexingHarness.SourceIdFor(0),
-            new UpdateSourceRequest(MaxFileBytes: 0), default);
+        var update = await config.UpdateSourceAsync(corpus, IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(MaxFileBytes: 0), TestContext.Current.CancellationToken);
         update.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
     }
 
@@ -75,12 +72,11 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     {
         await using var db = _harness.NewContext();
 
-        var updated = await _harness.NewConfiguration(db).UpdateSourceAsync(await CorpusAsync(db),
-            IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(), default);
+        var updated = await _harness.NewConfiguration(db).UpdateSourceAsync(await CorpusAsync(db), IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(), TestContext.Current.CancellationToken);
 
         updated.Refusal.ShouldBeNull();
         updated.Value!.IndexJob.ShouldBeNull();
-        (await db.Jobs.AnyAsync()).ShouldBeFalse();
+        (await db.Jobs.AnyAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 
     /// <summary>
@@ -96,10 +92,10 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     {
         await using var db = _harness.NewContext();
 
-        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest(name), default);
+        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest(name), TestContext.Current.CancellationToken);
 
         created.Refusal.ShouldNotBeNull().Status.ShouldBe(409);
-        (await db.Corpora.CountAsync()).ShouldBe(1);
+        (await db.Corpora.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     /// <summary>
@@ -113,14 +109,14 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
         await using var db = _harness.NewContext();
         var config = _harness.NewConfiguration(db);
 
-        (await config.CreateCorpusAsync(new CreateCorpusRequest("Ångström"), default)).Refusal.ShouldBeNull();
-        var second = await config.CreateCorpusAsync(new CreateCorpusRequest("ångström"), default);
+        (await config.CreateCorpusAsync(new CreateCorpusRequest("Ångström"), TestContext.Current.CancellationToken)).Refusal.ShouldBeNull();
+        var second = await config.CreateCorpusAsync(new CreateCorpusRequest("ångström"), TestContext.Current.CancellationToken);
 
         var refusal = second.Refusal.ShouldNotBeNull();
         refusal.Status.ShouldBe(409);
         refusal.Detail.ShouldContain("already exists");
         refusal.Detail.ShouldNotContain("Ångström", Case.Sensitive, "the caller may not reach the corpus that holds it");
-        (await db.Corpora.CountAsync(c => c.Name != "notes")).ShouldBe(1);
+        (await db.Corpora.CountAsync(c => c.Name != "notes", cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]
@@ -130,10 +126,10 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
         // that name would be listed and never reached.
         await using var db = _harness.NewContext();
 
-        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("team:notes"), default);
+        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("team:notes"), TestContext.Current.CancellationToken);
 
         created.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
-        (await db.Corpora.CountAsync()).ShouldBe(1);
+        (await db.Corpora.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Theory]
@@ -147,10 +143,10 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
         // Every listing puts a name on a line of its own, and every change is logged with it.
         await using var db = _harness.NewContext();
 
-        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest(name), default);
+        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest(name), TestContext.Current.CancellationToken);
 
         created.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
-        (await db.Corpora.CountAsync()).ShouldBe(1);
+        (await db.Corpora.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]
@@ -161,11 +157,11 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
         await using var db = _harness.NewContext();
         var config = _harness.NewConfiguration(db);
 
-        var refused = await config.CreateCorpusAsync(new CreateCorpusRequest(new string('n', 201)), default);
+        var refused = await config.CreateCorpusAsync(new CreateCorpusRequest(new string('n', 201)), TestContext.Current.CancellationToken);
 
         refused.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
-        (await db.Corpora.CountAsync()).ShouldBe(1);
-        (await config.CreateCorpusAsync(new CreateCorpusRequest(new string('n', CorpusConfiguration.NameMax)), default))
+        (await db.Corpora.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
+        (await config.CreateCorpusAsync(new CreateCorpusRequest(new string('n', CorpusConfiguration.NameMax)), TestContext.Current.CancellationToken))
             .Refusal.ShouldBeNull();
     }
 
@@ -174,15 +170,15 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     {
         // The resolver matches a name or an id, so this name would reach either corpus.
         await using var db = _harness.NewContext();
-        var id = (await db.Corpora.SingleAsync()).Id;
+        var id = (await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).Id;
 
-        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest(id), default);
+        var created = await _harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest(id), TestContext.Current.CancellationToken);
 
         var refusal = created.Refusal.ShouldNotBeNull();
         refusal.Status.ShouldBe(409);
         refusal.Detail.ShouldContain("is the id of a corpus");
         refusal.Detail.ShouldNotContain("'notes'", Case.Sensitive, "the caller may not reach that corpus");
-        (await db.Corpora.CountAsync()).ShouldBe(1);
+        (await db.Corpora.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]
@@ -193,14 +189,14 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
         await using var db = _harness.NewContext();
         var config = _harness.NewConfiguration(db);
         var defaults = new UpdateCorpusRequest(Defaults: new CorpusDefaults(false, null, null, ["**/bin/**"]));
-        var empty = (await config.CreateCorpusAsync(new CreateCorpusRequest("empty"), default)).Value!;
+        var empty = (await config.CreateCorpusAsync(new CreateCorpusRequest("empty"), TestContext.Current.CancellationToken)).Value!;
 
-        (await config.UpdateCorpusAsync(empty, defaults, default)).Value.ShouldBeTrue("the defaults moved");
-        (await db.Jobs.AnyAsync(j => j.CorpusId == empty.Id)).ShouldBeFalse("there is nothing to re-read");
+        (await config.UpdateCorpusAsync(empty, defaults, TestContext.Current.CancellationToken)).Value.ShouldBeTrue("the defaults moved");
+        (await db.Jobs.AnyAsync(j => j.CorpusId == empty.Id, cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse("there is nothing to re-read");
 
         var withSources = await CorpusAsync(db);
-        (await config.UpdateCorpusAsync(withSources, defaults, default)).Value.ShouldBeTrue();
-        (await db.Jobs.AnyAsync(j => j.CorpusId == withSources.Id && j.Kind == JobKind.Refresh))
+        (await config.UpdateCorpusAsync(withSources, defaults, TestContext.Current.CancellationToken)).Value.ShouldBeTrue();
+        (await db.Jobs.AnyAsync(j => j.CorpusId == withSources.Id && j.Kind == JobKind.Refresh, cancellationToken: TestContext.Current.CancellationToken))
             .ShouldBeTrue("a corpus with sources is still refreshed");
     }
 
@@ -215,14 +211,12 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
         var config = _harness.NewConfiguration(db);
         var corpus = await CorpusAsync(db);
 
-        var refused = await config.UpdateCorpusAsync(corpus,
-            new UpdateCorpusRequest(Description: "rejected", Defaults: new CorpusDefaults(null, 0, null, null)), default);
+        var refused = await config.UpdateCorpusAsync(corpus, new UpdateCorpusRequest(Description: "rejected", Defaults: new CorpusDefaults(null, 0, null, null)), TestContext.Current.CancellationToken);
         refused.Refusal.ShouldNotBeNull();
         corpus.Description.ShouldBeNull();
 
         // The next change through the same context, which is what would have saved it.
-        (await config.UpdateSourceAsync(corpus, IndexingHarness.SourceIdFor(0),
-            new UpdateSourceRequest(UseGitignore: false), default)).Refusal.ShouldBeNull();
+        (await config.UpdateSourceAsync(corpus, IndexingHarness.SourceIdFor(0), new UpdateSourceRequest(UseGitignore: false), TestContext.Current.CancellationToken)).Refusal.ShouldBeNull();
 
         await using var fresh = _harness.NewContext();
         (await CorpusAsync(fresh)).Description.ShouldBeNull();
@@ -238,7 +232,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     {
         await _harness.WriteFileAsync("same.md", IndexingHarness.Prose("alpha"), source: 0);
         await _harness.WriteFileAsync("same.md", IndexingHarness.Prose("beta"), source: 1);
-        await _harness.RunIndexAsync(JobKind.Full);
+        await _harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
 
         string removedSource = IndexingHarness.SourceIdFor(0), keptSource = IndexingHarness.SourceIdFor(1);
         foreach (var set in new[] { "set-1", "set-2" })
@@ -248,7 +242,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
         }
 
         await using var db = _harness.NewContext();
-        var removed = await _harness.NewConfiguration(db).RemoveSourceAsync(await CorpusAsync(db), removedSource, default);
+        var removed = await _harness.NewConfiguration(db).RemoveSourceAsync(await CorpusAsync(db), removedSource, TestContext.Current.CancellationToken);
 
         removed.Refusal.ShouldBeNull();
         foreach (var set in new[] { "set-1", "set-2" })
@@ -256,8 +250,8 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
             _harness.Vectors.CountFor("same.md", set, removedSource).ShouldBe(0, $"gone from {set}");
             _harness.Vectors.CountFor("same.md", set, keptSource).ShouldBeGreaterThan(0, $"the other source's file stays in {set}");
         }
-        (await db.Files.AnyAsync(f => f.SourceId == removedSource)).ShouldBeFalse();
-        (await db.Files.AnyAsync(f => f.SourceId == keptSource)).ShouldBeTrue();
+        (await db.Files.AnyAsync(f => f.SourceId == removedSource, cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
+        (await db.Files.AnyAsync(f => f.SourceId == keptSource, cancellationToken: TestContext.Current.CancellationToken)).ShouldBeTrue();
     }
 
     [Fact]
@@ -265,7 +259,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     {
         await using var db = _harness.NewContext();
 
-        var removed = await _harness.NewConfiguration(db).RemoveSourceAsync(await CorpusAsync(db), "nope", default);
+        var removed = await _harness.NewConfiguration(db).RemoveSourceAsync(await CorpusAsync(db), "nope", TestContext.Current.CancellationToken);
 
         var refusal = removed.Refusal.ShouldNotBeNull();
         refusal.Status.ShouldBe(404);
@@ -276,17 +270,17 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     public async Task ARemovedChunkSetTakesItsVectorsAndLeavesTheOtherSetAlone()
     {
         await _harness.WriteFileAsync("a.md", IndexingHarness.Prose("alpha"), source: 0);
-        await _harness.RunIndexAsync(JobKind.Full);
+        await _harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
         _harness.Vectors.CountFor("a.md", "set-2").ShouldBeGreaterThan(0, "the premise: the set to remove holds vectors");
 
         await using var db = _harness.NewContext();
-        var removed = await _harness.NewConfiguration(db).RemoveChunkSetAsync(await CorpusAsync(db), "alt-1", default);
+        var removed = await _harness.NewConfiguration(db).RemoveChunkSetAsync(await CorpusAsync(db), "alt-1", TestContext.Current.CancellationToken);
 
         removed.Refusal.ShouldBeNull();
         _harness.Vectors.CountFor("a.md", "set-2").ShouldBe(0);
         _harness.Vectors.CountFor("a.md", "set-1").ShouldBeGreaterThan(0, "the default set is untouched");
-        (await db.ChunkSets.AnyAsync(s => s.Id == "set-2")).ShouldBeFalse();
-        (await db.ChunkSets.AnyAsync(s => s.Id == "set-1")).ShouldBeTrue();
+        (await db.ChunkSets.AnyAsync(s => s.Id == "set-2", cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse();
+        (await db.ChunkSets.AnyAsync(s => s.Id == "set-1", cancellationToken: TestContext.Current.CancellationToken)).ShouldBeTrue();
     }
 
     [Fact]
@@ -294,12 +288,12 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     {
         await using var db = _harness.NewContext();
 
-        var removed = await _harness.NewConfiguration(db).RemoveChunkSetAsync(await CorpusAsync(db), "set-3", default);
+        var removed = await _harness.NewConfiguration(db).RemoveChunkSetAsync(await CorpusAsync(db), "set-3", TestContext.Current.CancellationToken);
 
         var refusal = removed.Refusal.ShouldNotBeNull();
         refusal.Status.ShouldBe(404);
         refusal.Detail.ShouldContain("'set-3'");
-        (await db.ChunkSets.CountAsync()).ShouldBe(2, "a refusal removes nothing");
+        (await db.ChunkSets.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2, "a refusal removes nothing");
     }
 
     [Fact]
@@ -307,12 +301,12 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     {
         await using var db = _harness.NewContext();
 
-        var removed = await _harness.NewConfiguration(db).RemoveChunkSetAsync(await CorpusAsync(db), "default", default);
+        var removed = await _harness.NewConfiguration(db).RemoveChunkSetAsync(await CorpusAsync(db), "default", TestContext.Current.CancellationToken);
 
         var refusal = removed.Refusal.ShouldNotBeNull();
         refusal.Status.ShouldBe(409);
         refusal.Title.ShouldContain("default chunk set");
-        (await db.ChunkSets.CountAsync()).ShouldBe(2, "a refusal removes nothing");
+        (await db.ChunkSets.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2, "a refusal removes nothing");
     }
 
     [Fact]
@@ -322,7 +316,7 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
         await single.SeedCorpusAsync(SourceKind.Workspace, sets: 1);
         await using var db = single.NewContext();
 
-        var removed = await single.NewConfiguration(db).RemoveChunkSetAsync(await CorpusAsync(db), "default", default);
+        var removed = await single.NewConfiguration(db).RemoveChunkSetAsync(await CorpusAsync(db), "default", TestContext.Current.CancellationToken);
 
         var refusal = removed.Refusal.ShouldNotBeNull();
         refusal.Status.ShouldBe(409);
@@ -344,17 +338,17 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
                 State = JobState.Queued,
                 QueuedUtc = DateTime.UtcNow,
             });
-            await seed.SaveChangesAsync();
+            await seed.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var db = _harness.NewContext();
-        var refused = await _harness.NewConfiguration(db).RemoveChunkSetAsync(await CorpusAsync(db), "alt-1", default);
+        var refused = await _harness.NewConfiguration(db).RemoveChunkSetAsync(await CorpusAsync(db), "alt-1", TestContext.Current.CancellationToken);
 
         refused.Refusal.ShouldNotBeNull().Status.ShouldBe(409);
-        (await db.ChunkSets.AnyAsync(s => s.Id == "set-2")).ShouldBeTrue("nothing was removed under the job");
+        (await db.ChunkSets.AnyAsync(s => s.Id == "set-2", cancellationToken: TestContext.Current.CancellationToken)).ShouldBeTrue("nothing was removed under the job");
 
-        await db.Jobs.ExecuteUpdateAsync(u => u.SetProperty(j => j.State, JobState.Succeeded));
-        var removed = await _harness.NewConfiguration(db).RemoveChunkSetAsync(await CorpusAsync(db), "alt-1", default);
+        await db.Jobs.ExecuteUpdateAsync(u => u.SetProperty(j => j.State, JobState.Succeeded), cancellationToken: TestContext.Current.CancellationToken);
+        var removed = await _harness.NewConfiguration(db).RemoveChunkSetAsync(await CorpusAsync(db), "alt-1", TestContext.Current.CancellationToken);
 
         removed.Refusal.ShouldBeNull();
     }
@@ -368,16 +362,16 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     public async Task AChunkSetWhoseVectorsCannotBeDeletedKeepsItsRow()
     {
         await _harness.WriteFileAsync("a.md", IndexingHarness.Prose("alpha"), source: 0);
-        await _harness.RunIndexAsync(JobKind.Full);
+        await _harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
         _harness.Vectors.DeletesThrow = true;
 
         await using var db = _harness.NewContext();
         var corpus = await CorpusAsync(db);
         await Should.ThrowAsync<InvalidOperationException>(
-            _harness.NewConfiguration(db).RemoveChunkSetAsync(corpus, "alt-1", default));
+            _harness.NewConfiguration(db).RemoveChunkSetAsync(corpus, "alt-1", TestContext.Current.CancellationToken));
 
         await using var fresh = _harness.NewContext();
-        (await fresh.ChunkSets.AnyAsync(s => s.Id == "set-2")).ShouldBeTrue("the row stays while its vectors may still exist");
+        (await fresh.ChunkSets.AnyAsync(s => s.Id == "set-2", cancellationToken: TestContext.Current.CancellationToken)).ShouldBeTrue("the row stays while its vectors may still exist");
         _harness.Vectors.CountFor("a.md", "set-2").ShouldBeGreaterThan(0);
     }
 
@@ -385,17 +379,17 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     public async Task ACorpusWhoseVectorsCannotBeDeletedKeepsItsRows()
     {
         await _harness.WriteFileAsync("a.md", IndexingHarness.Prose("alpha"), source: 0);
-        await _harness.RunIndexAsync(JobKind.Full);
+        await _harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
         _harness.Vectors.DeletesThrow = true;
 
         await using var db = _harness.NewContext();
         var corpus = await CorpusAsync(db);
         await Should.ThrowAsync<InvalidOperationException>(
-            _harness.NewConfiguration(db).RemoveCorpusAsync(corpus, default));
+            _harness.NewConfiguration(db).RemoveCorpusAsync(corpus, TestContext.Current.CancellationToken));
 
         await using var fresh = _harness.NewContext();
-        (await fresh.Corpora.CountAsync()).ShouldBe(1);
-        (await fresh.Files.AnyAsync()).ShouldBeTrue();
+        (await fresh.Corpora.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
+        (await fresh.Files.AnyAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeTrue();
         _harness.Vectors.CountFor("a.md", "set-1").ShouldBeGreaterThan(0);
     }
 
@@ -403,21 +397,21 @@ public sealed class CorpusConfigurationTests : IAsyncLifetime
     public async Task ARemovedCorpusTakesItsVectorsInEverySetAndEveryRowUnderIt()
     {
         await _harness.WriteFileAsync("a.md", IndexingHarness.Prose("alpha"), source: 0);
-        await _harness.RunIndexAsync(JobKind.Full);
+        await _harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
         foreach (var set in new[] { "set-1", "set-2" })
             _harness.Vectors.CountFor("a.md", set).ShouldBeGreaterThan(0, $"the premise: {set} holds vectors");
 
         await using var db = _harness.NewContext();
-        var removed = await _harness.NewConfiguration(db).RemoveCorpusAsync(await CorpusAsync(db), default);
+        var removed = await _harness.NewConfiguration(db).RemoveCorpusAsync(await CorpusAsync(db), TestContext.Current.CancellationToken);
 
         removed.Refusal.ShouldBeNull();
         foreach (var set in new[] { "set-1", "set-2" })
             _harness.Vectors.CountFor("a.md", set).ShouldBe(0, $"gone from {set}");
-        (await db.Corpora.CountAsync()).ShouldBe(0);
-        (await db.Sources.CountAsync()).ShouldBe(0);
-        (await db.Files.CountAsync()).ShouldBe(0);
-        (await db.FileChunkStates.CountAsync()).ShouldBe(0);
-        (await db.ChunkSets.CountAsync()).ShouldBe(0);
-        (await db.Jobs.CountAsync()).ShouldBe(0);
+        (await db.Corpora.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
+        (await db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
+        (await db.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
+        (await db.FileChunkStates.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
+        (await db.ChunkSets.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
+        (await db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 }

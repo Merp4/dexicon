@@ -202,14 +202,14 @@ public sealed class SourceCoverageTests : IDisposable
         SourceCoverage.Find(_root, [
             new SourceCoverage.SourceRoot(null, 262_144),
             new SourceCoverage.SourceRoot(null, 262_144),
-        ]).ShouldBeEmpty();
+        ], ct: TestContext.Current.CancellationToken).ShouldBeEmpty();
 
         // The root itself as a source covers everything below it.
         SourceCoverage.Find(_root, [
             new SourceCoverage.SourceRoot("", 262_144),
             new SourceCoverage.SourceRoot("docs", 262_144),
             new SourceCoverage.SourceRoot("src", 262_144),
-        ]).ShouldBeEmpty();
+        ], ct: TestContext.Current.CancellationToken).ShouldBeEmpty();
     }
 
     [Fact]

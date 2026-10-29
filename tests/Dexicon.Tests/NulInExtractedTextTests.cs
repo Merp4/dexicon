@@ -121,7 +121,7 @@ public sealed class NulInExtractedTextTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await WriteAsync(harness, Pdf(PageWithNul(Words(40), Words(40))));
 
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var row = await CachedRowAsync(harness);
         row.Text.Length.ShouldBe(row.ExtractedChars, "what the table returns is as long as what was written");
@@ -135,7 +135,7 @@ public sealed class NulInExtractedTextTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await WriteAsync(harness, Pdf(PageWithNul(Words(40), Words(40))));
 
-        var first = await harness.RunIndexAsync();
+        var first = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         first.FilesDone.ShouldBe(1);
         var chunks = harness.Vectors.CountFor("paper.pdf");
         chunks.ShouldBeGreaterThan(0);
@@ -146,11 +146,11 @@ public sealed class NulInExtractedTextTests
         // settled file is not read, so a pass would not reach the cache at all.
         await using (var db = harness.NewContext())
         {
-            await db.FileTexts.ExecuteUpdateAsync(u => u.SetProperty(t => t.Text, whole[..20]));
-            await db.FileChunkStates.ExecuteUpdateAsync(u => u.SetProperty(s => s.SettledFor, (string?)null));
+            await db.FileTexts.ExecuteUpdateAsync(u => u.SetProperty(t => t.Text, whole[..20]), cancellationToken: TestContext.Current.CancellationToken);
+            await db.FileChunkStates.ExecuteUpdateAsync(u => u.SetProperty(s => s.SettledFor, (string?)null), cancellationToken: TestContext.Current.CancellationToken);
         }
 
-        var second = await harness.RunIndexAsync();
+        var second = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var row = await CachedRowAsync(harness);
         row.Text.ShouldBe(whole, "the damaged row was extracted again and replaced");
@@ -173,11 +173,11 @@ public sealed class NulInExtractedTextTests
         {
             var documents = harness.NewDocumentService(db);
             var corpus = await db.Corpora.Include(c => c.Sources).Include(c => c.ChunkSets)
-                .FirstAsync(c => c.Id == IndexingHarness.CorpusId);
+                .FirstAsync(c => c.Id == IndexingHarness.CorpusId, cancellationToken: TestContext.Current.CancellationToken);
             using var bytes = new MemoryStream(Encoding.UTF8.GetBytes(whole));
-            var stored = await documents.StoreAsync(bytes, "paper.md");
+            var stored = await documents.StoreAsync(bytes, "paper.md", TestContext.Current.CancellationToken);
             sha = stored.Sha256;
-            await documents.AttachAsync(corpus, sha, "paper.md");
+            await documents.AttachAsync(corpus, sha, "paper.md", TestContext.Current.CancellationToken);
         }
 
         // The state the live catalogue is in: the head of the text, the length of the whole
@@ -186,20 +186,20 @@ public sealed class NulInExtractedTextTests
         int recorded;
         await using (var db = harness.NewContext())
         {
-            recorded = (await db.BlobTexts.AsNoTracking().SingleAsync()).ExtractedChars;
+            recorded = (await db.BlobTexts.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).ExtractedChars;
             await db.BlobTexts.ExecuteUpdateAsync(u => u
                 .SetProperty(t => t.Text, "Paragraph 1: head only")
-                .SetProperty(t => t.ExtractedChars, "Paragraph 1: head only".Length));
+                .SetProperty(t => t.ExtractedChars, "Paragraph 1: head only".Length), cancellationToken: TestContext.Current.CancellationToken);
         }
 
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         var fromTheHead = harness.Vectors.CountFor("paper.md");
         fromTheHead.ShouldBeGreaterThan(0);
 
         await using (var db = harness.NewContext())
-            await db.BlobTexts.ExecuteUpdateAsync(u => u.SetProperty(t => t.ExtractedChars, recorded));
+            await db.BlobTexts.ExecuteUpdateAsync(u => u.SetProperty(t => t.ExtractedChars, recorded), cancellationToken: TestContext.Current.CancellationToken);
 
-        var repaired = await harness.RunIndexAsync();
+        var repaired = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         repaired.FilesDone.ShouldBe(1, "the repaired text is chunked and embedded again");
         harness.Vectors.CountFor("paper.md").ShouldBeGreaterThan(fromTheHead,

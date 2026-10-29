@@ -55,7 +55,7 @@ public sealed class DocumentDetachEndpointTests
         var refused = result.ShouldBeOfType<ProblemHttpResult>();
         refused.StatusCode.ShouldBe(403);
         refused.ProblemDetails.Detail.ShouldNotBeNull().ShouldContain("needs 'destroy'");
-        (await db.Files.AnyAsync(f => f.Id == fileId)).ShouldBeTrue();
+        (await db.Files.AnyAsync(f => f.Id == fileId, cancellationToken: TestContext.Current.CancellationToken)).ShouldBeTrue();
         harness.Vectors.CountFor("paper.md").ShouldBeGreaterThan(0);
     }
 
@@ -70,9 +70,9 @@ public sealed class DocumentDetachEndpointTests
 
         result.ShouldBeOfType<NoContent>();
         await using var fresh = harness.NewContext();
-        (await fresh.Files.AnyAsync(f => f.Id == fileId)).ShouldBeFalse("detached from the corpus");
+        (await fresh.Files.AnyAsync(f => f.Id == fileId, cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse("detached from the corpus");
         harness.Vectors.CountFor("paper.md").ShouldBe(0, "its vectors go with it");
-        (await fresh.Blobs.AnyAsync()).ShouldBeFalse("no other corpus holds the document");
+        (await fresh.Blobs.AnyAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse("no other corpus holds the document");
     }
 
     [Fact]
@@ -103,16 +103,16 @@ public sealed class DocumentDetachEndpointTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await harness.WriteFileAsync("a.md", IndexingHarness.Prose("alpha"), source: 0);
-        await harness.RunIndexAsync(JobKind.Full);
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
         await using var db = harness.NewContext();
-        var fileId = await db.Files.Where(f => f.RelativePath == "a.md").Select(f => f.Id).SingleAsync();
+        var fileId = await db.Files.Where(f => f.RelativePath == "a.md").Select(f => f.Id).SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         harness.Vectors.CountFor("a.md").ShouldBeGreaterThan(0, "the premise");
 
         var result = await DetachAsync(harness, db, As(Scopes.Search, Scopes.Destroy), fileId);
 
         result.ShouldBeOfType<NotFound>();
         await using var fresh = harness.NewContext();
-        (await fresh.Files.AnyAsync(f => f.Id == fileId)).ShouldBeTrue("the source still lists it");
+        (await fresh.Files.AnyAsync(f => f.Id == fileId, cancellationToken: TestContext.Current.CancellationToken)).ShouldBeTrue("the source still lists it");
         harness.Vectors.CountFor("a.md").ShouldBeGreaterThan(0, "and its vectors are untouched");
     }
 }

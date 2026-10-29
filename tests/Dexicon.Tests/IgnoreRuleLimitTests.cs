@@ -73,7 +73,7 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         Write("g4999", "x");
         Write("keep.txt", "x");
 
-        Walk().Files.Select(f => f.RelativePath).OrderBy(p => p, StringComparer.Ordinal)
+        Walk(ct: TestContext.Current.CancellationToken).Files.Select(f => f.RelativePath).OrderBy(p => p, StringComparer.Ordinal)
             .ShouldBe([".dexiconignore", "keep.txt"]);
     }
 
@@ -115,7 +115,7 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         Write(".gitignore", Rules(IgnoreRuleSet.MaxRulesPerSource + 5));
         Write("g0", "x");
 
-        Walk(useGitignore: false).Files.Select(f => f.RelativePath).ShouldContain("g0");
+        Walk(useGitignore: false, ct: TestContext.Current.CancellationToken).Files.Select(f => f.RelativePath).ShouldContain("g0");
     }
 
     [Fact]
@@ -242,7 +242,7 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         Write("node_modules/.gitkeep", "x");
         for (var i = 0; i < 700; i++) Write($"node_modules/pkg{i:D4}/.gitignore", Rules(10, i * 10));
 
-        var files = Walk().Files.Select(f => f.RelativePath).OrderBy(p => p, StringComparer.Ordinal).ToList();
+        var files = Walk(ct: TestContext.Current.CancellationToken).Files.Select(f => f.RelativePath).OrderBy(p => p, StringComparer.Ordinal).ToList();
 
         files.ShouldBe([".gitignore", "app.txt", "node_modules/.gitkeep"]);
     }
@@ -261,7 +261,7 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         Write("vendor/sub/pub.txt", "x");
         Write("vendor/sub/.dexiconignore", "private2.txt\n");
 
-        var files = Walk().Files.Select(f => f.RelativePath).OrderBy(p => p, StringComparer.Ordinal).ToList();
+        var files = Walk(ct: TestContext.Current.CancellationToken).Files.Select(f => f.RelativePath).OrderBy(p => p, StringComparer.Ordinal).ToList();
 
         files.ShouldBe([".dexiconignore", "a.txt", "vendor/sub/pub.txt"]);
     }
@@ -275,7 +275,7 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         Write("build/docs/secret.md", "x");
         Write("build/docs/other.md", "x");
 
-        var files = Walk().Files.Select(f => f.RelativePath).ToList();
+        var files = Walk(ct: TestContext.Current.CancellationToken).Files.Select(f => f.RelativePath).ToList();
 
         files.ShouldContain("build/docs/other.md");
         files.ShouldNotContain("build/docs/secret.md");
@@ -303,7 +303,7 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         Write("lib/keep/secret.txt", "x");
         Write("lib/keep/note.txt", "x");
 
-        var files = Walk().Files.Select(f => f.RelativePath).ToList();
+        var files = Walk(ct: TestContext.Current.CancellationToken).Files.Select(f => f.RelativePath).ToList();
 
         files.ShouldContain("lib/keep/note.txt");
         files.ShouldNotContain("lib/keep/secret.txt");
@@ -318,7 +318,7 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         Write("lib/.gitignore", "keep.txt\n");
         Write("lib/keep/keep.txt", "x");
 
-        Walk().Files.Select(f => f.RelativePath).ShouldContain("lib/keep/keep.txt");
+        Walk(ct: TestContext.Current.CancellationToken).Files.Select(f => f.RelativePath).ShouldContain("lib/keep/keep.txt");
     }
 
     [Fact]
@@ -340,7 +340,7 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         Write("keep.txt", "x");
         Write("a.log", "x");
 
-        var names = Walk(exclude: ["*.log"]).Files.Select(f => f.RelativePath).ToList();
+        var names = Walk(exclude: ["*.log"], ct: TestContext.Current.CancellationToken).Files.Select(f => f.RelativePath).ToList();
 
         names.ShouldContain("keep.txt");
         names.ShouldNotContain("a.log");
@@ -398,7 +398,7 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         Write(".gitignore", string.Concat(Enumerable.Repeat("[z-a]\n", 1_500)) + "secret.txt\n");
         Write("secret.txt", "x");
 
-        var walk = WorkspaceWalker.Walk(_root, true, null, null, 1_000_000);
+        var walk = WorkspaceWalker.Walk(_root, true, null, null, 1_000_000, ct: TestContext.Current.CancellationToken);
 
         // The rule after the thousandth skipped line is not read, which is the one way a git-owned file can leave a
         // rule out without failing the walk. The warning says where reading stopped.
@@ -416,7 +416,7 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         // A tree of many ignore files that each stop being read must not log one notice for each, on every pass.
         for (var i = 0; i < 25; i++) Write($"d{i:D2}/.gitignore", string.Concat(Enumerable.Repeat("[z-a]\n", 1_000)));
 
-        var walk = WorkspaceWalker.Walk(_root, true, null, null, 1_000_000);
+        var walk = WorkspaceWalker.Walk(_root, true, null, null, 1_000_000, ct: TestContext.Current.CancellationToken);
 
         const string stopped = ".gitignore has 1,000 lines that cannot be used";
         walk.Warnings.Count(w => w.Contains(stopped, StringComparison.Ordinal)).ShouldBe(WarningSink.MaxKept);
@@ -448,7 +448,7 @@ public sealed class IgnoreRuleLimitTests : IDisposable
 
         WorkspaceWalker.WalkResult walk;
         AppDomain.CurrentDomain.FirstChanceException += Count;
-        try { walk = WorkspaceWalker.Walk(_root, true, null, null, 1_000_000); }
+        try { walk = WorkspaceWalker.Walk(_root, true, null, null, 1_000_000, ct: TestContext.Current.CancellationToken); }
         finally { AppDomain.CurrentDomain.FirstChanceException -= Count; }
 
         walk.Warnings.Count.ShouldBe(WarningSink.MaxKept + 1, "twenty descriptions and the notice");
@@ -620,7 +620,7 @@ public sealed class IgnoreRuleLimitTests : IDisposable
         await harness.SeedCorpusAsync(SourceKind.Workspace, sets: 3);
         var log = new RecordingLoggerFactory();
 
-        await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log));
+        await harness.RunIndexAsync(log: new Logger<CorpusIndexer>(log), cancel: TestContext.Current.CancellationToken);
 
         log.Lines.Count(l => l.Contains(".gitignore line", StringComparison.Ordinal)).ShouldBe(WarningSink.MaxKept);
         log.Lines.Count(l => l.Contains("30 more ignore-file warnings", StringComparison.Ordinal)).ShouldBe(1);

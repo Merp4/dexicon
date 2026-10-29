@@ -48,7 +48,7 @@ public sealed class JobCounterTests
     {
         await using var harness = await WithMixedFilesAsync();
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.State.ShouldBe(JobState.Succeeded);
         job.FilesDone.ShouldBe(3);
@@ -60,11 +60,11 @@ public sealed class JobCounterTests
     public async Task OnASecondPassWhereNothingChangedTheCountersStillAddUp()
     {
         await using var harness = await WithMixedFilesAsync();
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         // The shape the defect was found in: every file increments FilesSkipped, three
         // because they are unchanged and two because the walk threw them out.
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.FilesDone.ShouldBe(0);
         job.FilesSkipped.ShouldBe(5);
@@ -79,7 +79,7 @@ public sealed class JobCounterTests
         // not for two would reintroduce the defect the `+=` already exists for.
         await using var harness = await WithMixedFilesAsync(sets: 2);
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.FilesDone.ShouldBe(6, "three files, once per set");
         job.FilesSkipped.ShouldBe(4);
@@ -99,7 +99,7 @@ public sealed class JobCounterTests
         await harness.WriteFileAsync("kept.md", IndexingHarness.Prose("outer"), source: 0);
         await harness.WriteFileAsync("empty.md", "", source: 1);
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.State.ShouldBe(JobState.Succeeded);
         job.FilesSkipped.ShouldBe(1);
@@ -107,7 +107,7 @@ public sealed class JobCounterTests
 
         await using var db = harness.NewContext();
         (await db.Files.Where(f => f.RelativePath.EndsWith("empty.md"))
-                .Select(f => new { f.SourceId, f.RelativePath }).ToListAsync())
+                .Select(f => new { f.SourceId, f.RelativePath }).ToListAsync(cancellationToken: TestContext.Current.CancellationToken))
             .ShouldHaveSingleItem()
             .ShouldBe(new { SourceId = IndexingHarness.SourceIdFor(1), RelativePath = "empty.md" });
     }
@@ -138,14 +138,14 @@ public sealed class JobCounterTests
                 Status = FileStatus.Skipped,
                 StatusDetail = "empty",
             });
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         await using var check = harness.NewContext();
         (await check.Files.Where(f => f.RelativePath.EndsWith("empty.md"))
-                .Select(f => f.SourceId).ToListAsync())
+                .Select(f => f.SourceId).ToListAsync(cancellationToken: TestContext.Current.CancellationToken))
             .ShouldBe([IndexingHarness.SourceIdFor(1)]);
     }
 
@@ -155,8 +155,8 @@ public sealed class JobCounterTests
         // What the UI computes, asserted here so the invariant is stated in the terms the
         // defect was reported in rather than only in the counters it comes from.
         await using var harness = await WithMixedFilesAsync();
-        await harness.RunIndexAsync();
-        var job = await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var processed = job.FilesDone + job.FilesSkipped + job.FilesFailed;
         var fraction = (double)processed / job.FilesTotal;

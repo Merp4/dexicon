@@ -202,7 +202,7 @@ public sealed class NestedIgnoreFilesTests : IDisposable
             // indexed carrying the host file's content: CI returned `sub/.gitignore`.
             Walk().ShouldBe(["sub/app.ts", "sub/secret.txt"]);
 
-            WorkspaceWalker.Walk(_root, true, null, null, 1_000_000).SkippedFiles
+            WorkspaceWalker.Walk(_root, true, null, null, 1_000_000, ct: TestContext.Current.CancellationToken).SkippedFiles
                 .ShouldContain(s => s.RelativePath == "sub/.gitignore"
                                  && s.Reason == WorkspaceWalker.LinkNotFollowed);
         }

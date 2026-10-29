@@ -20,7 +20,7 @@ public sealed class EmptyFileVectorTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await harness.WriteFileAsync("note.md", IndexingHarness.Prose("retrieval"));
 
-        var first = await harness.RunIndexAsync();
+        var first = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         first.State.ShouldBe(JobState.Succeeded);
         harness.Vectors.CountFor("note.md")
             .ShouldBeGreaterThan(0, "the first run must actually index something");
@@ -30,7 +30,7 @@ public sealed class EmptyFileVectorTests
         // an extractor regression both arrive at.
         await harness.WriteFileAsync("note.md", "   \n\n   \n");
 
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var state = await harness.StateOfAsync("note.md");
         state.Status.ShouldBe(FileStatus.Empty);
@@ -46,7 +46,7 @@ public sealed class EmptyFileVectorTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await harness.WriteFileAsync("note.md", IndexingHarness.Prose("chunking"));
 
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         harness.Vectors.CountFor("note.md").ShouldBeGreaterThan(0);
 
         // Zero bytes is skipped by the walk itself, before extraction, so it reaches the
@@ -54,7 +54,7 @@ public sealed class EmptyFileVectorTests
         // file is still there, so the reconcile pass never considers it gone either.
         await harness.WriteFileAsync("note.md", "");
 
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var state = await harness.StateOfAsync("note.md");
         state.Status.ShouldBe(FileStatus.Skipped);
@@ -73,14 +73,14 @@ public sealed class EmptyFileVectorTests
             var documents = harness.NewDocumentService(db);
 
             var corpus = await db.Corpora.Include(c => c.Sources).Include(c => c.ChunkSets)
-                .FirstAsync(c => c.Id == IndexingHarness.CorpusId);
+                .FirstAsync(c => c.Id == IndexingHarness.CorpusId, cancellationToken: TestContext.Current.CancellationToken);
             using var bytes = new MemoryStream(
                 System.Text.Encoding.UTF8.GetBytes(IndexingHarness.Prose("embedding")));
-            var stored = await documents.StoreAsync(bytes, "paper.md");
-            await documents.AttachAsync(corpus, stored.Sha256, "paper.md");
+            var stored = await documents.StoreAsync(bytes, "paper.md", TestContext.Current.CancellationToken);
+            await documents.AttachAsync(corpus, stored.Sha256, "paper.md", TestContext.Current.CancellationToken);
         }
 
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         harness.Vectors.CountFor("paper.md").ShouldBeGreaterThan(0);
 
         // What an extractor that now yields nothing leaves behind. Written straight to
@@ -88,13 +88,13 @@ public sealed class EmptyFileVectorTests
         // re-extracting: the bytes are unchanged, and it is the extraction that changed.
         await using (var db = harness.NewContext())
         {
-            var text = await db.BlobTexts.FirstAsync();
+            var text = await db.BlobTexts.FirstAsync(cancellationToken: TestContext.Current.CancellationToken);
             text.Text = "";
             text.ExtractedChars = 0;
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var state = await harness.StateOfAsync("paper.md");
         state.Status.ShouldBe(FileStatus.Empty);

@@ -46,16 +46,16 @@ public sealed class MalformedRequestTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await using var db = harness.NewContext();
         var (key, _) = await new TokenService(db, TimeProvider.System)
-            .CreateAsync("agent", [Scopes.Search], null, [IndexingHarness.CorpusId]);
+            .CreateAsync("agent", [Scopes.Search], null, [IndexingHarness.CorpusId], TestContext.Current.CancellationToken);
         db.ChangeTracker.Clear();
 
-        var result = await SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest(), AsAdmin(), db, default);
+        var result = await SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest(), AsAdmin(), db, TestContext.Current.CancellationToken);
 
         StatusOf(result).ShouldBe(400);
         await using var check = harness.NewContext();
-        (await check.TokenCorpora.Where(tc => tc.TokenId == key.Id).Select(tc => tc.CorpusId).ToListAsync())
+        (await check.TokenCorpora.Where(tc => tc.TokenId == key.Id).Select(tc => tc.CorpusId).ToListAsync(cancellationToken: TestContext.Current.CancellationToken))
             .ShouldBe([IndexingHarness.CorpusId], "a refused replacement leaves the mapping as it was");
-        (await check.Tokens.SingleAsync(t => t.Id == key.Id)).AllCorpora.ShouldBeFalse();
+        (await check.Tokens.SingleAsync(t => t.Id == key.Id, cancellationToken: TestContext.Current.CancellationToken)).AllCorpora.ShouldBeFalse();
     }
 
     [Fact]
@@ -64,7 +64,7 @@ public sealed class MalformedRequestTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await using var db = harness.NewContext();
 
-        var result = await SystemEndpoints.ReplaceCorporaAsync("any", new UpdateTokenCorporaRequest(), AsIngester(), db, default);
+        var result = await SystemEndpoints.ReplaceCorporaAsync("any", new UpdateTokenCorporaRequest(), AsIngester(), db, TestContext.Current.CancellationToken);
 
         StatusOf(result).ShouldBe(403);
     }
@@ -81,11 +81,10 @@ public sealed class MalformedRequestTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await using var db = harness.NewContext();
 
-        var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", ExpiresInDays: days),
-            AsAdmin(), new TokenService(db, TimeProvider.System), db, default);
+        var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", ExpiresInDays: days), AsAdmin(), new TokenService(db, TimeProvider.System), db, TestContext.Current.CancellationToken);
 
         StatusOf(result).ShouldBe(400);
-        (await db.Tokens.CountAsync(t => t.Name == "agent")).ShouldBe(0, "a refused key is not saved");
+        (await db.Tokens.CountAsync(t => t.Name == "agent", cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0, "a refused key is not saved");
     }
 
     [Fact]
@@ -94,9 +93,7 @@ public sealed class MalformedRequestTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await using var db = harness.NewContext();
 
-        var result = await SystemEndpoints.CreateTokenAsync(
-            new CreateTokenRequest("agent", ExpiresInDays: 36_500),
-            AsAdmin(), new TokenService(db, TimeProvider.System), db, default);
+        var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", ExpiresInDays: 36_500), AsAdmin(), new TokenService(db, TimeProvider.System), db, TestContext.Current.CancellationToken);
 
         var expires = result.ShouldBeOfType<Ok<CreatedTokenResponse>>().Value!.Token.ExpiresUtc.ShouldNotBeNull();
         expires.ShouldBeGreaterThan(DateTime.UtcNow.AddDays(36_499));
@@ -113,11 +110,10 @@ public sealed class MalformedRequestTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await using var db = harness.NewContext();
 
-        var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", ExpiresInDays: days),
-            AsAdmin(), new TokenService(db, TimeProvider.System), db, default);
+        var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", ExpiresInDays: days), AsAdmin(), new TokenService(db, TimeProvider.System), db, TestContext.Current.CancellationToken);
 
         result.ShouldBeOfType<Ok<CreatedTokenResponse>>().Value!.Token.ExpiresUtc.ShouldBeNull();
-        (await db.Tokens.CountAsync(t => t.Name == "agent")).ShouldBe(1);
+        (await db.Tokens.CountAsync(t => t.Name == "agent", cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]
@@ -128,13 +124,13 @@ public sealed class MalformedRequestTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await using var db = harness.NewContext();
-        var corpus = await db.Corpora.SingleAsync();
-        var before = await db.Sources.CountAsync();
+        var corpus = await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var before = await db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-        var outcome = await harness.NewConfiguration(db).AddSourceAsync(corpus, new AddSourceRequest(null!), default);
+        var outcome = await harness.NewConfiguration(db).AddSourceAsync(corpus, new AddSourceRequest(null!), TestContext.Current.CancellationToken);
 
         outcome.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
-        (await db.Sources.CountAsync()).ShouldBe(before);
+        (await db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(before);
     }
 
     [Fact]
@@ -144,9 +140,9 @@ public sealed class MalformedRequestTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using var db = harness.NewContext();
-        var corpus = await db.Corpora.SingleAsync();
+        var corpus = await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-        var outcome = await harness.NewConfiguration(db).AddSourceAsync(corpus, new AddSourceRequest(""), default);
+        var outcome = await harness.NewConfiguration(db).AddSourceAsync(corpus, new AddSourceRequest(""), TestContext.Current.CancellationToken);
 
         outcome.Refusal.ShouldBeNull();
         outcome.Value!.Source.RootPath.ShouldBe(string.Empty);
@@ -161,11 +157,11 @@ public sealed class MalformedRequestTests
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
-        var corpus = await db.Corpora.SingleAsync();
-        var a = await documents.StoreAsync(new MemoryStream("the first document"u8.ToArray()), "a.txt");
-        var b = await documents.StoreAsync(new MemoryStream("the second document"u8.ToArray()), "b.txt");
-        await documents.AttachAsync(corpus, a.Sha256, "a.txt");
-        await documents.AttachAsync(corpus, b.Sha256, "b.txt");
+        var corpus = await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var a = await documents.StoreAsync(new MemoryStream("the first document"u8.ToArray()), "a.txt", TestContext.Current.CancellationToken);
+        var b = await documents.StoreAsync(new MemoryStream("the second document"u8.ToArray()), "b.txt", TestContext.Current.CancellationToken);
+        await documents.AttachAsync(corpus, a.Sha256, "a.txt", TestContext.Current.CancellationToken);
+        await documents.AttachAsync(corpus, b.Sha256, "b.txt", TestContext.Current.CancellationToken);
 
         var thrown = await Should.ThrowAsync<NameTakenException>(() => documents.AttachAsync(corpus, a.Sha256, "b.txt"));
 
@@ -173,7 +169,7 @@ public sealed class MalformedRequestTests
         thrown.Message.ShouldContain("'a.txt'");
         thrown.Message.ShouldNotContain("Parameter", Case.Sensitive, "the message goes to the caller, who cannot see an argument name");
         await using var check = harness.NewContext();
-        (await check.Files.ToDictionaryAsync(f => f.RelativePath, f => f.BlobSha256))
+        (await check.Files.ToDictionaryAsync(f => f.RelativePath, f => f.BlobSha256, cancellationToken: TestContext.Current.CancellationToken))
             .ShouldBe(new Dictionary<string, string?> { ["a.txt"] = a.Sha256, ["b.txt"] = b.Sha256 }, ignoreOrder: true);
     }
 
@@ -185,19 +181,19 @@ public sealed class MalformedRequestTests
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
-        var corpus = await db.Corpora.SingleAsync();
-        var elsewhere = (await harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("papers"), default)).Value!;
-        var a = await documents.StoreAsync(new MemoryStream("the first document"u8.ToArray()), "a.txt");
-        var b = await documents.StoreAsync(new MemoryStream("the second document"u8.ToArray()), "b.txt");
-        await documents.AttachAsync(corpus, a.Sha256, "a.txt");
-        await documents.AttachAsync(elsewhere, b.Sha256, "b.txt");
+        var corpus = await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var elsewhere = (await harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("papers"), TestContext.Current.CancellationToken)).Value!;
+        var a = await documents.StoreAsync(new MemoryStream("the first document"u8.ToArray()), "a.txt", TestContext.Current.CancellationToken);
+        var b = await documents.StoreAsync(new MemoryStream("the second document"u8.ToArray()), "b.txt", TestContext.Current.CancellationToken);
+        await documents.AttachAsync(corpus, a.Sha256, "a.txt", TestContext.Current.CancellationToken);
+        await documents.AttachAsync(elsewhere, b.Sha256, "b.txt", TestContext.Current.CancellationToken);
 
-        await documents.AttachAsync(corpus, a.Sha256, "b.txt");
+        await documents.AttachAsync(corpus, a.Sha256, "b.txt", TestContext.Current.CancellationToken);
 
         await using var check = harness.NewContext();
-        (await check.Files.Where(f => f.Source!.CorpusId == corpus.Id).Select(f => f.RelativePath).ToListAsync())
+        (await check.Files.Where(f => f.Source!.CorpusId == corpus.Id).Select(f => f.RelativePath).ToListAsync(cancellationToken: TestContext.Current.CancellationToken))
             .ShouldBe(["b.txt"]);
-        (await check.Files.CountAsync(f => f.Source!.CorpusId == elsewhere.Id)).ShouldBe(1);
+        (await check.Files.CountAsync(f => f.Source!.CorpusId == elsewhere.Id, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]
@@ -208,14 +204,14 @@ public sealed class MalformedRequestTests
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
-        var corpus = await db.Corpora.SingleAsync();
-        var a = await documents.StoreAsync(new MemoryStream("the first document"u8.ToArray()), "a.txt");
-        await documents.AttachAsync(corpus, a.Sha256, "a.txt");
+        var corpus = await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var a = await documents.StoreAsync(new MemoryStream("the first document"u8.ToArray()), "a.txt", TestContext.Current.CancellationToken);
+        await documents.AttachAsync(corpus, a.Sha256, "a.txt", TestContext.Current.CancellationToken);
 
-        await documents.AttachAsync(corpus, a.Sha256, "renamed.txt");
+        await documents.AttachAsync(corpus, a.Sha256, "renamed.txt", TestContext.Current.CancellationToken);
 
         await using var check = harness.NewContext();
-        (await check.Files.Select(f => f.RelativePath).ToListAsync()).ShouldBe(["renamed.txt"]);
+        (await check.Files.Select(f => f.RelativePath).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(["renamed.txt"]);
     }
 
     [Fact]
@@ -233,7 +229,7 @@ public sealed class MalformedRequestTests
         var http = new DefaultHttpContext { RequestServices = new ServiceCollection().AddLogging().AddOptions().BuildServiceProvider() };
         http.Response.Body = new MemoryStream();
         var handled = await new ScopeExceptionHandler(NullLogger<ScopeExceptionHandler>.Instance)
-            .TryHandleAsync(http, thrown, default);
+            .TryHandleAsync(http, thrown, TestContext.Current.CancellationToken);
 
         handled.ShouldBeTrue();
         http.Response.StatusCode.ShouldBe(400);
@@ -307,8 +303,7 @@ public sealed class MalformedRequestTests
         await RenameTheCorpusAsync(harness, "Café notes");
         await using var db = harness.NewContext();
 
-        var result = await CorpusEndpoints.SweepAsync(IndexingHarness.CorpusId, AsIngester(), new ScopeResolver(db),
-            new SweepQueue(new WorkScheduler(harness.Settings)), default);
+        var result = await CorpusEndpoints.SweepAsync(IndexingHarness.CorpusId, AsIngester(), new ScopeResolver(db), new SweepQueue(new WorkScheduler(harness.Settings)), TestContext.Current.CancellationToken);
 
         var location = result.ShouldBeOfType<Accepted<SweepQueued>>().Location.ShouldNotBeNull();
         location.ShouldBe("/api/corpora/Caf%C3%A9%20notes");
@@ -323,9 +318,7 @@ public sealed class MalformedRequestTests
         await RenameTheCorpusAsync(harness, "Café notes");
         await using var db = harness.NewContext();
 
-        var result = await ChunkSetEndpoints.CreateAsync(
-            IndexingHarness.CorpusId, new CreateChunkSetRequest("résumé set"), AsAdmin(), new ScopeResolver(db), db,
-            harness.Vectors, harness.Embedder, QueueOn(harness, db), harness.Settings, default);
+        var result = await ChunkSetEndpoints.CreateAsync(IndexingHarness.CorpusId, new CreateChunkSetRequest("résumé set"), AsAdmin(), new ScopeResolver(db), db, harness.Vectors, harness.Embedder, QueueOn(harness, db), harness.Settings, TestContext.Current.CancellationToken);
 
         var location = result.ShouldBeOfType<Accepted<ChunkSetCreated>>().Location.ShouldNotBeNull();
         location.ShouldBe("/api/corpora/Caf%C3%A9%20notes/chunk-sets/r%C3%A9sum%C3%A9%20set");
@@ -353,13 +346,13 @@ public sealed class MalformedRequestTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await using var db = harness.NewContext();
-        var corpus = await db.Corpora.SingleAsync();
-        var before = await db.Sources.CountAsync();
+        var corpus = await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var before = await db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-        var outcome = await harness.NewConfiguration(db).AddSourceAsync(corpus, new AddSourceRequest("a\0b"), default);
+        var outcome = await harness.NewConfiguration(db).AddSourceAsync(corpus, new AddSourceRequest("a\0b"), TestContext.Current.CancellationToken);
 
         outcome.Refusal.ShouldNotBeNull().Status.ShouldBe(400);
-        (await db.Sources.CountAsync()).ShouldBe(before);
+        (await db.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(before);
     }
 
     [Theory]
@@ -383,21 +376,19 @@ public sealed class MalformedRequestTests
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
-        var corpus = await db.Corpora.SingleAsync();
-        var a = await documents.StoreAsync(new MemoryStream("the first document"u8.ToArray()), "a.txt");
-        var b = await documents.StoreAsync(new MemoryStream("the second document"u8.ToArray()), "b.txt");
-        await documents.AttachAsync(corpus, a.Sha256, "a.txt");
-        await documents.AttachAsync(corpus, b.Sha256, "b.txt");
+        var corpus = await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var a = await documents.StoreAsync(new MemoryStream("the first document"u8.ToArray()), "a.txt", TestContext.Current.CancellationToken);
+        var b = await documents.StoreAsync(new MemoryStream("the second document"u8.ToArray()), "b.txt", TestContext.Current.CancellationToken);
+        await documents.AttachAsync(corpus, a.Sha256, "a.txt", TestContext.Current.CancellationToken);
+        await documents.AttachAsync(corpus, b.Sha256, "b.txt", TestContext.Current.CancellationToken);
         var queue = new IndexJobQueue(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance);
 
-        var result = await DocumentEndpoints.AttachAsync(
-            IndexingHarness.CorpusId, new AttachDocumentRequest(a.Sha256, "b.txt"), AsIngester(), new ScopeResolver(db),
-            documents, db, queue, default);
+        var result = await DocumentEndpoints.AttachAsync(IndexingHarness.CorpusId, new AttachDocumentRequest(a.Sha256, "b.txt"), AsIngester(), new ScopeResolver(db), documents, db, queue, TestContext.Current.CancellationToken);
 
         var problem = result.ShouldBeOfType<ProblemHttpResult>();
         problem.StatusCode.ShouldBe(409);
         problem.ProblemDetails.Detail.ShouldNotBeNull().ShouldContain("'b.txt'");
-        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh)).ShouldBe(0, "a refused attach queues nothing");
+        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0, "a refused attach queues nothing");
     }
 
     [Theory]
@@ -410,16 +401,14 @@ public sealed class MalformedRequestTests
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
-        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), "a.txt");
+        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), "a.txt", TestContext.Current.CancellationToken);
         var queue = new IndexJobQueue(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance);
 
-        var result = await DocumentEndpoints.AttachAsync(
-            IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256, name), AsIngester(), new ScopeResolver(db),
-            documents, db, queue, default);
+        var result = await DocumentEndpoints.AttachAsync(IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256, name), AsIngester(), new ScopeResolver(db), documents, db, queue, TestContext.Current.CancellationToken);
 
         result.ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(400);
-        (await db.Files.CountAsync()).ShouldBe(0);
-        (await db.Jobs.CountAsync()).ShouldBe(0);
+        (await db.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
+        (await db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]
@@ -430,13 +419,11 @@ public sealed class MalformedRequestTests
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
-        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), "a.txt");
+        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), "a.txt", TestContext.Current.CancellationToken);
         await harness.HoldElsewhereAsync(stored.Sha256);
         var queue = new IndexJobQueue(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance);
 
-        var result = await DocumentEndpoints.AttachAsync(
-            IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256), AsAdmin(), new ScopeResolver(db),
-            documents, db, queue, default);
+        var result = await DocumentEndpoints.AttachAsync(IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256), AsAdmin(), new ScopeResolver(db), documents, db, queue, TestContext.Current.CancellationToken);
 
         result.ShouldBeOfType<Accepted<DocumentAttached>>().Value!.FileName.ShouldBe("a.txt");
     }
@@ -448,14 +435,14 @@ public sealed class MalformedRequestTests
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
-        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), "a.txt");
+        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), "a.txt", TestContext.Current.CancellationToken);
 
-        var corpus = await db.Corpora.SingleAsync();
+        var corpus = await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         var thrown = await Should.ThrowAsync<ArgumentException>(() => documents.AttachAsync(corpus, stored.Sha256, " "));
 
         thrown.Message.ShouldBe("A file name is required.");
-        (await db.Files.CountAsync()).ShouldBe(0);
+        (await db.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     public static TheoryData<string> UnacceptableFileNames() => new()
@@ -501,7 +488,7 @@ public sealed class MalformedRequestTests
         thrown.Message.ShouldNotContain(name, Case.Sensitive);
         thrown.Message.ShouldMatch("control character|260 characters");
         content.Reads.ShouldBe(0, "the name was refused before the upload was copied anywhere");
-        (await db.Blobs.CountAsync()).ShouldBe(0);
+        (await db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Theory]
@@ -512,16 +499,16 @@ public sealed class MalformedRequestTests
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
-        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), "a.txt");
-        var corpus = await db.Corpora.SingleAsync();
+        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), "a.txt", TestContext.Current.CancellationToken);
+        var corpus = await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         var thrown = await Should.ThrowAsync<ArgumentException>(() => documents.AttachAsync(corpus, stored.Sha256, name));
 
         thrown.ParamName.ShouldBeNull();
         thrown.Message.ShouldNotContain(name, Case.Sensitive);
         thrown.Message.ShouldMatch("control character|260 characters");
-        (await db.Files.CountAsync()).ShouldBe(0);
-        (await db.Sources.CountAsync(s => s.Kind == SourceKind.Upload)).ShouldBe(1, "no upload source was added for it");
+        (await db.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
+        (await db.Sources.CountAsync(s => s.Kind == SourceKind.Upload, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "no upload source was added for it");
     }
 
     [Theory]
@@ -534,10 +521,10 @@ public sealed class MalformedRequestTests
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
-        var corpus = await db.Corpora.SingleAsync();
+        var corpus = await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), name);
-        var file = await documents.AttachAsync(corpus, stored.Sha256, name);
+        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), name, TestContext.Current.CancellationToken);
+        var file = await documents.AttachAsync(corpus, stored.Sha256, name, TestContext.Current.CancellationToken);
 
         file.RelativePath.ShouldBe(name);
     }
@@ -551,10 +538,10 @@ public sealed class MalformedRequestTests
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
         var name = new string('n', 256) + ".txt";
-        var corpus = await db.Corpora.SingleAsync();
+        var corpus = await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), name);
-        var file = await documents.AttachAsync(corpus, stored.Sha256, name);
+        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), name, TestContext.Current.CancellationToken);
+        var file = await documents.AttachAsync(corpus, stored.Sha256, name, TestContext.Current.CancellationToken);
 
         name.Length.ShouldBe(260);
         file.RelativePath.ShouldBe(name);
@@ -568,19 +555,17 @@ public sealed class MalformedRequestTests
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
-        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), "a.txt");
+        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), "a.txt", TestContext.Current.CancellationToken);
         var queue = new IndexJobQueue(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance);
 
-        var result = await DocumentEndpoints.AttachAsync(
-            IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256, name), AsIngester(), new ScopeResolver(db),
-            documents, db, queue, default);
+        var result = await DocumentEndpoints.AttachAsync(IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256, name), AsIngester(), new ScopeResolver(db), documents, db, queue, TestContext.Current.CancellationToken);
 
         var problem = result.ShouldBeOfType<ProblemHttpResult>();
         problem.StatusCode.ShouldBe(400);
         problem.ProblemDetails.Title.ShouldBe("Invalid file name");
         problem.ProblemDetails.Detail.ShouldNotBeNull().ShouldNotContain(name, Case.Sensitive);
-        (await db.Files.CountAsync()).ShouldBe(0);
-        (await db.Jobs.CountAsync()).ShouldBe(0);
+        (await db.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
+        (await db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]
@@ -591,20 +576,18 @@ public sealed class MalformedRequestTests
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
-        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), "a.txt");
-        (await db.Blobs.SingleAsync()).OriginalFileName = "old\nname.txt";
-        await db.SaveChangesAsync();
+        var stored = await documents.StoreAsync(new MemoryStream("a document"u8.ToArray()), "a.txt", TestContext.Current.CancellationToken);
+        (await db.Blobs.SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).OriginalFileName = "old\nname.txt";
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         await harness.HoldElsewhereAsync(stored.Sha256);
         var queue = new IndexJobQueue(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance);
 
-        var result = await DocumentEndpoints.AttachAsync(
-            IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256), AsAdmin(), new ScopeResolver(db),
-            documents, db, queue, default);
+        var result = await DocumentEndpoints.AttachAsync(IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256), AsAdmin(), new ScopeResolver(db), documents, db, queue, TestContext.Current.CancellationToken);
 
         var problem = result.ShouldBeOfType<ProblemHttpResult>();
         problem.StatusCode.ShouldBe(400);
         problem.ProblemDetails.Title.ShouldBe("Invalid file name");
         problem.ProblemDetails.Detail.ShouldNotBeNull().ShouldContain("fileName");
-        (await db.Files.CountAsync(f => f.Source!.CorpusId == IndexingHarness.CorpusId)).ShouldBe(0);
+        (await db.Files.CountAsync(f => f.Source!.CorpusId == IndexingHarness.CorpusId, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 }

@@ -37,7 +37,7 @@ public sealed class ModelProfileSaveTests : IAsyncLifetime
     private IndexJobQueue _queue = null!;
     private IOptions<DexiconOptions> _options = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _connection = new SqliteConnection("Data Source=:memory:");
         await _connection.OpenAsync();
@@ -54,7 +54,7 @@ public sealed class ModelProfileSaveTests : IAsyncLifetime
         await _db.SaveChangesAsync();
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         _cache.Dispose();
         await _db.DisposeAsync();
@@ -107,7 +107,7 @@ public sealed class ModelProfileSaveTests : IAsyncLifetime
             .ShouldBe("task: custom | query: x", "the set records the untagged name, and that is what the indexer reads");
         (await EffectiveAsync("embeddinggemma")).Origin.ShouldBe(TemplateOrigin.Configured);
 
-        var job = await _db.Jobs.SingleAsync();
+        var job = await _db.Jobs.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         job.Kind.ShouldBe(JobKind.Rebuild);
         job.ChunkSetId.ShouldBe(set.Id);
     }
@@ -120,7 +120,7 @@ public sealed class ModelProfileSaveTests : IAsyncLifetime
         var saved = await SaveAsync("embeddinggemma:latest");
 
         saved.Model.ShouldBe("embeddinggemma");
-        (await _db.ModelProfiles.Select(p => p.Model).ToListAsync()).ShouldBe(["embeddinggemma"]);
+        (await _db.ModelProfiles.Select(p => p.Model).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(["embeddinggemma"]);
     }
 
     [Fact]
@@ -144,7 +144,7 @@ public sealed class ModelProfileSaveTests : IAsyncLifetime
             _queue, _options, CancellationToken.None);
 
         second.ShouldBeOfType<Ok<ModelProfileSaved>>();
-        var rows = await _db.ModelProfiles.ToListAsync();
+        var rows = await _db.ModelProfiles.ToListAsync(cancellationToken: TestContext.Current.CancellationToken);
         rows.Count.ShouldBe(1);
         rows[0].Model.ShouldBe("embeddinggemma");
         rows[0].QueryTemplate.ShouldBe("q: {text}");
@@ -161,7 +161,7 @@ public sealed class ModelProfileSaveTests : IAsyncLifetime
 
         saved.Model.ShouldBe("embeddinggemma");
         saved.Reindexing.Order().ToList().ShouldBe(["docs:default", "docs:mixed"]);
-        (await _db.ModelProfiles.Select(p => p.Model).ToListAsync()).ShouldBe(["embeddinggemma"]);
+        (await _db.ModelProfiles.Select(p => p.Model).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(["embeddinggemma"]);
         foreach (var name in new[] { "embeddinggemma", "EMBEDDINGGEMMA", "EmbeddingGemma:latest" })
             (await EffectiveAsync(name)).Origin.ShouldBe(TemplateOrigin.Configured, name);
     }
@@ -194,7 +194,7 @@ public sealed class ModelProfileSaveTests : IAsyncLifetime
         var saved = await SaveAsync("embeddinggemma:latest");
 
         saved.Reindexing.Order().ToList().ShouldBe(["docs:tagged", "docs:untagged"]);
-        (await _db.Jobs.Select(j => j.ChunkSetId).ToListAsync()).Order().ToList().ShouldBe(["s1", "s2"]);
+        (await _db.Jobs.Select(j => j.ChunkSetId).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).Order().ToList().ShouldBe(["s1", "s2"]);
     }
 
     /// <summary>Cancels the request the moment a save has committed, as a client that goes away would.</summary>
@@ -224,7 +224,7 @@ public sealed class ModelProfileSaveTests : IAsyncLifetime
             _queue, _options, cancel.Token);
 
         result.ShouldBeOfType<Ok<ModelProfileSaved>>().Value!.Reindexing.ShouldBe(["docs:default"]);
-        (await _db.Jobs.CountAsync()).ShouldBe(1);
+        (await _db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]
@@ -234,6 +234,6 @@ public sealed class ModelProfileSaveTests : IAsyncLifetime
 
         saved.Reindexing.ShouldBeEmpty();
         saved.Note.ShouldBeNull();
-        (await _db.Jobs.CountAsync()).ShouldBe(0);
+        (await _db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 }

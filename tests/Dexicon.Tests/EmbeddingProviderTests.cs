@@ -32,7 +32,7 @@ public sealed class EmbeddingProviderTests
         var generator = new RecordingGenerator(dimensions: 8);
         var service = Service(generator);
 
-        await service.EmbedAsync(new EmbeddingTarget(Provider, "mxbai-embed-large"), EmbedPurpose.Raw, ["hello"]);
+        await service.EmbedAsync(new EmbeddingTarget(Provider, "mxbai-embed-large"), EmbedPurpose.Raw, ["hello"], ct: TestContext.Current.CancellationToken);
 
         generator.ModelsUsed.ShouldBe(["mxbai-embed-large"],
             "a set pinned to a model must embed with THAT model, not the configured default");
@@ -45,8 +45,8 @@ public sealed class EmbeddingProviderTests
         var generator = new RecordingGenerator(dimensions: 8);
         var service = Service(generator);
 
-        await service.EmbedAsync(new EmbeddingTarget(Provider, "model-a"), EmbedPurpose.Raw, ["x"]);
-        await service.EmbedAsync(new EmbeddingTarget(Provider, "model-b"), EmbedPurpose.Raw, ["y"]);
+        await service.EmbedAsync(new EmbeddingTarget(Provider, "model-a"), EmbedPurpose.Raw, ["x"], ct: TestContext.Current.CancellationToken);
+        await service.EmbedAsync(new EmbeddingTarget(Provider, "model-b"), EmbedPurpose.Raw, ["y"], ct: TestContext.Current.CancellationToken);
 
         generator.ModelsUsed.ShouldBe(["model-a", "model-b"]);
     }
@@ -75,7 +75,7 @@ public sealed class EmbeddingProviderTests
         var target = new EmbeddingTarget(Provider, "nomic-embed-text");
 
         for (var i = 0; i < 3; i++)
-            (await Service(generator, cache).ProbeDimensionsAsync(target)).ShouldBe(768);
+            (await Service(generator, cache).ProbeDimensionsAsync(target, TestContext.Current.CancellationToken)).ShouldBe(768);
 
         generator.Calls.ShouldBe(1, "the probe is a round-trip; it must not repeat per request");
     }
@@ -87,7 +87,7 @@ public sealed class EmbeddingProviderTests
         var cache = new MemoryCache(new MemoryCacheOptions());
         var target = new EmbeddingTarget(Provider, "nomic-embed-text");
 
-        await Service(generator, cache).ProbeDimensionsAsync(target);
+        await Service(generator, cache).ProbeDimensionsAsync(target, TestContext.Current.CancellationToken);
         var after = generator.Calls;
 
         Service(generator, cache).KnownDimensions(target).ShouldBe(768);
@@ -103,8 +103,8 @@ public sealed class EmbeddingProviderTests
         var generator = new RecordingGenerator(dimensions: 8);
         var cache = new MemoryCache(new MemoryCacheOptions());
 
-        await Service(generator, cache).ProbeDimensionsAsync(new EmbeddingTarget("local", "shared-name"));
-        await Service(generator, cache).ProbeDimensionsAsync(new EmbeddingTarget("hosted", "shared-name"));
+        await Service(generator, cache).ProbeDimensionsAsync(new EmbeddingTarget("local", "shared-name"), TestContext.Current.CancellationToken);
+        await Service(generator, cache).ProbeDimensionsAsync(new EmbeddingTarget("hosted", "shared-name"), TestContext.Current.CancellationToken);
 
         generator.Calls.ShouldBe(2);
     }
@@ -120,7 +120,7 @@ public sealed class EmbeddingProviderTests
         var service = Service(new OrderRevealingGenerator(), batchSize: 1, maxConcurrency: 4);
 
         var inputs = Enumerable.Range(0, 24).Select(i => i.ToString()).ToArray();
-        var vectors = await service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Raw, inputs);
+        var vectors = await service.EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Raw, inputs, ct: TestContext.Current.CancellationToken);
 
         vectors.Count.ShouldBe(inputs.Length);
         for (var i = 0; i < inputs.Length; i++)
@@ -131,7 +131,7 @@ public sealed class EmbeddingProviderTests
     public async Task NoInputsMeansNoCalls()
     {
         var generator = new RecordingGenerator(dimensions: 8);
-        (await Service(generator).EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Raw, [])).ShouldBeEmpty();
+        (await Service(generator).EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Raw, [], ct: TestContext.Current.CancellationToken)).ShouldBeEmpty();
         generator.Calls.ShouldBe(0);
     }
 

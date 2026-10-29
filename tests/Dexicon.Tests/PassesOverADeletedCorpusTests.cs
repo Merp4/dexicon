@@ -46,8 +46,8 @@ public sealed class PassesOverADeletedCorpusTests
         await using (var db = harness.NewContext())
         {
             var documents = harness.NewDocumentService(db);
-            var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt");
-            await documents.AttachAsync(await db.Corpora.SingleAsync(), stored.Sha256, "doc.txt");
+            var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt", TestContext.Current.CancellationToken);
+            await documents.AttachAsync(await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken), stored.Sha256, "doc.txt", TestContext.Current.CancellationToken);
         }
 
         await RunAsync(harness, new RecordingLoggerFactory());
@@ -69,11 +69,11 @@ public sealed class PassesOverADeletedCorpusTests
             other.ChunkSets.Where(s => s.Id == "set-1").ExecuteDelete();
         };
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         await using var db = harness.NewContext();
-        (await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == job.Id)).State.ShouldBe(JobState.Failed);
-        (await db.Files.Select(f => f.RelativePath).ToListAsync()).ShouldBe(["a.txt"], "its source is still there");
-        (await db.FileChunkStates.CountAsync(s => s.ChunkSetId == "set-1")).ShouldBe(0);
+        (await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == job.Id, cancellationToken: TestContext.Current.CancellationToken)).State.ShouldBe(JobState.Failed);
+        (await db.Files.Select(f => f.RelativePath).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(["a.txt"], "its source is still there");
+        (await db.FileChunkStates.CountAsync(s => s.ChunkSetId == "set-1", cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 }

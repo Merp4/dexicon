@@ -72,7 +72,7 @@ public sealed class DetachingWhileIndexingTests
         var library = await AttachAsync(harness, two: true);
         DetachWhenThePassReachesIt(harness, library.First);
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var read = await ReadBackAsync(harness, job);
         read.Recorded.State.ShouldBe(JobState.Succeeded, "the outcome of the pass is recorded in the catalogue");
@@ -92,10 +92,10 @@ public sealed class DetachingWhileIndexingTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Upload);
         var library = await AttachAsync(harness, two: true);
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         DetachWhenThePassReachesIt(harness, library.Second!);
 
-        var job = await harness.RunIndexAsync(JobKind.Full);
+        var job = await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
 
         var read = await ReadBackAsync(harness, job);
         read.Recorded.State.ShouldBe(JobState.Succeeded);
@@ -115,7 +115,7 @@ public sealed class DetachingWhileIndexingTests
         var library = await AttachAsync(harness, two: false);
         DetachWhenThePassReachesIt(harness, library.First);
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var read = await ReadBackAsync(harness, job);
         read.Recorded.State.ShouldBe(JobState.Succeeded);
@@ -134,13 +134,13 @@ public sealed class DetachingWhileIndexingTests
         DetachWhenThePassReachesIt(harness, library.First,
             then: () => throw new InvalidOperationException("the vector store is unreachable"));
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         (await ReadBackAsync(harness, job)).Recorded.State.ShouldBe(JobState.Succeeded);
         harness.Vectors.CountFor(PathOfTheFirst).ShouldBeGreaterThan(0, "the clean-up failed, so the points are still there");
 
         harness.Vectors.OnDeleteAsync = null;
-        var next = await harness.RunIndexAsync();
+        var next = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         (await ReadBackAsync(harness, next)).Recorded.State.ShouldBe(JobState.Succeeded);
         harness.Vectors.CountFor(PathOfTheFirst).ShouldBe(0, "the next pass removes points no row names");
@@ -154,13 +154,13 @@ public sealed class DetachingWhileIndexingTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Upload);
         var library = await AttachAsync(harness, two: false);
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         harness.Vectors.CountFor(PathOfTheFirst).ShouldBeGreaterThan(0);
         await using (var db = harness.NewContext())
-            (await harness.NewDocumentService(db).DetachAsync(IndexingHarness.CorpusId, library.First.Id)).ShouldBeTrue();
+            (await harness.NewDocumentService(db).DetachAsync(IndexingHarness.CorpusId, library.First.Id, TestContext.Current.CancellationToken)).ShouldBeTrue();
         harness.Vectors.CountFor(PathOfTheFirst).ShouldBeGreaterThan(0, "a detach that is not the cleanup leaves the points");
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         (await ReadBackAsync(harness, job)).Recorded.State.ShouldBe(JobState.Succeeded);
         harness.Vectors.CountFor(PathOfTheFirst).ShouldBe(0);
@@ -204,14 +204,14 @@ public sealed class DetachingWhileIndexingTests
         await harness.SeedCorpusAsync(SourceKind.Upload);
         var library = await AttachAsync(harness, two: false);
         await using (var db = harness.NewContext())
-            await db.FileChunkStates.ExecuteDeleteAsync();
+            await db.FileChunkStates.ExecuteDeleteAsync(cancellationToken: TestContext.Current.CancellationToken);
         var fired = 0;
         harness.Vectors.OnCountAsync = async () =>
         {
             if (Interlocked.Exchange(ref fired, 1) == 0) await DetachNowAsync(harness, library.First);
         };
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var read = await ReadBackAsync(harness, job);
         read.Recorded.State.ShouldBe(JobState.Succeeded);
@@ -228,7 +228,7 @@ public sealed class DetachingWhileIndexingTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Upload);
         var library = await AttachAsync(harness, two: false);
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         harness.Vectors.DropSilently(PathOfTheFirst).ShouldBeGreaterThan(0);
         var fired = 0;
         harness.Vectors.OnCountAsync = async () =>
@@ -236,7 +236,7 @@ public sealed class DetachingWhileIndexingTests
             if (Interlocked.Exchange(ref fired, 1) == 0) await DetachNowAsync(harness, library.First);
         };
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var read = await ReadBackAsync(harness, job);
         read.Recorded.State.ShouldBe(JobState.Succeeded);
@@ -275,7 +275,7 @@ public sealed class DetachingWhileIndexingTests
         var library = await AttachAsync(harness, two: true);
         harness.Embedder = new EmbedderThatActsOnce(() => DetachNowAsync(harness, library.First));
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var read = await ReadBackAsync(harness, job);
         read.Recorded.State.ShouldBe(JobState.Succeeded);
@@ -295,7 +295,7 @@ public sealed class DetachingWhileIndexingTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Upload);
         var library = await AttachAsync(harness, two: true);
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var deletes = 0;
         FileStatus? statusWhenTheSecondIsDeleted = null;
@@ -315,7 +315,7 @@ public sealed class DetachingWhileIndexingTests
             }
         };
 
-        var job = await harness.RunIndexAsync(JobKind.Full);
+        var job = await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
 
         deletes.ShouldBeGreaterThanOrEqualTo(3);
         statusWhenTheSecondIsDeleted.ShouldBe(FileStatus.Pending, "its claim was saved before its points were deleted");
@@ -339,7 +339,7 @@ public sealed class DetachingWhileIndexingTests
             await other.FileChunkStates.Where(s => s.FileId == library.First.Id).ExecuteDeleteAsync();
         };
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var read = await ReadBackAsync(harness, job);
         read.Recorded.State.ShouldBe(JobState.Failed);
@@ -360,7 +360,7 @@ public sealed class DetachingWhileIndexingTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Upload);
         var library = await AttachAsync(harness, two: true);
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var deletes = 0;
         harness.Vectors.OnDeleteAsync = async () =>
@@ -396,8 +396,8 @@ public sealed class DetachingWhileIndexingTests
         var library = await AttachAsync(harness, two: false);
         await using (var db = harness.NewContext())
         {
-            await db.FileChunkStates.ExecuteDeleteAsync();
-            await db.BlobTexts.ExecuteDeleteAsync();
+            await db.FileChunkStates.ExecuteDeleteAsync(cancellationToken: TestContext.Current.CancellationToken);
+            await db.BlobTexts.ExecuteDeleteAsync(cancellationToken: TestContext.Current.CancellationToken);
         }
 
         var fired = 0;
@@ -406,7 +406,7 @@ public sealed class DetachingWhileIndexingTests
             if (Interlocked.Exchange(ref fired, 1) == 0) await DetachNowAsync(harness, library.First);
         };
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var read = await ReadBackAsync(harness, job);
         read.Recorded.State.ShouldBe(JobState.Succeeded);
@@ -420,11 +420,11 @@ public sealed class DetachingWhileIndexingTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Upload);
         var library = await AttachAsync(harness, two: true);
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         harness.Vectors.CountFor(PathOfTheFirst).ShouldBeGreaterThan(0);
         harness.Vectors.CountFor("two.txt").ShouldBeGreaterThan(0);
         await using (var db = harness.NewContext())
-            await db.FileChunkStates.ExecuteDeleteAsync();
+            await db.FileChunkStates.ExecuteDeleteAsync(cancellationToken: TestContext.Current.CancellationToken);
         var fired = 0;
         harness.Vectors.OnCountAsync = async () =>
         {
@@ -433,7 +433,7 @@ public sealed class DetachingWhileIndexingTests
             await DetachNowAsync(harness, library.Second!);
         };
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var read = await ReadBackAsync(harness, job);
         read.Recorded.State.ShouldBe(JobState.Succeeded);
@@ -459,7 +459,7 @@ public sealed class DetachingWhileIndexingTests
             throw new EmbeddingUnavailableException("the provider is away");
         });
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var read = await ReadBackAsync(harness, job);
         read.Recorded.State.ShouldBe(JobState.Degraded, "the embedding failure is the job's, and the pass went on");
@@ -483,7 +483,7 @@ public sealed class DetachingWhileIndexingTests
             other.ChunkSets.Where(s => s.Id == "set-2").ExecuteDelete();
         };
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var read = await ReadBackAsync(harness, job);
         read.Recorded.State.ShouldBe(JobState.Failed);
@@ -533,7 +533,7 @@ public sealed class DetachingWhileIndexingTests
             await other.Sources.ExecuteDeleteAsync();
         };
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var read = await ReadBackAsync(harness, job);
         read.Recorded.State.ShouldBe(JobState.Succeeded);

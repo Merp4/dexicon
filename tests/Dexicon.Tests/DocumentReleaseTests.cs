@@ -55,10 +55,10 @@ public sealed class DocumentReleaseTests
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
         var sha = await StoreAsync(documents, "held by one corpus");
-        var file = await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), sha, "a.txt");
+        var file = await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), sha, "a.txt", TestContext.Current.CancellationToken);
         (await HeldAsync(harness, documents, sha)).ShouldBe((true, true, true), "the premise");
 
-        (await documents.DetachAsync(IndexingHarness.CorpusId, file.Id)).ShouldBeTrue();
+        (await documents.DetachAsync(IndexingHarness.CorpusId, file.Id, TestContext.Current.CancellationToken)).ShouldBeTrue();
 
         (await HeldAsync(harness, documents, sha)).ShouldBe((false, false, false));
     }
@@ -71,13 +71,13 @@ public sealed class DocumentReleaseTests
         var documents = harness.NewDocumentService(db);
         var papers = await AddCorpusAsync(harness, db, "papers");
         var sha = await StoreAsync(documents, "held by two corpora");
-        var inNotes = await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), sha, "a.txt");
-        var inPapers = await documents.AttachAsync(papers, sha, "a.txt");
+        var inNotes = await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), sha, "a.txt", TestContext.Current.CancellationToken);
+        var inPapers = await documents.AttachAsync(papers, sha, "a.txt", TestContext.Current.CancellationToken);
 
-        (await documents.DetachAsync(IndexingHarness.CorpusId, inNotes.Id)).ShouldBeTrue();
+        (await documents.DetachAsync(IndexingHarness.CorpusId, inNotes.Id, TestContext.Current.CancellationToken)).ShouldBeTrue();
         (await HeldAsync(harness, documents, sha)).ShouldBe((true, true, true), "papers still holds it");
 
-        (await documents.DetachAsync(papers.Id, inPapers.Id)).ShouldBeTrue();
+        (await documents.DetachAsync(papers.Id, inPapers.Id, TestContext.Current.CancellationToken)).ShouldBeTrue();
         (await HeldAsync(harness, documents, sha)).ShouldBe((false, false, false));
     }
 
@@ -89,10 +89,10 @@ public sealed class DocumentReleaseTests
         var documents = harness.NewDocumentService(db);
         var corpus = await CorpusAsync(db, IndexingHarness.CorpusId);
         var first = await StoreAsync(documents, "the first version");
-        await documents.AttachAsync(corpus, first, "a.txt");
+        await documents.AttachAsync(corpus, first, "a.txt", TestContext.Current.CancellationToken);
         var second = await StoreAsync(documents, "the second version");
 
-        await documents.AttachAsync(corpus, second, "a.txt");
+        await documents.AttachAsync(corpus, second, "a.txt", TestContext.Current.CancellationToken);
 
         (await HeldAsync(harness, documents, first)).ShouldBe((false, false, false), "nothing holds the replaced bytes");
         (await HeldAsync(harness, documents, second)).ShouldBe((true, true, true));
@@ -108,12 +108,12 @@ public sealed class DocumentReleaseTests
         var papers = await AddCorpusAsync(harness, db, "papers");
         var alone = await StoreAsync(documents, "only notes holds this", "alone.txt");
         var shared = await StoreAsync(documents, "notes and papers hold this", "shared.txt");
-        await documents.AttachAsync(notes, alone, "alone.txt");
-        await documents.AttachAsync(notes, shared, "shared.txt");
-        await documents.AttachAsync(papers, shared, "shared.txt");
-        var source = await db.Sources.SingleAsync(s => s.CorpusId == notes.Id && s.Kind == SourceKind.Upload);
+        await documents.AttachAsync(notes, alone, "alone.txt", TestContext.Current.CancellationToken);
+        await documents.AttachAsync(notes, shared, "shared.txt", TestContext.Current.CancellationToken);
+        await documents.AttachAsync(papers, shared, "shared.txt", TestContext.Current.CancellationToken);
+        var source = await db.Sources.SingleAsync(s => s.CorpusId == notes.Id && s.Kind == SourceKind.Upload, cancellationToken: TestContext.Current.CancellationToken);
 
-        (await harness.NewConfiguration(db).RemoveSourceAsync(notes, source.Id, default)).Refusal.ShouldBeNull();
+        (await harness.NewConfiguration(db).RemoveSourceAsync(notes, source.Id, TestContext.Current.CancellationToken)).Refusal.ShouldBeNull();
 
         (await HeldAsync(harness, documents, alone)).ShouldBe((false, false, false));
         (await HeldAsync(harness, documents, shared)).ShouldBe((true, true, true), "papers still holds it");
@@ -129,11 +129,11 @@ public sealed class DocumentReleaseTests
         var papers = await AddCorpusAsync(harness, db, "papers");
         var alone = await StoreAsync(documents, "only notes holds this", "alone.txt");
         var shared = await StoreAsync(documents, "notes and papers hold this", "shared.txt");
-        await documents.AttachAsync(notes, alone, "alone.txt");
-        await documents.AttachAsync(notes, shared, "shared.txt");
-        await documents.AttachAsync(papers, shared, "shared.txt");
+        await documents.AttachAsync(notes, alone, "alone.txt", TestContext.Current.CancellationToken);
+        await documents.AttachAsync(notes, shared, "shared.txt", TestContext.Current.CancellationToken);
+        await documents.AttachAsync(papers, shared, "shared.txt", TestContext.Current.CancellationToken);
 
-        (await harness.NewConfiguration(db).RemoveCorpusAsync(notes, default)).Refusal.ShouldBeNull();
+        (await harness.NewConfiguration(db).RemoveCorpusAsync(notes, TestContext.Current.CancellationToken)).Refusal.ShouldBeNull();
 
         (await HeldAsync(harness, documents, alone)).ShouldBe((false, false, false));
         (await HeldAsync(harness, documents, shared)).ShouldBe((true, true, true), "papers still holds it");
@@ -146,7 +146,7 @@ public sealed class DocumentReleaseTests
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
         var held = await StoreAsync(documents, "held by notes", "held.txt");
-        await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), held, "held.txt");
+        await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), held, "held.txt", TestContext.Current.CancellationToken);
         var leftOver = await StoreAsync(documents, "stored and never attached", "left.txt");
 
         await Bootstrapper.ReleaseUnheldDocumentsAsync(db, harness.Settings.Value, NullLogger.Instance);
@@ -162,7 +162,7 @@ public sealed class DocumentReleaseTests
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
         var sha = await StoreAsync(documents, "held");
-        await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), sha, "a.txt");
+        await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), sha, "a.txt", TestContext.Current.CancellationToken);
         var logs = new RecordingLoggerFactory();
 
         // A hash shorter than the fan-out folder is skipped, and one no blob has deletes nothing.
@@ -186,7 +186,7 @@ public sealed class DocumentReleaseTests
         foreach (var text in new[] { "first leftover", "second leftover", "third leftover" })
             shas.Add(await StoreAsync(documents, text, $"{text}.txt"));
         var held = await StoreAsync(documents, "held by notes", "held.txt");
-        await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), held, "held.txt");
+        await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), held, "held.txt", TestContext.Current.CancellationToken);
 
         var deleted = await DocumentService.ReleaseAsync(
             db, harness.Settings.Value.Storage.BlobRoot, [.. shas, held, shas[0]]);
@@ -204,12 +204,12 @@ public sealed class DocumentReleaseTests
         var logs = new RecordingLoggerFactory();
         var documents = harness.NewDocumentService(db, new Logger<DocumentService>(logs));
         var sha = await StoreAsync(documents, "bytes that cannot be deleted");
-        var file = await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), sha, "a.txt");
+        var file = await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), sha, "a.txt", TestContext.Current.CancellationToken);
         // A directory where the bytes were: File.Delete refuses it on every platform.
         File.Delete(documents.PathFor(sha));
         Directory.CreateDirectory(documents.PathFor(sha));
 
-        (await documents.DetachAsync(IndexingHarness.CorpusId, file.Id)).ShouldBeTrue();
+        (await documents.DetachAsync(IndexingHarness.CorpusId, file.Id, TestContext.Current.CancellationToken)).ShouldBeTrue();
 
         (await HeldAsync(harness, documents, sha)).Blob.ShouldBeFalse("the rows went");
         Directory.Exists(documents.PathFor(sha)).ShouldBeTrue("the path was left as it was");
@@ -257,7 +257,7 @@ public sealed class DocumentReleaseTests
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
         var sha = await StoreAsync(documents, "released under the lock");
-        var file = await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), sha, "a.txt");
+        var file = await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), sha, "a.txt", TestContext.Current.CancellationToken);
         hold.Armed = true;
 
         var detaching = Task.Run(() => documents.DetachAsync(IndexingHarness.CorpusId, file.Id));
@@ -276,8 +276,8 @@ public sealed class DocumentReleaseTests
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
         var notes = await CorpusAsync(db, IndexingHarness.CorpusId);
-        await documents.AttachAsync(notes, await StoreAsync(documents, "released under the lock"), "a.txt");
-        var source = await db.Sources.SingleAsync(s => s.CorpusId == notes.Id && s.Kind == SourceKind.Upload);
+        await documents.AttachAsync(notes, await StoreAsync(documents, "released under the lock"), "a.txt", TestContext.Current.CancellationToken);
+        var source = await db.Sources.SingleAsync(s => s.CorpusId == notes.Id && s.Kind == SourceKind.Upload, cancellationToken: TestContext.Current.CancellationToken);
         hold.Armed = true;
 
         var removing = Task.Run(() => harness.NewConfiguration(db).RemoveSourceAsync(notes, source.Id, default));
@@ -296,7 +296,7 @@ public sealed class DocumentReleaseTests
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
         var notes = await CorpusAsync(db, IndexingHarness.CorpusId);
-        await documents.AttachAsync(notes, await StoreAsync(documents, "released under the lock"), "a.txt");
+        await documents.AttachAsync(notes, await StoreAsync(documents, "released under the lock"), "a.txt", TestContext.Current.CancellationToken);
         hold.Armed = true;
 
         var removing = Task.Run(() => harness.NewConfiguration(db).RemoveCorpusAsync(notes, default));
@@ -317,7 +317,7 @@ public sealed class DocumentReleaseTests
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
         var sha = await StoreAsync(documents, "stored again meanwhile");
-        var file = await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), sha, "a.txt");
+        var file = await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), sha, "a.txt", TestContext.Current.CancellationToken);
         hold.Armed = true;
 
         var detaching = Task.Run(() => documents.DetachAsync(IndexingHarness.CorpusId, file.Id));
@@ -326,7 +326,7 @@ public sealed class DocumentReleaseTests
             await Gates.ReachedAsync(hold.Reached, "the release's check for a blob stored again");
             await using var upload = harness.NewContext();
             upload.Blobs.Add(new Blob { Sha256 = sha, SizeBytes = 1, CreatedUtc = DateTime.UtcNow });
-            await upload.SaveChangesAsync();
+            await upload.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
         finally { hold.Release(); }
 
@@ -349,7 +349,7 @@ public sealed class DocumentReleaseTests
         var documents = harness.NewDocumentService(db);
         var papers = await AddCorpusAsync(harness, db, "papers");
         var sha = await StoreAsync(documents, "detached while it waited to be attached");
-        await documents.AttachAsync(papers, sha, "a.txt");
+        await documents.AttachAsync(papers, sha, "a.txt", TestContext.Current.CancellationToken);
         await using var requestDb = harness.NewContext();
         var queue = new IndexJobQueue(requestDb, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance);
         var admin = new RequestContext
@@ -365,8 +365,8 @@ public sealed class DocumentReleaseTests
         {
             await Gates.ReachedAsync(hold.Reached, "the attachment's check of its corpus");
             await using var other = harness.NewContext();
-            await other.Files.Where(f => f.BlobSha256 == sha).ExecuteDeleteAsync();
-            await other.Blobs.Where(b => b.Sha256 == sha).ExecuteDeleteAsync();
+            await other.Files.Where(f => f.BlobSha256 == sha).ExecuteDeleteAsync(cancellationToken: TestContext.Current.CancellationToken);
+            await other.Blobs.Where(b => b.Sha256 == sha).ExecuteDeleteAsync(cancellationToken: TestContext.Current.CancellationToken);
         }
         finally { hold.Release(); }
 
@@ -374,7 +374,7 @@ public sealed class DocumentReleaseTests
 
         result.ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(404);
         await using var check = harness.NewContext();
-        (await check.Files.CountAsync(f => f.BlobSha256 == sha)).ShouldBe(0);
+        (await check.Files.CountAsync(f => f.BlobSha256 == sha, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]
@@ -384,20 +384,19 @@ public sealed class DocumentReleaseTests
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
         var sha = await StoreAsync(documents, "kept because the catalogue refuses");
-        var file = await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), sha, "a.txt");
-        await db.Database.ExecuteSqlRawAsync(
-            "CREATE TRIGGER refuse_blob_delete BEFORE DELETE ON blobs BEGIN SELECT RAISE(ABORT, 'refused'); END");
+        var file = await documents.AttachAsync(await CorpusAsync(db, IndexingHarness.CorpusId), sha, "a.txt", TestContext.Current.CancellationToken);
+        await db.Database.ExecuteSqlRawAsync("CREATE TRIGGER refuse_blob_delete BEFORE DELETE ON blobs BEGIN SELECT RAISE(ABORT, 'refused'); END", cancellationToken: TestContext.Current.CancellationToken);
         var logs = new RecordingLoggerFactory();
         var detaching = harness.NewDocumentService(db, new Logger<DocumentService>(logs));
 
-        (await detaching.DetachAsync(IndexingHarness.CorpusId, file.Id)).ShouldBeTrue();
+        (await detaching.DetachAsync(IndexingHarness.CorpusId, file.Id, TestContext.Current.CancellationToken)).ShouldBeTrue();
 
         (await HeldAsync(harness, documents, sha)).ShouldBe((true, true, true), "the delete was refused");
         await using var check = harness.NewContext();
-        (await check.Files.AnyAsync(f => f.Id == file.Id)).ShouldBeFalse("the detach itself was saved");
+        (await check.Files.AnyAsync(f => f.Id == file.Id, cancellationToken: TestContext.Current.CancellationToken)).ShouldBeFalse("the detach itself was saved");
         logs.Levels.ShouldBe([LogLevel.Warning]);
         logs.Exceptions.ShouldHaveSingleItem().ShouldBeAssignableTo<System.Data.Common.DbException>();
-        await db.Database.ExecuteSqlRawAsync("DROP TRIGGER refuse_blob_delete");
+        await db.Database.ExecuteSqlRawAsync("DROP TRIGGER refuse_blob_delete", cancellationToken: TestContext.Current.CancellationToken);
         await Bootstrapper.ReleaseUnheldDocumentsAsync(db, harness.Settings.Value, NullLogger.Instance);
         (await HeldAsync(harness, documents, sha)).ShouldBe((false, false, false), "the next start deletes it");
     }
@@ -411,14 +410,14 @@ public sealed class DocumentReleaseTests
         var corpus = await CorpusAsync(db, IndexingHarness.CorpusId);
         var papers = await AddCorpusAsync(harness, db, "papers");
         var sha = await StoreAsync(documents, "deleted between the lookup and the attach");
-        var held = await documents.AttachAsync(papers, sha, "a.txt");
-        await documents.DetachAsync(papers.Id, held.Id);
+        var held = await documents.AttachAsync(papers, sha, "a.txt", TestContext.Current.CancellationToken);
+        await documents.DetachAsync(papers.Id, held.Id, TestContext.Current.CancellationToken);
 
         var thrown = await Should.ThrowAsync<DocumentGoneException>(() => documents.AttachAsync(corpus, sha, "a.txt"));
 
         thrown.Message.ShouldContain("Upload it again");
         await using var check = harness.NewContext();
-        (await check.Files.CountAsync(f => f.BlobSha256 == sha)).ShouldBe(0);
+        (await check.Files.CountAsync(f => f.BlobSha256 == sha, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]
@@ -429,14 +428,14 @@ public sealed class DocumentReleaseTests
         var documents = harness.NewDocumentService(db);
         var corpus = await CorpusAsync(db, IndexingHarness.CorpusId);
         var sha = await StoreAsync(documents, "come back");
-        var file = await documents.AttachAsync(corpus, sha, "a.txt");
-        await documents.DetachAsync(corpus.Id, file.Id);
+        var file = await documents.AttachAsync(corpus, sha, "a.txt", TestContext.Current.CancellationToken);
+        await documents.DetachAsync(corpus.Id, file.Id, TestContext.Current.CancellationToken);
 
-        var again = await documents.StoreAsync(new MemoryStream("come back"u8.ToArray()), "a.txt");
+        var again = await documents.StoreAsync(new MemoryStream("come back"u8.ToArray()), "a.txt", TestContext.Current.CancellationToken);
 
         again.Sha256.ShouldBe(sha);
         again.AlreadyExisted.ShouldBeFalse("the document was deleted, so it is stored as new");
-        await documents.AttachAsync(corpus, again.Sha256, "a.txt");
+        await documents.AttachAsync(corpus, again.Sha256, "a.txt", TestContext.Current.CancellationToken);
         (await HeldAsync(harness, documents, sha)).ShouldBe((true, true, true));
     }
 }

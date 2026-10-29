@@ -153,7 +153,7 @@ public sealed class IndexingActivityTests
         await using (var db = harness.NewContext())
         {
             db.Corpora.Add(new Corpus { Id = "corpus-2", Name = "other", CreatedUtc = DateTime.UtcNow });
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
         await AddJobAsync(harness, JobState.Queued, corpusId: "corpus-2");
 
@@ -171,8 +171,8 @@ public sealed class IndexingActivityTests
         await using var harness = await StartAsync();
         await using (var db = harness.NewContext())
         {
-            await db.Corpora.ExecuteUpdateAsync(u => u.SetProperty(c => c.State, outcome));
-            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.State, outcome));
+            await db.Corpora.ExecuteUpdateAsync(u => u.SetProperty(c => c.State, outcome), cancellationToken: TestContext.Current.CancellationToken);
+            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.State, outcome), cancellationToken: TestContext.Current.CancellationToken);
         }
         await AddJobAsync(harness, JobState.Running);
         await HoldAsync(harness, $"{IndexingActivity.HolderPrefix}{JobId}", TimeSpan.FromMinutes(-5));
@@ -194,8 +194,8 @@ public sealed class IndexingActivityTests
         await using var harness = await StartAsync();
         await using (var db = harness.NewContext())
         {
-            await db.Corpora.ExecuteUpdateAsync(u => u.SetProperty(c => c.State, outcome));
-            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.State, outcome));
+            await db.Corpora.ExecuteUpdateAsync(u => u.SetProperty(c => c.State, outcome), cancellationToken: TestContext.Current.CancellationToken);
+            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.State, outcome), cancellationToken: TestContext.Current.CancellationToken);
         }
 
         using var caller = new CancellationTokenSource();
@@ -207,14 +207,14 @@ public sealed class IndexingActivityTests
         job.State.ShouldBe(JobState.Cancelled);
 
         await using var read = harness.NewContext();
-        var row = await read.Jobs.AsNoTracking().SingleAsync();
+        var row = await read.Jobs.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         row.State.ShouldBe(JobState.Cancelled);
         row.FinishedUtc.ShouldNotBeNull();
 
-        var corpus = await read.Corpora.AsNoTracking().SingleAsync();
+        var corpus = await read.Corpora.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         corpus.State.ShouldBe(outcome);
         corpus.HeldBy.ShouldBeNull("the lease is released when the pass ends");
-        (await read.ChunkSets.AsNoTracking().SingleAsync()).State.ShouldBe(outcome);
+        (await read.ChunkSets.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).State.ShouldBe(outcome);
     }
 
     // ---- what the API reports ---------------------------------------------------------
@@ -226,16 +226,16 @@ public sealed class IndexingActivityTests
         await AddJobAsync(harness, JobState.Queued, chunkSetId: "set-2");
 
         await using var db = harness.NewContext();
-        var corpus = await db.Corpora.AsNoTracking().SingleAsync();
+        var corpus = await db.Corpora.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-        var during = await CorpusEndpoints.Summarise(db, corpus, harness.Settings.Value.Indexing, default);
+        var during = await CorpusEndpoints.Summarise(db, corpus, harness.Settings.Value.Indexing, TestContext.Current.CancellationToken);
         during.State.ShouldBe("indexing");
         during.ChunkSets.Single(s => s.Name == "alt-1").State.ShouldBe("indexing");
         during.ChunkSets.Single(s => s.Name == "default").State.ShouldBe("ready");
 
-        await db.Jobs.ExecuteUpdateAsync(u => u.SetProperty(j => j.State, JobState.Succeeded));
+        await db.Jobs.ExecuteUpdateAsync(u => u.SetProperty(j => j.State, JobState.Succeeded), cancellationToken: TestContext.Current.CancellationToken);
 
-        var after = await CorpusEndpoints.Summarise(db, corpus, harness.Settings.Value.Indexing, default);
+        var after = await CorpusEndpoints.Summarise(db, corpus, harness.Settings.Value.Indexing, TestContext.Current.CancellationToken);
         after.State.ShouldBe("ready");
         after.ChunkSets.ShouldAllBe(s => s.State == "ready");
     }
@@ -280,7 +280,7 @@ public sealed class IndexingActivityTests
         await harness.RunRefreshTickAsync();
 
         await using var db = harness.NewContext();
-        (await db.Jobs.CountAsync()).ShouldBe(1, "the job already queued is what will run");
+        (await db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "the job already queued is what will run");
     }
 
     [Fact]
@@ -310,11 +310,11 @@ public sealed class IndexingActivityTests
             await using var db = new CatalogDbContext(new DbContextOptionsBuilder<CatalogDbContext>()
                 .UseSqlite($"Data Source={path};Pooling=False").Options);
 
-            await db.Database.MigrateAsync();
+            await db.Database.MigrateAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-            (await db.Database.GetAppliedMigrationsAsync())
+            (await db.Database.GetAppliedMigrationsAsync(cancellationToken: TestContext.Current.CancellationToken))
                 .ShouldContain("20261007020000_IndexingIsNotStored");
-            (await db.Database.GetPendingMigrationsAsync()).ShouldBeEmpty();
+            (await db.Database.GetPendingMigrationsAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeEmpty();
             db.Database.HasPendingModelChanges().ShouldBeFalse();
         }
         finally
@@ -330,14 +330,14 @@ public sealed class IndexingActivityTests
         await using var db = harness.NewContext();
 
         // Written as text, which is how the column holds the enum.
-        await db.Database.ExecuteSqlRawAsync("UPDATE corpora SET State = 'Indexing'");
-        await db.Database.ExecuteSqlRawAsync("UPDATE chunk_sets SET State = 'Indexing' WHERE Id = 'set-1'");
-        await db.Database.ExecuteSqlRawAsync("UPDATE chunk_sets SET State = 'Unavailable' WHERE Id = 'set-2'");
+        await db.Database.ExecuteSqlRawAsync("UPDATE corpora SET State = 'Indexing'", cancellationToken: TestContext.Current.CancellationToken);
+        await db.Database.ExecuteSqlRawAsync("UPDATE chunk_sets SET State = 'Indexing' WHERE Id = 'set-1'", cancellationToken: TestContext.Current.CancellationToken);
+        await db.Database.ExecuteSqlRawAsync("UPDATE chunk_sets SET State = 'Unavailable' WHERE Id = 'set-2'", cancellationToken: TestContext.Current.CancellationToken);
 
-        await db.Database.ExecuteSqlRawAsync(IndexingIsNotStored.ClearStoredIndexingSql);
+        await db.Database.ExecuteSqlRawAsync(IndexingIsNotStored.ClearStoredIndexingSql, cancellationToken: TestContext.Current.CancellationToken);
 
-        (await db.Corpora.AsNoTracking().SingleAsync()).State.ShouldBe(CorpusState.Degraded);
-        var sets = await db.ChunkSets.AsNoTracking().ToDictionaryAsync(s => s.Id, s => s.State);
+        (await db.Corpora.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).State.ShouldBe(CorpusState.Degraded);
+        var sets = await db.ChunkSets.AsNoTracking().ToDictionaryAsync(s => s.Id, s => s.State, cancellationToken: TestContext.Current.CancellationToken);
         sets["set-1"].ShouldBe(CorpusState.Degraded);
         sets["set-2"].ShouldBe(CorpusState.Unavailable, "not Indexing, so not touched");
         sets["set-3"].ShouldBe(CorpusState.Ready);

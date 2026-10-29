@@ -101,16 +101,16 @@ public sealed class HostLoggingTests : IDisposable
         const string sha = "ab00000000000000000000000000000000000000000000000000000000000001";
         var bytes = Path.Combine(storage.BlobRoot, sha[..2], sha);
         Directory.CreateDirectory(Path.GetDirectoryName(bytes)!);
-        await File.WriteAllTextAsync(bytes, "left by an earlier version");
+        await File.WriteAllTextAsync(bytes, "left by an earlier version", TestContext.Current.CancellationToken);
         var partialUpload = Path.Combine(storage.BlobRoot, $".incoming-{Guid.NewGuid():N}");
-        await File.WriteAllTextAsync(partialUpload, "a crash left this");
+        await File.WriteAllTextAsync(partialUpload, "a crash left this", TestContext.Current.CancellationToken);
         var options = new DbContextOptionsBuilder<CatalogDbContext>()
             .UseSqlite($"Data Source={storage.CatalogPath};Pooling=False").Options;
         await using (var seed = new CatalogDbContext(options))
         {
-            await seed.Database.MigrateAsync();
+            await seed.Database.MigrateAsync(cancellationToken: TestContext.Current.CancellationToken);
             seed.Blobs.Add(new Blob { Sha256 = sha, SizeBytes = 26, CreatedUtc = DateTime.UtcNow });
-            await seed.SaveChangesAsync();
+            await seed.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var captured = new StringWriter();
@@ -118,7 +118,7 @@ public sealed class HostLoggingTests : IDisposable
         await using (var factory = new WebApplicationFactory<Program>()) _ = factory.Services;
 
         await using var check = new CatalogDbContext(options);
-        (await check.Blobs.CountAsync(b => b.Sha256 == sha)).ShouldBe(0);
+        (await check.Blobs.CountAsync(b => b.Sha256 == sha, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
         File.Exists(bytes).ShouldBeFalse();
         File.Exists(partialUpload).ShouldBeFalse("the sweep of the blob root runs at startup too");
         var lines = TestText.Lines(captured.ToString());

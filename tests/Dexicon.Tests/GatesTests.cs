@@ -49,7 +49,7 @@ public sealed class GatesTests
         late.SetResult(owner);
 
         var until = DateTime.UtcNow.AddSeconds(10);
-        while (Volatile.Read(ref owner.Disposed) == 0 && DateTime.UtcNow < until) await Task.Delay(10);
+        while (Volatile.Read(ref owner.Disposed) == 0 && DateTime.UtcNow < until) await Task.Delay(10, TestContext.Current.CancellationToken);
         owner.Disposed.ShouldBe(1, "what was taken late is given back");
     }
 }
