@@ -43,21 +43,21 @@ public sealed class DiskFullTests
             throw DiskFull.Refusal();
         };
 
-        var job = await harness.RunIndexAsync(log: logs.CreateLogger<CorpusIndexer>());
+        var job = await harness.RunIndexAsync(log: logs.CreateLogger<CorpusIndexer>(), cancel: TestContext.Current.CancellationToken);
 
         disk.SavesRefused.ShouldBe(2, "the window has to have been opened, and both refusals were the failure's own save");
         job.State.ShouldBe(JobState.Failed);
 
         await using var db = harness.NewContext();
-        var row = await db.Jobs.AsNoTracking().SingleAsync();
+        var row = await db.Jobs.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         row.State.ShouldBe(JobState.Failed, "recorded, not left running");
         row.FinishedUtc.ShouldNotBeNull();
         row.Error.ShouldNotBeNull().ShouldContain("database or disk is full");
 
-        var corpus = await db.Corpora.AsNoTracking().SingleAsync();
+        var corpus = await db.Corpora.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         corpus.State.ShouldBe(CorpusState.Degraded);
         corpus.HeldBy.ShouldBeNull("released, as it is when the outcome is recorded");
-        (await db.ChunkSets.AsNoTracking().SingleAsync()).State.ShouldBe(CorpusState.Degraded);
+        (await db.ChunkSets.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).State.ShouldBe(CorpusState.Degraded);
 
         logs.Lines.ShouldContain(l => l.Contains("Recorded the outcome of job")
                                       && l.Contains($"attempt 3 of {CorpusIndexer.SaveAttempts}"));
@@ -86,7 +86,7 @@ public sealed class DiskFullTests
         CorpusIndexer.SaveAttempts.ShouldBeGreaterThan(1, "one attempt is not a retry");
 
         await using var db = harness.NewContext();
-        var row = await db.Jobs.AsNoTracking().SingleAsync();
+        var row = await db.Jobs.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         row.State.ShouldBe(JobState.Running, "nothing could be written");
 
         var gaveUp = logs.Lines.Single(l => l.Contains("Gave up recording the outcome"));
@@ -134,7 +134,7 @@ public sealed class DiskFullTests
         disk.Fired.ShouldBeTrue("the window has to have been opened");
 
         await using var db = harness.NewContext();
-        (await db.Jobs.AsNoTracking().SingleAsync()).State.ShouldBe(JobState.Queued);
+        (await db.Jobs.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).State.ShouldBe(JobState.Queued);
 
         var gaveUp = logs.Lines.Single(l => l.Contains("Gave up recording the outcome"));
         gaveUp.ShouldContain("the job reads Queued in the catalogue");
@@ -151,7 +151,7 @@ public sealed class DiskFullTests
         // refused while the job's own row can still be written. A job that never held the
         // corpus does not write the corpus or its sets, and had its outcome dropped with them:
         // the row stayed Queued with no reason and no finish time.
-        var job = await harness.RunIndexAsync(beforePass: () => disk.RefuseWritesTo("corpora"));
+        var job = await harness.RunIndexAsync(beforePass: () => disk.RefuseWritesTo("corpora"), cancel: TestContext.Current.CancellationToken);
         disk.Free();
 
         disk.Fired.ShouldBeTrue("the window has to have been opened");
@@ -159,27 +159,27 @@ public sealed class DiskFullTests
         job.State.ShouldBe(JobState.Failed);
 
         await using var db = harness.NewContext();
-        var row = await db.Jobs.AsNoTracking().SingleAsync();
+        var row = await db.Jobs.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         row.State.ShouldBe(JobState.Failed, "recorded, not left queued");
         row.FinishedUtc.ShouldNotBeNull();
         row.StartedUtc.ShouldBeNull("it never got as far as running");
         row.Error.ShouldNotBeNull().ShouldContain("database or disk is full");
 
         // Not the job's to write, and not written.
-        var corpus = await db.Corpora.AsNoTracking().SingleAsync();
+        var corpus = await db.Corpora.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         corpus.State.ShouldBe(CorpusState.Ready);
         corpus.HeldBy.ShouldBeNull();
-        (await db.ChunkSets.AsNoTracking().SingleAsync()).State.ShouldBe(CorpusState.Ready);
+        (await db.ChunkSets.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).State.ShouldBe(CorpusState.Ready);
 
         // A Queued row is what a later request coalesces onto, and nothing puts such a job
         // back on the scheduler, so it would never run.
         var queue = new IndexJobQueue(db, new WorkScheduler(harness.Settings),
             NullLogger<IndexJobQueue>.Instance);
-        var next = await queue.EnqueueAsync(IndexingHarness.CorpusId, JobKind.Refresh);
+        var next = await queue.EnqueueAsync(IndexingHarness.CorpusId, JobKind.Refresh, ct: TestContext.Current.CancellationToken);
 
         next.Id.ShouldNotBe(row.Id, "not coalesced onto the failed job");
         next.State.ShouldBe(JobState.Queued);
-        (await db.Jobs.AsNoTracking().CountAsync()).ShouldBe(2);
+        (await db.Jobs.AsNoTracking().CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2);
     }
 
     [Fact]
@@ -195,14 +195,14 @@ public sealed class DiskFullTests
         {
             disk.RefuseWritesTo("corpora");
             disk.RefuseSaves(2);
-        });
+        }, cancel: TestContext.Current.CancellationToken);
         disk.Free();
 
         disk.SavesRefused.ShouldBe(2, "the window has to have been opened");
         disk.WritesRefused.ShouldBe(1, "the lease claim, and no later attempt to write the corpus");
 
         await using var db = harness.NewContext();
-        var row = await db.Jobs.AsNoTracking().SingleAsync();
+        var row = await db.Jobs.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         row.Id.ShouldBe(job.Id);
         row.State.ShouldBe(JobState.Failed);
         row.FinishedUtc.ShouldNotBeNull();
@@ -241,7 +241,7 @@ public sealed class DiskFullTests
             cancelled = ct.IsCancellationRequested;
         };
 
-        var job = await harness.RunIndexAsync(log: logs.CreateLogger<CorpusIndexer>(), leases: leases);
+        var job = await harness.RunIndexAsync(log: logs.CreateLogger<CorpusIndexer>(), leases: leases, cancel: TestContext.Current.CancellationToken);
         disk.Free();
 
         disk.Fired.ShouldBeTrue("the window has to have been opened");
@@ -253,20 +253,20 @@ public sealed class DiskFullTests
         // and the row keeps the outcome of the last pass. It never held Indexing, so there is
         // nothing for a job that stops to leave behind.
         await using var db = harness.NewContext();
-        var row = await db.Jobs.AsNoTracking().SingleAsync();
+        var row = await db.Jobs.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         row.State.ShouldBe(JobState.Failed, "recorded, not left running");
         row.FinishedUtc.ShouldNotBeNull();
         row.Error.ShouldNotBeNull().ShouldContain("is not available");
 
-        var corpus = await db.Corpora.AsNoTracking().SingleAsync();
+        var corpus = await db.Corpora.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         corpus.State.ShouldBe(CorpusState.Ready, "not what this pass decided");
         corpus.HeldBy.ShouldBe($"index-{row.Id}", "a hold that was lost is not released");
-        (await db.ChunkSets.AsNoTracking().ToListAsync()).ShouldAllBe(s => s.State == CorpusState.Ready);
+        (await db.ChunkSets.AsNoTracking().ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldAllBe(s => s.State == CorpusState.Ready);
 
         logs.Lines.ShouldContain(l => l.Contains(row.Id) && l.Contains("lost its lease"));
 
         // And it does not read as indexing: the job is finished, whatever lease is left.
-        var activity = await IndexingActivity.ReadAsync(db, [corpus.Id]);
+        var activity = await IndexingActivity.ReadAsync(db, [corpus.Id], TestContext.Current.CancellationToken);
         activity.Of(corpus).ShouldBe(CorpusState.Ready);
     }
 
@@ -289,32 +289,32 @@ public sealed class DiskFullTests
         // What the outage left, which is the state found in production: the job reads
         // Running, and the lease is still named for it because its release was refused as well.
         await using var db = harness.NewContext();
-        var stuck = await db.Jobs.AsNoTracking().SingleAsync();
+        var stuck = await db.Jobs.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         stuck.State.ShouldBe(JobState.Running);
-        var corpus = await db.Corpora.AsNoTracking().SingleAsync();
+        var corpus = await db.Corpora.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         corpus.HeldBy.ShouldBe($"index-{stuck.Id}");
         corpus.State.ShouldBe(CorpusState.Ready, "the job never wrote Indexing, so it cannot have left it");
 
         // The lease was renewed moments ago. A job that has stopped cannot be told from one that
         // is slow until the lease has had time to lapse, so it still counts.
-        (await IndexingActivity.ReadAsync(db, [corpus.Id])).Of(corpus).ShouldBe(CorpusState.Indexing);
+        (await IndexingActivity.ReadAsync(db, [corpus.Id], TestContext.Current.CancellationToken)).Of(corpus).ShouldBe(CorpusState.Indexing);
         await harness.RunRefreshTickAsync();
-        (await db.Jobs.CountAsync(j => j.State == JobState.Queued)).ShouldBe(0, "a corpus a job holds is not refreshed");
+        (await db.Jobs.CountAsync(j => j.State == JobState.Queued, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0, "a corpus a job holds is not refreshed");
 
         // The time a lease takes to lapse, without waiting it out.
         await db.Corpora.ExecuteUpdateAsync(u => u
-            .SetProperty(c => c.HeldUntilUtc, DateTime.UtcNow.AddMinutes(-1)));
+            .SetProperty(c => c.HeldUntilUtc, DateTime.UtcNow.AddMinutes(-1)), cancellationToken: TestContext.Current.CancellationToken);
 
-        (await IndexingActivity.ReadAsync(db, [corpus.Id])).Of(corpus)
+        (await IndexingActivity.ReadAsync(db, [corpus.Id], TestContext.Current.CancellationToken)).Of(corpus)
             .ShouldBe(CorpusState.Ready, "nothing renews the lease, so the job no longer counts and the outcome stands");
 
         // The refresh that was held out for six hours now runs, with nothing repaired first.
         await harness.RunRefreshTickAsync();
-        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh && j.State == JobState.Queued))
+        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh && j.State == JobState.Queued, cancellationToken: TestContext.Current.CancellationToken))
             .ShouldBe(1, "the corpus is refreshed by the next tick");
 
         // The stopped job's row is not rewritten. Nothing reads it as work, and the next start
         // marks it failed.
-        (await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == stuck.Id)).State.ShouldBe(JobState.Running);
+        (await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == stuck.Id, cancellationToken: TestContext.Current.CancellationToken)).State.ShouldBe(JobState.Running);
     }
 }

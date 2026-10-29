@@ -100,7 +100,7 @@ public sealed class SqlitePragmaTests : IDisposable
             w.ExecuteNonQuery();
         }
 
-        var released = Task.Run(async () => { await Task.Delay(400); tx.Commit(); });
+        var released = Task.Run(async () => { await Task.Delay(400); tx.Commit(); }, TestContext.Current.CancellationToken);
 
         using var second = new SqliteConnection($"Data Source={_path}");
         second.Open();

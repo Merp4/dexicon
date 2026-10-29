@@ -105,7 +105,7 @@ public sealed class CommittedChangeTests
         using var cts = new CancellationTokenSource();
         watcher.Cts = cts;
         await using var db = harness.NewContext();
-        var corpus = await db.Corpora.SingleAsync();
+        var corpus = await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         watcher.Armed = true;
 
         var outcome = await harness.NewConfiguration(db).UpdateCorpusAsync(corpus,
@@ -114,7 +114,7 @@ public sealed class CommittedChangeTests
         watcher.Fired.ShouldBeTrue("the window has to have been opened");
         outcome.Refusal.ShouldBeNull();
         outcome.Value.ShouldBeTrue();
-        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh)).ShouldBe(1, "the saved change has its job");
+        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "the saved change has its job");
     }
 
     [Fact]
@@ -127,15 +127,15 @@ public sealed class CommittedChangeTests
         using var cts = new CancellationTokenSource();
         watcher.Cts = cts;
         await using var db = harness.NewContext();
-        var corpus = await db.Corpora.SingleAsync();
+        var corpus = await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         watcher.Armed = true;
 
         var outcome = await harness.NewConfiguration(db).AddSourceAsync(corpus, new AddSourceRequest("extra"), cts.Token);
 
         watcher.Fired.ShouldBeTrue("the window has to have been opened");
         outcome.Refusal.ShouldBeNull();
-        (await db.Sources.CountAsync(s => s.RootPath == "extra")).ShouldBe(1);
-        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh)).ShouldBe(1, "the saved source has its job");
+        (await db.Sources.CountAsync(s => s.RootPath == "extra", cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
+        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "the saved source has its job");
     }
 
     /// <summary>A vector store that passes everything to <paramref name="inner"/>, for a test to override one call.</summary>
@@ -216,8 +216,8 @@ public sealed class CommittedChangeTests
 
         vectors.Called.ShouldBeTrue("the window has to have been opened");
         outcome.Refusal.ShouldBeNull();
-        var papers = await db.Corpora.AsNoTracking().SingleAsync(c => c.Name == "papers");
-        (await db.Jobs.CountAsync(j => j.CorpusId == papers.Id && j.Kind == JobKind.Full)).ShouldBe(1, "the new corpus has its job");
+        var papers = await db.Corpora.AsNoTracking().SingleAsync(c => c.Name == "papers", cancellationToken: TestContext.Current.CancellationToken);
+        (await db.Jobs.CountAsync(j => j.CorpusId == papers.Id && j.Kind == JobKind.Full, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "the new corpus has its job");
     }
 
     [Fact]
@@ -240,7 +240,7 @@ public sealed class CommittedChangeTests
             "papers", create: true));
 
         thrown.Message.ShouldContain("was created, but preparing its index failed");
-        (await db.Corpora.AnyAsync(c => c.Name == "papers")).ShouldBeTrue("the corpus is saved");
+        (await db.Corpora.AnyAsync(c => c.Name == "papers", cancellationToken: TestContext.Current.CancellationToken)).ShouldBeTrue("the corpus is saved");
         logs.Lines.ShouldContain(l => l.Contains("agent-nine") && l.Contains("created corpus papers"));
     }
 
@@ -265,7 +265,7 @@ public sealed class CommittedChangeTests
             harness.NewConfiguration(db, new EnsureThrows(harness.Vectors)), logs,
             "papers", create: true, description: "Conference papers", exclude: ["**/draft/**"], maxFileKb: 512));
 
-        var saved = await db.Corpora.AsNoTracking().SingleAsync(c => c.Name == "papers");
+        var saved = await db.Corpora.AsNoTracking().SingleAsync(c => c.Name == "papers", cancellationToken: TestContext.Current.CancellationToken);
         saved.DefaultsOf().ShouldBe(new CorpusDefaults(null, 512 * 1024, null, ["**/draft/**"]), new SameDefaults());
         logs.Lines.ShouldContain(l => l.Contains("agent-eight") && l.Contains("created corpus papers")
                                       && l.Contains("description, the filters its sources inherit"));
@@ -329,7 +329,7 @@ public sealed class CommittedChangeTests
         watcher.Cts = cts;
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
-        var stored = await documents.StoreAsync(new MemoryStream("some text to index"u8.ToArray()), "doc.txt");
+        var stored = await documents.StoreAsync(new MemoryStream("some text to index"u8.ToArray()), "doc.txt", TestContext.Current.CancellationToken);
         await harness.HoldElsewhereAsync(stored.Sha256);
         var rc = new RequestContext
         {
@@ -343,8 +343,8 @@ public sealed class CommittedChangeTests
 
         watcher.Fired.ShouldBeTrue("the window has to have been opened");
         result.ShouldBeOfType<Accepted<DocumentAttached>>();
-        (await db.Files.CountAsync(f => f.Source!.CorpusId == IndexingHarness.CorpusId)).ShouldBe(1);
-        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh)).ShouldBe(1, "the attached document has its job");
+        (await db.Files.CountAsync(f => f.Source!.CorpusId == IndexingHarness.CorpusId, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
+        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "the attached document has its job");
     }
 
     [Fact]
@@ -366,8 +366,8 @@ public sealed class CommittedChangeTests
 
         watcher.Fired.ShouldBeTrue("the window has to have been opened");
         outcome.Refusal.ShouldBeNull();
-        var papers = await db.Corpora.AsNoTracking().SingleAsync(c => c.Name == "papers");
-        (await db.Jobs.CountAsync(j => j.CorpusId == papers.Id && j.Kind == JobKind.Full)).ShouldBe(1, "the new corpus has its job");
+        var papers = await db.Corpora.AsNoTracking().SingleAsync(c => c.Name == "papers", cancellationToken: TestContext.Current.CancellationToken);
+        (await db.Jobs.CountAsync(j => j.CorpusId == papers.Id && j.Kind == JobKind.Full, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "the new corpus has its job");
     }
 
     private static RequestContext AsAdmin() => new()
@@ -394,8 +394,8 @@ public sealed class CommittedChangeTests
             harness.Embedder, QueueOn(harness, db), harness.Settings, cts.Token);
 
         vectors.Called.ShouldBeTrue("the window has to have been opened");
-        var second = await db.ChunkSets.AsNoTracking().SingleAsync(s => s.Name == "second");
-        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Rebuild && j.ChunkSetId == second.Id)).ShouldBe(1, "the saved set has its job");
+        var second = await db.ChunkSets.AsNoTracking().SingleAsync(s => s.Name == "second", cancellationToken: TestContext.Current.CancellationToken);
+        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Rebuild && j.ChunkSetId == second.Id, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "the saved set has its job");
         result.ShouldBeOfType<Accepted<ChunkSetCreated>>().Value!.ChunkSet.Name.ShouldBe("second", "the reply reports the saved set");
     }
 
@@ -415,8 +415,8 @@ public sealed class CommittedChangeTests
             harness.Embedder, QueueOn(harness, db), harness.Settings, cts.Token);
 
         watcher.Fired.ShouldBeTrue("the window has to have been opened");
-        var second = await db.ChunkSets.AsNoTracking().SingleAsync(s => s.Name == "second");
-        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Rebuild && j.ChunkSetId == second.Id)).ShouldBe(1, "the saved set has its job");
+        var second = await db.ChunkSets.AsNoTracking().SingleAsync(s => s.Name == "second", cancellationToken: TestContext.Current.CancellationToken);
+        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Rebuild && j.ChunkSetId == second.Id, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "the saved set has its job");
         result.ShouldBeOfType<Accepted<ChunkSetCreated>>().Value!.BackfillJob.Id.ShouldNotBeNullOrEmpty("the reply reports the job");
     }
 
@@ -437,8 +437,8 @@ public sealed class CommittedChangeTests
             new ScopeResolver(db), db, QueueOn(harness, db), cts.Token);
 
         watcher.Fired.ShouldBeTrue("the window has to have been opened");
-        (await db.ChunkSets.AsNoTracking().SingleAsync()).ChunkSize.ShouldBe(400, "the change is saved");
-        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh && j.ChunkSetId == "set-1")).ShouldBe(1, "the saved change has its job");
+        (await db.ChunkSets.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).ChunkSize.ShouldBe(400, "the change is saved");
+        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh && j.ChunkSetId == "set-1", cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "the saved change has its job");
         result.ShouldBeOfType<Ok<ChunkSetUpdated>>().Value!.RechunkJob.ShouldNotBeNull("the reply reports the job");
     }
 
@@ -460,7 +460,7 @@ public sealed class CommittedChangeTests
             logs, "notes", "extra", create: true));
 
         watcher.Fired.ShouldBeTrue("the window has to have been opened");
-        (await db.Sources.CountAsync(s => s.RootPath == "extra")).ShouldBe(1, "the source is saved");
+        (await db.Sources.CountAsync(s => s.RootPath == "extra", cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "the source is saved");
         logs.Lines.ShouldContain(l => l.Contains("agent-four") && l.Contains("added the source for the files under extra"));
     }
 
@@ -481,7 +481,7 @@ public sealed class CommittedChangeTests
             "notes", description: "Notes, edited", exclude: ["**/bin/**"]));
 
         watcher.Fired.ShouldBeTrue("the window has to have been opened");
-        (await db.Corpora.AsNoTracking().SingleAsync()).Description.ShouldBe("Notes, edited");
+        (await db.Corpora.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).Description.ShouldBe("Notes, edited");
         logs.Lines.ShouldContain(l => l.Contains("agent-three") && l.Contains("changed corpus notes")
                                       && l.Contains("description, the filters its sources inherit"));
     }
@@ -494,7 +494,7 @@ public sealed class CommittedChangeTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await using var db = harness.NewContext();
         var tokens = new TokenService(db, TimeProvider.System);
-        var (key, _) = await tokens.CreateAsync("agent", [Scopes.Search, Scopes.Configure], null);
+        var (key, _) = await tokens.CreateAsync("agent", [Scopes.Search, Scopes.Configure], null, ct: TestContext.Current.CancellationToken);
         using var cts = new CancellationTokenSource();
         watcher.Cts = cts;
         using var cache = new Microsoft.Extensions.Caching.Memory.MemoryCache(
@@ -518,7 +518,7 @@ public sealed class CommittedChangeTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await using var db = harness.NewContext();
-        await db.Corpora.ExecuteUpdateAsync(u => u.SetProperty(c => c.Name, "two\nlines"));
+        await db.Corpora.ExecuteUpdateAsync(u => u.SetProperty(c => c.Name, "two\nlines"), cancellationToken: TestContext.Current.CancellationToken);
 
         var thrown = await Should.ThrowAsync<McpException>(() => ConfigureTools.ConfigureCorpusAsync(
             Configure("k5", "agent\nforged"), new ScopeResolver(db), db, harness.NewConfiguration(db),
@@ -566,7 +566,7 @@ public sealed class CommittedChangeTests
 
         watcher.Fired.ShouldBeTrue("the window has to have been opened");
         result.ShouldBeOfType<Ok<CorpusUpdated>>().Value!.Corpus.Name.ShouldBe("notes");
-        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh)).ShouldBe(1, "the saved change has its job");
+        (await db.Jobs.CountAsync(j => j.Kind == JobKind.Refresh, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "the saved change has its job");
     }
 
     [Fact]
@@ -591,7 +591,7 @@ public sealed class CommittedChangeTests
 
         watcher.Fired.ShouldBeTrue("the window has to have been opened");
         await using var check = harness.NewContext();
-        (await check.Tokens.Where(t => t.Name == "agent").Select(t => new { t.AllCorpora, t.Corpora.Count }).ToListAsync())
+        (await check.Tokens.Where(t => t.Name == "agent").Select(t => new { t.AllCorpora, t.Corpora.Count }).ToListAsync(cancellationToken: TestContext.Current.CancellationToken))
             .ShouldAllBe(t => !t.AllCorpora && t.Count == 1, "a key that is saved reaches only the corpus it was issued for");
     }
 
@@ -603,17 +603,15 @@ public sealed class CommittedChangeTests
         await using var harness = await IndexingHarness.StartAsync("notes");
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await using var db = harness.NewContext();
-        var papers = (await harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("papers"), default)).Value!;
+        var papers = (await harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("papers"), TestContext.Current.CancellationToken)).Value!;
 
-        var result = await SystemEndpoints.CreateTokenAsync(
-            new CreateTokenRequest("agent", CorpusIds: [IndexingHarness.CorpusId, papers.Id]),
-            AsAdmin(), new TokenService(db, TimeProvider.System), db, default);
+        var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", CorpusIds: [IndexingHarness.CorpusId, papers.Id]), AsAdmin(), new TokenService(db, TimeProvider.System), db, TestContext.Current.CancellationToken);
 
         var created = result.ShouldBeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<CreatedTokenResponse>>().Value!;
         created.Token.CorpusIds.ShouldBe([IndexingHarness.CorpusId, papers.Id], ignoreOrder: true);
         created.Token.AllCorpora.ShouldBeFalse();
         await using var check = harness.NewContext();
-        (await check.TokenCorpora.Where(tc => tc.TokenId == created.Token.Id).Select(tc => tc.CorpusId).ToListAsync())
+        (await check.TokenCorpora.Where(tc => tc.TokenId == created.Token.Id).Select(tc => tc.CorpusId).ToListAsync(cancellationToken: TestContext.Current.CancellationToken))
             .ShouldBe([IndexingHarness.CorpusId, papers.Id], ignoreOrder: true);
     }
 
@@ -626,11 +624,10 @@ public sealed class CommittedChangeTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await using var db = harness.NewContext();
 
-        var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", CorpusIds: ["missing"]),
-            AsAdmin(), new TokenService(db, TimeProvider.System), db, default);
+        var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", CorpusIds: ["missing"]), AsAdmin(), new TokenService(db, TimeProvider.System), db, TestContext.Current.CancellationToken);
 
         ((Microsoft.AspNetCore.Http.IStatusCodeHttpResult)result).StatusCode.ShouldBe(400);
-        (await db.Tokens.CountAsync(t => t.Name == "agent")).ShouldBe(0, "a refused key is not saved");
+        (await db.Tokens.CountAsync(t => t.Name == "agent", cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0, "a refused key is not saved");
     }
 
     [Fact]
@@ -644,9 +641,9 @@ public sealed class CommittedChangeTests
         await using var harness = await IndexingHarness.StartAsync(watcher, "notes");
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await using var db = harness.NewContext();
-        var papers = (await harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("papers"), default)).Value!;
+        var papers = (await harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("papers"), TestContext.Current.CancellationToken)).Value!;
         var (key, _) = await new TokenService(db, TimeProvider.System)
-            .CreateAsync("agent", [Scopes.Search], null, [IndexingHarness.CorpusId]);
+            .CreateAsync("agent", [Scopes.Search], null, [IndexingHarness.CorpusId], TestContext.Current.CancellationToken);
         db.ChangeTracker.Clear();
         using var cts = new CancellationTokenSource();
         watcher.Cts = cts;
@@ -671,8 +668,8 @@ public sealed class CommittedChangeTests
         watcher.Cts = cts;
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
-        var stored = await documents.StoreAsync(new MemoryStream("some text to index"u8.ToArray()), "doc.txt");
-        var corpus = await db.Corpora.SingleAsync();
+        var stored = await documents.StoreAsync(new MemoryStream("some text to index"u8.ToArray()), "doc.txt", TestContext.Current.CancellationToken);
+        var corpus = await db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         watcher.Armed = true;
 
         try { await documents.AttachAsync(corpus, stored.Sha256, "doc.txt", cts.Token); }
@@ -680,8 +677,8 @@ public sealed class CommittedChangeTests
 
         watcher.Fired.ShouldBeTrue("the window has to have been opened");
         await using var check = harness.NewContext();
-        var uploads = await check.Sources.CountAsync(s => s.Kind == SourceKind.Upload);
-        var attached = await check.Files.CountAsync(f => f.BlobSha256 == stored.Sha256);
+        var uploads = await check.Sources.CountAsync(s => s.Kind == SourceKind.Upload, cancellationToken: TestContext.Current.CancellationToken);
+        var attached = await check.Files.CountAsync(f => f.BlobSha256 == stored.Sha256, cancellationToken: TestContext.Current.CancellationToken);
         uploads.ShouldBe(attached, "an upload source exists only with the document it was made for");
     }
 
@@ -706,15 +703,15 @@ public sealed class CommittedChangeTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await using var db = harness.NewContext();
         var (key, _) = await new TokenService(db, TimeProvider.System)
-            .CreateAsync("mapped", [Scopes.Configure], null, [IndexingHarness.CorpusId]);
+            .CreateAsync("mapped", [Scopes.Configure], null, [IndexingHarness.CorpusId], TestContext.Current.CancellationToken);
         await using var admin = harness.NewContext();
 
         Task<(Microsoft.AspNetCore.Http.IResult? Refusal, ApiToken? Key)> replacement;
-        await CorpusConfiguration.Naming.WaitAsync();
+        await CorpusConfiguration.Naming.WaitAsync(TestContext.Current.CancellationToken);
         try
         {
-            replacement = SystemEndpoints.MapCorporaAsync(admin, key.Id, null, default);
-            await Task.Delay(300);
+            replacement = SystemEndpoints.MapCorporaAsync(admin, key.Id, null, TestContext.Current.CancellationToken);
+            await Task.Delay(300, TestContext.Current.CancellationToken);
             replacement.IsCompleted.ShouldBeFalse("the replacement waits for the creation to finish");
         }
         finally
@@ -722,9 +719,9 @@ public sealed class CommittedChangeTests
             CorpusConfiguration.Naming.Release();
         }
 
-        (await replacement.WaitAsync(TimeSpan.FromSeconds(10))).Refusal.ShouldBeNull();
-        (await db.TokenCorpora.CountAsync(tc => tc.TokenId == key.Id)).ShouldBe(0, "cleared when the key is set to every corpus");
-        (await db.Tokens.AsNoTracking().SingleAsync(t => t.Id == key.Id)).AllCorpora.ShouldBeTrue();
+        (await replacement.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken)).Refusal.ShouldBeNull();
+        (await db.TokenCorpora.CountAsync(tc => tc.TokenId == key.Id, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0, "cleared when the key is set to every corpus");
+        (await db.Tokens.AsNoTracking().SingleAsync(t => t.Id == key.Id, cancellationToken: TestContext.Current.CancellationToken)).AllCorpora.ShouldBeTrue();
     }
 
     [Fact]
@@ -734,20 +731,20 @@ public sealed class CommittedChangeTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await using var db = harness.NewContext();
         var tokens = new TokenService(db, TimeProvider.System);
-        var (mapped, _) = await tokens.CreateAsync("mapped", [Scopes.Configure], null, [IndexingHarness.CorpusId]);
-        var (nothing, _) = await tokens.CreateAsync("nothing", [Scopes.Configure], null, []);
-        var (everything, _) = await tokens.CreateAsync("everything", [Scopes.Configure], null);
+        var (mapped, _) = await tokens.CreateAsync("mapped", [Scopes.Configure], null, [IndexingHarness.CorpusId], TestContext.Current.CancellationToken);
+        var (nothing, _) = await tokens.CreateAsync("nothing", [Scopes.Configure], null, [], TestContext.Current.CancellationToken);
+        var (everything, _) = await tokens.CreateAsync("everything", [Scopes.Configure], null, ct: TestContext.Current.CancellationToken);
         var config = harness.NewConfiguration(db);
 
-        var forMapped = (await config.CreateCorpusAsync(new CreateCorpusRequest("papers"), default, mapped.Id)).Value!;
-        var forNothing = (await config.CreateCorpusAsync(new CreateCorpusRequest("notebooks"), default, nothing.Id)).Value!;
-        await config.CreateCorpusAsync(new CreateCorpusRequest("books"), default, everything.Id);
-        await config.CreateCorpusAsync(new CreateCorpusRequest("misc"), default);
+        var forMapped = (await config.CreateCorpusAsync(new CreateCorpusRequest("papers"), TestContext.Current.CancellationToken, mapped.Id)).Value!;
+        var forNothing = (await config.CreateCorpusAsync(new CreateCorpusRequest("notebooks"), TestContext.Current.CancellationToken, nothing.Id)).Value!;
+        await config.CreateCorpusAsync(new CreateCorpusRequest("books"), TestContext.Current.CancellationToken, everything.Id);
+        await config.CreateCorpusAsync(new CreateCorpusRequest("misc"), TestContext.Current.CancellationToken);
 
-        (await db.TokenCorpora.Where(tc => tc.TokenId == mapped.Id).Select(tc => tc.CorpusId).ToListAsync())
+        (await db.TokenCorpora.Where(tc => tc.TokenId == mapped.Id).Select(tc => tc.CorpusId).ToListAsync(cancellationToken: TestContext.Current.CancellationToken))
             .ShouldBe([IndexingHarness.CorpusId, forMapped.Id], ignoreOrder: true);
-        (await db.TokenCorpora.Where(tc => tc.TokenId == nothing.Id).Select(tc => tc.CorpusId).ToListAsync())
+        (await db.TokenCorpora.Where(tc => tc.TokenId == nothing.Id).Select(tc => tc.CorpusId).ToListAsync(cancellationToken: TestContext.Current.CancellationToken))
             .ShouldBe([forNothing.Id], "a key restricted to nothing reaches the corpus it made, and no other");
-        (await db.TokenCorpora.CountAsync(tc => tc.TokenId == everything.Id)).ShouldBe(0, "it reaches every corpus without a row");
+        (await db.TokenCorpora.CountAsync(tc => tc.TokenId == everything.Id, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0, "it reaches every corpus without a row");
     }
 }

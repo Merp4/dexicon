@@ -76,8 +76,8 @@ public sealed class ContextExpansionScopeTests
         await using var db = new CatalogDbContext(
             new DbContextOptionsBuilder<CatalogDbContext>()
                 .UseSqlite("DataSource=:memory:").Options);
-        await db.Database.OpenConnectionAsync();
-        await db.Database.EnsureCreatedAsync();
+        await db.Database.OpenConnectionAsync(cancellationToken: TestContext.Current.CancellationToken);
+        await db.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
 
         var corpus = new Corpus { Id = "01BOOKS", Name = "books", State = CorpusState.Ready };
         corpus.ChunkSets.Add(new ChunkSet
@@ -111,14 +111,14 @@ public sealed class ContextExpansionScopeTests
             State = CorpusState.Ready,
         });
         db.Corpora.Add(corpus);
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var scopes = new ScopeResolver(db);
         var principal = new Principal("admin-session", "admin",
             new HashSet<string>(StringComparer.Ordinal) { Scopes.Admin });
 
-        var bare = await scopes.ResolveReadableAsync(principal, ["books"]);
-        var qualified = await scopes.ResolveReadableAsync(principal, ["books:fine"]);
+        var bare = await scopes.ResolveReadableAsync(principal, ["books"], TestContext.Current.CancellationToken);
+        var qualified = await scopes.ResolveReadableAsync(principal, ["books:fine"], TestContext.Current.CancellationToken);
 
         bare.Targets[0].Set.Name.ShouldBe("default");
         qualified.Targets[0].Set.Name.ShouldBe("fine");

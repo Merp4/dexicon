@@ -30,13 +30,13 @@ public sealed class DuplicatePathTests : IAsyncLifetime
 
     private IndexingHarness _harness = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _harness = await IndexingHarness.StartAsync("notes", "docs");
         await _harness.SeedCorpusAsync(SourceKind.Workspace);
     }
 
-    public async Task DisposeAsync() => await _harness.DisposeAsync();
+    public async ValueTask DisposeAsync() => await _harness.DisposeAsync();
 
     private static RequestContext Reader() => new()
     {

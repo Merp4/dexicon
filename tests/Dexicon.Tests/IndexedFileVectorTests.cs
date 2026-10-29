@@ -38,7 +38,7 @@ public sealed class IndexedFileVectorTests
         harness.Vectors.DropSilently("note.md");
         (await harness.StateOfAsync("note.md")).ContentHash.ShouldNotBeNull();
 
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         harness.Vectors.CountFor("note.md").ShouldBe(before,
             "the pass compares the recorded count against the index and re-indexes the difference");
@@ -56,7 +56,7 @@ public sealed class IndexedFileVectorTests
         // Long enough to chunk into several pieces, so some can go missing.
         await harness.WriteFileAsync("long.md",
             string.Join("\n\n", Enumerable.Range(1, 400).Select(i => $"Paragraph {i} of the document.")));
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var before = harness.Vectors.CountFor("long.md");
         before.ShouldBeGreaterThan(1, "this test needs a file of more than one chunk");
@@ -64,7 +64,7 @@ public sealed class IndexedFileVectorTests
         harness.Vectors.DropOne("long.md");
         harness.Vectors.CountFor("long.md").ShouldBe(before - 1);
 
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         harness.Vectors.CountFor("long.md").ShouldBe(before);
     }
@@ -81,7 +81,7 @@ public sealed class IndexedFileVectorTests
         harness.Vectors.AddStraySilently("note.md");
         harness.Vectors.CountFor("note.md").ShouldBe(recorded + 1);
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.FilesDone.ShouldBe(1, "a surplus is re-indexed, not ignored");
         harness.Vectors.CountFor("note.md").ShouldBe(recorded,
@@ -103,7 +103,7 @@ public sealed class IndexedFileVectorTests
         File.Delete(Path.Combine(harness.SourceDirectory, "note.md"));
         harness.Vectors.CountFor("note.md").ShouldBe(held, "the points outlive the row, as they did live");
 
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         harness.Vectors.CountFor("note.md").ShouldBe(0);
     }
@@ -118,13 +118,13 @@ public sealed class IndexedFileVectorTests
         File.Delete(Path.Combine(harness.SourceDirectory, "note.md"));
 
         harness.Vectors.DeletesThrow = true;
-        var failed = await harness.RunIndexAsync();
+        var failed = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         failed.State.ShouldBe(JobState.Succeeded);
         harness.Vectors.CountFor("note.md").ShouldBe(held);
 
         harness.Vectors.DeletesThrow = false;
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         harness.Vectors.CountFor("note.md").ShouldBe(0);
     }
@@ -139,7 +139,7 @@ public sealed class IndexedFileVectorTests
 
         await RemoveRowAsync(harness, "note.md");
 
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         harness.Vectors.CountFor("note.md").ShouldBe(held);
         (await harness.StateOfAsync("note.md")).ChunkCount.ShouldBe(held);
@@ -155,7 +155,7 @@ public sealed class IndexedFileVectorTests
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await AttachAsync(harness, "kept.md", "retrieval");
         await AttachAsync(harness, "orphaned.md", "chunking");
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         var kept = harness.Vectors.CountFor("kept.md");
         kept.ShouldBeGreaterThan(0);
         harness.Vectors.CountFor("orphaned.md").ShouldBeGreaterThan(0);
@@ -163,11 +163,11 @@ public sealed class IndexedFileVectorTests
         await RemoveRowAsync(harness, "orphaned.md");
         await using (var db = harness.NewContext())
         {
-            (await db.Files.SingleAsync(f => f.RelativePath == "kept.md")).BlobSha256 = null;
-            await db.SaveChangesAsync();
+            (await db.Files.SingleAsync(f => f.RelativePath == "kept.md", cancellationToken: TestContext.Current.CancellationToken)).BlobSha256 = null;
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         harness.Vectors.CountFor("orphaned.md").ShouldBe(0);
         harness.Vectors.CountFor("kept.md").ShouldBe(kept);
@@ -203,7 +203,7 @@ public sealed class IndexedFileVectorTests
         var before = harness.Vectors.CountFor("note.md");
 
         harness.Vectors.CountsAreIncomplete = true;
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.State.ShouldBe(JobState.Succeeded);
         job.FilesDone.ShouldBe(0, "nothing may be re-indexed on the strength of an incomplete answer");
@@ -219,7 +219,7 @@ public sealed class IndexedFileVectorTests
         var before = harness.Vectors.CountFor("note.md");
 
         harness.Vectors.CountsThrow = true;
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         job.State.ShouldBe(JobState.Succeeded);
         job.FilesDone.ShouldBe(0);
@@ -245,7 +245,7 @@ public sealed class IndexedFileVectorTests
 
         // It escapes every per-file catch and ends the job, which is the point: no
         // handler runs for this file, so nothing tidies its row on the way out.
-        var abandoned = await harness.RunIndexAsync();
+        var abandoned = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         abandoned.State.ShouldBe(JobState.Failed);
 
         var state = await harness.StateOfAsync("note.md");
@@ -253,7 +253,7 @@ public sealed class IndexedFileVectorTests
             "a row still carrying its hash here is skipped by every later refresh, for good");
 
         // And it is recoverable: the next pass indexes it rather than short-circuiting.
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var after = await harness.StateOfAsync("note.md");
         after.Status.ShouldBe(FileStatus.Indexed);
@@ -274,14 +274,14 @@ public sealed class IndexedFileVectorTests
         {
             var documents = harness.NewDocumentService(db);
             var corpus = await db.Corpora.Include(c => c.Sources).Include(c => c.ChunkSets)
-                .FirstAsync(c => c.Id == IndexingHarness.CorpusId);
+                .FirstAsync(c => c.Id == IndexingHarness.CorpusId, cancellationToken: TestContext.Current.CancellationToken);
             using var bytes = new MemoryStream(
                 System.Text.Encoding.UTF8.GetBytes(IndexingHarness.Prose("interruption")));
-            sha = (await documents.StoreAsync(bytes, "paper.md")).Sha256;
-            await documents.AttachAsync(corpus, sha, "paper.md");
+            sha = (await documents.StoreAsync(bytes, "paper.md", TestContext.Current.CancellationToken)).Sha256;
+            await documents.AttachAsync(corpus, sha, "paper.md", TestContext.Current.CancellationToken);
         }
 
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         (await harness.StateOfAsync("paper.md")).ContentHash.ShouldNotBeNull();
 
         // Stale but PRESENT, which is the state the assertion below is about: nulling it
@@ -291,19 +291,19 @@ public sealed class IndexedFileVectorTests
         // to change it.
         await using (var db = harness.NewContext())
         {
-            var state = await db.FileChunkStates.FirstAsync();
+            var state = await db.FileChunkStates.FirstAsync(cancellationToken: TestContext.Current.CancellationToken);
             state.ContentHash = "a-fingerprint-from-some-earlier-setting";
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
         harness.Vectors.AbandonNextDelete = true;
 
-        var abandoned = await harness.RunIndexAsync();
+        var abandoned = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         abandoned.State.ShouldBe(JobState.Failed);
 
         (await harness.StateOfAsync("paper.md")).ContentHash.ShouldBeNull(
             "a row still carrying its hash here is skipped by every later refresh, for good");
 
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         var after = await harness.StateOfAsync("paper.md");
         after.Status.ShouldBe(FileStatus.Indexed);
         harness.Vectors.CountFor("paper.md").ShouldBeGreaterThan(0);
@@ -317,7 +317,7 @@ public sealed class IndexedFileVectorTests
         await using var harness = await IndexingHarness.StartAsync();
         await harness.SeedCorpusAsync(SourceKind.Workspace, sets: 2);
         await harness.WriteFileAsync("note.md", IndexingHarness.Prose("scoping"));
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var inSetOne = harness.Vectors.CountFor("note.md", chunkSetId: "set-1");
         var inSetTwo = harness.Vectors.CountFor("note.md", chunkSetId: "set-2");
@@ -326,7 +326,7 @@ public sealed class IndexedFileVectorTests
 
         harness.Vectors.DropSilently("note.md", chunkSetId: "set-1");
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         harness.Vectors.CountFor("note.md", chunkSetId: "set-1").ShouldBe(inSetOne, "the set that lost them");
         harness.Vectors.CountFor("note.md", chunkSetId: "set-2").ShouldBe(inSetTwo, "the set that did not");
@@ -343,7 +343,7 @@ public sealed class IndexedFileVectorTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await harness.WriteFileAsync("note.md", IndexingHarness.Prose("first source"), source: 0);
         await harness.WriteFileAsync("note.md", IndexingHarness.Prose("second source"), source: 1);
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var one = IndexingHarness.SourceIdFor(0);
         var two = IndexingHarness.SourceIdFor(1);
@@ -354,7 +354,7 @@ public sealed class IndexedFileVectorTests
 
         harness.Vectors.DropSilently("note.md", sourceId: one);
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         harness.Vectors.CountFor("note.md", sourceId: one).ShouldBe(inOne);
         harness.Vectors.CountFor("note.md", sourceId: two).ShouldBe(inTwo);
@@ -373,19 +373,19 @@ public sealed class IndexedFileVectorTests
         {
             var documents = harness.NewDocumentService(db);
             var corpus = await db.Corpora.Include(c => c.Sources).Include(c => c.ChunkSets)
-                .FirstAsync(c => c.Id == IndexingHarness.CorpusId);
+                .FirstAsync(c => c.Id == IndexingHarness.CorpusId, cancellationToken: TestContext.Current.CancellationToken);
             using var bytes = new MemoryStream(
                 System.Text.Encoding.UTF8.GetBytes(IndexingHarness.Prose("uploads")));
-            var stored = await documents.StoreAsync(bytes, "paper.md");
-            await documents.AttachAsync(corpus, stored.Sha256, "paper.md");
+            var stored = await documents.StoreAsync(bytes, "paper.md", TestContext.Current.CancellationToken);
+            await documents.AttachAsync(corpus, stored.Sha256, "paper.md", TestContext.Current.CancellationToken);
         }
 
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         var before = harness.Vectors.CountFor("paper.md");
         before.ShouldBeGreaterThan(0);
 
         harness.Vectors.DropSilently("paper.md");
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         harness.Vectors.CountFor("paper.md").ShouldBe(before);
     }

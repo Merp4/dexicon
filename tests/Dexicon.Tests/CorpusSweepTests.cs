@@ -173,11 +173,11 @@ public sealed class CorpusSweepTests : IDisposable
         using (var scope = _services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
-            var state = await db.FileChunkStates.FirstAsync();
+            var state = await db.FileChunkStates.FirstAsync(cancellationToken: TestContext.Current.CancellationToken);
             state.Status = FileStatus.Indexed;
             state.ChunkCount = 12;
             state.ContentHash = "fingerprint";
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await SweepAsync(id);
@@ -214,7 +214,7 @@ public sealed class CorpusSweepTests : IDisposable
         var id = await CorpusAsync();
         var leases = Leases();
 
-        await using var indexing = await leases.TryAcquireAsync(id, "index-job-1", default);
+        await using var indexing = await leases.TryAcquireAsync(id, "index-job-1", TestContext.Current.CancellationToken);
         indexing.ShouldNotBeNull();
 
         var result = await SweepAsync(id, leases);
@@ -262,7 +262,7 @@ public sealed class CorpusSweepTests : IDisposable
             {
                 Indexing = new IndexingOptions { WorkspaceRoot = Path.GetTempPath() },
             }),
-            NullLogger<CorpusSweeper>.Instance).SweepAsync(id, default);
+            NullLogger<CorpusSweeper>.Instance).SweepAsync(id, TestContext.Current.CancellationToken);
 
         deleteOnClaim.Fired.ShouldBeTrue("the interceptor has to have opened the window");
         result.Outcome.ShouldBe(SweepOutcome.NoSuchCorpus,

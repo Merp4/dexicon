@@ -18,13 +18,13 @@ public sealed class ScopeMessageTests : IAsyncLifetime
 {
     private IndexingHarness _harness = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _harness = await IndexingHarness.StartAsync("notes");
         await _harness.SeedCorpusAsync(SourceKind.Workspace);
     }
 
-    public async Task DisposeAsync() => await _harness.DisposeAsync();
+    public async ValueTask DisposeAsync() => await _harness.DisposeAsync();
 
     private static Principal Reader => new("k", "reader", new HashSet<string>(StringComparer.Ordinal) { Scopes.Search });
 
@@ -180,7 +180,7 @@ public sealed class ScopeMessageTests : IAsyncLifetime
                     RootPath = RaggedName(i, 100),
                     CreatedUtc = DateTime.UtcNow,
                 });
-            await seed.SaveChangesAsync();
+            await seed.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var db = _harness.NewContext();
@@ -212,7 +212,7 @@ public sealed class ScopeMessageTests : IAsyncLifetime
                     State = CorpusState.Ready,
                     CreatedUtc = DateTime.UtcNow,
                 });
-            await seed.SaveChangesAsync();
+            await seed.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var db = _harness.NewContext();
@@ -311,7 +311,7 @@ public sealed class ScopeMessageTests : IAsyncLifetime
                 .AddLogging().AddOptions().AddProblemDetails().BuildServiceProvider(),
         };
         context.Response.Body = new MemoryStream();
-        await new ScopeExceptionHandler(NullLogger<ScopeExceptionHandler>.Instance).TryHandleAsync(context, thrown, default);
+        await new ScopeExceptionHandler(NullLogger<ScopeExceptionHandler>.Instance).TryHandleAsync(context, thrown, TestContext.Current.CancellationToken);
 
         thrown.Message.ShouldStartWith("Unknown corpus 'n0', 'n1', 'n2' (and 999997 more). ");
         thrown.Message.Length.ShouldBeLessThan(1_000);

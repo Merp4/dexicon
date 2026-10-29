@@ -23,14 +23,14 @@ public sealed class WorkspaceFileRowsAfterARefusedSaveTests
             var until = DateTime.UtcNow.AddSeconds(20);
             while (disk.WritesRefused < 3 && DateTime.UtcNow < until) await Task.Delay(10);
             disk.Free();
-        });
+        }, TestContext.Current.CancellationToken);
 
-        await harness.RunIndexAsync(saveRetryDelay: TimeSpan.FromMilliseconds(300));
+        await harness.RunIndexAsync(saveRetryDelay: TimeSpan.FromMilliseconds(300), cancel: TestContext.Current.CancellationToken);
         await freeing;
 
         disk.WritesRefused.ShouldBeGreaterThanOrEqualTo(3, "the window has to have been open");
         await using var db = harness.NewContext();
-        (await db.Files.CountAsync()).ShouldBe(1, "the file the pass embedded keeps its row");
-        (await db.FileChunkStates.CountAsync()).ShouldBe(1);
+        (await db.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "the file the pass embedded keeps its row");
+        (await db.FileChunkStates.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 }

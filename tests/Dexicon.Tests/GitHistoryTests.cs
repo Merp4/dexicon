@@ -543,13 +543,13 @@ public sealed class GitHistoryTests : IDisposable
     [Fact]
     public async Task ADirectoryThatIsNotARepositoryIsNotOne()
     {
-        (await GitHistory.IsRepositoryAsync(Repo(_repo), default)).ShouldBeTrue();
+        (await GitHistory.IsRepositoryAsync(Repo(_repo), TestContext.Current.CancellationToken)).ShouldBeTrue();
 
         var plain = Path.Combine(Path.GetTempPath(), $"plain-{Guid.NewGuid():N}");
         Directory.CreateDirectory(plain);
         try
         {
-            (await GitHistory.IsRepositoryAsync(Repo(plain), default)).ShouldBeFalse();
+            (await GitHistory.IsRepositoryAsync(Repo(plain), TestContext.Current.CancellationToken)).ShouldBeFalse();
 
             GitHistory.RepositoryIn(plain, "nope").ShouldBeNull();
         }
@@ -567,13 +567,13 @@ public sealed class GitHistoryTests : IDisposable
         var flood = new string('x', GitHistory.StderrKept * 4);
         using var reader = new StringReader(flood + "tail");
 
-        var kept = await GitHistory.DrainAsync(reader, GitHistory.StderrKept, default);
+        var kept = await GitHistory.DrainAsync(reader, GitHistory.StderrKept, TestContext.Current.CancellationToken);
 
         kept.Length.ShouldBe(GitHistory.StderrKept);
-        (await reader.ReadToEndAsync()).ShouldBeEmpty("the rest was read, so a pipe would not block");
+        (await reader.ReadToEndAsync(TestContext.Current.CancellationToken)).ShouldBeEmpty("the rest was read, so a pipe would not block");
 
         using var short_ = new StringReader("fatal: not a git repository\n");
-        (await GitHistory.DrainAsync(short_, GitHistory.StderrKept, default)).ShouldBe("fatal: not a git repository\n");
+        (await GitHistory.DrainAsync(short_, GitHistory.StderrKept, TestContext.Current.CancellationToken)).ShouldBe("fatal: not a git repository\n");
     }
 
     /// <summary>
@@ -587,22 +587,19 @@ public sealed class GitHistoryTests : IDisposable
         var root = Path.GetDirectoryName(_repo)!;
         var name = Path.GetFileName(_repo);
 
-        (await Dexicon.Api.CorpusEndpoints.NotAHistoryRootAsync(root, name, GitHistory.IsRepositoryAsync, default))
+        (await Dexicon.Api.CorpusEndpoints.NotAHistoryRootAsync(root, name, GitHistory.IsRepositoryAsync, TestContext.Current.CancellationToken))
             .ShouldBeNull("the folder holds a repository");
 
         var plain = Path.Combine(Path.GetTempPath(), $"plain-{Guid.NewGuid():N}");
         Directory.CreateDirectory(plain);
         try
         {
-            var notOne = await Dexicon.Api.CorpusEndpoints.NotAHistoryRootAsync(
-                Path.GetDirectoryName(plain)!, Path.GetFileName(plain), GitHistory.IsRepositoryAsync, default);
+            var notOne = await Dexicon.Api.CorpusEndpoints.NotAHistoryRootAsync(Path.GetDirectoryName(plain)!, Path.GetFileName(plain), GitHistory.IsRepositoryAsync, TestContext.Current.CancellationToken);
             notOne.ShouldNotBeNull().Status.ShouldBe(400);
         }
         finally { Directory.Delete(plain, recursive: true); }
 
-        var unasked = await Dexicon.Api.CorpusEndpoints.NotAHistoryRootAsync(root, name,
-            (_, _) => throw new GitHistoryException("git could not be started. A git-history source needs the git binary on PATH."),
-            default);
+        var unasked = await Dexicon.Api.CorpusEndpoints.NotAHistoryRootAsync(root, name, (_, _) => throw new GitHistoryException("git could not be started. A git-history source needs the git binary on PATH."), TestContext.Current.CancellationToken);
         var problem = unasked.ShouldNotBeNull();
         problem.Status.ShouldBe(503);
         problem.Detail.ShouldContain("could not be started");
@@ -621,8 +618,8 @@ public sealed class GitHistoryTests : IDisposable
     {
         Commit("src/a.txt", "one", "first");
 
-        (await GitHistory.IsRepositoryAsync(Repo(_repo), default)).ShouldBeTrue();
-        (await GitHistory.IsRepositoryAsync(Repo(Path.Combine(_repo, "src")), default)).ShouldBeFalse();
+        (await GitHistory.IsRepositoryAsync(Repo(_repo), TestContext.Current.CancellationToken)).ShouldBeTrue();
+        (await GitHistory.IsRepositoryAsync(Repo(Path.Combine(_repo, "src")), TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 
     /// <summary>

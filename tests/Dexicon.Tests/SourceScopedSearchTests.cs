@@ -57,7 +57,7 @@ public sealed class SourceScopedSearchTests : IDisposable
     [Fact]
     public async Task OneFolderResolvesToOneSource()
     {
-        var ids = await _scopes.SourceIdsAsync(["books"], "books/manuals/AI");
+        var ids = await _scopes.SourceIdsAsync(["books"], "books/manuals/AI", TestContext.Current.CancellationToken);
 
         ids.ShouldBe(["src-ai"]);
     }
@@ -67,7 +67,7 @@ public sealed class SourceScopedSearchTests : IDisposable
     {
         // `manuals` should mean the whole shelf, not nothing. Without this a caller has to
         // know every topic folder to search more than one.
-        var ids = await _scopes.SourceIdsAsync(["books"], "books/manuals");
+        var ids = await _scopes.SourceIdsAsync(["books"], "books/manuals", TestContext.Current.CancellationToken);
 
         ids.ShouldBe(["src-ai", "src-phil", "src-arch"], ignoreOrder: true);
     }
@@ -85,8 +85,8 @@ public sealed class SourceScopedSearchTests : IDisposable
     public async Task LeadingAndTrailingSlashesAreForgiven()
     {
         // list_corpora prints the stored form; a person types whatever looks like a path.
-        (await _scopes.SourceIdsAsync(["books"], "/books/manuals/AI/")).ShouldBe(["src-ai"]);
-        (await _scopes.SourceIdsAsync(["books"], "books\\manuals\\AI")).ShouldBe(["src-ai"]);
+        (await _scopes.SourceIdsAsync(["books"], "/books/manuals/AI/", TestContext.Current.CancellationToken)).ShouldBe(["src-ai"]);
+        (await _scopes.SourceIdsAsync(["books"], "books\\manuals\\AI", TestContext.Current.CancellationToken)).ShouldBe(["src-ai"]);
     }
 
     [Fact]
@@ -125,7 +125,7 @@ public sealed class SourceScopedSearchTests : IDisposable
         // "Sources: ." would read as a formatting bug. An upload has no path, so there is
         // genuinely nothing to suggest, and saying that is the useful answer.
         _db.Sources.RemoveRange(_db.Sources.Where(x => x.CorpusId == "books" && x.RootPath != null));
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var error = await Should.ThrowAsync<ScopeResolutionException>(
             () => _scopes.SourceIdsAsync(["books"], "books/manuals/AI"));
@@ -138,7 +138,7 @@ public sealed class SourceScopedSearchTests : IDisposable
     public async Task AnUploadSourceNeverMatchesAFolder()
     {
         // It has no root path. Matching it against one would be matching against null.
-        var ids = await _scopes.SourceIdsAsync(["books"], "books/manuals");
+        var ids = await _scopes.SourceIdsAsync(["books"], "books/manuals", TestContext.Current.CancellationToken);
 
         ids.ShouldNotContain("src-upload");
     }

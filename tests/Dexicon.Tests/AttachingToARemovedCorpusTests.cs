@@ -19,23 +19,23 @@ public sealed class AttachingToARemovedCorpusTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await using var attaching = harness.NewContext();
         var documents = harness.NewDocumentService(attaching);
-        var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt");
-        var corpus = await attaching.Corpora.SingleAsync();
+        var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt", TestContext.Current.CancellationToken);
+        var corpus = await attaching.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         Task<IndexedFile> attachment;
-        using (await DocumentService.HoldAttachmentsAsync().FinishesAsync("taking the lock"))
+        using (await DocumentService.HoldAttachmentsAsync(TestContext.Current.CancellationToken).FinishesAsync("taking the lock"))
         {
             attachment = Task.Run(() => documents.AttachAsync(corpus, stored.Sha256, "doc.txt"));
             await using var removing = harness.NewContext();
-            await removing.Corpora.ExecuteDeleteAsync();
+            await removing.Corpora.ExecuteDeleteAsync(cancellationToken: TestContext.Current.CancellationToken);
         }
 
         var refused = await Should.ThrowAsync<ScopeResolutionException>(
             () => attachment.FinishesAsync("the attachment"));
         refused.Message.ShouldContain("removed while this request waited");
         await using var check = harness.NewContext();
-        (await check.Sources.CountAsync()).ShouldBe(0, "no upload source is created for a corpus that is gone");
-        (await check.Files.CountAsync()).ShouldBe(0);
+        (await check.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0, "no upload source is created for a corpus that is gone");
+        (await check.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]
@@ -49,8 +49,8 @@ public sealed class AttachingToARemovedCorpusTests
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using var attaching = harness.NewContext();
         var documents = harness.NewDocumentService(attaching);
-        var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt");
-        var corpus = await attaching.Corpora.SingleAsync();
+        var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt", TestContext.Current.CancellationToken);
+        var corpus = await attaching.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         hold.Armed = true;
 
         var attachment = Task.Run(() => documents.AttachAsync(corpus, stored.Sha256, "doc.txt"));
@@ -59,8 +59,8 @@ public sealed class AttachingToARemovedCorpusTests
         try
         {
             await Gates.ReachedAsync(hold.Reached, "the attachment's check of its corpus");
-            other = DocumentService.HoldAttachmentsAsync();
-            tookTheLockWhileHeld = await Task.WhenAny(other, Task.Delay(TimeSpan.FromSeconds(3))) == other;
+            other = DocumentService.HoldAttachmentsAsync(TestContext.Current.CancellationToken);
+            tookTheLockWhileHeld = await Task.WhenAny(other, Task.Delay(TimeSpan.FromSeconds(3), TestContext.Current.CancellationToken)) == other;
         }
         finally { hold.Release(); }
 
@@ -78,17 +78,17 @@ public sealed class AttachingToARemovedCorpusTests
         await harness.SeedCorpusAsync(SourceKind.Upload, sets: 2);
         await using var attaching = harness.NewContext();
         var documents = harness.NewDocumentService(attaching);
-        var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt");
-        var corpus = await attaching.Corpora.Include(c => c.ChunkSets).SingleAsync();
+        var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt", TestContext.Current.CancellationToken);
+        var corpus = await attaching.Corpora.Include(c => c.ChunkSets).SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         corpus.ChunkSets.Count.ShouldBe(2);
         await using (var removing = harness.NewContext())
             (await harness.NewConfiguration(removing)
-                .RemoveChunkSetAsync(await removing.Corpora.SingleAsync(), "alt-1", default)).Refusal.ShouldBeNull();
+                .RemoveChunkSetAsync(await removing.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken), "alt-1", TestContext.Current.CancellationToken)).Refusal.ShouldBeNull();
 
-        var attached = await documents.AttachAsync(corpus, stored.Sha256, "doc.txt");
+        var attached = await documents.AttachAsync(corpus, stored.Sha256, "doc.txt", TestContext.Current.CancellationToken);
 
         await using var check = harness.NewContext();
-        (await check.FileChunkStates.Where(s => s.FileId == attached.Id).Select(s => s.ChunkSetId).ToListAsync())
+        (await check.FileChunkStates.Where(s => s.FileId == attached.Id).Select(s => s.ChunkSetId).ToListAsync(cancellationToken: TestContext.Current.CancellationToken))
             .ShouldBe(["set-1"]);
     }
 }

@@ -79,11 +79,11 @@ public sealed class RemovedCorpusEndpointTests
         await harness.SeedCorpusAsync(SourceKind.Upload);
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
-        var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt");
+        var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt", TestContext.Current.CancellationToken);
         await harness.HoldElsewhereAsync(stored.Sha256);
 
         Task<IResult> attachment;
-        using (await DocumentService.HoldAttachmentsAsync().FinishesAsync("taking the lock"))
+        using (await DocumentService.HoldAttachmentsAsync(TestContext.Current.CancellationToken).FinishesAsync("taking the lock"))
         {
             attachment = Task.Run(() => DocumentEndpoints.AttachAsync(
                 IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256, "doc.txt"),
@@ -92,7 +92,7 @@ public sealed class RemovedCorpusEndpointTests
             // Only the corpus being attached to: the one that holds the document has to stay, or the attach is
             // answered as a document nobody holds before it reaches the lock.
             await using var removing = harness.NewContext();
-            await removing.Corpora.Where(c => c.Id == IndexingHarness.CorpusId).ExecuteDeleteAsync();
+            await removing.Corpora.Where(c => c.Id == IndexingHarness.CorpusId).ExecuteDeleteAsync(cancellationToken: TestContext.Current.CancellationToken);
         }
 
         var refused = await Should.ThrowAsync<ScopeResolutionException>(() => attachment.FinishesAsync("the attachment"));
@@ -131,7 +131,7 @@ public sealed class RemovedCorpusEndpointTests
         (await StatusOfAsync(refused)).ShouldBe(400);
         logs.Lines.ShouldNotContain(l => l.Contains("Queuing the refresh", StringComparison.Ordinal));
         await using var check = harness.NewContext();
-        (await check.Jobs.CountAsync()).ShouldBe(0);
+        (await check.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]
@@ -143,18 +143,18 @@ public sealed class RemovedCorpusEndpointTests
         await harness.SeedCorpusAsync(SourceKind.Upload, sets: 2);
         await using var db = harness.NewContext();
         var documents = harness.NewDocumentService(db);
-        var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt");
+        var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt", TestContext.Current.CancellationToken);
         await harness.HoldElsewhereAsync(stored.Sha256);
 
         Task<IResult> attachment;
-        using (await DocumentService.HoldAttachmentsAsync().FinishesAsync("taking the lock"))
+        using (await DocumentService.HoldAttachmentsAsync(TestContext.Current.CancellationToken).FinishesAsync("taking the lock"))
         {
             attachment = Task.Run(() => DocumentEndpoints.AttachAsync(
                 IndexingHarness.CorpusId, new AttachDocumentRequest(stored.Sha256, "doc.txt"),
                 As(Scopes.Admin), new ScopeResolver(db), documents, db,
                 new IndexJobQueue(db, new WorkScheduler(harness.Settings), NullLogger<IndexJobQueue>.Instance), default));
             await using var removing = harness.NewContext();
-            await removing.ChunkSets.Where(s => s.Id == "set-2").ExecuteDeleteAsync();
+            await removing.ChunkSets.Where(s => s.Id == "set-2").ExecuteDeleteAsync(cancellationToken: TestContext.Current.CancellationToken);
         }
 
         var result = await attachment.FinishesAsync("the attachment");
@@ -162,6 +162,6 @@ public sealed class RemovedCorpusEndpointTests
         var attached = result.ShouldBeOfType<Microsoft.AspNetCore.Http.HttpResults.Accepted<DocumentAttached>>().Value.ShouldNotBeNull();
         attached.Chunking.Select(c => c.Set).ShouldBe(["default"]);
         await using var check = harness.NewContext();
-        (await check.FileChunkStates.Select(s => s.ChunkSetId).ToListAsync()).ShouldBe(["set-1"]);
+        (await check.FileChunkStates.Select(s => s.ChunkSetId).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(["set-1"]);
     }
 }

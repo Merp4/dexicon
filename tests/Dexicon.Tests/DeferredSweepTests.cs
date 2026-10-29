@@ -93,10 +93,10 @@ public sealed class DeferredSweepTests : IDisposable
         // Another holder, standing in for the other process. Taken before the sweep runs,
         // so the sweep reaches the lease and is turned away.
         var leases = _services.GetRequiredService<CorpusLeases>();
-        await using var held = await leases.TryAcquireAsync(corpusId, "someone-else", default);
+        await using var held = await leases.TryAcquireAsync(corpusId, "someone-else", TestContext.Current.CancellationToken);
         held.ShouldNotBeNull();
 
-        await Pool(scheduler).RunOneAsync(new WorkItem(WorkType.Sweep, corpusId, corpusId), default);
+        await Pool(scheduler).RunOneAsync(new WorkItem(WorkType.Sweep, corpusId, corpusId), TestContext.Current.CancellationToken);
 
         // The requeue is a detached task with no delay, so this normally returns within
         // milliseconds, and the window only bounds a failing run. At 5 seconds it failed
@@ -116,10 +116,10 @@ public sealed class DeferredSweepTests : IDisposable
         var scheduler = Scheduler();
         var missing = Ulid.NewUlid().ToString();
 
-        await Pool(scheduler).RunOneAsync(new WorkItem(WorkType.Sweep, missing, missing), default);
+        await Pool(scheduler).RunOneAsync(new WorkItem(WorkType.Sweep, missing, missing), TestContext.Current.CancellationToken);
 
         // Long enough that a zero delay would have landed many times over.
-        await Task.Delay(200);
+        await Task.Delay(200, TestContext.Current.CancellationToken);
 
         scheduler.TryTake().ShouldBeNull("a deleted corpus is terminal, not deferred");
     }

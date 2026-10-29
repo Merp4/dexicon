@@ -29,7 +29,7 @@ public sealed class HealthReportTests : IAsyncLifetime
     private SqliteConnection _connection = null!;
     private CatalogDbContext _db = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _connection = new SqliteConnection("Data Source=:memory:");
         await _connection.OpenAsync();
@@ -42,7 +42,7 @@ public sealed class HealthReportTests : IAsyncLifetime
         await _db.SaveChangesAsync();
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await _db.DisposeAsync();
         await _connection.DisposeAsync();

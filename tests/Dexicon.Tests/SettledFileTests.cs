@@ -51,7 +51,7 @@ public sealed class SettledFileTests
         await using var _ = harness;
         await WriteAsync(harness, "note.md", IndexingHarness.Prose("alpha"));
 
-        var first = await harness.RunIndexAsync();
+        var first = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         first.FilesDone.ShouldBe(1);
         var embedded = embedder.Inputs;
         embedded.ShouldBeGreaterThan(0);
@@ -61,7 +61,7 @@ public sealed class SettledFileTests
         // was skipped, and it is also the price of the shortcut.
         await WriteAsync(harness, "note.md", IndexingHarness.Prose("omega"));
 
-        var second = await harness.RunIndexAsync();
+        var second = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         second.FilesSkipped.ShouldBe(1);
         second.FilesDone.ShouldBe(0);
@@ -74,7 +74,7 @@ public sealed class SettledFileTests
         var (harness, embedder) = await StartAsync();
         await using var _ = harness;
         await WriteAsync(harness, "note.md", IndexingHarness.Prose("alpha"));
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         var embedded = embedder.Inputs;
         var settled = (await harness.StateOfAsync("note.md")).SettledFor;
         settled.ShouldNotBeNull();
@@ -82,7 +82,7 @@ public sealed class SettledFileTests
         // Touched. The key no longer matches, so the file is read, its text is found to be what
         // was indexed, and the key is rewritten for the time it has now.
         File.SetLastWriteTimeUtc(Path.Combine(harness.SourceDirectory, "note.md"), Stamp.AddHours(1));
-        var second = await harness.RunIndexAsync();
+        var second = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         second.FilesSkipped.ShouldBe(1);
         embedder.Inputs.ShouldBe(embedded, "the text was the same, so nothing is embedded again");
@@ -91,7 +91,7 @@ public sealed class SettledFileTests
 
         // And the next pass leaves it unread on the new time, shown the same way as above.
         await WriteAsync(harness, "note.md", IndexingHarness.Prose("omega"), Stamp.AddHours(1));
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         embedder.Inputs.ShouldBe(embedded);
     }
 
@@ -101,12 +101,12 @@ public sealed class SettledFileTests
         var (harness, embedder) = await StartAsync();
         await using var _ = harness;
         await WriteAsync(harness, "note.md", IndexingHarness.Prose("alpha"));
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         var embedded = embedder.Inputs;
 
         await WriteAsync(harness, "note.md", IndexingHarness.Prose("alpha") + "\n\nA new paragraph.",
             Stamp.AddMinutes(5));
-        var second = await harness.RunIndexAsync();
+        var second = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         second.FilesDone.ShouldBe(1);
         embedder.Inputs.ShouldBeGreaterThan(embedded);
@@ -118,13 +118,13 @@ public sealed class SettledFileTests
         var (harness, embedder) = await StartAsync();
         await using var _ = harness;
         await WriteAsync(harness, "note.md", IndexingHarness.Prose("alpha"));
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         var embedded = embedder.Inputs;
 
         await using (var db = harness.NewContext())
-            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.ChunkSize, 64));
+            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.ChunkSize, 64), cancellationToken: TestContext.Current.CancellationToken);
 
-        var second = await harness.RunIndexAsync();
+        var second = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         second.FilesDone.ShouldBe(1, "the file did not change, but what is made of it did");
         embedder.Inputs.ShouldBeGreaterThan(embedded);
@@ -136,10 +136,10 @@ public sealed class SettledFileTests
         var (harness, embedder) = await StartAsync();
         await using var _ = harness;
         await WriteAsync(harness, "note.md", IndexingHarness.Prose("alpha"));
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         var embedded = embedder.Inputs;
 
-        var full = await harness.RunIndexAsync(JobKind.Full);
+        var full = await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
 
         full.FilesDone.ShouldBe(1);
         embedder.Inputs.ShouldBeGreaterThan(embedded);
@@ -153,14 +153,14 @@ public sealed class SettledFileTests
         await WriteAsync(harness, "note.md", IndexingHarness.Prose("alpha"));
 
         embedder.Down = true;
-        var first = await harness.RunIndexAsync();
+        var first = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         first.FilesFailed.ShouldBe(1);
         var failed = await harness.StateOfAsync("note.md");
         failed.Status.ShouldBe(FileStatus.Failed);
         failed.SettledFor.ShouldBeNull("a service that was down says nothing about the file");
 
         embedder.Down = false;
-        var second = await harness.RunIndexAsync();
+        var second = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         second.FilesDone.ShouldBe(1);
         (await harness.StateOfAsync("note.md")).Status.ShouldBe(FileStatus.Indexed);
@@ -175,18 +175,18 @@ public sealed class SettledFileTests
         var (harness, embedder) = await StartAsync();
         await using var _ = harness;
         await WriteAsync(harness, "note.md", IndexingHarness.Prose("alpha"));
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         (await harness.StateOfAsync("note.md")).SettledFor.ShouldNotBeNull();
 
         embedder.Down = true;
-        var full = await harness.RunIndexAsync(JobKind.Full);
+        var full = await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
         full.FilesFailed.ShouldBe(1);
         var failed = await harness.StateOfAsync("note.md");
         failed.Status.ShouldBe(FileStatus.Failed);
         failed.SettledFor.ShouldBeNull();
 
         embedder.Down = false;
-        var next = await harness.RunIndexAsync();
+        var next = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         next.FilesDone.ShouldBe(1);
         (await harness.StateOfAsync("note.md")).Status.ShouldBe(FileStatus.Indexed);
@@ -201,10 +201,10 @@ public sealed class SettledFileTests
         var path = Path.Combine(harness.SourceDirectory, "report.pdf");
 
         // No trailer, which is what a truncated download is: the same on every read.
-        await File.WriteAllBytesAsync(path, Truncated(40_000));
+        await File.WriteAllBytesAsync(path, Truncated(40_000), TestContext.Current.CancellationToken);
         File.SetLastWriteTimeUtc(path, Stamp);
 
-        var first = await harness.RunIndexAsync(log: logs.CreateLogger<CorpusIndexer>());
+        var first = await harness.RunIndexAsync(log: logs.CreateLogger<CorpusIndexer>(), cancel: TestContext.Current.CancellationToken);
         first.FilesFailed.ShouldBe(1);
         var state = await harness.StateOfAsync("report.pdf");
         state.Status.ShouldBe(FileStatus.Failed);
@@ -212,7 +212,7 @@ public sealed class SettledFileTests
         state.SettledFor.ShouldNotBeNull();
         Said(logs, "Extraction failed for").ShouldBe(1);
 
-        var second = await harness.RunIndexAsync(log: logs.CreateLogger<CorpusIndexer>());
+        var second = await harness.RunIndexAsync(log: logs.CreateLogger<CorpusIndexer>(), cancel: TestContext.Current.CancellationToken);
 
         second.FilesFailed.ShouldBe(0, "it was not read, so it did not fail again");
         second.FilesSkipped.ShouldBe(1);
@@ -220,9 +220,9 @@ public sealed class SettledFileTests
         (await harness.StateOfAsync("report.pdf")).Status.ShouldBe(FileStatus.Failed, "the row still says why");
 
         // Replaced by another truncated file, which is a change and is looked at.
-        await File.WriteAllBytesAsync(path, Truncated(41_000));
+        await File.WriteAllBytesAsync(path, Truncated(41_000), TestContext.Current.CancellationToken);
         File.SetLastWriteTimeUtc(path, Stamp.AddMinutes(5));
-        var third = await harness.RunIndexAsync(log: logs.CreateLogger<CorpusIndexer>());
+        var third = await harness.RunIndexAsync(log: logs.CreateLogger<CorpusIndexer>(), cancel: TestContext.Current.CancellationToken);
 
         third.FilesFailed.ShouldBe(1);
         Said(logs, "Extraction failed for").ShouldBe(2);
@@ -235,14 +235,14 @@ public sealed class SettledFileTests
         await using var _ = harness;
         var path = Path.Combine(harness.SourceDirectory, "report.pdf");
 
-        await File.WriteAllBytesAsync(path, ReadablePdf());
+        await File.WriteAllBytesAsync(path, ReadablePdf(), TestContext.Current.CancellationToken);
         File.SetLastWriteTimeUtc(path, Stamp);
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         harness.Vectors.CountFor("report.pdf").ShouldBeGreaterThan(0, "the first pass has to index something");
 
-        await File.WriteAllBytesAsync(path, Truncated(40_000));
+        await File.WriteAllBytesAsync(path, Truncated(40_000), TestContext.Current.CancellationToken);
         File.SetLastWriteTimeUtc(path, Stamp.AddMinutes(5));
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var state = await harness.StateOfAsync("report.pdf");
         state.Status.ShouldBe(FileStatus.Failed);
@@ -259,14 +259,14 @@ public sealed class SettledFileTests
         await using var _ = harness;
         var path = Path.Combine(harness.SourceDirectory, "report.pdf");
 
-        await File.WriteAllBytesAsync(path, ReadablePdf());
+        await File.WriteAllBytesAsync(path, ReadablePdf(), TestContext.Current.CancellationToken);
         File.SetLastWriteTimeUtc(path, Stamp);
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
-        await File.WriteAllBytesAsync(path, Truncated(40_000));
+        await File.WriteAllBytesAsync(path, Truncated(40_000), TestContext.Current.CancellationToken);
         File.SetLastWriteTimeUtc(path, Stamp.AddMinutes(5));
         harness.Vectors.DeletesThrow = true;
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var state = await harness.StateOfAsync("report.pdf");
         state.Status.ShouldBe(FileStatus.Failed);
@@ -276,7 +276,7 @@ public sealed class SettledFileTests
         // The store is back. The file has not changed, and it is looked at again because it was
         // never settled.
         harness.Vectors.DeletesThrow = false;
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         (await harness.StateOfAsync("report.pdf")).SettledFor.ShouldNotBeNull();
         harness.Vectors.CountFor("report.pdf").ShouldBe(0);
@@ -289,7 +289,7 @@ public sealed class SettledFileTests
         await using var _ = harness;
         await WriteAsync(harness, "blank.md", "   \n\n   \n");
 
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var state = await harness.StateOfAsync("blank.md");
         state.Status.ShouldBe(FileStatus.Empty);
@@ -299,7 +299,7 @@ public sealed class SettledFileTests
         // pass that read the file would index it; this one leaves it as it was.
         await WriteAsync(harness, "blank.md", "ab cd ef\n");
 
-        var second = await harness.RunIndexAsync();
+        var second = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         second.FilesSkipped.ShouldBe(1);
         embedder.Inputs.ShouldBe(0, "the file was not read, so the text now in it was not seen");
@@ -312,14 +312,14 @@ public sealed class SettledFileTests
         var (harness, embedder) = await StartAsync();
         await using var _ = harness;
         await WriteAsync(harness, "note.md", IndexingHarness.Prose("alpha"));
-        await harness.RunIndexAsync();
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         var embedded = embedder.Inputs;
 
         // What the catalogue held after the upgrade: indexed, with no key.
         await using (var db = harness.NewContext())
-            await db.FileChunkStates.ExecuteUpdateAsync(u => u.SetProperty(s => s.SettledFor, (string?)null));
+            await db.FileChunkStates.ExecuteUpdateAsync(u => u.SetProperty(s => s.SettledFor, (string?)null), cancellationToken: TestContext.Current.CancellationToken);
 
-        var second = await harness.RunIndexAsync();
+        var second = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         second.FilesSkipped.ShouldBe(1);
         embedder.Inputs.ShouldBe(embedded, "read and compared, and found unchanged");

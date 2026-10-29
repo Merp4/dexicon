@@ -22,7 +22,7 @@ public sealed class CoverageEndpointTests : IAsyncLifetime
     private CatalogDbContext _db = null!;
     private readonly string _root = Directory.CreateTempSubdirectory("dexicon-coverage-api-").FullName;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _connection = new SqliteConnection("Data Source=:memory:");
         await _connection.OpenAsync();
@@ -35,7 +35,7 @@ public sealed class CoverageEndpointTests : IAsyncLifetime
         await _db.SaveChangesAsync();
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await _db.DisposeAsync();
         await _connection.DisposeAsync();
@@ -156,7 +156,7 @@ public sealed class CoverageEndpointTests : IAsyncLifetime
             RootPath = null,
             CreatedUtc = DateTime.UtcNow,
         });
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // One workspace source and one upload source is one source under books/manuals, not
         // two, so there is nothing to infer about that directory.

@@ -76,15 +76,14 @@ public sealed class SourceAddedWhileQueuedTests
         // and the interceptor puts the other one back mid-flight. Its files stay on disk.
         await using (var db = harness.NewContext())
         {
-            db.Sources.Remove(await db.Sources.FindAsync(IndexingHarness.SourceIdFor(1))
-                              ?? throw new InvalidOperationException("seed is wrong"));
-            await db.SaveChangesAsync();
+            db.Sources.Remove(await db.Sources.FindAsync(new object?[] { IndexingHarness.SourceIdFor(1) }, TestContext.Current.CancellationToken) ?? throw new InvalidOperationException("seed is wrong"));
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await harness.WriteFileAsync("early.md", IndexingHarness.Prose("early"));
         await harness.WriteFileAsync("late.md", IndexingHarness.Prose("late"), source: 1);
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         watcher.Fired.ShouldBeTrue("the interceptor has to have opened the window");
         job.State.ShouldBe(JobState.Succeeded);

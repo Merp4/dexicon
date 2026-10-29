@@ -9,14 +9,14 @@ public sealed class AttachmentLockHoldTests
     [Fact]
     public async Task DisposingAHoldTwiceDoesNotReleaseTheLockOfTheNextHolder()
     {
-        var first = await DocumentService.HoldAttachmentsAsync().FinishesAsync("taking the lock");
+        var first = await DocumentService.HoldAttachmentsAsync(TestContext.Current.CancellationToken).FinishesAsync("taking the lock");
         first.Dispose();
-        var second = await DocumentService.HoldAttachmentsAsync().FinishesAsync("taking the lock after a release");
+        var second = await DocumentService.HoldAttachmentsAsync(TestContext.Current.CancellationToken).FinishesAsync("taking the lock after a release");
         Task<IDisposable> third;
         try
         {
             first.Dispose();
-            third = DocumentService.HoldAttachmentsAsync();
+            third = DocumentService.HoldAttachmentsAsync(TestContext.Current.CancellationToken);
         }
         catch
         {
@@ -26,7 +26,7 @@ public sealed class AttachmentLockHoldTests
 
         try
         {
-            (await Task.WhenAny(third, Task.Delay(TimeSpan.FromMilliseconds(500)))).ShouldNotBeSameAs(third,
+            (await Task.WhenAny(third, Task.Delay(TimeSpan.FromMilliseconds(500), TestContext.Current.CancellationToken))).ShouldNotBeSameAs(third,
                 "the second dispose of the first hold released the lock the second hold took");
         }
         finally
@@ -44,7 +44,7 @@ public sealed class AttachmentLockHoldTests
     [Fact]
     public async Task ACancelledWaitForTheLockLeavesTheLockWithItsHolder()
     {
-        using var holder = await DocumentService.HoldAttachmentsAsync().FinishesAsync("taking the lock");
+        using var holder = await DocumentService.HoldAttachmentsAsync(TestContext.Current.CancellationToken).FinishesAsync("taking the lock");
         using var giveUp = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
 
         await Should.ThrowAsync<OperationCanceledException>(

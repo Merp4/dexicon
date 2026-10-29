@@ -27,7 +27,7 @@ public sealed class ModelProfileTests : IAsyncLifetime
     private CatalogDbContext _db = null!;
     private ModelProfiles _profiles = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _connection = new SqliteConnection("Data Source=:memory:");
         await _connection.OpenAsync();
@@ -37,7 +37,7 @@ public sealed class ModelProfileTests : IAsyncLifetime
         _profiles = new ModelProfiles(_db, new MemoryCache(new MemoryCacheOptions()));
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await _db.DisposeAsync();
         await _connection.DisposeAsync();
@@ -52,7 +52,7 @@ public sealed class ModelProfileTests : IAsyncLifetime
     {
         // The bug this closes: Dexicon sent raw text to nomic-embed-text, whose model card
         // calls the prefixes required rather than optional.
-        var templates = await _profiles.ForAsync(Target("nomic-embed-text"));
+        var templates = await _profiles.ForAsync(Target("nomic-embed-text"), TestContext.Current.CancellationToken);
 
         templates.Apply(EmbedPurpose.Document, "hello").ShouldBe("search_document: hello");
         templates.Apply(EmbedPurpose.Query, "hello").ShouldBe("search_query: hello");
@@ -65,7 +65,7 @@ public sealed class ModelProfileTests : IAsyncLifetime
         // EmbeddingGemma's document form is not a prefix; it surrounds the text. This is
         // why the stored value is a template with a {text} placeholder and not a prefix
         // string: a prefix-shaped design could not express it.
-        var templates = await _profiles.ForAsync(Target("embeddinggemma"));
+        var templates = await _profiles.ForAsync(Target("embeddinggemma"), TestContext.Current.CancellationToken);
 
         templates.Apply(EmbedPurpose.Document, "hello").ShouldBe("title: none | text: hello");
         templates.Apply(EmbedPurpose.Query, "hello").ShouldBe("task: search result | query: hello");
@@ -77,7 +77,7 @@ public sealed class ModelProfileTests : IAsyncLifetime
         // Ollama reports `nomic-embed-text:latest`; a chunk set may record
         // `nomic-embed-text` or `nomic-embed-text:v1.5`. All the same model.
         foreach (var name in new[] { "nomic-embed-text", "nomic-embed-text:latest", "nomic-embed-text:v1.5" })
-            (await _profiles.ForAsync(Target(name)))
+            (await _profiles.ForAsync(Target(name), TestContext.Current.CancellationToken))
                 .Apply(EmbedPurpose.Query, "x").ShouldBe("search_query: x");
     }
 
@@ -89,7 +89,7 @@ public sealed class ModelProfileTests : IAsyncLifetime
         // Someone pulls a model this build has never heard of. Inventing a prefix for it
         // would be worse than none: the model would embed the literal text
         // "search_query:" as content. Raw, and the UI says so.
-        var templates = await _profiles.ForAsync(Target("some-model-released-next-year"));
+        var templates = await _profiles.ForAsync(Target("some-model-released-next-year"), TestContext.Current.CancellationToken);
 
         templates.IsRaw.ShouldBeTrue();
         templates.Origin.ShouldBe(TemplateOrigin.None);
@@ -110,9 +110,9 @@ public sealed class ModelProfileTests : IAsyncLifetime
             CreatedUtc = DateTime.UtcNow,
             UpdatedUtc = DateTime.UtcNow,
         });
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var templates = await _profiles.ForAsync(Target("brand-new-embed"));
+        var templates = await _profiles.ForAsync(Target("brand-new-embed"), TestContext.Current.CancellationToken);
 
         templates.Apply(EmbedPurpose.Document, "hi").ShouldBe("passage: hi");
         templates.Origin.ShouldBe(TemplateOrigin.Configured);
@@ -132,9 +132,9 @@ public sealed class ModelProfileTests : IAsyncLifetime
             CreatedUtc = DateTime.UtcNow,
             UpdatedUtc = DateTime.UtcNow,
         });
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var templates = await _profiles.ForAsync(Target("nomic-embed-text"));
+        var templates = await _profiles.ForAsync(Target("nomic-embed-text"), TestContext.Current.CancellationToken);
 
         templates.Apply(EmbedPurpose.Query, "x").ShouldBe("corrected-query: x");
         templates.Origin.ShouldBe(TemplateOrigin.Configured);
@@ -154,10 +154,10 @@ public sealed class ModelProfileTests : IAsyncLifetime
             CreatedUtc = DateTime.UtcNow,
             UpdatedUtc = DateTime.UtcNow,
         });
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        (await _profiles.ForAsync(new EmbeddingTarget("openai", "nomic-embed-text"))).IsRaw.ShouldBeTrue();
-        (await _profiles.ForAsync(new EmbeddingTarget("ollama", "nomic-embed-text"))).IsRaw.ShouldBeFalse();
+        (await _profiles.ForAsync(new EmbeddingTarget("openai", "nomic-embed-text"), TestContext.Current.CancellationToken)).IsRaw.ShouldBeTrue();
+        (await _profiles.ForAsync(new EmbeddingTarget("ollama", "nomic-embed-text"), TestContext.Current.CancellationToken)).IsRaw.ShouldBeFalse();
     }
 
     [Fact]
@@ -175,17 +175,17 @@ public sealed class ModelProfileTests : IAsyncLifetime
             CreatedUtc = DateTime.UtcNow,
             UpdatedUtc = DateTime.UtcNow,
         });
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         foreach (var name in new[] { "embeddinggemma", "embeddinggemma:latest", "embeddinggemma:LATEST" })
         {
-            var templates = await _profiles.ForAsync(Target(name));
+            var templates = await _profiles.ForAsync(Target(name), TestContext.Current.CancellationToken);
             templates.Origin.ShouldBe(TemplateOrigin.Configured, name);
             templates.Apply(EmbedPurpose.Query, "x").ShouldBe("query: x", name);
         }
 
         // A different tag is a different model and does not inherit the framing.
-        (await _profiles.ForAsync(Target("embeddinggemma:v2"))).Origin.ShouldBe(TemplateOrigin.BuiltIn);
+        (await _profiles.ForAsync(Target("embeddinggemma:v2"), TestContext.Current.CancellationToken)).Origin.ShouldBe(TemplateOrigin.BuiltIn);
     }
 
     [Fact]
@@ -202,11 +202,11 @@ public sealed class ModelProfileTests : IAsyncLifetime
             CreatedUtc = DateTime.UtcNow,
             UpdatedUtc = DateTime.UtcNow,
         });
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         foreach (var name in new[] { "EmbeddingGemma", "EMBEDDINGGEMMA:latest", "EmbeddingGemma:LATEST" })
         {
-            var templates = await _profiles.ForAsync(Target(name));
+            var templates = await _profiles.ForAsync(Target(name), TestContext.Current.CancellationToken);
             templates.Origin.ShouldBe(TemplateOrigin.Configured, name);
             templates.Apply(EmbedPurpose.Query, "x").ShouldBe("query: x", name);
         }

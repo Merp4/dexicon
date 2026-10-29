@@ -44,7 +44,7 @@ public sealed class EchoSiteTests : IAsyncLifetime
         { "propose_removal: the service refuses the target", 1_200 },
     };
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _harness = await IndexingHarness.StartAsync("notes");
         await _harness.SeedCorpusAsync(SourceKind.Workspace);
@@ -53,7 +53,7 @@ public sealed class EchoSiteTests : IAsyncLifetime
         await _harness.RunIndexAsync();
     }
 
-    public async Task DisposeAsync() => await _harness.DisposeAsync();
+    public async ValueTask DisposeAsync() => await _harness.DisposeAsync();
 
     private static RequestContext Holding(params string[] scopes) => new()
     {

@@ -114,9 +114,9 @@ public sealed class DocumentReaderTests : IDisposable
         db.FileTexts.Add(Text("aa11", "PdfTextExtractor", "the whole book",
             units: """[{"Number":4,"StartOffset":9,"Label":"Chapter 4"}]""", title: "A Book"));
         db.Files.Add(File(sourceId, "x.pdf", setId, sha: "aa11"));
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var body = await new DocumentReader(db).ForAsync(corpusId, setId, "x.pdf", sourceId);
+        var body = await new DocumentReader(db).ForAsync(corpusId, setId, "x.pdf", sourceId, TestContext.Current.CancellationToken);
 
         body.ShouldNotBeNull();
         body.Text.ShouldBe("the whole book");
@@ -142,9 +142,9 @@ public sealed class DocumentReaderTests : IDisposable
             ExtractedUtc = DateTime.UtcNow,
         });
         db.Files.Add(File(sourceId, "y.pdf", setId, blob: "bb22"));
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var body = await new DocumentReader(db).ForAsync(corpusId, setId, "y.pdf", sourceId);
+        var body = await new DocumentReader(db).ForAsync(corpusId, setId, "y.pdf", sourceId, TestContext.Current.CancellationToken);
 
         body.ShouldNotBeNull();
         body.Text.ShouldBe("the uploaded document");
@@ -176,11 +176,11 @@ public sealed class DocumentReaderTests : IDisposable
             Status = FileStatus.Indexed,
         });
         db.Files.Add(file);
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var reader = new DocumentReader(db);
-        (await reader.ForAsync(corpusId, oldSet, "x.pdf", sourceId))!.Text.ShouldBe("the first revision");
-        (await reader.ForAsync(corpusId, newSet.Id, "x.pdf", sourceId))!.Text.ShouldBe("the second revision");
+        (await reader.ForAsync(corpusId, oldSet, "x.pdf", sourceId, TestContext.Current.CancellationToken))!.Text.ShouldBe("the first revision");
+        (await reader.ForAsync(corpusId, newSet.Id, "x.pdf", sourceId, TestContext.Current.CancellationToken))!.Text.ShouldBe("the second revision");
     }
 
     /// <summary>
@@ -196,9 +196,9 @@ public sealed class DocumentReaderTests : IDisposable
 
         db.FileTexts.Add(Text("shared", "EpubTextExtractor", "the epub reading"));
         db.Files.Add(File(sourceId, "renamed.docx", setId, sha: "shared"));
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        (await new DocumentReader(db).ForAsync(corpusId, setId, "renamed.docx", sourceId))
+        (await new DocumentReader(db).ForAsync(corpusId, setId, "renamed.docx", sourceId, TestContext.Current.CancellationToken))
             .ShouldBeNull();
     }
 
@@ -212,9 +212,9 @@ public sealed class DocumentReaderTests : IDisposable
         await using var db = Db();
         var (corpusId, sourceId, setId) = await CorpusAsync(db);
         db.Files.Add(File(sourceId, "src/a.cs", setId, sha: "cc33"));
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        (await new DocumentReader(db).ForAsync(corpusId, setId, "src/a.cs", sourceId)).ShouldBeNull();
+        (await new DocumentReader(db).ForAsync(corpusId, setId, "src/a.cs", sourceId, TestContext.Current.CancellationToken)).ShouldBeNull();
     }
 
     /// <summary>
@@ -228,9 +228,9 @@ public sealed class DocumentReaderTests : IDisposable
         await using var db = Db();
         var (corpusId, sourceId, setId) = await CorpusAsync(db);
         db.Files.Add(File(sourceId, "old.pdf", setId));
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        (await new DocumentReader(db).ForAsync(corpusId, setId, "old.pdf", sourceId)).ShouldBeNull();
+        (await new DocumentReader(db).ForAsync(corpusId, setId, "old.pdf", sourceId, TestContext.Current.CancellationToken)).ShouldBeNull();
     }
 
     /// <summary>
@@ -255,13 +255,13 @@ public sealed class DocumentReaderTests : IDisposable
         db.FileTexts.Add(Text("ee55", "PdfTextExtractor", "the second book"));
         db.Files.Add(File(firstSource, "intro.pdf", setId, sha: "dd44"));
         db.Files.Add(File(second.Id, "intro.pdf", setId, sha: "ee55"));
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var reader = new DocumentReader(db);
-        (await reader.ForAsync(corpusId, setId, "intro.pdf", sourceId: null)).ShouldBeNull();
+        (await reader.ForAsync(corpusId, setId, "intro.pdf", sourceId: null, ct: TestContext.Current.CancellationToken)).ShouldBeNull();
 
         // Named, it resolves: the ambiguity is in the path, not in the data.
-        (await reader.ForAsync(corpusId, setId, "intro.pdf", firstSource))!
+        (await reader.ForAsync(corpusId, setId, "intro.pdf", firstSource, TestContext.Current.CancellationToken))!
             .Text.ShouldBe("the first book");
     }
 
@@ -273,9 +273,9 @@ public sealed class DocumentReaderTests : IDisposable
         var (otherCorpus, _, otherSet) = await CorpusAsync(db);
         db.FileTexts.Add(Text("ff66", "PdfTextExtractor", "somebody else's book"));
         db.Files.Add(File(sourceId, "x.pdf", setId, sha: "ff66"));
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        (await new DocumentReader(db).ForAsync(otherCorpus, otherSet, "x.pdf", sourceId: null))
+        (await new DocumentReader(db).ForAsync(otherCorpus, otherSet, "x.pdf", sourceId: null, ct: TestContext.Current.CancellationToken))
             .ShouldBeNull();
     }
 

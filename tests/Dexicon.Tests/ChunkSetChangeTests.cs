@@ -22,7 +22,7 @@ public sealed class ChunkSetChangeTests : IAsyncLifetime
 
     private IndexingHarness _harness = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _harness = await IndexingHarness.StartAsync("notes");
         await _harness.SeedCorpusAsync(SourceKind.Workspace);
@@ -32,7 +32,7 @@ public sealed class ChunkSetChangeTests : IAsyncLifetime
             .SetProperty(s => s.BoundaryMode, "blank-line").SetProperty(s => s.Description, "old"));
     }
 
-    public async Task DisposeAsync() => await _harness.DisposeAsync();
+    public async ValueTask DisposeAsync() => await _harness.DisposeAsync();
 
     private static RequestContext AsAdmin() => new()
     {
@@ -74,9 +74,9 @@ public sealed class ChunkSetChangeTests : IAsyncLifetime
 
         result.ShouldBeOfType<ProblemHttpResult>().ProblemDetails.Title.ShouldBe(title);
         await using var fresh = _harness.NewContext();
-        var set = await fresh.ChunkSets.AsNoTracking().SingleAsync();
+        var set = await fresh.ChunkSets.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         (set.ChunkSize, set.ChunkOverlap, set.BoundaryMode).ShouldBe((29_491, 3_686, "blank-line"));
-        (await fresh.Jobs.CountAsync()).ShouldBe(0, "a refused change queues no re-chunk");
+        (await fresh.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0, "a refused change queues no re-chunk");
     }
 
     public static TheoryData<string, UpdateChunkSetRequest> Accepted => new()
@@ -116,7 +116,7 @@ public sealed class ChunkSetChangeTests : IAsyncLifetime
     public async Task AnOverlapPastTheSizeStoredBeforeTheRuleDoesNotBlockAModeChangeButAnUnknownModeIsStillRefused()
     {
         await using (var db = _harness.NewContext())
-            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.ChunkSize, 100).SetProperty(s => s.ChunkOverlap, 500));
+            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.ChunkSize, 100).SetProperty(s => s.ChunkOverlap, 500), cancellationToken: TestContext.Current.CancellationToken);
 
         var bogus = await PatchAsync(new UpdateChunkSetRequest(BoundaryMode: "bogus"));
         var none = await PatchAsync(new UpdateChunkSetRequest(BoundaryMode: "none"));
@@ -129,7 +129,7 @@ public sealed class ChunkSetChangeTests : IAsyncLifetime
     public async Task ANegativeOverlapStoredBeforeTheRuleDoesNotBlockADescriptionOrAModeChange()
     {
         await using (var db = _harness.NewContext())
-            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.ChunkSize, 256).SetProperty(s => s.ChunkOverlap, -5));
+            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.ChunkSize, 256).SetProperty(s => s.ChunkOverlap, -5), cancellationToken: TestContext.Current.CancellationToken);
 
         var description = await PatchAsync(new UpdateChunkSetRequest(Description: "edited"));
         var mode = await PatchAsync(new UpdateChunkSetRequest(BoundaryMode: "none"));
@@ -145,7 +145,7 @@ public sealed class ChunkSetChangeTests : IAsyncLifetime
     {
         await using (var db = _harness.NewContext())
             await db.ChunkSets.ExecuteUpdateAsync(u => u
-                .SetProperty(s => s.BoundaryMode, "custom").SetProperty(s => s.CustomBoundaryPattern, "^#"));
+                .SetProperty(s => s.BoundaryMode, "custom").SetProperty(s => s.CustomBoundaryPattern, "^#"), cancellationToken: TestContext.Current.CancellationToken);
 
         var bad = await PatchAsync(new UpdateChunkSetRequest(CustomBoundaryPattern: "[z-a]"));
         var good = await PatchAsync(new UpdateChunkSetRequest(CustomBoundaryPattern: "^##"));
@@ -153,14 +153,14 @@ public sealed class ChunkSetChangeTests : IAsyncLifetime
         bad.ShouldBeOfType<ProblemHttpResult>().ProblemDetails.Title.ShouldBe("Invalid custom boundary pattern");
         good.ShouldBeOfType<Ok<ChunkSetUpdated>>();
         await using var fresh = _harness.NewContext();
-        (await fresh.ChunkSets.AsNoTracking().SingleAsync()).CustomBoundaryPattern.ShouldBe("^##");
+        (await fresh.ChunkSets.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).CustomBoundaryPattern.ShouldBe("^##");
     }
 
     [Fact]
     public async Task AnOverlapSentAgainAtTheStoredValueIsNotAChangeEvenWhenItIsNotBelowTheSize()
     {
         await using (var db = _harness.NewContext())
-            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.ChunkSize, 100).SetProperty(s => s.ChunkOverlap, 500));
+            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.ChunkSize, 100).SetProperty(s => s.ChunkOverlap, 500), cancellationToken: TestContext.Current.CancellationToken);
 
         var same = await PatchAsync(new UpdateChunkSetRequest(Description: "edited", ChunkOverlap: 500));
         var changed = await PatchAsync(new UpdateChunkSetRequest(ChunkOverlap: 501));
@@ -173,7 +173,7 @@ public sealed class ChunkSetChangeTests : IAsyncLifetime
     public async Task APatternSentWhileTheModeIsNotCustomIsNotJudgedAgainstAnUnknownModeStoredBeforeTheRule()
     {
         await using (var db = _harness.NewContext())
-            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.BoundaryMode, "bogus"));
+            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.BoundaryMode, "bogus"), cancellationToken: TestContext.Current.CancellationToken);
 
         var result = await PatchAsync(new UpdateChunkSetRequest(CustomBoundaryPattern: "^#"));
 
@@ -186,14 +186,8 @@ public sealed class ChunkSetChangeTests : IAsyncLifetime
         await using var db = _harness.NewContext();
         var options = _harness.Settings;
 
-        var inherited = await ChunkSetEndpoints.CreateAsync(
-            IndexingHarness.CorpusId, new CreateChunkSetRequest("second", EmbeddingModel: "m"), AsAdmin(),
-            new ScopeResolver(db), db, _harness.Vectors, _harness.Embedder,
-            new IndexJobQueue(db, new WorkScheduler(options), NullLogger<IndexJobQueue>.Instance), options, default);
-        var sent = await ChunkSetEndpoints.CreateAsync(
-            IndexingHarness.CorpusId, new CreateChunkSetRequest("third", EmbeddingModel: "m", ChunkSize: 9_000), AsAdmin(),
-            new ScopeResolver(db), db, _harness.Vectors, _harness.Embedder,
-            new IndexJobQueue(db, new WorkScheduler(options), NullLogger<IndexJobQueue>.Instance), options, default);
+        var inherited = await ChunkSetEndpoints.CreateAsync(IndexingHarness.CorpusId, new CreateChunkSetRequest("second", EmbeddingModel: "m"), AsAdmin(), new ScopeResolver(db), db, _harness.Vectors, _harness.Embedder, new IndexJobQueue(db, new WorkScheduler(options), NullLogger<IndexJobQueue>.Instance), options, TestContext.Current.CancellationToken);
+        var sent = await ChunkSetEndpoints.CreateAsync(IndexingHarness.CorpusId, new CreateChunkSetRequest("third", EmbeddingModel: "m", ChunkSize: 9_000), AsAdmin(), new ScopeResolver(db), db, _harness.Vectors, _harness.Embedder, new IndexJobQueue(db, new WorkScheduler(options), NullLogger<IndexJobQueue>.Instance), options, TestContext.Current.CancellationToken);
 
         inherited.ShouldBeOfType<Accepted<ChunkSetCreated>>();
         sent.ShouldBeOfType<ProblemHttpResult>().ProblemDetails.Title.ShouldBe(TooBig);

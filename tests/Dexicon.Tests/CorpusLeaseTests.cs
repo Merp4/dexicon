@@ -67,7 +67,7 @@ public sealed class CorpusLeaseTests : IDisposable
         var id = await CorpusAsync();
         var leases = Leases();
 
-        await using var hold = await leases.TryAcquireAsync(id, "index-job-1", default);
+        await using var hold = await leases.TryAcquireAsync(id, "index-job-1", TestContext.Current.CancellationToken);
 
         hold.ShouldNotBeNull();
         var row = await RowAsync(id);
@@ -81,8 +81,8 @@ public sealed class CorpusLeaseTests : IDisposable
         var id = await CorpusAsync();
         var leases = Leases();
 
-        await using var first = await leases.TryAcquireAsync(id, "index-job-1", default);
-        var second = await leases.TryAcquireAsync(id, "sweep-1", default);
+        await using var first = await leases.TryAcquireAsync(id, "index-job-1", TestContext.Current.CancellationToken);
+        var second = await leases.TryAcquireAsync(id, "sweep-1", TestContext.Current.CancellationToken);
 
         first.ShouldNotBeNull();
         second.ShouldBeNull();
@@ -94,11 +94,11 @@ public sealed class CorpusLeaseTests : IDisposable
         var id = await CorpusAsync();
         var leases = Leases();
 
-        var first = await leases.TryAcquireAsync(id, "index-job-1", default);
+        var first = await leases.TryAcquireAsync(id, "index-job-1", TestContext.Current.CancellationToken);
         first.ShouldNotBeNull();
         await first.DisposeAsync();
 
-        await using var second = await leases.TryAcquireAsync(id, "sweep-1", default);
+        await using var second = await leases.TryAcquireAsync(id, "sweep-1", TestContext.Current.CancellationToken);
         second.ShouldNotBeNull();
         (await RowAsync(id)).Holder.ShouldBe("sweep-1");
     }
@@ -113,13 +113,13 @@ public sealed class CorpusLeaseTests : IDisposable
         using (var scope = _services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
-            var c = await db.Corpora.FirstAsync(x => x.Id == id);
+            var c = await db.Corpora.FirstAsync(x => x.Id == id, cancellationToken: TestContext.Current.CancellationToken);
             c.HeldBy = "a-process-that-died";
             c.HeldUntilUtc = DateTime.UtcNow.AddMinutes(-1);
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
-        await using var hold = await Leases().TryAcquireAsync(id, "sweep-1", default);
+        await using var hold = await Leases().TryAcquireAsync(id, "sweep-1", TestContext.Current.CancellationToken);
 
         hold.ShouldNotBeNull();
         (await RowAsync(id)).Holder.ShouldBe("sweep-1");
@@ -133,13 +133,13 @@ public sealed class CorpusLeaseTests : IDisposable
         using (var scope = _services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
-            var c = await db.Corpora.FirstAsync(x => x.Id == id);
+            var c = await db.Corpora.FirstAsync(x => x.Id == id, cancellationToken: TestContext.Current.CancellationToken);
             c.HeldBy = "a-long-index-job";
             c.HeldUntilUtc = DateTime.UtcNow.AddMinutes(1);
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
-        (await Leases().TryAcquireAsync(id, "sweep-1", default)).ShouldBeNull();
+        (await Leases().TryAcquireAsync(id, "sweep-1", TestContext.Current.CancellationToken)).ShouldBeNull();
     }
 
     [Fact]
@@ -188,19 +188,19 @@ public sealed class CorpusLeaseTests : IDisposable
         var id = await CorpusAsync();
         var leases = Leases();
 
-        var hold = await leases.TryAcquireAsync(id, "slow-holder", default);
+        var hold = await leases.TryAcquireAsync(id, "slow-holder", TestContext.Current.CancellationToken);
         hold.ShouldNotBeNull();
 
         using (var scope = _services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
-            var c = await db.Corpora.FirstAsync(x => x.Id == id);
+            var c = await db.Corpora.FirstAsync(x => x.Id == id, cancellationToken: TestContext.Current.CancellationToken);
             c.HeldUntilUtc = DateTime.UtcNow.AddSeconds(-1);   // its renewal did not arrive
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Someone else takes it, as they are entitled to.
-        await using var taker = await leases.TryAcquireAsync(id, "sweep-1", default);
+        await using var taker = await leases.TryAcquireAsync(id, "sweep-1", TestContext.Current.CancellationToken);
         taker.ShouldNotBeNull();
         (await RowAsync(id)).Holder.ShouldBe("sweep-1");
 
@@ -222,7 +222,7 @@ public sealed class CorpusLeaseTests : IDisposable
             lease: TimeSpan.FromMilliseconds(200),
             renew: TimeSpan.FromMilliseconds(50));
 
-        await using var hold = await fast.TryAcquireAsync(id, "holder", default);
+        await using var hold = await fast.TryAcquireAsync(id, "holder", TestContext.Current.CancellationToken);
         hold.ShouldNotBeNull();
         hold.Lost.IsCancellationRequested.ShouldBeFalse();
 
@@ -233,13 +233,13 @@ public sealed class CorpusLeaseTests : IDisposable
             await db.Corpora.Where(c => c.Id == id)
                 .ExecuteUpdateAsync(u => u
                     .SetProperty(c => c.HeldBy, "someone-else")
-                    .SetProperty(c => c.HeldUntilUtc, DateTime.UtcNow.AddMinutes(5)));
+                    .SetProperty(c => c.HeldUntilUtc, DateTime.UtcNow.AddMinutes(5)), cancellationToken: TestContext.Current.CancellationToken);
         }
 
         // The next renewal finds it gone and cancels.
         var waited = System.Diagnostics.Stopwatch.StartNew();
         while (!hold.Lost.IsCancellationRequested && waited.ElapsedMilliseconds < 5_000)
-            await Task.Delay(25);
+            await Task.Delay(25, TestContext.Current.CancellationToken);
 
         hold.Lost.IsCancellationRequested.ShouldBeTrue();
 
@@ -256,8 +256,8 @@ public sealed class CorpusLeaseTests : IDisposable
         var b = await CorpusAsync();
         var leases = Leases();
 
-        await using var indexing = await leases.TryAcquireAsync(a, "index-job-1", default);
-        await using var sweeping = await leases.TryAcquireAsync(b, "sweep-1", default);
+        await using var indexing = await leases.TryAcquireAsync(a, "index-job-1", TestContext.Current.CancellationToken);
+        await using var sweeping = await leases.TryAcquireAsync(b, "sweep-1", TestContext.Current.CancellationToken);
 
         indexing.ShouldNotBeNull();
         sweeping.ShouldNotBeNull();

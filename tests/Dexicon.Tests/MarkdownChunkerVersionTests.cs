@@ -38,7 +38,7 @@ public sealed class MarkdownChunkerVersionTests
         await using var harness = await IndexingHarness.StartAsync();
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await using var db = harness.NewContext();
-        var set = await db.ChunkSets.SingleAsync();
+        var set = await db.ChunkSets.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         var asMarkdown = CorpusIndexer.ChunkingFingerprint(set, "blob", ModelTemplates.Raw, "a.md");
         var asText = CorpusIndexer.ChunkingFingerprint(set, "blob", ModelTemplates.Raw, "a.txt");
@@ -58,7 +58,7 @@ public sealed class MarkdownChunkerVersionTests
         // wrote for either, since the two names differ only in the extension.
         await WriteAsync(harness, "note.md", Note);
         await WriteAsync(harness, "note.txt", Note);
-        var first = await harness.RunIndexAsync();
+        var first = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         first.FilesDone.ShouldBe(2);
 
         var markdown = await harness.StateOfAsync("note.md");
@@ -70,13 +70,13 @@ public sealed class MarkdownChunkerVersionTests
         // Put the Markdown file's record back as the earlier version left it.
         await using (var db = harness.NewContext())
         {
-            var fileId = await db.Files.Where(f => f.RelativePath == "note.md").Select(f => f.Id).SingleAsync();
+            var fileId = await db.Files.Where(f => f.RelativePath == "note.md").Select(f => f.Id).SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
             await db.FileChunkStates.Where(s => s.FileId == fileId).ExecuteUpdateAsync(u => u
                 .SetProperty(s => s.ContentHash, text.ContentHash)
-                .SetProperty(s => s.SettledFor, text.SettledFor));
+                .SetProperty(s => s.SettledFor, text.SettledFor), cancellationToken: TestContext.Current.CancellationToken);
         }
 
-        var upgraded = await harness.RunIndexAsync();
+        var upgraded = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         upgraded.FilesDone.ShouldBe(1, "the Markdown file");
         upgraded.FilesSkipped.ShouldBe(1, "the text file, which is what it was");
@@ -84,7 +84,7 @@ public sealed class MarkdownChunkerVersionTests
         (await harness.StateOfAsync("note.txt")).ContentHash.ShouldBe(text.ContentHash);
         (await SectionsOf(harness, "note.md")).ShouldBe(["Alpha"]);
 
-        var settled = await harness.RunIndexAsync();
+        var settled = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         settled.FilesDone.ShouldBe(0, "the Markdown file is settled under its new key");
         settled.FilesSkipped.ShouldBe(2);
@@ -99,26 +99,26 @@ public sealed class MarkdownChunkerVersionTests
         await using (var setup = harness.NewContext())
         {
             var documents = harness.NewDocumentService(setup);
-            var stored = await documents.StoreAsync(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(Note)), "doc.md");
+            var stored = await documents.StoreAsync(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(Note)), "doc.md", TestContext.Current.CancellationToken);
             sha = stored.Sha256;
-            await documents.AttachAsync(await setup.Corpora.SingleAsync(), sha, "doc.md");
+            await documents.AttachAsync(await setup.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken), sha, "doc.md", TestContext.Current.CancellationToken);
         }
 
-        (await harness.RunIndexAsync()).FilesDone.ShouldBe(1);
+        (await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken)).FilesDone.ShouldBe(1);
 
         await using (var db = harness.NewContext())
         {
-            var set = await db.ChunkSets.AsNoTracking().FirstAsync();
-            var state = await db.FileChunkStates.AsNoTracking().SingleAsync();
+            var set = await db.ChunkSets.AsNoTracking().FirstAsync(cancellationToken: TestContext.Current.CancellationToken);
+            var state = await db.FileChunkStates.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
             var earlier = CorpusIndexer.ChunkingFingerprint(set, sha, ModelTemplates.Raw, "doc.txt");
             state.ContentHash.ShouldBe(CorpusIndexer.ChunkingFingerprint(set, sha, ModelTemplates.Raw, "doc.md"));
             state.ContentHash.ShouldNotBe(earlier);
 
-            await db.FileChunkStates.ExecuteUpdateAsync(u => u.SetProperty(s => s.ContentHash, earlier));
+            await db.FileChunkStates.ExecuteUpdateAsync(u => u.SetProperty(s => s.ContentHash, earlier), cancellationToken: TestContext.Current.CancellationToken);
         }
 
-        (await harness.RunIndexAsync()).FilesDone.ShouldBe(1, "the key held is the one the earlier version wrote");
-        (await harness.RunIndexAsync()).FilesDone.ShouldBe(0, "and it is the new key now");
+        (await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken)).FilesDone.ShouldBe(1, "the key held is the one the earlier version wrote");
+        (await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken)).FilesDone.ShouldBe(0, "and it is the new key now");
     }
 
     private static async Task WriteAsync(IndexingHarness harness, string name, string text)

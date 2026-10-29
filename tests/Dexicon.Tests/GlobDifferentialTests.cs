@@ -11,7 +11,7 @@ namespace Dexicon.Tests;
 /// s in both cases, dotted and dotless i, the Greek sigmas, a titlecase digraph) and an emoji. Paths with a line
 /// feed are left out, which is the one documented difference (<see cref="GlobOracle"/>).
 /// </summary>
-public sealed class GlobDifferentialTests(Xunit.Abstractions.ITestOutputHelper output)
+public sealed class GlobDifferentialTests(ITestOutputHelper output)
 {
     private static string U(int codePoint) => char.ConvertFromUtf32(codePoint);
 

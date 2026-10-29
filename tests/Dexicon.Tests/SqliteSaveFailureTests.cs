@@ -16,18 +16,18 @@ public sealed class SqliteSaveFailureTests
         await using (var setup = harness.NewContext())
         {
             var documents = harness.NewDocumentService(setup);
-            var corpus = await setup.Corpora.SingleAsync();
+            var corpus = await setup.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
             for (var i = 0; i < 3; i++)
             {
-                var stored = await documents.StoreAsync(new MemoryStream(System.Text.Encoding.UTF8.GetBytes($"doc {i}")), $"d{i}.txt");
-                await documents.AttachAsync(corpus, stored.Sha256, $"d{i}.txt");
+                var stored = await documents.StoreAsync(new MemoryStream(System.Text.Encoding.UTF8.GetBytes($"doc {i}")), $"d{i}.txt", TestContext.Current.CancellationToken);
+                await documents.AttachAsync(corpus, stored.Sha256, $"d{i}.txt", TestContext.Current.CancellationToken);
             }
         }
 
         await using var db = harness.NewContext();
-        foreach (var state in await db.FileChunkStates.ToListAsync()) state.Status = FileStatus.Indexed;
+        foreach (var state in await db.FileChunkStates.ToListAsync(cancellationToken: TestContext.Current.CancellationToken)) state.Status = FileStatus.Indexed;
         await using (var other = harness.NewContext())
-            await other.Files.ExecuteDeleteAsync();
+            await other.Files.ExecuteDeleteAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         var failure = await Should.ThrowAsync<DbUpdateConcurrencyException>(() => db.SaveChangesAsync());
 

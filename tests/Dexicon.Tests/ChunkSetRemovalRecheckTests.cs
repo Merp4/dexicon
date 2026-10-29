@@ -38,20 +38,20 @@ public sealed class ChunkSetRemovalRecheckTests
         };
 
         var config = harness.NewConfiguration(removing);
-        var corpus = await removing.Corpora.SingleAsync();
-        var outcome = await config.RemoveChunkSetAsync(corpus, "alt-1", default);
+        var corpus = await removing.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var outcome = await config.RemoveChunkSetAsync(corpus, "alt-1", TestContext.Current.CancellationToken);
 
         outcome.Refusal.ShouldNotBeNull().Status.ShouldBe(409);
         outcome.Refusal.Title.ShouldBe("Cannot delete the default chunk set");
         outcome.Refusal.KeptSetId.ShouldBe("set-2");
         await using var check = harness.NewContext();
-        (await check.ChunkSets.CountAsync()).ShouldBe(2);
-        (await check.ChunkSets.CountAsync(s => s.IsDefault)).ShouldBe(1, "a corpus keeps a default set");
-        (await check.Jobs.CountAsync()).ShouldBe(0, "the removal queued nothing");
+        (await check.ChunkSets.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2);
+        (await check.ChunkSets.CountAsync(s => s.IsDefault, cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "a corpus keeps a default set");
+        (await check.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0, "the removal queued nothing");
 
         await config.FollowUpAsync(corpus, outcome.Refusal);
 
-        var queued = await check.Jobs.SingleAsync();
+        var queued = await check.Jobs.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         (queued.State, queued.Kind, queued.ChunkSetId).ShouldBe((JobState.Queued, JobKind.Refresh, "set-2"));
     }
 
@@ -67,14 +67,14 @@ public sealed class ChunkSetRemovalRecheckTests
         };
 
         var config = harness.NewConfiguration(removing);
-        var corpus = await removing.Corpora.SingleAsync();
-        var outcome = await config.RemoveChunkSetAsync(corpus, "alt-1", default);
+        var corpus = await removing.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var outcome = await config.RemoveChunkSetAsync(corpus, "alt-1", TestContext.Current.CancellationToken);
 
         outcome.Refusal.ShouldNotBeNull().Title.ShouldBe("Cannot delete the only chunk set");
         await config.FollowUpAsync(corpus, outcome.Refusal);
         await using var check = harness.NewContext();
-        (await check.ChunkSets.Select(s => s.Id).ToListAsync()).ShouldBe(["set-2"]);
-        (await check.Jobs.CountAsync(j => j.ChunkSetId == "set-2")).ShouldBe(1);
+        (await check.ChunkSets.Select(s => s.Id).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(["set-2"]);
+        (await check.Jobs.CountAsync(j => j.ChunkSetId == "set-2", cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]
@@ -83,15 +83,15 @@ public sealed class ChunkSetRemovalRecheckTests
         await using var harness = await StartAsync(sets: 2);
         await using var removing = harness.NewContext();
         var config = harness.NewConfiguration(removing);
-        var corpus = await removing.Corpora.SingleAsync();
+        var corpus = await removing.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-        var outcome = await config.RemoveChunkSetAsync(corpus, "alt-1", default);
+        var outcome = await config.RemoveChunkSetAsync(corpus, "alt-1", TestContext.Current.CancellationToken);
 
         outcome.Refusal.ShouldBeNull();
         await using var check = harness.NewContext();
-        (await check.Jobs.CountAsync()).ShouldBe(0, "a set that is gone has nothing to refresh");
+        (await check.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0, "a set that is gone has nothing to refresh");
         await config.FollowUpAsync(corpus, new ConfigRefusal("any", "any", 409));
-        (await check.Jobs.CountAsync()).ShouldBe(0, "a refusal that names no set asks for nothing");
+        (await check.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0, "a refusal that names no set asks for nothing");
     }
 
     [Fact]
@@ -117,9 +117,8 @@ public sealed class ChunkSetRemovalRecheckTests
         try
         {
             await Gates.ReachedAsync(hold.Reached, "the delete of the set");
-            promotion = ChunkSetEndpoints.PromoteAsync(
-                IndexingHarness.CorpusId, "alt-1", admin, new ScopeResolver(promoting), promoting, default);
-            promotedWhileHeld = await Task.WhenAny(promotion, Task.Delay(TimeSpan.FromSeconds(3))) == promotion;
+            promotion = ChunkSetEndpoints.PromoteAsync(IndexingHarness.CorpusId, "alt-1", admin, new ScopeResolver(promoting), promoting, TestContext.Current.CancellationToken);
+            promotedWhileHeld = await Task.WhenAny(promotion, Task.Delay(TimeSpan.FromSeconds(3), TestContext.Current.CancellationToken)) == promotion;
         }
         finally { hold.Release(); }
 
@@ -129,7 +128,7 @@ public sealed class ChunkSetRemovalRecheckTests
         promotedWhileHeld.ShouldBeFalse("the promotion ran between the removal's check and its delete");
         result.ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(404);
         await using var check = harness.NewContext();
-        var left = await check.ChunkSets.ToListAsync();
+        var left = await check.ChunkSets.ToListAsync(cancellationToken: TestContext.Current.CancellationToken);
         (left.Single().Id, left.Single().IsDefault).ShouldBe(("set-1", true));
     }
 
@@ -149,11 +148,10 @@ public sealed class ChunkSetRemovalRecheckTests
             Principal = new Principal("k", "admin", new HashSet<string>(StringComparer.Ordinal) { Scopes.Admin }),
         };
 
-        var result = await ChunkSetEndpoints.RemoveAsync(
-            IndexingHarness.CorpusId, "alt-1", admin, new ScopeResolver(removing), harness.NewConfiguration(removing), default);
+        var result = await ChunkSetEndpoints.RemoveAsync(IndexingHarness.CorpusId, "alt-1", admin, new ScopeResolver(removing), harness.NewConfiguration(removing), TestContext.Current.CancellationToken);
 
         result.ShouldBeOfType<ProblemHttpResult>().StatusCode.ShouldBe(409);
         await using var check = harness.NewContext();
-        (await check.Jobs.SingleAsync()).ChunkSetId.ShouldBe("set-2");
+        (await check.Jobs.SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).ChunkSetId.ShouldBe("set-2");
     }
 }

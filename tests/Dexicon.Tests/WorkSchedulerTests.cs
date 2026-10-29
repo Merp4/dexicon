@@ -193,7 +193,7 @@ public sealed class WorkSchedulerTests
 
         s.Enqueue(Index("a"));
 
-        await waiting.WaitAsync(TimeSpan.FromSeconds(5));
+        await waiting.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         s.TryTake().ShouldNotBeNull();
     }
 

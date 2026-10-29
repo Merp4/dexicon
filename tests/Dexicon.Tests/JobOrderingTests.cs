@@ -19,7 +19,7 @@ public sealed class JobOrderingTests : IAsyncLifetime
     private SqliteConnection _connection = null!;
     private CatalogDbContext _db = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _connection = new SqliteConnection("Data Source=:memory:");
         await _connection.OpenAsync();
@@ -37,7 +37,7 @@ public sealed class JobOrderingTests : IAsyncLifetime
         await _db.SaveChangesAsync();
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await _db.DisposeAsync();
         await _connection.DisposeAsync();
@@ -141,7 +141,7 @@ public sealed class JobOrderingTests : IAsyncLifetime
         Add("j", queued: DateTime.UtcNow, started: null, state: JobState.Queued);
         _db.ChangeTracker.Clear();
 
-        (await _db.Jobs.SingleAsync()).QueuedUtc.Kind.ShouldBe(DateTimeKind.Utc);
+        (await _db.Jobs.SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).QueuedUtc.Kind.ShouldBe(DateTimeKind.Utc);
     }
 
     private void Add(string id, DateTime queued, DateTime? started, JobState state,

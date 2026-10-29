@@ -110,8 +110,8 @@ public sealed class IndexingLimitsTests
         string[] inputs = ["1", "2", "3", "4", "5", "6", "7", "8"];
 
         await Task.WhenAll(
-            a.EmbedAsync(target, EmbedPurpose.Raw, inputs),
-            b.EmbedAsync(target, EmbedPurpose.Raw, inputs));
+            a.EmbedAsync(target, EmbedPurpose.Raw, inputs, ct: TestContext.Current.CancellationToken),
+            b.EmbedAsync(target, EmbedPurpose.Raw, inputs, ct: TestContext.Current.CancellationToken));
 
         generator.Peak.ShouldBeLessThanOrEqualTo(2,
             "the limit belongs to the endpoint; a per-call gate would have allowed four");
@@ -125,9 +125,7 @@ public sealed class IndexingLimitsTests
         using var limits = new IndexingLimits(options);
         var generator = new ConcurrencyWatchingGenerator();
 
-        await Service(options, limits, generator).EmbedAsync(
-            new EmbeddingTarget(Provider, "m"), EmbedPurpose.Raw,
-            ["1", "2", "3", "4", "5", "6", "7", "8"]);
+        await Service(options, limits, generator).EmbedAsync(new EmbeddingTarget(Provider, "m"), EmbedPurpose.Raw, ["1", "2", "3", "4", "5", "6", "7", "8"], ct: TestContext.Current.CancellationToken);
 
         generator.Peak.ShouldBe(4);
     }
@@ -148,9 +146,9 @@ public sealed class IndexingLimitsTests
         var service = Service(options, limits, generator);
 
         await Task.WhenAll(
-            service.EmbedAsync(target, EmbedPurpose.Raw, ["1", "2", "3", "4"]),
-            service.CountTokensAsync(target, "how long is this"),
-            service.CountTokensAsync(target, "and this"));
+            service.EmbedAsync(target, EmbedPurpose.Raw, ["1", "2", "3", "4"], ct: TestContext.Current.CancellationToken),
+            service.CountTokensAsync(target, "how long is this", TestContext.Current.CancellationToken),
+            service.CountTokensAsync(target, "and this", TestContext.Current.CancellationToken));
 
         generator.Peak.ShouldBe(1,
             "a token count that skips the gate lets the endpoint exceed its budget");

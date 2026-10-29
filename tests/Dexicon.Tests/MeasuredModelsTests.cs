@@ -17,7 +17,7 @@ public sealed class MeasuredModelsTests : IAsyncLifetime
     private SqliteConnection _connection = null!;
     private CatalogDbContext _db = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _connection = new SqliteConnection("Data Source=:memory:");
         await _connection.OpenAsync();
@@ -26,7 +26,7 @@ public sealed class MeasuredModelsTests : IAsyncLifetime
         await _db.Database.EnsureCreatedAsync();
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await _db.DisposeAsync();
         await _connection.DisposeAsync();
@@ -46,7 +46,7 @@ public sealed class MeasuredModelsTests : IAsyncLifetime
     {
         await StoreAsync("embeddinggemma:latest", 2048);
 
-        var found = await MeasuredModels.ForAsync(_db, new EmbeddingTarget("ollama", "embeddinggemma"));
+        var found = await MeasuredModels.ForAsync(_db, new EmbeddingTarget("ollama", "embeddinggemma"), TestContext.Current.CancellationToken);
 
         found.ShouldNotBeNull().ContextTokens.ShouldBe(2048);
     }
@@ -56,7 +56,7 @@ public sealed class MeasuredModelsTests : IAsyncLifetime
     {
         await StoreAsync("embeddinggemma", 2048);
 
-        var found = await MeasuredModels.ForAsync(_db, new EmbeddingTarget("ollama", "embeddinggemma:latest"));
+        var found = await MeasuredModels.ForAsync(_db, new EmbeddingTarget("ollama", "embeddinggemma:latest"), TestContext.Current.CancellationToken);
 
         found.ShouldNotBeNull().ContextTokens.ShouldBe(2048);
     }
@@ -67,8 +67,8 @@ public sealed class MeasuredModelsTests : IAsyncLifetime
         await StoreAsync("embeddinggemma", 2048);
         await StoreAsync("embeddinggemma:latest", 1024);
 
-        (await _db.ModelMeasurements.Select(m => m.Model).ToListAsync()).ShouldBe(["embeddinggemma"]);
-        (await MeasuredModels.ForAsync(_db, new EmbeddingTarget("ollama", "embeddinggemma")))
+        (await _db.ModelMeasurements.Select(m => m.Model).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(["embeddinggemma"]);
+        (await MeasuredModels.ForAsync(_db, new EmbeddingTarget("ollama", "embeddinggemma"), TestContext.Current.CancellationToken))
             .ShouldNotBeNull().ContextTokens.ShouldBe(1024);
     }
 
@@ -77,9 +77,9 @@ public sealed class MeasuredModelsTests : IAsyncLifetime
     {
         await StoreAsync("EmbeddingGemma:LATEST", 2048);
 
-        (await _db.ModelMeasurements.Select(m => m.Model).ToListAsync()).ShouldBe(["embeddinggemma"]);
+        (await _db.ModelMeasurements.Select(m => m.Model).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(["embeddinggemma"]);
         foreach (var name in new[] { "embeddinggemma", "EmbeddingGemma", "EMBEDDINGGEMMA:latest" })
-            (await MeasuredModels.ForAsync(_db, new EmbeddingTarget("ollama", name)))
+            (await MeasuredModels.ForAsync(_db, new EmbeddingTarget("ollama", name), TestContext.Current.CancellationToken))
                 .ShouldNotBeNull(name).ContextTokens.ShouldBe(2048);
     }
 
@@ -89,8 +89,8 @@ public sealed class MeasuredModelsTests : IAsyncLifetime
         await StoreAsync("embeddinggemma", 2048);
         await StoreAsync("EmbeddingGemma", 1024);
 
-        (await _db.ModelMeasurements.Select(m => m.Model).ToListAsync()).ShouldBe(["embeddinggemma"]);
-        (await MeasuredModels.ForAsync(_db, new EmbeddingTarget("ollama", "embeddinggemma")))
+        (await _db.ModelMeasurements.Select(m => m.Model).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(["embeddinggemma"]);
+        (await MeasuredModels.ForAsync(_db, new EmbeddingTarget("ollama", "embeddinggemma"), TestContext.Current.CancellationToken))
             .ShouldNotBeNull().ContextTokens.ShouldBe(1024);
     }
 
@@ -100,8 +100,8 @@ public sealed class MeasuredModelsTests : IAsyncLifetime
         // Controls: the lookup must not widen into "any row that starts with the name".
         await StoreAsync("embeddinggemma:latest", 2048);
 
-        (await MeasuredModels.ForAsync(_db, new EmbeddingTarget("ollama", "embeddinggemma:v2"))).ShouldBeNull();
-        (await MeasuredModels.ForAsync(_db, new EmbeddingTarget("openai", "embeddinggemma"))).ShouldBeNull();
-        (await MeasuredModels.ForAsync(_db, new EmbeddingTarget("ollama", "nomic-embed-text"))).ShouldBeNull();
+        (await MeasuredModels.ForAsync(_db, new EmbeddingTarget("ollama", "embeddinggemma:v2"), TestContext.Current.CancellationToken)).ShouldBeNull();
+        (await MeasuredModels.ForAsync(_db, new EmbeddingTarget("openai", "embeddinggemma"), TestContext.Current.CancellationToken)).ShouldBeNull();
+        (await MeasuredModels.ForAsync(_db, new EmbeddingTarget("ollama", "nomic-embed-text"), TestContext.Current.CancellationToken)).ShouldBeNull();
     }
 }

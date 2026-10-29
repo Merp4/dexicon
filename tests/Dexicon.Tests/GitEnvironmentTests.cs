@@ -116,7 +116,7 @@ public sealed class GitEnvironmentTests : IDisposable
         // With the variable, git matches `:(glob)docs/*.md` as a literal name and selects nothing.
         Environment.SetEnvironmentVariable("GIT_LITERAL_PATHSPECS", "1");
 
-        var commits = await GitHistory.EnumerateAsync(Repo(), new GitHistoryOptions(), [":(glob)docs/*.md"], default);
+        var commits = await GitHistory.EnumerateAsync(Repo(), new GitHistoryOptions(), [":(glob)docs/*.md"], TestContext.Current.CancellationToken);
 
         commits.ShouldHaveSingleItem();
     }
@@ -129,7 +129,7 @@ public sealed class GitEnvironmentTests : IDisposable
         // With the variable every call fails: it names a repository that is not there.
         Environment.SetEnvironmentVariable("GIT_DIR", Path.Combine(_repo, "no-such-git-dir"));
 
-        (await GitHistory.EnumerateAsync(Repo(), new GitHistoryOptions(), null, default)).ShouldHaveSingleItem();
+        (await GitHistory.EnumerateAsync(Repo(), new GitHistoryOptions(), null, TestContext.Current.CancellationToken)).ShouldHaveSingleItem();
     }
 
     [Fact]
@@ -142,13 +142,13 @@ public sealed class GitEnvironmentTests : IDisposable
             string.Join('\n', Enumerable.Range(1, 40).Select(i => i == 20 ? "changed" : $"line {i}")) + "\n");
         Git("commit", "-am", "second");
         var options = new GitHistoryOptions { IncludeDiff = true };
-        var commits = await GitHistory.EnumerateAsync(Repo(), options, null, default);
+        var commits = await GitHistory.EnumerateAsync(Repo(), options, null, TestContext.Current.CancellationToken);
 
         // With the variable the patch carries nine lines of context either side of the change, not the pinned three.
         Environment.SetEnvironmentVariable("GIT_DIFF_OPTS", "--unified=9");
 
         var read = new Dictionary<string, string>();
-        await foreach (var (sha, text) in GitHistory.ReadAsync(Repo(), options, [commits[0].Sha], null))
+        await foreach (var (sha, text) in GitHistory.ReadAsync(Repo(), options, [commits[0].Sha], null, TestContext.Current.CancellationToken))
             read[sha] = text;
 
         // Context lines start with a space. The hunk header repeats the line before the hunk, so the text alone is no test.

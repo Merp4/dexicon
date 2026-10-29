@@ -83,24 +83,24 @@ public sealed class UploadFingerprintTests
         await using (var setup = harness.NewContext())
         {
             var documents = harness.NewDocumentService(setup);
-            var stored = await documents.StoreAsync(new MemoryStream("some current text to index"u8.ToArray()), "doc.txt");
+            var stored = await documents.StoreAsync(new MemoryStream("some current text to index"u8.ToArray()), "doc.txt", TestContext.Current.CancellationToken);
             sha = stored.Sha256;
-            await documents.AttachAsync(await setup.Corpora.SingleAsync(), sha, "doc.txt");
+            await documents.AttachAsync(await setup.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken), sha, "doc.txt", TestContext.Current.CancellationToken);
         }
 
-        var first = await harness.RunIndexAsync();
+        var first = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         await using (var check = harness.NewContext())
         {
-            var set = await check.ChunkSets.FirstAsync();
-            var state = await check.FileChunkStates.AsNoTracking().SingleAsync();
-            var row = await check.BlobTexts.AsNoTracking().SingleAsync();
+            var set = await check.ChunkSets.FirstAsync(cancellationToken: TestContext.Current.CancellationToken);
+            var state = await check.FileChunkStates.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
+            var row = await check.BlobTexts.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
             CorpusIndexer.TextKey(row).ShouldBe(row.Sha256);
             state.ContentHash.ShouldBe(CorpusIndexer.ChunkingFingerprint(set, sha, ModelTemplates.Raw, "doc.txt"),
                 "the stamp of a current row is the fingerprint built on the hash alone");
         }
 
-        var again = await harness.RunIndexAsync();
+        var again = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         first.FilesDone.ShouldBe(1);
         again.FilesDone.ShouldBe(0, "nothing changed");

@@ -54,12 +54,12 @@ public sealed class RemovingWhileAttachingTests
         await using var looking = harness.NewContext();
         await using var removing = harness.NewContext();
         hold.Armed = true;
-        var lookup = looking.Files.FirstOrDefaultAsync(f => f.SourceId == IndexingHarness.SourceId);
+        var lookup = looking.Files.FirstOrDefaultAsync(f => f.SourceId == IndexingHarness.SourceId, cancellationToken: TestContext.Current.CancellationToken);
 
         try
         {
             await Gates.ReachedAsync(hold.Reached, "the held file lookup");
-            var removal = RemoveAsync(harness.NewConfiguration(removing), await removing.Corpora.SingleAsync(), what);
+            var removal = RemoveAsync(harness.NewConfiguration(removing), await removing.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken), what);
 
             (await removal.FinishesAsync("the removal beside a held lookup")).Refusal.ShouldBeNull();
         }
@@ -82,8 +82,8 @@ public sealed class RemovingWhileAttachingTests
         await using var attaching = harness.NewContext();
         await using var removing = harness.NewContext();
         var documents = harness.NewDocumentService(attaching);
-        var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt");
-        var corpus = await attaching.Corpora.SingleAsync();
+        var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt", TestContext.Current.CancellationToken);
+        var corpus = await attaching.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         hold.Armed = true;
 
         var attachment = Task.Run(() => documents.AttachAsync(corpus, stored.Sha256, "doc.txt"));
@@ -92,8 +92,8 @@ public sealed class RemovingWhileAttachingTests
         try
         {
             await Gates.ReachedAsync(hold.Reached, "the attachment's file lookup");
-            removal = RemoveAsync(harness.NewConfiguration(removing), await removing.Corpora.SingleAsync(), what);
-            removedWhileHeld = await Task.WhenAny(removal, Task.Delay(HowLongToWait)) == removal;
+            removal = RemoveAsync(harness.NewConfiguration(removing), await removing.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken), what);
+            removedWhileHeld = await Task.WhenAny(removal, Task.Delay(HowLongToWait, TestContext.Current.CancellationToken)) == removal;
         }
         finally { hold.Release(); }
 
@@ -106,14 +106,14 @@ public sealed class RemovingWhileAttachingTests
         await using var check = harness.NewContext();
         if (what == Removal.ChunkSet)
         {
-            (await check.Files.CountAsync()).ShouldBe(1, "removing a chunk set keeps the document");
-            (await check.ChunkSets.CountAsync()).ShouldBe(1);
-            (await check.FileChunkStates.CountAsync()).ShouldBe(1, "a chunk state for the set that is left");
+            (await check.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "removing a chunk set keeps the document");
+            (await check.ChunkSets.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
+            (await check.FileChunkStates.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1, "a chunk state for the set that is left");
         }
         else
         {
-            (await check.Files.CountAsync()).ShouldBe(0, "the removal then took the attached document with it");
-            (await check.Sources.CountAsync()).ShouldBe(0);
+            (await check.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0, "the removal then took the attached document with it");
+            (await check.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
         }
     }
 
@@ -130,11 +130,11 @@ public sealed class RemovingWhileAttachingTests
         await using var attaching = harness.NewContext();
         await using var removing = harness.NewContext();
         var documents = harness.NewDocumentService(attaching);
-        var first = await documents.StoreAsync(new MemoryStream("the first document"u8.ToArray()), "one.txt");
-        var second = await documents.StoreAsync(new MemoryStream("the second document"u8.ToArray()), "two.txt");
-        var corpus = await attaching.Corpora.SingleAsync();
-        await documents.AttachAsync(corpus, first.Sha256, "one.txt");
-        await harness.RunIndexAsync();
+        var first = await documents.StoreAsync(new MemoryStream("the first document"u8.ToArray()), "one.txt", TestContext.Current.CancellationToken);
+        var second = await documents.StoreAsync(new MemoryStream("the second document"u8.ToArray()), "two.txt", TestContext.Current.CancellationToken);
+        var corpus = await attaching.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
+        await documents.AttachAsync(corpus, first.Sha256, "one.txt", TestContext.Current.CancellationToken);
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
         harness.Vectors.CountFor("one.txt").ShouldBeGreaterThan(0, "the removal has vectors to delete");
 
         var deleting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -151,8 +151,7 @@ public sealed class RemovingWhileAttachingTests
         {
             await Gates.ReachedAsync(deleting.Task, "the removal's vector delete");
 
-            await documents.AttachAsync(corpus, second.Sha256, "two.txt")
-                .FinishesAsync("the attachment while the removal waits on the vector store");
+            await documents.AttachAsync(corpus, second.Sha256, "two.txt", TestContext.Current.CancellationToken).FinishesAsync("the attachment while the removal waits on the vector store");
         }
         finally { letGo.TrySetResult(); }
 
@@ -172,9 +171,9 @@ public sealed class RemovingWhileAttachingTests
         await using var first = harness.NewContext();
         await using var second = harness.NewContext();
         var documents = harness.NewDocumentService(first);
-        var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt");
-        await documents.AttachAsync(await first.Corpora.SingleAsync(), stored.Sha256, "doc.txt");
-        await harness.RunIndexAsync();
+        var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt", TestContext.Current.CancellationToken);
+        await documents.AttachAsync(await first.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken), stored.Sha256, "doc.txt", TestContext.Current.CancellationToken);
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         var arrived = 0;
         var both = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -185,8 +184,8 @@ public sealed class RemovingWhileAttachingTests
         };
 
         var outcomes = await Task.WhenAll(
-                RemoveAsync(harness.NewConfiguration(first), await first.Corpora.SingleAsync(), what),
-                RemoveAsync(harness.NewConfiguration(second), await second.Corpora.SingleAsync(), what))
+                RemoveAsync(harness.NewConfiguration(first), await first.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken), what),
+                RemoveAsync(harness.NewConfiguration(second), await second.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken), what))
             .FinishesAsync("the two removals");
 
         arrived.ShouldBe(2, "both removals have to have deleted vectors before either deleted its row");
@@ -198,9 +197,9 @@ public sealed class RemovingWhileAttachingTests
         await using var check = harness.NewContext();
         switch (what)
         {
-            case Removal.Source: (await check.Sources.CountAsync()).ShouldBe(0); break;
-            case Removal.ChunkSet: (await check.ChunkSets.Select(s => s.Id).ToListAsync()).ShouldBe(["set-1"]); break;
-            default: (await check.Corpora.CountAsync()).ShouldBe(0); break;
+            case Removal.Source: (await check.Sources.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0); break;
+            case Removal.ChunkSet: (await check.ChunkSets.Select(s => s.Id).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(["set-1"]); break;
+            default: (await check.Corpora.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0); break;
         }
     }
 }

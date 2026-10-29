@@ -23,14 +23,14 @@ public sealed class WorkspacePassesOverDeletedRowsTests
             other.Sources.ExecuteDelete();
         };
 
-        var job = await harness.RunIndexAsync();
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
         await using var db = harness.NewContext();
-        var row = await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == job.Id);
+        var row = await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == job.Id, cancellationToken: TestContext.Current.CancellationToken);
         row.State.ShouldBe(JobState.Failed);
         row.FinishedUtc.ShouldNotBeNull();
         row.Error.ShouldNotBeNull().ShouldContain("removed while the pass ran");
-        (await db.Files.CountAsync()).ShouldBe(0);
+        (await db.Files.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]
@@ -43,7 +43,7 @@ public sealed class WorkspacePassesOverDeletedRowsTests
         await harness.SeedCorpusAsync(SourceKind.Workspace);
         await harness.WriteFileAsync("a.md", IndexingHarness.Prose("alpha"));
         await harness.WriteFileAsync("b.md", IndexingHarness.Prose("beta"));
-        await harness.RunIndexAsync(JobKind.Full);
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
         File.Delete(Path.Combine(harness.SourceDirectory, "a.md"));
         var fired = 0;
         harness.Vectors.OnDeleteAsync = async () =>
@@ -53,10 +53,10 @@ public sealed class WorkspacePassesOverDeletedRowsTests
             await other.Sources.ExecuteDeleteAsync();
         };
 
-        var job = await harness.RunIndexAsync().FinishesAsync("the pass and the record of its outcome");
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken).FinishesAsync("the pass and the record of its outcome");
 
         await using var db = harness.NewContext();
-        var row = await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == job.Id);
+        var row = await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == job.Id, cancellationToken: TestContext.Current.CancellationToken);
         row.State.ShouldBe(JobState.Failed, "the outcome is recorded");
         row.FinishedUtc.ShouldNotBeNull();
         fired.ShouldBe(1, "the source has to have been deleted during the reconcile");

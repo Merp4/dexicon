@@ -64,16 +64,16 @@ public sealed class KeyReachTests
         await using var db = harness.NewContext();
         var (key, papers) = await RestrictedToPapersAsync(harness, db);
         var resolver = new ScopeResolver(db);
-        (await resolver.VisibleAsync(Agent(key))).Select(c => c.Name).ShouldBe(["papers"]);
+        (await resolver.VisibleAsync(Agent(key), TestContext.Current.CancellationToken)).Select(c => c.Name).ShouldBe(["papers"]);
 
-        (await harness.NewConfiguration(db).RemoveCorpusAsync(papers, default)).Refusal.ShouldBeNull();
+        (await harness.NewConfiguration(db).RemoveCorpusAsync(papers, TestContext.Current.CancellationToken)).Refusal.ShouldBeNull();
 
         (await StoredAsync(harness, key.Id)).ShouldBe("restricted; rows: []", "the row went with the corpus, and the key is still restricted");
-        (await resolver.VisibleAsync(Agent(key))).ShouldBeEmpty("the corpus that is left was never this key's");
+        (await resolver.VisibleAsync(Agent(key), TestContext.Current.CancellationToken)).ShouldBeEmpty("the corpus that is left was never this key's");
         (await Should.ThrowAsync<ScopeResolutionException>(() => resolver.ResolveReadableAsync(Agent(key), null)))
             .Message.ShouldContain("can reach no corpora");
         await using var listing = harness.NewContext();
-        var summary = (await listing.Tokens.Include(t => t.Corpora).SingleAsync(t => t.Id == key.Id)).ToSummary();
+        var summary = (await listing.Tokens.Include(t => t.Corpora).SingleAsync(t => t.Id == key.Id, cancellationToken: TestContext.Current.CancellationToken)).ToSummary();
         summary.AllCorpora.ShouldBeFalse("what the Access page reads to tell this key from one that reaches every corpus");
         summary.CorpusIds.ShouldBeEmpty();
     }
@@ -84,11 +84,11 @@ public sealed class KeyReachTests
         await using var harness = await StartAsync();
         await using var db = harness.NewContext();
         var (_, papers) = await RestrictedToPapersAsync(harness, db);
-        var (everything, _) = await new TokenService(db, TimeProvider.System).CreateAsync("everything", [Scopes.Search], null);
+        var (everything, _) = await new TokenService(db, TimeProvider.System).CreateAsync("everything", [Scopes.Search], null, ct: TestContext.Current.CancellationToken);
 
-        await harness.NewConfiguration(db).RemoveCorpusAsync(papers, default);
+        await harness.NewConfiguration(db).RemoveCorpusAsync(papers, TestContext.Current.CancellationToken);
 
-        (await new ScopeResolver(db).VisibleAsync(Agent(everything))).Select(c => c.Name).ShouldBe(["notes"]);
+        (await new ScopeResolver(db).VisibleAsync(Agent(everything), TestContext.Current.CancellationToken)).Select(c => c.Name).ShouldBe(["notes"]);
     }
 
     [Fact]
@@ -97,11 +97,11 @@ public sealed class KeyReachTests
         await using var harness = await StartAsync();
         await using var db = harness.NewContext();
         var (key, papers) = await RestrictedToPapersAsync(harness, db);
-        await harness.NewConfiguration(db).RemoveCorpusAsync(papers, default);
+        await harness.NewConfiguration(db).RemoveCorpusAsync(papers, TestContext.Current.CancellationToken);
 
-        await harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("later"), default);
+        await harness.NewConfiguration(db).CreateCorpusAsync(new CreateCorpusRequest("later"), TestContext.Current.CancellationToken);
 
-        (await new ScopeResolver(db).VisibleAsync(Agent(key))).ShouldBeEmpty();
+        (await new ScopeResolver(db).VisibleAsync(Agent(key), TestContext.Current.CancellationToken)).ShouldBeEmpty();
     }
 
     // ---- creating a key ---------------------------------------------------------------------------
@@ -112,8 +112,7 @@ public sealed class KeyReachTests
         await using var harness = await StartAsync();
         await using var db = harness.NewContext();
 
-        var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent"), AsAdmin(),
-            new TokenService(db, TimeProvider.System), db, default);
+        var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent"), AsAdmin(), new TokenService(db, TimeProvider.System), db, TestContext.Current.CancellationToken);
 
         var token = result.ShouldBeOfType<Ok<CreatedTokenResponse>>().Value!.Token;
         token.AllCorpora.ShouldBeTrue();
@@ -129,11 +128,10 @@ public sealed class KeyReachTests
         await using var harness = await StartAsync();
         await using var db = harness.NewContext();
 
-        var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", CorpusIds: []), AsAdmin(),
-            new TokenService(db, TimeProvider.System), db, default);
+        var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", CorpusIds: []), AsAdmin(), new TokenService(db, TimeProvider.System), db, TestContext.Current.CancellationToken);
 
         StatusOf(result).ShouldBe(400);
-        (await db.Tokens.CountAsync(t => t.Name == "agent")).ShouldBe(0);
+        (await db.Tokens.CountAsync(t => t.Name == "agent", cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]
@@ -142,9 +140,7 @@ public sealed class KeyReachTests
         await using var harness = await StartAsync();
         await using var db = harness.NewContext();
 
-        var result = await SystemEndpoints.CreateTokenAsync(
-            new CreateTokenRequest("agent", CorpusIds: [], AllCorpora: true), AsAdmin(),
-            new TokenService(db, TimeProvider.System), db, default);
+        var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", CorpusIds: [], AllCorpora: true), AsAdmin(), new TokenService(db, TimeProvider.System), db, TestContext.Current.CancellationToken);
 
         result.ShouldBeOfType<Ok<CreatedTokenResponse>>().Value!.Token.AllCorpora.ShouldBeTrue();
     }
@@ -157,11 +153,10 @@ public sealed class KeyReachTests
         await using var db = harness.NewContext();
         var ids = Enumerable.Range(0, SystemEndpoints.MaxReachIds + 1).Select(i => $"id-{i}").ToList();
 
-        var create = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", CorpusIds: ids), AsAdmin(),
-            new TokenService(db, TimeProvider.System), db, default);
-        var (key, _) = await new TokenService(db, TimeProvider.System).CreateAsync("other", [Scopes.Search], null);
+        var create = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", CorpusIds: ids), AsAdmin(), new TokenService(db, TimeProvider.System), db, TestContext.Current.CancellationToken);
+        var (key, _) = await new TokenService(db, TimeProvider.System).CreateAsync("other", [Scopes.Search], null, ct: TestContext.Current.CancellationToken);
         db.ChangeTracker.Clear();
-        var replace = await SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest(ids), AsAdmin(), db, default);
+        var replace = await SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest(ids), AsAdmin(), db, TestContext.Current.CancellationToken);
 
         StatusOf(create).ShouldBe(400);
         StatusOf(replace).ShouldBe(400);
@@ -174,13 +169,12 @@ public sealed class KeyReachTests
         await using var harness = await StartAsync();
         await using var db = harness.NewContext();
 
-        var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", CorpusIds: [], AllCorpora: false),
-            AsAdmin(), new TokenService(db, TimeProvider.System), db, default);
+        var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", CorpusIds: [], AllCorpora: false), AsAdmin(), new TokenService(db, TimeProvider.System), db, TestContext.Current.CancellationToken);
 
         var token = result.ShouldBeOfType<Ok<CreatedTokenResponse>>().Value!.Token;
         token.AllCorpora.ShouldBeFalse();
         (await StoredAsync(harness, token.Id)).ShouldBe("restricted; rows: []");
-        (await new ScopeResolver(db).VisibleAsync(new Principal(token.Id, "agent", new HashSet<string>(StringComparer.Ordinal) { Scopes.Search })))
+        (await new ScopeResolver(db).VisibleAsync(new Principal(token.Id, "agent", new HashSet<string>(StringComparer.Ordinal) { Scopes.Search }), TestContext.Current.CancellationToken))
             .ShouldBeEmpty();
     }
 
@@ -190,12 +184,10 @@ public sealed class KeyReachTests
         await using var harness = await StartAsync();
         await using var db = harness.NewContext();
 
-        var result = await SystemEndpoints.CreateTokenAsync(
-            new CreateTokenRequest("agent", CorpusIds: [IndexingHarness.CorpusId], AllCorpora: true),
-            AsAdmin(), new TokenService(db, TimeProvider.System), db, default);
+        var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", CorpusIds: [IndexingHarness.CorpusId], AllCorpora: true), AsAdmin(), new TokenService(db, TimeProvider.System), db, TestContext.Current.CancellationToken);
 
         StatusOf(result).ShouldBe(400);
-        (await db.Tokens.CountAsync(t => t.Name == "agent")).ShouldBe(0);
+        (await db.Tokens.CountAsync(t => t.Name == "agent", cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     [Fact]
@@ -204,11 +196,10 @@ public sealed class KeyReachTests
         await using var harness = await StartAsync();
         await using var db = harness.NewContext();
 
-        var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", AllCorpora: false),
-            AsAdmin(), new TokenService(db, TimeProvider.System), db, default);
+        var result = await SystemEndpoints.CreateTokenAsync(new CreateTokenRequest("agent", AllCorpora: false), AsAdmin(), new TokenService(db, TimeProvider.System), db, TestContext.Current.CancellationToken);
 
         StatusOf(result).ShouldBe(400);
-        (await db.Tokens.CountAsync(t => t.Name == "agent")).ShouldBe(0);
+        (await db.Tokens.CountAsync(t => t.Name == "agent", cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(0);
     }
 
     // ---- replacing a key's reach ------------------------------------------------------------------
@@ -221,7 +212,7 @@ public sealed class KeyReachTests
         var (key, papers) = await RestrictedToPapersAsync(harness, db);
         db.ChangeTracker.Clear();
 
-        var result = await SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest([]), AsAdmin(), db, default);
+        var result = await SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest([]), AsAdmin(), db, TestContext.Current.CancellationToken);
 
         StatusOf(result).ShouldBe(400);
         (await StoredAsync(harness, key.Id)).ShouldBe($"restricted; rows: [{papers.Id}]");
@@ -234,14 +225,13 @@ public sealed class KeyReachTests
         await using var db = harness.NewContext();
         var (key, _) = await RestrictedToPapersAsync(harness, db);
 
-        var result = await SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest(AllCorpora: true),
-            AsAdmin(), db, default);
+        var result = await SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest(AllCorpora: true), AsAdmin(), db, TestContext.Current.CancellationToken);
 
         var summary = result.ShouldBeOfType<Ok<TokenSummary>>().Value!;
         summary.AllCorpora.ShouldBeTrue();
         summary.CorpusIds.ShouldBeEmpty();
         (await StoredAsync(harness, key.Id)).ShouldBe("every corpus; rows: []");
-        (await new ScopeResolver(db).VisibleAsync(Agent(key))).Select(c => c.Name).ShouldBe(["notes", "papers"]);
+        (await new ScopeResolver(db).VisibleAsync(Agent(key), TestContext.Current.CancellationToken)).Select(c => c.Name).ShouldBe(["notes", "papers"]);
     }
 
     [Fact]
@@ -251,14 +241,13 @@ public sealed class KeyReachTests
         await using var db = harness.NewContext();
         var (key, _) = await RestrictedToPapersAsync(harness, db);
 
-        var result = await SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest([], AllCorpora: false),
-            AsAdmin(), db, default);
+        var result = await SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest([], AllCorpora: false), AsAdmin(), db, TestContext.Current.CancellationToken);
 
         var summary = result.ShouldBeOfType<Ok<TokenSummary>>().Value!;
         summary.AllCorpora.ShouldBeFalse();
         summary.CorpusIds.ShouldBeEmpty();
         (await StoredAsync(harness, key.Id)).ShouldBe("restricted; rows: []");
-        (await new ScopeResolver(db).VisibleAsync(Agent(key))).ShouldBeEmpty();
+        (await new ScopeResolver(db).VisibleAsync(Agent(key), TestContext.Current.CancellationToken)).ShouldBeEmpty();
     }
 
     [Fact]
@@ -266,10 +255,9 @@ public sealed class KeyReachTests
     {
         await using var harness = await StartAsync();
         await using var db = harness.NewContext();
-        var (everything, _) = await new TokenService(db, TimeProvider.System).CreateAsync("everything", [Scopes.Search], null);
+        var (everything, _) = await new TokenService(db, TimeProvider.System).CreateAsync("everything", [Scopes.Search], null, ct: TestContext.Current.CancellationToken);
 
-        var result = await SystemEndpoints.ReplaceCorporaAsync(everything.Id,
-            new UpdateTokenCorporaRequest([IndexingHarness.CorpusId]), AsAdmin(), db, default);
+        var result = await SystemEndpoints.ReplaceCorporaAsync(everything.Id, new UpdateTokenCorporaRequest([IndexingHarness.CorpusId]), AsAdmin(), db, TestContext.Current.CancellationToken);
 
         var summary = result.ShouldBeOfType<Ok<TokenSummary>>().Value!;
         summary.AllCorpora.ShouldBeFalse();
@@ -285,8 +273,7 @@ public sealed class KeyReachTests
         var (key, papers) = await RestrictedToPapersAsync(harness, db);
         db.ChangeTracker.Clear();
 
-        var result = await SystemEndpoints.ReplaceCorporaAsync(key.Id,
-            new UpdateTokenCorporaRequest([IndexingHarness.CorpusId], AllCorpora: true), AsAdmin(), db, default);
+        var result = await SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest([IndexingHarness.CorpusId], AllCorpora: true), AsAdmin(), db, TestContext.Current.CancellationToken);
 
         StatusOf(result).ShouldBe(400);
         (await StoredAsync(harness, key.Id)).ShouldBe($"restricted; rows: [{papers.Id}]");
@@ -300,8 +287,7 @@ public sealed class KeyReachTests
         var (key, papers) = await RestrictedToPapersAsync(harness, db);
         db.ChangeTracker.Clear();
 
-        var result = await SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest(AllCorpora: false),
-            AsAdmin(), db, default);
+        var result = await SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest(AllCorpora: false), AsAdmin(), db, TestContext.Current.CancellationToken);
 
         StatusOf(result).ShouldBe(400);
         (await StoredAsync(harness, key.Id)).ShouldBe($"restricted; rows: [{papers.Id}]");
@@ -315,8 +301,7 @@ public sealed class KeyReachTests
         var (key, papers) = await RestrictedToPapersAsync(harness, db);
         db.ChangeTracker.Clear();
 
-        var result = await SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest(["missing"]),
-            AsAdmin(), db, default);
+        var result = await SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest(["missing"]), AsAdmin(), db, TestContext.Current.CancellationToken);
 
         StatusOf(result).ShouldBe(400);
         (await StoredAsync(harness, key.Id)).ShouldBe($"restricted; rows: [{papers.Id}]");
@@ -330,30 +315,29 @@ public sealed class KeyReachTests
         // replaced beside a setting that no longer matched them.
         await using var harness = await StartAsync();
         await using var db = harness.NewContext();
-        var (key, _) = await new TokenService(db, TimeProvider.System).CreateAsync("agent", [Scopes.Search], null);
+        var (key, _) = await new TokenService(db, TimeProvider.System).CreateAsync("agent", [Scopes.Search], null, ct: TestContext.Current.CancellationToken);
         db.ChangeTracker.Clear();
         await using var other = harness.NewContext();
 
         Task<IResult> everyCorpus;
-        await CorpusConfiguration.Naming.WaitAsync();
+        await CorpusConfiguration.Naming.WaitAsync(TestContext.Current.CancellationToken);
         try
         {
-            everyCorpus = SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest(AllCorpora: true),
-                AsAdmin(), db, default);
-            await Task.Delay(300);
+            everyCorpus = SystemEndpoints.ReplaceCorporaAsync(key.Id, new UpdateTokenCorporaRequest(AllCorpora: true), AsAdmin(), db, TestContext.Current.CancellationToken);
+            await Task.Delay(300, TestContext.Current.CancellationToken);
             everyCorpus.IsCompleted.ShouldBeFalse("the replacement waits for the lock, which is the window");
 
-            var held = await other.Tokens.SingleAsync(t => t.Id == key.Id);
+            var held = await other.Tokens.SingleAsync(t => t.Id == key.Id, cancellationToken: TestContext.Current.CancellationToken);
             held.AllCorpora = false;
             other.TokenCorpora.Add(new TokenCorpus { TokenId = key.Id, CorpusId = IndexingHarness.CorpusId });
-            await other.SaveChangesAsync();
+            await other.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
         finally
         {
             CorpusConfiguration.Naming.Release();
         }
 
-        var summary = (await everyCorpus.WaitAsync(TimeSpan.FromSeconds(10))).ShouldBeOfType<Ok<TokenSummary>>().Value!;
+        var summary = (await everyCorpus.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken)).ShouldBeOfType<Ok<TokenSummary>>().Value!;
         summary.AllCorpora.ShouldBeTrue();
         summary.CorpusIds.ShouldBeEmpty();
         (await StoredAsync(harness, key.Id)).ShouldBe("every corpus; rows: []", "the last request decides");
@@ -364,17 +348,17 @@ public sealed class KeyReachTests
     {
         await using var harness = await StartAsync();
         await using var db = harness.NewContext();
-        var (key, _) = await new TokenService(db, TimeProvider.System).CreateAsync("agent", [Scopes.Search], null);
+        var (key, _) = await new TokenService(db, TimeProvider.System).CreateAsync("agent", [Scopes.Search], null, ct: TestContext.Current.CancellationToken);
         db.ChangeTracker.Clear();
-        var stale = await db.Tokens.SingleAsync(t => t.Id == key.Id);
+        var stale = await db.Tokens.SingleAsync(t => t.Id == key.Id, cancellationToken: TestContext.Current.CancellationToken);
         stale.AllCorpora.ShouldBeTrue();
         await using var other = harness.NewContext();
-        var held = await other.Tokens.SingleAsync(t => t.Id == key.Id);
+        var held = await other.Tokens.SingleAsync(t => t.Id == key.Id, cancellationToken: TestContext.Current.CancellationToken);
         held.AllCorpora = false;
         other.TokenCorpora.Add(new TokenCorpus { TokenId = key.Id, CorpusId = IndexingHarness.CorpusId });
-        await other.SaveChangesAsync();
+        await other.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var (refusal, _) = await SystemEndpoints.MapCorporaAsync(db, key.Id, null, default);
+        var (refusal, _) = await SystemEndpoints.MapCorporaAsync(db, key.Id, null, TestContext.Current.CancellationToken);
 
         refusal.ShouldBeNull();
         (await StoredAsync(harness, key.Id)).ShouldBe("every corpus; rows: []");
@@ -386,15 +370,13 @@ public sealed class KeyReachTests
         await using var harness = await StartAsync();
         await using var db = harness.NewContext();
 
-        var result = await SystemEndpoints.ReplaceCorporaAsync("missing", new UpdateTokenCorporaRequest(AllCorpora: true),
-            AsAdmin(), db, default);
+        var result = await SystemEndpoints.ReplaceCorporaAsync("missing", new UpdateTokenCorporaRequest(AllCorpora: true), AsAdmin(), db, TestContext.Current.CancellationToken);
 
         StatusOf(result).ShouldBe(404);
 
         // The key is looked up first, as it was before the lock moved, so a missing key beside a missing
         // corpus is still the key's 404.
-        var both = await SystemEndpoints.ReplaceCorporaAsync("missing", new UpdateTokenCorporaRequest(["no-such-corpus"]),
-            AsAdmin(), db, default);
+        var both = await SystemEndpoints.ReplaceCorporaAsync("missing", new UpdateTokenCorporaRequest(["no-such-corpus"]), AsAdmin(), db, TestContext.Current.CancellationToken);
 
         StatusOf(both).ShouldBe(404);
     }
@@ -414,11 +396,11 @@ public sealed class KeyReachTests
             Scopes = Scopes.Search,
             CreatedUtc = DateTime.UtcNow,
         });
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         db.ChangeTracker.Clear();
 
         (await StoredAsync(harness, "unset")).ShouldBe("restricted; rows: []");
-        (await new ScopeResolver(db).VisibleAsync(new Principal("unset", "unset", new HashSet<string>(StringComparer.Ordinal) { Scopes.Search })))
+        (await new ScopeResolver(db).VisibleAsync(new Principal("unset", "unset", new HashSet<string>(StringComparer.Ordinal) { Scopes.Search }), TestContext.Current.CancellationToken))
             .ShouldBeEmpty();
     }
 
@@ -428,16 +410,16 @@ public sealed class KeyReachTests
         // The rows are ignored while the key reaches every corpus, and the summary says so.
         await using var harness = await StartAsync();
         await using var db = harness.NewContext();
-        var (key, _) = await new TokenService(db, TimeProvider.System).CreateAsync("agent", [Scopes.Search], null);
+        var (key, _) = await new TokenService(db, TimeProvider.System).CreateAsync("agent", [Scopes.Search], null, ct: TestContext.Current.CancellationToken);
         db.TokenCorpora.Add(new TokenCorpus { TokenId = key.Id, CorpusId = IndexingHarness.CorpusId });
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         db.ChangeTracker.Clear();
 
-        var summary = (await db.Tokens.Include(t => t.Corpora).SingleAsync(t => t.Id == key.Id)).ToSummary();
+        var summary = (await db.Tokens.Include(t => t.Corpora).SingleAsync(t => t.Id == key.Id, cancellationToken: TestContext.Current.CancellationToken)).ToSummary();
 
         summary.AllCorpora.ShouldBeTrue();
         summary.CorpusIds.ShouldBeEmpty();
-        (await new ScopeResolver(db).VisibleAsync(Agent(key))).Select(c => c.Name).ShouldBe(["notes"]);
+        (await new ScopeResolver(db).VisibleAsync(Agent(key), TestContext.Current.CancellationToken)).Select(c => c.Name).ShouldBe(["notes"]);
     }
 
     // ---- the migration ----------------------------------------------------------------------------
@@ -453,26 +435,25 @@ public sealed class KeyReachTests
             .UseSqlite($"Data Source={path};Pooling=False").Options);
         try
         {
-            await db.GetService<IMigrator>().MigrateAsync(BeforeIt);
-            await db.Database.ExecuteSqlRawAsync(
-                "INSERT INTO corpora (Id, Name, State, CreatedUtc) VALUES ('c1', 'one', 'Ready', '2026-10-01 00:00:00')");
+            await db.GetService<IMigrator>().MigrateAsync(BeforeIt, TestContext.Current.CancellationToken);
+            await db.Database.ExecuteSqlRawAsync("INSERT INTO corpora (Id, Name, State, CreatedUtc) VALUES ('c1', 'one', 'Ready', '2026-10-01 00:00:00')", cancellationToken: TestContext.Current.CancellationToken);
             foreach (var id in new[] { "k-none", "k-one", "k-revoked" })
                 await db.Database.ExecuteSqlRawAsync(
                     "INSERT INTO tokens (Id, Name, TokenHash, TokenSalt, Scopes, CreatedUtc, RevokedUtc) "
                     + "VALUES ({0}, {0}, zeroblob(32), zeroblob(32), 'search', '2026-10-01 00:00:00', {1})",
                     id, id == "k-revoked" ? "2026-10-02 00:00:00" : null!);
-            await db.Database.ExecuteSqlRawAsync("INSERT INTO token_corpora (TokenId, CorpusId) VALUES ('k-one', 'c1')");
+            await db.Database.ExecuteSqlRawAsync("INSERT INTO token_corpora (TokenId, CorpusId) VALUES ('k-one', 'c1')", cancellationToken: TestContext.Current.CancellationToken);
 
-            await db.GetService<IMigrator>().MigrateAsync(TheMigration);
+            await db.GetService<IMigrator>().MigrateAsync(TheMigration, TestContext.Current.CancellationToken);
 
-            var after = await db.Tokens.AsNoTracking().Select(t => new { t.Id, t.AllCorpora }).ToDictionaryAsync(t => t.Id, t => t.AllCorpora);
+            var after = await db.Tokens.AsNoTracking().Select(t => new { t.Id, t.AllCorpora }).ToDictionaryAsync(t => t.Id, t => t.AllCorpora, cancellationToken: TestContext.Current.CancellationToken);
             after.ShouldBe(new Dictionary<string, bool>
             {
                 ["k-none"] = true,
                 ["k-one"] = false,
                 ["k-revoked"] = true,
             }, ignoreOrder: true);
-            (await db.TokenCorpora.AsNoTracking().Select(tc => tc.CorpusId).ToListAsync()).ShouldBe(["c1"], "the rows are left as they were");
+            (await db.TokenCorpora.AsNoTracking().Select(tc => tc.CorpusId).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(["c1"], "the rows are left as they were");
         }
         finally
         {
@@ -491,13 +472,12 @@ public sealed class KeyReachTests
             .UseSqlite($"Data Source={path};Pooling=False").Options);
         try
         {
-            await db.Database.MigrateAsync();
-            await db.Database.ExecuteSqlRawAsync(
-                "INSERT INTO tokens (Id, Name, TokenHash, TokenSalt, Scopes, CreatedUtc) "
-                + "VALUES ('k', 'k', zeroblob(32), zeroblob(32), 'search', '2026-10-01 00:00:00')");
+            await db.Database.MigrateAsync(cancellationToken: TestContext.Current.CancellationToken);
+            await db.Database.ExecuteSqlRawAsync("INSERT INTO tokens (Id, Name, TokenHash, TokenSalt, Scopes, CreatedUtc) "
+                + "VALUES ('k', 'k', zeroblob(32), zeroblob(32), 'search', '2026-10-01 00:00:00')", cancellationToken: TestContext.Current.CancellationToken);
 
-            (await db.Tokens.AsNoTracking().SingleAsync(t => t.Id == "k")).AllCorpora.ShouldBeFalse();
-            (await db.Database.GetAppliedMigrationsAsync()).ShouldContain(TheMigration);
+            (await db.Tokens.AsNoTracking().SingleAsync(t => t.Id == "k", cancellationToken: TestContext.Current.CancellationToken)).AllCorpora.ShouldBeFalse();
+            (await db.Database.GetAppliedMigrationsAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldContain(TheMigration);
             db.Database.HasPendingModelChanges().ShouldBeFalse();
         }
         finally

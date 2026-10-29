@@ -28,7 +28,7 @@ public sealed class JobCoalescingTests : IAsyncLifetime
     private IndexJobQueue _queue = null!;
     private WorkScheduler _scheduler = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _connection = new SqliteConnection("Data Source=:memory:");
         await _connection.OpenAsync();
@@ -54,7 +54,7 @@ public sealed class JobCoalescingTests : IAsyncLifetime
         _queue = new IndexJobQueue(_db, _scheduler, NullLogger<IndexJobQueue>.Instance);
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await _db.DisposeAsync();
         await _connection.DisposeAsync();
@@ -84,10 +84,10 @@ public sealed class JobCoalescingTests : IAsyncLifetime
         // Queuing a second job here would index the same thing twice.
         var queued = await Existing(JobState.Queued);
 
-        var result = await _queue.EnqueueAsync("c", JobKind.Refresh);
+        var result = await _queue.EnqueueAsync("c", JobKind.Refresh, ct: TestContext.Current.CancellationToken);
 
         result.Id.ShouldBe(queued.Id);
-        (await _db.Jobs.CountAsync()).ShouldBe(1);
+        (await _db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     /// <summary>
@@ -102,11 +102,11 @@ public sealed class JobCoalescingTests : IAsyncLifetime
     {
         var queued = await Existing(JobState.Queued);
 
-        var result = await _queue.EnqueueAsync("c", JobKind.Full);
+        var result = await _queue.EnqueueAsync("c", JobKind.Full, ct: TestContext.Current.CancellationToken);
 
         result.Id.ShouldNotBe(queued.Id);
         result.Kind.ShouldBe(JobKind.Full);
-        (await _db.Jobs.CountAsync()).ShouldBe(2);
+        (await _db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2);
         _scheduler.TryTake().ShouldNotBeNull().Item.Type.ShouldBe(WorkType.Rebuild);
     }
 
@@ -119,10 +119,10 @@ public sealed class JobCoalescingTests : IAsyncLifetime
     {
         var queued = await Existing(JobState.Queued, JobKind.Full);
 
-        var result = await _queue.EnqueueAsync("c", JobKind.Refresh);
+        var result = await _queue.EnqueueAsync("c", JobKind.Refresh, ct: TestContext.Current.CancellationToken);
 
         result.Id.ShouldBe(queued.Id);
-        (await _db.Jobs.CountAsync()).ShouldBe(1);
+        (await _db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]
@@ -132,11 +132,11 @@ public sealed class JobCoalescingTests : IAsyncLifetime
         // "your new folder is covered" when it is not, and nothing ever revisits it.
         var running = await Existing(JobState.Running);
 
-        var result = await _queue.EnqueueAsync("c", JobKind.Refresh);
+        var result = await _queue.EnqueueAsync("c", JobKind.Refresh, ct: TestContext.Current.CancellationToken);
 
         result.Id.ShouldNotBe(running.Id);
         result.State.ShouldBe(JobState.Queued);
-        (await _db.Jobs.CountAsync()).ShouldBe(2);
+        (await _db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2);
     }
 
     [Fact]
@@ -146,11 +146,11 @@ public sealed class JobCoalescingTests : IAsyncLifetime
         // produce one follow-up job rather than nine: the first creates it, the rest fold in.
         await Existing(JobState.Running);
 
-        var first = await _queue.EnqueueAsync("c", JobKind.Refresh);
+        var first = await _queue.EnqueueAsync("c", JobKind.Refresh, ct: TestContext.Current.CancellationToken);
         for (var i = 0; i < 8; i++)
-            (await _queue.EnqueueAsync("c", JobKind.Refresh)).Id.ShouldBe(first.Id);
+            (await _queue.EnqueueAsync("c", JobKind.Refresh, ct: TestContext.Current.CancellationToken)).Id.ShouldBe(first.Id);
 
-        (await _db.Jobs.CountAsync()).ShouldBe(2); // the running one, and one follow-up
+        (await _db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2); // the running one, and one follow-up
     }
 
     [Fact]
@@ -158,10 +158,10 @@ public sealed class JobCoalescingTests : IAsyncLifetime
     {
         await Existing(JobState.Succeeded);
 
-        var result = await _queue.EnqueueAsync("c", JobKind.Refresh);
+        var result = await _queue.EnqueueAsync("c", JobKind.Refresh, ct: TestContext.Current.CancellationToken);
 
         result.State.ShouldBe(JobState.Queued);
-        (await _db.Jobs.CountAsync()).ShouldBe(2);
+        (await _db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2);
     }
 
     [Fact]
@@ -171,7 +171,7 @@ public sealed class JobCoalescingTests : IAsyncLifetime
         // the live set's refresh, report success, and build nothing.
         var queuedForDefault = await Existing(JobState.Queued);
 
-        var forOtherSet = await _queue.EnqueueAsync("c", JobKind.Refresh, chunkSetId: "set-2");
+        var forOtherSet = await _queue.EnqueueAsync("c", JobKind.Refresh, chunkSetId: "set-2", ct: TestContext.Current.CancellationToken);
 
         forOtherSet.Id.ShouldNotBe(queuedForDefault.Id);
     }

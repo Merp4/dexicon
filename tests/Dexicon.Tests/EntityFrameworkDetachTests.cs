@@ -23,19 +23,18 @@ public sealed class EntityFrameworkDetachTests
         await using (var setup = harness.NewContext())
         {
             var documents = harness.NewDocumentService(setup);
-            var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt");
-            await documents.AttachAsync(
-                await setup.Corpora.Include(c => c.ChunkSets).SingleAsync(), stored.Sha256, "doc.txt");
+            var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt", TestContext.Current.CancellationToken);
+            await documents.AttachAsync(await setup.Corpora.Include(c => c.ChunkSets).SingleAsync(cancellationToken: TestContext.Current.CancellationToken), stored.Sha256, "doc.txt", TestContext.Current.CancellationToken);
             if (kind == EntityState.Added)
-                await setup.FileChunkStates.Where(s => s.ChunkSetId == "set-2").ExecuteDeleteAsync();
+                await setup.FileChunkStates.Where(s => s.ChunkSetId == "set-2").ExecuteDeleteAsync(cancellationToken: TestContext.Current.CancellationToken);
         }
 
         await using var db = harness.NewContext();
-        var file = await db.Files.SingleAsync();
+        var file = await db.Files.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         if (kind == EntityState.Added)
             db.FileChunkStates.Add(new FileChunkState { FileId = file.Id, ChunkSetId = "set-2", Status = FileStatus.Pending });
 
-        var states = await db.FileChunkStates.ToListAsync();
+        var states = await db.FileChunkStates.ToListAsync(cancellationToken: TestContext.Current.CancellationToken);
         if (kind == EntityState.Modified)
             foreach (var state in states) state.Status = FileStatus.Indexed;
 
@@ -55,13 +54,13 @@ public sealed class EntityFrameworkDetachTests
         await using (var setup = harness.NewContext())
         {
             var documents = harness.NewDocumentService(setup);
-            var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt");
-            await documents.AttachAsync(await setup.Corpora.SingleAsync(), stored.Sha256, "doc.txt");
+            var stored = await documents.StoreAsync(new MemoryStream("one document"u8.ToArray()), "doc.txt", TestContext.Current.CancellationToken);
+            await documents.AttachAsync(await setup.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken), stored.Sha256, "doc.txt", TestContext.Current.CancellationToken);
         }
 
         await using var db = harness.NewContext();
-        var file = await db.Files.SingleAsync();
-        var state = await db.FileChunkStates.SingleAsync();
+        var file = await db.Files.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var state = await db.FileChunkStates.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         db.FileChunkStates.Remove(state);
 
         db.Entry(file).State = EntityState.Detached;

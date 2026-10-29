@@ -67,7 +67,7 @@ public sealed class SourceUpdateBindingTests
         body.ShouldContain("Unknown filter");
         body.ShouldContain("A null entry is not a filter that can be cleared");
         await using var db = harness.NewContext();
-        (await db.Sources.AsNoTracking().SingleAsync()).MaxFileBytes.ShouldBeNull();
+        (await db.Sources.AsNoTracking().SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).MaxFileBytes.ShouldBeNull();
     }
 
     [Fact]

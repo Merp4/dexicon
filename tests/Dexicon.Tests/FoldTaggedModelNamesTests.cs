@@ -91,7 +91,7 @@ public sealed class FoldTaggedModelNamesTests
         {
             await SeedProfilesAsync(db);
 
-            await db.GetService<IMigrator>().MigrateAsync(TheMigration);
+            await db.GetService<IMigrator>().MigrateAsync(TheMigration, TestContext.Current.CancellationToken);
 
             (await ProfilesAsync(db)).ShouldBe(new Dictionary<string, string>
             {
@@ -135,7 +135,7 @@ public sealed class FoldTaggedModelNamesTests
             await SeedMeasurementAsync(db, "ollama", "case:LATEST", 9, "2026-10-02 00:00:00");
             await SeedMeasurementAsync(db, "ollama", "Lone:V2", 10, "2026-10-02 00:00:00");
 
-            await db.GetService<IMigrator>().MigrateAsync(TheMigration);
+            await db.GetService<IMigrator>().MigrateAsync(TheMigration, TestContext.Current.CancellationToken);
 
             (await MeasurementsAsync(db)).ShouldBe(new Dictionary<string, int?>
             {
@@ -165,11 +165,11 @@ public sealed class FoldTaggedModelNamesTests
             await SeedProfilesAsync(db);
             await SeedMeasurementAsync(db, "ollama", "newer", 2, "2026-10-02 00:00:00");
             await SeedMeasurementAsync(db, "ollama", "newer:latest", 3, "2026-10-03 00:00:00");
-            await db.GetService<IMigrator>().MigrateAsync(TheMigration);
+            await db.GetService<IMigrator>().MigrateAsync(TheMigration, TestContext.Current.CancellationToken);
             var profiles = await ProfilesAsync(db);
             var measurements = await MeasurementsAsync(db);
 
-            await db.Database.ExecuteSqlRawAsync(FoldTaggedModelNames.FoldSql);
+            await db.Database.ExecuteSqlRawAsync(FoldTaggedModelNames.FoldSql, cancellationToken: TestContext.Current.CancellationToken);
 
             (await ProfilesAsync(db)).ShouldBe(profiles, ignoreOrder: true);
             (await MeasurementsAsync(db)).ShouldBe(measurements, ignoreOrder: true);
@@ -190,10 +190,10 @@ public sealed class FoldTaggedModelNamesTests
             await using var db = new CatalogDbContext(new DbContextOptionsBuilder<CatalogDbContext>()
                 .UseSqlite($"Data Source={path};Pooling=False").Options);
 
-            await db.Database.MigrateAsync();
+            await db.Database.MigrateAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-            (await db.Database.GetAppliedMigrationsAsync()).ShouldContain(TheMigration);
-            (await db.Database.GetPendingMigrationsAsync()).ShouldBeEmpty();
+            (await db.Database.GetAppliedMigrationsAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldContain(TheMigration);
+            (await db.Database.GetPendingMigrationsAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBeEmpty();
             db.Database.HasPendingModelChanges().ShouldBeFalse();
         }
         finally

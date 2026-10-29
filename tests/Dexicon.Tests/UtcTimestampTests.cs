@@ -22,7 +22,7 @@ public sealed class UtcTimestampTests : IAsyncLifetime
     private SqliteConnection _connection = null!;
     private CatalogDbContext _db = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _connection = new SqliteConnection("Data Source=:memory:");
         await _connection.OpenAsync();
@@ -31,7 +31,7 @@ public sealed class UtcTimestampTests : IAsyncLifetime
         await _db.Database.EnsureCreatedAsync();
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await _db.DisposeAsync();
         await _connection.DisposeAsync();
@@ -41,10 +41,10 @@ public sealed class UtcTimestampTests : IAsyncLifetime
     public async Task TimestampsComeBackFromTheDatabaseTaggedAsUtc()
     {
         _db.Corpora.Add(new Corpus { Id = "c", Name = "c", CreatedUtc = DateTime.UtcNow });
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
         _db.ChangeTracker.Clear();   // force a real materialisation, not the tracked instance
 
-        var corpus = await _db.Corpora.SingleAsync();
+        var corpus = await _db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         corpus.CreatedUtc.Kind.ShouldBe(DateTimeKind.Utc,
             "an Unspecified Kind serialises without a 'Z' and browsers then read it as local time");
@@ -60,10 +60,10 @@ public sealed class UtcTimestampTests : IAsyncLifetime
             CreatedUtc = DateTime.UtcNow,
             LastIndexedUtc = DateTime.UtcNow,
         });
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
         _db.ChangeTracker.Clear();
 
-        var corpus = await _db.Corpora.SingleAsync();
+        var corpus = await _db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         corpus.LastIndexedUtc!.Value.Kind.ShouldBe(DateTimeKind.Utc);
     }
 
@@ -73,10 +73,10 @@ public sealed class UtcTimestampTests : IAsyncLifetime
         // The property that actually matters to a browser. Asserting on Kind alone would
         // pass while the wire format stayed ambiguous.
         _db.Corpora.Add(new Corpus { Id = "c", Name = "c", CreatedUtc = DateTime.UtcNow });
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
         _db.ChangeTracker.Clear();
 
-        var corpus = await _db.Corpora.SingleAsync();
+        var corpus = await _db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         var json = JsonSerializer.Serialize(new { corpus.CreatedUtc });
 
         // An ISO timestamp without a zone is read as LOCAL time by new Date().
@@ -90,10 +90,10 @@ public sealed class UtcTimestampTests : IAsyncLifetime
         // stamp UTC onto a local value and shift the instant.
         var localNow = DateTime.Now;
         _db.Corpora.Add(new Corpus { Id = "c", Name = "c", CreatedUtc = localNow });
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
         _db.ChangeTracker.Clear();
 
-        var corpus = await _db.Corpora.SingleAsync();
+        var corpus = await _db.Corpora.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         corpus.CreatedUtc.Kind.ShouldBe(DateTimeKind.Utc);
         (corpus.CreatedUtc - localNow.ToUniversalTime()).Duration()
