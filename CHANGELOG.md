@@ -45,6 +45,10 @@ with no section here fails its release rather than publishing an undescribed one
   0.40.12 returns vectors that differ from 0.40.4 by a cosine similarity of at least 0.99997 for
   the same model files; stored vectors are not re-made.
 - Dependabot ignores TypeScript 7 and later. It used to ignore every TypeScript major.
+- The version stamped on an untagged build of `main`, and so on the `edge` image, is
+  `0.0.0-edge.g<hash>`; it was `0.0.0-edge.<hash>`. A commit whose seven-character hash is all
+  digits and starts with 0 gave an invalid version, NuGet failed the restore without a message,
+  and the `Release` workflow failed on that commit. Tagged releases were not affected.
 - The skill is unchanged (`dexicon-skill-version: 7`).
 
 ## 0.6.11 — 2026-10-29
