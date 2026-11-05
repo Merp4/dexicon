@@ -16,6 +16,28 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## 0.6.13 — 2026-11-05
+
+### ⚠️ Upgrading
+
+- **No migration, no re-index and no re-extraction.** The HTML parser under HTML and EPUB
+  extraction moves to a new version (below) and extracts the same text. Over 39 EPUBs (34,971,758
+  characters in 1,146 chapters), 22 HTML files and 46 edge-case documents, the text, line count,
+  chapter units and title were identical under AngleSharp 1.8.6 and 1.9.0. `ExtractorVersions.Current`
+  stays 6 and cached text is kept.
+
+### Changed
+
+- The web UI is built on Node 26 (LTS from 2026-10-28, npm 11); it was Node 24. The image's UI
+  stage is `node:26-alpine`, and contributors need Node 26 for `clients/web-ui`. The built files
+  are identical to those of a Node 24 build of the same source.
+- AngleSharp, the HTML parser behind HTML and EPUB extraction, moves from 1.8.6 to 1.9.0. It parses
+  a hostile document about four times faster: a table of 20,000 rows, each preceded by text that
+  belongs to no cell, took 1,138 to 1,395 ms in three runs and now takes 277 to 317 ms. The 39
+  EPUBs took 9.9 s to extract under both versions.
+- lucide-react, the icon set of the web UI, moves from 1.61.0 to 1.64.0.
+- The skill is unchanged (`dexicon-skill-version: 7`).
+
 ## 0.6.12 — 2026-10-29
 
 ### ⚠️ Upgrading
