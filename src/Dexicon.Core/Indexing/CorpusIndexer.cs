@@ -119,29 +119,54 @@ public sealed class CorpusIndexer(
     private async Task RecordModelAsync(
         ChunkSet set, IReadOnlyList<Source> sources, ModelTemplates templates, DateTime passStarted, CancellationToken ct)
     {
+        int kept;
+        try { kept = await PointsFromEarlierPassesAsync(set, sources, passStarted, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            log.LogWarning(ex, "Chunk set {Set} of corpus {CorpusId}: the vector store could not be read after the pass, "
+                + "so the current model and framing were not recorded", set.Name, set.CorpusId);
+            return;
+        }
+
+        if (kept == int.MaxValue)
+        {
+            log.LogInformation(
+                "Chunk set {Set} of corpus {CorpusId}: the vector store could not say which files hold points, "
+                + "so the current model and framing were not recorded", set.Name, set.CorpusId);
+            return;
+        }
+
+        if (kept > 0)
+        {
+            log.LogInformation(
+                "Chunk set {Set} of corpus {CorpusId}: {Files} file(s) hold points this pass did not write, "
+                + "so the current model and framing were not recorded", set.Name, set.CorpusId, kept);
+            return;
+        }
+
+        // Two records, each in its own step: a fault in one leaves the other to be written, since every vector of
+        // the set was written by this pass whichever of them fails.
+        await RecordFramingAfterPassAsync(set, templates, passStarted, ct);
+
+        try { await ModelCanary.RecordAsync(db, embedder, set, log, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            log.LogWarning(ex, "Chunk set {Set} of corpus {CorpusId}: the model could not be recorded after the pass",
+                set.Name, set.CorpusId);
+        }
+    }
+
+    /// <summary>
+    /// Replaces the set's document template with the one the pass resolved at the set's start, and only if the
+    /// profile stayed that. The embedding service reads the profile again for each batch, so one saved while the pass
+    /// ran applies to the files embedded after it, and the set then holds two framings. The earlier record stands,
+    /// the health report compares it with the profile, and the rebuild that save queued corrects the set.
+    /// </summary>
+    private async Task RecordFramingAfterPassAsync(
+        ChunkSet set, ModelTemplates templates, DateTime passStarted, CancellationToken ct)
+    {
         try
         {
-            var kept = await PointsFromEarlierPassesAsync(set, sources, passStarted, ct);
-            if (kept == int.MaxValue)
-            {
-                log.LogInformation(
-                    "Chunk set {Set} of corpus {CorpusId}: the vector store could not say which files hold points, "
-                    + "so the current model and framing were not recorded", set.Name, set.CorpusId);
-                return;
-            }
-
-            if (kept > 0)
-            {
-                log.LogInformation(
-                    "Chunk set {Set} of corpus {CorpusId}: {Files} file(s) hold points this pass did not write, "
-                    + "so the current model and framing were not recorded", set.Name, set.CorpusId, kept);
-                return;
-            }
-
-            // The template the pass resolved at the set's start, and only if the profile stayed that. The
-            // embedding service reads the profile again for each batch, so one saved while the pass ran applies to the
-            // files embedded after it, and the set then holds two framings. The earlier record stands, the health
-            // report compares it with the profile, and the rebuild that save queued corrects the set.
             if (await ModelFraming.UnchangedSinceAsync(db, profiles, set, templates, passStarted, ct))
                 await ModelFraming.RecordAsync(db, set, templates, ct);
             else
@@ -151,16 +176,8 @@ public sealed class CorpusIndexer(
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            log.LogWarning(ex, "Chunk set {Set} of corpus {CorpusId}: the model and framing could not be recorded after the pass",
+            log.LogWarning(ex, "Chunk set {Set} of corpus {CorpusId}: the document framing could not be recorded after the pass",
                 set.Name, set.CorpusId);
-            return;
-        }
-
-        try { await ModelCanary.RecordAsync(db, embedder, set, log, ct); }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            log.LogWarning(ex, "Chunk set {Set} of corpus {CorpusId}: the model could not be recorded after the pass, "
-                + "and the framing was", set.Name, set.CorpusId);
         }
     }
 

@@ -340,8 +340,11 @@ public sealed class ModelFramingIndexing
     public async Task AFullPassDuringWhichTheProfileChangedLeavesTheEarlierRecord()
     {
         await using var harness = await StartAsync();
+        var embedder = new FixedEmbedder();
+        harness.Embedder = embedder;
         await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
         harness.Profiles.Templates = Framed;
+        embedder.Answer = [0f, 1f, 0f, 0f];
         // The profile is saved while the pass runs: at the second read of the store, which is the record gate's, after
         // the files are embedded. The first is the pass's reconcile at its start.
         var counts = 0;
@@ -356,6 +359,11 @@ public sealed class ModelFramingIndexing
         counts.ShouldBe(2, "the profile was changed at the gate's read");
         // Neither the template the pass resolved nor the one the profile gives at the end describes its vectors.
         (await RecordedAsync(harness)).ShouldBe("{text}");
+
+        // The vectors are all from this pass's model, so the model's record does not wait on the framing's.
+        await using var db = harness.NewContext();
+        (await db.ChunkSets.AsNoTracking().SingleAsync(TestContext.Current.CancellationToken))
+            .CanaryVector.ShouldBe(ModelCanary.Pack([0f, 1f, 0f, 0f]));
     }
 
     [Fact]
@@ -428,9 +436,38 @@ public sealed class ModelFramingIndexing
         (await RecordedAsync(harness)).ShouldBe("title: none | text: {text}");
     }
 
+    [Fact]
+    public async Task AFullPassWhoseFramingRecordFaultsStillRecordsTheModelAndIsNotFailed()
+    {
+        await using var harness = await StartAsync();
+        var embedder = new FixedEmbedder();
+        harness.Embedder = embedder;
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+        harness.Profiles.Templates = Framed;
+        embedder.Answer = [0f, 1f, 0f, 0f];
+        // The pass reads the profile once to embed with and once more at the end, to see that it has not changed.
+        var lookups = harness.Profiles.Lookups;
+        harness.Profiles.OnLookup = () =>
+        {
+            if (harness.Profiles.Lookups == lookups + 2) throw new InvalidOperationException("the catalogue is busy");
+        };
+
+        var job = await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+
+        harness.Profiles.Lookups.ShouldBe(lookups + 2);
+        job.State.ShouldBe(JobState.Succeeded);
+        (await RecordedAsync(harness)).ShouldBe("{text}", "the record that faulted keeps its earlier value");
+        await using var db = harness.NewContext();
+        var set = await db.ChunkSets.AsNoTracking().SingleAsync(TestContext.Current.CancellationToken);
+        set.CanaryVector.ShouldBe(ModelCanary.Pack([0f, 1f, 0f, 0f]), "the model's record does not wait on the framing's");
+    }
+
     /// <summary>Every embedding is zeros but for the canary, which answers a fixed unit vector.</summary>
     private sealed class FixedEmbedder : IEmbeddingService
     {
+        /// <summary>What the canary answers.</summary>
+        public float[] Answer { get; set; } = [1f, 0f, 0f, 0f];
+
         /// <summary>Runs when the canary is asked, before it answers.</summary>
         public Action? OnCanary { get; set; }
 
@@ -440,7 +477,7 @@ public sealed class ModelFramingIndexing
             if (IndexingHarness.IsCanary(inputs)) OnCanary?.Invoke();
 
             return Task.FromResult<IReadOnlyList<float[]>>(
-                [.. inputs.Select(_ => IndexingHarness.IsCanary(inputs) ? new float[] { 1, 0, 0, 0 } : new float[768])]);
+                [.. inputs.Select(_ => IndexingHarness.IsCanary(inputs) ? Answer : new float[768])]);
         }
 
         public Task<int?> CountTokensAsync(EmbeddingTarget target, string text, CancellationToken ct = default) =>
