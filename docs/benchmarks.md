@@ -259,7 +259,7 @@ Reproduce with:
 ```bash
 mkdir -p /tmp/tree && git archive a948496 docs src scripts/bench | tar -x -C /tmp/tree
 python scripts/bench/modelbench.py --list
-python scripts/bench/modelbench.py --root /tmp/tree --ollama http://127.0.0.1:21434     --arms v1_framed,v1_title,eg2_q8 --out modelbench-out.json
+python scripts/bench/modelbench.py --root /tmp/tree --ollama http://127.0.0.1:21434 --arms v1_framed,v1_title,eg2_q8 --out modelbench-out.json
 ```
 
 The wrong-path arms are `v1_title_placebo_s1` to `v1_title_placebo_s10`. A seed fixes one permutation
