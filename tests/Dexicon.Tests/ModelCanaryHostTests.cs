@@ -56,13 +56,16 @@ public sealed class ModelCanaryHostTests : IDisposable
         foreach (var (id, name) in new[] { ("c-alpha", "alpha"), ("c-beta", "beta") })
             db.Corpora.Add(new Corpus { Id = id, Name = name, CreatedUtc = DateTime.UtcNow });
 
-        AddSet(db, "s-alpha-changed", "c-alpha", "changed", similarity: 0.5);
-        AddSet(db, "s-alpha-same", "c-alpha", "same", similarity: 1.0);
-        AddSet(db, "s-beta-changed", "c-beta", "changed", similarity: 0.25);
+        // embeddinggemma's built-in document template is `title: none | text: {text}`: a set recorded as `{text}` was
+        // embedded raw, and one recorded with the template was not.
+        AddSet(db, "s-alpha-changed", "c-alpha", "changed", similarity: 0.5, framing: "{text}");
+        AddSet(db, "s-alpha-same", "c-alpha", "same", similarity: 1.0, framing: "title: none | text: {text}");
+        AddSet(db, "s-beta-changed", "c-beta", "changed", similarity: 0.25, framing: "{text}");
         await db.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
-    private static void AddSet(CatalogDbContext db, string id, string corpusId, string name, double similarity) =>
+    private static void AddSet(
+        CatalogDbContext db, string id, string corpusId, string name, double similarity, string framing) =>
         db.ChunkSets.Add(new ChunkSet
         {
             Id = id,
@@ -76,6 +79,7 @@ public sealed class ModelCanaryHostTests : IDisposable
             CanaryVector = ModelCanary.Pack([1f, 0f, 0f, 0f]),
             CanarySimilarity = similarity,
             CanaryCheckedUtc = DateTime.UtcNow,
+            FramingRecorded = framing,
         });
 
     public void Dispose()
@@ -100,7 +104,8 @@ public sealed class ModelCanaryHostTests : IDisposable
         }
     }
 
-    private static async Task<string[]> ChangedSetsAsync(HttpClient client, string bearer)
+    private static async Task<string[]> ChangedSetsAsync(
+        HttpClient client, string bearer, string field = "changedModels")
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, "/healthz");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
@@ -108,7 +113,7 @@ public sealed class ModelCanaryHostTests : IDisposable
         response.EnsureSuccessStatusCode();
 
         var body = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
-        return [.. body.GetProperty("changedModels").EnumerateArray().Select(e => e.GetProperty("set").GetString()!)];
+        return [.. body.GetProperty(field).EnumerateArray().Select(e => e.GetProperty("set").GetString()!)];
     }
 
     [Fact]
@@ -120,20 +125,13 @@ public sealed class ModelCanaryHostTests : IDisposable
         factory.Services.GetServices<IHostedService>().OfType<ModelCanaryService>().ShouldHaveSingleItem();
     }
 
-    [Fact]
-    public async Task HealthListsTheChangedSetsOfTheCorporaTheCallerReachesAndNoOthers()
+    /// <summary>An administrator's session and a search key restricted to the alpha corpus.</summary>
+    private static async Task<(string Admin, string Key)> AdminAndAlphaKeyAsync(HttpClient client)
     {
-        await SeedAsync();
-        await using var factory = new WebApplicationFactory<Program>();
-        using var client = factory.CreateClient();
-
         var login = await client.PostAsJsonAsync("/api/session", new { password = Password }, TestContext.Current.CancellationToken);
         login.EnsureSuccessStatusCode();
         var admin = (await login.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken))
             .GetProperty("token").GetString()!;
-
-        // An administrator reaches every corpus; the set that is not below the threshold is not listed.
-        (await ChangedSetsAsync(client, admin)).ShouldBe(["alpha:changed", "beta:changed"]);
 
         using var create = new HttpRequestMessage(HttpMethod.Post, "/api/tokens")
         {
@@ -145,7 +143,35 @@ public sealed class ModelCanaryHostTests : IDisposable
         var key = (await created.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken))
             .GetProperty("secret").GetString()!;
 
+        return (admin, key);
+    }
+
+    [Fact]
+    public async Task HealthListsTheChangedSetsOfTheCorporaTheCallerReachesAndNoOthers()
+    {
+        await SeedAsync();
+        await using var factory = new WebApplicationFactory<Program>();
+        using var client = factory.CreateClient();
+        var (admin, key) = await AdminAndAlphaKeyAsync(client);
+
+        // An administrator reaches every corpus; the set that is not below the threshold is not listed.
+        (await ChangedSetsAsync(client, admin)).ShouldBe(["alpha:changed", "beta:changed"]);
+
         // A key restricted to alpha learns nothing of beta.
         (await ChangedSetsAsync(client, key)).ShouldBe(["alpha:changed"]);
+    }
+
+    [Fact]
+    public async Task HealthListsTheSetsEmbeddedUnderAnotherFramingOfTheCorporaTheCallerReachesAndNoOthers()
+    {
+        await SeedAsync();
+        await using var factory = new WebApplicationFactory<Program>();
+        using var client = factory.CreateClient();
+        var (admin, key) = await AdminAndAlphaKeyAsync(client);
+
+        // The profile is read from the running host, which gives embeddinggemma its built-in template: the set that
+        // was recorded with that template is not listed.
+        (await ChangedSetsAsync(client, admin, "changedFramings")).ShouldBe(["alpha:changed", "beta:changed"]);
+        (await ChangedSetsAsync(client, key, "changedFramings")).ShouldBe(["alpha:changed"]);
     }
 }

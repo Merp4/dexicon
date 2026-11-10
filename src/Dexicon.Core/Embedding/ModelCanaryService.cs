@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using Dexicon.Core.Catalog;
+using Dexicon.Core.Indexing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -9,7 +10,9 @@ namespace Dexicon.Core.Embedding;
 
 /// <summary>
 /// Checks every chunk set's model canary (<see cref="ModelCanary"/>) once a few hours, so a model that
-/// changed under a set is reported without waiting for someone to index into it.
+/// changed under a set is reported without waiting for someone to index into it. A set with no recorded
+/// document template gets one here too (<see cref="ModelFraming"/>), so the first tick after an upgrade
+/// is the baseline a later framing change is reported against.
 ///
 /// A timer of its own, not a call from the health report. <c>/healthz</c> is polled every fifteen
 /// seconds per open tab, and an embedding call on that path once timed out under indexing load and
@@ -70,12 +73,15 @@ public sealed class ModelCanaryService(
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
         var embedder = scope.ServiceProvider.GetRequiredService<IEmbeddingService>();
+        var profiles = scope.ServiceProvider.GetRequiredService<IModelProfiles>();
 
         var sets = await db.ChunkSets.AsNoTracking().OrderBy(s => s.Id).ToListAsync(ct);
         var silent = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var set in sets)
         {
+            await RecordFramingAsync(db, profiles, set, ct);
+
             var model = $"{set.EmbeddingProvider}/{EmbeddingTarget.Canonical(set.EmbeddingModel)}";
             if (silent.Contains(model)) continue;
 
@@ -92,6 +98,26 @@ public sealed class ModelCanaryService(
                     set.Name, set.CorpusId);
                 silent.Add(model);
             }
+        }
+    }
+
+    /// <summary>
+    /// The document template of a set that has none. Its own failure handling, so a catalogue error here
+    /// does not stop the model check of the same set.
+    /// </summary>
+    private async Task RecordFramingAsync(CatalogDbContext db, IModelProfiles profiles, ChunkSet set, CancellationToken ct)
+    {
+        if (set.FramingRecorded is not null) return;
+
+        try
+        {
+            var templates = await profiles.ForAsync(set.Target(), ct);
+            await ModelFraming.EnsureRecordedAsync(db, set, templates, log, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            log.LogWarning(ex, "Chunk set {Set} of corpus {CorpusId}: the document framing could not be recorded",
+                set.Name, set.CorpusId);
         }
     }
 }

@@ -171,6 +171,12 @@ CREATE TABLE chunk_sets (
   -- reported in /healthz as changed. Computed against the constant at read time, so no flag is stored.
   canary_similarity       REAL,
   canary_checked_utc      TEXT,
+  -- The document template the model's profile gave when the set's vectors were last all embedded with one
+  -- framing (ModelFraming). NULL until the first check records it, which precedes the set's first write; a full
+  -- or rebuild pass replaces it under the condition that replaces canary_vector. /healthz compares it with the
+  -- template the profile gives at read time, so no flag is stored. The query template is not kept: it changes
+  -- what a search sends and leaves the stored vectors as they are.
+  framing_recorded        TEXT,
   UNIQUE (corpus_id, name)
 );
 CREATE INDEX ix_chunk_sets_default ON chunk_sets(corpus_id, is_default);

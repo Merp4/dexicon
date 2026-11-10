@@ -29,6 +29,7 @@ function health(over: Partial<Health> = {}): Health {
     activeJob: null,
     missingModels: [],
     changedModels: [],
+    changedFramings: [],
     ...over,
   } as Health;
 }
@@ -119,6 +120,37 @@ describe('the dependency panel', () => {
       .toBeInTheDocument();
   });
 
+  it('flags a chunk set embedded under another document framing', async () => {
+    await open(health({
+      changedFramings: [{
+        set: 'books:fine', provider: 'ollama', model: 'embeddinggemma-2',
+        recorded: '{text}', current: 'title: none | text: {text}',
+      }],
+    }));
+
+    const alert = screen.getByRole('status');
+    expect(alert).toHaveTextContent('books:fine');
+    expect(alert).toHaveTextContent('embedded with the document framing {text}');
+    expect(alert).toHaveTextContent('now frames documents as title: none | text: {text}');
+    expect(alert).toHaveTextContent('full reindex of its corpus');
+  });
+
+  it('marks the collapsed button for a changed framing too', async () => {
+    render(<HealthDots
+      health={health({
+        changedFramings: [{
+          set: 'books:fine', provider: 'ollama', model: 'embeddinggemma-2',
+          recorded: '{text}', current: 'title: none | text: {text}',
+        }],
+      })}
+      connected
+      stale={false}
+    />);
+
+    expect(within(screen.getByRole('button')).getByText(/1 chunk set embedded with a document framing that has changed/))
+      .toBeInTheDocument();
+  });
+
   it('says both when a model is missing and another has changed', async () => {
     await open(health({
       missingModels: [{ provider: 'ollama', model: 'gone', sets: ['notes:default'] }],
@@ -141,6 +173,7 @@ describe('the dependency panel', () => {
     const older = health();
     delete (older as { missingModels?: unknown }).missingModels;
     delete (older as { changedModels?: unknown }).changedModels;
+    delete (older as { changedFramings?: unknown }).changedFramings;
 
     await open(older);
 

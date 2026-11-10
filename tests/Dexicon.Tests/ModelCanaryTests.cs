@@ -574,6 +574,7 @@ public sealed class ModelCanaryServiceTicks : IAsyncLifetime
     private SqliteConnection _connection = null!;
     private ServiceProvider _services = null!;
     private readonly PerModelEmbedder _embedder = new();
+    private readonly IndexingHarness.FixedProfiles _profiles = new();
 
     public async ValueTask InitializeAsync()
     {
@@ -583,6 +584,7 @@ public sealed class ModelCanaryServiceTicks : IAsyncLifetime
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton<IEmbeddingService>(_embedder);
+        services.AddSingleton<IModelProfiles>(_profiles);
         services.AddDbContext<CatalogDbContext>(o => o.UseSqlite(_connection));
         _services = services.BuildServiceProvider();
 
@@ -624,6 +626,42 @@ public sealed class ModelCanaryServiceTicks : IAsyncLifetime
     {
         await using var db = NewContext();
         return await db.ChunkSets.AsNoTracking().SingleAsync(s => s.Id == id, TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task ATickRecordsTheDocumentTemplateOfASetThatHasNone()
+    {
+        await AddSet("a", "embeddinggemma");
+        _profiles.Templates = new ModelTemplates("title: none | text: {text}", "task: search result | query: {text}", TemplateOrigin.BuiltIn);
+
+        await Service().RunTickAsync(TestContext.Current.CancellationToken);
+
+        (await Stored("a")).FramingRecorded.ShouldBe("title: none | text: {text}");
+    }
+
+    [Fact]
+    public async Task ATickLeavesTheRecordedTemplateAsItWas()
+    {
+        await AddSet("a", "embeddinggemma");
+        await Service().RunTickAsync(TestContext.Current.CancellationToken);
+        _profiles.Templates = new ModelTemplates("search_document: {text}", "search_query: {text}", TemplateOrigin.Configured);
+
+        await Service().RunTickAsync(TestContext.Current.CancellationToken);
+
+        (await Stored("a")).FramingRecorded.ShouldBe("{text}", "a change is reported against the record, and the tick does not move it");
+    }
+
+    [Fact]
+    public async Task AFailedProfileLookupDoesNotStopTheModelCheckOfTheSet()
+    {
+        await AddSet("a", "embeddinggemma");
+        _profiles.OnLookup = () => throw new InvalidOperationException("the catalogue is busy");
+
+        await Service().RunTickAsync(TestContext.Current.CancellationToken);
+
+        var set = await Stored("a");
+        set.FramingRecorded.ShouldBeNull();
+        set.CanaryVector.ShouldNotBeNull("the model check does not depend on the profile");
     }
 
     [Fact]

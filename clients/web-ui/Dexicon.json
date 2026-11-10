@@ -1583,6 +1583,33 @@
           }
         }
       },
+      "ChangedFraming": {
+        "required": [
+          "set",
+          "provider",
+          "model",
+          "recorded",
+          "current"
+        ],
+        "type": "object",
+        "properties": {
+          "set": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "recorded": {
+            "type": "string"
+          },
+          "current": {
+            "type": "string"
+          }
+        }
+      },
       "ChangedModel": {
         "required": [
           "set",
@@ -3067,7 +3094,8 @@
           "corpora",
           "activeJob",
           "missingModels",
-          "changedModels"
+          "changedModels",
+          "changedFramings"
         ],
         "type": "object",
         "properties": {
@@ -3104,6 +3132,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ChangedModel"
+            }
+          },
+          "changedFramings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChangedFraming"
             }
           },
           "pendingProposals": {

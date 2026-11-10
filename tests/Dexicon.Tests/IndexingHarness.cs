@@ -46,6 +46,9 @@ internal sealed class IndexingHarness : IAsyncDisposable
     /// <summary>Each source's root on disk, in the order they were declared.</summary>
     public IReadOnlyList<string> SourceDirectories { get; }
 
+    /// <summary>The profile every indexing pass of this harness reads.</summary>
+    public FixedProfiles Profiles { get; } = new();
+
     /// <summary>Where the catalogue and the workspace live, for a test that has to reach them.</summary>
     public string DataPath => _dataPath;
 
@@ -372,7 +375,7 @@ internal sealed class IndexingHarness : IAsyncDisposable
             new WorkspaceFileReader(scopes, options),
             Vectors,
             Embedder,
-            new RawProfiles(),
+            Profiles,
             documentsFor?.Invoke(runDb) ?? new DocumentService(runDb, options, NullLogger<DocumentService>.Instance),
             leases ?? new CorpusLeases(scopes, NullLogger<CorpusLeases>.Instance),
             options,
@@ -400,7 +403,7 @@ internal sealed class IndexingHarness : IAsyncDisposable
             new WorkspaceFileReader(scopes, options),
             Vectors,
             Embedder,
-            new RawProfiles(),
+            Profiles,
             documentsFor(runDb),
             new CorpusLeases(scopes, NullLogger<CorpusLeases>.Instance),
             options,
@@ -751,10 +754,27 @@ internal sealed class IndexingHarness : IAsyncDisposable
         public int KnownDimensions(EmbeddingTarget t) => 768;
     }
 
-    internal sealed class RawProfiles : IModelProfiles
+    /// <summary>
+    /// What every model's profile gives, raw until a test sets it. A test that changes it between passes is the
+    /// profile being edited, or a release adding a built-in entry.
+    /// </summary>
+    internal sealed class FixedProfiles : IModelProfiles
     {
-        public Task<ModelTemplates> ForAsync(EmbeddingTarget t, CancellationToken ct = default) =>
-            Task.FromResult(ModelTemplates.Raw);
-        public ModelTemplates? Suggest(string model) => ModelTemplates.Raw;
+        public ModelTemplates Templates { get; set; } = ModelTemplates.Raw;
+
+        /// <summary>How many times a profile was asked for, for a test that checks it is looked up once.</summary>
+        public int Lookups { get; private set; }
+
+        /// <summary>Runs when a profile is asked for, before it answers.</summary>
+        public Action? OnLookup { get; set; }
+
+        public Task<ModelTemplates> ForAsync(EmbeddingTarget t, CancellationToken ct = default)
+        {
+            Lookups++;
+            OnLookup?.Invoke();
+            return Task.FromResult(Templates);
+        }
+
+        public ModelTemplates? Suggest(string model) => Templates;
     }
 }
