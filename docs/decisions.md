@@ -2504,8 +2504,9 @@ against the stored vector (`canary_similarity`, `canary_checked_utc`). It runs b
 every set every six hours from `ModelCanaryService`, whose first check is one minute after the process starts. A set
 below 0.999 is listed in `/healthz` as `changedModels` and in the health panel, scoped to the corpora the caller reaches.
 A set with no stored vector (every set that exists when this version first runs, and every new set) stores the model's
-current answer at its first check, which precedes its first write. A full or rebuild pass that finishes with no file left
-unembedded replaces the stored vector with the model's current answer.
+current answer at its first check, which precedes its first write. A full or rebuild pass replaces the stored vector with
+the model's current answer when no file of the set is left on the vectors of an earlier pass: no file that is not
+`Indexed` still has chunks, and no file failed to embed or was out of reach.
 
 The check is advisory. A pass runs, writes and succeeds whatever it finds, and a provider that does not answer leaves
 the earlier state as it was. Whether a set counts as changed is computed from the stored similarity and the constant, so
@@ -2517,14 +2518,17 @@ indexing after the change holds a mixture: every search succeeds, and the files 
 ones by a measure that means nothing. The catalogue held the name and the dimensionality, so a replacement of the same
 dimensionality could not be seen.
 
-The threshold comes from three measurements with Ollama on CPU. One model embedded twice agreed to 3e-16 over 2,768
-chunk vectors (0.40.15, 2026-11-09). The upgrade from 0.32.14 to 0.40.4 moved 23 vectors by at most 3e-6 (2026-10-15).
-Another quantisation of one model (embeddinggemma-2 as Q8_0 GGUF against nvfp4 MLX, 0.40.15, 2026-11-09) agreed at a
-median 0.988 and a minimum 0.958, with 83% of the top ten results shared. 0.999 sits between the first two and the
+The threshold comes from three measurements with Ollama on CPU, each as cosine similarity. One model embedded twice
+agreed to within 3e-16 of 1 over 2,768 chunk vectors (0.40.15, 2026-11-09). The upgrade from 0.32.14 to 0.40.4 gave a
+lowest similarity of 0.999997 over 23 vectors (2026-10-15). Another quantisation of one model (embeddinggemma-2 as Q8_0
+GGUF against nvfp4 MLX, 0.40.15, 2026-11-09) gave a median of 0.988 and a minimum of 0.958, with 83% of the top ten
+results shared. The first and third are the `agreement` entries of
+`scripts/bench/results-models-2026-11-09.json` (pull request 306), `v1_framed` against `v1_framed_repeat` and `eg2_q8`
+against `eg2_nvfp4`; the upgrade measurement is not kept in the repository. 0.999 sits between the first two and the
 third.
 
 **Rejected.** The digest Ollama reports for a model: a hosted provider reports none, and a digest stored per set needs
-an action to accept a deliberate update, where the stored vector replaces itself when a rebuild finishes. Stopping a pass
+an action to accept a deliberate update, where the stored vector replaces itself when a full pass finishes. Stopping a pass
 or refusing writes to a changed set: the threshold is measured for one engine on CPU, and a false report would then halt
 the indexing of a corpus, where now it is a notice. Storing the vector when a set is created, from the dimension probe:
 it adds two creation sites for a value the first check stores before the first write anyway, and sets that already exist
@@ -2537,11 +2541,20 @@ embedding call on that path has timed out under indexing load before, which `Emb
   applies to every set that exists when this version first runs.
 - A change that leaves the vector within 0.999 of the old one is not reported, whatever it does to retrieval.
 - Not measured: the repeatability of a hosted provider, and one model on CPU against GPU. A false report there is a
-  notice that a rebuild clears.
+  notice that a full reindex clears.
 - Each set costs one short embedding per pass and one every six hours. In the timer's check a model that does not
-  answer is asked once, however many sets use it.
-- A refresh after a change keeps writing vectors from the new model into the set. Only a full pass or a rebuild clears
-  the report, and a full pass that leaves a file unembedded does not.
+  answer is asked once, however many sets use it. Each check loads the set's model into the provider if it is not
+  resident, which can evict another model, so a search soon after a check may wait for a model load.
+- With the provider unreachable, a pass waits for the embedding service's retries (two, about two seconds of backoff
+  in all) before each set's check returns, including a refresh that finds nothing to embed.
+- A refresh after a change keeps writing vectors from the new model into the set. Only a full pass clears the report,
+  which in the web UI is **Full reindex** on the corpus. A pass that leaves a file on the vectors of an earlier pass
+  does not, whether the file failed to embed or failed another way, such as a read that timed out. A file that can never
+  be read has no chunks and does not hold the record back.
+- A pass is one unit for the failure flags: once a file of one set fails to embed, or a source is out of reach, no later
+  set of the same pass is recorded.
+- A model replaced while a full pass runs leaves the files embedded before the replacement on the old model, and the
+  pass records the new one at its end.
 - Migration `ChunkSetsRecordAModelCanary` adds three nullable columns. A version without it ignores them.
 
 ---

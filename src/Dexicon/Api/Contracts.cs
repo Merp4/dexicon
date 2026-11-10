@@ -166,7 +166,7 @@ public sealed record MissingModel(string Provider, string Model, IReadOnlyList<s
 /// One entry per set rather than per model, because two sets on one model can disagree: one built
 /// before the change and one after.
 /// </summary>
-/// <param name="Set">`corpus:set`, because the fix is per set: rebuild it.</param>
+/// <param name="Set">`corpus:set`. A full reindex of the corpus re-embeds the set and clears the entry.</param>
 /// <param name="Similarity">
 /// Cosine similarity between the recorded answer and the current one. 0 when the dimensionality
 /// differs, since the two are then not comparable.

@@ -502,8 +502,8 @@ export function HealthDots({ health, connected, stale }: { health: Health | null
                   <strong className="mono">{c.set}</strong> was built with{' '}
                   <span className="mono">{c.model}</span>, which no longer answers as it did when the
                   set was recorded (similarity {c.similarity.toFixed(3)}, where 1 is the same model).
-                  Files indexed since are embedded by the current model, so the set mixes two. Rebuild
-                  it to re-embed everything.
+                  Files indexed since are embedded by the current model, so the set mixes two. A full
+                  reindex of its corpus re-embeds everything.
                 </Notice>
               ))}
             </div>

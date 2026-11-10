@@ -99,8 +99,8 @@ describe('the dependency panel', () => {
     expect(alert).toHaveTextContent('books:fine');
     expect(alert).toHaveTextContent('nomic-embed-text');
     expect(alert).toHaveTextContent('similarity 0.930');
-    // The way out is per set, so it is said in the notice.
-    expect(alert).toHaveTextContent('Rebuild it');
+    // The way out is a control the corpus page has, so the notice names it.
+    expect(alert).toHaveTextContent('full reindex of its corpus');
   });
 
   it('marks the collapsed button for a changed model too', async () => {
