@@ -2494,6 +2494,56 @@ measurement is dense-only on one repository. Running `scripts/bench/sweep.py` wi
 **Revisit when** that sweep shows a mean MRR gain of at least 0.03 with a bootstrap interval above zero
 on both corpora, or when re-embedding every corpus stops being a cost worth weighing.
 
+### D-46 A chunk set records what its model answers to a fixed sentence
+
+**Status.** Accepted and implemented, 2026-11-10.
+
+**Decision.** Each chunk set stores the vector its model returns for one fixed sentence (`ModelCanary.Text`), embedded
+without framing, in `chunk_sets.canary_vector`. A check embeds the sentence again and stores the cosine similarity
+against the stored vector (`canary_similarity`, `canary_checked_utc`). It runs before a pass writes to a set, and for
+every set every six hours from `ModelCanaryService`, whose first check is one minute after the process starts. A set
+below 0.999 is listed in `/healthz` as `changedModels` and in the health panel, scoped to the corpora the caller reaches.
+A set with no stored vector (every set that exists when this version first runs, and every new set) stores the model's
+current answer at its first check, which precedes its first write. A full or rebuild pass that finishes with no file left
+unembedded replaces the stored vector with the model's current answer.
+
+The check is advisory. A pass runs, writes and succeeds whatever it finds, and a provider that does not answer leaves
+the earlier state as it was. Whether a set counts as changed is computed from the stored similarity and the constant, so
+no flag is stored.
+
+**Why.** A chunk set pins a model by name. `ollama pull` on a tag that has moved replaces the weights under the name, and
+a hosted model can be updated under a stable id. Vectors from two models do not share a space, so a set that keeps
+indexing after the change holds a mixture: every search succeeds, and the files indexed since rank against the older
+ones by a measure that means nothing. The catalogue held the name and the dimensionality, so a replacement of the same
+dimensionality could not be seen.
+
+The threshold comes from three measurements with Ollama on CPU. One model embedded twice agreed to 3e-16 over 2,768
+chunk vectors (0.40.15, 2026-11-09). The upgrade from 0.32.14 to 0.40.4 moved 23 vectors by at most 3e-6 (2026-10-15).
+Another quantisation of one model (embeddinggemma-2 as Q8_0 GGUF against nvfp4 MLX, 0.40.15, 2026-11-09) agreed at a
+median 0.988 and a minimum 0.958, with 83% of the top ten results shared. 0.999 sits between the first two and the
+third.
+
+**Rejected.** The digest Ollama reports for a model: a hosted provider reports none, and a digest stored per set needs
+an action to accept a deliberate update, where the stored vector replaces itself when a rebuild finishes. Stopping a pass
+or refusing writes to a changed set: the threshold is measured for one engine on CPU, and a false report would then halt
+the indexing of a corpus, where now it is a notice. Storing the vector when a set is created, from the dimension probe:
+it adds two creation sites for a value the first check stores before the first write anyway, and sets that already exist
+need that path regardless. Checking on the `/healthz` poll: it is requested every fifteen seconds per open tab, and an
+embedding call on that path has timed out under indexing load before, which `EmbeddingService.ProbeDimensionsAsync` records.
+
+**Consequences.**
+
+- A set whose model changed before its first check is stored from the changed model and nothing reports it. This
+  applies to every set that exists when this version first runs.
+- A change that leaves the vector within 0.999 of the old one is not reported, whatever it does to retrieval.
+- Not measured: the repeatability of a hosted provider, and one model on CPU against GPU. A false report there is a
+  notice that a rebuild clears.
+- Each set costs one short embedding per pass and one every six hours. In the timer's check a model that does not
+  answer is asked once, however many sets use it.
+- A refresh after a change keeps writing vectors from the new model into the set. Only a full pass or a rebuild clears
+  the report, and a full pass that leaves a file unembedded does not.
+- Migration `ChunkSetsRecordAModelCanary` adds three nullable columns. A version without it ignores them.
+
 ---
 
 ## Resolved questions
