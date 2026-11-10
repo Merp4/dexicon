@@ -703,6 +703,13 @@ internal sealed class IndexingHarness : IAsyncDisposable
         public Task<bool> PingAsync(CancellationToken ct = default) => Task.FromResult(true);
     }
 
+    /// <summary>
+    /// Whether an embed call is a model canary check (<see cref="ModelCanary"/>). A pass makes one before
+    /// each chunk set's first write, and it is not a document: a test double that counts embedded text,
+    /// or acts on the first call, skips it.
+    /// </summary>
+    internal static bool IsCanary(IReadOnlyList<string> inputs) => inputs is [ModelCanary.Text];
+
     /// <summary>One vector per input, of the right width. Nothing here is about ranking.</summary>
     internal sealed class FixedEmbedder : IEmbeddingService
     {
