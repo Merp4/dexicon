@@ -2456,9 +2456,10 @@ profile for that name.
 - *Tags move.* Ollama repointed `latest` to a GGUF build on 2026-10-16
   ([#18971](https://github.com/ollama/ollama/issues/18971)), and `270m` was an nvfp4 build when pulled
   on 2026-10-08 and resolves to a GGUF build now. A chunk set records the model's name and
-  dimensions and nothing that identifies the weights, so a pull can change them under an indexed
-  corpus without anything noticing. A local alias made with `ollama cp` does not move until it is
-  overwritten.
+  dimensions, which do not identify the weights, so a pull can change them under an indexed
+  corpus. D-46 adds a stored vector for a fixed sentence that reports a change of answer
+  ([D-46](#d-46-a-chunk-set-records-what-its-model-answers-to-a-fixed-sentence)). A local alias made with
+  `ollama cp` does not move until it is overwritten.
 
 **Rejected.** Making it the default: no gain was measured and it costs a re-embed of every corpus.
 Choosing it for code corpora on the card's code figure: the repository's code queries show -0.014
@@ -2485,7 +2486,7 @@ place.
    Changing the model does not have this problem ([D-21](#d-21-chunk-sets-not-corpus-level-chunking)).
 3. *The listing filter admits `laya`.* Its family is `modern-bert` and the filter accepts any family
    containing "bert". A decision model that answers `/api/embed` at all would pass the dimension probe.
-4. *Model identity.* See the last item under "Tags move".
+4. *Model identity.* Decided in [D-46](#d-46-a-chunk-set-records-what-its-model-answers-to-a-fixed-sentence).
 
 **Cost.** The Models screen lists `embeddinggemma-2` tags that this record does not recommend. The
 measurement is dense-only on one repository. Running `scripts/bench/sweep.py` with the official
