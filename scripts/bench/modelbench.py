@@ -19,8 +19,15 @@ THE CORPUS IS THIS REPOSITORY. Results depend on the docs and src trees they wer
 change to docs/ changes the docs corpus. The committed results record the commit; to reproduce them
 extract that commit and pass --root:
 
-    git archive a948496 docs src scripts/bench | tar -x -C /tmp/tree
+    mkdir -p /tmp/tree && git archive a948496 docs src scripts/bench | tar -x -C /tmp/tree
     python scripts/bench/modelbench.py --root /tmp/tree ...
+
+CHUNKS. Blank-line paragraphs are joined up to 1,200 characters, a single paragraph is kept whole up to 1,400, a
+longer one is split on line boundaries, and a single line over 1,400 characters is cut at 1,400. In the tree above
+that cuts two lines of docs/10-security-secrets.md (2,249 characters) and none under src. Every arm sees the same
+chunks. Files under bin, obj, node_modules and .git are not read, so a built tree gives the same corpus. Files are
+taken in sorted order of their Path, which compares case-sensitively on POSIX: run it there (a container does),
+because a placebo seed permutes chunk positions and another order is another draw.
 
 Dexicon's own Ollama publishes no port. Run this from a container on its network
 (docker run --rm --network dexicon_default -v <repo>:/repo python:3.12-alpine python ...) or with
@@ -43,11 +50,13 @@ import urllib.request
 BATCH, WORKERS, TARGET, HARD = 32, 4, 1200, 1400
 TEXT_EXT = {".md", ".cs", ".csproj", ".json", ".props", ".yml", ".yaml", ".txt"}
 MAX_FILE_BYTES = 256 * 1024
+SKIP_DIRS = {"bin", "obj", "node_modules", ".git"}
 MIN_FREE_GB = 10
 
 V1 = "embeddinggemma:latest"
 GGUF = "hf.co/ggml-org/embeddinggemma-2-GGUF:Q8_0"
-MLX = "embeddinggemma-2:270m"
+# The nvfp4 (MLX) build by its explicit tag: embeddinggemma-2:270m now resolves to a GGUF build. Digest 9e1df58d197e.
+MLX = "embeddinggemma-2:270m-nvfp4-text"
 GEMMA_DOC, GEMMA_Q = "title: none | text: {t}", "task: search result | query: {t}"
 TITLED = "title: {p} | text: {t}"
 
@@ -77,6 +86,11 @@ PAIRS = [
     ("eg2_q8_codeprompt", "eg2_q8_title"), ("eg2_q8_codeprompt", "v1_title"),
 ] + [(f"v1_title_placebo_s{n}", base) for n in range(1, 11) for base in ("v1_framed", "v1_title")]
 AGREEMENT = [("eg2_q8", "eg2_nvfp4"), ("v1_framed", "v1_framed_repeat"), ("eg2_q8", "eg2_q8_title")]
+
+
+def same_model(listed, wanted):
+    """Ollama lists an untagged name as name:latest. The two forms match, and nothing looser does."""
+    return listed == wanted or listed == f"{wanted}:latest" or wanted == f"{listed}:latest"
 
 
 def mem_available_gb():
@@ -132,6 +146,8 @@ def load_corpus(root, sub):
         if path.suffix.lower() not in TEXT_EXT or path.stat().st_size > MAX_FILE_BYTES:
             continue
         rel = path.relative_to(base).as_posix()
+        if SKIP_DIRS.intersection(path.relative_to(base).parts[:-1]):
+            continue
         items.extend((rel, c) for c in chunks_of(path))
     return items
 
@@ -271,8 +287,7 @@ def main():
             sys.exit(f"ABORT before {arm}: only {free:.1f} GB available in the VM (floor {MIN_FREE_GB})")
         print(f"\n=== {arm}  model={model}" + (f"  (VM available {free:.1f} GB)" if free is not None else ""), flush=True)
         call(base, "/api/embed", {"model": model, "input": ["warm"], "truncate": False})
-        prefix = model.split(":")[0]
-        ps = [m for m in json.load(urllib.request.urlopen(base + "/api/ps"))["models"] if m["name"].startswith(prefix)]
+        ps = [m for m in json.load(urllib.request.urlopen(base + "/api/ps"))["models"] if same_model(m["name"], model)]
         result["arms"][arm] = {"model": model, "ps": ps[:1]}
         for cname, c in corpora.items():
             items, queries = c["items"], c["queries"]

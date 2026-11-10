@@ -2,7 +2,7 @@
 
 ARM: dense-only retrieval quality, file-level, for embeddinggemma-2 (GGUF Q8_0 and MLX nvfp4) against
 embeddinggemma v1, on this repository's docs (55 queries) and src (52 queries), straight against the
-live Ollama 0.40.15. Own chunker (blank-line paragraphs, <= 1,200 chars), identical chunks and queries for
+live Ollama 0.40.15. Own chunker (blank-line paragraphs, target 1,200 chars, up to 1,400), identical chunks and queries for
 every arm, top 10 chunk hits, rank of the first hit from the expected file.
 
 CONTROL: v1, framed with its card prompts. Sensitivity control: v1 with no framing (the September report
@@ -42,7 +42,7 @@ P3 HALF    nvfp4 - Q8: docs -0.016 (ok), code -0.043 (CI -0.082..-0.012, not wit
 P4 PASSED NARROWLY  v1 raw - framed: docs -0.059 (CI -0.127..+0.006), code +0.015 (n.s.).
 P5 PASSED  nomic - v1: docs -0.117, code -0.131, both CIs below 0.
 P6 UNRESOLVED  eg2-Q8 7.0 and 13.2 chunks/s vs v1 22.2 and 18.5 (v1 repeat 27.1 and 29.5, raw 35.3 and 31.9):
-   v1 alone varies 1.9x between identical runs on the shared GPU.
+   the identical v1 framed row varies 1.6x between runs on the shared GPU (code 18.5 and 29.5, docs 22.2 and 27.1).
 Adoption criterion (same sign on both corpora AND bootstrap lower bound > 0) FAILED for eg2-Q8 and eg2-nvfp4.
 
 # ROUND 2, registered before running (card best practice the app cannot express today)
@@ -63,7 +63,7 @@ T2 PASSED  v1 title - v1 framed, code +0.054 (CI +0.008..+0.106).
 T3 MISSED  eg2-Q8 title+code prompt - v1 title, code -0.023 (CI -0.111..+0.066). I gave it 25%.
 T4 PASSED  eg2 - v1 on docs with titles -0.037 (CI -0.125..+0.048): same sign as without titles (-0.057).
 Also: eg2-Q8 title - eg2-Q8, docs +0.077 (CI +0.018..+0.143), code +0.021 (n.s.). eg2 never beat v1 under equal
-treatment; 5 of 6 point estimates favour v1 by 0.02..0.06, every interval spans 0. n = 55 and 52 cannot resolve
+treatment; all 6 point estimates favour v1, by 0.014 to 0.057, every interval spans 0. n = 55 and 52 cannot resolve
 gaps under about 0.1.
 
 # ROUND 3, registered before running: is the title lift information or only format?

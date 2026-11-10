@@ -177,7 +177,9 @@ and the same queries, which model, and which text wrapped around each chunk, ran
 higher? It talks to Ollama directly, splits `docs/` and `src/` on blank lines into 623 and 2,145 chunks
 of about 1,000 characters, embeds with the indexer's batch size of 32 and four requests in flight, and
 scores the 55 and 52 queries the sweep uses. It is dense only, with no sparse leg and no fusion, so its
-absolute numbers differ from the sweep's hybrid ones and only differences between arms are read.
+absolute numbers differ from the sweep's hybrid ones and only differences between arms are read. A line
+over 1,400 characters is cut at 1,400: that is two lines of `docs/10-security-secrets.md` (2,249 characters)
+and none under `src/`, and every arm sees the same chunks.
 
 Measured on tree `a948496` (docs and src identical to v0.6.13) with Ollama 0.40.15, on a GPU shared with
 another training workload. The predictions written before each round are in
@@ -224,7 +226,7 @@ gap under about 0.1 cannot be resolved, so this supports "no evidence of a gain"
 nvfp4 build is measurably worse than Q8_0 on code, and `nomic-embed-text` is worse than
 `embeddinggemma` on both corpora, as in the September sweep.
 
-**A title in the document text is a larger effect than the choice of model.** `title: {path}` in place
+**A title in the document text lifts the score by at least as much as the choice between the two generations changes it.** `title: {path}` in place
 of `title: none` lifts `embeddinggemma` by about 0.055 on both corpora, the card's own recommendation
 for documents that have a title. The placebo separates two causes: the title form, and the information
 in the path. Ten draws gave each chunk the path of another, randomly chosen chunk, each draw a fixed
@@ -246,13 +248,14 @@ lower on docs and 0.015 higher on code, against 0.632 to 0.799 on twelve queries
 
 Speed was measured on the same shared GPU and varied more than the models did: `embeddinggemma` ran
 at 13 to 39 chunks per second over 28 corpus runs, the identical first row and its repeat between 19 and
-30, and `embeddinggemma-2` Q8_0 at 7 to 25 over six. At those speeds, re-embedding a deployment of about
-258,000 chunks takes 2 to 5 hours with the first generation and 3 to 10 with the second.
+30, and `embeddinggemma-2` Q8_0 at 7 to 25 over six. At those speeds, re-embedding 258,000 chunks, the
+size of one deployed instance, takes 2 to 5 hours with the first generation and 3 to 10 with the second;
+scale by chunks divided by rate.
 
 Reproduce with:
 
 ```bash
-git archive a948496 docs src scripts/bench | tar -x -C /tmp/tree
+mkdir -p /tmp/tree && git archive a948496 docs src scripts/bench | tar -x -C /tmp/tree
 python scripts/bench/modelbench.py --list
 python scripts/bench/modelbench.py --root /tmp/tree --ollama http://127.0.0.1:21434     --arms v1_framed,v1_title,eg2_q8 --out modelbench-out.json
 ```
@@ -263,7 +266,8 @@ different draw.
 
 `--root` matters: this corpus is the repository, so a later change to `docs/` changes the docs
 numbers. Ollama's tags move. The `embeddinggemma-2:270m` tag measured as nvfp4 on 2026-10-08 now
-resolves to a GGUF build, so the MLX arm needs `--model eg2_nvfp4=embeddinggemma-2:270m-nvfp4-text`.
+resolves to a GGUF build (digest `ff630aa67948`), so the `eg2_nvfp4` arm names the build by its explicit tag,
+`embeddinggemma-2:270m-nvfp4-text`, whose digest `9e1df58d197e` is the one recorded in the results.
 The Q8_0 arm used the ggml-org file (`hf.co/ggml-org/embeddinggemma-2-GGUF:Q8_0`), which is not the same
 file as the one Ollama now serves as `embeddinggemma-2:270m`; the official build has not been measured.
 Dexicon's own Ollama publishes no port, so run the script from a container on its network or with

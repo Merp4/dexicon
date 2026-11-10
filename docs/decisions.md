@@ -2422,6 +2422,13 @@ framing is the first generation's: the model card's `config_sentence_transformer
 hyphenated, which makes it a different family key from `embeddinggemma`. Before the entry existed the
 Models screen offered the new tags with `origin=none`, so they would have been embedded raw.
 
+**Existing sets.** A chunk set built on `embeddinggemma-2` before this entry holds raw document vectors. From this
+version its queries are framed. The framing is part of the chunking fingerprint, so a refresh re-embeds the set's
+files, but the upgrade queues no pass and `ScheduledRefreshService` is off by default (`RefreshMinutes = 0`). Such a
+set answers with framed queries against raw vectors until a refresh or a full reindex of its corpus runs. A set on
+`embeddinggemma` or any other model is unaffected, and a set built on `embeddinggemma-2` after this version is framed
+from its first pass.
+
 **Why it is not the default.**
 
 - *No gain measured here.* On 107 of this repository's own queries, dense only, with the same chunks
@@ -2432,8 +2439,8 @@ Models screen offered the new tags with `origin=none`, so they would have been e
   code-retrieval query prompt brings the second generation to 0.724 and 0.705. The card's MTEB gains
   (code 78.68 against 68.76) do not appear on file-level lookups
   ([benchmarks](benchmarks.md#comparing-models-directly-2026-11-09)).
-- *The cost is a re-embed of every corpus that follows it.* About 258,000 chunks would take 2 to 5
-  hours at the speeds measured for `embeddinggemma` and 3 to 10 for `embeddinggemma-2` (13 to 39 and
+- *The cost is a re-embed of every corpus that follows it.* 258,000 chunks, the size of one deployed
+  instance, would take 2 to 5 hours at the speeds measured for `embeddinggemma` and 3 to 10 for `embeddinggemma-2` (13 to 39 and
   7 to 25 chunks per second, on a GPU shared with a training workload).
 - *Where it runs.* Ollama's `embeddinggemma-2:270m`, `:740m` and `:latest` resolve to GGUF builds, which
   Ollama 0.40.4 and later can run on llama.cpp on Linux; 0.40.0 to 0.40.3 bundle a llama.cpp older than
@@ -2457,7 +2464,10 @@ with the generic prompt and -0.023 with the code prompt, both intervals spanning
 entry out because it is not the default: the model is installable on Linux and the Models screen lists
 it, and without an entry it is embedded raw, which costs recall and raises nothing. An entry for
 `laya`, which Ollama files in the same category: it is a decision model that answers questions about a
-text and returns no retrieval vectors, so `ModelProfileCoverageTests` lists it as an exemption.
+text and is not meant to produce retrieval vectors, so `ModelProfileCoverageTests` lists it as an exemption.
+Queuing a rebuild at startup for the sets on a model whose built-in framing changed: it adds a startup mechanism for
+the sets that someone built on `embeddinggemma-2` while it had no entry, where saving a profile already rebuilds in
+place.
 
 **Follow-ups, recorded and not decided.**
 

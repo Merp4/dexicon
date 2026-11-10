@@ -79,7 +79,7 @@ public enum TemplateOrigin
 ///
 /// The table below covers every embedding model in Ollama's embedding category as of 2026-11-10,
 /// all thirteen of them rather than a selection. The category also lists `laya`, a decision
-/// model built on ModernBERT that answers questions about a text and returns no retrieval vectors,
+/// model built on ModernBERT that answers questions about a text and is not meant to produce retrieval vectors,
 /// so it has no entry. That is a snapshot, not a contract: a model added
 /// to the library tomorrow gets raw framing and a UI that says so, which is the designed
 /// behaviour and the reason this is a fallback. `ModelProfileCoverageTests` pins the list

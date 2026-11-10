@@ -1205,7 +1205,7 @@ document form wraps the text rather than preceding it:
 
 Every embedding model in Ollama's embedding category has a built-in, read off its model card
 (checked 2026-11-10, all thirteen). The category also lists `laya`, a decision model that
-answers questions about a text and returns no retrieval vectors, so it has none.
+answers questions about a text and is not meant to produce retrieval vectors, so it has none.
 `ModelProfileCoverageTests` pins the list so one cannot be dropped unnoticed.
 
 | model | indexed text | queries |
