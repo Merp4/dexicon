@@ -90,5 +90,7 @@ Ten seeded draws, sorted order, seeds 1 to 10:
   code  0.634..0.682, mean 0.662; minus v1 framed -0.011 (range -0.040..+0.008); minus true path -0.066 (range -0.094..-0.046)
 Against the round 3 registration: the mean of the draws is within +-0.02 of v1 framed on both corpora ("about
 equal", 30%), and every draw is below the true path. None of the ten reproduces the first draw's code result, and its
-cause is not known. Its share of chunks left on their own file's path (2.10% of 2,145) is inside the range of the
-others (1.31% to 1.96%), so leakage of the true path does not explain it.
+cause is not known. Its share of chunks left on their own file's path (2.10% of 2,145) is slightly above the range
+of the others (1.31% to 1.96%). Among the 892 chunks of the files the queries ask about, 25 kept their own path, inside
+their 14 to 26, and the seeded draws with 26 and 25 scored 0.675 and 0.663. Leakage of the true path does not explain
+it.

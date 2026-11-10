@@ -236,8 +236,10 @@ draws were no better than no title on average, so the gain comes from the path t
 title form. A single draw does not resolve this at 55 and 52 queries: the interval on the difference
 from the true path excludes zero in 4 of the 10 draws on docs and 3 of 10 on code. One further draw,
 from an earlier version of the script that read files in directory order, scored 0.731 on docs and 0.744
-on code. On code that is above the true path. It kept no more chunks on their own file's path than the
-seeded draws did (2.1% of 2,145 against 1.3% to 2.0%), and its cause is not known. The metric scores
+on code. On code that is above the true path. It left 2.1% of its 2,145 chunks on their own file's path,
+just above the seeded draws' 1.3% to 2.0%, but 25 of the 892 chunks of the files the queries ask about kept
+their own path, inside the seeded draws' 14 to 26, and the draws with 26 and 25 scored 0.675 and 0.663. A leak
+of the true path does not account for it, and its cause is not known. The metric scores
 which file a query is about, and the files are descriptively named, so read the figure as an upper
 bound for queries that do not echo a file name. It has not been run through the app's hybrid search.
 Dexicon's framing templates carry `{text}` only, so a title cannot be expressed today.
