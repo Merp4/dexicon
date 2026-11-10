@@ -2597,8 +2597,11 @@ a set answers with framed queries against raw vectors, or the reverse, with noth
 - At the first check of a set with no record: the indexer records before the set's first write, and the six-hourly
   tick of `ModelCanaryService` records for any set that still has none. Neither needs a provider to answer.
 - When a full or rebuild pass replaces the model's record ([D-46](decisions.md#d-46-a-chunk-set-records-what-its-model-answers-to-a-fixed-sentence)): after the vector store
-  holds points only for files that pass indexed. The template recorded is the one the pass embedded with, not the
-  profile as it is at the end, so a profile saved while the pass ran is reported against the pass's vectors.
+  holds points only for files that pass indexed, and the profile stayed what the pass resolved at the set's start:
+  it gives the same document template when the pass ends and no profile row for the model was saved since the pass
+  began. The embedding service reads the profile again for each batch, so a profile saved while the pass ran applies
+  to the files embedded after it and the set holds two framings. The earlier record then stands, the report compares
+  it with the profile, and the rebuild that save queued corrects the set.
 
 The comparison is made when `/healthz` is read, with the profile lookup that `IModelProfiles` caches for thirty seconds
 and a save evicts. A set therefore appears as soon as a profile is saved and clears when the rebuild it queues records
@@ -2616,6 +2619,9 @@ the new template.
 - *A flag written by the tick.* It would be as stale as the tick: up to six hours after a profile save. The live
   comparison costs one catalogue read and one cached lookup per model on a poll that arrives every fifteen seconds
   per open tab.
+- *Embedding every batch of a pass with the template the pass resolved.* It would end mixed framings from a profile
+  saved mid-pass, which the per-file fingerprints also cannot tell apart. It changes `IEmbeddingService.EmbedAsync`
+  and its test doubles, and the saved profile's own rebuild already corrects the set, so it is a separate change.
 - *Inferring a baseline for existing sets from the per-file fingerprints.* A fingerprint also covers the chunking and
   the content, so a mismatch is not evidence about the framing.
 

@@ -337,7 +337,7 @@ public sealed class ModelFramingIndexing
     }
 
     [Fact]
-    public async Task APassRecordsTheTemplateItEmbeddedWithAndNotTheProfileAsItIsAtTheEnd()
+    public async Task AFullPassDuringWhichTheProfileChangedLeavesTheEarlierRecord()
     {
         await using var harness = await StartAsync();
         await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
@@ -354,16 +354,94 @@ public sealed class ModelFramingIndexing
         await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
 
         counts.ShouldBe(2, "the profile was changed at the gate's read");
+        // Neither the template the pass resolved nor the one the profile gives at the end describes its vectors.
+        (await RecordedAsync(harness)).ShouldBe("{text}");
+    }
+
+    [Fact]
+    public async Task AFullPassDuringWhichTheProfileWasSavedAndSavedBackLeavesTheEarlierRecord()
+    {
+        await using var harness = await StartAsync();
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+        harness.Profiles.Templates = Framed;
+        // Two saves leave the template as it was, and the files embedded between them hold the other one.
+        var counts = 0;
+        harness.Vectors.OnCountAsync = async () =>
+        {
+            if (++counts == 2) await SaveProfileRowAsync(harness, updated: DateTime.UtcNow);
+        };
+
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+
+        counts.ShouldBe(2);
+        (await RecordedAsync(harness)).ShouldBe("{text}");
+    }
+
+    [Fact]
+    public async Task AProfileSavedBeforeThePassBeganDoesNotKeepItFromRecording()
+    {
+        await using var harness = await StartAsync();
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+        harness.Profiles.Templates = Framed;
+        // The save that queued this rebuild.
+        await SaveProfileRowAsync(harness, updated: DateTime.UtcNow.AddMinutes(-5));
+
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+
+        (await RecordedAsync(harness)).ShouldBe("title: none | text: {text}");
+    }
+
+    private static async Task SaveProfileRowAsync(IndexingHarness harness, DateTime updated)
+    {
+        await using var db = harness.NewContext();
+        db.ModelProfiles.Add(new EmbeddingModelProfile
+        {
+            Provider = "ollama",
+            Model = EmbeddingTarget.Canonical(IndexingHarness.Model),
+            DocumentTemplate = "title: none | text: {text}",
+            QueryTemplate = "task: search result | query: {text}",
+            CreatedUtc = updated,
+            UpdatedUtc = updated,
+        });
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task AFullPassWhoseCanaryRecordFaultsStillRecordsTheTemplateAndIsNotFailed()
+    {
+        await using var harness = await StartAsync();
+        var embedder = new FixedEmbedder();
+        harness.Embedder = embedder;
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+        harness.Profiles.Templates = Framed;
+        // The pass asks the canary twice: to check the set before it writes, and to record it at the end.
+        var calls = 0;
+        embedder.OnCanary = () =>
+        {
+            if (++calls == 2) throw new InvalidOperationException("the provider faulted");
+        };
+
+        var job = await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+
+        calls.ShouldBe(2);
+        job.State.ShouldBe(JobState.Succeeded);
         (await RecordedAsync(harness)).ShouldBe("title: none | text: {text}");
     }
 
     /// <summary>Every embedding is zeros but for the canary, which answers a fixed unit vector.</summary>
     private sealed class FixedEmbedder : IEmbeddingService
     {
+        /// <summary>Runs when the canary is asked, before it answers.</summary>
+        public Action? OnCanary { get; set; }
+
         public Task<IReadOnlyList<float[]>> EmbedAsync(EmbeddingTarget target, EmbedPurpose purpose,
-            IReadOnlyList<string> inputs, string? source = null, CancellationToken ct = default) =>
-            Task.FromResult<IReadOnlyList<float[]>>(
+            IReadOnlyList<string> inputs, string? source = null, CancellationToken ct = default)
+        {
+            if (IndexingHarness.IsCanary(inputs)) OnCanary?.Invoke();
+
+            return Task.FromResult<IReadOnlyList<float[]>>(
                 [.. inputs.Select(_ => IndexingHarness.IsCanary(inputs) ? new float[] { 1, 0, 0, 0 } : new float[768])]);
+        }
 
         public Task<int?> CountTokensAsync(EmbeddingTarget target, string text, CancellationToken ct = default) =>
             Task.FromResult<int?>(null);

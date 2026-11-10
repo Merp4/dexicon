@@ -1,4 +1,5 @@
 using Dexicon.Core.Catalog;
+using Dexicon.Core.Indexing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -49,14 +50,34 @@ public static class ModelFraming
     }
 
     /// <summary>
-    /// Replaces the set's record with the template a full pass embedded with, once every vector of the set
-    /// is one that pass wrote.
+    /// Replaces the set's record with the template a full pass resolved at the set's start, once every vector of the
+    /// set is one that pass wrote.
     /// </summary>
     public static async Task RecordAsync(CatalogDbContext db, ChunkSet set, ModelTemplates used, CancellationToken ct)
     {
         var id = set.Id;
         await db.ChunkSets.Where(s => s.Id == id)
             .ExecuteUpdateAsync(u => u.SetProperty(s => s.FramingRecorded, used.Document), ct);
+    }
+
+    /// <summary>
+    /// Whether the profile stayed what a pass resolved at the set's start, which is the only template a pass can
+    /// claim for its vectors. The embedding service reads the profile again for each batch, so a profile saved while
+    /// the pass ran applies to the files embedded after it. Not changed means the profile gives the same document
+    /// template now and no row for the model was saved since the pass began; the second condition catches a save
+    /// followed by a save back, which leaves the template as it was and the vectors mixed.
+    /// </summary>
+    public static async Task<bool> UnchangedSinceAsync(
+        CatalogDbContext db, IModelProfiles profiles, ChunkSet set, ModelTemplates resolved, DateTime since,
+        CancellationToken ct)
+    {
+        var target = set.Target();
+        var live = await profiles.ForAsync(target, ct);
+        if (!string.Equals(live.Document, resolved.Document, StringComparison.Ordinal)) return false;
+
+        var model = target.CanonicalModel;
+        return !await db.ModelProfiles.AsNoTracking()
+            .AnyAsync(p => p.Provider == target.Provider && p.Model == model && p.UpdatedUtc >= since, ct);
     }
 
     /// <summary>

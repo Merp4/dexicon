@@ -138,15 +138,29 @@ public sealed class CorpusIndexer(
                 return;
             }
 
-            // The template the pass embedded with, and not the profile as it is now: a profile saved while the
-            // pass ran has not been applied to these vectors, and the next check reports it.
-            await ModelFraming.RecordAsync(db, set, templates, ct);
-            await ModelCanary.RecordAsync(db, embedder, set, log, ct);
+            // The template the pass resolved at the set's start, and only if the profile stayed that. The
+            // embedding service reads the profile again for each batch, so one saved while the pass ran applies to the
+            // files embedded after it, and the set then holds two framings. The earlier record stands, the health
+            // report compares it with the profile, and the rebuild that save queued corrects the set.
+            if (await ModelFraming.UnchangedSinceAsync(db, profiles, set, templates, passStarted, ct))
+                await ModelFraming.RecordAsync(db, set, templates, ct);
+            else
+                log.LogInformation(
+                    "Chunk set {Set} of corpus {CorpusId}: the profile of {Model} was saved while the pass ran, "
+                    + "so the document framing was not recorded", set.Name, set.CorpusId, set.EmbeddingModel);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             log.LogWarning(ex, "Chunk set {Set} of corpus {CorpusId}: the model and framing could not be recorded after the pass",
                 set.Name, set.CorpusId);
+            return;
+        }
+
+        try { await ModelCanary.RecordAsync(db, embedder, set, log, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            log.LogWarning(ex, "Chunk set {Set} of corpus {CorpusId}: the model could not be recorded after the pass, "
+                + "and the framing was", set.Name, set.CorpusId);
         }
     }
 

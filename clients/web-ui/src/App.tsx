@@ -523,7 +523,7 @@ export function HealthDots({ health, connected, stale }: { health: Health | null
             <div className="mt-2.5 grid gap-1.5">
               {reframed.map((c) => (
                 <Notice key={c.set} tone="warn" className="text-xs">
-                  <strong className="mono">{c.set}</strong> was embedded with the document framing{' '}
+                  <strong className="mono">{c.set}</strong> was recorded as embedded with the document framing{' '}
                   <span className="mono">{c.recorded}</span>, and <span className="mono">{c.model}</span> now
                   frames documents as <span className="mono">{c.current}</span>. Queries use the current
                   framing, so they may match the set's vectors less well. A full reindex of its corpus
