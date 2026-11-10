@@ -2556,9 +2556,13 @@ embedding call on that path has timed out under indexing load before, which `Emb
   which in the web UI is **Full reindex** on the corpus. A pass that leaves points of an earlier pass in the store does
   not, whatever left them: a file that failed to embed, a read that timed out, a file that became empty or excluded or
   vanished while a delete was refused, points with no catalogue row, or a store that could not be read. A file that can
-  never be read has no points and does not hold the record back. The rule reads the store and the catalogue after the
-  pass and does not enumerate failure paths; it costs the per-file count call that a pass already makes at its start,
-  once more per source after a full pass.
+  never be read has no points and does not hold the record back. A file that fails on every pass and still holds
+  points of an earlier pass (a read that always times out, an extraction error other than an unreadable document, an
+  upload whose cached text is gone) holds it back on every full pass, so **Full reindex** does not clear the notice
+  until the file is repaired or removed. A source with 250,000 or more distinct file paths reaches the cap of the
+  store's per-file count, which is an unanswered read (the largest source measured has 27,002 files). The rule reads
+  the store and the catalogue after the pass and does not enumerate failure paths; it costs the per-file count call
+  that a pass already makes at its start, once more per source after a full pass.
 - The rule reads the sources the pass indexed. `RemoveSourceAsync` reads a source's file paths before it deletes their
   vectors, so points that a running pass writes for the source in between stay in the store under the id of a source
   that no longer exists (its code comment records this). The rule does not read them. Only removing the chunk set or

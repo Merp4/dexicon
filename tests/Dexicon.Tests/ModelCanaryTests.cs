@@ -1041,6 +1041,115 @@ public sealed class ModelCanaryIndexing
         (await StoredSet(harness)).CanaryVector.ShouldBe(ModelCanary.Pack(Original));
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task AFullPassThatLeftAFileOfOneSourceOnItsEarlierVectorsDoesNotTakeTheNewModel(int failingSource)
+    {
+        // The same relative path in both sources: the comparison has to key a file by its source as well as its path,
+        // and has to add up every source rather than answer for the first or the last.
+        await using var harness = await IndexingHarness.StartAsync("notes", "more");
+        await harness.WriteFileAsync("same.txt", IndexingHarness.Prose("first"), source: 0);
+        await harness.WriteFileAsync("same.txt", IndexingHarness.Prose("second"), source: 1);
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        var embedder = new CanaryAwareEmbedder();
+        harness.Embedder = embedder;
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+        embedder.Answer = Replaced;
+        harness.Vectors.DeleteFailsForPath = "same.txt";
+        harness.Vectors.DeleteFailsForSourceId = IndexingHarness.SourceIdFor(failingSource);
+
+        var job = await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+
+        job.FilesFailed.ShouldBe(1);
+        (await harness.StateOfAsync("same.txt", sourceId: IndexingHarness.SourceIdFor(1 - failingSource)))
+            .Status.ShouldBe(FileStatus.Indexed);
+        (await StoredSet(harness)).CanaryVector.ShouldBe(ModelCanary.Pack(Original));
+    }
+
+    [Theory]
+    [InlineData("set-1", "set-2")]
+    [InlineData("set-2", "set-1")]
+    public async Task AFullPassThatLeftAFileOfOneSetOnItsEarlierVectorsRecordsTheOtherSetOnly(
+        string failingSet, string otherSet)
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.WriteFileAsync("one.txt", IndexingHarness.Prose("first"));
+        await harness.SeedCorpusAsync(SourceKind.Workspace, sets: 2);
+        var embedder = new CanaryAwareEmbedder();
+        harness.Embedder = embedder;
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+        embedder.Answer = Replaced;
+        harness.Vectors.DeleteFailsForPath = "one.txt";
+        harness.Vectors.DeleteFailsForChunkSetId = failingSet;
+
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+
+        // The other set's row for the file is Indexed in this pass. That must not stand in for the failing set's row,
+        // whichever of the two the pass reaches last (they are visited in name order, which this test does not rely on).
+        await using var db = harness.NewContext();
+        var sets = await db.ChunkSets.AsNoTracking().ToDictionaryAsync(s => s.Id, TestContext.Current.CancellationToken);
+        sets[otherSet].CanaryVector.ShouldBe(ModelCanary.Pack(Replaced));
+        sets[failingSet].CanaryVector.ShouldBe(ModelCanary.Pack(Original));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AFullPassDoesNotTakeTheNewModelWhenTheStoreStopsAnsweringAfterThePassStarted(bool storeThrows)
+    {
+        var (harness, embedder) = await StartAsync();
+        await using var _ = harness;
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+        embedder.Answer = Replaced;
+        // The first count of a pass reconciles the catalogue with the store, the second is the record gate's.
+        var counts = 0;
+        harness.Vectors.OnCountAsync = () =>
+        {
+            if (++counts == 2)
+            {
+                harness.Vectors.CountsAreIncomplete = !storeThrows;
+                harness.Vectors.CountsThrow = storeThrows;
+            }
+
+            return Task.CompletedTask;
+        };
+
+        var job = await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+
+        counts.ShouldBe(2, "the pass reads the store once to reconcile and once to decide whether to record");
+        job.State.ShouldBe(JobState.Succeeded);
+        (await StoredSet(harness)).CanaryVector.ShouldBe(ModelCanary.Pack(Original));
+    }
+
+    [Fact]
+    public async Task AFullPassOverAnUploadSourceThatCouldNotRemoveOldPointsDoesNotTakeTheNewModel()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        var embedder = new CanaryAwareEmbedder();
+        harness.Embedder = embedder;
+        await using (var db = harness.NewContext())
+        {
+            var documents = harness.NewDocumentService(db);
+            var stored = await documents.StoreAsync(
+                new MemoryStream(System.Text.Encoding.UTF8.GetBytes(IndexingHarness.Prose("uploaded"))), "doc.txt",
+                TestContext.Current.CancellationToken);
+            await documents.AttachAsync(
+                await db.Corpora.SingleAsync(TestContext.Current.CancellationToken), stored.Sha256, "doc.txt",
+                TestContext.Current.CancellationToken);
+        }
+
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+        embedder.Answer = Replaced;
+        harness.Vectors.DeleteFailsForPath = "doc.txt";
+
+        var job = await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+
+        job.FilesFailed.ShouldBe(1);
+        (await StoredSet(harness)).CanaryVector.ShouldBe(ModelCanary.Pack(Original));
+    }
+
     [Fact]
     public async Task AFullPassOverAnUploadSourceTakesTheNewModel()
     {

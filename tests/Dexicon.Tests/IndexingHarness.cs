@@ -560,6 +560,12 @@ internal sealed class IndexingHarness : IAsyncDisposable
         /// <summary>Make the delete of one file's chunks fail, by its path in the source, and no other.</summary>
         public string? DeleteFailsForPath { get; set; }
 
+        /// <summary>Narrows <see cref="DeleteFailsForPath"/> to the files of one source.</summary>
+        public string? DeleteFailsForSourceId { get; set; }
+
+        /// <summary>Narrows <see cref="DeleteFailsForPath"/> to the files of one chunk set.</summary>
+        public string? DeleteFailsForChunkSetId { get; set; }
+
         /// <summary>
         /// Runs as any delete reaches the store, before it takes effect. A test holds a delete open
         /// here and acts while the caller is part way through, which is the window a removal has
@@ -654,7 +660,10 @@ internal sealed class IndexingHarness : IAsyncDisposable
                 throw new OperationCanceledException("the pass was interrupted mid-file");
             }
 
-            if (DeletesThrow || (DeleteFailsForPath is not null && DeleteFailsForPath == filePath))
+            if (DeletesThrow
+                || (DeleteFailsForPath is not null && DeleteFailsForPath == filePath
+                    && (DeleteFailsForSourceId is null || DeleteFailsForSourceId == sourceId)
+                    && (DeleteFailsForChunkSetId is null || DeleteFailsForChunkSetId == chunkSetId)))
                 throw new InvalidOperationException("the vector store is unreachable");
 
             // The same four-part key Qdrant filters on. Matching on filePath alone would
