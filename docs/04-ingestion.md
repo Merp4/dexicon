@@ -1203,14 +1203,15 @@ recall@1 16/25 without its prefixes and 23/25 with them.
 Dexicon stores this per model as a **template** rather than a prefix, because Gemma's
 document form wraps the text rather than preceding it:
 
-Every model in Ollama's embedding category has a built-in, read off its model card
-(checked 2026-09-17, all twelve). `ModelProfileCoverageTests` pins the list so one cannot
-be dropped unnoticed.
+Every embedding model in Ollama's embedding category has a built-in, read off its model card
+(checked 2026-11-10, all thirteen). The category also lists `laya`, a decision model that
+answers questions about a text and is not meant to produce retrieval vectors, so it has none.
+`ModelProfileCoverageTests` pins the list so one cannot be dropped unnoticed.
 
 | model | indexed text | queries |
 |---|---|---|
 | `nomic-embed-text`, `nomic-embed-text-v2-moe` | `search_document: {text}` | `search_query: {text}` |
-| `embeddinggemma` | `title: none \| text: {text}` | `task: search result \| query: {text}` |
+| `embeddinggemma`, `embeddinggemma-2` | `title: none \| text: {text}` | `task: search result \| query: {text}` |
 | `qwen3-embedding` | `{text}` | `Instruct: …\nQuery: {text}` |
 | `mxbai-embed-large`, `bge-large`, `snowflake-arctic-embed` | `{text}` | `Represent this sentence for searching relevant passages: {text}` |
 | `snowflake-arctic-embed2` | `{text}` | `query: {text}` |
@@ -1220,6 +1221,15 @@ The last row is intentional: symmetric sentence-transformers models were
 trained on sentence pairs with no task prefix, so a prefix is noise in the embedding rather
 than framing. The two Arctic generations want **different** prefixes and differ by one
 character in their names, so the model a set uses should be confirmed.
+
+`embeddinggemma-2` is the Ollama name of the second generation. It is hyphenated, so it is a
+separate key from `embeddinggemma`, and its card gives the same two strings. The lookup removes a
+`:tag` and nothing else, so `embeddinggemma-2:270m` and `embeddinggemma-2:740m` are recognised, while a
+Hugging Face path such as `hf.co/ggml-org/embeddinggemma-2-GGUF:Q8_0` or an alias made with `ollama cp`
+is an unrecognised name and is embedded raw until a row is saved for it on the Models screen. It is not the
+default: on this repository's own queries it scored no better than the first generation, and the
+tags Ollama serves can be repointed
+([D-45](decisions.md#d-45-embeddinggemma-2-has-a-built-in-framing-and-is-not-the-default)).
 
 `bge-large` is the one judgement call. BGE v1.5 made instructions optional "for
 convenience", but the same card recommends them "for a retrieval task that uses short

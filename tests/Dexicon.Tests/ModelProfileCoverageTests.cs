@@ -11,31 +11,48 @@ namespace Dexicon.Tests;
 /// failure mode this guards is silent by construction, and the only defence is checking
 /// the list against the library rather than against memory.
 ///
-/// The list was read off ollama.com/search?c=embedding on 2026-09-17: the whole category,
-/// twelve models, not a selection. It is a snapshot and will go stale: a model added
+/// The list was read off ollama.com/search?c=embedding on 2026-11-10: the whole category,
+/// fourteen entries, thirteen of them embedding models and one a decision model (see
+/// <see cref="DecisionModelsInTheCategory"/>). The previous reading, 2026-09-17, held twelve;
+/// the additions are `embeddinggemma-2` and `laya`. It is a snapshot and will go stale: a model added
 /// tomorrow gets raw framing and a UI that says so, which is the designed fallback. What
 /// this test pins is that nothing in the list was covered by ACCIDENT, and that a future
 /// edit cannot quietly drop one.
 /// </summary>
 public class ModelProfileCoverageTests
 {
-    /// <param name="Pulls">Downloads on 2026-09-17, so the list stays ordered by what people use.</param>
+    /// <param name="Pulls">Downloads on 2026-11-10, so the list stays ordered by what people use.</param>
     public record Model(string Name, string Pulls, bool NameSaysEmbed, string? Family);
 
     public static readonly Model[] OllamaEmbeddingLibrary =
     [
-        new("nomic-embed-text", "86M", true, "nomic-bert"),
-        new("mxbai-embed-large", "14.7M", true, "bert"),
-        new("bge-m3", "6.7M", false, "bert"),
-        new("qwen3-embedding", "4M", true, null),
-        new("all-minilm", "3.6M", false, "bert"),
-        new("snowflake-arctic-embed", "3.1M", true, "bert"),
-        new("embeddinggemma", "2.1M", true, null),
-        new("paraphrase-multilingual", "941.2K", false, "bert"),
-        new("nomic-embed-text-v2-moe", "906.6K", true, "nomic-bert"),
-        new("snowflake-arctic-embed2", "452.4K", true, "bert"),
-        new("granite-embedding", "369.1K", true, null),
-        new("bge-large", "285.6K", false, "bert"),
+        new("nomic-embed-text", "96.9M", true, "nomic-bert"),
+        new("mxbai-embed-large", "16.8M", true, "bert"),
+        new("bge-m3", "8.3M", false, "bert"),
+        new("qwen3-embedding", "4.5M", true, null),
+        new("all-minilm", "3.9M", false, "bert"),
+        new("snowflake-arctic-embed", "3.2M", true, "bert"),
+        new("embeddinggemma", "2.8M", true, null),
+        new("nomic-embed-text-v2-moe", "1.3M", true, "nomic-bert"),
+        new("paraphrase-multilingual", "964.3K", false, "bert"),
+        new("snowflake-arctic-embed2", "496.9K", true, "bert"),
+        new("granite-embedding", "424.1K", true, null),
+        new("bge-large", "304.8K", false, "bert"),
+        new("embeddinggemma-2", "147.2K", true, null),
+    ];
+
+    /// <summary>
+    /// Listed in the category and not an embedding model. `laya` is a 421M decision model fine-tuned
+    /// from ModernBERT-large, served through Ollama's decision API (questions with criteria, answers
+    /// per question) and not through `/api/embed`. Giving it a framing would suggest it can index a
+    /// corpus, so it has none and is exempt from the rule the other entries are held to.
+    ///
+    /// The listing filter does not exclude it: its family is `modern-bert`, which contains "bert".
+    /// That is the filter's known limit (D-45), not something this list asserts.
+    /// </summary>
+    public static readonly Model[] DecisionModelsInTheCategory =
+    [
+        new("laya", "24.5K", false, "modern-bert"),
     ];
 
     public static TheoryData<string> EveryModel()
@@ -95,6 +112,37 @@ public class ModelProfileCoverageTests
     }
 
     [Fact]
+    public void ADecisionModelInTheCategoryIsGivenNoFraming()
+    {
+        // The exemption is as load-bearing as the rule. Without it the next reader either adds
+        // a framing for a model that cannot index anything, or deletes the coverage rule to
+        // make the list pass.
+        var profiles = new ModelProfiles(null!, null!);
+
+        foreach (var model in DecisionModelsInTheCategory)
+            profiles.Suggest(model.Name).ShouldBeNull(
+                $"'{model.Name}' is a decision model, not an embedder; a framing would imply it can index text.");
+    }
+
+    [Fact]
+    public void TheTwoEmbeddingGemmaGenerationsShareFramingUnderSeparateKeys()
+    {
+        // Ollama names the second generation `embeddinggemma-2`, hyphenated, so `Family` leaves it
+        // alone and it needs its own key. The card's Document and SearchQuery prompts are the first
+        // generation's strings; if they ever diverge, this is where the difference gets decided.
+        var profiles = new ModelProfiles(null!, null!);
+
+        var v1 = profiles.Suggest("embeddinggemma").ShouldNotBeNull();
+        var v2 = profiles.Suggest("embeddinggemma-2").ShouldNotBeNull();
+
+        v2.Document.ShouldBe("title: none | text: {text}");
+        v2.Query.ShouldBe("task: search result | query: {text}");
+        v2.ShouldBe(v1);
+        profiles.Suggest("embeddinggemma-2:270m").ShouldBe(v2);
+        profiles.Suggest("embeddinggemma-2:q8_0").ShouldBe(v2);
+    }
+
+    [Fact]
     public void AModelNobodyHasHeardOfGetsNoFramingRatherThanAGuess()
     {
         // The fallback that makes runtime-added models safe: an unknown model is embedded
@@ -107,7 +155,7 @@ public class ModelProfileCoverageTests
     public void EveryModelInTheLibrarySurvivesTheListingFilter(string model)
     {
         // A model with a perfect profile that never appears in the picker is not usable.
-        // Four of the twelve carry no "embed" in their name, so this asserts the family
+        // Four of the thirteen carry no "embed" in their name, so this asserts the family
         // check is doing the work it is relied on for.
         var entry = Array.Find(OllamaEmbeddingLibrary, m => m.Name == model)!;
 

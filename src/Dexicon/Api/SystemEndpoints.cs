@@ -1360,14 +1360,18 @@ public static class ModelNames
     /// into memory in turn just to render a dropdown.
     ///
     /// The name check alone is NOT enough, and it is worth being exact about why. Of the
-    /// twelve models in Ollama's embedding category, four carry no "embed" in their name:
+    /// thirteen embedding models in Ollama's embedding category, four carry no "embed" in their name:
     /// bge-m3, bge-large, all-minilm and paraphrase-multilingual. All four are BERT
     /// derivatives, so the family check is what admits them and is load-bearing rather
     /// than a redundant extra check. (`all-minilm` reports family `bert`;
     /// `nomic-embed-text` reports `nomic-bert`.)
     ///
-    /// The cost of being wrong is a model missing from a list, not a broken index,
-    /// because the real check still runs when one is chosen.
+    /// The family check also admits something that is not an embedder: the category lists
+    /// `laya`, a decision model, and its family `modern-bert` contains "bert" (D-45).
+    ///
+    /// The cost of being wrong is usually a model missing from a list, not a broken index,
+    /// because the real check still runs when one is chosen. That check is a dimension probe, so
+    /// a model that answers `/api/embed` with vectors that cannot rank text would pass it.
     /// </summary>
     internal static bool LooksLikeAnEmbeddingModel(string name, string? family) =>
         name.Contains("embed", StringComparison.OrdinalIgnoreCase)

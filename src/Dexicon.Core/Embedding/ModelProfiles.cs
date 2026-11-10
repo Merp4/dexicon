@@ -77,8 +77,10 @@ public enum TemplateOrigin
 /// built-in can be overridden by saving a row, and the UI says which of the three applies
 /// so "embedded raw" is visible rather than assumed.
 ///
-/// The table below covers every model in Ollama's embedding category as of 2026-09-17,
-/// all twelve of them rather than a selection. That is a snapshot, not a contract: a model added
+/// The table below covers every embedding model in Ollama's embedding category as of 2026-11-10,
+/// all thirteen of them rather than a selection. The category also lists `laya`, a decision
+/// model built on ModernBERT that answers questions about a text and is not meant to produce retrieval vectors,
+/// so it has no entry. That is a snapshot, not a contract: a model added
 /// to the library tomorrow gets raw framing and a UI that says so, which is the designed
 /// behaviour and the reason this is a fallback. `ModelProfileCoverageTests` pins the list
 /// so a future reader can see what was checked and when.
@@ -113,6 +115,14 @@ public sealed class ModelProfiles(CatalogDbContext db, IMemoryCache cache) : IMo
         // EmbeddingGemma: https://ai.google.dev/gemma/docs/embeddinggemma. The document form
         // wraps rather than prefixes, which is why these are templates.
         ["embeddinggemma"] = new("title: none | text: {text}", "task: search result | query: {text}", TemplateOrigin.BuiltIn),
+
+        // EmbeddingGemma 2 (Ollama: `embeddinggemma-2`, hyphenated, which is a different family
+        // key from the one above). Its card keeps the first generation's strings: the `Document`
+        // and `SearchQuery` prompts in config_sentence_transformers.json are `title: none | text: `
+        // and `task: search result | query: `. https://huggingface.co/google/embeddinggemma-2
+        // The card also recommends the titled document form and a code-retrieval query prompt,
+        // which a template cannot express because it carries only {text} (D-45).
+        ["embeddinggemma-2"] = new("title: none | text: {text}", "task: search result | query: {text}", TemplateOrigin.BuiltIn),
 
         // Instruction-aware; the instruction belongs on the QUERY side only.
         ["qwen3-embedding"] = new(

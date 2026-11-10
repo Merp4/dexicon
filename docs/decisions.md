@@ -2410,6 +2410,90 @@ key without the Markdown part, and upgrading again repeats it: each switch in ei
 key now carries two chunker numbers. A third format that needs its own re-chunk is the point to replace both with a table
 keyed by language.
 
+### D-45 embeddinggemma-2 has a built-in framing and is not the default
+
+**Status.** Accepted, 2026-11-10. Measured between 2026-10-07 and 2026-11-10 against Ollama 0.40.0,
+0.40.4 and 0.40.15 on Linux with two NVIDIA GPUs.
+
+**Decision.** `embeddinggemma-2` gets a built-in framing and `embeddinggemma` stays the default. The
+framing is the first generation's: the model card's `config_sentence_transformers.json` gives
+`title: none | text: ` for `Document` and `task: search result | query: ` for `SearchQuery`
+([04](04-ingestion.md#task-framing--what-the-model-is-told-the-text-is-for)). Ollama's name is
+hyphenated, which makes it a different family key from `embeddinggemma`. Before the entry existed the
+Models screen offered the new tags with `origin=none`, so they would have been embedded raw.
+
+**Existing sets.** A chunk set built on `embeddinggemma-2` before this entry holds raw document vectors. From this
+version its queries are framed. The framing is part of the chunking fingerprint, so a refresh re-embeds the set's
+files, but the upgrade queues no pass and `ScheduledRefreshService` is off by default (`RefreshMinutes = 0`). Such a
+set answers with framed queries against raw vectors until a refresh or a full reindex of its corpus runs. A set on
+`embeddinggemma` or any other model is unaffected, and a set built on `embeddinggemma-2` after this version is framed
+from its first pass. The entry matches the name with its `:tag` removed, so a set on a Hugging Face path
+(`hf.co/ggml-org/embeddinggemma-2-GGUF:Q8_0`) or on an `ollama cp` alias gets no built-in framing and needs a saved
+profile for that name.
+
+**Why it is not the default.**
+
+- *No gain measured here.* On 107 of this repository's own queries, dense only, with the same chunks
+  for every arm, `embeddinggemma-2` Q8_0 scored 0.666 and 0.660 MRR (docs, code) against 0.723 and
+  0.674 for `embeddinggemma`. Every interval on the difference includes zero, so the result is "no
+  evidence of a gain", not "worse": 55 and 52 queries resolve only gaps over about 0.1. With the file
+  path as the title on both, the figures are 0.742 and 0.680 against 0.779 and 0.728, and the card's
+  code-retrieval query prompt brings the second generation to 0.724 and 0.705. The card's MTEB gains
+  (code 78.68 against 68.76) do not appear on file-level lookups
+  ([benchmarks](benchmarks.md#comparing-models-directly-2026-11-09)).
+- *The cost is a re-embed of every corpus that follows it.* 258,000 chunks, the size of one deployed
+  instance, would take 2 to 6 hours at the speeds measured for `embeddinggemma` and 3 to 10 for `embeddinggemma-2` (13 to 39 and
+  7 to 25 chunks per second, on a GPU shared with a training workload).
+- *Where it runs.* Ollama's `embeddinggemma-2:270m`, `:740m` and `:latest` resolve to GGUF builds, which
+  Ollama 0.40.4 and later can run on llama.cpp on Linux; 0.40.0 to 0.40.3 bundle a llama.cpp older than
+  the architecture's support (merged 2026-10-06). The `-bf16`, `-mxfp8` and `-nvfp4` tags are MLX. In
+  0.40.0 the MLX tags would not load on Linux, because the bundled `libgfortran` needs a `libquadmath`
+  the image lacked, and with that bypassed the runner failed on 1 to 5% of 300 embeds. The 0.40.15 image
+  bundles the library and passed two 300-embed loops. The ggml-org GGUF build ran 600 embeds without a
+  failure; the official build, a different file of 304 MB against 310 MB, has not been run here. Ollama
+  closed [ollama/ollama#18825](https://github.com/ollama/ollama/issues/18825) on 2026-11-07 with the
+  GGUF tags as the workaround.
+- *Tags move.* Ollama repointed `latest` to a GGUF build on 2026-10-16
+  ([#18971](https://github.com/ollama/ollama/issues/18971)), and `270m` was an nvfp4 build when pulled
+  on 2026-10-08 and resolves to a GGUF build now. A chunk set records the model's name and
+  dimensions and nothing that identifies the weights, so a pull can change them under an indexed
+  corpus without anything noticing. A local alias made with `ollama cp` does not move until it is
+  overwritten.
+
+**Rejected.** Making it the default: no gain was measured and it costs a re-embed of every corpus.
+Choosing it for code corpora on the card's code figure: the repository's code queries show -0.014
+with the generic prompt and -0.023 with the code prompt, both intervals spanning zero. Leaving the
+entry out because it is not the default: the model is installable on Linux and the Models screen lists
+it, and without an entry it is embedded raw, which costs recall and raises nothing. An entry for
+`laya`, which Ollama files in the same category: it is a decision model that answers questions about a
+text and is not meant to produce retrieval vectors, so `ModelProfileCoverageTests` lists it as an exemption.
+Queuing a rebuild at startup for the sets on a model whose built-in framing changed: it adds a startup mechanism for
+the sets that someone built on `embeddinggemma-2` while it had no entry, where saving a profile already rebuilds in
+place.
+
+**Follow-ups, recorded and not decided.**
+
+1. *A title in the framing.* `title: {file path}` lifted `embeddinggemma` by about 0.055 on both
+   corpora. Ten draws of another file's path as the title scored 0.703 to 0.772 on docs and 0.634 to
+   0.682 on code, below the true path (0.779, 0.728) in every draw and no better than no title on
+   average (+0.008, -0.011), so the gain comes from the path text. One earlier draw, which the current
+   script cannot reproduce, scored 0.744 on code and its cause is not known. A template carries
+   `{text}` only. The measurement is file-level on descriptively named files, dense only, and untested
+   in hybrid search.
+2. *A framing change is not a build-beside-and-promote operation.* Saving a framing queues a rebuild of
+   every chunk set on that model in place, and two sets on one model cannot hold different framings.
+   Changing the model does not have this problem ([D-21](#d-21-chunk-sets-not-corpus-level-chunking)).
+3. *The listing filter admits `laya`.* Its family is `modern-bert` and the filter accepts any family
+   containing "bert". A decision model that answers `/api/embed` at all would pass the dimension probe.
+4. *Model identity.* See the last item under "Tags move".
+
+**Cost.** The Models screen lists `embeddinggemma-2` tags that this record does not recommend. The
+measurement is dense-only on one repository. Running `scripts/bench/sweep.py` with the official
+`embeddinggemma-2:270m` build against `embeddinggemma` would answer the hybrid question.
+
+**Revisit when** that sweep shows a mean MRR gain of at least 0.03 with a bootstrap interval above zero
+on both corpora, or when re-embedding every corpus stops being a cost worth weighing.
+
 ---
 
 ## Resolved questions
