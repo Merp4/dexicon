@@ -2558,6 +2558,11 @@ embedding call on that path has timed out under indexing load before, which `Emb
   never be read has no points and does not hold the record back. The rule reads the store and the catalogue after the
   pass and does not enumerate failure paths; it costs the per-file count call that a pass already makes at its start,
   once more per source after a full pass.
+- The rule reads the sources the pass indexed. `RemoveSourceAsync` reads a source's file paths before it deletes their
+  vectors, so points that a running pass writes for the source in between stay in the store under the id of a source
+  that no longer exists (its code comment records this). The rule does not read them. Only removing the chunk set or
+  the corpus deletes them, so a set-wide read would hold the record back for as long as they stay, and no pass could
+  clear the notice.
 - A pass is one unit for the failure flags: once a file of one set fails to embed, or a source is out of reach, no later
   set of the same pass is recorded.
 - A model replaced while a full pass runs leaves the files embedded before the replacement on the old model, and the
