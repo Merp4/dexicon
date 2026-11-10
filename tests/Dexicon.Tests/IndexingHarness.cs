@@ -527,6 +527,16 @@ internal sealed class IndexingHarness : IAsyncDisposable
             _points.Add(existing with { ChunkIndex = _points.Max(p => p.ChunkIndex) + 1 });
         }
 
+        /// <summary>
+        /// A point under a path the catalogue has no row for, copied from <paramref name="likeFilePath"/>: what a pass
+        /// interrupted after writing a file's points and before saving its row leaves.
+        /// </summary>
+        public void AddOrphanSilently(string likeFilePath, string orphanFilePath)
+        {
+            var existing = _points.First(p => p.FilePath == likeFilePath);
+            _points.Add(existing with { FilePath = orphanFilePath });
+        }
+
         /// <summary>One point of a file, for a partial loss rather than a total one.</summary>
         public void DropOne(string filePath)
         {

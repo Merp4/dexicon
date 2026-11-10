@@ -2505,8 +2505,10 @@ every set every six hours from `ModelCanaryService`, whose first check is one mi
 below 0.999 is listed in `/healthz` as `changedModels` and in the health panel, scoped to the corpora the caller reaches.
 A set with no stored vector (every set that exists when this version first runs, and every new set) stores the model's
 current answer at its first check, which precedes its first write. A full or rebuild pass replaces the stored vector with
-the model's current answer when no file of the set is left on the vectors of an earlier pass: every file that has chunks
-is `Indexed` and was indexed after the pass began, no file failed to embed, and no source was out of reach. An answer that is all zeros,
+the model's current answer when the vector store, read back after the pass, holds points only for files that pass
+indexed: for each source it is asked which files hold points, and each has a catalogue row that is `Indexed` with a time
+after the pass began. No file may have failed to embed, and no source may have been out of reach. A store that cannot
+answer holds the record back. An answer that is all zeros,
 or has a component that is not a number, cannot be compared with itself: it is not recorded, and the check counts as
 unavailable. Against an existing record it reads as a similarity of 0.
 
@@ -2550,10 +2552,12 @@ embedding call on that path has timed out under indexing load before, which `Emb
 - With the provider unreachable, a pass waits for the embedding service's retries (two, about two seconds of backoff
   in all) before each set's check returns, including a refresh that finds nothing to embed.
 - A refresh after a change keeps writing vectors from the new model into the set. Only a full pass clears the report,
-  which in the web UI is **Full reindex** on the corpus. A pass that leaves a file on the vectors of an earlier pass
-  does not, whether the file failed to embed, failed another way such as a read that timed out, became empty or
-  excluded, or vanished, with its old vectors left in the store because a delete was refused. A file that can never be read has no chunks and does not hold
-  the record back.
+  which in the web UI is **Full reindex** on the corpus. A pass that leaves points of an earlier pass in the store does
+  not, whatever left them: a file that failed to embed, a read that timed out, a file that became empty or excluded or
+  vanished while a delete was refused, points with no catalogue row, or a store that could not be read. A file that can
+  never be read has no points and does not hold the record back. The rule reads the store and the catalogue after the
+  pass and does not enumerate failure paths; it costs the per-file count call that a pass already makes at its start,
+  once more per source after a full pass.
 - A pass is one unit for the failure flags: once a file of one set fails to embed, or a source is out of reach, no later
   set of the same pass is recorded.
 - A model replaced while a full pass runs leaves the files embedded before the replacement on the old model, and the

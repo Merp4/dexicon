@@ -98,25 +98,29 @@ public sealed class CorpusIndexer(
     }
 
     /// <summary>
-    /// Replaces the set's canary after a full pass in which no file kept the vectors of an earlier pass.
-    /// Advisory, like <see cref="CheckModelAsync"/>; a failure leaves the earlier record, which the next
+    /// Replaces the set's canary after a full pass, when the vector store holds points only for files that pass
+    /// indexed. Advisory, like <see cref="CheckModelAsync"/>; a failure leaves the earlier record, which the next
     /// check reports against if the model changed.
     /// </summary>
-    private async Task RecordModelAsync(ChunkSet set, DateTime passStarted, CancellationToken ct)
+    private async Task RecordModelAsync(
+        ChunkSet set, IReadOnlyList<Source> sources, DateTime passStarted, CancellationToken ct)
     {
         try
         {
-            // A file that was not re-embedded keeps the vectors the model before had made: one that failed for a
-            // reason other than the embedding service (a read that timed out, a fault in an extractor), or one that
-            // vanished and whose vectors could not be removed. The pass-wide embedding flag does not cover them,
-            // so the files are counted here.
-            var kept = await EarlierVectorsKeptAsync(db, set.Id, passStarted, ct);
+            var kept = await PointsFromEarlierPassesAsync(set, sources, passStarted, ct);
+            if (kept == int.MaxValue)
+            {
+                log.LogInformation(
+                    "Chunk set {Set} of corpus {CorpusId}: the vector store could not say which files hold points, "
+                    + "so the current model was not recorded", set.Name, set.CorpusId);
+                return;
+            }
+
             if (kept > 0)
             {
                 log.LogInformation(
-                    "Chunk set {Set} of corpus {CorpusId}: {Files} file(s) kept vectors from before this pass, "
-                    + "so the current model was not recorded",
-                    set.Name, set.CorpusId, kept);
+                    "Chunk set {Set} of corpus {CorpusId}: {Files} file(s) hold points this pass did not write, "
+                    + "so the current model was not recorded", set.Name, set.CorpusId, kept);
                 return;
             }
 
@@ -130,19 +134,37 @@ public sealed class CorpusIndexer(
     }
 
     /// <summary>
-    /// How many files of the set still have chunks that the pass did not write: <c>ChunkCount</c> above zero, which
-    /// is the one record that chunks exist when removing them failed, and either a status other than
-    /// <c>Indexed</c> or an indexed time before <paramref name="since"/>, the start of the pass. A file the pass
-    /// re-embedded is <c>Indexed</c> with a time after it. One that failed to embed or to read, timed out, became
-    /// empty or excluded with its old chunks left in the store, or vanished with its vectors left there, is one or
-    /// the other. A file the pass could not read for good has its chunks removed and counts zero. Read from the
-    /// catalogue, which a source's pass has saved by the time it returns.
+    /// How many files hold points in the vector store that this pass did not write, or <see cref="int.MaxValue"/>
+    /// when the store could not say. The store is asked which files of each source hold points, and the catalogue
+    /// which files were indexed since <paramref name="since"/>, the start of the pass. A file with points that is not
+    /// among them failed to embed or to read, timed out, became empty or excluded, vanished, or has no catalogue row,
+    /// and in each case its points were made by an earlier pass, by whatever model that used.
+    ///
+    /// It reads the two records after the pass and does not reason about how a file came to be left, so a way of
+    /// failing that nobody listed is still counted, and a refused delete or an unreadable store is not mistaken for
+    /// an empty one. The catalogue is read after each source has saved, which it has by the time this runs.
     /// </summary>
-    internal static Task<int> EarlierVectorsKeptAsync(
-        CatalogDbContext db, string chunkSetId, DateTime since, CancellationToken ct) =>
-        db.FileChunkStates.CountAsync(
-            s => s.ChunkSetId == chunkSetId && s.ChunkCount > 0
-                 && (s.Status != FileStatus.Indexed || s.IndexedUtc == null || s.IndexedUtc < since), ct);
+    private async Task<int> PointsFromEarlierPassesAsync(
+        ChunkSet set, IReadOnlyList<Source> sources, DateTime since, CancellationToken ct)
+    {
+        var written = (await db.FileChunkStates.AsNoTracking()
+                .Where(s => s.ChunkSetId == set.Id && s.Status == FileStatus.Indexed && s.IndexedUtc >= since)
+                .Select(s => new { s.File!.SourceId, s.File.RelativePath })
+                .ToListAsync(ct))
+            .Select(f => (f.SourceId, f.RelativePath))
+            .ToHashSet();
+
+        var kept = 0;
+        foreach (var source in sources)
+        {
+            var held = await vectors.CountByFileAsync(set.CollectionName, set.Id, source.Id, ct);
+            if (held is null) return int.MaxValue;
+
+            kept += held.Keys.Count(path => !written.Contains((source.Id, path)));
+        }
+
+        return kept;
+    }
 
     public async Task<IndexJob> RunAsync(string jobId, IProgress<IndexProgress>? progress, CancellationToken ct)
     {
@@ -328,7 +350,7 @@ public sealed class CorpusIndexer(
                     // makes of them. A refresh leaves files it did not touch as they were, and does not
                     // change what the set is known to hold.
                     if (job.Kind is JobKind.Full or JobKind.Rebuild)
-                        await RecordModelAsync(set, job.StartedUtc ?? DateTime.UtcNow, ct);
+                        await RecordModelAsync(set, sources, job.StartedUtc ?? DateTime.UtcNow, ct);
                 }
             }
 

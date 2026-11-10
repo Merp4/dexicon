@@ -938,8 +938,9 @@ public sealed class ModelCanaryIndexing
         await using var _ = harness;
         await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
         embedder.Answer = Replaced;
-        // Not an embedding service failure, so the pass-wide embedding flag stays clear.
-        embedder.ChunksFault = new InvalidOperationException("a fault in the reader");
+        // Not an embedding service failure, so the pass-wide embedding flag stays clear: the store refuses to remove the
+        // old points of a file the pass re-embeds, the file fails, and its old points stay.
+        harness.Vectors.DeleteFailsForPath = "one.txt";
 
         var job = await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
 
@@ -947,9 +948,6 @@ public sealed class ModelCanaryIndexing
         var set = await StoredSet(harness);
         set.CanaryVector.ShouldBe(ModelCanary.Pack(Original));
         set.CanarySimilarity!.Value.ShouldBe(0.0, 1e-9);
-        await using var db = harness.NewContext();
-        (await CorpusIndexer.EarlierVectorsKeptAsync(db, set.Id, job.StartedUtc!.Value, TestContext.Current.CancellationToken))
-            .ShouldBe(1);
     }
 
     [Fact]
@@ -968,9 +966,6 @@ public sealed class ModelCanaryIndexing
         // The file is gone from disk and its state is still Indexed, with the old model's vectors in the store.
         job.State.ShouldBe(JobState.Succeeded);
         (await StoredSet(harness)).CanaryVector.ShouldBe(ModelCanary.Pack(Original));
-        await using var db = harness.NewContext();
-        (await CorpusIndexer.EarlierVectorsKeptAsync(
-            db, (await StoredSet(harness)).Id, job.StartedUtc!.Value, TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]
@@ -993,6 +988,84 @@ public sealed class ModelCanaryIndexing
         state.IndexedUtc!.Value.ShouldBeGreaterThanOrEqualTo(job.StartedUtc!.Value);
         state.ChunkCount.ShouldBeGreaterThan(0);
         (await StoredSet(harness)).CanaryVector.ShouldBe(ModelCanary.Pack(Original));
+    }
+
+    [Fact]
+    public async Task AFullPassThatCouldNotRemovePointsWithNoCatalogueRowDoesNotTakeTheNewModel()
+    {
+        var (harness, embedder) = await StartAsync();
+        await using var _ = harness;
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+        // What an interrupted pass leaves: points for a path nothing in the catalogue names.
+        harness.Vectors.AddOrphanSilently("one.txt", "ghost.txt");
+        embedder.Answer = Replaced;
+        harness.Vectors.DeleteFailsForPath = "ghost.txt";
+
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+
+        harness.Vectors.CountFor("ghost.txt").ShouldBeGreaterThan(0, "the store refused to remove them");
+        (await StoredSet(harness)).CanaryVector.ShouldBe(ModelCanary.Pack(Original));
+    }
+
+    [Fact]
+    public async Task APassThatRemovesPointsWithNoCatalogueRowTakesTheNewModel()
+    {
+        var (harness, embedder) = await StartAsync();
+        await using var _ = harness;
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+        harness.Vectors.AddOrphanSilently("one.txt", "ghost.txt");
+        embedder.Answer = Replaced;
+
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+
+        harness.Vectors.CountFor("ghost.txt").ShouldBe(0);
+        (await StoredSet(harness)).CanaryVector.ShouldBe(ModelCanary.Pack(Replaced));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AFullPassDoesNotTakeTheNewModelWhenTheStoreCannotSayWhatItHolds(bool storeThrows)
+    {
+        var (harness, embedder) = await StartAsync();
+        await using var _ = harness;
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+        embedder.Answer = Replaced;
+        // Incomplete is a null answer, which is not the same as an empty index; a throw is an unreachable store.
+        harness.Vectors.CountsAreIncomplete = !storeThrows;
+        harness.Vectors.CountsThrow = storeThrows;
+
+        var job = await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+
+        job.State.ShouldBe(JobState.Succeeded);
+        (await StoredSet(harness)).CanaryVector.ShouldBe(ModelCanary.Pack(Original));
+    }
+
+    [Fact]
+    public async Task AFullPassOverAnUploadSourceTakesTheNewModel()
+    {
+        await using var harness = await IndexingHarness.StartAsync("notes");
+        await harness.SeedCorpusAsync(SourceKind.Upload);
+        var embedder = new CanaryAwareEmbedder();
+        harness.Embedder = embedder;
+        await using (var db = harness.NewContext())
+        {
+            var documents = harness.NewDocumentService(db);
+            var stored = await documents.StoreAsync(
+                new MemoryStream(System.Text.Encoding.UTF8.GetBytes(IndexingHarness.Prose("uploaded"))), "doc.txt",
+                TestContext.Current.CancellationToken);
+            await documents.AttachAsync(
+                await db.Corpora.SingleAsync(TestContext.Current.CancellationToken), stored.Sha256, "doc.txt",
+                TestContext.Current.CancellationToken);
+        }
+
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+        embedder.Answer = Replaced;
+        var job = await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+
+        // An upload's points are keyed the way its catalogue row is, so the comparison does not block it for good.
+        job.FilesDone.ShouldBe(1);
+        (await StoredSet(harness)).CanaryVector.ShouldBe(ModelCanary.Pack(Replaced));
     }
 
     [Fact]
