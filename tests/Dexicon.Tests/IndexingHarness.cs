@@ -527,6 +527,16 @@ internal sealed class IndexingHarness : IAsyncDisposable
             _points.Add(existing with { ChunkIndex = _points.Max(p => p.ChunkIndex) + 1 });
         }
 
+        /// <summary>
+        /// A point under a path the catalogue has no row for, copied from <paramref name="likeFilePath"/>: what a pass
+        /// interrupted after writing a file's points and before saving its row leaves.
+        /// </summary>
+        public void AddOrphanSilently(string likeFilePath, string orphanFilePath)
+        {
+            var existing = _points.First(p => p.FilePath == likeFilePath);
+            _points.Add(existing with { FilePath = orphanFilePath });
+        }
+
         /// <summary>One point of a file, for a partial loss rather than a total one.</summary>
         public void DropOne(string filePath)
         {
@@ -546,6 +556,15 @@ internal sealed class IndexingHarness : IAsyncDisposable
 
         /// <summary>Make every delete fail as an unreachable vector store does, not as a cancel.</summary>
         public bool DeletesThrow { get; set; }
+
+        /// <summary>Make the delete of one file's chunks fail, by its path in the source, and no other.</summary>
+        public string? DeleteFailsForPath { get; set; }
+
+        /// <summary>Narrows <see cref="DeleteFailsForPath"/> to the files of one source.</summary>
+        public string? DeleteFailsForSourceId { get; set; }
+
+        /// <summary>Narrows <see cref="DeleteFailsForPath"/> to the files of one chunk set.</summary>
+        public string? DeleteFailsForChunkSetId { get; set; }
 
         /// <summary>
         /// Runs as any delete reaches the store, before it takes effect. A test holds a delete open
@@ -641,7 +660,11 @@ internal sealed class IndexingHarness : IAsyncDisposable
                 throw new OperationCanceledException("the pass was interrupted mid-file");
             }
 
-            if (DeletesThrow) throw new InvalidOperationException("the vector store is unreachable");
+            if (DeletesThrow
+                || (DeleteFailsForPath is not null && DeleteFailsForPath == filePath
+                    && (DeleteFailsForSourceId is null || DeleteFailsForSourceId == sourceId)
+                    && (DeleteFailsForChunkSetId is null || DeleteFailsForChunkSetId == chunkSetId)))
+                throw new InvalidOperationException("the vector store is unreachable");
 
             // The same four-part key Qdrant filters on. Matching on filePath alone would
             // make the test agree with a delete that drops another source's file too.
@@ -703,12 +726,23 @@ internal sealed class IndexingHarness : IAsyncDisposable
         public Task<bool> PingAsync(CancellationToken ct = default) => Task.FromResult(true);
     }
 
+    /// <summary>
+    /// Whether an embed call is a model canary check (<see cref="ModelCanary"/>). A pass makes one before
+    /// each chunk set's first write, and it is not a document: a test double that counts embedded text,
+    /// or acts on the first call, skips it.
+    /// </summary>
+    internal static bool IsCanary(IReadOnlyList<string> inputs) => inputs is [ModelCanary.Text];
+
     /// <summary>One vector per input, of the right width. Nothing here is about ranking.</summary>
     internal sealed class FixedEmbedder : IEmbeddingService
     {
         public Task<IReadOnlyList<float[]>> EmbedAsync(EmbeddingTarget target, EmbedPurpose purpose,
             IReadOnlyList<string> inputs, string? source = null, CancellationToken ct = default) =>
-            Task.FromResult<IReadOnlyList<float[]>>(inputs.Select(_ => new float[768]).ToList());
+            Task.FromResult<IReadOnlyList<float[]>>(inputs.Select(Vector).ToList());
+
+        // Zeros everywhere but for the canary, which is compared by cosine and has none for a zero vector.
+        private static float[] Vector(string text) =>
+            text == ModelCanary.Text ? [.. Enumerable.Range(0, 768).Select(i => i == 0 ? 1f : 0f)] : new float[768];
 
         public Task<int?> CountTokensAsync(EmbeddingTarget t, string text, CancellationToken ct = default) =>
             Task.FromResult<int?>(null);

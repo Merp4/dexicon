@@ -1583,6 +1583,35 @@
           }
         }
       },
+      "ChangedModel": {
+        "required": [
+          "set",
+          "provider",
+          "model",
+          "similarity",
+          "checkedUtc"
+        ],
+        "type": "object",
+        "properties": {
+          "set": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "similarity": {
+            "type": "number",
+            "format": "double"
+          },
+          "checkedUtc": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "ChunkSetCreated": {
         "required": [
           "chunkSet",
@@ -3037,7 +3066,8 @@
           "ollama",
           "corpora",
           "activeJob",
-          "missingModels"
+          "missingModels",
+          "changedModels"
         ],
         "type": "object",
         "properties": {
@@ -3068,6 +3098,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/MissingModel"
+            }
+          },
+          "changedModels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChangedModel"
             }
           },
           "pendingProposals": {

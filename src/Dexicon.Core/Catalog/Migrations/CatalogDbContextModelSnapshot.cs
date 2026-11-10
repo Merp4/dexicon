@@ -15,7 +15,7 @@ namespace Dexicon.Core.Catalog.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.12");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.14");
 
             modelBuilder.Entity("Dexicon.Core.Catalog.AdminCredential", b =>
                 {
@@ -158,6 +158,15 @@ namespace Dexicon.Core.Catalog.Migrations
                         .IsRequired()
                         .HasMaxLength(40)
                         .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("CanaryCheckedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<double?>("CanarySimilarity")
+                        .HasColumnType("REAL");
+
+                    b.Property<byte[]>("CanaryVector")
+                        .HasColumnType("BLOB");
 
                     b.Property<int>("ChunkOverlap")
                         .HasColumnType("INTEGER");

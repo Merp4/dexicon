@@ -2456,9 +2456,10 @@ profile for that name.
 - *Tags move.* Ollama repointed `latest` to a GGUF build on 2026-10-16
   ([#18971](https://github.com/ollama/ollama/issues/18971)), and `270m` was an nvfp4 build when pulled
   on 2026-10-08 and resolves to a GGUF build now. A chunk set records the model's name and
-  dimensions and nothing that identifies the weights, so a pull can change them under an indexed
-  corpus without anything noticing. A local alias made with `ollama cp` does not move until it is
-  overwritten.
+  dimensions, which do not identify the weights, so a pull can change them under an indexed
+  corpus. D-46 adds a stored vector for a fixed sentence that reports a change of answer
+  ([D-46](#d-46-a-chunk-set-records-what-its-model-answers-to-a-fixed-sentence)). A local alias made with
+  `ollama cp` does not move until it is overwritten.
 
 **Rejected.** Making it the default: no gain was measured and it costs a re-embed of every corpus.
 Choosing it for code corpora on the card's code figure: the repository's code queries show -0.014
@@ -2485,7 +2486,7 @@ place.
    Changing the model does not have this problem ([D-21](#d-21-chunk-sets-not-corpus-level-chunking)).
 3. *The listing filter admits `laya`.* Its family is `modern-bert` and the filter accepts any family
    containing "bert". A decision model that answers `/api/embed` at all would pass the dimension probe.
-4. *Model identity.* See the last item under "Tags move".
+4. *Model identity.* Decided in [D-46](#d-46-a-chunk-set-records-what-its-model-answers-to-a-fixed-sentence).
 
 **Cost.** The Models screen lists `embeddinggemma-2` tags that this record does not recommend. The
 measurement is dense-only on one repository. Running `scripts/bench/sweep.py` with the official
@@ -2493,6 +2494,85 @@ measurement is dense-only on one repository. Running `scripts/bench/sweep.py` wi
 
 **Revisit when** that sweep shows a mean MRR gain of at least 0.03 with a bootstrap interval above zero
 on both corpora, or when re-embedding every corpus stops being a cost worth weighing.
+
+### D-46 A chunk set records what its model answers to a fixed sentence
+
+**Status.** Accepted and implemented, 2026-11-10.
+
+**Decision.** Each chunk set stores the vector its model returns for one fixed sentence (`ModelCanary.Text`), embedded
+without framing, in `chunk_sets.canary_vector`. A check embeds the sentence again and stores the cosine similarity
+against the stored vector (`canary_similarity`, `canary_checked_utc`). It runs before a pass writes to a set, and for
+every set every six hours from `ModelCanaryService`, whose first check is one minute after the process starts. A set
+below 0.999 is listed in `/healthz` as `changedModels` and in the health panel, scoped to the corpora the caller reaches.
+A set with no stored vector (every set that exists when this version first runs, and every new set) stores the model's
+current answer at its first check, which precedes its first write. A full or rebuild pass replaces the stored vector with
+the model's current answer when the vector store, read back after the pass, holds points only for files that pass
+indexed: for each source it is asked which files hold points, and each has a catalogue row that is `Indexed` with a time
+after the pass began. No file may have failed to embed, and no source may have been out of reach. A store that cannot
+answer holds the record back. An answer that is all zeros,
+or has a component that is not a number, cannot be compared with itself: it is not recorded, and the check counts as
+unavailable. Against an existing record it reads as a similarity of 0.
+
+The check is advisory. A pass runs, writes and succeeds whatever it finds, and a provider that does not answer leaves
+the earlier state as it was. Whether a set counts as changed is computed from the stored similarity and the constant, so
+no flag is stored.
+
+**Why.** A chunk set pins a model by name. `ollama pull` on a tag that has moved replaces the weights under the name, and
+a hosted model can be updated under a stable id. Vectors from two models do not share a space, so a set that keeps
+indexing after the change holds a mixture: every search succeeds, and the files indexed since rank against the older
+ones by a measure that means nothing. The catalogue held the name and the dimensionality, so a replacement of the same
+dimensionality could not be seen.
+
+The threshold comes from three measurements with Ollama on CPU, each as cosine similarity. One model embedded twice
+agreed to within 3e-16 of 1 over 2,768 chunk vectors (0.40.15, 2026-11-09). The upgrade from 0.32.14 to 0.40.4 gave a
+lowest similarity of 0.999997 over 23 vectors (2026-10-15). Another quantisation of one model (embeddinggemma-2 as Q8_0
+GGUF against nvfp4 MLX, 0.40.15, 2026-11-09) gave a median of 0.988 and a minimum of 0.958, with 83% of the top ten
+results shared. The first and third are the `agreement` entries of
+`scripts/bench/results-models-2026-11-09.json` (pull request 306), `v1_framed` against `v1_framed_repeat` and `eg2_q8`
+against `eg2_nvfp4`; the upgrade measurement is not kept in the repository. 0.999 sits between the first two and the
+third.
+
+**Rejected.** The digest Ollama reports for a model: a hosted provider reports none, and a digest stored per set needs
+an action to accept a deliberate update, where the stored vector replaces itself when a full pass finishes. Stopping a pass
+or refusing writes to a changed set: the threshold is measured for one engine on CPU, and a false report would then halt
+the indexing of a corpus, where now it is a notice. Storing the vector when a set is created, from the dimension probe:
+it adds two creation sites for a value the first check stores before the first write anyway, and sets that already exist
+need that path regardless. Checking on the `/healthz` poll: it is requested every fifteen seconds per open tab, and an
+embedding call on that path has timed out under indexing load before, which `EmbeddingService.ProbeDimensionsAsync` records.
+
+**Consequences.**
+
+- A set whose model changed before its first check is stored from the changed model and nothing reports it. This
+  applies to every set that exists when this version first runs.
+- A change that leaves the vector within 0.999 of the old one is not reported, whatever it does to retrieval.
+- Not measured: the repeatability of a hosted provider, and one model on CPU against GPU. A false report there is a
+  notice that a full reindex clears.
+- Each set costs one short embedding per pass and one every six hours. In the timer's check a model that does not
+  answer is asked once, however many sets use it. Each check loads the set's model into the provider if it is not
+  resident, which can evict another model, so a search soon after a check may wait for a model load.
+- With the provider unreachable, a pass waits for the embedding service's retries (two, about two seconds of backoff
+  in all) before each set's check returns, including a refresh that finds nothing to embed.
+- A refresh after a change keeps writing vectors from the new model into the set. Only a full pass clears the report,
+  which in the web UI is **Full reindex** on the corpus. A pass that leaves points of an earlier pass in the store does
+  not, whatever left them: a file that failed to embed, a read that timed out, a file that became empty or excluded or
+  vanished while a delete was refused, points with no catalogue row, or a store that could not be read. A file that can
+  never be read has no points and does not hold the record back. A file that fails on every pass and still holds
+  points of an earlier pass (a read that always times out, an extraction error other than an unreadable document, an
+  upload whose cached text is gone) holds it back on every full pass, so **Full reindex** does not clear the notice
+  until the file is repaired or removed. A source with 250,000 or more distinct file paths reaches the cap of the
+  store's per-file count, which is an unanswered read (the largest source measured has 27,002 files). The rule reads
+  the store and the catalogue after the pass and does not enumerate failure paths; it costs the per-file count call
+  that a pass already makes at its start, once more per source after a full pass.
+- The rule reads the sources the pass indexed. `RemoveSourceAsync` reads a source's file paths before it deletes their
+  vectors, so points that a running pass writes for the source in between stay in the store under the id of a source
+  that no longer exists (its code comment records this). The rule does not read them. Only removing the chunk set or
+  the corpus deletes them, so a set-wide read would hold the record back for as long as they stay, and no pass could
+  clear the notice.
+- A pass is one unit for the failure flags: once a file of one set fails to embed, or a source is out of reach, no later
+  set of the same pass is recorded.
+- A model replaced while a full pass runs leaves the files embedded before the replacement on the old model, and the
+  pass records the new one at its end.
+- Migration `ChunkSetsRecordAModelCanary` adds three nullable columns. A version without it ignores them.
 
 ---
 

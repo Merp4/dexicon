@@ -155,13 +155,33 @@ public sealed record EmbeddingHealth(
 /// <param name="Sets">`corpus:set` for each affected set, because the fix is per set.</param>
 public sealed record MissingModel(string Provider, string Model, IReadOnlyList<string> Sets);
 
+/// <summary>
+/// A chunk set whose model no longer answers as it did when the set was recorded.
+///
+/// A set pins a model by name, and a tag that was pulled again points at other weights under the same
+/// name. Vectors from two models do not share a space, so files indexed since the change rank against
+/// the rest of the set by a measure that means nothing, and no search fails. The check compares the
+/// model's answer to a fixed string with the one recorded for the set (<c>ModelCanary</c>).
+///
+/// One entry per set rather than per model, because two sets on one model can disagree: one built
+/// before the change and one after.
+/// </summary>
+/// <param name="Set">`corpus:set`. A full reindex of the corpus re-embeds the set and clears the entry.</param>
+/// <param name="Similarity">
+/// Cosine similarity between the recorded answer and the current one. 0 when the dimensionality
+/// differs, since the two are then not comparable.
+/// </param>
+/// <param name="CheckedUtc">When the model was last asked.</param>
+public sealed record ChangedModel(string Set, string Provider, string Model, double Similarity, DateTime CheckedUtc);
+
 /// <param name="PendingProposals">
 /// How many removals agents have asked for that no one has decided. Counted for an administrator and
 /// null for a key, who has no use for it and no way to act on it.
 /// </param>
 public sealed record HealthResponse(
     string Status, HealthDependency Qdrant, EmbeddingHealth Ollama, int Corpora, JobSummary? ActiveJob,
-    IReadOnlyList<MissingModel> MissingModels, int? PendingProposals = null);
+    IReadOnlyList<MissingModel> MissingModels, IReadOnlyList<ChangedModel> ChangedModels,
+    int? PendingProposals = null);
 
 public sealed record ReadinessResponse(string Status, bool Qdrant, bool Catalogue);
 

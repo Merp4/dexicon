@@ -83,6 +83,89 @@ public sealed class CorpusIndexer(
     private const string EmbeddingFailedReason =
         "One or more files could not be embedded and were skipped. They will be retried on the next run.";
 
+    /// <summary>
+    /// Records or checks the set's model canary (<see cref="ModelCanary"/>). Advisory: a failure is
+    /// logged and the pass goes on, since a check that cannot run is no reason to stop indexing.
+    /// </summary>
+    private async Task CheckModelAsync(ChunkSet set, CancellationToken ct)
+    {
+        try { await ModelCanary.CheckAsync(db, embedder, set, log, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            log.LogWarning(ex, "Chunk set {Set} of corpus {CorpusId}: the model check failed and was skipped",
+                set.Name, set.CorpusId);
+        }
+    }
+
+    /// <summary>
+    /// Replaces the set's canary after a full pass, when the vector store holds points only for files that pass
+    /// indexed. Advisory, like <see cref="CheckModelAsync"/>; a failure leaves the earlier record, which the next
+    /// check reports against if the model changed.
+    /// </summary>
+    private async Task RecordModelAsync(
+        ChunkSet set, IReadOnlyList<Source> sources, DateTime passStarted, CancellationToken ct)
+    {
+        try
+        {
+            var kept = await PointsFromEarlierPassesAsync(set, sources, passStarted, ct);
+            if (kept == int.MaxValue)
+            {
+                log.LogInformation(
+                    "Chunk set {Set} of corpus {CorpusId}: the vector store could not say which files hold points, "
+                    + "so the current model was not recorded", set.Name, set.CorpusId);
+                return;
+            }
+
+            if (kept > 0)
+            {
+                log.LogInformation(
+                    "Chunk set {Set} of corpus {CorpusId}: {Files} file(s) hold points this pass did not write, "
+                    + "so the current model was not recorded", set.Name, set.CorpusId, kept);
+                return;
+            }
+
+            await ModelCanary.RecordAsync(db, embedder, set, log, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            log.LogWarning(ex, "Chunk set {Set} of corpus {CorpusId}: the model could not be recorded after the pass",
+                set.Name, set.CorpusId);
+        }
+    }
+
+    /// <summary>
+    /// How many files hold points in the vector store that this pass did not write, or <see cref="int.MaxValue"/>
+    /// when the store could not say. The store is asked which files of each source hold points, and the catalogue
+    /// which files were indexed since <paramref name="since"/>, the start of the pass. A file with points that is not
+    /// among them failed to embed or to read, timed out, became empty or excluded, vanished, or has no catalogue row,
+    /// and in each case its points were made by an earlier pass, by whatever model that used.
+    ///
+    /// It reads the two records after the pass and does not reason about how a file came to be left, so a way of
+    /// failing that nobody listed is still counted, and a refused delete or an unreadable store is not mistaken for
+    /// an empty one. The catalogue is read after each source has saved, which it has by the time this runs.
+    /// </summary>
+    private async Task<int> PointsFromEarlierPassesAsync(
+        ChunkSet set, IReadOnlyList<Source> sources, DateTime since, CancellationToken ct)
+    {
+        var written = (await db.FileChunkStates.AsNoTracking()
+                .Where(s => s.ChunkSetId == set.Id && s.Status == FileStatus.Indexed && s.IndexedUtc >= since)
+                .Select(s => new { s.File!.SourceId, s.File.RelativePath })
+                .ToListAsync(ct))
+            .Select(f => (f.SourceId, f.RelativePath))
+            .ToHashSet();
+
+        var kept = 0;
+        foreach (var source in sources)
+        {
+            var held = await vectors.CountByFileAsync(set.CollectionName, set.Id, source.Id, ct);
+            if (held is null) return int.MaxValue;
+
+            kept += held.Keys.Count(path => !written.Contains((source.Id, path)));
+        }
+
+        return kept;
+    }
+
     public async Task<IndexJob> RunAsync(string jobId, IProgress<IndexProgress>? progress, CancellationToken ct)
     {
         var job = await db.Jobs.FirstAsync(j => j.Id == jobId, ct);
@@ -185,6 +268,10 @@ public sealed class CorpusIndexer(
             // whole discovery in memory, which a large monorepo makes a worse trade.
             foreach (var set in targets)
             {
+                // Before this set's first write, so a set recorded here has only vectors from the model
+                // that answers now, and one that changed is reported before more are added to it.
+                await CheckModelAsync(set, ct);
+
                 await vectors.EnsureCollectionAsync(set.CollectionName, set.EmbeddingDimensions, ct);
 
                 // Once per set, not once per file: the templates are the same for every
@@ -255,7 +342,16 @@ public sealed class CorpusIndexer(
                     : embeddingFailed ? CorpusState.Degraded
                     : CorpusState.Ready;
 
-                if (!embeddingFailed && !unavailable) set.LastIndexedUtc = DateTime.UtcNow;
+                if (!embeddingFailed && !unavailable)
+                {
+                    set.LastIndexedUtc = DateTime.UtcNow;
+
+                    // A full pass re-embeds every file, so the set now holds only what the current model
+                    // makes of them. A refresh leaves files it did not touch as they were, and does not
+                    // change what the set is known to hold.
+                    if (job.Kind is JobKind.Full or JobKind.Rebuild)
+                        await RecordModelAsync(set, sources, job.StartedUtc ?? DateTime.UtcNow, ct);
+                }
             }
 
             job.Phase = "reconcile";

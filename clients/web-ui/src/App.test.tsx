@@ -33,6 +33,7 @@ const healthy = {
   corpora: 0,
   activeJob: null,
   missingModels: [],
+  changedModels: [],
 } as unknown as Health;
 
 beforeEach(() => {

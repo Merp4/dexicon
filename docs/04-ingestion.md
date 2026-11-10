@@ -1364,6 +1364,14 @@ The collection name also carries the provider, as in
 `dexicon__ollama__nomic-embed-text__768`, because two providers can serve a model of the
 same name and those are not the same vectors.
 
+A name does not identify weights either. `ollama pull` on a tag that has moved replaces the
+model under the name, and a hosted model can change under a stable id. Each chunk set
+therefore stores the model's answer to one fixed sentence and compares it with a fresh
+answer before a pass writes to the set and every six hours
+([D-46](decisions.md#d-46-a-chunk-set-records-what-its-model-answers-to-a-fixed-sentence)). A set whose model now answers differently is listed in the
+health report and the health panel. The pass is not stopped; a full pass or a rebuild
+re-embeds every file and, when none is left on the vectors of an earlier pass, records the current model.
+
 Listing, pulling and deleting models is separate from embedding, and only local providers
 support it. You cannot pull a model into OpenAI; its catalogue is a fixed list, configured
 rather than discovered.

@@ -413,7 +413,7 @@ public sealed class SettledFileTests
         {
             if (Down) throw new EmbeddingUnavailableException("the embedding service is down");
 
-            Interlocked.Add(ref _inputs, inputs.Count);
+            if (!IndexingHarness.IsCanary(inputs)) Interlocked.Add(ref _inputs, inputs.Count);
             return _inner.EmbedAsync(target, purpose, inputs, source, ct);
         }
 

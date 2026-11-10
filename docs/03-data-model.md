@@ -163,6 +163,14 @@ CREATE TABLE chunk_sets (
   state                   TEXT NOT NULL,       -- Ready | Degraded | Unavailable, as for corpora
   created_utc             TEXT NOT NULL,
   last_indexed_utc        TEXT,
+  -- What embedding_model answered to a fixed sentence (ModelCanary.Text) when the set was last known to hold
+  -- only that model's vectors, as little-endian float32. NULL until the first check records it, which
+  -- precedes the set's first write; a full or rebuild pass replaces it. A name does not identify weights.
+  canary_vector           BLOB,
+  -- Cosine similarity between canary_vector and the model's answer at the last check. Below 0.999 the set is
+  -- reported in /healthz as changed. Computed against the constant at read time, so no flag is stored.
+  canary_similarity       REAL,
+  canary_checked_utc      TEXT,
   UNIQUE (corpus_id, name)
 );
 CREATE INDEX ix_chunk_sets_default ON chunk_sets(corpus_id, is_default);

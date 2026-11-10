@@ -22,14 +22,18 @@ public sealed class DocumentExtractionTimeoutTests
     private static string ShaOf(byte[] bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
 
     /// <param name="registry">Replaces how the extractor is chosen, for a test that needs the real ones or none.</param>
+    /// <param name="extractionTimeoutSeconds">
+    /// One second is what the tests of a timeout rely on. A test whose extractor does catalogue work and must still
+    /// finish gives itself a budget the machine's speed cannot exceed.
+    /// </param>
     private static DocumentService ServiceWith(
         IndexingHarness harness, CatalogDbContext db, ITextExtractor? extractor, ILogger<DocumentService>? log = null,
-        Func<string, ITextExtractor?>? registry = null) =>
+        Func<string, ITextExtractor?>? registry = null, int extractionTimeoutSeconds = 1) =>
         new(db,
             Options.Create(new DexiconOptions
             {
                 Storage = new StorageOptions { DataPath = harness.DataPath },
-                Indexing = new IndexingOptions { ExtractionTimeoutSeconds = 1 },
+                Indexing = new IndexingOptions { ExtractionTimeoutSeconds = extractionTimeoutSeconds },
             }),
             log ?? NullLogger<DocumentService>.Instance)
         {
@@ -833,7 +837,8 @@ public sealed class DocumentExtractionTimeoutTests
         };
 
         await using var db = harness.NewContext();
-        var returned = await ServiceWith(harness, db, extractor).CurrentTextFor(sha, "doc.slow", ct: TestContext.Current.CancellationToken);
+        var returned = await ServiceWith(harness, db, extractor, extractionTimeoutSeconds: 60)
+            .CurrentTextFor(sha, "doc.slow", ct: TestContext.Current.CancellationToken);
 
         extractor.Calls.ShouldBe(1, "the text was stale, so it was extracted again");
         returned.ShouldBeNull();

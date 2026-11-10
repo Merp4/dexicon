@@ -400,16 +400,22 @@ export function HealthDots({ health, connected, stale }: { health: Health | null
   });
 
   const missing = health?.missingModels ?? [];
+  // Guarded for the same reason: a container built before the field answers without it.
+  const changed = health?.changedModels ?? [];
+  const missingText = missing.length > 0
+    ? `${missing.length} embedding model${missing.length === 1 ? '' : 's'} a chunk set needs ` +
+      `${missing.length === 1 ? 'is' : 'are'} missing`
+    : '';
+  const changedText = changed.length > 0
+    ? `${changed.length} chunk set${changed.length === 1 ? '' : 's'} embedded by a model that has changed`
+    : '';
 
   return (
     <div className="relative" ref={wrapper}>
       <Button
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        title={missing.length > 0
-          ? `${missing.length} embedding model${missing.length === 1 ? '' : 's'} a chunk set needs ` +
-            `${missing.length === 1 ? 'is' : 'are'} missing`
-          : 'Dependency health'}
+        title={missingText || changedText ? [missingText, changedText].filter(Boolean).join('; ') : 'Dependency health'}
       >
         <span style={dot(health?.qdrant.reachable)} /> qdrant
         {/* The configured provider names itself. Hardcoding "ollama" labelled the dot
@@ -418,12 +424,15 @@ export function HealthDots({ health, connected, stale }: { health: Health | null
         {/* Both dots can be green while a set is unsearchable, so the fault needs a mark
             of its own out here. Behind the click it is a fault the screen knows about and
             does not mention. */}
-        {missing.length > 0 && (
+        {(missing.length > 0 || changed.length > 0) && (
           <>
             <TriangleAlert aria-hidden className="ml-1 size-3.5 text-[var(--warn-text)]" />
-            <span className="sr-only">
-              {missing.length} embedding model{missing.length === 1 ? '' : 's'} missing
-            </span>
+            {missing.length > 0 && (
+              <span className="sr-only">
+                {missing.length} embedding model{missing.length === 1 ? '' : 's'} missing
+              </span>
+            )}
+            {changed.length > 0 && <span className="sr-only">{changedText}</span>}
           </>
         )}
         {stale && <span className="dim ml-1.5 text-xs">· checking</span>}
@@ -478,6 +487,23 @@ export function HealthDots({ health, connected, stale }: { health: Health | null
                   <span className="mono">{m.sets.join(', ')}</span>. Searching{' '}
                   {m.sets.length === 1 ? 'it' : 'them'} returns nothing until the model is
                   pulled back.
+                </Notice>
+              ))}
+            </div>
+          )}
+          {/* A set that still answers, from two models. Nothing fails, which is why it needs saying:
+              the model pulled under a name is not the one that embedded the set's files, so the
+              files indexed since rank against the rest by a measure that means nothing. The fix is
+              per set, the same as for a missing model. */}
+          {changed.length > 0 && (
+            <div className="mt-2.5 grid gap-1.5">
+              {changed.map((c) => (
+                <Notice key={c.set} tone="warn" className="text-xs">
+                  <strong className="mono">{c.set}</strong> was built with{' '}
+                  <span className="mono">{c.model}</span>, which no longer answers as it did when the
+                  set was recorded (similarity {c.similarity.toFixed(3)}, where 1 is the same model).
+                  Files indexed since are embedded by the current model, so the set mixes two. A full
+                  reindex of its corpus re-embeds everything.
                 </Notice>
               ))}
             </div>

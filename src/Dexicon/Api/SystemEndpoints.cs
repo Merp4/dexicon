@@ -1070,6 +1070,7 @@ public static class SystemEndpoints
                 activeJob?.ToSummary(),
                 await MissingModelsAsync(db, catalog, cache, visibleIds,
                     rc.RequirePrincipal().TokenId, ct),
+                await ChangedModelsAsync(db, visibleIds, ct),
                 // The UI polls this, and what it shows beside the Approvals link is the count.
                 rc.RequirePrincipal().Scopes.Contains(Scopes.Admin)
                     ? await db.Proposals.CountAsync(p => p.Status == ProposalStatus.Pending, ct)
@@ -1333,6 +1334,37 @@ public static class SystemEndpoints
         IReadOnlyList<MissingModel> result = missing;
         cache.Set(key, result, TimeSpan.FromMinutes(1));
         return result;
+    }
+
+    /// <summary>
+    /// Chunk sets whose model answers differently from when the set was recorded
+    /// (<see cref="ModelCanary"/>), scoped to what the caller can reach as
+    /// <see cref="MissingModelsAsync"/> is.
+    ///
+    /// A catalogue read of columns the canary check writes, so it makes no embedding call and is not
+    /// cached: <c>/healthz</c> is polled every fifteen seconds per open tab and this is one query.
+    /// </summary>
+    internal static async Task<IReadOnlyList<ChangedModel>> ChangedModelsAsync(
+        CatalogDbContext db, IReadOnlyList<string> corpusIds, CancellationToken ct)
+    {
+        var rows = await db.ChunkSets
+            .Where(s => corpusIds.Contains(s.CorpusId) && s.CanarySimilarity < ModelCanary.SameModel)
+            .Select(s => new
+            {
+                Corpus = s.Corpus!.Name,
+                s.Name,
+                s.EmbeddingProvider,
+                s.EmbeddingModel,
+                s.CanarySimilarity,
+                s.CanaryCheckedUtc,
+            })
+            .ToListAsync(ct);
+
+        return [.. rows
+            .OrderBy(r => r.Corpus, StringComparer.Ordinal).ThenBy(r => r.Name, StringComparer.Ordinal)
+            .Select(r => new ChangedModel(
+                $"{r.Corpus}:{r.Name}", r.EmbeddingProvider, r.EmbeddingModel,
+                r.CanarySimilarity!.Value, r.CanaryCheckedUtc ?? default))];
     }
 }
 

@@ -191,6 +191,24 @@ public sealed class ChunkSet
     public int EmbeddingDimensions { get; set; }
     public required string CollectionName { get; set; }
 
+    /// <summary>
+    /// The model's answer to <see cref="Embedding.ModelCanary.Text"/> when this set was last known
+    /// to hold only vectors from the model it names, as little-endian float32. Null until the set
+    /// is first checked, which records it. A name does not identify a model (a tag can be pulled
+    /// again and point at different weights), so this is what a later check compares against.
+    /// </summary>
+    public byte[]? CanaryVector { get; set; }
+
+    /// <summary>
+    /// Cosine similarity between <see cref="CanaryVector"/> and the model's answer at the last
+    /// check: 1 for a set recorded just now, and below <see cref="Embedding.ModelCanary.SameModel"/>
+    /// when the model behind the name has changed. Whether a set counts as changed is computed from
+    /// this and that constant, so moving the constant moves every set at once.
+    /// </summary>
+    public double? CanarySimilarity { get; set; }
+
+    public DateTime? CanaryCheckedUtc { get; set; }
+
     public int ChunkSize { get; set; }
     public int ChunkOverlap { get; set; }
     public required string BoundaryMode { get; set; }

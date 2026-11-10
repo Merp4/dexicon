@@ -28,6 +28,7 @@ function health(over: Partial<Health> = {}): Health {
     corpora: 2,
     activeJob: null,
     missingModels: [],
+    changedModels: [],
     ...over,
   } as Health;
 }
@@ -86,6 +87,52 @@ describe('the dependency panel', () => {
     expect(within(screen.getByRole('button')).getByText(/1 embedding model missing/)).toBeInTheDocument();
   });
 
+  it('flags a chunk set whose model no longer answers as it did', async () => {
+    await open(health({
+      changedModels: [{
+        set: 'books:fine', provider: 'ollama', model: 'nomic-embed-text',
+        similarity: 0.93, checkedUtc: '2026-11-10T06:00:00Z',
+      }],
+    }));
+
+    const alert = screen.getByRole('status');
+    expect(alert).toHaveTextContent('books:fine');
+    expect(alert).toHaveTextContent('nomic-embed-text');
+    expect(alert).toHaveTextContent('similarity 0.930');
+    // The way out is a control the corpus page has, so the notice names it.
+    expect(alert).toHaveTextContent('full reindex of its corpus');
+  });
+
+  it('marks the collapsed button for a changed model too', async () => {
+    render(<HealthDots
+      health={health({
+        changedModels: [{
+          set: 'books:fine', provider: 'ollama', model: 'nomic-embed-text',
+          similarity: 0, checkedUtc: '2026-11-10T06:00:00Z',
+        }],
+      })}
+      connected
+      stale={false}
+    />);
+
+    expect(within(screen.getByRole('button')).getByText(/1 chunk set embedded by a model that has changed/))
+      .toBeInTheDocument();
+  });
+
+  it('says both when a model is missing and another has changed', async () => {
+    await open(health({
+      missingModels: [{ provider: 'ollama', model: 'gone', sets: ['notes:default'] }],
+      changedModels: [{
+        set: 'books:fine', provider: 'ollama', model: 'nomic-embed-text',
+        similarity: 0.5, checkedUtc: '2026-11-10T06:00:00Z',
+      }],
+    }));
+
+    expect(screen.getAllByRole('status')).toHaveLength(2);
+    expect(screen.getByRole('button')).toHaveAttribute(
+      'title', expect.stringMatching(/missing; 1 chunk set embedded by a model that has changed/));
+  });
+
   it('opens against a server that predates the field', async () => {
     // The dev loop is a supported workflow — Vite serving this UI against a container
     // built earlier — so the UI can genuinely be ahead of the API, and it was: reading
@@ -93,6 +140,7 @@ describe('the dependency panel', () => {
     // was opened, taking the page with it. The same trap caught a source's globs once.
     const older = health();
     delete (older as { missingModels?: unknown }).missingModels;
+    delete (older as { changedModels?: unknown }).changedModels;
 
     await open(older);
 

@@ -182,7 +182,8 @@ public sealed class DetachingWhileIndexingTests
         public async Task<IReadOnlyList<float[]>> EmbedAsync(EmbeddingTarget target, EmbedPurpose purpose,
             IReadOnlyList<string> inputs, string? source = null, CancellationToken ct = default)
         {
-            if (Interlocked.Exchange(ref _acted, 1) == 0) await act();
+            // The first document, not the first call: a pass checks the model's canary before it writes.
+            if (!IndexingHarness.IsCanary(inputs) && Interlocked.Exchange(ref _acted, 1) == 0) await act();
             return await _inner.EmbedAsync(target, purpose, inputs, source, ct);
         }
 
