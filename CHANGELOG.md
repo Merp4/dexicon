@@ -16,6 +16,52 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## 0.6.14 — 2026-11-10
+
+### ⚠️ Upgrading
+
+- **No migration, no re-index and no re-extraction.** The HTML parser under HTML and EPUB
+  extraction moves to a new version (below) and extracts the same text. Over 149 documents
+  (46 EPUBs, 57 HTML files and 46 edge-case documents; 40,523,037 characters in 1,322 chapter
+  units), the text, line count, chapter units and title were identical under AngleSharp 1.9.0
+  and 1.10.0. `ExtractorVersions.Current` stays 6 and cached text is kept.
+- **An MCP request must spell its property names as the protocol does.** The MCP server SDK
+  (below) matches protocol property names case-sensitively. A `tools/call` that carried `Name`
+  and `Arguments` was answered by 0.6.13; it now gets JSON-RPC error -32603, "An error
+  occurred." Requests with `name` and `arguments`, as clients that follow the protocol send
+  them, are answered as before.
+
+### Changed
+
+- `ModelContextProtocol.AspNetCore`, the MCP server SDK, moves from 2.3.0 to 2.4.0. 42 requests
+  went to 0.6.13 and to this build on the same catalogue: `tools/list` for five kinds of caller
+  (search, ingest and propose keys, a key with every scope, an admin session), `tools/call`
+  (valid, malformed, unknown, and refused for lack of a scope), resources, prompts, ping, and
+  malformed JSON and header cases. 41 answers were identical; the other is the property-name
+  case above.
+- `OllamaSharp`, the Ollama client, moves from 5.5.0 to 5.5.2. Three fixed text files were
+  embedded with `embeddinggemma` through one Ollama server by 0.6.13 and by this build, into
+  separate vector stores. The stored vectors were identical (largest difference 0.0) and nine
+  searches (semantic, hybrid and keyword) returned the same hits in the same order with the
+  same scores.
+- AngleSharp, the HTML parser, moves from 1.9.0 to 1.10.0 (extraction results above).
+- Web UI: `vite` 8.3.5 to 8.3.6, `tailwindcss` and `@tailwindcss/vite` 4.3.3 to 4.3.4,
+  `@vitejs/plugin-react` 6.1.2 to 6.2.1, `lucide-react` 1.64.0 to 1.69.0, `cn` 0.5.0 to 0.5.2.
+  The built bundle differs from 0.6.13 in 7 of 4,739 JavaScript statements and holds the same
+  698 CSS rules. Tailwind writes the selectors for `group-data-*` and `peer-disabled:` in a
+  different form, and the stylesheet applied them to test elements as before. lucide renamed
+  two icons (`circle-alert` is now `circle-exclamation-point`, `triangle-alert` is now
+  `triangle-exclamation-point`), which changes the class on their SVG; nothing in the UI source
+  refers to those classes. The eight pages were opened signed in: every icon was drawn and the
+  console log was empty.
+- Build and test tooling, not shipped: `vitest` and `@vitest/coverage-v8` 5.0.5 to 5.1.0,
+  `jsdom` 30.1.3 to 31.0.0 (a major release; the web UI tests pass under it) and
+  `xunit.v3.mtp-off` 4.0.2 to 4.0.3. The web UI lockfile resolves 66 other packages to new
+  versions, adds 8 and drops 30 (311 packages to 289).
+- The digests of the two base images advance: `mcr.microsoft.com/dotnet/sdk:10.0-alpine` to
+  `5562fd6` and `mcr.microsoft.com/dotnet/aspnet:10.0-alpine` to `486297a`.
+- The skill is unchanged (`dexicon-skill-version: 7`).
+
 ## 0.6.13 — 2026-11-05
 
 ### ⚠️ Upgrading
