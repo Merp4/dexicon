@@ -34,6 +34,7 @@ const healthy = {
   activeJob: null,
   missingModels: [],
   changedModels: [],
+  changedFramings: [],
 } as unknown as Health;
 
 beforeEach(() => {

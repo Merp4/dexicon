@@ -209,6 +209,15 @@ public sealed class ChunkSet
 
     public DateTime? CanaryCheckedUtc { get; set; }
 
+    /// <summary>
+    /// The document template the model's profile gave when this set's vectors were last all embedded
+    /// with one framing: at the first check of a set with no record, and when a full pass replaces every
+    /// vector. Null until recorded. The health report compares it with the template the profile gives now
+    /// (<see cref="Embedding.ModelFraming"/>); only the document template is kept, because the query
+    /// template changes what a search sends and leaves the stored vectors as they are.
+    /// </summary>
+    public string? FramingRecorded { get; set; }
+
     public int ChunkSize { get; set; }
     public int ChunkOverlap { get; set; }
     public required string BoundaryMode { get; set; }

@@ -174,6 +174,19 @@ public sealed record MissingModel(string Provider, string Model, IReadOnlyList<s
 /// <param name="CheckedUtc">When the model was last asked.</param>
 public sealed record ChangedModel(string Set, string Provider, string Model, double Similarity, DateTime CheckedUtc);
 
+/// <summary>
+/// A chunk set whose vectors were embedded with another document template than its model's profile gives now.
+///
+/// The template comes from the profile when a file is embedded and when a query is sent. Editing the profile, or
+/// a release that adds a built-in entry for the model, changes the queries of every set on it while the stored
+/// vectors stay as they were, so a set answers with framed queries against raw vectors, or the reverse. Saving a
+/// profile queues a rebuild; a built-in entry added by an upgrade queues nothing.
+/// </summary>
+/// <param name="Set">`corpus:set`. A full reindex of the corpus re-embeds the set and clears the entry.</param>
+/// <param name="Recorded">The document template the set's vectors were embedded with.</param>
+/// <param name="Current">The document template the model's profile gives now.</param>
+public sealed record ChangedFraming(string Set, string Provider, string Model, string Recorded, string Current);
+
 /// <param name="PendingProposals">
 /// How many removals agents have asked for that no one has decided. Counted for an administrator and
 /// null for a key, who has no use for it and no way to act on it.
@@ -181,7 +194,7 @@ public sealed record ChangedModel(string Set, string Provider, string Model, dou
 public sealed record HealthResponse(
     string Status, HealthDependency Qdrant, EmbeddingHealth Ollama, int Corpora, JobSummary? ActiveJob,
     IReadOnlyList<MissingModel> MissingModels, IReadOnlyList<ChangedModel> ChangedModels,
-    int? PendingProposals = null);
+    IReadOnlyList<ChangedFraming> ChangedFramings, int? PendingProposals = null);
 
 public sealed record ReadinessResponse(string Status, bool Qdrant, bool Catalogue);
 

@@ -402,6 +402,7 @@ export function HealthDots({ health, connected, stale }: { health: Health | null
   const missing = health?.missingModels ?? [];
   // Guarded for the same reason: a container built before the field answers without it.
   const changed = health?.changedModels ?? [];
+  const reframed = health?.changedFramings ?? [];
   const missingText = missing.length > 0
     ? `${missing.length} embedding model${missing.length === 1 ? '' : 's'} a chunk set needs ` +
       `${missing.length === 1 ? 'is' : 'are'} missing`
@@ -409,13 +410,18 @@ export function HealthDots({ health, connected, stale }: { health: Health | null
   const changedText = changed.length > 0
     ? `${changed.length} chunk set${changed.length === 1 ? '' : 's'} embedded by a model that has changed`
     : '';
+  const reframedText = reframed.length > 0
+    ? `${reframed.length} chunk set${reframed.length === 1 ? '' : 's'} embedded with a document framing that has changed`
+    : '';
 
   return (
     <div className="relative" ref={wrapper}>
       <Button
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        title={missingText || changedText ? [missingText, changedText].filter(Boolean).join('; ') : 'Dependency health'}
+        title={missingText || changedText || reframedText
+          ? [missingText, changedText, reframedText].filter(Boolean).join('; ')
+          : 'Dependency health'}
       >
         <span style={dot(health?.qdrant.reachable)} /> qdrant
         {/* The configured provider names itself. Hardcoding "ollama" labelled the dot
@@ -424,7 +430,7 @@ export function HealthDots({ health, connected, stale }: { health: Health | null
         {/* Both dots can be green while a set is unsearchable, so the fault needs a mark
             of its own out here. Behind the click it is a fault the screen knows about and
             does not mention. */}
-        {(missing.length > 0 || changed.length > 0) && (
+        {(missing.length > 0 || changed.length > 0 || reframed.length > 0) && (
           <>
             <TriangleAlert aria-hidden className="ml-1 size-3.5 text-[var(--warn-text)]" />
             {missing.length > 0 && (
@@ -433,6 +439,7 @@ export function HealthDots({ health, connected, stale }: { health: Health | null
               </span>
             )}
             {changed.length > 0 && <span className="sr-only">{changedText}</span>}
+            {reframed.length > 0 && <span className="sr-only">{reframedText}</span>}
           </>
         )}
         {stale && <span className="dim ml-1.5 text-xs">· checking</span>}
@@ -504,6 +511,23 @@ export function HealthDots({ health, connected, stale }: { health: Health | null
                   set was recorded (similarity {c.similarity.toFixed(3)}, where 1 is the same model).
                   Files indexed since are embedded by the current model, so the set mixes two. A full
                   reindex of its corpus re-embeds everything.
+                </Notice>
+              ))}
+            </div>
+          )}
+          {/* A set whose files were embedded under another document framing than its model's profile
+              gives now. Saving a profile rebuilds the sets on it, so what reaches here is a framing that
+              changed without a rebuild: a release adding a built-in entry. Queries use the current
+              framing, and the stored vectors keep the old one. */}
+          {reframed.length > 0 && (
+            <div className="mt-2.5 grid gap-1.5">
+              {reframed.map((c) => (
+                <Notice key={c.set} tone="warn" className="text-xs">
+                  <strong className="mono">{c.set}</strong> was embedded with the document framing{' '}
+                  <span className="mono">{c.recorded}</span>, and <span className="mono">{c.model}</span> now
+                  frames documents as <span className="mono">{c.current}</span>. Queries use the current
+                  framing, so they may match the set's vectors less well. A full reindex of its corpus
+                  re-embeds everything.
                 </Notice>
               ))}
             </div>

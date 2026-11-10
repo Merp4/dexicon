@@ -206,6 +206,9 @@ namespace Dexicon.Core.Catalog.Migrations
                         .HasMaxLength(60)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("FramingRecorded")
+                        .HasColumnType("TEXT");
+
                     b.Property<bool>("HeadingContext")
                         .HasColumnType("INTEGER");
 

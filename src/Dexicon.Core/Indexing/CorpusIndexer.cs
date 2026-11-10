@@ -98,12 +98,26 @@ public sealed class CorpusIndexer(
     }
 
     /// <summary>
-    /// Replaces the set's canary after a full pass, when the vector store holds points only for files that pass
-    /// indexed. Advisory, like <see cref="CheckModelAsync"/>; a failure leaves the earlier record, which the next
-    /// check reports against if the model changed.
+    /// Records the document template for a set that has none (<see cref="ModelFraming"/>). Advisory, as
+    /// <see cref="CheckModelAsync"/> is.
+    /// </summary>
+    private async Task EnsureFramingRecordedAsync(ChunkSet set, ModelTemplates templates, CancellationToken ct)
+    {
+        try { await ModelFraming.EnsureRecordedAsync(db, set, templates, log, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            log.LogWarning(ex, "Chunk set {Set} of corpus {CorpusId}: the document framing could not be recorded",
+                set.Name, set.CorpusId);
+        }
+    }
+
+    /// <summary>
+    /// Replaces the set's canary and its document template after a full pass, when the vector store holds points
+    /// only for files that pass indexed. Advisory, like <see cref="CheckModelAsync"/>; a failure leaves the earlier
+    /// records, which the next check reports against if the model or its framing changed.
     /// </summary>
     private async Task RecordModelAsync(
-        ChunkSet set, IReadOnlyList<Source> sources, DateTime passStarted, CancellationToken ct)
+        ChunkSet set, IReadOnlyList<Source> sources, ModelTemplates templates, DateTime passStarted, CancellationToken ct)
     {
         try
         {
@@ -112,7 +126,7 @@ public sealed class CorpusIndexer(
             {
                 log.LogInformation(
                     "Chunk set {Set} of corpus {CorpusId}: the vector store could not say which files hold points, "
-                    + "so the current model was not recorded", set.Name, set.CorpusId);
+                    + "so the current model and framing were not recorded", set.Name, set.CorpusId);
                 return;
             }
 
@@ -120,15 +134,18 @@ public sealed class CorpusIndexer(
             {
                 log.LogInformation(
                     "Chunk set {Set} of corpus {CorpusId}: {Files} file(s) hold points this pass did not write, "
-                    + "so the current model was not recorded", set.Name, set.CorpusId, kept);
+                    + "so the current model and framing were not recorded", set.Name, set.CorpusId, kept);
                 return;
             }
 
+            // The template the pass embedded with, and not the profile as it is now: a profile saved while the
+            // pass ran has not been applied to these vectors, and the next check reports it.
+            await ModelFraming.RecordAsync(db, set, templates, ct);
             await ModelCanary.RecordAsync(db, embedder, set, log, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            log.LogWarning(ex, "Chunk set {Set} of corpus {CorpusId}: the model could not be recorded after the pass",
+            log.LogWarning(ex, "Chunk set {Set} of corpus {CorpusId}: the model and framing could not be recorded after the pass",
                 set.Name, set.CorpusId);
         }
     }
@@ -278,6 +295,10 @@ public sealed class CorpusIndexer(
                 // file in it, and they are part of the staleness key for all of them.
                 var templates = await profiles.ForAsync(set.Target(), ct);
 
+                // Before this set's first write, as the model check is: the record is the template the set
+                // starts with, and a change to it afterwards is reported against that.
+                await EnsureFramingRecordedAsync(set, templates, ct);
+
                 // The same, for what the model measured about itself. The chunk budget is
                 // reconciled against it here rather than per file, and a set whose model
                 // was never probed gets the configured size unchanged.
@@ -350,7 +371,7 @@ public sealed class CorpusIndexer(
                     // makes of them. A refresh leaves files it did not touch as they were, and does not
                     // change what the set is known to hold.
                     if (job.Kind is JobKind.Full or JobKind.Rebuild)
-                        await RecordModelAsync(set, sources, job.StartedUtc ?? DateTime.UtcNow, ct);
+                        await RecordModelAsync(set, sources, templates, job.StartedUtc ?? DateTime.UtcNow, ct);
                 }
             }
 

@@ -1041,7 +1041,8 @@ public static class SystemEndpoints
 
         app.MapGet("/healthz", async (RequestContext rc, IVectorStore vectors, IEmbeddingService embedder,
             IModelCatalog catalog, IEmbeddingGeneratorFactory factory, CatalogDbContext db,
-            ScopeResolver scopes, IMemoryCache cache, IOptions<DexiconOptions> opts, CancellationToken ct) =>
+            IModelProfiles profiles, ScopeResolver scopes, IMemoryCache cache, IOptions<DexiconOptions> opts,
+            CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
             var visible = await scopes.VisibleAsync(rc.RequirePrincipal(), ct);
@@ -1071,6 +1072,7 @@ public static class SystemEndpoints
                 await MissingModelsAsync(db, catalog, cache, visibleIds,
                     rc.RequirePrincipal().TokenId, ct),
                 await ChangedModelsAsync(db, visibleIds, ct),
+                await ChangedFramingsAsync(db, profiles, visibleIds, ct),
                 // The UI polls this, and what it shows beside the Approvals link is the count.
                 rc.RequirePrincipal().Scopes.Contains(Scopes.Admin)
                     ? await db.Proposals.CountAsync(p => p.Status == ProposalStatus.Pending, ct)
@@ -1365,6 +1367,49 @@ public static class SystemEndpoints
             .Select(r => new ChangedModel(
                 $"{r.Corpus}:{r.Name}", r.EmbeddingProvider, r.EmbeddingModel,
                 r.CanarySimilarity!.Value, r.CanaryCheckedUtc ?? default))];
+    }
+
+    /// <summary>
+    /// Chunk sets whose vectors were embedded with another document template than the model's profile gives now
+    /// (<see cref="ModelFraming"/>), scoped as <see cref="ChangedModelsAsync"/> is.
+    ///
+    /// One catalogue read and one profile lookup per model, which <see cref="IModelProfiles"/> caches for thirty
+    /// seconds and a profile save evicts, so it is cheap for a poll every fifteen seconds per open tab and a
+    /// saved profile shows at once.
+    /// </summary>
+    internal static async Task<IReadOnlyList<ChangedFraming>> ChangedFramingsAsync(
+        CatalogDbContext db, IModelProfiles profiles, IReadOnlyList<string> corpusIds, CancellationToken ct)
+    {
+        var rows = await db.ChunkSets.AsNoTracking()
+            .Where(s => corpusIds.Contains(s.CorpusId) && s.FramingRecorded != null)
+            .Select(s => new
+            {
+                Corpus = s.Corpus!.Name,
+                s.Name,
+                s.EmbeddingProvider,
+                s.EmbeddingModel,
+                s.FramingRecorded,
+            })
+            .ToListAsync(ct);
+
+        var changed = new List<ChangedFraming>();
+        var current = new Dictionary<(string Provider, string Model), ModelTemplates>();
+
+        foreach (var r in rows
+            .OrderBy(r => r.Corpus, StringComparer.Ordinal).ThenBy(r => r.Name, StringComparer.Ordinal))
+        {
+            var target = new EmbeddingTarget(r.EmbeddingProvider, r.EmbeddingModel);
+            var key = (target.Provider, target.CanonicalModel);
+            if (!current.TryGetValue(key, out var templates))
+                current[key] = templates = await profiles.ForAsync(target, ct);
+
+            if (ModelFraming.Differs(r.FramingRecorded, templates))
+                changed.Add(new ChangedFraming(
+                    $"{r.Corpus}:{r.Name}", r.EmbeddingProvider, r.EmbeddingModel,
+                    r.FramingRecorded!, templates.Document));
+        }
+
+        return changed;
     }
 }
 
