@@ -244,14 +244,17 @@ which file a query is about, and the files are descriptively named, so read the 
 bound for queries that do not echo a file name. It has not been run through the app's hybrid search.
 Dexicon's framing templates carry `{text}` only, so a title cannot be expressed today.
 
-**Framing matters less than the September report suggested.** Unframed `embeddinggemma` is 0.059
-lower on docs and 0.015 higher on code, against 0.632 to 0.799 on twelve queries in hybrid mode in
-[decisions.md](decisions.md#q3-second-measurement--with-task-framing).
+**Framing matters less here than in the September report.** Unframed `embeddinggemma` is 0.059
+lower on docs and 0.015 higher on code (dense only, 55 and 52 queries, blank-line chunks). September's
+second measurement went from 0.632 raw to 0.799 framed on twelve queries through the app's hybrid search
+([decisions.md](decisions.md#q3-second-measurement--with-task-framing)). The two differ in query set,
+chunking and retrieval mode, and twelve queries resolve only large gaps, so the two figures are not
+directly comparable.
 
 Speed was measured on the same shared GPU and varied more than the models did: `embeddinggemma` ran
 at 13 to 39 chunks per second over 28 corpus runs, the identical first row and its repeat between 19 and
 30, and `embeddinggemma-2` Q8_0 at 7 to 25 over six. At those speeds, re-embedding 258,000 chunks, the
-size of one deployed instance, takes 2 to 5 hours with the first generation and 3 to 10 with the second;
+size of one deployed instance, takes 2 to 6 hours with the first generation and 3 to 10 with the second;
 scale by chunks divided by rate.
 
 Reproduce with:

@@ -2427,7 +2427,9 @@ version its queries are framed. The framing is part of the chunking fingerprint,
 files, but the upgrade queues no pass and `ScheduledRefreshService` is off by default (`RefreshMinutes = 0`). Such a
 set answers with framed queries against raw vectors until a refresh or a full reindex of its corpus runs. A set on
 `embeddinggemma` or any other model is unaffected, and a set built on `embeddinggemma-2` after this version is framed
-from its first pass.
+from its first pass. The entry matches the name with its `:tag` removed, so a set on a Hugging Face path
+(`hf.co/ggml-org/embeddinggemma-2-GGUF:Q8_0`) or on an `ollama cp` alias gets no built-in framing and needs a saved
+profile for that name.
 
 **Why it is not the default.**
 
@@ -2440,7 +2442,7 @@ from its first pass.
   (code 78.68 against 68.76) do not appear on file-level lookups
   ([benchmarks](benchmarks.md#comparing-models-directly-2026-11-09)).
 - *The cost is a re-embed of every corpus that follows it.* 258,000 chunks, the size of one deployed
-  instance, would take 2 to 5 hours at the speeds measured for `embeddinggemma` and 3 to 10 for `embeddinggemma-2` (13 to 39 and
+  instance, would take 2 to 6 hours at the speeds measured for `embeddinggemma` and 3 to 10 for `embeddinggemma-2` (13 to 39 and
   7 to 25 chunks per second, on a GPU shared with a training workload).
 - *Where it runs.* Ollama's `embeddinggemma-2:270m`, `:740m` and `:latest` resolve to GGUF builds, which
   Ollama 0.40.4 and later can run on llama.cpp on Linux; 0.40.0 to 0.40.3 bundle a llama.cpp older than

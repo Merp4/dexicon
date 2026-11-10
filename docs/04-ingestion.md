@@ -1223,7 +1223,10 @@ than framing. The two Arctic generations want **different** prefixes and differ 
 character in their names, so the model a set uses should be confirmed.
 
 `embeddinggemma-2` is the Ollama name of the second generation. It is hyphenated, so it is a
-separate key from `embeddinggemma`, and its card gives the same two strings. It is not the
+separate key from `embeddinggemma`, and its card gives the same two strings. The lookup removes a
+`:tag` and nothing else, so `embeddinggemma-2:270m` and `embeddinggemma-2:740m` are recognised, while a
+Hugging Face path such as `hf.co/ggml-org/embeddinggemma-2-GGUF:Q8_0` or an alias made with `ollama cp`
+is an unrecognised name and is embedded raw until a row is saved for it on the Models screen. It is not the
 default: on this repository's own queries it scored no better than the first generation, and the
 tags Ollama serves can be repointed
 ([D-45](decisions.md#d-45-embeddinggemma-2-has-a-built-in-framing-and-is-not-the-default)).
