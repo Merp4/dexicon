@@ -974,6 +974,28 @@ public sealed class ModelCanaryIndexing
     }
 
     [Fact]
+    public async Task AFullPassThatCouldNotRemoveTheChunksOfAFileThatBecameEmptyDoesNotTakeTheNewModel()
+    {
+        var (harness, embedder) = await StartAsync();
+        await using var _ = harness;
+        await harness.WriteFileAsync("two.txt", IndexingHarness.Prose("second"));
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+        embedder.Answer = Replaced;
+        // Nothing to embed now, so the pass tries to remove the chunks it has, and the store refuses.
+        await harness.WriteFileAsync("two.txt", "   \n\n  \n");
+        harness.Vectors.DeleteFailsForPath = "two.txt";
+
+        var job = await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+
+        // The row is Failed with an indexed time inside the pass, and its old chunks are still counted.
+        var state = await harness.StateOfAsync("two.txt");
+        state.Status.ShouldBe(FileStatus.Failed);
+        state.IndexedUtc!.Value.ShouldBeGreaterThanOrEqualTo(job.StartedUtc!.Value);
+        state.ChunkCount.ShouldBeGreaterThan(0);
+        (await StoredSet(harness)).CanaryVector.ShouldBe(ModelCanary.Pack(Original));
+    }
+
+    [Fact]
     public async Task AFileThatCanNeverBeReadDoesNotHoldBackTheRecord()
     {
         var (harness, embedder) = await StartAsync();

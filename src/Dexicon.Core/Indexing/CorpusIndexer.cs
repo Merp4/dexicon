@@ -130,16 +130,19 @@ public sealed class CorpusIndexer(
     }
 
     /// <summary>
-    /// How many files of the set have chunks that were not written since <paramref name="since"/>, the start of
-    /// the pass. A file the pass re-embedded has an indexed time after it. One that failed to embed or to read,
-    /// timed out, or vanished with its vectors left in the store keeps an earlier one. A file the pass could not
-    /// read for good has its chunks removed and counts zero. Read from the catalogue, which a source's pass has
-    /// saved by the time it returns.
+    /// How many files of the set still have chunks that the pass did not write: <c>ChunkCount</c> above zero, which
+    /// is the one record that chunks exist when removing them failed, and either a status other than
+    /// <c>Indexed</c> or an indexed time before <paramref name="since"/>, the start of the pass. A file the pass
+    /// re-embedded is <c>Indexed</c> with a time after it. One that failed to embed or to read, timed out, became
+    /// empty or excluded with its old chunks left in the store, or vanished with its vectors left there, is one or
+    /// the other. A file the pass could not read for good has its chunks removed and counts zero. Read from the
+    /// catalogue, which a source's pass has saved by the time it returns.
     /// </summary>
     internal static Task<int> EarlierVectorsKeptAsync(
         CatalogDbContext db, string chunkSetId, DateTime since, CancellationToken ct) =>
         db.FileChunkStates.CountAsync(
-            s => s.ChunkSetId == chunkSetId && s.ChunkCount > 0 && (s.IndexedUtc == null || s.IndexedUtc < since), ct);
+            s => s.ChunkSetId == chunkSetId && s.ChunkCount > 0
+                 && (s.Status != FileStatus.Indexed || s.IndexedUtc == null || s.IndexedUtc < since), ct);
 
     public async Task<IndexJob> RunAsync(string jobId, IProgress<IndexProgress>? progress, CancellationToken ct)
     {
