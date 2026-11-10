@@ -1,9 +1,11 @@
 using Dexicon.Api;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Embedding;
+using Dexicon.Core.Indexing;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 
@@ -55,6 +57,15 @@ public sealed class ModelCanaryMeasurementTests
     [Fact]
     public void AnEmptyVectorIsSimilarToNothing() =>
         ModelCanary.Similarity([], []).ShouldBe(0.0);
+
+    [Fact]
+    public void AComponentThatIsNotAFiniteNumberIsSimilarToNothing()
+    {
+        // NaN would be stored as NULL, and a NULL similarity is neither above nor below the threshold.
+        ModelCanary.Similarity([1f, 0f], [float.NaN, 0f]).ShouldBe(0.0);
+        ModelCanary.Similarity([1f, 0f], [float.PositiveInfinity, 0f]).ShouldBe(0.0);
+        ModelCanary.Similarity([float.NaN, 0f], [1f, 0f]).ShouldBe(0.0);
+    }
 
     [Fact]
     public void APackedVectorUnpacksToTheSameValues()
@@ -334,6 +345,69 @@ public sealed class ModelCanaryChecks : IAsyncLifetime
         (await Changed(_db)).ShouldBeEmpty();
     }
 
+    // ── One set's write does not reach another's ─────────────────────────────
+
+    [Fact]
+    public async Task ACheckOrARecordOfOneSetLeavesAnotherSetOnTheSameModelAlone()
+    {
+        await AddSet("s2", "fine");
+        _embedder.Answer = Original;
+        await Check("s1");
+        await Check("s2");
+        var other = await Stored("s2");
+
+        // The model changes, and only s1 is checked: the two rows hold the same bytes, so a write that matched
+        // on the record and not on the set would reach both.
+        _embedder.Answer = At(0.5);
+        (await Check("s1")).ShouldBe(CanaryOutcome.Changed);
+        var afterCheck = await Stored("s2");
+        afterCheck.CanarySimilarity.ShouldBe(other.CanarySimilarity);
+        afterCheck.CanaryCheckedUtc.ShouldBe(other.CanaryCheckedUtc);
+
+        (await ModelCanary.RecordAsync(
+            _db, _embedder, await Stored("s1"), NullLogger.Instance, TestContext.Current.CancellationToken)).ShouldBeTrue();
+        var afterRecord = await Stored("s2");
+        afterRecord.CanaryVector.ShouldBe(other.CanaryVector, "recording s1 does not record s2");
+        afterRecord.CanarySimilarity.ShouldBe(other.CanarySimilarity);
+        (await Changed(_db)).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ACheckOnAChangedSetUpdatesTheTimeItWasChecked()
+    {
+        _embedder.Answer = Original;
+        await Check();
+        var past = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        await _db.ChunkSets.ExecuteUpdateAsync(
+            u => u.SetProperty(s => s.CanaryCheckedUtc, past), TestContext.Current.CancellationToken);
+
+        _embedder.Answer = At(0.5);
+        (await Check()).ShouldBe(CanaryOutcome.Changed);
+
+        (await Stored()).CanaryCheckedUtc!.Value.ShouldBeGreaterThan(past);
+    }
+
+    [Fact]
+    public async Task AnEmptyAnswerIsNotRecordedAsABaseline()
+    {
+        _embedder.Answer = [];
+
+        (await Check()).ShouldBe(CanaryOutcome.Unavailable);
+
+        (await Stored()).CanaryVector.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ChangedSetsAreListedInCorpusAndSetOrderWhateverOrderTheyWereAdded()
+    {
+        await AddSet("s2", "zeta");
+        await AddSet("s3", "alpha");
+        await _db.ChunkSets.ExecuteUpdateAsync(
+            u => u.SetProperty(s => s.CanarySimilarity, 0.5), TestContext.Current.CancellationToken);
+
+        (await Changed(_db)).Select(c => c.Set).ShouldBe(["books:alpha", "books:default", "books:zeta"]);
+    }
+
     // ── Recording after a full pass ─────────────────────────────────────────
 
     [Fact]
@@ -475,7 +549,7 @@ public sealed class ModelCanaryServiceTicks : IAsyncLifetime
 
     private CatalogDbContext NewContext() => new(_services.GetRequiredService<DbContextOptions<CatalogDbContext>>());
 
-    private async Task AddSet(string id, string model)
+    private async Task AddSet(string id, string model, string provider = "ollama")
     {
         await using var db = NewContext();
         db.ChunkSets.Add(new ChunkSet
@@ -484,7 +558,7 @@ public sealed class ModelCanaryServiceTicks : IAsyncLifetime
             CorpusId = "c",
             Name = id,
             EmbeddingModel = model,
-            EmbeddingProvider = "ollama",
+            EmbeddingProvider = provider,
             CollectionName = $"dexicon_{id}",
             BoundaryMode = "blank-line",
             CreatedUtc = DateTime.UtcNow,
@@ -519,7 +593,7 @@ public sealed class ModelCanaryServiceTicks : IAsyncLifetime
         await AddSet("a", "embeddinggemma");
         await Service().RunTickAsync(TestContext.Current.CancellationToken);
 
-        _embedder.Answers["embeddinggemma"] = [0.6f, 0.8f, 0f, 0f];
+        _embedder.Answers["ollama/embeddinggemma"] = [0.6f, 0.8f, 0f, 0f];
         await Service().RunTickAsync(TestContext.Current.CancellationToken);
 
         await using var db = NewContext();
@@ -536,7 +610,7 @@ public sealed class ModelCanaryServiceTicks : IAsyncLifetime
         await AddSet("b", "gone");
         await AddSet("c", "gone:latest");
         await AddSet("d", "embeddinggemma");
-        _embedder.Down.Add("gone");
+        _embedder.Down.Add("ollama/gone");
 
         await Service().RunTickAsync(TestContext.Current.CancellationToken);
 
@@ -554,19 +628,113 @@ public sealed class ModelCanaryServiceTicks : IAsyncLifetime
         _embedder.Asked.ShouldBeEmpty();
     }
 
-    /// <summary>One answer per model name, and a set of names that fail.</summary>
+    [Fact]
+    public async Task TwoProvidersServingOneModelNameAreAskedSeparately()
+    {
+        await AddSet("a", "gone", "ollama");
+        await AddSet("b", "gone", "other");
+        _embedder.Down.Add("ollama/gone");
+
+        await Service().RunTickAsync(TestContext.Current.CancellationToken);
+
+        (await Stored("a")).CanaryVector.ShouldBeNull();
+        (await Stored("b")).CanaryVector.ShouldNotBeNull("the other provider's model of that name answered");
+    }
+
+    [Fact]
+    public async Task AnUnexpectedFaultInOneSetDoesNotStopTheTick()
+    {
+        await AddSet("a", "broken");
+        await AddSet("b", "embeddinggemma");
+        _embedder.Throws.Add("ollama/broken");
+
+        await Service().RunTickAsync(TestContext.Current.CancellationToken);
+
+        (await Stored("a")).CanaryVector.ShouldBeNull();
+        (await Stored("b")).CanaryVector.ShouldNotBeNull("the set after the one that failed is still checked");
+    }
+
+    [Fact]
+    public void TheDefaultTimingIsOneMinuteThenSixHours()
+    {
+        ModelCanaryService.DefaultFirstCheckAfter.ShouldBe(TimeSpan.FromMinutes(1));
+        ModelCanaryService.DefaultEvery.ShouldBe(TimeSpan.FromHours(6));
+    }
+
+    private static async Task<bool> WaitFor(Func<Task<bool>> condition)
+    {
+        var until = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        while (DateTime.UtcNow < until)
+        {
+            if (await condition()) return true;
+            await Task.Delay(25, TestContext.Current.CancellationToken);
+        }
+
+        return await condition();
+    }
+
+    [Fact]
+    public async Task TheServiceChecksOnItsTimerAndStopsWhenAskedTo()
+    {
+        await AddSet("a", "embeddinggemma");
+        var service = new ModelCanaryService(
+            _services.GetRequiredService<IServiceScopeFactory>(), NullLogger<ModelCanaryService>.Instance,
+            TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(50));
+
+        await service.StartAsync(TestContext.Current.CancellationToken);
+        try
+        {
+            (await WaitFor(async () => (await Stored("a")).CanaryVector is not null))
+                .ShouldBeTrue("the first check recorded a baseline");
+
+            _embedder.Answers["ollama/embeddinggemma"] = [0.6f, 0.8f, 0f, 0f];
+            (await WaitFor(async () => (await Stored("a")).CanarySimilarity < ModelCanary.SameModel))
+                .ShouldBeTrue("a later tick found the change");
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+        }
+
+        var asked = _embedder.Asked.Count;
+        await Task.Delay(250, TestContext.Current.CancellationToken);
+        _embedder.Asked.Count.ShouldBe(asked, "a stopped service asks no more");
+    }
+
+    [Fact]
+    public async Task AServiceStoppedBeforeItsFirstCheckChecksNothing()
+    {
+        await AddSet("a", "embeddinggemma");
+        var service = new ModelCanaryService(
+            _services.GetRequiredService<IServiceScopeFactory>(), NullLogger<ModelCanaryService>.Instance,
+            TimeSpan.FromHours(1), TimeSpan.FromHours(1));
+
+        await service.StartAsync(TestContext.Current.CancellationToken);
+        await service.StopAsync(CancellationToken.None);
+
+        _embedder.Asked.ShouldBeEmpty();
+        (await Stored("a")).CanaryVector.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// One answer per model, and the models that fail, each keyed <c>provider/model</c>: <c>Down</c> as a model
+    /// the provider does not have, <c>Throws</c> as a fault no embedding service reports.
+    /// </summary>
     private sealed class PerModelEmbedder : IEmbeddingService
     {
         public Dictionary<string, float[]> Answers { get; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> Down { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> Throws { get; } = new(StringComparer.OrdinalIgnoreCase);
         public List<string> Asked { get; } = [];
 
         public Task<IReadOnlyList<float[]>> EmbedAsync(EmbeddingTarget target, EmbedPurpose purpose,
             IReadOnlyList<string> inputs, string? source = null, CancellationToken ct = default)
         {
+            var key = $"{target.Provider}/{target.CanonicalModel}";
             Asked.Add(target.Model);
-            if (Down.Contains(target.CanonicalModel)) throw new EmbeddingUnavailableException("model not found");
-            var answer = Answers.TryGetValue(target.CanonicalModel, out var a) ? a : [1f, 0f, 0f, 0f];
+            if (Throws.Contains(key)) throw new InvalidOperationException("the provider cannot be built");
+            if (Down.Contains(key)) throw new EmbeddingUnavailableException("model not found");
+            var answer = Answers.TryGetValue(key, out var a) ? a : [1f, 0f, 0f, 0f];
             return Task.FromResult<IReadOnlyList<float[]>>([answer]);
         }
 
@@ -681,6 +849,79 @@ public sealed class ModelCanaryIndexing
     }
 
     [Fact]
+    public async Task ACancelledPassIsNotLoggedAsAFailedModelCheck()
+    {
+        var (harness, embedder) = await StartAsync();
+        await using var _ = harness;
+        using var cts = new CancellationTokenSource();
+        embedder.OnCanary = () => cts.Cancel();
+        var logs = new RecordingLoggerFactory();
+
+        var job = await harness.RunIndexAsync(JobKind.Full, log: logs.CreateLogger<CorpusIndexer>(), cancel: cts.Token);
+
+        job.State.ShouldBe(JobState.Cancelled);
+        logs.Lines.ShouldNotContain(l => l.Contains("the model check failed", StringComparison.Ordinal));
+        embedder.Order.ShouldNotContain("chunk");
+    }
+
+    [Fact]
+    public async Task AFullPassOnAnUnreachableSourceKeepsTheEarlierModel()
+    {
+        var (harness, embedder) = await StartAsync();
+        await using var _ = harness;
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+        embedder.Answer = Replaced;
+        Directory.Delete(harness.SourceDirectory, recursive: true);
+
+        var job = await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+
+        // The files of the set were not visited, so none of them was embedded by the current model.
+        job.State.ShouldBe(JobState.Degraded);
+        (await StoredSet(harness)).CanaryVector.ShouldBe(ModelCanary.Pack(Original));
+    }
+
+    [Fact]
+    public async Task AFullPassThatLeftAFileOnItsEarlierVectorsDoesNotTakeTheNewModel()
+    {
+        var (harness, embedder) = await StartAsync();
+        await using var _ = harness;
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+        embedder.Answer = Replaced;
+        // Not an embedding service failure, so the pass-wide embedding flag stays clear.
+        embedder.ChunksFault = new InvalidOperationException("a fault in the reader");
+
+        var job = await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+
+        job.FilesFailed.ShouldBe(1);
+        var set = await StoredSet(harness);
+        set.CanaryVector.ShouldBe(ModelCanary.Pack(Original));
+        set.CanarySimilarity!.Value.ShouldBe(0.0, 1e-9);
+        await using var db = harness.NewContext();
+        (await CorpusIndexer.EarlierVectorsKeptAsync(db, set.Id, TestContext.Current.CancellationToken)).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AFileThatCanNeverBeReadDoesNotHoldBackTheRecord()
+    {
+        var (harness, embedder) = await StartAsync();
+        await using var _ = harness;
+        // No trailer, which is what a truncated download is: the same on every read, and it never had chunks.
+        var pdf = new byte[40_000];
+        "%PDF-1.7\n"u8.CopyTo(pdf);
+        Array.Fill(pdf, (byte)'x', 9, pdf.Length - 9);
+        await File.WriteAllBytesAsync(Path.Combine(harness.SourceDirectory, "broken.pdf"), pdf, TestContext.Current.CancellationToken);
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+        embedder.Answer = Replaced;
+
+        var job = await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+
+        job.FilesFailed.ShouldBe(1, "the unreadable file fails again on every full pass");
+        (await harness.StateOfAsync("broken.pdf")).Status.ShouldBe(FileStatus.Failed);
+        (await StoredSet(harness)).CanaryVector.ShouldBe(ModelCanary.Pack(Replaced),
+            "it holds no vectors of an earlier model, so it does not keep the notice up for good");
+    }
+
+    [Fact]
     public async Task APassIsNotFailedByACanaryThatCannotBeEmbedded()
     {
         var (harness, embedder) = await StartAsync();
@@ -701,6 +942,12 @@ public sealed class ModelCanaryIndexing
         public bool CanaryFails { get; set; }
         public bool ChunksFail { get; set; }
 
+        /// <summary>A fault no embedding service reports, thrown for a chunk: the pass records the file as failed.</summary>
+        public Exception? ChunksFault { get; set; }
+
+        /// <summary>Runs when the canary is asked, before it answers.</summary>
+        public Action? OnCanary { get; set; }
+
         /// <summary>"canary" or "chunk" for each call, in the order made.</summary>
         public List<string> Order { get; } = [];
 
@@ -710,11 +957,14 @@ public sealed class ModelCanaryIndexing
             if (IndexingHarness.IsCanary(inputs))
             {
                 Order.Add("canary");
+                OnCanary?.Invoke();
+                ct.ThrowIfCancellationRequested();
                 if (CanaryFails) throw new EmbeddingUnavailableException("canary refused");
                 return Task.FromResult<IReadOnlyList<float[]>>([Answer]);
             }
 
             Order.Add("chunk");
+            if (ChunksFault is not null) throw ChunksFault;
             if (ChunksFail) throw new EmbeddingUnavailableException("chunk refused");
             return Task.FromResult<IReadOnlyList<float[]>>([.. inputs.Select(_ => new float[768])]);
         }

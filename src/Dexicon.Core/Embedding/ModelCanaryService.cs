@@ -21,35 +21,39 @@ namespace Dexicon.Core.Embedding;
     + "checked at the next tick.")]
 public sealed class ModelCanaryService(
     IServiceScopeFactory scopes,
-    ILogger<ModelCanaryService> log) : BackgroundService
+    ILogger<ModelCanaryService> log,
+    TimeSpan? firstCheckAfter = null,
+    TimeSpan? every = null) : BackgroundService
 {
     /// <summary>
     /// Waited before the first check, so startup (the dependency probes, a cold embedding model loading
     /// into memory) finishes first. A set with no recorded canary gets one from this check, and the
-    /// sooner that happens after an upgrade the less a model change can go unseen.
+    /// sooner that happens after an upgrade the less a model change can go unseen. The constructor
+    /// argument is for tests; the host supplies none.
     /// </summary>
-    internal static readonly TimeSpan FirstCheckAfter = TimeSpan.FromMinutes(1);
+    internal static readonly TimeSpan DefaultFirstCheckAfter = TimeSpan.FromMinutes(1);
 
     /// <summary>
     /// Between checks. A model is replaced by a person at a keyboard, and the pass that follows checks
     /// again before it writes, so the delay bounds how long a change sits unreported on an idle server.
     /// </summary>
-    internal static readonly TimeSpan Every = TimeSpan.FromHours(6);
+    internal static readonly TimeSpan DefaultEvery = TimeSpan.FromHours(6);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try
         {
-            await Task.Delay(FirstCheckAfter, stoppingToken);
+            await Task.Delay(firstCheckAfter ?? DefaultFirstCheckAfter, stoppingToken);
 
-            using var timer = new PeriodicTimer(Every);
+            using var timer = new PeriodicTimer(every ?? DefaultEvery);
             do
             {
                 try { await RunTickAsync(stoppingToken); }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
                 catch (Exception ex)
                 {
-                    log.LogError(ex, "Model canary check failed; will try again in {Hours} hours", Every.TotalHours);
+                    log.LogError(ex, "Model canary check failed; will try again in {Hours} hours",
+                        (every ?? DefaultEvery).TotalHours);
                 }
             }
             while (await timer.WaitForNextTickAsync(stoppingToken));
@@ -75,8 +79,19 @@ public sealed class ModelCanaryService(
             var model = $"{set.EmbeddingProvider}/{EmbeddingTarget.Canonical(set.EmbeddingModel)}";
             if (silent.Contains(model)) continue;
 
-            var outcome = await ModelCanary.CheckAsync(db, embedder, set, log, ct);
-            if (outcome == CanaryOutcome.Unavailable) silent.Add(model);
+            try
+            {
+                var outcome = await ModelCanary.CheckAsync(db, embedder, set, log, ct);
+                if (outcome == CanaryOutcome.Unavailable) silent.Add(model);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // A provider that cannot be built, or a catalogue error, is one set's failure. The other sets
+                // are still checked, and this model is not asked again in the tick.
+                log.LogWarning(ex, "Chunk set {Set} of corpus {CorpusId}: the model check failed",
+                    set.Name, set.CorpusId);
+                silent.Add(model);
+            }
         }
     }
 }

@@ -715,7 +715,11 @@ internal sealed class IndexingHarness : IAsyncDisposable
     {
         public Task<IReadOnlyList<float[]>> EmbedAsync(EmbeddingTarget target, EmbedPurpose purpose,
             IReadOnlyList<string> inputs, string? source = null, CancellationToken ct = default) =>
-            Task.FromResult<IReadOnlyList<float[]>>(inputs.Select(_ => new float[768]).ToList());
+            Task.FromResult<IReadOnlyList<float[]>>(inputs.Select(Vector).ToList());
+
+        // Zeros everywhere but for the canary, which is compared by cosine and has none for a zero vector.
+        private static float[] Vector(string text) =>
+            text == ModelCanary.Text ? [.. Enumerable.Range(0, 768).Select(i => i == 0 ? 1f : 0f)] : new float[768];
 
         public Task<int?> CountTokensAsync(EmbeddingTarget t, string text, CancellationToken ct = default) =>
             Task.FromResult<int?>(null);

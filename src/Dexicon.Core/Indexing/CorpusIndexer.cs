@@ -92,22 +92,50 @@ public sealed class CorpusIndexer(
         try { await ModelCanary.CheckAsync(db, embedder, set, log, ct); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            log.LogWarning(ex, "Chunk set {Set}: the model check failed and was skipped", set.Name);
+            log.LogWarning(ex, "Chunk set {Set} of corpus {CorpusId}: the model check failed and was skipped",
+                set.Name, set.CorpusId);
         }
     }
 
     /// <summary>
-    /// Replaces the set's canary after a full pass. Advisory, like <see cref="CheckModelAsync"/>; a
-    /// failure leaves the earlier record, which the next check reports against if the model changed.
+    /// Replaces the set's canary after a full pass in which no file kept the vectors of an earlier pass.
+    /// Advisory, like <see cref="CheckModelAsync"/>; a failure leaves the earlier record, which the next
+    /// check reports against if the model changed.
     /// </summary>
     private async Task RecordModelAsync(ChunkSet set, CancellationToken ct)
     {
-        try { await ModelCanary.RecordAsync(db, embedder, set, log, ct); }
+        try
+        {
+            // A file that failed for a reason other than the embedding service (a read that timed out, a
+            // fault in an extractor) is not re-embedded and keeps the vectors the model before had made. The
+            // pass-wide embedding flag does not cover it, so the files are counted here.
+            var kept = await EarlierVectorsKeptAsync(db, set.Id, ct);
+            if (kept > 0)
+            {
+                log.LogInformation(
+                    "Chunk set {Set} of corpus {CorpusId}: {Files} file(s) kept vectors from before this pass, "
+                    + "so the current model was not recorded",
+                    set.Name, set.CorpusId, kept);
+                return;
+            }
+
+            await ModelCanary.RecordAsync(db, embedder, set, log, ct);
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            log.LogWarning(ex, "Chunk set {Set}: the model could not be recorded after the pass", set.Name);
+            log.LogWarning(ex, "Chunk set {Set} of corpus {CorpusId}: the model could not be recorded after the pass",
+                set.Name, set.CorpusId);
         }
     }
+
+    /// <summary>
+    /// How many files of the set still have chunks without being <c>Indexed</c>. A file the pass could not
+    /// read for good has its chunks removed and counts zero; one that timed out or failed in a way that may
+    /// pass keeps them. Read from the catalogue, which a source's pass has saved by the time it returns.
+    /// </summary>
+    internal static Task<int> EarlierVectorsKeptAsync(CatalogDbContext db, string chunkSetId, CancellationToken ct) =>
+        db.FileChunkStates.CountAsync(
+            s => s.ChunkSetId == chunkSetId && s.ChunkCount > 0 && s.Status != FileStatus.Indexed, ct);
 
     public async Task<IndexJob> RunAsync(string jobId, IProgress<IndexProgress>? progress, CancellationToken ct)
     {

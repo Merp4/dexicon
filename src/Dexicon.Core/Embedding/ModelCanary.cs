@@ -52,19 +52,19 @@ public static class ModelCanary
     /// <summary>
     /// Cosine similarity at or above which the model counts as the one that was recorded.
     ///
-    /// Measured with Ollama on CPU. One model embedded twice agrees to 3e-16 (Ollama 0.40.15, 2,768 chunk
-    /// vectors, 2026-11-09). The upgrade from Ollama 0.32.14 to 0.40.4 moved 23 vectors by at most 3e-6
-    /// (2026-10-15). A different quantisation of one model (embeddinggemma-2 as Q8_0 GGUF against nvfp4
-    /// MLX, 0.40.15, 2026-11-09) agrees at a median 0.988 and a minimum 0.958, with 83% of the top ten
-    /// results shared. The threshold sits between the first two and the third. Not measured: a hosted
-    /// provider, and one deployment moving between CPU and GPU. A false report there is a notice, since
-    /// nothing acts on it.
+    /// Measured with Ollama on CPU, as cosine similarity. One model embedded twice agrees to within 3e-16
+    /// of 1 (Ollama 0.40.15, 2,768 chunk vectors, 2026-11-09). The upgrade from Ollama 0.32.14 to 0.40.4
+    /// gave a lowest similarity of 0.999997 over 23 vectors (2026-10-15). A different quantisation of one
+    /// model (embeddinggemma-2 as Q8_0 GGUF against nvfp4 MLX, 0.40.15, 2026-11-09) gives a median of
+    /// 0.988 and a minimum of 0.958, with 83% of the top ten results shared. The first two are above the
+    /// threshold and the third is below it. Not measured: a hosted provider, and one deployment moving
+    /// between CPU and GPU. A false report there is a notice, since nothing acts on it.
     /// </summary>
     public const double SameModel = 0.999;
 
     /// <summary>
     /// Cosine similarity of two vectors. A different length is a different space, so 0 whatever the
-    /// values are, and so is a vector of zeros.
+    /// values are, and so is a vector of zeros or one with a component that is not a finite number.
     /// </summary>
     public static double Similarity(ReadOnlySpan<float> recorded, ReadOnlySpan<float> current)
     {
@@ -78,7 +78,11 @@ public static class ModelCanary
             b += (double)current[i] * current[i];
         }
 
-        return a == 0 || b == 0 ? 0 : dot / Math.Sqrt(a * b);
+        var cosine = a == 0 || b == 0 ? 0 : dot / Math.Sqrt(a * b);
+
+        // A component that is not a number makes the result not a number, which SQLite stores as NULL and which
+        // compares as neither above nor below the threshold. A vector like that is not the recorded model.
+        return double.IsFinite(cosine) ? cosine : 0;
     }
 
     /// <summary>Little-endian float32, the form <see cref="ChunkSet.CanaryVector"/> stores.</summary>
@@ -133,8 +137,8 @@ public static class ModelCanary
             if (written == 0) return CanaryOutcome.Superseded;
 
             log.LogInformation(
-                "Chunk set {Set}: recorded the {Model} canary ({Dimensions} dimensions)",
-                set.Name, set.EmbeddingModel, current.Length);
+                "Chunk set {Set} of corpus {CorpusId}: recorded the {Model} canary ({Dimensions} dimensions)",
+                set.Name, set.CorpusId, set.EmbeddingModel, current.Length);
             return CanaryOutcome.Recorded;
         }
 
@@ -152,14 +156,14 @@ public static class ModelCanary
         if (similarity >= SameModel) return CanaryOutcome.Unchanged;
 
         // On the way in only. The check runs every few hours and again at the start of each pass, and
-        // a set that stays changed would repeat this line until someone rebuilds it.
+        // a set that stays changed would repeat this line until a full pass records it again.
         if (set.CanarySimilarity is null or >= SameModel)
             log.LogWarning(
-                "Chunk set {Set}: {Provider} {Model} no longer answers as it did when the set was "
-                + "recorded (similarity {Similarity:F4}, same model at {Threshold}). Files indexed from "
-                + "here on are embedded by the current model into a set built by another; a rebuild "
-                + "re-embeds everything",
-                set.Name, set.EmbeddingProvider, set.EmbeddingModel, similarity, SameModel);
+                "Chunk set {Set} of corpus {CorpusId}: {Provider} {Model} no longer answers as it did when "
+                + "the set was recorded (similarity {Similarity:F4}, same model at {Threshold}). Files indexed "
+                + "from here on are embedded by the current model into a set built by another; a full reindex "
+                + "of the corpus re-embeds everything",
+                set.Name, set.CorpusId, set.EmbeddingProvider, set.EmbeddingModel, similarity, SameModel);
 
         return CanaryOutcome.Changed;
     }
@@ -204,7 +208,7 @@ public static class ModelCanary
         }
         catch (Exception ex) when (ex is EmbeddingUnavailableException or UnknownEmbeddingProviderException)
         {
-            log.LogDebug(ex, "Chunk set {Set}: the canary could not be embedded", set.Name);
+            log.LogDebug(ex, "Chunk set {Set} of corpus {CorpusId}: the canary could not be embedded", set.Name, set.CorpusId);
             return null;
         }
     }
