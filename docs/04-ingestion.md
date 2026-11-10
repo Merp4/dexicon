@@ -1364,6 +1364,14 @@ The collection name also carries the provider, as in
 `dexicon__ollama__nomic-embed-text__768`, because two providers can serve a model of the
 same name and those are not the same vectors.
 
+A chunk set stores no framing, so the template comes from the model's profile each time a file is embedded
+and each time a query is sent. Each set therefore records the document template it was embedded with, at its first
+check and when a full pass or a rebuild replaces every vector (under the condition that records the model, below),
+and a set whose record differs from the template the profile gives now is listed in the health report and the
+health panel ([D-47](decisions.md#d-47-a-chunk-set-records-the-document-template-it-was-embedded-with)). Saving a profile queues a rebuild, which records the new template
+when it finishes. A built-in entry added by an upgrade queues nothing, and the report is for that case. The query
+template is not recorded: it changes what a search sends, not what is stored.
+
 A name does not identify weights either. `ollama pull` on a tag that has moved replaces the
 model under the name, and a hosted model can change under a stable id. Each chunk set
 therefore stores the model's answer to one fixed sentence and compares it with a fresh

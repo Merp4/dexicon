@@ -69,7 +69,10 @@ public sealed class ModelFramingRecords : IAsyncLifetime
 
         await using var db = NewContext();
         await db.Database.EnsureCreatedAsync();
-        foreach (var (id, name) in new[] { ("c-alpha", "alpha"), ("c-beta", "beta") })
+        // The last two have ids that sort the other way from their names, so that an order by name cannot be met by
+        // the order of an index on the id.
+        foreach (var (id, name) in new[]
+            { ("c-alpha", "alpha"), ("c-beta", "beta"), ("c-first", "zeta"), ("c-second", "apex") })
             db.Corpora.Add(new Corpus { Id = id, Name = name, CreatedUtc = DateTime.UtcNow });
         await db.SaveChangesAsync();
     }
@@ -203,19 +206,21 @@ public sealed class ModelFramingRecords : IAsyncLifetime
     [Fact]
     public async Task OnlyTheCorporaTheCallerReachesAreListedInOrder()
     {
-        await AddSet("a", "c-beta", "zed", framing: "{text}");
-        await AddSet("b", "c-alpha", "two", framing: "{text}");
-        await AddSet("c", "c-alpha", "one", framing: "{text}");
+        await AddSet("a", "c-first", "x", framing: "{text}");
+        await AddSet("b", "c-second", "y", framing: "{text}");
+        await AddSet("c", "c-second", "a", framing: "{text}");
+        await AddSet("d", "c-beta", "unreached", framing: "{text}");
         _profiles.Templates = Framed;
         await using var db = NewContext();
 
-        var all = await Dexicon.Api.SystemEndpoints.ChangedFramingsAsync(
-            db, _profiles, AllCorpora, TestContext.Current.CancellationToken);
-        var alpha = await Dexicon.Api.SystemEndpoints.ChangedFramingsAsync(
-            db, _profiles, ["c-alpha"], TestContext.Current.CancellationToken);
+        var reached = await Dexicon.Api.SystemEndpoints.ChangedFramingsAsync(
+            db, _profiles, ["c-first", "c-second"], TestContext.Current.CancellationToken);
+        var second = await Dexicon.Api.SystemEndpoints.ChangedFramingsAsync(
+            db, _profiles, ["c-second"], TestContext.Current.CancellationToken);
 
-        all.Select(c => c.Set).ShouldBe(["alpha:one", "alpha:two", "beta:zed"]);
-        alpha.Select(c => c.Set).ShouldBe(["alpha:one", "alpha:two"]);
+        // By corpus name and then set name, which is not the order of the ids.
+        reached.Select(c => c.Set).ShouldBe(["apex:a", "apex:y", "zeta:x"]);
+        second.Select(c => c.Set).ShouldBe(["apex:a", "apex:y"]);
     }
 
     [Fact]

@@ -2574,6 +2574,63 @@ embedding call on that path has timed out under indexing load before, which `Emb
   pass records the new one at its end.
 - Migration `ChunkSetsRecordAModelCanary` adds three nullable columns. A version without it ignores them.
 
+### D-47 A chunk set records the document template it was embedded with
+
+**Status.** Accepted and implemented, 2026-11-10.
+
+**Decision.** Each chunk set records the document template its model's profile gave when its vectors were last all
+embedded with one framing (`chunk_sets.FramingRecorded`, migration `ChunkSetsRecordTheirFraming`). `GET /healthz`
+lists the sets whose record differs from the template the profile gives now as `changedFramings`, each with both
+templates, scoped to the corpora the caller reaches, and the health panel shows a notice that names a full reindex of
+the corpus as the way out. The report is advisory: no pass is failed or stopped by it.
+
+**Why.** A set stores no framing. The template comes from the model's profile when a file is embedded and again when
+a query is sent, so a change to the profile changes the queries of every set on the model while the stored vectors
+stay as they were. Saving a profile queues a rebuild of the sets on it. A built-in entry added by an upgrade queues
+nothing ([D-45](decisions.md#d-45-embeddinggemma-2-has-a-built-in-framing-and-is-not-the-default), existing sets), so
+a set answers with framed queries against raw vectors, or the reverse, with nothing reporting it.
+
+**What is recorded and when.**
+
+- The document template only. It decides what the vectors are. The query template decides what a search sends, and
+  changing it leaves every stored vector valid.
+- At the first check of a set with no record: the indexer records before the set's first write, and the six-hourly
+  tick of `ModelCanaryService` records for any set that still has none. Neither needs a provider to answer.
+- When a full or rebuild pass replaces the model's record ([D-46](decisions.md#d-46-a-chunk-set-records-what-its-model-answers-to-a-fixed-sentence)): after the vector store
+  holds points only for files that pass indexed. The template recorded is the one the pass embedded with, not the
+  profile as it is at the end, so a profile saved while the pass ran is reported against the pass's vectors.
+
+The comparison is made when `/healthz` is read, with the profile lookup that `IModelProfiles` caches for thirty seconds
+and a save evicts. A set therefore appears as soon as a profile is saved and clears when the rebuild it queues records
+the new template.
+
+**Rejected.**
+
+- *Storing the templates on the set and embedding its queries with them.* It would end the problem, and it would let
+  two sets on one model hold different framings (the build-beside-and-promote of
+  [D-45](decisions.md#d-45-embeddinggemma-2-has-a-built-in-framing-and-is-not-the-default), follow-up 2). It changes the
+  query path, what a profile save does, the Models screen and the existing sets, which would need a baseline. This
+  record is the first step of it and does not preclude it.
+- *A digest of both templates.* It could not show what changed, and a change to the query template alone would be
+  reported although no vector is stale.
+- *A flag written by the tick.* It would be as stale as the tick: up to six hours after a profile save. The live
+  comparison costs one catalogue read and one cached lookup per model on a poll that arrives every fifteen seconds
+  per open tab.
+- *Inferring a baseline for existing sets from the per-file fingerprints.* A fingerprint also covers the chunking and
+  the content, so a mismatch is not evidence about the framing.
+
+**Consequences.**
+
+- An existing set records the profile as it is at its first check after the upgrade. A framing change made before
+  then is not visible, including a set built raw before D-45's entry shipped.
+- A refresh re-embeds the files whose fingerprint changed, which is every file when the document template changed,
+  and does not replace the record. Only a full pass or a rebuild clears the report, under D-46's condition, so a file
+  that keeps earlier vectors keeps the set listed.
+- Migration `ChunkSetsRecordTheirFraming` adds one nullable column. A version without it ignores the column.
+
+**Revisit when** a set has to keep its own framing: two sets on one model with different templates, or a framing
+change that has to be built beside the live set and promoted.
+
 ---
 
 ## Resolved questions
