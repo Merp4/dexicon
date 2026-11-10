@@ -128,6 +128,12 @@ public static class ModelCanary
 
         if (set.CanaryVector is not { } recorded)
         {
+            if (!CanBeRecorded(current))
+            {
+                LogUnusable(log, set);
+                return CanaryOutcome.Unavailable;
+            }
+
             var written = await db.ChunkSets.Where(s => s.Id == id && s.CanaryVector == null)
                 .ExecuteUpdateAsync(u => u
                     .SetProperty(s => s.CanaryVector, Pack(current))
@@ -179,6 +185,12 @@ public static class ModelCanary
         var current = await TryEmbedAsync(embedder, set, log, ct);
         if (current is null) return false;
 
+        if (!CanBeRecorded(current))
+        {
+            LogUnusable(log, set);
+            return false;
+        }
+
         var id = set.Id;
         var now = DateTime.UtcNow;
         await db.ChunkSets.Where(s => s.Id == id)
@@ -189,6 +201,20 @@ public static class ModelCanary
 
         return true;
     }
+
+    /// <summary>
+    /// Whether an answer can stand as a record: it has to be similar to itself, which a vector of zeros, or one with a
+    /// component that is not a finite number, is not. Recorded, it would read as changed against every later answer, and
+    /// the notice would blame a model change for a model that never answered usefully. Compared with a record, the same
+    /// answer is not refused: it reads as a similarity of 0.
+    /// </summary>
+    private static bool CanBeRecorded(float[] answer) => Similarity(answer, answer) >= SameModel;
+
+    private static void LogUnusable(ILogger log, ChunkSet set) =>
+        log.LogWarning(
+            "Chunk set {Set} of corpus {CorpusId}: {Model} answered the canary with a vector of zeros or one that is not a "
+            + "number, so it was not recorded",
+            set.Name, set.CorpusId, set.EmbeddingModel);
 
     /// <summary>
     /// The model's current answer, or null when the provider could not give one. Unreachable is not

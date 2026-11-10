@@ -397,6 +397,57 @@ public sealed class ModelCanaryChecks : IAsyncLifetime
         (await Stored()).CanaryVector.ShouldBeNull();
     }
 
+    public static TheoryData<float[]> UnusableAnswers => new()
+    {
+        new float[] { 0f, 0f, 0f, 0f },
+        new float[] { float.NaN, 0f, 0f, 0f },
+        new float[] { 1f, float.PositiveInfinity, 0f, 0f },
+    };
+
+    [Theory]
+    [MemberData(nameof(UnusableAnswers))]
+    public async Task AnAnswerThatCannotBeComparedWithItselfIsNotRecordedAsABaseline(float[] answer)
+    {
+        _embedder.Answer = answer;
+
+        (await Check()).ShouldBe(CanaryOutcome.Unavailable);
+
+        var set = await Stored();
+        set.CanaryVector.ShouldBeNull();
+        set.CanarySimilarity.ShouldBeNull();
+    }
+
+    [Theory]
+    [MemberData(nameof(UnusableAnswers))]
+    public async Task AnAnswerThatCannotBeComparedWithItselfDoesNotReplaceAnEarlierRecord(float[] answer)
+    {
+        _embedder.Answer = Original;
+        await Check();
+        _embedder.Answer = At(0.5);
+        await Check();
+
+        _embedder.Answer = answer;
+        (await ModelCanary.RecordAsync(
+            _db, _embedder, await Stored(), NullLogger.Instance, TestContext.Current.CancellationToken)).ShouldBeFalse();
+
+        // Still the first model's record, and still reported.
+        (await Stored()).CanaryVector.ShouldBe(ModelCanary.Pack(Original));
+        (await Changed(_db)).ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task AnUnusableAnswerToACheckAgainstARecordReadsAsAChange()
+    {
+        _embedder.Answer = Original;
+        await Check();
+
+        _embedder.Answer = [0f, 0f, 0f, 0f];
+        (await Check()).ShouldBe(CanaryOutcome.Changed);
+
+        (await Stored()).CanarySimilarity!.Value.ShouldBe(0.0);
+        (await Changed(_db)).ShouldHaveSingleItem().Similarity.ShouldBe(0.0);
+    }
+
     [Fact]
     public async Task ChangedSetsAreListedInCorpusAndSetOrderWhateverOrderTheyWereAdded()
     {
@@ -897,7 +948,29 @@ public sealed class ModelCanaryIndexing
         set.CanaryVector.ShouldBe(ModelCanary.Pack(Original));
         set.CanarySimilarity!.Value.ShouldBe(0.0, 1e-9);
         await using var db = harness.NewContext();
-        (await CorpusIndexer.EarlierVectorsKeptAsync(db, set.Id, TestContext.Current.CancellationToken)).ShouldBe(1);
+        (await CorpusIndexer.EarlierVectorsKeptAsync(db, set.Id, job.StartedUtc!.Value, TestContext.Current.CancellationToken))
+            .ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AFullPassThatCouldNotRemoveAVanishedFilesVectorsDoesNotTakeTheNewModel()
+    {
+        var (harness, embedder) = await StartAsync();
+        await using var _ = harness;
+        await harness.WriteFileAsync("two.txt", IndexingHarness.Prose("second"));
+        await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+        embedder.Answer = Replaced;
+        File.Delete(Path.Combine(harness.SourceDirectory, "two.txt"));
+        harness.Vectors.DeleteFailsForPath = "two.txt";
+
+        var job = await harness.RunIndexAsync(JobKind.Full, cancel: TestContext.Current.CancellationToken);
+
+        // The file is gone from disk and its state is still Indexed, with the old model's vectors in the store.
+        job.State.ShouldBe(JobState.Succeeded);
+        (await StoredSet(harness)).CanaryVector.ShouldBe(ModelCanary.Pack(Original));
+        await using var db = harness.NewContext();
+        (await CorpusIndexer.EarlierVectorsKeptAsync(
+            db, (await StoredSet(harness)).Id, job.StartedUtc!.Value, TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     [Fact]

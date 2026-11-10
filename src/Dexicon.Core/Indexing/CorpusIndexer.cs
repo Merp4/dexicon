@@ -102,14 +102,15 @@ public sealed class CorpusIndexer(
     /// Advisory, like <see cref="CheckModelAsync"/>; a failure leaves the earlier record, which the next
     /// check reports against if the model changed.
     /// </summary>
-    private async Task RecordModelAsync(ChunkSet set, CancellationToken ct)
+    private async Task RecordModelAsync(ChunkSet set, DateTime passStarted, CancellationToken ct)
     {
         try
         {
-            // A file that failed for a reason other than the embedding service (a read that timed out, a
-            // fault in an extractor) is not re-embedded and keeps the vectors the model before had made. The
-            // pass-wide embedding flag does not cover it, so the files are counted here.
-            var kept = await EarlierVectorsKeptAsync(db, set.Id, ct);
+            // A file that was not re-embedded keeps the vectors the model before had made: one that failed for a
+            // reason other than the embedding service (a read that timed out, a fault in an extractor), or one that
+            // vanished and whose vectors could not be removed. The pass-wide embedding flag does not cover them,
+            // so the files are counted here.
+            var kept = await EarlierVectorsKeptAsync(db, set.Id, passStarted, ct);
             if (kept > 0)
             {
                 log.LogInformation(
@@ -129,13 +130,16 @@ public sealed class CorpusIndexer(
     }
 
     /// <summary>
-    /// How many files of the set still have chunks without being <c>Indexed</c>. A file the pass could not
-    /// read for good has its chunks removed and counts zero; one that timed out or failed in a way that may
-    /// pass keeps them. Read from the catalogue, which a source's pass has saved by the time it returns.
+    /// How many files of the set have chunks that were not written since <paramref name="since"/>, the start of
+    /// the pass. A file the pass re-embedded has an indexed time after it. One that failed to embed or to read,
+    /// timed out, or vanished with its vectors left in the store keeps an earlier one. A file the pass could not
+    /// read for good has its chunks removed and counts zero. Read from the catalogue, which a source's pass has
+    /// saved by the time it returns.
     /// </summary>
-    internal static Task<int> EarlierVectorsKeptAsync(CatalogDbContext db, string chunkSetId, CancellationToken ct) =>
+    internal static Task<int> EarlierVectorsKeptAsync(
+        CatalogDbContext db, string chunkSetId, DateTime since, CancellationToken ct) =>
         db.FileChunkStates.CountAsync(
-            s => s.ChunkSetId == chunkSetId && s.ChunkCount > 0 && s.Status != FileStatus.Indexed, ct);
+            s => s.ChunkSetId == chunkSetId && s.ChunkCount > 0 && (s.IndexedUtc == null || s.IndexedUtc < since), ct);
 
     public async Task<IndexJob> RunAsync(string jobId, IProgress<IndexProgress>? progress, CancellationToken ct)
     {
@@ -320,7 +324,8 @@ public sealed class CorpusIndexer(
                     // A full pass re-embeds every file, so the set now holds only what the current model
                     // makes of them. A refresh leaves files it did not touch as they were, and does not
                     // change what the set is known to hold.
-                    if (job.Kind is JobKind.Full or JobKind.Rebuild) await RecordModelAsync(set, ct);
+                    if (job.Kind is JobKind.Full or JobKind.Rebuild)
+                        await RecordModelAsync(set, job.StartedUtc ?? DateTime.UtcNow, ct);
                 }
             }
 

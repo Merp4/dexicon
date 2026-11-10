@@ -2505,8 +2505,10 @@ every set every six hours from `ModelCanaryService`, whose first check is one mi
 below 0.999 is listed in `/healthz` as `changedModels` and in the health panel, scoped to the corpora the caller reaches.
 A set with no stored vector (every set that exists when this version first runs, and every new set) stores the model's
 current answer at its first check, which precedes its first write. A full or rebuild pass replaces the stored vector with
-the model's current answer when no file of the set is left on the vectors of an earlier pass: no file that is not
-`Indexed` still has chunks, and no file failed to embed or was out of reach.
+the model's current answer when no file of the set is left on the vectors of an earlier pass: every file that has chunks
+was indexed after the pass began, no file failed to embed, and no source was out of reach. An answer that is all zeros,
+or has a component that is not a number, cannot be compared with itself: it is not recorded, and the check counts as
+unavailable. Against an existing record it reads as a similarity of 0.
 
 The check is advisory. A pass runs, writes and succeeds whatever it finds, and a provider that does not answer leaves
 the earlier state as it was. Whether a set counts as changed is computed from the stored similarity and the constant, so
@@ -2549,8 +2551,9 @@ embedding call on that path has timed out under indexing load before, which `Emb
   in all) before each set's check returns, including a refresh that finds nothing to embed.
 - A refresh after a change keeps writing vectors from the new model into the set. Only a full pass clears the report,
   which in the web UI is **Full reindex** on the corpus. A pass that leaves a file on the vectors of an earlier pass
-  does not, whether the file failed to embed or failed another way, such as a read that timed out. A file that can never
-  be read has no chunks and does not hold the record back.
+  does not, whether the file failed to embed, failed another way such as a read that timed out, or vanished with its
+  vectors left in the store because a delete was refused. A file that can never be read has no chunks and does not hold
+  the record back.
 - A pass is one unit for the failure flags: once a file of one set fails to embed, or a source is out of reach, no later
   set of the same pass is recorded.
 - A model replaced while a full pass runs leaves the files embedded before the replacement on the old model, and the
