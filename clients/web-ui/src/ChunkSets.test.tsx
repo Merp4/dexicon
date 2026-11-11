@@ -809,6 +809,17 @@ describe('saving a framing', () => {
     expect(within(dialog).queryByText(/chunk set\(s\)/)).not.toBeInTheDocument();
   });
 
+  it('says "is" of a single chunk set and "are" of several', async () => {
+    saveModelProfile.mockResolvedValue({
+      provider: 'ollama', model: 'nomic-embed-text:latest', reindexing: ['e2e:default'], note: null,
+    });
+    const { dialog, user } = await openFraming();
+
+    await save(user, dialog);
+
+    expect(await within(dialog).findByText(/Saved\. 1 chunk set is re-indexing/)).toBeInTheDocument();
+  });
+
   it('closes without a message when nothing was queued and the server has no note', async () => {
     saveModelProfile.mockResolvedValue({
       provider: 'ollama', model: 'nomic-embed-text:latest', reindexing: [], note: null,

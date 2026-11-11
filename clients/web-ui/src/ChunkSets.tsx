@@ -1104,7 +1104,7 @@ function FramingModal({
           {saved.reindexing.length > 0 ? (
             <>
               <p className="text-sm">
-                Saved. {saved.reindexing.length} chunk set{saved.reindexing.length === 1 ? '' : 's'} are re-indexing, because
+                Saved. {saved.reindexing.length} chunk set{saved.reindexing.length === 1 ? ' is' : 's are'} re-indexing, because
                 framing changes the vectors and both sides of a search have to agree:
               </p>
               <ul className="mono text-sm">
