@@ -33,6 +33,24 @@ Dexicon's own Ollama publishes no port. Run this from a container on its network
 (docker run --rm --network dexicon_default -v <repo>:/repo python:3.12-alpine python ...) or with
 docker-compose.debug.yml, which publishes it on 21434.
 
+CHUNK SIZE AND CONTEXT. An arm may name a chunk target in characters (the fourth element of its entry); without one it
+uses TARGET. The `v1_c*`, `eg2x_c*` and `eg2d_c*` arms hold the model and the framing fixed and change only how much text one
+chunk carries, to ask what the larger context of the second generation is worth:
+
+  v1_c1200 / v1_c2500 / v1_c3500     embeddinggemma:latest, whose options are num_ctx 2048 and num_batch 2048
+  eg2x_c1200 ... eg2x_c16000         embeddinggemma-2:q8_0, a local alias of the ggml-org Q8_0 file with num_ctx 8192 and
+                                     num_batch 8192 (ollama create from a Modelfile; the GGUF itself trains to 262,144)
+  eg2d_c3500                         the ggml-org file at Ollama's default options: a control that the alias is the same
+                                     weights where both can take the input
+
+The alias must exist (ollama show embeddinggemma-2:q8_0 lists its parameters). A chunk that the model cannot take fails the
+arm: truncate is off, so nothing is cut quietly.
+
+Docs queries carry an `answer` literal; those whose literal is in their file are ANSWERABLE (47 of 55 on a948496, since the rest
+were edited out of the documents). For those the output also reports ANSWER RECALL: whether the top 1 chunk, and the top 3,
+contain it, with the mean characters delivered, because a bigger chunk finds the file more easily (fewer, larger buckets) and
+costs the reader more text; the pair of numbers is the trade.
+
 Writes --out (default modelbench-out.json in the current directory).
 """
 import argparse
@@ -48,10 +66,16 @@ import urllib.error
 import urllib.request
 
 BATCH, WORKERS, TARGET, HARD = 32, 4, 1200, 1400
+HARD_RATIO = HARD / TARGET
 TEXT_EXT = {".md", ".cs", ".csproj", ".json", ".props", ".yml", ".yaml", ".txt"}
 MAX_FILE_BYTES = 256 * 1024
 SKIP_DIRS = {"bin", "obj", "node_modules", ".git"}
 MIN_FREE_GB = 10
+# During an arm: below this the VM is close to an out-of-memory kill of Ollama's runner, which the live app shares. On 2026-10-14 a
+# num_batch of 32768 made a runner hold 26.8 GB of shared memory and the kernel killed it.
+ABORT_FREE_GB = 3
+# Characters of text one request may carry; a bigger chunk goes in smaller batches, and in fewer at once.
+REQUEST_CHARS = 40000
 
 V1 = "embeddinggemma:latest"
 GGUF = "hf.co/ggml-org/embeddinggemma-2-GGUF:Q8_0"
@@ -77,6 +101,12 @@ ARMS = {
     "eg2_nvfp4":         (MLX, GEMMA_DOC, GEMMA_Q),
     "nomic":             ("nomic-embed-text", "search_document: {t}", "search_query: {t}"),
 }
+ALIAS = "embeddinggemma-2:q8_0"
+for _t in (1200, 2500, 3500):
+    ARMS[f"v1_c{_t}"] = (V1, GEMMA_DOC, GEMMA_Q, _t)
+for _t in (1200, 2500, 3500, 8000, 16000):
+    ARMS[f"eg2x_c{_t}"] = (ALIAS, GEMMA_DOC, GEMMA_Q, _t)
+ARMS["eg2d_c3500"] = (GGUF, GEMMA_DOC, GEMMA_Q, 3500)
 
 # Pairs worth a paired interval, when both arms ran.
 PAIRS = [
@@ -84,8 +114,17 @@ PAIRS = [
     ("v1_raw", "v1_framed"), ("nomic", "v1_framed"), ("v1_framed_repeat", "v1_framed"),
     ("v1_title", "v1_framed"), ("eg2_q8_title", "eg2_q8"), ("eg2_q8_title", "v1_title"),
     ("eg2_q8_codeprompt", "eg2_q8_title"), ("eg2_q8_codeprompt", "v1_title"),
+    ("v1_c2500", "v1_c1200"), ("v1_c3500", "v1_c1200"),
+    ("eg2x_c2500", "eg2x_c1200"), ("eg2x_c3500", "eg2x_c1200"), ("eg2x_c8000", "eg2x_c1200"), ("eg2x_c16000", "eg2x_c1200"),
+    ("eg2x_c8000", "eg2x_c3500"), ("eg2x_c16000", "eg2x_c3500"),
+    ("eg2x_c1200", "v1_c1200"), ("eg2x_c2500", "v1_c2500"), ("eg2x_c3500", "v1_c3500"),
+    ("eg2x_c8000", "v1_c3500"), ("eg2x_c16000", "v1_c3500"),
+    # Against the first generation's best size on each corpus (1,200 on docs, 2,500 on code), and the one high point of
+    # the second generation on code. Computed by hand on the 2026-11-11 results; a run now includes them.
+    ("eg2x_c8000", "v1_c1200"), ("eg2x_c16000", "v1_c1200"), ("eg2x_c16000", "v1_c2500"),
+    ("eg2x_c2500", "v1_c1200"), ("eg2x_c2500", "eg2x_c3500"),
 ] + [(f"v1_title_placebo_s{n}", base) for n in range(1, 11) for base in ("v1_framed", "v1_title")]
-AGREEMENT = [("eg2_q8", "eg2_nvfp4"), ("v1_framed", "v1_framed_repeat"), ("eg2_q8", "eg2_q8_title")]
+AGREEMENT = [("eg2_q8", "eg2_nvfp4"), ("v1_framed", "v1_framed_repeat"), ("eg2_q8", "eg2_q8_title"), ("eg2d_c3500", "eg2x_c3500")]
 
 
 def same_model(listed, wanted):
@@ -110,7 +149,8 @@ def call(base, path, body, timeout=900):
     return json.load(urllib.request.urlopen(req, timeout=timeout))
 
 
-def chunks_of(path):
+def chunks_of(path, target=TARGET):
+    hard = int(target * HARD_RATIO)
     text = path.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
     out, cur = [], ""
 
@@ -121,25 +161,25 @@ def chunks_of(path):
         cur = ""
 
     for para in text.split("\n\n"):
-        if len(para) > HARD:  # a long paragraph is split on line boundaries
+        if len(para) > hard:  # a long paragraph is split on line boundaries
             flush()
             piece = ""
             for line in para.split("\n"):
-                if piece and len(piece) + len(line) + 1 > TARGET:
+                if piece and len(piece) + len(line) + 1 > target:
                     out.append(piece.strip())
                     piece = ""
-                piece += line[:HARD] + "\n"
+                piece += line[:hard] + "\n"
             if piece.strip():
                 out.append(piece.strip())
             continue
-        if cur and len(cur) + len(para) + 2 > TARGET:
+        if cur and len(cur) + len(para) + 2 > target:
             flush()
         cur += para + "\n\n"
     flush()
     return out
 
 
-def load_corpus(root, sub):
+def load_corpus(root, sub, target=TARGET):
     items = []
     base = root / sub
     for path in sorted(p for p in base.rglob("*") if p.is_file()):  # sorted: placebo draws depend on this order
@@ -148,7 +188,7 @@ def load_corpus(root, sub):
         rel = path.relative_to(base).as_posix()
         if SKIP_DIRS.intersection(path.relative_to(base).parts[:-1]):
             continue
-        items.extend((rel, c) for c in chunks_of(path))
+        items.extend((rel, c) for c in chunks_of(path, target))
     return items
 
 
@@ -171,13 +211,16 @@ def placebo_paths(items, seed):
     return out
 
 
-def embed_all(base, model, texts, label):
-    """Batches of BATCH, WORKERS in flight. Any batch that fails twice, or returns nulls, raises."""
-    batches = [texts[i:i + BATCH] for i in range(0, len(texts), BATCH)]
+def embed_all(base, model, texts, label, batch=BATCH, workers=WORKERS):
+    """Batches of `batch`, `workers` in flight. Any batch that fails twice, or returns nulls, raises."""
+    batches = [texts[i:i + batch] for i in range(0, len(texts), batch)]
     secs, vecs = [0.0] * len(batches), [None] * len(batches)
 
     def one(i):
         t0 = time.time()
+        free = mem_available_gb()
+        if free is not None and free < ABORT_FREE_GB:
+            raise SystemExit(f"ABORT in {label}: {free:.1f} GB available in the VM (floor {ABORT_FREE_GB}); stopping before the kernel does")
         for attempt in (0, 1):
             try:
                 d = call(base, "/api/embed", {"model": model, "input": batches[i], "truncate": False})
@@ -190,7 +233,7 @@ def embed_all(base, model, texts, label):
                 if attempt == 1:
                     raise RuntimeError(f"{label}: batch {i} failed twice: {e}") from e
 
-    with cf.ThreadPoolExecutor(WORKERS) as ex:
+    with cf.ThreadPoolExecutor(workers) as ex:
         list(ex.map(one, range(len(batches))))
     return [x for b in vecs for x in b], secs
 
@@ -204,7 +247,12 @@ def dot(a, b):
     return sum(x * y for x, y in zip(a, b))
 
 
-def evaluate(qvecs, cvecs, files, queries):
+def squash(text):
+    """Case and whitespace folded, so a literal that wraps across a line still matches."""
+    return " ".join(text.lower().split())
+
+
+def evaluate(qvecs, cvecs, files, queries, texts=None):
     ranks, tops = [], []
     for qv, q in zip(qvecs, queries):
         scores = sorted(((dot(qv, cv), i) for i, cv in enumerate(cvecs)), reverse=True)[:10]
@@ -212,7 +260,24 @@ def evaluate(qvecs, cvecs, files, queries):
         ranks.append(next((k + 1 for k, (_, i) in enumerate(scores) if files[i] == q["file"]), 0))
     rr = [1 / r if r else 0.0 for r in ranks]
     n = len(ranks)
-    return {"mrr": sum(rr) / n,
+    answer = {}
+    if texts is not None:
+        folded = [squash(t) for t in texts]
+        scored = [(q, top) for q, top in zip(queries, tops) if q.get("answerable")]
+        if scored:
+            lit = lambda q: squash(q.get("answer_literal") or q["answer"])
+            by_file = {}
+            for f, t in zip(files, folded):
+                by_file.setdefault(f, []).append(t)
+            # The most any arm could score at this chunk size: a literal that a boundary splits is in no chunk.
+            ceiling = [any(lit(q) in t for t in by_file.get(q["file"], [])) for q, _ in scored]
+            a1 = [lit(q) in folded[top[0]] for q, top in scored]
+            a3 = [any(lit(q) in folded[i] for i in top[:3]) for q, top in scored]
+            answer = {"answer_queries": len(scored), "answer_ceiling": sum(ceiling) / len(scored),
+                      "answer_top1": sum(a1) / len(scored), "answer_top3": sum(a3) / len(scored),
+                      "chars_top1": sum(len(texts[top[0]]) for _, top in scored) / len(scored),
+                      "chars_top3": sum(sum(len(texts[i]) for i in top[:3]) for _, top in scored) / len(scored)}
+    return {**answer, "mrr": sum(rr) / n,
             "hit1": sum(1 for r in ranks if r == 1) / n,
             "hit3": sum(1 for r in ranks if 0 < r <= 3) / n,
             "hit5": sum(1 for r in ranks if 0 < r <= 5) / n,
@@ -252,8 +317,9 @@ def main():
             sys.exit(f"--model {item!r}: expected ARM=MODEL with ARM one of {', '.join(arms)}")
         arms[arm][0] = model
     if args.list:
-        for k, (m, d, q) in arms.items():
-            print(f"{k:<20} {m:<46} doc {d!r}  query {q!r}")
+        for k, v in arms.items():
+            m, d, q = v[:3]
+            print(f"{k:<20} {m:<46} doc {d!r}  query {q!r}" + (f"  chunks of {v[3]} characters" if len(v) > 3 else ""))
         return
     wanted = args.arms.split(",") if args.arms else list(arms)
     unknown = [a for a in wanted if a not in arms]
@@ -261,44 +327,62 @@ def main():
         sys.exit(f"unknown arm(s): {', '.join(unknown)}. Known: {', '.join(arms)}")
 
     base, root = args.ollama.rstrip("/"), pathlib.Path(args.root)
-    corpora = {}
-    for name, sub, qfile in (("docs", "docs", "queries-docs.json"), ("code", "src", "queries-code.json")):
-        spec = json.loads((root / "scripts/bench" / qfile).read_text(encoding="utf-8"))
-        items = load_corpus(root, sub)
-        files = {f for f, _ in items}
-        missing = {q["file"] for q in spec["queries"]} - files
-        if missing:
-            sys.exit(f"{name}: query targets missing from the corpus under {root}: {sorted(missing)[:5]}")
-        if len(items) < 300:
-            sys.exit(f"{name}: only {len(items)} chunks loaded from {root / sub}")
-        corpora[name] = {"items": items, "queries": spec["queries"]}
-        median = sorted(len(c) for _, c in items)[len(items) // 2]
-        print(f"{name}: {len(items)} chunks from {len(files)} files, {len(spec['queries'])} queries, "
-              f"median {median} chars/chunk", flush=True)
+    specs = {name: json.loads((root / "scripts/bench" / qfile).read_text(encoding="utf-8"))
+             for name, qfile in (("docs", "queries-docs.json"), ("code", "queries-code.json"))}
+    subs = {"docs": "docs", "code": "src"}
+    # A literal that is not in its file at all (the document was edited after the question was written) cannot be found by any
+    # arm, so it is left out of answer recall; what is left is the denominator at every chunk size.
+    for q in specs["docs"]["queries"]:
+        text = (root / "docs" / q["file"]).read_text(encoding="utf-8", errors="replace")
+        q["answerable"] = bool(q.get("answer")) and squash(q["answer"]) in squash(text)
+    print(f"docs: {sum(q['answerable'] for q in specs['docs']['queries'])} of {len(specs['docs']['queries'])} answer literals are in their file", flush=True)
+    targets = sorted({(arms[a][3] if len(arms[a]) > 3 else TARGET) for a in wanted})
+    corpora_by_target = {}
+    for target in targets:
+        corpora = {}
+        for name in ("docs", "code"):
+            spec, sub = specs[name], subs[name]
+            items = load_corpus(root, sub, target)
+            files = {f for f, _ in items}
+            missing = {q["file"] for q in spec["queries"]} - files
+            if missing:
+                sys.exit(f"{name}: query targets missing from the corpus under {root}: {sorted(missing)[:5]}")
+            if len(items) < (300 if target <= TARGET * 2 else 20):
+                sys.exit(f"{name}: only {len(items)} chunks loaded from {root / sub} at {target} characters")
+            corpora[name] = {"items": items, "queries": spec["queries"]}
+            median = sorted(len(c) for _, c in items)[len(items) // 2]
+            print(f"target {target}: {name}: {len(items)} chunks from {len(files)} files, {len(spec['queries'])} queries, "
+                  f"median {median} chars/chunk", flush=True)
+        corpora_by_target[target] = corpora
+    corpora = corpora_by_target[TARGET] if TARGET in corpora_by_target else next(iter(corpora_by_target.values()))
 
     result = {"arms": {}, "meta": {"batch": BATCH, "workers": WORKERS, "target_chars": TARGET,
-                                   "chunks": {k: len(v["items"]) for k, v in corpora.items()},
+                                   "chunks": {str(t): {k: len(v["items"]) for k, v in c.items()} for t, c in corpora_by_target.items()},
                                    "ollama": json.load(urllib.request.urlopen(base + "/api/version"))}}
     vectors = {}
     for arm in wanted:
-        model, dtpl, qtpl = arms[arm]
+        model, dtpl, qtpl = arms[arm][:3]
+        target = arms[arm][3] if len(arms[arm]) > 3 else TARGET
+        corpora = corpora_by_target[target]
+        batch = max(1, min(BATCH, REQUEST_CHARS // target))
+        workers = WORKERS if target <= 5000 else 2
         free = mem_available_gb()
         if free is not None and free < MIN_FREE_GB:
             sys.exit(f"ABORT before {arm}: only {free:.1f} GB available in the VM (floor {MIN_FREE_GB})")
         print(f"\n=== {arm}  model={model}" + (f"  (VM available {free:.1f} GB)" if free is not None else ""), flush=True)
         call(base, "/api/embed", {"model": model, "input": ["warm"], "truncate": False})
         ps = [m for m in json.load(urllib.request.urlopen(base + "/api/ps"))["models"] if same_model(m["name"], model)]
-        result["arms"][arm] = {"model": model, "ps": ps[:1]}
+        result["arms"][arm] = {"model": model, "ps": ps[:1], "target_chars": target, "batch": batch, "workers": workers}
         for cname, c in corpora.items():
             items, queries = c["items"], c["queries"]
             paths = placebo_paths(items, placebo_seed(arm)) if "placebo" in arm else [f for f, _ in items]
             t0 = time.time()
             cv, secs = embed_all(base, model, [dtpl.format(t=t, p=paths[i]) for i, (_, t) in enumerate(items)],
-                                 f"{arm}/{cname}")
+                                 f"{arm}/{cname}", batch, workers)
             took = time.time() - t0
             qv, _ = embed_all(base, model, [qtpl.format(t=q["query"]) for q in queries], f"{arm}/{cname}/queries")
             cv, qv = [norm(v) for v in cv], [norm(v) for v in qv]
-            ev = evaluate(qv, cv, [f for f, _ in items], queries)
+            ev = evaluate(qv, cv, [f for f, _ in items], queries, [t for _, t in items])
             ev.update({"chunks": len(items), "embed_seconds": took, "chunks_per_second": len(items) / took,
                        "median_batch_s": sorted(secs)[len(secs) // 2], "max_batch_s": max(secs), "dims": len(cv[0])})
             result["arms"][arm][cname] = ev
@@ -307,6 +391,10 @@ def main():
                   f"hit@5 {ev['hit5']:.2f} miss {ev['miss']:.2f} | {len(items)} chunks in {took:.0f}s = "
                   f"{ev['chunks_per_second']:.1f}/s (median batch {ev['median_batch_s']:.1f}s, "
                   f"max {ev['max_batch_s']:.1f}s)", flush=True)
+            if "answer_top1" in ev:
+                print(f"    answer in top 1 chunk {ev['answer_top1']:.2f} ({ev['chars_top1']:.0f} chars), "
+                      f"in top 3 {ev['answer_top3']:.2f} ({ev['chars_top3']:.0f} chars), of {ev['answer_queries']} answerable queries "
+                      f"(ceiling {ev['answer_ceiling']:.2f}: the literal is whole in a chunk of its file; the rest are cut by a boundary)", flush=True)
         call(base, "/api/embed", {"model": model, "keep_alive": 0})
 
     result["paired"], result["agreement"] = {}, {}

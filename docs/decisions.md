@@ -2412,7 +2412,7 @@ keyed by language.
 
 ### D-45 embeddinggemma-2 has a built-in framing and is not the default
 
-**Status.** Accepted, 2026-11-10. Measured between 2026-10-07 and 2026-11-10 against Ollama 0.40.0,
+**Status.** Accepted, 2026-11-10. Measured between 2026-10-07 and 2026-11-11 against Ollama 0.40.0,
 0.40.4 and 0.40.15 on Linux with two NVIDIA GPUs.
 
 **Decision.** `embeddinggemma-2` gets a built-in framing and `embeddinggemma` stays the default. The
@@ -2441,6 +2441,13 @@ profile for that name.
   code-retrieval query prompt brings the second generation to 0.724 and 0.705. The card's MTEB gains
   (code 78.68 against 68.76) do not appear on file-level lookups
   ([benchmarks](benchmarks.md#comparing-models-directly-2026-11-09)).
+- *Its longer context is not shown to help.* The second generation reads chunks of 8,000 and 16,000
+  characters that the first cannot. Across chunk targets of 1,200 to 16,000 characters it scored 0.654 to
+  0.779 on docs and 0.630 to 0.744 on code. At equal chunk size (1,200 to 3,500) every interval against
+  `embeddinggemma` includes zero. At 16,000 characters on docs it gains +0.113 [+0.024, +0.200] over its own
+  1,200 and +0.056 [-0.048, +0.156] over the first generation's best size, and its top three chunks then
+  carry 41,210 characters; code does not gain (-0.029 [-0.147, +0.087]). No predictions were recorded for
+  this round ([benchmarks](benchmarks.md#chunk-size-and-the-second-generations-context-2026-11-11)).
 - *The cost is a re-embed of every corpus that follows it.* 258,000 chunks, the size of one deployed
   instance, would take 2 to 6 hours at the speeds measured for `embeddinggemma` and 3 to 10 for `embeddinggemma-2` (13 to 39 and
   7 to 25 chunks per second, on a GPU shared with a training workload).
@@ -2487,6 +2494,11 @@ place.
 3. *The listing filter admits `laya`.* Its family is `modern-bert` and the filter accepts any family
    containing "bert". A decision model that answers `/api/embed` at all would pass the dimension probe.
 4. *Model identity.* Decided in [D-46](#d-46-a-chunk-set-records-what-its-model-answers-to-a-fixed-sentence).
+5. *The chunk size suggested for the alias.* The UI suggests 90% of the measured context: 7,335 tokens
+   (31,232 characters of prose) for `embeddinggemma-2:q8_0` against 1,805 for `embeddinggemma` (Test limits,
+   2026-11-11). The largest arms measured are about 4,200 tokens and show no gain on code, so the suggestion
+   for a long-context model is untested. Suggesting less than the model can take is a design change that is
+   recorded here and not made.
 
 **Cost.** The Models screen lists `embeddinggemma-2` tags that this record does not recommend. The
 measurement is dense-only on one repository. Running `scripts/bench/sweep.py` with the official
