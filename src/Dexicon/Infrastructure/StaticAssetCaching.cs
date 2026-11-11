@@ -49,15 +49,6 @@ internal static class StaticAssetCaching
     };
 
     /// <summary>
-    /// For the SPA fallback, which answers every route the UI owns with <c>index.html</c> under that route's own
-    /// path, so the policy cannot depend on the path.
-    /// </summary>
-    internal static StaticFileOptions FallbackOptions() => new()
-    {
-        OnPrepareResponse = context => Apply(context, Revalidate),
-    };
-
-    /// <summary>
     /// Sets the policy on a response that carries the file: 200, 206 and 304, which is where an unchanged
     /// <c>index.html</c> is answered. A 412 or a 416 is an answer about the request and says nothing about the file,
     /// and a year of caching on it would be wrong; the middleware calls this for those too.

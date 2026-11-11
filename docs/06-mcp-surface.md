@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| Transport | **Streamable HTTP** at `POST /mcp`. Legacy HTTP+SSE is deprecated in the spec and not implemented. |
+| Transport | **Streamable HTTP** at `POST /mcp`. Legacy HTTP+SSE is deprecated in the spec and not implemented. GET, HEAD, PUT and DELETE answer 405 with `Allow: POST`: the transport is stateless, so there is no stream to open and no session to end. |
 | Handshake revisions | `2024-11-05`, `2025-03-26`, `2025-06-18`, **`2025-11-25`** — what SDK 2.2.0 will negotiate through `initialize`. |
 | Handshake-free | **`2026-07-28`** clients send no `initialize` at all. Measured: `tools/list` and `tools/call` both succeed cold, with no prior handshake. |
 | Session mode | **Stateless.** Measured: no `Mcp-Session-Id` response header is ever emitted. |

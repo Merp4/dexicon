@@ -1,7 +1,5 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
-using System.Text.Json;
 using Dexicon.Core.Configuration;
 using Dexicon.Infrastructure;
 using Microsoft.AspNetCore.Hosting;
@@ -48,8 +46,8 @@ public sealed class StaticAssetCachingPolicy
 
 /// <summary>
 /// The application started the way it is deployed, with a web root of three kinds of file. The policy is a header that
-/// the static file middleware and the SPA fallback each have to apply; a unit test of the function does not show that
-/// either one calls it, and the middleware that sends 304 has to carry the header too.
+/// the static file middleware has to apply; a unit test of the function does not show that the middleware calls it, and
+/// the answer to a conditional request (304) has to carry the header too.
 /// </summary>
 [Collection(ConsoleOutputCollection.Name)]
 public sealed class StaticAssetCachingHost : IDisposable
@@ -124,18 +122,6 @@ public sealed class StaticAssetCachingHost : IDisposable
 
         var index = await client.GetAsync("/index.html", ct);
         CacheControl(index).ShouldBe("no-cache", "the same file by its own name");
-
-        // The fallback answers a route only to a caller the auth middleware lets through, and it lets through no route of
-        // the UI's anonymously: the UI routes with the hash, so the server sees `/` only. A signed-in caller reaches it.
-        var login = await client.PostAsJsonAsync("/api/session", new { password = "a-test-password-for-this-run" }, ct);
-        login.EnsureSuccessStatusCode();
-        var token = (await login.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("token").GetString()!;
-        using var deepRequest = new HttpRequestMessage(HttpMethod.Get, "/corpora/e2e");
-        deepRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        var deepLink = await client.SendAsync(deepRequest, ct);
-        deepLink.StatusCode.ShouldBe(HttpStatusCode.OK);
-        deepLink.Content.Headers.ContentType!.MediaType.ShouldBe("text/html");
-        CacheControl(deepLink).ShouldBe("no-cache", "a route the UI owns is answered with index.html by the fallback");
 
         var bundle = await client.GetAsync("/assets/app-AbCdEf12.js", ct);
         bundle.StatusCode.ShouldBe(HttpStatusCode.OK);
