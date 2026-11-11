@@ -11,8 +11,8 @@ namespace Dexicon.Core.Embedding;
 ///
 /// A set stores no framing. The template comes from the model's profile when a file is embedded and again
 /// when a query is sent, so editing a profile, or a release adding a built-in entry for the model, changes
-/// the queries of every set on it while their stored vectors stay as they were. Saving a profile queues a
-/// rebuild; a built-in entry added by an upgrade queues nothing, and the set answers with framed queries
+/// the queries of every set on it while their stored vectors stay as they were. Saving a profile with a new
+/// or changed template queues a rebuild; a built-in entry added by an upgrade queues nothing, and the set answers with framed queries
 /// against raw vectors until someone reindexes it.
 ///
 /// Only the document template is kept. It decides what the vectors are; the query template decides what a

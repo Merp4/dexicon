@@ -1149,7 +1149,8 @@ function FramingModal({
 
           {model.inUse && (
             <p className="dim text-xs">
-              This model is in use. Saving re-indexes every chunk set on it.
+              This model is in use. Saving re-indexes every chunk set on it, unless both templates are
+              the ones already saved.
             </p>
           )}
 

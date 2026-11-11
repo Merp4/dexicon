@@ -1257,8 +1257,12 @@ an argument makes it impossible to omit at either of the two places that embed t
 number of characters, and a template would shift every measurement by the length of a
 prefix.
 
-The effective template is part of the chunking fingerprint, so editing a profile
-re-indexes every chunk set on that model rather than leaving the two sides to disagree.
+The effective templates, indexed text and query, are part of the chunking fingerprint, so editing a profile
+re-indexes every chunk set on that model rather than leaving the two sides to disagree. Saving a profile queues a
+rebuild of each set on the model when the row is new or either template differs from the stored row. A query-only
+edit queues one too: the vectors come out the same, but every file's fingerprint changed, so the next refresh would
+delete and re-embed each file anyway. Saving the same two templates again, or changing only the notes, queues
+nothing.
 
 ### "Tokens" is a character budget, and the ratio is measured
 
@@ -1368,7 +1372,7 @@ A chunk set stores no framing, so the template comes from the model's profile ea
 and each time a query is sent. Each set therefore records the document template it was embedded with, at its first
 check and when a full pass or a rebuild replaces every vector (under the condition that records the model, below),
 and a set whose record differs from the template the profile gives now is listed in the health report and the
-health panel ([D-47](decisions.md#d-47-a-chunk-set-records-the-document-template-it-was-embedded-with)). Saving a profile queues a rebuild, which records the new template
+health panel ([D-47](decisions.md#d-47-a-chunk-set-records-the-document-template-it-was-embedded-with)). Saving a new or changed profile queues a rebuild, which records the new template
 when it finishes. A built-in entry added by an upgrade queues nothing, and the report is for that case. The query
 template is not recorded: it changes what a search sends, not what is stored.
 

@@ -180,7 +180,7 @@ public sealed record ChangedModel(string Set, string Provider, string Model, dou
 /// The template comes from the profile when a file is embedded and when a query is sent. Editing the profile, or
 /// a release that adds a built-in entry for the model, changes the queries of every set on it while the stored
 /// vectors stay as they were, so a set answers with framed queries against raw vectors, or the reverse. Saving a
-/// profile queues a rebuild; a built-in entry added by an upgrade queues nothing.
+/// profile with a new or changed template queues a rebuild; a built-in entry added by an upgrade queues nothing.
 /// </summary>
 /// <param name="Set">`corpus:set`. A full reindex of the corpus re-embeds the set and clears the entry.</param>
 /// <param name="Recorded">The document template the set's vectors were embedded with.</param>

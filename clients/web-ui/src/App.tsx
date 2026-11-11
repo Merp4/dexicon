@@ -516,7 +516,7 @@ export function HealthDots({ health, connected, stale }: { health: Health | null
             </div>
           )}
           {/* A set whose files were embedded under another document framing than its model's profile
-              gives now. Saving a profile rebuilds the sets on it, so what reaches here is a framing that
+              gives now. Saving a new or changed profile rebuilds the sets on it, so what reaches here is a framing that
               changed without a rebuild: a release adding a built-in entry. Queries use the current
               framing, and the stored vectors keep the old one. */}
           {reframed.length > 0 && (
