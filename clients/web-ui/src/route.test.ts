@@ -5,9 +5,9 @@ import { parseHash, toHash, VIEWS } from './route';
  * Reloading the page used to land on Search, whatever you were looking at, because the app
  * kept no view state in the URL. So did a bookmark, and the back button did nothing at all.
  *
- * The hash carries it. Not the path: every path but `/` needs a token, so a real path would
- * 401 on the very reload this is meant to fix, and widening the anonymous list would trade a
- * security surface for a prettier URL.
+ * The hash carries it. Not the path: every path but `/` and the static files on the
+ * anonymous list needs a token, so a real path would 401 on the very reload this is meant to
+ * fix, and widening the anonymous list would trade a security surface for a prettier URL.
  */
 describe('the screen in the URL', () => {
   it('round-trips every view', () => {
