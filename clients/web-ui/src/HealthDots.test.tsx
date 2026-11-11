@@ -41,6 +41,24 @@ const open = async (h: Health) => {
 };
 
 describe('the dependency panel', () => {
+  it('fits a phone: a width from the viewport and the bar, a fixed one only from sm up', async () => {
+    // jsdom lays nothing out, so this holds the classes that did it. A fixed 330px box anchored to the right of
+    // its button sat 84px off the left edge of a 375px screen, where the wrapped bar leaves the button. Below sm
+    // the wrapper is not positioned, so the panel is placed against the bar and takes its width from two insets.
+    const { container } = render(<HealthDots health={health()} connected stale={false} />);
+    await userEvent.setup().click(screen.getByRole('button'));
+
+    const panel = container.querySelector('.card.absolute');
+    expect(panel).not.toBeNull();
+    const classes = (panel as HTMLElement).className.split(/\s+/);
+    expect(classes).toEqual(expect.arrayContaining(['left-4', 'right-4', 'max-w-md', 'sm:w-[330px]', 'sm:right-0', 'sm:left-auto']));
+    // No bare width, which is what overflowed.
+    expect(classes).not.toContain('w-[330px]');
+    // The wrapper is the containing block only from sm up.
+    expect((container.firstElementChild as HTMLElement).className.split(/\s+/)).toContain('sm:relative');
+    expect((container.firstElementChild as HTMLElement).className.split(/\s+/)).not.toContain('relative');
+  });
+
   it('names the provider rather than assuming Ollama', async () => {
     // `provider` has been on the wire all along and the UI hardcoded "ollama", so a
     // deployment defaulting to OpenAI labelled its dot with the wrong backend.
