@@ -24,10 +24,12 @@ const probeEmbeddingModel = vi.fn();
 const listEmbeddingProviders = vi.fn();
 const promoteChunkSet = vi.fn();
 const updateChunkSet = vi.fn();
+const saveModelProfile = vi.fn();
 
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
   api: {
+    saveModelProfile: (...args: unknown[]) => saveModelProfile(...args),
     listEmbeddingModels: (...args: unknown[]) => listEmbeddingModels(...args),
     probeEmbeddingModel: (...args: unknown[]) => probeEmbeddingModel(...args),
     listEmbeddingProviders: (...args: unknown[]) => listEmbeddingProviders(...args),
@@ -737,5 +739,97 @@ describe('the default for new corpora badge', () => {
     await screen.findByText('embeddinggemma:latest');
 
     expect(badged()).toEqual(['nomic-embed-text:latest']);
+  });
+});
+
+/**
+ * Saving a framing.
+ *
+ * A save that changes neither template queues nothing, and the server answers with a note that says so. The dialog
+ * closed without showing it, so a second click on Save gave no sign of what it had done. A save that queues sets
+ * lists them, and a save with no chunk set on the model closes, as before.
+ */
+describe('saving a framing', () => {
+  const unchangedNote = 'The templates are unchanged: no chunk set was re-indexed.';
+
+  async function openFraming() {
+    const user = userEvent.setup();
+    listEmbeddingProviders.mockResolvedValue({
+      default: 'ollama',
+      providers: [{ name: 'ollama', kind: 'ollama', managed: true, configured: true, detail: null }],
+    });
+    render(<ModelsView />);
+    // The first model of the shared default list is nomic-embed-text:latest.
+    await user.click((await screen.findAllByRole('button', { name: 'Framing' }))[0]);
+    const dialog = await screen.findByRole('dialog');
+    return { dialog, user };
+  }
+
+  const save = (user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement) =>
+    user.click(within(dialog).getByRole('button', { name: 'Save' }));
+
+  it('says the templates are unchanged, and closes on Done', async () => {
+    saveModelProfile.mockResolvedValue({
+      provider: 'ollama', model: 'nomic-embed-text:latest', reindexing: [], note: unchangedNote,
+    });
+    const { dialog, user } = await openFraming();
+
+    await save(user, dialog);
+
+    expect(await within(dialog).findByText(`Saved. ${unchangedNote}`)).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+    expect(saveModelProfile).toHaveBeenCalledWith({
+      provider: 'ollama',
+      model: 'nomic-embed-text:latest',
+      documentTemplate: 'search_document: {text}',
+      queryTemplate: 'search_query: {text}',
+      notes: undefined,
+    });
+
+    const listed = listEmbeddingModels.mock.calls.length;
+    await user.click(within(dialog).getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(listEmbeddingModels.mock.calls.length).toBeGreaterThan(listed);
+  });
+
+  it('lists the chunk sets a save queued, and does not repeat the note of such a save', async () => {
+    saveModelProfile.mockResolvedValue({
+      provider: 'ollama',
+      model: 'nomic-embed-text:latest',
+      reindexing: ['docs:default', 'books:default'],
+      note: '2 chunk set(s) are re-indexing: framing changes the vectors.',
+    });
+    const { dialog, user } = await openFraming();
+
+    await save(user, dialog);
+
+    expect(await within(dialog).findByText(/Saved\. 2 chunk sets are re-indexing/)).toBeInTheDocument();
+    expect(within(dialog).getByText('docs:default')).toBeInTheDocument();
+    expect(within(dialog).getByText('books:default')).toBeInTheDocument();
+    expect(within(dialog).queryByText(/chunk set\(s\)/)).not.toBeInTheDocument();
+  });
+
+  it('says "is" of a single chunk set', async () => {
+    saveModelProfile.mockResolvedValue({
+      provider: 'ollama', model: 'nomic-embed-text:latest', reindexing: ['e2e:default'], note: null,
+    });
+    const { dialog, user } = await openFraming();
+
+    await save(user, dialog);
+
+    expect(await within(dialog).findByText(/Saved\. 1 chunk set is re-indexing/)).toBeInTheDocument();
+  });
+
+  it('closes without a message when nothing was queued and the server has no note', async () => {
+    saveModelProfile.mockResolvedValue({
+      provider: 'ollama', model: 'nomic-embed-text:latest', reindexing: [], note: null,
+    });
+    const { dialog, user } = await openFraming();
+    const listed = listEmbeddingModels.mock.calls.length;
+
+    await save(user, dialog);
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(listEmbeddingModels.mock.calls.length).toBeGreaterThan(listed);
   });
 });
