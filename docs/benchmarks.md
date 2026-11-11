@@ -277,3 +277,105 @@ The Q8_0 arm used the ggml-org file (`hf.co/ggml-org/embeddinggemma-2-GGUF:Q8_0`
 file as the one Ollama now serves as `embeddinggemma-2:270m`; the official build has not been measured.
 Dexicon's own Ollama publishes no port, so run the script from a container on its network or with
 `docker-compose.debug.yml`.
+
+## Chunk size and the second generation's context (2026-11-11)
+
+`embeddinggemma` takes about 2,000 tokens of input and `embeddinggemma-2:q8_0` about 8,000 (Test limits,
+`POST /api/embedding-models/probe`, measured a context of 2,006 and 8,150 tokens and 11,520 and 46,848
+characters of prose), so the second generation can read chunks the first cannot. This round asks whether larger chunks
+are worth anything. The arms hold the model and the framing fixed and change the chunk target in
+characters: `v1_c1200`, `v1_c2500` and `v1_c3500` for `embeddinggemma`, and `eg2x_c1200` to `eg2x_c16000`
+for `embeddinggemma-2:q8_0`, a local alias of the ggml-org Q8_0 file with `num_ctx` and `num_batch` 8192.
+A paragraph is kept whole up to 1.167 times the target, so the largest chunks are about 18,700 characters.
+The tree (`a948496`), queries, scoring and Ollama (0.40.15) are those of the section above, on a GPU shared
+with a training workload. No predictions were written for this round, so every figure here is exploratory.
+The results are in `scripts/bench/results-context-2026-11-11.json`.
+
+Two arms reproduce rows of the earlier round: `v1_c1200` gives the framed first-generation figures (0.723,
+0.674) and `eg2x_c1200` the Q8_0 figures (0.666, 0.660). `eg2d_c3500`
+is the ggml-org GGUF under its `hf.co` name, at Ollama's default options, on the same chunks as `eg2x_c3500`: its chunk vectors
+have a cosine of 1.0000 (median, 5th percentile and minimum) to the alias's on both corpora, its top-10
+overlap is 1.00, and its MRR is identical, so the alias holds the same weights and the context setting
+does not change a vector.
+
+| chunk target (characters) | chunks (docs, code) | `embeddinggemma` docs / code | `embeddinggemma-2` docs / code |
+|---|---|---|---|
+| 1,200 | 623, 2,145 | 0.723 / 0.674 | 0.666 / 0.660 |
+| 2,500 | 277, 969 | 0.689 / 0.706 | 0.654 / 0.744 |
+| 3,500 | 193, 687 | 0.662 / 0.693 | 0.696 / 0.657 |
+| 8,000 | 85, 339 | not run | 0.727 / 0.656 |
+| 16,000 | 43, 208 | not run | 0.779 / 0.630 |
+
+The docs queries that carry an answer literal (47 of 55) also give how often the top chunk or the top three
+contain it, and how much text that delivers to the reader:
+
+| arm | answer in the top chunk (mean characters) | in the top three (mean characters) |
+|---|---|---|
+| `embeddinggemma`, 1,200 | 0.30 (860) | 0.49 (2,737) |
+| `embeddinggemma`, 2,500 | 0.30 (2,121) | 0.47 (6,150) |
+| `embeddinggemma`, 3,500 | 0.21 (3,128) | 0.43 (9,357) |
+| `embeddinggemma-2`, 1,200 | 0.30 (849) | 0.53 (2,599) |
+| `embeddinggemma-2`, 2,500 | 0.28 (1,958) | 0.57 (6,151) |
+| `embeddinggemma-2`, 3,500 | 0.23 (2,916) | 0.64 (8,796) |
+| `embeddinggemma-2`, 8,000 | 0.34 (6,745) | 0.66 (19,461) |
+| `embeddinggemma-2`, 16,000 | 0.60 (13,349) | 0.83 (41,210) |
+
+Differences are the first arm minus the second in mean reciprocal rank, with a 95% interval from a paired
+bootstrap over the queries:
+
+| comparison | docs | code |
+|---|---|---|
+| `embeddinggemma-2` minus `embeddinggemma`, 1,200 | -0.057 [-0.165, +0.049] | -0.014 [-0.101, +0.073] |
+| the same at 2,500 | -0.034 [-0.127, +0.059] | +0.038 [-0.044, +0.126] |
+| the same at 3,500 | +0.034 [-0.059, +0.125] | -0.036 [-0.135, +0.069] |
+| `embeddinggemma-2` at 8,000 minus its own 1,200 | +0.062 [-0.023, +0.148] | -0.004 [-0.112, +0.103] |
+| `embeddinggemma-2` at 16,000 minus its own 1,200 | +0.113 [+0.024, +0.200] | -0.029 [-0.147, +0.087] |
+| `embeddinggemma-2` at 16,000 minus its own 3,500 | +0.083 [+0.011, +0.157] | -0.027 [-0.111, +0.060] |
+| `embeddinggemma-2` at 16,000 minus `embeddinggemma` at 3,500 | +0.117 [+0.037, +0.197] | -0.062 [-0.154, +0.029] |
+| `embeddinggemma-2` at 16,000 minus `embeddinggemma` at 1,200 | +0.056 [-0.048, +0.156] | -0.043 [-0.142, +0.056] |
+| `embeddinggemma-2` at 16,000 minus `embeddinggemma` at 2,500 | +0.090 [+0.004, +0.179] | -0.075 [-0.175, +0.024] |
+
+**At equal chunk size the second generation is not shown to be better.** The six differences at 1,200,
+2,500 and 3,500 characters range from -0.057 to +0.034 on docs and from -0.036 to +0.038 on code, and every
+interval includes zero.
+
+**The longer context is not shown to help.** The script computes 26 intervals for the arms of this round. Ten
+more (five arm pairs on both corpora) were computed from the saved per-query reciprocal ranks with the
+script's `bootstrap` function and are in `PAIRS`; the results file does not hold them. Five of the 36 exclude zero. None is
+against the first generation's best arm on its corpus. On docs the 16,000-character arm gains over
+`embeddinggemma-2` at 1,200 and 3,500 characters and over `embeddinggemma` at 2,500 and 3,500, where the
+first generation scores less; against the first generation's best docs size (1,200 characters, 0.723) the gain
+is +0.056 and the interval includes zero. On code the figures for the second generation are 0.660, 0.744,
+0.657, 0.656 and 0.630 from 1,200 to 16,000 characters: one high point at 2,500, which beats 3,500 by +0.087
+with a lower bound of +0.002 and is the fifth interval, and no trend around it. With 36 intervals on shared
+queries, a few are expected to exclude zero by chance alone.
+
+**At 16,000 characters a docs lookup is easier and costs the reader more.** The docs corpus is 16 files,
+and at 16,000 characters it is 43 chunks, about 2.7 per file. No arm separates chunk size from the number
+of chunks per file, so part of the docs gain may be that fewer chunks compete with the right file.
+The answer is in the top chunk for 0.60 of the answerable queries, against 0.30 at 1,200 characters, and
+the top three chunks carry 41,210 characters, 16 times the 2,599 at 1,200.
+
+**The size the Models screen suggests is outside what was measured.** The UI suggests for a new chunk set 90%
+of the model's measured context as its chunk size (`CodeChunker.UsableContext`), held to 64 to 8,192 tokens.
+Test limits suggested 1,805 tokens for `embeddinggemma` and 7,335 tokens (31,232 characters of prose) for
+`embeddinggemma-2:q8_0`. The largest arm here is 16,000 characters, about 4,200 tokens at 3.8 characters per
+token, so nothing in this round supports the size suggested for the alias, and on code the trend at larger
+sizes is flat to negative.
+
+Speed, on the shared GPU: `embeddinggemma` ran at 12 to 15 chunks per second and `embeddinggemma-2` at 8 to
+9 up to 8,000 characters, and at 4.2 (docs) and 5.8 (code) at 16,000. `/api/ps` reported the alias at 1.40 GB
+and `embeddinggemma` at 0.69 GB.
+
+Reproduce with:
+
+```bash
+mkdir -p /tmp/tree && git archive a948496 docs src scripts/bench | tar -x -C /tmp/tree
+python scripts/bench/modelbench.py --root /tmp/tree --ollama http://127.0.0.1:21434 \
+  --arms v1_c1200,v1_c2500,v1_c3500,eg2x_c1200,eg2x_c2500,eg2x_c3500,eg2x_c8000,eg2x_c16000,eg2d_c3500 \
+  --out modelbench-out.json
+```
+
+The `embeddinggemma-2:q8_0` alias must exist (`ollama show embeddinggemma-2:q8_0` lists `num_ctx` and `num_batch`
+8192). The `eg2x` arms load it at that context, which needs more memory than the other arms; the script
+refuses to start an arm with less than 10 GB available in the VM and stops if the figure falls below 3 GB.
