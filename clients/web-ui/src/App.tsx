@@ -283,8 +283,10 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
 
   return (
     <div className="flex flex-col min-h-[100dvh]">
+      {/* `relative`: below the sm breakpoint the health panel is positioned against the bar, not
+          against its button, which is wherever the wrapping put it. */}
       <header
-        className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border bg-card px-4 py-2.5"
+        className="relative flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border bg-card px-4 py-2.5"
       >
         <strong className="text-base">Dexicon</strong>
 
@@ -415,7 +417,7 @@ export function HealthDots({ health, connected, stale }: { health: Health | null
     : '';
 
   return (
-    <div className="relative" ref={wrapper}>
+    <div className="sm:relative" ref={wrapper}>
       <Button
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
@@ -450,9 +452,16 @@ export function HealthDots({ health, connected, stale }: { health: Health | null
           hand-rolled rather than a shadcn primitive, and it was the only one that appeared
           with a hard cut. `origin-top-right` so it grows from the button it belongs to
           rather than from its own middle. Reduced motion collapses the duration, handled
-          once in index.css. */}
+          once in index.css.
+
+          Its width is the viewport's below the sm breakpoint and 330px from there. As a fixed
+          330px box anchored to the right of the button it sat 84px off the left edge of a
+          375px screen, where the wrapped bar leaves the button, and no scrolling reaches the
+          part left of the viewport. Below sm the wrapper is not positioned, so the panel takes
+          the bar (the header is `relative`) for its containing block and spans it, inset by
+          the bar's own padding and no wider than 28rem, from its left edge. */}
       {open && health && (
-        <div className="card absolute top-10 right-0 z-20 w-[330px] origin-top-right p-3 text-xs shadow-lg animate-in fade-in-0 zoom-in-95 duration-150">
+        <div className="card absolute top-full right-4 left-4 z-20 mt-1 max-w-md origin-top-left p-3 text-xs shadow-lg animate-in fade-in-0 zoom-in-95 duration-150 sm:top-10 sm:right-0 sm:left-auto sm:mt-0 sm:w-[330px] sm:origin-top-right">
           <p className="mt-0 mx-0 mb-2 font-semibold">Qdrant</p>
           <p className="dim mono m-0 break-all">{health.qdrant.endpoint}</p>
           <p className="mt-1 mx-0 mb-3">
