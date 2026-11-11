@@ -379,3 +379,81 @@ python scripts/bench/modelbench.py --root /tmp/tree --ollama http://127.0.0.1:21
 The `embeddinggemma-2:q8_0` alias must exist (`ollama show embeddinggemma-2:q8_0` lists `num_ctx` and `num_batch`
 8192). The `eg2x` arms load it at that context, which needs more memory than the other arms; the script
 refuses to start an arm with less than 10 GB available in the VM and stops if the figure falls below 3 GB.
+
+## Function-level retrieval, and where the chunker breaks a member (2026-11-11)
+
+Every score above asks which file a question is about. It cannot say whether the chunk that comes back is the function the
+question is about, or whether that function arrives with its own description. This round measures both on the C# of `src/`
+(tree `f239ba4`, 143 text files, chunked by the production `CodeChunker` in `language-aware` mode at 256/32, 512/64 and 1,024/128
+tokens and overlap). 2,065/258, the size the docs' example uses, was dropped: `embeddinggemma:latest` refused 7 of the 60
+longest such chunks of this code ("the input length exceeds the context length"). The predictions, committed before any scoring
+run, are in `scripts/bench/functionbench-predictions-2026-11-11.md`; the results are in
+`scripts/bench/results-functionbench-2026-11-11.json`.
+
+**Where the chunker breaks a member.** A `language-aware` boundary is the member's signature line, so the `///` block and the
+attributes above it belong to the segment before. When a chunk breaks at a boundary, which is what the chunker aims for, the next
+member's description sits at the end of the chunk before it. Over the 88 `.cs` files outside `Migrations` (1,868 members, 1,005
+with a `///` block above), measured by `scripts/bench/chunk_coherence.py` on the chunks of `f239ba4`:
+
+| chunk size / overlap | chunks | members per chunk | non-final chunks ending on a `///` line | documented members with comment and signature in one chunk |
+|---|---|---|---|---|
+| 256 / 32 | 1,820 | 1.13 | 45.7% | 46.8% |
+| 512 / 64 | 932 | 2.23 | 48.6% | 74.4% |
+| 1,024 / 128 | 486 | 4.21 | 52.5% | 91.7% |
+
+Overlap carries a comment forward only when the overlap is longer than the comment, so the figure rises with the chunk. The `///`
+blocks of this repository have a median of 262 characters and a 90th percentile of 845, and the overlap at 256/32 is 128
+characters at four characters per token; 73% of the blocks are longer than that. The figures are for this comment style. A C# program
+run over the same files gave the same numbers at 256 and 512 tokens.
+
+**A prototype that attaches them.** `scripts/bench/functionbench-attach-leading-lines.patch` moves each boundary up over the
+unbroken run of comment and attribute lines above it (a blank line ends the run), for the languages that have a boundary pattern.
+On the same chunks the share of documented members kept whole becomes 89.3%, 98.4% and 100%, and the share of non-final chunks
+ending on a `///` line falls to 8.2%, 2.2% and 0.3%.
+
+**Whether it changes what a question finds.** `queries-code-members.json` says which member of the expected file answers each of the
+52 questions in `queries-code.json`: a reviewer who saw the questions and the source, and no result, chose them from what each member
+does. 48 questions have a member (12 of them marked ambiguous by the reviewer) and 4 are answered by the whole file. A question is
+scored by the reciprocal rank of its first hit in the top ten, dense only, with each model's own framing. A *strict* hit is a chunk of
+the expected file that holds a labelled member's signature line; a *lenient* hit overlaps the member's text from its leading comment
+to its last line; a *file* hit is any chunk of the expected file, as in `modelbench.py`. Each cell is the old chunker, then the
+prototype:
+
+| model, size | strict MRR | new minus old, strict [95% paired bootstrap] | lenient MRR | file MRR |
+|---|---|---|---|---|
+| `embeddinggemma`, 256 | 0.323, 0.337 | +0.014 [-0.077, +0.098] | 0.556, 0.548 | 0.735, 0.696 |
+| `embeddinggemma`, 512 | 0.448, 0.374 | -0.074 [-0.159, +0.004] | 0.594, 0.544 | 0.716, 0.661 |
+| `embeddinggemma`, 1,024 | 0.447, 0.460 | +0.013 [-0.037, +0.067] | 0.558, 0.554 | 0.646, 0.660 |
+| `embeddinggemma-2`, 256 | 0.193, 0.270 | +0.077 [+0.002, +0.162] | 0.349, 0.370 | 0.674, 0.686 |
+| `embeddinggemma-2`, 512 | 0.385, 0.367 | -0.018 [-0.088, +0.051] | 0.480, 0.439 | 0.700, 0.656 |
+| `embeddinggemma-2`, 1,024 | 0.459, 0.425 | -0.034 [-0.115, +0.049] | 0.566, 0.552 | 0.651, 0.638 |
+
+**The prototype does not change retrieval consistently, so it is not adopted.** One of six intervals excludes zero, and barely
+(`embeddinggemma-2` at 256, whose lower bound is +0.002); the sign changes with the size and with the model. One of the six
+predictions made beforehand held (an interval at 256 that excludes zero for one model). The others expected a gain of 0.03 or more at
+256 for both models (`embeddinggemma` gained 0.014), a gain at 512 (both lost), a change of at most 0.02 at 1,024 (`embeddinggemma-2`
+lost 0.034), a file-level change under 0.02 (up to -0.055), and the best size to be 256 or 512 (it was 1,024 for three of the four
+model and chunker pairs). The rule written beforehand, a gain of at least +0.02 for both models at 256 or 512 tokens, is not met.
+The chunker is unchanged. What the table does show about the chunks is a result of its own: a function is found much less often than
+its file (strict 0.19 to 0.46 against file 0.64 to 0.74); for both models and for the unchanged chunker the strict score is higher at
+512 and 1,024 tokens than at 256 (`embeddinggemma` 0.323, 0.448, 0.447; `embeddinggemma-2` 0.193, 0.385, 0.459).
+
+Limits: 48 questions resolve differences of about 0.08, and the intervals are that wide. The labels are one reviewer's, and 12 are
+marked ambiguous (on the 36 unambiguous ones `embeddinggemma-2` at 256 gains +0.103 [+0.025, +0.199]). The strict score does not
+credit a chunk that holds only the tail of a long member, and the lenient score credits any overlap. The member's last line comes from a
+brace matcher that was checked on all 76 labelled members and is not a parser. One repository and one language were measured, dense
+only; the prototype's patterns for the other languages were not.
+
+Reproduce with:
+
+```bash
+git archive f239ba4 src | tar -x -C /tmp/tree
+dotnet run --project scripts/bench/chunkjson -c Release -- /tmp/tree/src /tmp/chunks/old
+git apply scripts/bench/functionbench-attach-leading-lines.patch
+dotnet run --project scripts/bench/chunkjson -c Release -- /tmp/tree/src /tmp/chunks/new
+git checkout -- src
+python scripts/bench/chunk_coherence.py --src /tmp/tree/src --chunks /tmp/chunks
+python scripts/bench/functionbench.py --ollama http://127.0.0.1:21434 --src /tmp/tree/src --chunks /tmp/chunks --out functionbench-out.json
+```
+
+`--src` has to be the tree the labels belong to (`f239ba4`), and the chunker under test is the one in the working tree.

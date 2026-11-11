@@ -1,0 +1,670 @@
+{
+ "tree": "f239ba4",
+ "note": "For each question of queries-code.json, the member(s) of the expected file that a developer would read to answer it: the member's first line, with its signature as in the file. Lines belong to src at tree f239ba4 (the C# of main through 0bd3624). Labelled by a reviewer who saw the questions and the source and no chunking or embedding result, from what each member does and not from how its name matches the question; `ambiguous` marks the questions the reviewer was unsure of (the answer sits partly in another file, or in a delegate). A question with no member is answered by the whole file.",
+ "queries": [
+  {
+   "query": "how are dense and sparse results fused into one ranking",
+   "file": "Dexicon.Core/Search/SearchService.cs",
+   "ambiguous": true,
+   "members": [
+    {
+     "line": 73,
+     "signature": "public async Task<SearchResult> SearchAsync("
+    }
+   ]
+  },
+  {
+   "query": "what stops a search running without a corpus scope",
+   "file": "Dexicon.Core/Search/SearchModels.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 160,
+     "signature": "public sealed class UnscopedQueryException(string caller)"
+    }
+   ]
+  },
+  {
+   "query": "how is the sparse vector built from text",
+   "file": "Dexicon.Core/Search/SparseEncoder.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 37,
+     "signature": "public static SparseVector Encode(string? text)"
+    },
+    {
+     "line": 68,
+     "signature": "public static IEnumerable<string> Tokenize(string text)"
+    }
+   ]
+  },
+  {
+   "query": "how is a query embedding cached between searches",
+   "file": "Dexicon.Core/Search/SearchService.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 237,
+     "signature": "private async Task<float[]> EmbedQueryAsync(string query, EmbeddingTarget target, CancellationToken ct)"
+    },
+    {
+     "line": 71,
+     "signature": "private static readonly TimeSpan QueryEmbeddingTtl = TimeSpan.FromMinutes(5);"
+    }
+   ]
+  },
+  {
+   "query": "how does a line longer than the whole chunk budget get split",
+   "file": "Dexicon.Core/Indexing/CodeChunker.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 475,
+     "signature": "private static IEnumerable<string> SplitOversizeLine("
+    }
+   ]
+  },
+  {
+   "query": "where is chunk size converted from tokens to characters",
+   "file": "Dexicon.Core/Indexing/CodeChunker.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 209,
+     "signature": "public static IReadOnlyList<TextChunk> Chunk("
+    },
+    {
+     "line": 85,
+     "signature": "public const int CharsPerToken = 4;"
+    }
+   ]
+  },
+  {
+   "query": "how does an incremental refresh decide a file is unchanged",
+   "file": "Dexicon.Core/Indexing/CorpusIndexer.cs",
+   "ambiguous": true,
+   "members": [
+    {
+     "line": 1482,
+     "signature": "private async Task IndexUnitsAsync(Corpus corpus, ChunkSet set, ModelTemplates templates,"
+    },
+    {
+     "line": 1147,
+     "signature": "internal static string ChunkingFingerprint("
+    },
+    {
+     "line": 512,
+     "signature": "private async Task IndexUploadSourceAsync(Corpus corpus, ChunkSet set, ModelTemplates templates,"
+    }
+   ]
+  },
+  {
+   "query": "how are gitignore and dexiconignore rules applied",
+   "file": "Dexicon.Core/Indexing/GitignoreFilter.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 206,
+     "signature": "public bool IsIgnored(string relativePath, bool isDirectory)"
+    },
+    {
+     "line": 406,
+     "signature": "private static WalkResult WalkCore(string rootPath, bool useGitignore, IReadOnlyList<string>? includeGlobs,"
+    },
+    {
+     "line": 842,
+     "signature": "private static bool AddIgnoreFile("
+    }
+   ]
+  },
+  {
+   "query": "what decides the language of a file from its extension",
+   "file": "Dexicon.Core/Indexing/LanguageMap.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 130,
+     "signature": "public static string Detect(string relativePath)"
+    }
+   ]
+  },
+  {
+   "query": "how does a job get queued and picked up",
+   "file": "Dexicon.Core/Indexing/IndexJobQueue.cs",
+   "ambiguous": true,
+   "members": [
+    {
+     "line": 51,
+     "signature": "public async Task<IndexJob> EnqueueAsync(string corpusId, JobKind kind, string? chunkSetId = null,"
+    },
+    {
+     "line": 59,
+     "signature": "private async Task<IndexJob> EnqueueHeldAsync(string corpusId, JobKind kind, string? chunkSetId,"
+    }
+   ]
+  },
+  {
+   "query": "what options control how a chunk set chunks",
+   "file": "Dexicon.Core/Indexing/ChunkSetOptions.cs",
+   "ambiguous": true,
+   "members": [
+    {
+     "line": 45,
+     "signature": "public static ChunkOptions Options(this ChunkSet set, EmbeddingModelMeasurement? measured = null)"
+    }
+   ]
+  },
+  {
+   "query": "how does one bad file avoid starving the whole index",
+   "file": "Dexicon.Core/Indexing/CorpusIndexer.cs",
+   "ambiguous": true,
+   "members": [
+    {
+     "line": 1482,
+     "signature": "private async Task IndexUnitsAsync(Corpus corpus, ChunkSet set, ModelTemplates templates,"
+    },
+    {
+     "line": 512,
+     "signature": "private async Task IndexUploadSourceAsync(Corpus corpus, ChunkSet set, ModelTemplates templates,"
+    }
+   ]
+  },
+  {
+   "query": "how is the embedding model chosen per call rather than at startup",
+   "file": "Dexicon.Core/Embedding/EmbeddingGeneratorFactory.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 60,
+     "signature": "public interface IEmbeddingGeneratorFactory"
+    },
+    {
+     "line": 104,
+     "signature": "public IEmbeddingGenerator<string, Embedding<float>> GeneratorFor(EmbeddingTarget target) =>"
+    },
+    {
+     "line": 107,
+     "signature": "private IEmbeddingGenerator<string, Embedding<float>> Build(string name, EmbeddingProviderOptions options)"
+    }
+   ]
+  },
+  {
+   "query": "how does it measure what a model will actually accept",
+   "file": "Dexicon.Core/Embedding/ModelProbe.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 78,
+     "signature": "public async Task<ModelCapabilities> RunAsync(EmbeddingTarget target, CancellationToken ct = default)"
+    },
+    {
+     "line": 166,
+     "signature": "private static async Task<(bool Read, double Similarity)> TailIsRead("
+    }
+   ]
+  },
+  {
+   "query": "where is task framing applied to text before embedding",
+   "file": "Dexicon.Core/Embedding/EmbeddingService.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 165,
+     "signature": "public async Task<IReadOnlyList<float[]>> EmbedAsync("
+    }
+   ]
+  },
+  {
+   "query": "how are per-model prompt templates resolved",
+   "file": "Dexicon.Core/Embedding/ModelProfiles.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 185,
+     "signature": "public async Task<ModelTemplates> ForAsync(EmbeddingTarget target, CancellationToken ct = default)"
+    },
+    {
+     "line": 109,
+     "signature": "private static readonly Dictionary<string, ModelTemplates> BuiltIn = new(StringComparer.OrdinalIgnoreCase)"
+    }
+   ]
+  },
+  {
+   "query": "how does it count tokens with the model's own tokenizer",
+   "file": "Dexicon.Core/Embedding/EmbeddingService.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 136,
+     "signature": "public async Task<int?> CountTokensAsync("
+    }
+   ]
+  },
+  {
+   "query": "which models are offered and which are filtered out as chat models",
+   "file": "Dexicon.Core/Embedding/ModelCatalog.cs",
+   "ambiguous": true,
+   "members": [
+    {
+     "line": 54,
+     "signature": "public async Task<IReadOnlyList<AvailableModel>> ListAsync(string provider, CancellationToken ct = default)"
+    }
+   ]
+  },
+  {
+   "query": "how does embedding back off when the provider is struggling",
+   "file": "Dexicon.Core/Embedding/EmbeddingService.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 211,
+     "signature": "private async Task<float[][]> GenerateAsync("
+    }
+   ]
+  },
+  {
+   "query": "how is a Qdrant collection named",
+   "file": "Dexicon.Core/Vectors/QdrantVectorStore.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 130,
+     "signature": "public string CollectionNameFor(EmbeddingTarget target, int dimensions) =>"
+    },
+    {
+     "line": 147,
+     "signature": "private static string Slug(string value)"
+    }
+   ]
+  },
+  {
+   "query": "how is multitenancy enforced in the vector store",
+   "file": "Dexicon.Core/Vectors/QdrantVectorStore.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 161,
+     "signature": "public async Task EnsureCollectionAsync(string collection, int dimensions, CancellationToken ct = default)"
+    },
+    {
+     "line": 212,
+     "signature": "private async Task EnsureIndexAsync(string collection, string field, PayloadSchemaType type,"
+    },
+    {
+     "line": 570,
+     "signature": "private static Filter BuildFilter(SearchQuery q)"
+    }
+   ]
+  },
+  {
+   "query": "how are a file's chunks fetched by filter rather than by search",
+   "file": "Dexicon.Core/Vectors/QdrantVectorStore.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 421,
+     "signature": "public async Task<IReadOnlyList<SearchHit>> GetFileChunksAsync(string collection, string chunkSetId,"
+    }
+   ]
+  },
+  {
+   "query": "how is an API token hashed and verified",
+   "file": "Dexicon.Core/Auth/TokenService.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 319,
+     "signature": "private static byte[] Hash(string secret, byte[] salt) =>"
+    },
+    {
+     "line": 146,
+     "signature": "public async Task<Principal?> VerifyAsync(string? presented, CancellationToken ct = default)"
+    },
+    {
+     "line": 116,
+     "signature": "public (ApiToken Row, IssuedToken Issued) Build("
+    }
+   ]
+  },
+  {
+   "query": "how does a tenant get read access to another tenant's corpus",
+   "file": "Dexicon.Core/Auth/ScopeResolver.cs",
+   "ambiguous": true,
+   "members": [
+    {
+     "line": 311,
+     "signature": "private IQueryable<Corpus> VisibleQuery(Principal principal)"
+    },
+    {
+     "line": 179,
+     "signature": "public async Task<ResolvedScope> ResolveReadableAsync("
+    }
+   ]
+  },
+  {
+   "query": "what happens when a corpus name does not resolve",
+   "file": "Dexicon.Core/Auth/ScopeResolver.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 179,
+     "signature": "public async Task<ResolvedScope> ResolveReadableAsync("
+    },
+    {
+     "line": 13,
+     "signature": "public sealed class ScopeResolutionException(string message, IReadOnlyList<string> visibleNames)"
+    }
+   ]
+  },
+  {
+   "query": "how is corpus:set parsed into a corpus and a chunk set",
+   "file": "Dexicon.Core/Auth/ScopeResolver.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 266,
+     "signature": "private static (string Corpus, string? Set) Split(string nameOrId)"
+    },
+    {
+     "line": 179,
+     "signature": "public async Task<ResolvedScope> ResolveReadableAsync("
+    }
+   ]
+  },
+  {
+   "query": "which paths are served without a token",
+   "file": "Dexicon/Infrastructure/DexiconAuth.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 42,
+     "signature": "private static readonly string[] AnonymousExact ="
+    },
+    {
+     "line": 50,
+     "signature": "private static readonly string[] AnonymousPrefixes = [\"/assets/\"];"
+    },
+    {
+     "line": 57,
+     "signature": "public static bool IsAnonymous(string path) =>"
+    }
+   ]
+  },
+  {
+   "query": "what runs on first start before the server accepts requests",
+   "file": "Dexicon/Infrastructure/Bootstrapper.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 41,
+     "signature": "public static async Task InitialiseAsync(WebApplication app)"
+    }
+   ]
+  },
+  {
+   "query": "how is a scope failure turned into a problem response",
+   "file": "Dexicon/Infrastructure/ScopeExceptionHandler.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 24,
+     "signature": "public async ValueTask<bool> TryHandleAsync("
+    }
+   ]
+  },
+  {
+   "query": "how do log timestamps stay UTC",
+   "file": "Dexicon/Infrastructure/UtcTimestampEnricher.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 19,
+     "signature": "public void Enrich(LogEvent logEvent, ILogEventPropertyFactory propertyFactory) =>"
+    }
+   ]
+  },
+  {
+   "query": "how are vectors removed when an attachment is detached",
+   "file": "Dexicon/Infrastructure/VectorStoreCleanup.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 21,
+     "signature": "public async Task<bool> RemoveAttachmentAsync(Corpus corpus, string fileId, DocumentService documents,"
+    }
+   ]
+  },
+  {
+   "query": "where is the OpenAPI document's security scheme declared",
+   "file": "Dexicon/Program.cs",
+   "ambiguous": false,
+   "members": []
+  },
+  {
+   "query": "why does a build not run first-run setup",
+   "file": "Dexicon/Infrastructure/Bootstrapper.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 38,
+     "signature": "public static bool IsBuildTimeToolRun =>"
+    }
+   ]
+  },
+  {
+   "query": "where is JSON number handling configured to be strict",
+   "file": "Dexicon/Program.cs",
+   "ambiguous": false,
+   "members": []
+  },
+  {
+   "query": "what happens when a corpus is created with a workspace path",
+   "file": "Dexicon/Api/CorpusEndpoints.cs",
+   "ambiguous": true,
+   "members": [
+    {
+     "line": 165,
+     "signature": "internal static async Task<IResult> CreateAsync(CreateCorpusRequest body, RequestContext rc, CatalogDbContext "
+    },
+    {
+     "line": 439,
+     "signature": "internal static Source FirstSource(string corpusId, string workspacePath) => new()"
+    }
+   ]
+  },
+  {
+   "query": "how is one indexed file read back over REST",
+   "file": "Dexicon/Api/CorpusEndpoints.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 211,
+     "signature": "internal static async Task<IResult> FileAsync(string nameOrId, string path, int? start, RequestContext rc,"
+    }
+   ]
+  },
+  {
+   "query": "how is a chunk set promoted to the default",
+   "file": "Dexicon/Api/ChunkSetEndpoints.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 276,
+     "signature": "internal static async Task<IResult> PromoteAsync(string nameOrId, string setName, RequestContext rc,"
+    }
+   ]
+  },
+  {
+   "query": "what happens to the old set when a new one is promoted",
+   "file": "Dexicon/Api/ChunkSetEndpoints.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 276,
+     "signature": "internal static async Task<IResult> PromoteAsync(string nameOrId, string setName, RequestContext rc,"
+    }
+   ]
+  },
+  {
+   "query": "how is an uploaded document deduplicated by hash",
+   "file": "Dexicon/Api/DocumentEndpoints.cs",
+   "ambiguous": true,
+   "members": [
+    {
+     "line": 88,
+     "signature": "internal static async Task<IResult> UploadAsync("
+    }
+   ]
+  },
+  {
+   "query": "how is the extracted text of a document served",
+   "file": "Dexicon/Api/DocumentEndpoints.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 453,
+     "signature": "public static void MapDocumentEndpoints(this IEndpointRouteBuilder app)"
+    }
+   ]
+  },
+  {
+   "query": "where are the request and response shapes for the REST API",
+   "file": "Dexicon/Api/Contracts.cs",
+   "ambiguous": false,
+   "members": []
+  },
+  {
+   "query": "how does the model list report what a probe measured",
+   "file": "Dexicon/Api/SystemEndpoints.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 791,
+     "signature": "public static void MapHealthEndpoints(this IEndpointRouteBuilder app)"
+    },
+    {
+     "line": 368,
+     "signature": "internal static ModelMeasurement? MeasurementOf(EmbeddingModelMeasurement? facts) =>"
+    }
+   ]
+  },
+  {
+   "query": "how does the health endpoint decide readiness",
+   "file": "Dexicon/Api/SystemEndpoints.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 791,
+     "signature": "public static void MapHealthEndpoints(this IEndpointRouteBuilder app)"
+    }
+   ]
+  },
+  {
+   "query": "how are overlapping chunks stitched back into a passage",
+   "file": "Dexicon/Mcp/DexiconTools.cs",
+   "ambiguous": true,
+   "members": [
+    {
+     "line": 245,
+     "signature": "public static async Task<string> GetContextAsync("
+    }
+   ]
+  },
+  {
+   "query": "what tools does the MCP server expose",
+   "file": "Dexicon/Mcp/DexiconTools.cs",
+   "ambiguous": true,
+   "members": [
+    {
+     "line": 30,
+     "signature": "public sealed class DexiconTools"
+    }
+   ]
+  },
+  {
+   "query": "how is a search result rendered for a model to read",
+   "file": "Dexicon/Mcp/DexiconTools.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 93,
+     "signature": "internal static string Render(SearchResult result)"
+    }
+   ]
+  },
+  {
+   "query": "how is a file reconstructed for an MCP resource read",
+   "file": "Dexicon/Mcp/DexiconResources.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 58,
+     "signature": "public static async Task<string> FileAsync("
+    }
+   ]
+  },
+  {
+   "query": "what is stored in the SQLite catalogue",
+   "file": "Dexicon.Core/Catalog/Entities.cs",
+   "ambiguous": false,
+   "members": []
+  },
+  {
+   "query": "how are tables and keys configured for the catalogue",
+   "file": "Dexicon.Core/Catalog/CatalogDbContext.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 58,
+     "signature": "protected override void OnModelCreating(ModelBuilder modelBuilder)"
+    }
+   ]
+  },
+  {
+   "query": "which settings can be set from the environment",
+   "file": "Dexicon.Core/Configuration/DexiconOptions.cs",
+   "ambiguous": true,
+   "members": [
+    {
+     "line": 8,
+     "signature": "public sealed class DexiconOptions"
+    }
+   ]
+  },
+  {
+   "query": "how is text extracted from a PDF or an EPUB",
+   "file": "Dexicon.Core/Extraction/TextExtractors.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 288,
+     "signature": "public ExtractedText Extract(Stream content, string fileName)"
+    },
+    {
+     "line": 554,
+     "signature": "public ExtractedText Extract(Stream content, string fileName)"
+    },
+    {
+     "line": 256,
+     "signature": "public static ITextExtractor? For(string relativePath)"
+    }
+   ]
+  },
+  {
+   "query": "how is an uploaded blob stored and its text cached",
+   "file": "Dexicon.Core/Documents/DocumentService.cs",
+   "ambiguous": false,
+   "members": [
+    {
+     "line": 156,
+     "signature": "public async Task<StoredDocument> StoreAsync(Stream content, string fileName, CancellationToken ct = default)"
+    },
+    {
+     "line": 356,
+     "signature": "private async Task<BlobText> ExtractAsync(string sha, string fileName, CancellationToken ct,"
+    }
+   ]
+  }
+ ]
+}
