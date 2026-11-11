@@ -1231,7 +1231,11 @@ public static class SystemEndpoints
             existing.DocumentTemplate = body.DocumentTemplate;
             existing.QueryTemplate = body.QueryTemplate;
             existing.Notes = body.Notes;
-            existing.UpdatedUtc = DateTime.UtcNow;
+
+            // UpdatedUtc is when a template last changed. ModelFraming.UnchangedSinceAsync compares it with
+            // the start of an index pass and, if it is later, the pass does not record its framing. A save
+            // of the same templates queues no rebuild to correct that, so it leaves the time alone.
+            if (templatesChanged) existing.UpdatedUtc = DateTime.UtcNow;
         }
 
         await db.SaveChangesAsync(ct);

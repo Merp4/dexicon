@@ -301,6 +301,53 @@ public sealed class ModelProfileSaveTests : IAsyncLifetime
             .ShouldBe("from the model card");
     }
 
+    /// <summary>
+    /// Backdates the profile row, then returns a time after it, as the start of a pass that began after the row
+    /// was last changed. <see cref="ModelFraming.UnchangedSinceAsync"/> compares the row's UpdatedUtc with it.
+    /// </summary>
+    private async Task<DateTime> StartPassAfterTheRowAsync()
+    {
+        var row = await _db.ModelProfiles.SingleAsync(TestContext.Current.CancellationToken);
+        row.UpdatedUtc = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        return DateTime.UtcNow;
+    }
+
+    [Fact]
+    public async Task AnUnchangedSaveWhileAPassRunsLeavesThePassFreeToRecordItsFraming()
+    {
+        // A pass records the framing it used only if no template was saved since it began. An identical save
+        // queues no rebuild, so a pass that it stopped from recording would leave /healthz reporting a stale
+        // framing with nothing queued to correct it.
+        var set = await SetAsync("s1", "default", "embeddinggemma");
+        await SaveAsync("embeddinggemma");
+        var passStarted = await StartPassAfterTheRowAsync();
+        var resolved = await EffectiveAsync("embeddinggemma");
+
+        await SaveAsync("embeddinggemma");
+        await SaveWithAsync("embeddinggemma", Doc, Query, notes: "from the model card");
+
+        (await ModelFraming.UnchangedSinceAsync(_db, _profiles, set, resolved, passStarted,
+            TestContext.Current.CancellationToken)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ChangingOnlyTheQueryTemplateWhileAPassRunsStopsItRecordingItsFraming()
+    {
+        // The control for the test above: a template change does move the row's time, and the document
+        // template alone cannot show it, since a query-only change leaves that the same.
+        var set = await SetAsync("s1", "default", "embeddinggemma");
+        await SaveAsync("embeddinggemma");
+        var passStarted = await StartPassAfterTheRowAsync();
+        var resolved = await EffectiveAsync("embeddinggemma");
+
+        await SaveWithAsync("embeddinggemma", Doc, "task: other | query: {text}");
+
+        (await EffectiveAsync("embeddinggemma")).Document.ShouldBe(resolved.Document);
+        (await ModelFraming.UnchangedSinceAsync(_db, _profiles, set, resolved, passStarted,
+            TestContext.Current.CancellationToken)).ShouldBeFalse();
+    }
+
     [Fact]
     public async Task SavingARowForTheFirstTimeQueuesARebuildEvenWhenItEqualsTheBuiltInFraming()
     {

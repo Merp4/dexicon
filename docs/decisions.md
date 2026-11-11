@@ -2598,9 +2598,10 @@ a set answers with framed queries against raw vectors, or the reverse, with noth
   tick of `ModelCanaryService` records for any set that still has none. Neither needs a provider to answer.
 - When a full or rebuild pass replaces the model's record ([D-46](decisions.md#d-46-a-chunk-set-records-what-its-model-answers-to-a-fixed-sentence)): after the vector store
   holds points only for files that pass indexed, and the profile stayed what the pass resolved at the set's start:
-  it gives the same document template when the pass ends and no profile row for the model was saved since the pass
-  began. The embedding service reads the profile again for each batch, so a profile saved while the pass ran applies
-  to the files embedded after it and the set holds two framings. The earlier record then stands, the report compares
+  it gives the same document template when the pass ends and no template of the model's profile row was saved since
+  the pass began (a save of the same templates, or of the notes alone, does not count). The embedding service reads
+  the profile again for each batch, so a profile saved while the pass ran applies to the files embedded after it and
+  the set holds two framings. The earlier record then stands, the report compares
   it with the profile, and the rebuild that save queued corrects the set.
 
 The comparison is made when `/healthz` is read, with the profile lookup that `IModelProfiles` caches for thirty seconds

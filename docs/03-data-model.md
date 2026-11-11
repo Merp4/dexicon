@@ -317,7 +317,7 @@ CREATE TABLE model_profiles (
   query_template    TEXT NOT NULL,          -- contains {text}
   notes             TEXT,
   created_utc       TEXT NOT NULL,
-  updated_utc       TEXT NOT NULL,
+  updated_utc       TEXT NOT NULL,          -- when a template last changed; a save of the same templates leaves it
   PRIMARY KEY (provider, model)
 );
 

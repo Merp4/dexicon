@@ -64,7 +64,7 @@ public static class ModelFraming
     /// Whether the profile stayed what a pass resolved at the set's start, which is the only template a pass can
     /// claim for its vectors. The embedding service reads the profile again for each batch, so a profile saved while
     /// the pass ran applies to the files embedded after it. Not changed means the profile gives the same document
-    /// template now and no row for the model was saved since the pass began; the second condition catches a save
+    /// template now and no template of the model's row was saved since the pass began; the second condition catches a save
     /// followed by a save back, which leaves the template as it was and the vectors mixed.
     /// </summary>
     public static async Task<bool> UnchangedSinceAsync(
