@@ -1122,8 +1122,8 @@ contract is not data, and any key at all can already reach the endpoints it desc
 
 The full document stays build-time only. Its consumer is a code generator reading the
 committed file, and it describes the workspace browser, the model endpoints and sign-in.
-`/openapi/v1.json` is a 404 for every method, set by an explicit route. Routing alone answers a
-HEAD for an unpublished name with a 405 from the document endpoint, whose template ends in `.json`.
+`/openapi/v1.json` is a 404 for every method, set by an explicit route: without it a HEAD for an
+unpublished name is answered 405.
 
 What the served copy adds over the committed one is the version of the instance actually
 answering. An operator can be running an image older than the checkout a consumer

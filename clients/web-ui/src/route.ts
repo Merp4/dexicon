@@ -2,9 +2,10 @@
  * Which screen the URL is pointing at.
  *
  * In the hash, not the path. The app is served by the same origin that serves the API, and
- * every path but `/` needs a token: a real path would 401 on reload, which is the failure
- * this exists to fix. Widening the anonymous list to cover the SPA's routes would trade a
- * security surface for a prettier URL, and the browser never asks the server for a fragment.
+ * every path but `/` and the static files on the anonymous list needs a token: a real path
+ * would 401 on reload, which is the failure this exists to fix. Widening the anonymous list
+ * to cover the SPA's routes would trade a security surface for a prettier URL, and the
+ * browser never asks the server for a fragment.
  *
  * Reload, bookmark, and the back button all work from this. Nothing else is kept: a search
  * query or a scroll position in the URL is a promise to restore state that is not actually

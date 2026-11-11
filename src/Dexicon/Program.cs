@@ -239,26 +239,25 @@ app.MapMcp("/mcp");
 app.MapOpenApi($"/openapi/{{documentName:regex(^{OpenApiDocuments.Integration}$)}}.json");
 
 // Anything else under /openapi/ is a name that is not published: a 404 for every method.
-// Left to routing, a HEAD for such a name is answered 405 by the document endpoint above,
-// whose template ends in .json.
+// Without this route a HEAD for such a name is answered 405.
 app.Map("/openapi/{**rest}", () => Results.NotFound()).ExcludeFromDescription();
 
 // The page. The built UI is not in source control (see .gitignore): the container image
-// builds it, and `dev.ps1 ui` builds it locally. A built UI is served as `/` by
-// UseDefaultFiles and UseStaticFiles above. There is no fallback to index.html for other
-// paths: the UI keeps its screen in the URL fragment (docs/08-ui.md), so the server is
-// never asked for a path of the UI's, and a catch-all would answer an unknown /api/ path,
-// or a GET to /mcp (the stateless transport takes POST only), with the page and a 200
-// instead of routing's 404 and 405.
+// builds it, and `dev.ps1 ui` builds it locally. A built UI is served as `/` and
+// `/index.html` by UseDefaultFiles and UseStaticFiles above. There is no fallback to
+// index.html for other paths: the UI keeps its screen in the URL fragment
+// (docs/08-ui.md), so the server is never asked for a path of the UI's, and a catch-all
+// would answer an unknown /api/ path, or a GET to /mcp (the stateless transport takes
+// POST only), with the page and a 200 instead of routing's 404 and 405.
 //
 // When the UI is absent, as after a bare `dotnet run` on a fresh clone, say so in words
-// rather than 404ing, and say how to get it. The build that writes Dexicon.json runs
-// without a built UI, so this endpoint is mapped then and is left out of the document.
-var spaIndex = Path.Combine(app.Environment.WebRootPath ?? "wwwroot", "index.html");
-
-if (!File.Exists(spaIndex))
+// rather than 404ing, and say how to get it. The build that writes Dexicon.json often
+// runs without a built UI (a fresh clone, CI), so this endpoint is mapped then and is
+// left out of the document.
+// The file provider the static file middleware reads, so this agrees with what it serves.
+if (!app.Environment.WebRootFileProvider.GetFileInfo("index.html").Exists)
 {
-    app.MapGet("/", () => Results.Content(
+    app.MapMethods("/", ["GET", "HEAD"], () => Results.Content(
         """
         <!doctype html>
         <meta charset="utf-8">

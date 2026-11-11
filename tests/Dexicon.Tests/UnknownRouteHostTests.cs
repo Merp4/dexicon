@@ -13,7 +13,7 @@ namespace Dexicon.Tests;
 
 /// <summary>
 /// What the application answers on a path it does not serve, or serves under another method, signed in, with the built
-/// UI in the web root. The page is served as <c>/</c> and nothing else (the UI keeps its screen in the URL fragment), so
+/// UI in the web root. The page is served as <c>/</c> and <c>/index.html</c> and no other path (the UI keeps its screen in the URL fragment), so
 /// routing's own answers stand: 404 for a path nothing serves, and 405 with the <c>Allow</c> of the endpoints that do
 /// exist for a path served under another method. A catch-all that answered every other GET with index.html and a 200
 /// made <c>GET /mcp</c> read as a working endpoint, although the stateless transport takes POST only.
@@ -224,6 +224,9 @@ public sealed class UnknownRouteHost : IDisposable
         var notice = await client.GetAsync("/", TestContext.Current.CancellationToken);
         notice.StatusCode.ShouldBe(HttpStatusCode.OK, "the notice that the UI is not built");
         (await notice.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)).ShouldContain("has not been built");
+
+        using var head = new HttpRequestMessage(HttpMethod.Head, "/");
+        (await client.SendAsync(head, TestContext.Current.CancellationToken)).StatusCode.ShouldBe(HttpStatusCode.OK, "HEAD / answers as GET / does");
 
         (await SendAsync(client, HttpMethod.Get, "/corpora/e2e", token)).StatusCode.ShouldBe(HttpStatusCode.NotFound, "GET /corpora/e2e");
         (await SendAsync(client, HttpMethod.Get, "/api/nope", token)).StatusCode.ShouldBe(HttpStatusCode.NotFound, "GET /api/nope");

@@ -116,7 +116,7 @@ function Build-Ui {
   } finally { Pop-Location }
 
   $dest = Join-Path $root 'src/Dexicon/wwwroot'
-  # The built bundle is gitignored; only the placeholder index.html is tracked.
+  # The built bundle is gitignored; only src/Dexicon/wwwroot/.gitkeep is tracked.
   Get-ChildItem (Join-Path $dest 'assets') -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
   Copy-Item (Join-Path $ui 'dist/*') $dest -Recurse -Force
   Write-Host "dexicon: UI copied to wwwroot"
