@@ -809,7 +809,7 @@ describe('saving a framing', () => {
     expect(within(dialog).queryByText(/chunk set\(s\)/)).not.toBeInTheDocument();
   });
 
-  it('says "is" of a single chunk set and "are" of several', async () => {
+  it('says "is" of a single chunk set', async () => {
     saveModelProfile.mockResolvedValue({
       provider: 'ollama', model: 'nomic-embed-text:latest', reindexing: ['e2e:default'], note: null,
     });
