@@ -574,6 +574,13 @@ whose image or configuration changed, and the volumes are kept: corpora, keys, d
 the admin password carry over. The first start of a new version can mark files `pending`
 when an extractor, chunker or framing version changed. The next refresh reprocesses those files.
 
+A browser picks up a new web UI on its next page load: the host serves `index.html` with
+`Cache-Control: no-cache` and the hashed bundle files as immutable
+([08](08-ui.md#stack)). A browser that loaded a release before this header was sent may keep the old
+`index.html` until its own freshness runs out or it is reloaded with the cache bypassed. A reverse proxy in front of the host
+applies its own policy, and one that caches `/` without regard to these headers shows the old UI
+until its entry expires.
+
 Qdrant and Ollama are upgraded on their own. A Dexicon release changes the defaults in
 `docker-compose.yml`; a deployment that pins `QDRANT_TAG` or `OLLAMA_TAG` in `.env` keeps what
 it pins until the pin is edited.
