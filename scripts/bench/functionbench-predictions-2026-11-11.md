@@ -15,6 +15,12 @@ labels (which member answers each of the 52 questions in `queries-code.json`) we
   file; the score is the reciprocal rank of the first hit in the top 10, dense only. File-level MRR is reported beside it.
 - Paired 95% bootstrap interval over the 52 queries for NEW minus OLD.
 
+## Amendment, before any scoring run
+
+The large setting is 1024/128, not 2065/258. `embeddinggemma:latest` refused 7 of the 60 longest 2065/258 chunks of this
+repository's code ("the input length exceeds the context length", `truncate` off), so that size cannot be compared across both
+models; at 1024/128 a chunk is at most 4,096 characters. Wherever the table below says 2065/258, read 1024/128.
+
 ## Predictions
 
 | id | prediction | probability |
