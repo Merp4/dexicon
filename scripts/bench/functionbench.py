@@ -87,7 +87,9 @@ def skip_hole(text, k):
 def member_span(lines, sig):
     """(first line of the member's text, last line), 1-based, for the C# member whose signature is on line `sig` (1-based).
     The first line takes in the unbroken run of comment and attribute lines above the signature. The last line is found by
-    matching braces from the signature, outside strings and comments, or by the first `;` at depth 0 for a member with no block."""
+    matching braces from the signature, outside strings and comments, or by the first `;` at depth 0 for a member with no block.
+    String state is kept within one line: a verbatim or raw string that spans lines, and a `'\\u007B'` or `'\\x7B'` character
+    literal, are not handled. None occurs in the labelled members."""
     i = sig - 1
     first = i
     while first > 0 and LEADING.match(lines[first - 1]):
@@ -141,25 +143,54 @@ def load_chunks(path):
     return [json.loads(l) for l in open(path, encoding="utf-8") if l.strip()]
 
 
-def targets_of(queries, members, src):
+def source_lines(src, rel, cache):
+    if rel not in cache:
+        text = (pathlib.Path(src) / rel).read_text(encoding="utf-8").replace("\r\n", "\n").lstrip("﻿")
+        cache[rel] = text.split("\n")
+    return cache[rel]
+
+
+def targets_of(queries, members, src, cache):
     """Per question: the strict targets (file, signature line) and lenient spans (file, first, last); None when it has no member."""
-    cache, out = {}, []
+    if len(members["queries"]) != len(queries):
+        sys.exit(f"queries-code-members.json has {len(members['queries'])} questions and queries-code.json has {len(queries)}")
+    out = []
     for q, m in zip(queries, members["queries"]):
         if q["query"] != m["query"] or q["file"] != m["file"]:
             sys.exit(f"queries-code-members.json does not match queries-code.json at {q['query']!r}")
         if not m["members"]:
             out.append(None)
             continue
-        if q["file"] not in cache:
-            cache[q["file"]] = (pathlib.Path(src) / q["file"]).read_text(encoding="utf-8").replace("\r\n", "\n").split("\n")
-        lines = cache[q["file"]]
+        lines = source_lines(src, q["file"], cache)
+        for x in m["members"]:
+            # The labels belong to one tree: a line that is not the labelled signature means --src is another tree.
+            got = lines[x["line"] - 1].strip() if x["line"] <= len(lines) else ""
+            if not got.startswith(x["signature"].strip()):
+                sys.exit(f"{q['file']}:{x['line']} is {got[:70]!r}, not the labelled signature {x['signature'][:70]!r}: "
+                         f"is --src the tree the labels belong to ({members.get('tree')})?")
         spans = [member_span(lines, x["line"]) for x in m["members"]]
-        for x, (a, b) in zip(m["members"], spans):
-            if not (a <= x["line"] <= b):
-                sys.exit(f"span of {q['file']}:{x['line']} is {a}-{b}, which does not hold its own signature")
         out.append({"strict": [(q["file"], x["line"]) for x in m["members"]], "lenient": [(q["file"], a, b) for a, b in spans],
                     "ambiguous": bool(m.get("ambiguous"))})
     return out
+
+
+def check_chunks(chunks, queries, src, cache, label):
+    """Every expected file has chunks, and the first and last chunk of each C# one hold the lines they claim, so the chunks were
+    cut from the tree the labels and --src belong to."""
+    if not chunks:
+        sys.exit(f"{label}: no chunks")
+    by_file = {}
+    for c in chunks:
+        by_file.setdefault(c["file"], []).append(c)
+    for rel in sorted({q["file"] for q in queries}):
+        if rel not in by_file:
+            sys.exit(f"{label}: no chunk of {rel}")
+        if not rel.endswith(".cs"):
+            continue
+        lines = source_lines(src, rel, cache)
+        for c in (min(by_file[rel], key=lambda c: c["start"]), max(by_file[rel], key=lambda c: c["start"])):
+            if "\n".join(lines[c["start"] - 1:c["end"]]).strip() != c["text"].replace("\r", "").lstrip("﻿").strip():
+                sys.exit(f"{label}: the chunk {rel}:{c['start']}-{c['end']} is not the text of those lines under --src")
 
 
 def reciprocal(ranked, chunks, test):
@@ -208,7 +239,8 @@ def main():
     base = args.ollama.rstrip("/")
     queries = json.loads(pathlib.Path(args.queries).read_text(encoding="utf-8"))["queries"]
     members = json.loads(pathlib.Path(args.members).read_text(encoding="utf-8"))
-    targets = targets_of(queries, members, args.src)
+    src_cache = {}
+    targets = targets_of(queries, members, args.src, src_cache)
     labelled = sum(t is not None for t in targets)
     print(f"{len(queries)} questions, {labelled} with a labelled member ({sum(t is not None and not t['ambiguous'] for t in targets)} unambiguous)", flush=True)
 
@@ -223,8 +255,9 @@ def main():
         for size in sizes:
             for var in variants:
                 chunks = load_chunks(pathlib.Path(args.chunks) / var / f"chunks-{size}.jsonl")
+                check_chunks(chunks, queries, args.src, src_cache, f"{var}/{size}")
                 texts = [mb.GEMMA_DOC.format(t=c["text"]) for c in chunks]
-                todo = sorted({t for t in texts if t not in cache}, key=len)
+                todo = sorted({t for t in texts if t not in cache}, key=lambda t: (len(t), t))
                 longest = max((len(t) for t in todo), default=1)
                 batch = max(1, min(mb.BATCH, mb.REQUEST_CHARS // longest))
                 t0 = time.time()

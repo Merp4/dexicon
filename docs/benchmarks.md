@@ -384,15 +384,15 @@ refuses to start an arm with less than 10 GB available in the VM and stops if th
 
 Every score above asks which file a question is about. It cannot say whether the chunk that comes back is the function the
 question is about, or whether that function arrives with its own description. This round measures both on the C# of `src/`
-(tree `f239ba4`, 143 text files, chunked by the production `CodeChunker` in `language-aware` mode at 256/32, 512/64 and 1,024/128
-tokens and overlap). 2,065/258, the size the docs' example uses, was dropped: `embeddinggemma:latest` refused 7 of the 60
+(tree `f239ba4`, 143 text files of which 88 are C#, chunked by the production `CodeChunker` in `language-aware` mode at 256/32,
+512/64 and 1,024/128 tokens and overlap). 2,065/258, the size the docs' example uses, was dropped: `embeddinggemma:latest` refused 7 of the 60
 longest such chunks of this code ("the input length exceeds the context length"). The predictions, committed before any scoring
 run, are in `scripts/bench/functionbench-predictions-2026-11-11.md`; the results are in
 `scripts/bench/results-functionbench-2026-11-11.json`.
 
 **Where the chunker breaks a member.** A `language-aware` boundary is the member's signature line, so the `///` block and the
 attributes above it belong to the segment before. When a chunk breaks at a boundary, which is what the chunker aims for, the next
-member's description sits at the end of the chunk before it. Over the 88 `.cs` files outside `Migrations` (1,868 members, 1,005
+member's description sits at the end of the chunk before it (a chunk can also end inside a long comment, and the table counts both). Over the 88 `.cs` files outside `Migrations` (1,868 members, 1,005
 with a `///` block above), measured by `scripts/bench/chunk_coherence.py` on the chunks of `f239ba4`:
 
 | chunk size / overlap | chunks | members per chunk | non-final chunks ending on a `///` line | documented members with comment and signature in one chunk |
@@ -401,13 +401,14 @@ with a `///` block above), measured by `scripts/bench/chunk_coherence.py` on the
 | 512 / 64 | 932 | 2.23 | 48.6% | 74.4% |
 | 1,024 / 128 | 486 | 4.21 | 52.5% | 91.7% |
 
-Overlap carries a comment forward only when the overlap is longer than the comment, so the figure rises with the chunk. The `///`
-blocks of this repository have a median of 262 characters and a 90th percentile of 845, and the overlap at 256/32 is 128
-characters at four characters per token; 73% of the blocks are longer than that. The figures are for this comment style. A C# program
-run over the same files gave the same numbers at 256 and 512 tokens.
+Two things raise the figure with the chunk: fewer breaks per member, and an overlap long enough to carry a whole comment forward;
+this measurement does not separate them. The `///` blocks of this repository have a median of 262 characters and a 90th percentile
+of 845, and the overlap at 256/32 is 128 characters at four characters per token; 73% of the blocks are longer than that. The
+figures are for this comment style.
 
 **A prototype that attaches them.** `scripts/bench/functionbench-attach-leading-lines.patch` moves each boundary up over the
-unbroken run of comment and attribute lines above it (a blank line ends the run), for the languages that have a boundary pattern.
+unbroken run of comment and attribute lines above it (a blank line, or another boundary, ends the run), for the 23 languages that
+have a member pattern; Markdown, HTML, Razor, Vue and Svelte, whose boundaries are headings or blank lines, are left alone.
 On the same chunks the share of documented members kept whole becomes 89.3%, 98.4% and 100%, and the share of non-final chunks
 ending on a `///` line falls to 8.2%, 2.2% and 0.3%.
 
@@ -433,16 +434,22 @@ prototype:
 predictions made beforehand held (an interval at 256 that excludes zero for one model). The others expected a gain of 0.03 or more at
 256 for both models (`embeddinggemma` gained 0.014), a gain at 512 (both lost), a change of at most 0.02 at 1,024 (`embeddinggemma-2`
 lost 0.034), a file-level change under 0.02 (up to -0.055), and the best size to be 256 or 512 (it was 1,024 for three of the four
-model and chunker pairs). The rule written beforehand, a gain of at least +0.02 for both models at 256 or 512 tokens, is not met.
-The chunker is unchanged. What the table does show about the chunks is a result of its own: a function is found much less often than
-its file (strict 0.19 to 0.46 against file 0.64 to 0.74); for both models and for the unchanged chunker the strict score is higher at
-512 and 1,024 tokens than at 256 (`embeddinggemma` 0.323, 0.448, 0.447; `embeddinggemma-2` 0.193, 0.385, 0.459).
+model and chunker pairs). The rule written beforehand, a gain of at least +0.02 for both models at 256 or 512 tokens and an
+interval that excludes zero for at least one of them, is not met. The chunker is unchanged. A strict hit is also a file hit, so the
+strict score cannot exceed the file score; the gap here is strict 0.19 to 0.46 against file 0.64 to 0.74. For both models and the
+unchanged chunker the strict score is higher at 512 and 1,024 tokens than at 256 (`embeddinggemma` 0.323, 0.448, 0.447;
+`embeddinggemma-2` 0.193, 0.385, 0.459), without an interval, and a larger chunk holds more signatures, so part of that follows from
+the definition.
 
-Limits: 48 questions resolve differences of about 0.08, and the intervals are that wide. The labels are one reviewer's, and 12 are
+A second full run reproduced all 2,208 per-question scores and every interval exactly. Limits: 48 questions resolve differences of
+about 0.08, and the intervals are that wide. The labels are one reviewer's, and 12 are
 marked ambiguous (on the 36 unambiguous ones `embeddinggemma-2` at 256 gains +0.103 [+0.025, +0.199]). The strict score does not
-credit a chunk that holds only the tail of a long member, and the lenient score credits any overlap. The member's last line comes from a
-brace matcher that was checked on all 76 labelled members and is not a parser. One repository and one language were measured, dense
-only; the prototype's patterns for the other languages were not.
+credit a chunk that holds only the tail of a long member, and the lenient score credits any overlap: one question is labelled with a
+class that is 98% of its file, and five more with a member that covers more than half of a short file, so for those the lenient score
+is close to the file score. The member's last line comes from a
+brace matcher and not a parser; the script stops if a span does not contain its own signature line, and the spans of all 76 labelled
+members were read for plausibility without a record in the repository. One repository and one language were measured, dense only;
+the prototype's patterns for the other 22 languages were not.
 
 Reproduce with:
 

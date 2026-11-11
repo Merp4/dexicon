@@ -35,5 +35,6 @@ foreach (var (size, overlap) in settings)
             w.WriteLine(JsonSerializer.Serialize(new { file = rel, start = c.StartLine, end = c.EndLine, text = embed }));
         }
     }
+    if (n == 0) throw new InvalidOperationException($"no chunks at {size}/{overlap} from {files.Count} files");
     Console.WriteLine($"{mode} {size}/{overlap}: {n} chunks from {files.Count} files -> {path}");
 }
