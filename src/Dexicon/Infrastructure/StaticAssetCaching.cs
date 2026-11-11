@@ -34,27 +34,38 @@ internal static class StaticAssetCaching
     // taken for content-addressed, since a file cached as immutable under a name that is reused is wrong until
     // the cache is cleared by hand.
     private static readonly Regex HashedAsset =
-        new(@"^/assets/[^/]+-[A-Za-z0-9_-]{8}\.[A-Za-z0-9]+$", RegexOptions.CultureInvariant);
+        new(@"^/assets/[^/]+-[A-Za-z0-9_-]{8}\.[A-Za-z0-9]+\z", RegexOptions.CultureInvariant);
 
     /// <summary>The policy for a request path.</summary>
     internal static string For(PathString path) =>
         HashedAsset.IsMatch(path.Value ?? string.Empty) ? Immutable : Revalidate;
 
     /// <summary>
-    /// For <c>UseStaticFiles</c>. Applied to every response of the middleware, 304 included, which is
-    /// where an unchanged <c>index.html</c> is answered.
+    /// For <c>UseStaticFiles</c>. A new instance for each host, so a test that starts several does not share one.
     /// </summary>
-    internal static StaticFileOptions Options { get; } = new()
+    internal static StaticFileOptions Options() => new()
     {
-        OnPrepareResponse = context => context.Context.Response.Headers.CacheControl = For(context.Context.Request.Path),
+        OnPrepareResponse = context => Apply(context, For(context.Context.Request.Path)),
     };
 
     /// <summary>
     /// For the SPA fallback, which answers every route the UI owns with <c>index.html</c> under that route's own
     /// path, so the policy cannot depend on the path.
     /// </summary>
-    internal static StaticFileOptions FallbackOptions { get; } = new()
+    internal static StaticFileOptions FallbackOptions() => new()
     {
-        OnPrepareResponse = context => context.Context.Response.Headers.CacheControl = Revalidate,
+        OnPrepareResponse = context => Apply(context, Revalidate),
     };
+
+    /// <summary>
+    /// Sets the policy on a response that carries the file: 200, 206 and 304, which is where an unchanged
+    /// <c>index.html</c> is answered. A 412 or a 416 is an answer about the request and says nothing about the file,
+    /// and a year of caching on it would be wrong; the middleware calls this for those too.
+    /// </summary>
+    private static void Apply(StaticFileResponseContext context, string policy)
+    {
+        var response = context.Context.Response;
+        if (response.StatusCode is StatusCodes.Status200OK or StatusCodes.Status206PartialContent or StatusCodes.Status304NotModified)
+            response.Headers.CacheControl = policy;
+    }
 }

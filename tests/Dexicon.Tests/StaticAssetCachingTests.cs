@@ -37,6 +37,7 @@ public sealed class StaticAssetCachingPolicy
     [InlineData("/other/index-CnRHqk6r.js")]
     [InlineData("/prefix/assets/index-CnRHqk6r.js")]
     [InlineData("/assets/index-CnRHqk6rX.js")]
+    [InlineData("/assets/index-CnRHqk6r.js\n")]
     public void EverythingElseIsToldToAskBeforeUsingItsCopy(string path) =>
         StaticAssetCaching.For(path).ShouldBe("no-cache");
 
@@ -149,8 +150,47 @@ public sealed class StaticAssetCachingHost : IDisposable
 
         var missing = await client.GetAsync("/assets/app-ZZZZZZZZ.js", ct);
         missing.StatusCode.ShouldBe(HttpStatusCode.NotFound);
-        (missing.Headers.CacheControl?.ToString() ?? "").Contains("immutable")
-            .ShouldBeFalse("an old bundle's name after a deploy is a 404, and a 404 is not cached for a year");
+        missing.Headers.CacheControl.ShouldBeNull("an old bundle's name after a deploy is a 404, and a 404 is not cached for a year");
+    }
+
+    [Fact]
+    public async Task AHeadRequestCarriesTheSameCacheControlAsTheGet()
+    {
+        await using var factory = Start();
+        using var client = factory.CreateClient();
+
+        foreach (var (path, expected) in new[]
+        {
+            ("/", "no-cache"),
+            ("/assets/app-AbCdEf12.js", "public, max-age=31536000, immutable"),
+        })
+        {
+            using var head = new HttpRequestMessage(HttpMethod.Head, path);
+            var response = await client.SendAsync(head, TestContext.Current.CancellationToken);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.OK, path);
+            CacheControl(response).ShouldBe(expected, $"HEAD {path}");
+        }
+    }
+
+    [Fact]
+    public async Task AnErrorAnsweredForAHashedFileIsNotGivenAYearOfCaching()
+    {
+        await using var factory = Start();
+        using var client = factory.CreateClient();
+        var ct = TestContext.Current.CancellationToken;
+
+        using var range = new HttpRequestMessage(HttpMethod.Get, "/assets/app-AbCdEf12.js");
+        range.Headers.Range = new RangeHeaderValue(99_999, null);
+        var unsatisfiable = await client.SendAsync(range, ct);
+        unsatisfiable.StatusCode.ShouldBe(HttpStatusCode.RequestedRangeNotSatisfiable);
+        (unsatisfiable.Headers.CacheControl?.ToString() ?? "").Contains("immutable").ShouldBeFalse("a 416 says nothing about the file");
+
+        using var precondition = new HttpRequestMessage(HttpMethod.Get, "/assets/app-AbCdEf12.js");
+        precondition.Headers.IfMatch.Add(new EntityTagHeaderValue("\"not-the-etag\""));
+        var failed = await client.SendAsync(precondition, ct);
+        failed.StatusCode.ShouldBe(HttpStatusCode.PreconditionFailed);
+        (failed.Headers.CacheControl?.ToString() ?? "").Contains("immutable").ShouldBeFalse("a 412 says nothing about the file");
     }
 
     [Fact]
