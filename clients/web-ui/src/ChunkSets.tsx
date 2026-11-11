@@ -1066,7 +1066,8 @@ function FramingModal({
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const [result, setResult] = useState<string[] | null>(null);
+  // What the server answered, kept to show before closing: the chunk sets it queued, or the note of a save that queued none.
+  const [saved, setSaved] = useState<{ reindexing: string[]; note: string | null } | null>(null);
 
   const valid =
     documentTemplate.includes('{text}') && queryTemplate.includes('{text}');
@@ -1082,8 +1083,10 @@ function FramingModal({
         queryTemplate,
         notes: notes || undefined,
       });
-      // Shown before closing: re-indexing is a consequence people should see coming.
-      if (r.reindexing.length > 0) setResult(r.reindexing);
+      // Shown before closing: re-indexing is a consequence people should see coming. A save that queued
+      // nothing carries a note only when the templates were already the saved ones, and closing without it
+      // leaves the click unanswered. The note of a save that queued sets repeats the list, so it is not shown.
+      if (r.reindexing.length > 0 || r.note) setSaved({ reindexing: r.reindexing, note: r.note });
       else onSaved();
     } catch (e) {
       setError(e);
@@ -1096,15 +1099,21 @@ function FramingModal({
     <Modal title={`Framing — ${model.name}`} onClose={onClose} width={620}>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
 
-      {result ? (
+      {saved ? (
         <div>
-          <p className="text-sm">
-            Saved. {result.length} chunk set{result.length === 1 ? '' : 's'} are re-indexing, because
-            framing changes the vectors and both sides of a search have to agree:
-          </p>
-          <ul className="mono text-sm">
-            {result.map((s) => <li key={s}>{s}</li>)}
-          </ul>
+          {saved.reindexing.length > 0 ? (
+            <>
+              <p className="text-sm">
+                Saved. {saved.reindexing.length} chunk set{saved.reindexing.length === 1 ? '' : 's'} are re-indexing, because
+                framing changes the vectors and both sides of a search have to agree:
+              </p>
+              <ul className="mono text-sm">
+                {saved.reindexing.map((s) => <li key={s}>{s}</li>)}
+              </ul>
+            </>
+          ) : (
+            <p className="text-sm">Saved. {saved.note}</p>
+          )}
           <div className="flex justify-end">
             <Button variant="primary" onClick={onSaved}>Done</Button>
           </div>
