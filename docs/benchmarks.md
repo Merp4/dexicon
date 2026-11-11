@@ -293,7 +293,7 @@ The results are in `scripts/bench/results-context-2026-11-11.json`.
 
 Two arms reproduce rows of the earlier round: `v1_c1200` gives the framed first-generation figures (0.723,
 0.674) and `eg2x_c1200` the Q8_0 figures (0.666, 0.660). `eg2d_c3500`
-is the registry-path GGUF at Ollama's default options on the same chunks as `eg2x_c3500`: its chunk vectors
+is the ggml-org GGUF under its `hf.co` name, at Ollama's default options, on the same chunks as `eg2x_c3500`: its chunk vectors
 have a cosine of 1.0000 (median, 5th percentile and minimum) to the alias's on both corpora, its top-10
 overlap is 1.00, and its MRR is identical, so the alias holds the same weights and the context setting
 does not change a vector.
@@ -340,18 +340,19 @@ bootstrap over the queries:
 interval includes zero.
 
 **The longer context is not shown to help.** The script computes 26 intervals for the arms of this round. Ten
-more (five arm pairs on both corpora) were computed after the run from the saved per-query reciprocal ranks
-with the script's `bootstrap` function, and those pairs are now in `PAIRS`. Five of the 36 exclude zero. None is
+more (five arm pairs on both corpora) were computed from the saved per-query reciprocal ranks with the
+script's `bootstrap` function and are in `PAIRS`; the results file does not hold them. Five of the 36 exclude zero. None is
 against the first generation's best arm on its corpus. On docs the 16,000-character arm gains over
 `embeddinggemma-2` at 1,200 and 3,500 characters and over `embeddinggemma` at 2,500 and 3,500, where the
 first generation scores less; against the first generation's best docs size (1,200 characters, 0.723) the gain
 is +0.056 and the interval includes zero. On code the figures for the second generation are 0.660, 0.744,
 0.657, 0.656 and 0.630 from 1,200 to 16,000 characters: one high point at 2,500, which beats 3,500 by +0.087
-with a lower bound of +0.002 and is the fifth interval, and no trend around it. The five were picked from
-many comparisons that share their queries.
+with a lower bound of +0.002 and is the fifth interval, and no trend around it. With 36 intervals on shared
+queries, a few are expected to exclude zero by chance alone.
 
-**Larger chunks make a docs lookup easier and cost the reader more.** The docs corpus is 16 files, and
-at 16,000 characters it is 43 chunks, about 2.7 per file, so a file-level score has few places to go wrong.
+**At 16,000 characters a docs lookup is easier and costs the reader more.** The docs corpus is 16 files,
+and at 16,000 characters it is 43 chunks, about 2.7 per file. No arm separates chunk size from the number
+of chunks per file, so part of the docs gain may be that fewer chunks compete with the right file.
 The answer is in the top chunk for 0.60 of the answerable queries, against 0.30 at 1,200 characters, and
 the top three chunks carry 41,210 characters, 16 times the 2,599 at 1,200.
 
@@ -363,8 +364,8 @@ token, so nothing in this round supports the size suggested for the alias, and o
 sizes is flat to negative.
 
 Speed, on the shared GPU: `embeddinggemma` ran at 12 to 15 chunks per second and `embeddinggemma-2` at 8 to
-9 up to 8,000 characters, and at 4.2 (docs) and 5.8 (code) at 16,000. `ollama ps` showed the alias at 1.30 GB
-and `embeddinggemma` at 0.64 GB.
+9 up to 8,000 characters, and at 4.2 (docs) and 5.8 (code) at 16,000. `/api/ps` reported the alias at 1.40 GB
+and `embeddinggemma` at 0.69 GB.
 
 Reproduce with:
 

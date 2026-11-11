@@ -74,7 +74,8 @@ MIN_FREE_GB = 10
 # During an arm: below this the VM is close to an out-of-memory kill of Ollama's runner, which the live app shares. On 2026-10-14 a
 # num_batch of 32768 made a runner hold 26.8 GB of shared memory and the kernel killed it.
 ABORT_FREE_GB = 3
-# Characters of text one request may carry; a bigger chunk goes in smaller batches, and in fewer at once.
+# Characters of text one request may carry, counted at the chunk target; a bigger chunk goes in smaller batches, and in fewer at once.
+# A chunk can run to HARD_RATIO times its target, so a request can carry up to about 47,000.
 REQUEST_CHARS = 40000
 
 V1 = "embeddinggemma:latest"
@@ -119,8 +120,9 @@ PAIRS = [
     ("eg2x_c8000", "eg2x_c3500"), ("eg2x_c16000", "eg2x_c3500"),
     ("eg2x_c1200", "v1_c1200"), ("eg2x_c2500", "v1_c2500"), ("eg2x_c3500", "v1_c3500"),
     ("eg2x_c8000", "v1_c3500"), ("eg2x_c16000", "v1_c3500"),
-    # Against the first generation's best size on each corpus (1,200 on docs, 2,500 on code), and the one high point of
-    # the second generation on code. Computed by hand on the 2026-11-11 results; a run now includes them.
+    # Against the first generation's best size on each corpus (1,200 characters on docs, 2,500 on code), and the second
+    # generation's high point on code. results-context-2026-11-11.json holds the 26 intervals of the pairs above these; the
+    # ten intervals of the pairs below were computed from its saved reciprocal ranks and are not in it.
     ("eg2x_c8000", "v1_c1200"), ("eg2x_c16000", "v1_c1200"), ("eg2x_c16000", "v1_c2500"),
     ("eg2x_c2500", "v1_c1200"), ("eg2x_c2500", "eg2x_c3500"),
 ] + [(f"v1_title_placebo_s{n}", base) for n in range(1, 11) for base in ("v1_framed", "v1_title")]
@@ -211,8 +213,16 @@ def placebo_paths(items, seed):
     return out
 
 
+def unload(base, model):
+    """Free the model before an abort: the abort fires when memory is short, and the loaded model is what holds it."""
+    try:
+        call(base, "/api/embed", {"model": model, "keep_alive": 0})
+    except Exception as e:  # the abort or failure that follows is the message that matters
+        print(f"  could not unload {model}: {e}", flush=True)
+
+
 def embed_all(base, model, texts, label, batch=BATCH, workers=WORKERS):
-    """Batches of `batch`, `workers` in flight. Any batch that fails twice, or returns nulls, raises."""
+    """Batches of `batch`, `workers` in flight. Any batch that fails twice, or returns nulls, raises, after unloading the model."""
     batches = [texts[i:i + batch] for i in range(0, len(texts), batch)]
     secs, vecs = [0.0] * len(batches), [None] * len(batches)
 
@@ -220,6 +230,7 @@ def embed_all(base, model, texts, label, batch=BATCH, workers=WORKERS):
         t0 = time.time()
         free = mem_available_gb()
         if free is not None and free < ABORT_FREE_GB:
+            unload(base, model)
             raise SystemExit(f"ABORT in {label}: {free:.1f} GB available in the VM (floor {ABORT_FREE_GB}); stopping before the kernel does")
         for attempt in (0, 1):
             try:
@@ -231,6 +242,7 @@ def embed_all(base, model, texts, label, batch=BATCH, workers=WORKERS):
                 return
             except (urllib.error.HTTPError, urllib.error.URLError, ValueError) as e:
                 if attempt == 1:
+                    unload(base, model)
                     raise RuntimeError(f"{label}: batch {i} failed twice: {e}") from e
 
     with cf.ThreadPoolExecutor(workers) as ex:
@@ -265,7 +277,7 @@ def evaluate(qvecs, cvecs, files, queries, texts=None):
         folded = [squash(t) for t in texts]
         scored = [(q, top) for q, top in zip(queries, tops) if q.get("answerable")]
         if scored:
-            lit = lambda q: squash(q.get("answer_literal") or q["answer"])
+            lit = lambda q: squash(q["answer"])
             by_file = {}
             for f, t in zip(files, folded):
                 by_file.setdefault(f, []).append(t)
@@ -333,7 +345,10 @@ def main():
     # A literal that is not in its file at all (the document was edited after the question was written) cannot be found by any
     # arm, so it is left out of answer recall; what is left is the denominator at every chunk size.
     for q in specs["docs"]["queries"]:
-        text = (root / "docs" / q["file"]).read_text(encoding="utf-8", errors="replace")
+        doc = root / "docs" / q["file"]
+        if not doc.is_file():
+            sys.exit(f"docs: query target {q['file']} is missing under {root}: is --root the tree the queries were written for?")
+        text = doc.read_text(encoding="utf-8", errors="replace")
         q["answerable"] = bool(q.get("answer")) and squash(q["answer"]) in squash(text)
     print(f"docs: {sum(q['answerable'] for q in specs['docs']['queries'])} of {len(specs['docs']['queries'])} answer literals are in their file", flush=True)
     targets = sorted({(arms[a][3] if len(arms[a]) > 3 else TARGET) for a in wanted})
@@ -360,6 +375,8 @@ def main():
                                    "chunks": {str(t): {k: len(v["items"]) for k, v in c.items()} for t, c in corpora_by_target.items()},
                                    "ollama": json.load(urllib.request.urlopen(base + "/api/version"))}}
     vectors = {}
+    if mem_available_gb() is None:
+        print("memory floors are not enforced: /proc/meminfo is not readable here", flush=True)
     for arm in wanted:
         model, dtpl, qtpl = arms[arm][:3]
         target = arms[arm][3] if len(arms[arm]) > 3 else TARGET
