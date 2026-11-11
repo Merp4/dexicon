@@ -198,7 +198,10 @@ app.UseExceptionHandler();
 app.UseStatusCodePages();
 
 app.UseDefaultFiles();
-app.UseStaticFiles();
+
+// With a Cache-Control of its own: the defaults leave index.html to a browser's heuristic freshness, and
+// after a deploy a person who had loaded it keeps the old bundle (StaticAssetCaching).
+app.UseStaticFiles(StaticAssetCaching.Options);
 
 app.UseDexiconAuth();
 
@@ -248,7 +251,7 @@ var spaIndex = Path.Combine(app.Environment.WebRootPath ?? "wwwroot", "index.htm
 
 if (File.Exists(spaIndex))
 {
-    app.MapFallbackToFile("index.html");
+    app.MapFallbackToFile("index.html", StaticAssetCaching.FallbackOptions);
 }
 else
 {
