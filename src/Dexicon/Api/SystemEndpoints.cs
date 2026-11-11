@@ -1166,9 +1166,10 @@ public static class SystemEndpoints
     }
 
     /// <summary>
-    /// <c>PUT /api/embedding-models/profile</c>: saves the task framing for one model and queues a
-    /// rebuild of every chunk set on it. A method of its own so a test calls the handler that is
-    /// mapped.
+    /// <c>PUT /api/embedding-models/profile</c>: saves the task framing for one model. When the row is
+    /// new or either template differs from the stored row, it also queues a rebuild of every chunk set on
+    /// the model. A save of the same templates, with or without new notes, queues nothing. A method of its
+    /// own so a test calls the handler that is mapped.
     /// </summary>
     internal static async Task<IResult> SaveModelProfileAsync(
         SaveModelProfileRequest body, RequestContext rc, CatalogDbContext db, IMemoryCache cache,
@@ -1202,6 +1203,16 @@ public static class SystemEndpoints
         var existing = await db.ModelProfiles.FirstOrDefaultAsync(
             p => p.Provider == provider && p.Model == model, ct);
 
+        // A rebuild re-embeds every file of every set on the model. A file's fingerprint covers both
+        // templates (ModelTemplates.Fingerprint), so a change to either one makes every file stale for
+        // the next refresh. That includes a query-only change, which leaves the vectors as they were:
+        // the work is queued here, and listed in the answer, instead of running at the next refresh.
+        // Notes are in neither the vectors nor the fingerprint. A new row queues whatever it holds, so
+        // that saving a built-in entry as a row rebuilds sets that were embedded before the entry existed.
+        var templatesChanged = existing is null
+            || !string.Equals(existing.DocumentTemplate, body.DocumentTemplate, StringComparison.Ordinal)
+            || !string.Equals(existing.QueryTemplate, body.QueryTemplate, StringComparison.Ordinal);
+
         if (existing is null)
         {
             db.ModelProfiles.Add(new EmbeddingModelProfile
@@ -1220,22 +1231,29 @@ public static class SystemEndpoints
             existing.DocumentTemplate = body.DocumentTemplate;
             existing.QueryTemplate = body.QueryTemplate;
             existing.Notes = body.Notes;
-            existing.UpdatedUtc = DateTime.UtcNow;
+
+            // UpdatedUtc is when a template last changed. ModelFraming.UnchangedSinceAsync compares it with
+            // the start of an index pass and, if it is later, the pass does not record its framing. A save
+            // of the same templates queues no rebuild to correct that, so it leaves the time alone.
+            if (templatesChanged) existing.UpdatedUtc = DateTime.UtcNow;
         }
 
         await db.SaveChangesAsync(ct);
         cache.Remove(ModelProfiles.CacheKey(target));
 
-        // Not cancellable from here: the framing is committed, and the rebuilds are what make
-        // it apply. A cancel between the two left queries framed one way against stored
-        // document vectors framed another, and saving the same values again does not queue
-        // them (as in CorpusConfiguration).
+        if (!templatesChanged)
+            return Results.Ok(new ModelProfileSaved(
+                provider, model, [], "The templates are unchanged: no chunk set was re-indexed."));
+
+        // Not cancellable from here. The framing is committed and the rebuilds apply it. A cancel
+        // between the two leaves queries framed one way against stored document vectors framed
+        // another, and saving the same values again queues nothing. CorpusConfiguration.UpdateSourceAsync
+        // also queues only when something changed, and is not cancellable after its save for the same reason.
         //
-        // Framing is part of the chunking fingerprint, so every set on this model is
-        // now stale: its documents were embedded one way and its queries would arrive
-        // framed another. Re-indexed rather than left to disagree quietly. A set records
-        // the name it was created with, so `embeddinggemma` and `embeddinggemma:latest`
-        // are both this model; the tag is compared in memory, where the rule lives.
+        // Every set on this model is now stale: its documents were embedded with the old
+        // template and its queries arrive framed with the new one. A set records the name it
+        // was created with, so `embeddinggemma` and `embeddinggemma:latest` are both this
+        // model; the tag is compared in memory, where the rule lives.
         var affected = (await db.ChunkSets
                 .Where(s => s.EmbeddingProvider == provider)
                 .Select(s => new { s.Id, s.CorpusId, s.Name, s.EmbeddingModel, Corpus = s.Corpus!.Name })

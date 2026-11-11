@@ -92,6 +92,28 @@ public sealed class ModelProfileSaveTests : IAsyncLifetime
         return result.ShouldBeOfType<Ok<ModelProfileSaved>>().Value.ShouldNotBeNull();
     }
 
+    private async Task<ModelProfileSaved> SaveWithAsync(
+        string model, string document, string query, string? notes = null)
+    {
+        var result = await SystemEndpoints.SaveModelProfileAsync(
+            new SaveModelProfileRequest(model, document, query, Notes: notes), AsAdmin(), _db, _cache, _queue,
+            _options, CancellationToken.None);
+        return result.ShouldBeOfType<Ok<ModelProfileSaved>>().Value.ShouldNotBeNull();
+    }
+
+    /// <summary>
+    /// Sets every job to Running. The queue merges a request into a job that is still Queued, so a test that
+    /// counts jobs after a second save has to start the first job. Otherwise the count is 1 under either rule.
+    /// </summary>
+    private async Task StartQueuedJobsAsync()
+    {
+        foreach (var job in await _db.Jobs.ToListAsync(TestContext.Current.CancellationToken))
+            job.State = JobState.Running;
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
+    }
+
+    private Task<int> JobCountAsync() => _db.Jobs.CountAsync(TestContext.Current.CancellationToken);
+
     private Task<ModelTemplates> EffectiveAsync(string model, string provider = "ollama") =>
         _profiles.ForAsync(new EmbeddingTarget(provider, model));
 
@@ -197,6 +219,149 @@ public sealed class ModelProfileSaveTests : IAsyncLifetime
         (await _db.Jobs.Select(j => j.ChunkSetId).ToListAsync(cancellationToken: TestContext.Current.CancellationToken)).Order().ToList().ShouldBe(["s1", "s2"]);
     }
 
+    [Fact]
+    public async Task SavingTheSameTemplatesAgainQueuesNoJob()
+    {
+        await SetAsync("s1", "default", "embeddinggemma");
+        await SaveAsync("embeddinggemma");
+        await StartQueuedJobsAsync();
+
+        var again = await SaveAsync("embeddinggemma");
+
+        again.Reindexing.ShouldBeEmpty();
+        again.Note.ShouldBe("The templates are unchanged: no chunk set was re-indexed.");
+        (await JobCountAsync()).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task SavingTheSameTemplatesFromAnotherSpellingOfTheModelQueuesNoJob()
+    {
+        await SetAsync("s1", "default", "embeddinggemma");
+        await SaveAsync("embeddinggemma");
+        await StartQueuedJobsAsync();
+
+        var again = await SaveAsync("EmbeddingGemma:latest");
+
+        again.Reindexing.ShouldBeEmpty();
+        (await JobCountAsync()).ShouldBe(1);
+        (await _db.ModelProfiles.CountAsync(TestContext.Current.CancellationToken)).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ChangingTheDocumentTemplateQueuesOneRebuildForEachSetOnTheModel()
+    {
+        await SetAsync("s1", "first", "embeddinggemma");
+        await SetAsync("s2", "second", "embeddinggemma");
+        await SetAsync("s3", "other-model", "nomic-embed-text");
+        await SaveAsync("embeddinggemma");
+        await StartQueuedJobsAsync();
+
+        var changed = await SaveWithAsync("embeddinggemma", "doc: {text}", Query);
+
+        changed.Reindexing.Order().ToList().ShouldBe(["docs:first", "docs:second"]);
+        var queued = await _db.Jobs.Where(j => j.State == JobState.Queued)
+            .Select(j => new { j.ChunkSetId, j.Kind }).ToListAsync(TestContext.Current.CancellationToken);
+        queued.Select(j => j.ChunkSetId).Order().ToList().ShouldBe(["s1", "s2"]);
+        queued.ShouldAllBe(j => j.Kind == JobKind.Rebuild);
+    }
+
+    [Fact]
+    public async Task ChangingOnlyTheQueryTemplateQueuesARebuild()
+    {
+        // A file's fingerprint covers both templates, so the next refresh would delete and re-embed every
+        // file of the set after a query-only edit, with the same vectors as before. The rebuild is queued
+        // here instead, and the caller is told which sets it covers.
+        const string otherQuery = "task: other | query: {text}";
+        new ModelTemplates(Doc, Query, TemplateOrigin.Configured).Fingerprint
+            .ShouldNotBe(new ModelTemplates(Doc, otherQuery, TemplateOrigin.Configured).Fingerprint,
+                "if the fingerprint stops covering the query template, a query-only edit can queue nothing");
+
+        await SetAsync("s1", "default", "embeddinggemma");
+        await SaveAsync("embeddinggemma");
+        await StartQueuedJobsAsync();
+
+        var changed = await SaveWithAsync("embeddinggemma", Doc, otherQuery);
+
+        changed.Reindexing.ShouldBe(["docs:default"]);
+        (await JobCountAsync()).ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ChangingOnlyTheNotesQueuesNoJobAndStoresThem()
+    {
+        await SetAsync("s1", "default", "embeddinggemma");
+        await SaveAsync("embeddinggemma");
+        await StartQueuedJobsAsync();
+
+        var again = await SaveWithAsync("embeddinggemma", Doc, Query, notes: "from the model card");
+
+        again.Reindexing.ShouldBeEmpty();
+        (await JobCountAsync()).ShouldBe(1);
+        (await _db.ModelProfiles.SingleAsync(TestContext.Current.CancellationToken)).Notes
+            .ShouldBe("from the model card");
+    }
+
+    /// <summary>
+    /// Backdates the profile row, then returns a time after it, as the start of a pass that began after the row
+    /// was last changed. <see cref="ModelFraming.UnchangedSinceAsync"/> compares the row's UpdatedUtc with it.
+    /// </summary>
+    private async Task<DateTime> StartPassAfterTheRowAsync()
+    {
+        var row = await _db.ModelProfiles.SingleAsync(TestContext.Current.CancellationToken);
+        row.UpdatedUtc = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        return DateTime.UtcNow;
+    }
+
+    [Fact]
+    public async Task AnUnchangedSaveWhileAPassRunsLeavesThePassFreeToRecordItsFraming()
+    {
+        // A pass records the framing it used only if no template was saved since it began. An identical save
+        // queues no rebuild, so a pass that it stopped from recording would leave /healthz reporting a stale
+        // framing with nothing queued to correct it.
+        var set = await SetAsync("s1", "default", "embeddinggemma");
+        await SaveAsync("embeddinggemma");
+        var passStarted = await StartPassAfterTheRowAsync();
+        var resolved = await EffectiveAsync("embeddinggemma");
+
+        await SaveAsync("embeddinggemma");
+        await SaveWithAsync("embeddinggemma", Doc, Query, notes: "from the model card");
+
+        (await ModelFraming.UnchangedSinceAsync(_db, _profiles, set, resolved, passStarted,
+            TestContext.Current.CancellationToken)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ChangingOnlyTheQueryTemplateWhileAPassRunsStopsItRecordingItsFraming()
+    {
+        // The control for the test above: a template change does move the row's time, and the document
+        // template alone cannot show it, since a query-only change leaves that the same.
+        var set = await SetAsync("s1", "default", "embeddinggemma");
+        await SaveAsync("embeddinggemma");
+        var passStarted = await StartPassAfterTheRowAsync();
+        var resolved = await EffectiveAsync("embeddinggemma");
+
+        await SaveWithAsync("embeddinggemma", Doc, "task: other | query: {text}");
+
+        (await EffectiveAsync("embeddinggemma")).Document.ShouldBe(resolved.Document);
+        (await ModelFraming.UnchangedSinceAsync(_db, _profiles, set, resolved, passStarted,
+            TestContext.Current.CancellationToken)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task SavingARowForTheFirstTimeQueuesARebuildEvenWhenItEqualsTheBuiltInFraming()
+    {
+        // Sets built before a built-in entry existed were embedded raw. Saving the entry as a row is how
+        // they are rebuilt (D-45), so a new row queues whatever it contains.
+        await SetAsync("s1", "default", "embeddinggemma");
+        var builtIn = _profiles.Suggest("embeddinggemma").ShouldNotBeNull();
+
+        var saved = await SaveWithAsync("embeddinggemma", builtIn.Document, builtIn.Query);
+
+        saved.Reindexing.ShouldBe(["docs:default"]);
+        (await JobCountAsync()).ShouldBe(1);
+    }
+
     /// <summary>Cancels the request the moment a save has committed, as a client that goes away would.</summary>
     private sealed class CancelAfterSave(CancellationTokenSource source) : SaveChangesInterceptor
     {
@@ -225,6 +390,11 @@ public sealed class ModelProfileSaveTests : IAsyncLifetime
 
         result.ShouldBeOfType<Ok<ModelProfileSaved>>().Value!.Reindexing.ShouldBe(["docs:default"]);
         (await _db.Jobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(1);
+
+        // A second save of the same values queues nothing, so a rebuild dropped by the cancel would not come back.
+        await StartQueuedJobsAsync();
+        (await SaveAsync("embeddinggemma:latest")).Reindexing.ShouldBeEmpty();
+        (await JobCountAsync()).ShouldBe(1);
     }
 
     [Fact]

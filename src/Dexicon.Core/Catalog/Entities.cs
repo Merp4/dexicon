@@ -559,6 +559,11 @@ public sealed class EmbeddingModelProfile
     public string? Notes { get; set; }
 
     public DateTime CreatedUtc { get; set; }
+
+    /// <summary>
+    /// When a template last changed. A save of the same templates, with or without new notes, leaves it as it was
+    /// (<c>ModelFraming.UnchangedSinceAsync</c> reads it).
+    /// </summary>
     public DateTime UpdatedUtc { get; set; }
 }
 
