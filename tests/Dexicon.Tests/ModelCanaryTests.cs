@@ -571,21 +571,24 @@ public sealed class ModelCanaryChecks : IAsyncLifetime
 /// </summary>
 public sealed class ModelCanaryServiceTicks : IAsyncLifetime
 {
-    private SqliteConnection _connection = null!;
+    // A file, and a connection for each context. The timer tests run the service, which opens a scope every few
+    // milliseconds, while the test thread polls the catalogue. Both on one in-memory connection, a context that was
+    // created while the other thread had a statement active failed in EF's setup of the connection (SQLite error 5,
+    // "unable to delete/modify user-function due to active statements"); it did so once in 3,324 tests of a full run.
+    private string _path = null!;
     private ServiceProvider _services = null!;
     private readonly PerModelEmbedder _embedder = new();
     private readonly IndexingHarness.FixedProfiles _profiles = new();
 
     public async ValueTask InitializeAsync()
     {
-        _connection = new SqliteConnection("Data Source=:memory:");
-        await _connection.OpenAsync();
+        _path = Path.Combine(Path.GetTempPath(), $"dexicon-ticks-{Guid.NewGuid():N}.db");
 
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton<IEmbeddingService>(_embedder);
         services.AddSingleton<IModelProfiles>(_profiles);
-        services.AddDbContext<CatalogDbContext>(o => o.UseSqlite(_connection));
+        services.AddDbContext<CatalogDbContext>(o => o.UseSqlite($"Data Source={_path};Pooling=False"));
         _services = services.BuildServiceProvider();
 
         await using var db = NewContext();
@@ -597,7 +600,7 @@ public sealed class ModelCanaryServiceTicks : IAsyncLifetime
     public async ValueTask DisposeAsync()
     {
         await _services.DisposeAsync();
-        await _connection.DisposeAsync();
+        File.Delete(_path);
     }
 
     private CatalogDbContext NewContext() => new(_services.GetRequiredService<DbContextOptions<CatalogDbContext>>());
