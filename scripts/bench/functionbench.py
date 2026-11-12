@@ -164,8 +164,8 @@ def targets_of(queries, members, src, cache):
         lines = source_lines(src, q["file"], cache)
         for x in m["members"]:
             # The labels belong to one tree: a line that is not the labelled signature means --src is another tree.
-            got = lines[x["line"] - 1].strip() if x["line"] <= len(lines) else ""
-            if not got.startswith(x["signature"].strip()):
+            got = lines[x["line"] - 1].strip() if 1 <= x["line"] <= len(lines) else ""
+            if not x["signature"].strip() or not got.startswith(x["signature"].strip()):
                 sys.exit(f"{q['file']}:{x['line']} is {got[:70]!r}, not the labelled signature {x['signature'][:70]!r}: "
                          f"is --src the tree the labels belong to ({members.get('tree')})?")
         spans = [member_span(lines, x["line"]) for x in m["members"]]
@@ -175,8 +175,8 @@ def targets_of(queries, members, src, cache):
 
 
 def check_chunks(chunks, queries, src, cache, label):
-    """Every expected file has chunks, and the first and last chunk of each C# one hold the lines they claim, so the chunks were
-    cut from the tree the labels and --src belong to."""
+    """Every expected file has chunks, and every chunk of each expected C# file holds the lines it claims, so those chunks were cut
+    from the tree the labels and --src belong to. The other files of the corpus are not checked."""
     if not chunks:
         sys.exit(f"{label}: no chunks")
     by_file = {}
@@ -188,7 +188,7 @@ def check_chunks(chunks, queries, src, cache, label):
         if not rel.endswith(".cs"):
             continue
         lines = source_lines(src, rel, cache)
-        for c in (min(by_file[rel], key=lambda c: c["start"]), max(by_file[rel], key=lambda c: c["start"])):
+        for c in by_file[rel]:
             if "\n".join(lines[c["start"] - 1:c["end"]]).strip() != c["text"].replace("\r", "").lstrip("﻿").strip():
                 sys.exit(f"{label}: the chunk {rel}:{c['start']}-{c['end']} is not the text of those lines under --src")
 

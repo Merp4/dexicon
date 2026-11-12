@@ -384,7 +384,7 @@ refuses to start an arm with less than 10 GB available in the VM and stops if th
 
 Every score above asks which file a question is about. It cannot say whether the chunk that comes back is the function the
 question is about, or whether that function arrives with its own description. This round measures both on the C# of `src/`
-(tree `f239ba4`, 143 text files of which 88 are C#, chunked by the production `CodeChunker` in `language-aware` mode at 256/32,
+(tree `f239ba4`, 143 text files, 139 of them C#, chunked by the production `CodeChunker` in `language-aware` mode at 256/32,
 512/64 and 1,024/128 tokens and overlap). 2,065/258, the size the docs' example uses, was dropped: `embeddinggemma:latest` refused 7 of the 60
 longest such chunks of this code ("the input length exceeds the context length"). The predictions, committed before any scoring
 run, are in `scripts/bench/functionbench-predictions-2026-11-11.md`; the results are in
@@ -436,20 +436,20 @@ predictions made beforehand held (an interval at 256 that excludes zero for one 
 lost 0.034), a file-level change under 0.02 (up to -0.055), and the best size to be 256 or 512 (it was 1,024 for three of the four
 model and chunker pairs). The rule written beforehand, a gain of at least +0.02 for both models at 256 or 512 tokens and an
 interval that excludes zero for at least one of them, is not met. The chunker is unchanged. A strict hit is also a file hit, so the
-strict score cannot exceed the file score; the gap here is strict 0.19 to 0.46 against file 0.64 to 0.74. For both models and the
+strict score cannot exceed the file score on any question; the means are strict 0.19 to 0.46 against file 0.64 to 0.74. For both models and the
 unchanged chunker the strict score is higher at 512 and 1,024 tokens than at 256 (`embeddinggemma` 0.323, 0.448, 0.447;
-`embeddinggemma-2` 0.193, 0.385, 0.459), without an interval, and a larger chunk holds more signatures, so part of that follows from
+`embeddinggemma-2` 0.193, 0.385, 0.459); no interval was computed for those differences, and a larger chunk holds more signatures, so part of that follows from
 the definition.
 
 A second full run reproduced all 2,208 per-question scores and every interval exactly. Limits: 48 questions resolve differences of
 about 0.08, and the intervals are that wide. The labels are one reviewer's, and 12 are
 marked ambiguous (on the 36 unambiguous ones `embeddinggemma-2` at 256 gains +0.103 [+0.025, +0.199]). The strict score does not
 credit a chunk that holds only the tail of a long member, and the lenient score credits any overlap: one question is labelled with a
-class that is 98% of its file, and five more with a member that covers more than half of a short file, so for those the lenient score
-is close to the file score. The member's last line comes from a
-brace matcher and not a parser; the script stops if a span does not contain its own signature line, and the spans of all 76 labelled
-members were read for plausibility without a record in the repository. One repository and one language were measured, dense only;
-the prototype's patterns for the other 22 languages were not.
+class that is 98% of its file, and five more with a member that covers more than half of a file of under 300 lines, so for those the
+lenient score is close to the file score. The member's last line comes from a scanner that counts braces outside strings and comments,
+which is a heuristic and not a parser. The script stops if a labelled line is not the labelled signature, which also catches a source
+tree other than the one the labels belong to, and if any chunk of an expected file is not the text of its lines in that tree. One
+repository and one language were measured, dense only; the prototype's patterns for the other 22 languages were not.
 
 Reproduce with:
 
