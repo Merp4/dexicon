@@ -514,8 +514,10 @@ public static partial class GitHistory
     /// working tree (<c>fatal: pathspec 'dir/f.txt' is beyond a symbolic link</c>): a directory a stash
     /// held and the tree has since replaced with a link. The call is halved until the path is alone, and
     /// that path is not judged. It is not indexed, which is the safe answer for a file that may be a
-    /// secret, and it is recorded as skipped. More than <see cref="MaxUnjudged"/> such paths is git
-    /// failing for another reason, and is reported as that.
+    /// secret, and it is recorded as skipped. When a call fails, a harmless control path is put to git
+    /// first (<see cref="ControlAsync"/>): if that fails too, git is not answering and the inventory fails
+    /// with git's message instead of recording every path as unjudged. More than <see cref="MaxUnjudged"/>
+    /// such paths is also reported as git failing.
     /// </summary>
     private static async Task<(HashSet<string> Ignored, HashSet<string> Unjudged)> IgnoredAsync(
         GitRepository repo, List<string> paths, CancellationToken ct)
@@ -523,10 +525,22 @@ public static partial class GitHistory
         var ignored = new HashSet<string>(StringComparer.Ordinal);
         var unjudged = new HashSet<string>(StringComparer.Ordinal);
 
+        // Asked once, and only when a call fails: whether git can answer at all. A path that fails alone is then a
+        // fact about the path, and not a fault in git that would otherwise be recorded once for every path.
+        var healthy = new Lazy<Task>(() => ControlAsync(repo, ct));
+
         foreach (var chunk in paths.Chunk(ObjectsPerCall))
-            await CheckIgnoreAsync(repo, [.. chunk], ignored, unjudged, ct);
+            await CheckIgnoreAsync(repo, [.. chunk], ignored, unjudged, healthy, ct);
 
         return (ignored, unjudged);
+    }
+
+    /// <summary>A path that exists in no repository, put to the same command. Any answer but a failure will do.</summary>
+    private static async Task ControlAsync(GitRepository repo, CancellationToken ct)
+    {
+        var (ok, _, stderr) = await BoundedAsync(repo,
+            ["check-ignore", "--no-index", "--stdin", "-z"], ct, "control-path-that-is-not-a-file\0", alsoOk: 1);
+        if (!ok) throw new GitHistoryException($"git check-ignore failed: {Summarise(stderr)}");
     }
 
     private const int MaxUnjudged = 50;
@@ -539,7 +553,8 @@ public static partial class GitHistory
     private const int ObjectsPerCall = 10_000;
 
     private static async Task CheckIgnoreAsync(
-        GitRepository repo, List<string> paths, HashSet<string> ignored, HashSet<string> unjudged, CancellationToken ct)
+        GitRepository repo, List<string> paths, HashSet<string> ignored, HashSet<string> unjudged,
+        Lazy<Task> healthy, CancellationToken ct)
     {
         if (paths.Count == 0) return;
 
@@ -553,6 +568,9 @@ public static partial class GitHistory
             return;
         }
 
+        // Throws when git cannot answer a harmless question either.
+        await healthy.Value;
+
         if (paths.Count == 1)
         {
             if (unjudged.Count >= MaxUnjudged)
@@ -563,9 +581,10 @@ public static partial class GitHistory
         }
 
         var half = paths.Count / 2;
-        await CheckIgnoreAsync(repo, paths.GetRange(0, half), ignored, unjudged, ct);
-        await CheckIgnoreAsync(repo, paths.GetRange(half, paths.Count - half), ignored, unjudged, ct);
+        await CheckIgnoreAsync(repo, paths.GetRange(0, half), ignored, unjudged, healthy, ct);
+        await CheckIgnoreAsync(repo, paths.GetRange(half, paths.Count - half), ignored, unjudged, healthy, ct);
     }
+
     /// <summary>
     /// The documents of these stashes. The same layout as a commit's, with <c>stash</c> for the
     /// first word, the commit the stash was made on, and the diff taken against it: a stash is a
@@ -601,29 +620,38 @@ public static partial class GitHistory
         GitRepository repo, GitHistoryOptions options, IReadOnlyList<GitStashFile> files,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
-        foreach (var file in files)
+        // A few processes at a time, in order. One process per file, one after another, took 100 s for 71 files
+        // on a loaded host, and the content of a blob cannot be split safely out of one decoded stream of several.
+        foreach (var batch in files.Chunk(ReadParallelism))
         {
             ct.ThrowIfCancellationRequested();
 
-            // Given to git as an argument. The inventory only produces object names, and this is
-            // a public entry point: a unit built by hand must not become an option.
-            if (!ObjectName.IsMatch(file.BlobSha))
-                throw new GitHistoryException("An untracked file's object name is not one git could have printed.");
+            var texts = await Task.WhenAll(batch.Select(f => ReadStashFileAsync(repo, options, f, ct)));
+            for (var i = 0; i < batch.Length; i++) yield return (batch[i], texts[i]);
+        }
+    }
 
-            string content;
-            try
-            {
-                var (ok, stdout, stderr) = await RunAsync(repo, ["cat-file", "blob", file.BlobSha], ct,
-                    maxBytes: file.SizeBytes * 3 + 4096);
-                if (!ok) throw new GitHistoryException($"git cat-file failed: {Summarise(stderr)}");
-                content = stdout;
-            }
-            catch (GitOutputTooLargeException ex)
-            {
-                throw new GitHistoryException($"An untracked file of a stash could not be read: {ex.Message}", ex);
-            }
+    /// <summary>Untracked file documents read at once. Memory is bounded by this and the size cap.</summary>
+    private const int ReadParallelism = 8;
 
-            yield return (file, StashFileDocument(options, file, content));
+    private static async Task<string> ReadStashFileAsync(
+        GitRepository repo, GitHistoryOptions options, GitStashFile file, CancellationToken ct)
+    {
+        // Given to git as an argument. The inventory only produces object names, and this is
+        // a public entry point: a unit built by hand must not become an option.
+        if (!ObjectName.IsMatch(file.BlobSha))
+            throw new GitHistoryException("An untracked file's object name is not one git could have printed.");
+
+        try
+        {
+            var (ok, stdout, stderr) = await RunAsync(repo, ["cat-file", "blob", file.BlobSha], ct,
+                maxBytes: file.SizeBytes * 3 + 4096);
+            if (!ok) throw new GitHistoryException($"git cat-file failed: {Summarise(stderr)}");
+            return StashFileDocument(options, file, stdout);
+        }
+        catch (GitOutputTooLargeException ex)
+        {
+            throw new GitHistoryException($"An untracked file of a stash could not be read: {ex.Message}", ex);
         }
     }
 

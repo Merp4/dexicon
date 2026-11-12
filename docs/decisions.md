@@ -2716,8 +2716,8 @@ untracked-files commit by hand.
   contents has no setting for it; a path filter can leave directories out.
 - No migration. The setting is a key in the source's stored settings, and a source without it reads as off.
 - Each git call is a builtin (`for-each-ref`, `log`, `cat-file`, `check-ignore`), so a repository's aliases cannot
-  stand in for one. An untracked file is read with one `git cat-file blob` per document, because the content of a blob
-  cannot be split safely out of a decoded stream of several.
+  stand in for one. An untracked file is read with one `git cat-file blob` per document, eight at a time, because the content
+  of a blob cannot be split safely out of a decoded stream of several.
 
 **Revisit when** other local refs, such as unmerged branches, are wanted in the same corpus: they would need a way to
 name more than one ref, which the source does not have. Or when a stash holds enough untracked files that the limit of
