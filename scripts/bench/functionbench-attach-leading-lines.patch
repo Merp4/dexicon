@@ -1,0 +1,103 @@
+diff --git a/src/Dexicon.Core/Indexing/CodeChunker.cs b/src/Dexicon.Core/Indexing/CodeChunker.cs
+index 70cfd889..4f86d7cb 100644
+--- a/src/Dexicon.Core/Indexing/CodeChunker.cs
++++ b/src/Dexicon.Core/Indexing/CodeChunker.cs
+@@ -680,7 +680,41 @@ public static class CodeChunker
+             }
+         }
+ 
+-        return result;
++        return mode == "language-aware" && LanguageMap.LeadingLinePattern(language) is { } leading
++            ? AttachLeadingLines(result, lines, leading)
++            : result;
++    }
++
++    /// <summary>
++    /// Moves each member boundary up over the unbroken run of comment and attribute lines directly above it, so a
++    /// member's description and attributes begin the segment the member is in. A boundary is the member's signature line,
++    /// and without this the lines above it end the previous segment: a chunk that breaks at the boundary then carries the
++    /// next member's description at its tail and leaves that member without it. A blank line ends the run.
++    /// </summary>
++    private static List<int> AttachLeadingLines(List<int> boundaries, string[] lines, string leadingPattern)
++    {
++        var leading = new Regex(leadingPattern, RegexOptions.None, RegexTimeout);
++        var signatures = boundaries.ToHashSet();
++        var moved = new SortedSet<int>();
++
++        foreach (var signature in boundaries)
++        {
++            var start = signature;
++            try
++            {
++                while (start > 0 && !signatures.Contains(start - 1) && leading.IsMatch(lines[start - 1])) start--;
++            }
++            catch (RegexMatchTimeoutException ex)
++            {
++                throw new ArgumentException(
++                    $"Leading-line regex timed out after {RegexTimeout.TotalMilliseconds}ms above line {signature + 1}.", ex);
++            }
++
++            // Line 0 starts the first segment whether or not it is a boundary.
++            if (start > 0) moved.Add(start);
++        }
++
++        return [.. moved];
+     }
+ 
+     private static string[] SplitLines(string content) =>
+diff --git a/src/Dexicon.Core/Indexing/LanguageMap.cs b/src/Dexicon.Core/Indexing/LanguageMap.cs
+index 6eb8546e..e73ad4c8 100644
+--- a/src/Dexicon.Core/Indexing/LanguageMap.cs
++++ b/src/Dexicon.Core/Indexing/LanguageMap.cs
+@@ -115,6 +115,37 @@ public static class LanguageMap
+         ["svelte"] = BlankLine,
+     };
+ 
++    // Lines that belong to the declaration below them: its comments, and the attributes, annotations or decorators that
++    // precede it. A line is tested alone, so a block comment or a decorator that spans lines is attached by the lines of it
++    // that match, and only when they are unbroken up to the declaration. A language with no entry attaches nothing.
++    private const string SlashComment = @"//|/\*|\*";
++    private static readonly Dictionary<string, string> LeadingLines = new(StringComparer.OrdinalIgnoreCase)
++    {
++        ["csharp"] = @"^\s*(" + SlashComment + @"|\[)",
++        ["fsharp"] = @"^\s*(//|\(\*|\[<)",
++        ["vb"] = @"^\s*'",
++        ["java"] = @"^\s*(" + SlashComment + @"|@)",
++        ["kotlin"] = @"^\s*(" + SlashComment + @"|@)",
++        ["scala"] = @"^\s*(" + SlashComment + @"|@)",
++        ["swift"] = @"^\s*(" + SlashComment + @"|@)",
++        ["typescript"] = @"^\s*(" + SlashComment + @"|@)",
++        ["javascript"] = @"^\s*(" + SlashComment + @"|@)",
++        ["php"] = @"^\s*(" + SlashComment + @"|#)",
++        ["go"] = @"^\s*//",
++        ["rust"] = @"^\s*(//|#\[)",
++        ["c"] = @"^\s*(" + SlashComment + ")",
++        ["cpp"] = @"^\s*(" + SlashComment + ")",
++        ["python"] = @"^\s*(#|@)",
++        ["ruby"] = @"^\s*#",
++        ["shell"] = @"^\s*#",
++        ["powershell"] = @"^\s*#",
++        ["lua"] = @"^\s*--",
++        ["sql"] = @"^\s*--",
++        ["css"] = @"^\s*(/\*|\*)",
++        ["scss"] = @"^\s*(" + SlashComment + ")",
++        ["less"] = @"^\s*(" + SlashComment + ")",
++    };
++
+     /// <summary>Symbol-extraction patterns. A regex pass, explicitly not a parser.</summary>
+     private static readonly Dictionary<string, string> Symbols = new(StringComparer.OrdinalIgnoreCase)
+     {
+@@ -143,6 +174,13 @@ public static class LanguageMap
+     public static string? SymbolPattern(string language) =>
+         Symbols.TryGetValue(language, out var p) ? p : null;
+ 
++    /// <summary>
++    /// The lines that start a member's own text above its signature: comments and attributes. Null for a language
++    /// whose boundary is not a declaration, so a blank-line or heading boundary is left where it is.
++    /// </summary>
++    public static string? LeadingLinePattern(string language) =>
++        LeadingLines.TryGetValue(language, out var p) ? p : null;
++
+     public static string? MediaType(string language) => language switch
+     {
+         "csharp" => "text/x-csharp",

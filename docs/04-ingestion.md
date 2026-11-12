@@ -1135,7 +1135,12 @@ next chunk, so every chunk has an exact `start_line`/`end_line`. Never splits a 
 
 With `boundary_mode: language-aware`, the file is first split at member boundaries by
 language, then each segment is size-chunked. This keeps a method with its signature instead
-of slicing it at an arbitrary token count. The patterns are in `LanguageMap.Boundaries`.
+of slicing it at an arbitrary token count. The patterns are in `LanguageMap.Boundaries`. For the languages with a member pattern a
+boundary is the member's signature line, so the comment and attribute lines above it belong to the segment before it. On the C# of
+this repository, one chunk holds a documented member's `///` block and its signature for 46.8% of such members at 256 tokens, 74.4% at
+512 and 91.7% at 1,024 (2,065, the size of the example set below, was not measured); attaching those lines to the member did not
+change retrieval consistently and is not done
+([benchmarks](benchmarks.md#function-level-retrieval-and-where-the-chunker-breaks-a-member-2026-11-11)).
 These languages have a member pattern: C#, F#, VB, Java, Kotlin, Scala, Swift, TypeScript,
 JavaScript, Python, Ruby, Go, Rust, PHP, Lua, C, C++, SQL, CSS, SCSS, LESS, shell and
 PowerShell. Examples:
