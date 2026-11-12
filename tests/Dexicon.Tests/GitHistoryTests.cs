@@ -1213,6 +1213,8 @@ public sealed class GitHistoryTests : IDisposable
             .ShouldBe(baseline.ContentFingerprint());
         (baseline with { IncludeMerges = true }).ContentFingerprint()
             .ShouldBe(baseline.ContentFingerprint(), "turning merges on ADDS documents; it alters none");
+        (baseline with { IncludeStashes = true }).ContentFingerprint()
+            .ShouldBe(baseline.ContentFingerprint(), "turning stashes on adds documents; it alters no commit's");
 
         // The cap matters only when there is a patch for it to cap.
         (baseline with { MaxDiffBytes = 1 }).ContentFingerprint()

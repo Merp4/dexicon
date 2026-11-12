@@ -284,6 +284,28 @@ describe('the sources a corpus reads', () => {
   });
 
   /**
+   * A source that also indexes stashes holds stashes and untracked files beside its commits. Found walking the
+   * running app: the row said what a commit holds and nothing of the stashes, so the setting was invisible once saved.
+   */
+  it('says when a history source also indexes stashes, and counts its documents as documents', async () => {
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          source({
+            id: 's2', kind: 'githistory', rootPath: 'api-repo', fileCount: 12,
+            git: { ref: 'main', includeMessage: true, includeStat: true, includeDiff: false, maxDiffBytes: 65536, includeMerges: false, includeStashes: true },
+          }),
+        ],
+      }),
+    );
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText(/message and stat/)).toHaveTextContent(/^main · message and stat · with stashes/);
+    expect(screen.getByText(/12 documents/, { selector: 'span, div' })).toBeInTheDocument();
+  });
+
+  /**
    * Uploads are not walked. Their source stores int.MaxValue as its cap, and on the file
    * settings' line it read "upload · .gitignore ignored · code and text ≤ 2.0 GB", when the
    * server caps each upload as it arrives.
@@ -1366,10 +1388,31 @@ describe('editing a history source', () => {
     expect(body.git).toEqual({
       ref: 'refs/remotes/origin/main', includeMessage: true, includeStat: true, includeDiff: false,
       maxDiffBytes: 65536, includeMerges: false, maxCommits: null, keepIndexed: false, since: null,
+      includeStashes: false,
     });
     // Following the corpus, as the source did before: nothing new pinned against it.
     expect(body.clear).toEqual(['includeGlobs']);
     expect(body.includeGlobs).toBeUndefined();
+  });
+
+  /**
+   * Stashes add documents and alter none, as merges do, so ticking the box is not a re-read.
+   * A source stored before the setting existed has no value for it and shows it off.
+   */
+  it('sends the stashes setting, and does not call turning it on a re-read', async () => {
+    updateSource.mockResolvedValue({});
+    const { user, dialog } = await openEditor();
+
+    const stashes = within(dialog).getByRole('checkbox', { name: /^Stashes/ });
+    expect(stashes).not.toBeChecked();
+
+    await user.click(stashes);
+    expect(within(dialog).getByText(/documents already indexed\s+are kept/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Saving re-reads every commit/)).not.toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: /^Save changes$/ }));
+    await waitFor(() => expect(updateSource).toHaveBeenCalled());
+    expect(updateSource.mock.calls[0][2].git.includeStashes).toBe(true);
   });
 
   it('shows a refusal in the dialog, which stays open', async () => {

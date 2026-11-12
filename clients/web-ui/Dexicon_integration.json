@@ -785,6 +785,9 @@
               "string"
             ],
             "format": "date"
+          },
+          "includeStashes": {
+            "type": "boolean"
           }
         }
       },

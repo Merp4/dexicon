@@ -329,7 +329,8 @@ one kind on a folder, added in the UI; a folder cannot say which is meant, so a 
 either is refused and made in the UI. `exclude`, `gitignore` and `maxFileKb` apply to a files source; a
 history source takes `include`, as the paths whose commits are kept, and `history`: an
 object of `follow` (the ref), `message`, `stat`, `diff`, `maxDiffKb`, `merges`,
-`maxCommits`, `keepIndexed` and `since`. Settings left out keep their value; `reset`
+`maxCommits`, `keepIndexed`, `since` and `stashes` (also index the repository's stashes,
+[04](04-ingestion.md)). Settings left out keep their value; `reset`
 returns one to its default. The reply shows the source as `index_status` does:
 
 ```

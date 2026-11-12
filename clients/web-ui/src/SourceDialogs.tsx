@@ -255,6 +255,7 @@ type GitSettings = {
   maxCommits: number | null;
   keepIndexed: boolean;
   since: string | null;
+  includeStashes: boolean;
 };
 
 /** The server's defaults, spelled out so a form can show them. docs/04 lists them. */
@@ -268,6 +269,7 @@ const DEFAULT_GIT: GitSettings = {
   maxCommits: null,
   keepIndexed: false,
   since: null,
+  includeStashes: false,
 };
 
 function gitSettingsOf(git?: Source['git']): GitSettings {
@@ -281,6 +283,7 @@ function gitSettingsOf(git?: Source['git']): GitSettings {
     maxCommits: git?.maxCommits ?? null,
     keepIndexed: git?.keepIndexed ?? DEFAULT_GIT.keepIndexed,
     since: git?.since ?? null,
+    includeStashes: git?.includeStashes ?? DEFAULT_GIT.includeStashes,
   };
 }
 
@@ -369,6 +372,13 @@ function HistoryFields({ git, onGitChange, paths, onPathsChange, fallback, repos
           hint="Their default patch is empty and their message is usually generated."
           checked={git.includeMerges}
           onChange={(v) => set('includeMerges', v)}
+        />
+
+        <CheckField
+          label="Stashes"
+          hint="Work kept off the branch, with the untracked files a stash holds (git stash -u), under stashes/. Each version of an untracked file is indexed once, however many stashes hold it. Files git ignores and files a file walk excludes are left out. The ref and the commit limit do not apply; the date and paths do."
+          checked={git.includeStashes}
+          onChange={(v) => set('includeStashes', v)}
         />
       </Section>
 
@@ -695,7 +705,8 @@ export function EditHistorySourceModal({ corpus, source, onClose, onSaved }: {
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <form onSubmit={submit}>
         <p className="mt-0 mb-3.5 text-sm text-muted-foreground">
-          The commit history of <span className="mono">{sourceName(source)}</span>, one document per commit.
+          The commit history of <span className="mono">{sourceName(source)}</span>, one document per commit
+          {git.includeStashes && ', and one per stash and per untracked file version'}.
         </p>
 
         <HistoryFields git={git} onGitChange={setGit} paths={paths} onPathsChange={setPaths}
@@ -708,9 +719,9 @@ export function EditHistorySourceModal({ corpus, source, onClose, onSaved }: {
           </Notice>
         ) : (
           <Notice tone="neutral" className="text-xs">
-            Saving refreshes the corpus. The ref, the commit limit, the date and merges decide
-            which commits are indexed, not what any of them holds: documents already indexed
-            are kept, and commits no longer selected leave the index.
+            Saving refreshes the corpus. The ref, the commit limit, the date, merges and stashes
+            decide which documents are indexed, not what any of them holds: documents already
+            indexed are kept, and those no longer selected leave the index.
           </Notice>
         )}
 

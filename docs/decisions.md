@@ -2652,6 +2652,79 @@ change that has to be built beside the live set and promoted.
 
 ---
 
+### D-48 A history source can also index the repository's stashes
+
+**Status.** Accepted and implemented, 2026-11-12.
+
+**Decision.** A git-history source has a setting, `includeStashes` (default off), that adds two kinds of document to
+the commits it already indexes: one per stash, and one per distinct version of an untracked file a stash holds. The
+layout, the files left out and the settings that apply are in [04](04-ingestion.md#git-history--a-repositorys-commits).
+
+**Why.** A search for the exact wording of a product decision found nothing, because the document that held it was an
+untracked note kept in a stash. A history source follows one ref. A stash is on no ref, and the files `git stash -u`
+records as untracked are in no branch's history. Reading them back took `git show` against each stash's
+untracked-files commit by hand.
+
+**Measured.** On git 2.31.1 (Windows) and 2.54.0 (the image's base) in a scratch repository:
+
+- A stash commit has up to three parents: the commit it was made on, the index, and for `-u` or `-a` a root commit that
+  holds only the untracked files. `git show --stat stash@{0}` lists the tracked change and not `notes.md`, which is
+  under `stash@{0}^3`.
+- `git log --no-merges refs/stash` returned the newest stash's index commit and untracked-files commit and the base
+  commit. It did not return the stash commit, which is a merge, or any older stash.
+- `git log -p` prints nothing for a stash, and `--diff-merges=first-parent` prints the tracked diff.
+- The same untracked file in two stashes has one blob name, so the version of a file is its path and blob.
+- `git check-ignore --no-index --stdin -z` exits 1 when no path is ignored, and prints the ignored paths otherwise.
+- On the machine this was built on (2026-11-12), 31 stashes in 16 of 86 repositories held at most 71 untracked files
+  each and no binary file. Counted with `git log -g --format=%P refs/stash` for the third parent of each stash, then
+  `git ls-tree -r --name-only` and `git log --no-walk --root --numstat` on it. The limit of 500 paths per stash leaves
+  room for that and bounds a stash made with `--all`; 71 does not determine it.
+
+**Rejected.**
+
+- *Following `refs/stash` as the source's ref.* It reaches the newest stash only, as measured, and the untracked files
+  of that one are not in the diff of any commit the walk prints.
+- *One document per stash holding the text of its untracked files.* A note unchanged across thirty stashes would be
+  thirty copies in the results, and a search would return all of them for one wording.
+- *Naming every stash that holds a file in the file's document.* The document would change whenever a stash holding the
+  file was made or dropped, and each change re-embeds it. The oldest holder changes only when that stash is dropped,
+  and the stash documents list their files for the other direction.
+- *Indexing every untracked file whatever git's ignore rules say.* `git stash --all` records ignored files, `.env`
+  among them. A source that indexes a repository's files already leaves out what `.gitignore` covers, and this follows
+  the same rule, with the one difference that the rules are git's alone: a `.dexiconignore` is not read.
+- *Reading the ignore rules as they were when the stash was made.* The files are in a commit and the rules are files
+  in a tree, and git has no command that judges a path against another tree's ignore files. The check uses the rules
+  on disk at the time of the pass, and the limit is stated in [04](04-ingestion.md#git-history--a-repositorys-commits).
+- *Giving the source's exclude globs to git.* The history source passes no exclude to git for the commits, because
+  git's exclude pathspec syntax is its own. The untracked files are files, and the walk's own rule set, which is the
+  walk's pattern language with its precedence, is applied to them in this code and not by git.
+
+**Consequences.**
+
+- Stash documents come and go with the reflog. A `git stash pop` or `drop` removes the stash's documents on the next
+  pass, and a file version held only by it. Dropped stashes are not kept: `keepIndexed` is about commits.
+- Files a walk leaves out (build output, dependency folders, binaries, lock files, the source's exclude list) leave
+  no row. Git's ignore rules are those on disk when the pass runs. A file recorded by `git stash --all` as ignored by
+  a rule that is no longer on disk is indexed, which `git stash -u` avoids.
+- At most 10,000 untracked file documents a source indexes from stashes, oldest holders first left out as skipped rows,
+  because nothing else bounds them. A stash whose listing is over 64 MiB of git output is kept, and its document says
+  its files are too many to list or index.
+- With `includeStat` on, a stash's own document lists the names of the untracked files it holds (the first 500 that
+  the include paths select), including ignored ones from `--all`, so that its text does not depend on the ignore rules
+  in force when it is read. The contents of ignored files are not indexed.
+- The contents of untracked files are indexed whatever `includeDiff` says. A source that wants stashes but not file
+  contents has no setting for it; a path filter can leave directories out.
+- No migration. The setting is a key in the source's stored settings, and a source without it reads as off.
+- Each git call is a builtin (`for-each-ref`, `log`, `cat-file`, `check-ignore`), so a repository's aliases cannot
+  stand in for one. An untracked file is read with one `git cat-file blob` per document, eight at a time, because the content
+  of a blob cannot be split safely out of a decoded stream of several.
+
+**Revisit when** other local refs, such as unmerged branches, are wanted in the same corpus: they would need a way to
+name more than one ref, which the source does not have. Or when a stash holds enough untracked files that the limit of
+500 paths per stash leaves out what people look for.
+
+---
+
 ## Resolved questions
 
 | # | Question | Needed by | Current lean |

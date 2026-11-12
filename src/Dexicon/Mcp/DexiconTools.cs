@@ -484,13 +484,16 @@ public sealed class DexiconTools
             if (string.Equals(s.Kind, "githistory", StringComparison.OrdinalIgnoreCase))
             {
                 var git = s.Git ?? new GitHistoryOptions();
-                sb.Append($"    commit history of {where}: {s.FileCount:N0} {(s.FileCount == 1 ? "commit" : "commits")}, follows {OneLine(git.Ref)}");
+                // Stashes and the untracked files they held are documents of the source too, and not commits.
+                var unit = git.IncludeStashes ? "document" : "commit";
+                sb.Append($"    commit history of {where}: {s.FileCount:N0} {(s.FileCount == 1 ? unit : unit + "s")}, follows {OneLine(git.Ref)}");
                 if (s.Tracking is { } tracking && Distance(tracking) is { } distance)
                     sb.Append($" ({distance})");
                 var holds = new[] { git.IncludeMessage ? "message" : null, git.IncludeStat ? "stat" : null, git.IncludeDiff ? "diff" : null }
                     .Where(p => p is not null).ToList();
                 sb.Append($"; holds {(holds.Count == 0 ? "sha, author and date only" : string.Join(", ", holds))}");
                 if (git.IncludeMerges) sb.Append("; merges included");
+                if (git.IncludeStashes) sb.Append("; stashes included");
                 if (git.MaxCommits is { } max) sb.Append($"; newest {max:N0}{(git.KeepIndexed ? ", kept once indexed" : "")}");
                 if (git.Since is { } since) sb.Append($"; since {since:yyyy-MM-dd}");
                 if (s.IncludeGlobs.Count > 0)

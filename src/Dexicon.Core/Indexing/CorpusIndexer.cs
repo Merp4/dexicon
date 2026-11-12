@@ -1274,7 +1274,8 @@ public sealed class CorpusIndexer(
     }
 
     /// <summary>
-    /// One pass over a repository's history, one document per commit.
+    /// One pass over a repository's history, one document per commit, and with
+    /// <see cref="GitHistoryOptions.IncludeStashes"/> one per stash and one per untracked file version.
     ///
     /// The enumeration is the inventory and is deliberately cheap: shas and dates, no
     /// messages and no patches. Which of them still need reading is then settled against the
@@ -1315,6 +1316,7 @@ public sealed class CorpusIndexer(
         var filters = SourceFilters.Resolve(corpus, source, _indexing);
 
         IReadOnlyList<GitCommit> commits;
+        var stashes = GitStashInventory.None;
 
         // The probe and the enumeration share one catch, because they fail the same way.
         // RunAsync raises GitHistoryException for a missing git binary and for a timeout,
@@ -1339,6 +1341,10 @@ public sealed class CorpusIndexer(
             }
 
             commits = await GitHistory.EnumerateAsync(repo, options, filters.IncludeGlobs, ct);
+
+            // Beside the commits, and in the same catch: a stash is read by the same git. Empty
+            // unless the source asks for stashes.
+            stashes = await GitHistory.StashesAsync(repo, options, filters.IncludeGlobs, filters.MaxFileBytes, filters.ExcludeGlobs, ct);
         }
         catch (GitHistoryException ex)
         {
@@ -1348,6 +1354,10 @@ public sealed class CorpusIndexer(
 
         log.LogInformation("Source {Source}: {Commits} commits listed on {Ref}",
             source.RootPath, commits.Count, options.Ref);
+
+        if (options.IncludeStashes)
+            log.LogInformation("Source {Source}: {Stashes} stashes holding {Files} untracked file versions to index, {Skipped} left out",
+                source.RootPath, stashes.Stashes.Count, stashes.Files.Count, stashes.Skipped.Count);
 
         // Newest first, so the head of the inventory is the tip of what the settings
         // select: where the ref points, which is what a source that stopped moving needs
@@ -1384,11 +1394,14 @@ public sealed class CorpusIndexer(
                 + "sha prefix with a newer one, and are not indexed",
                 selected.Count - distinct.Count, selected.Count, source.RootPath);
 
-        var byPath = distinct.ToDictionary(c => c.RelativePath, StringComparer.Ordinal);
+        // Commits, then stashes and the files they held. Their paths cannot meet: each kind has
+        // its own folder, and the inventory keeps one unit per path within it.
+        var byPath = ((IEnumerable<GitUnit>)distinct).Concat(stashes.Units)
+            .ToDictionary(u => u.RelativePath, StringComparer.Ordinal);
 
         // Size is the size of the document, which is not known until it is read. Zero
         // here rather than a guess: a number nobody measured is worse than none.
-        var units = distinct
+        var units = byPath.Values
             .Select(c => new WorkspaceWalker.Candidate(repo.FullPath, c.RelativePath, 0))
             .ToList();
 
@@ -1408,11 +1421,11 @@ public sealed class CorpusIndexer(
         try
         {
             await IndexUnitsAsync(corpus, set, templates, chunking, source, job, progress, full,
-                units, [],
-                (toRead, token) => ReadCommitsAsync(repo, options, byPath, toRead, filters.IncludeGlobs, token),
+                units, stashes.Skipped,
+                (toRead, token) => ReadUnitsAsync(repo, options, byPath, toRead, filters.IncludeGlobs, token),
                 alwaysProse: true,
                 fingerprintOf: candidate => HashContent(
-                    byPath[candidate.RelativePath].Sha + '|' + fingerprint),
+                    byPath[candidate.RelativePath].ContentKey(options, fingerprint)),
                 onEmbeddingFailure, ct);
         }
         catch (GitHistoryException ex)
@@ -1422,37 +1435,64 @@ public sealed class CorpusIndexer(
     }
 
     /// <summary>
-    /// The commits the pass still wants, as reads the shared loop understands.
+    /// The units the pass still wants, as reads the shared loop understands: commits, then the
+    /// stashes, then the untracked files they held.
     ///
-    /// The sha is what the text is hashed from, for the same reason it is what the
+    /// The unit's content key is what the text is hashed from, for the same reason it is what the
     /// staleness check used: it settles the content, and hashing the document instead
     /// would mean the check could not run before the read.
     /// </summary>
-    private static async IAsyncEnumerable<ReadFile> ReadCommitsAsync(
-        GitRepository repo, GitHistoryOptions options, Dictionary<string, GitCommit> byPath,
+    private static async IAsyncEnumerable<ReadFile> ReadUnitsAsync(
+        GitRepository repo, GitHistoryOptions options, Dictionary<string, GitUnit> byPath,
         IReadOnlyList<WorkspaceWalker.Candidate> toRead, IReadOnlyList<string>? pathspecs,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
         if (toRead.Count == 0) yield break;
 
-        var wanted = new Dictionary<string, WorkspaceWalker.Candidate>(toRead.Count, StringComparer.Ordinal);
-        foreach (var candidate in toRead) wanted[byPath[candidate.RelativePath].Sha] = candidate;
-
         var fingerprint = options.ContentFingerprint(pathspecs);
 
-        await foreach (var (sha, text) in
-                       GitHistory.ReadAsync(repo, options, [.. wanted.Keys], pathspecs, ct))
-        {
-            if (!wanted.TryGetValue(sha, out var candidate)) continue;
+        ReadFile Read(WorkspaceWalker.Candidate candidate, GitUnit unit, string text) => new(
+            // UTF-8 bytes, because SizeBytes is a byte count everywhere else: it
+            // sorts the file list and is rendered as a size, and a commit carrying
+            // non-ASCII text would otherwise report smaller than it is.
+            candidate with { SizeBytes = Encoding.UTF8.GetByteCount(text) },
+            new ReadText(HashContent(unit.ContentKey(options, fingerprint)), new ExtractedText(text, []), null),
+            null);
 
-            yield return new ReadFile(
-                // UTF-8 bytes, because SizeBytes is a byte count everywhere else: it
-                // sorts the file list and is rendered as a size, and a commit carrying
-                // non-ASCII text would otherwise report smaller than it is.
-                candidate with { SizeBytes = Encoding.UTF8.GetByteCount(text) },
-                new ReadText(HashContent(sha + '|' + fingerprint), new ExtractedText(text, []), null),
-                null);
-        }
+        var commits = new Dictionary<string, WorkspaceWalker.Candidate>(toRead.Count, StringComparer.Ordinal);
+        var stashes = new Dictionary<string, WorkspaceWalker.Candidate>(StringComparer.Ordinal);
+        var files = new Dictionary<string, WorkspaceWalker.Candidate>(StringComparer.Ordinal);
+
+        foreach (var candidate in toRead)
+            switch (byPath[candidate.RelativePath])
+            {
+                case GitCommit c: commits[c.Sha] = candidate; break;
+                case GitStash s: stashes[s.Sha] = candidate; break;
+                case GitStashFile f: files[f.RelativePath] = candidate; break;
+                default: throw new InvalidOperationException($"A history source has no reader for {byPath[candidate.RelativePath].GetType().Name}.");
+            }
+
+        if (commits.Count > 0)
+            await foreach (var (sha, text) in
+                           GitHistory.ReadAsync(repo, options, [.. commits.Keys], pathspecs, ct))
+            {
+                if (!commits.TryGetValue(sha, out var candidate)) continue;
+                yield return Read(candidate, byPath[candidate.RelativePath], text);
+            }
+
+        if (stashes.Count > 0)
+            await foreach (var (sha, text) in GitHistory.ReadStashesAsync(
+                               repo, options, [.. stashes.Keys.Select(k => (GitStash)byPath[stashes[k].RelativePath])],
+                               pathspecs, ct))
+            {
+                if (!stashes.TryGetValue(sha, out var candidate)) continue;
+                yield return Read(candidate, byPath[candidate.RelativePath], text);
+            }
+
+        if (files.Count > 0)
+            await foreach (var (file, text) in GitHistory.ReadStashFilesAsync(
+                               repo, options, [.. files.Keys.Select(k => (GitStashFile)byPath[k])], ct))
+                yield return Read(files[file.RelativePath], file, text);
     }
 
     /// <summary>

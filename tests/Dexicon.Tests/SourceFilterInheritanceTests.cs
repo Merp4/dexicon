@@ -295,6 +295,27 @@ public sealed class SourceFilterUpdateTests
         GitHistoryOptions.FromJson(source.GitOptions).MaxCommits.ShouldBe(5);
     }
 
+    /// <summary>A row stored before stashes existed has no key for them, and reads as off.</summary>
+    [Fact]
+    public void TurningStashesOnIsAChangeAndAnOldRowReadsAsOff()
+    {
+        var source = new Source
+        {
+            Id = "s",
+            CorpusId = "c",
+            Kind = SourceKind.GitHistory,
+            RootPath = "",
+            CreatedUtc = DateTime.UtcNow,
+            GitOptions = """{"ref":"HEAD","includeMessage":true,"includeStat":true,"includeDiff":false,"maxDiffBytes":65536,"includeMerges":false,"keepIndexed":false}""",
+        };
+
+        GitHistoryOptions.FromJson(source.GitOptions).IncludeStashes.ShouldBeFalse();
+        CorpusEndpoints.ApplyHistorySettings(source, new GitHistoryOptions()).ShouldBeFalse();
+
+        CorpusEndpoints.ApplyHistorySettings(source, new GitHistoryOptions { IncludeStashes = true }).ShouldBeTrue();
+        GitHistoryOptions.FromJson(source.GitOptions).IncludeStashes.ShouldBeTrue();
+    }
+
     private static string Refusal(GitHistoryOptions git)
     {
         var problem = CorpusEndpoints.UnusableHistorySettings(git).ShouldNotBeNull();
