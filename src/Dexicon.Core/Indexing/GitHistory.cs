@@ -79,6 +79,22 @@ public sealed record GitHistoryOptions
     /// </summary>
     public DateOnly? Since { get; init; }
 
+    /// <summary>
+    /// Also index the repository's stashes, under <c>stashes/</c>. Off by default.
+    ///
+    /// A stash is work kept off the branch, so it is in no ref this source follows, and the files
+    /// a stash records as untracked (<c>git stash -u</c>) are in no commit at all. Each stash is a
+    /// document like a commit, and each distinct version of an untracked file is a document of its
+    /// own, held by the oldest stash that has it. <see cref="Ref"/> and <see cref="MaxCommits"/>
+    /// do not apply to stashes; <see cref="Since"/> and the include paths do, and
+    /// <see cref="IncludeMessage"/>, <see cref="IncludeStat"/> and <see cref="IncludeDiff"/> apply
+    /// to a stash's own document as they do to a commit's.
+    ///
+    /// Out of <see cref="ContentFingerprint"/>, as <see cref="IncludeMerges"/> is: it decides
+    /// which documents exist and alters none of a commit's.
+    /// </summary>
+    public bool IncludeStashes { get; init; }
+
     public string ToJson() => JsonSerializer.Serialize(this, GitHistoryJson.Options);
 
     public static GitHistoryOptions FromJson(string? json) =>
@@ -97,9 +113,9 @@ public sealed record GitHistoryOptions
     /// the first time it changes.
     ///
     /// Out: <see cref="Ref"/>, <see cref="MaxCommits"/>, <see cref="KeepIndexed"/>,
-    /// <see cref="Since"/> and <see cref="IncludeMerges"/>, which decide WHICH commits are
-    /// indexed and not what any one of them holds. Turning merges on adds documents; it
-    /// does not alter a single existing one.
+    /// <see cref="Since"/>, <see cref="IncludeMerges"/> and <see cref="IncludeStashes"/>,
+    /// which decide WHICH commits are indexed and not what any one of them holds. Turning
+    /// merges on adds documents; it does not alter a single existing one.
     ///
     /// <see cref="MaxDiffBytes"/> only when there is a diff for it to cap.
     /// </summary>
@@ -171,7 +187,7 @@ internal static class GitHistoryJson
 /// against it — it is an argument for asking for them where something displays them, with
 /// a bound chosen then.
 /// </remarks>
-public sealed record GitCommit(string Sha, DateTimeOffset AuthorDate)
+public sealed record GitCommit(string Sha, DateTimeOffset AuthorDate) : GitUnit
 {
     /// <summary>
     /// The path this commit is indexed under, relative to the source.
@@ -181,8 +197,11 @@ public sealed record GitCommit(string Sha, DateTimeOffset AuthorDate)
     /// because it is what people mean by when, and a rebase that moves the committer date
     /// produces a new sha in any case.
     /// </summary>
-    public string RelativePath =>
+    public override string RelativePath =>
         $"commits/{AuthorDate:yyyy-MM-dd}-{Sha[..Math.Min(12, Sha.Length)]}";
+
+    /// <summary>The sha and the settings, which is what a commit's document has always been keyed by.</summary>
+    public override string ContentKey(GitHistoryOptions options, string settings) => Sha + '|' + settings;
 }
 
 /// <summary>
@@ -627,9 +646,15 @@ public static partial class GitHistory
     /// at all, so everything between two markers is git's and nothing has to be guessed.
     /// The second call is skipped entirely when neither is wanted.
     /// </summary>
+    /// <param name="stashes">
+    /// Set when <paramref name="shas"/> are stashes, by sha. A stash is a merge and the tail is taken
+    /// against its first parent; its document says <c>stash</c>, names the commit it was made on, and
+    /// ends with its untracked files (<see cref="UntrackedSection"/>).
+    /// </param>
     private static async Task<List<(string Sha, string Text)>> ReadBatchAsync(
         GitRepository repo, GitHistoryOptions options, List<string> shas,
-        IReadOnlyList<string>? pathspecs, CancellationToken ct)
+        IReadOnlyList<string>? pathspecs, CancellationToken ct,
+        Dictionary<string, GitStash>? stashes = null)
     {
         var marker = Marker();
         var stdin = string.Join('\n', shas);
@@ -643,7 +668,7 @@ public static partial class GitHistory
             messages = await MessagesAsync(
                 repo, marker, stdin, known, options.IncludeMessage, MessageCeilingFor(shas.Count), ct);
             tails = options.IncludeStat || options.IncludeDiff
-                ? await TailsAsync(repo, options, marker, shas, pathspecs, known, ct)
+                ? await TailsAsync(repo, options, marker, shas, pathspecs, known, ct, stashes is not null)
                 : [];
         }
         catch (GitOutputTooLargeException ex)
@@ -663,7 +688,19 @@ public static partial class GitHistory
         foreach (var sha in shas)
         {
             if (!messages.TryGetValue(sha, out var message)) continue;
-            read.Add((sha, Document(options, message, tails.GetValueOrDefault(sha, string.Empty))));
+
+            var tail = tails.GetValueOrDefault(sha, string.Empty);
+            if (stashes is null)
+            {
+                read.Add((sha, Document(options, message, tail)));
+                continue;
+            }
+
+            var stash = stashes[sha];
+            var text = Document(options, message, tail, "stash", stash.BaseSha);
+
+            // The untracked files are part of the stat's answer, "which files", so they follow it.
+            read.Add((sha, options.IncludeStat ? text + UntrackedSection(stash) : text));
         }
 
         return read;
@@ -744,14 +781,14 @@ public static partial class GitHistory
     /// </summary>
     private static async Task<Dictionary<string, string>> TailsAsync(
         GitRepository repo, GitHistoryOptions options, string marker, List<string> shas,
-        IReadOnlyList<string>? pathspecs, HashSet<string> known, CancellationToken ct)
+        IReadOnlyList<string>? pathspecs, HashSet<string> known, CancellationToken ct, bool stashes = false)
     {
         if (shas.Count == 0) return [];
 
         try
         {
             return await ReadTailsAsync(repo, options, marker, shas, pathspecs, known,
-                CeilingFor(options, shas.Count), ct);
+                CeilingFor(options, shas.Count), ct, stashes);
         }
         catch (GitOutputTooLargeException) when (shas.Count > 1)
         {
@@ -760,9 +797,9 @@ public static partial class GitHistory
             // than one call per commit.
             var half = shas.Count / 2;
             var left = await TailsAsync(repo, options, marker,
-                shas.GetRange(0, half), pathspecs, known, ct);
+                shas.GetRange(0, half), pathspecs, known, ct, stashes);
             var right = await TailsAsync(repo, options, marker,
-                shas.GetRange(half, shas.Count - half), pathspecs, known, ct);
+                shas.GetRange(half, shas.Count - half), pathspecs, known, ct, stashes);
 
             foreach (var (sha, tail) in right) left[sha] = tail;
             return left;
@@ -775,7 +812,7 @@ public static partial class GitHistory
             // MaxDiffBytes means — and now it is a bound on memory as well as on the
             // document, because the patch was never materialised.
             var stat = await ReadTailsAsync(repo, options with { IncludeDiff = false },
-                marker, shas, pathspecs, known, CeilingFor(options with { IncludeDiff = false }, 1), ct);
+                marker, shas, pathspecs, known, CeilingFor(options with { IncludeDiff = false }, 1), ct, stashes);
 
             foreach (var sha in shas)
                 stat[sha] = (stat.GetValueOrDefault(sha, string.Empty).TrimEnd() + '\n'
@@ -847,7 +884,8 @@ public static partial class GitHistory
 
     private static async Task<Dictionary<string, string>> ReadTailsAsync(
         GitRepository repo, GitHistoryOptions options, string marker, List<string> shas,
-        IReadOnlyList<string>? pathspecs, HashSet<string> known, long ceiling, CancellationToken ct)
+        IReadOnlyList<string>? pathspecs, HashSet<string> known, long ceiling, CancellationToken ct,
+        bool stashes = false)
     {
         var args = new List<string>
         {
@@ -869,6 +907,12 @@ public static partial class GitHistory
             // unless --ext-diff is passed, confirmed on the same repo.
             "log", "--no-walk", "--stdin", "--no-color", "--no-textconv", $"--format={marker}%H",
         };
+
+        // A stash is a merge of the commit it was made on, the index and the untracked files, and
+        // git prints no diff for a merge unless it is told which parent to take it against. The
+        // first is the commit the stash was made on, so the diff is the stashed tracked changes.
+        // Measured on git 2.31.1 and 2.54.0: without this a stash has an empty stat and patch.
+        if (stashes) args.Add("--diff-merges=first-parent");
 
         if (options.IncludeDiff) args.Add("--patch");
         // The width, given explicitly. `diff.statWidth` and its siblings are repository
@@ -911,15 +955,19 @@ public static partial class GitHistory
     /// and a layout of our own would have to be explained to each one; the cost of
     /// following git is a few lines of formatting.
     /// </summary>
-    private static string Document(GitHistoryOptions options, string[] fields, string tail)
+    /// <param name="noun">The first word: <c>commit</c>, or <c>stash</c> for a stash.</param>
+    /// <param name="baseSha">For a stash, the commit it was made on. A commit has no such line.</param>
+    private static string Document(
+        GitHistoryOptions options, string[] fields, string tail, string noun = "commit", string? baseSha = null)
     {
         var (sha, date, name, email, subject, body) =
             (fields[0].Trim(), fields[1], fields[2], fields[3], fields[4], fields[5]);
 
         var sb = new StringBuilder();
-        sb.Append("commit ").Append(sha).Append('\n');
+        sb.Append(noun).Append(' ').Append(sha).Append('\n');
         sb.Append("Author: ").Append(name).Append(" <").Append(email).Append(">\n");
         sb.Append("Date:   ").Append(date).Append('\n');
+        if (!string.IsNullOrEmpty(baseSha)) sb.Append("Base:   ").Append(baseSha).Append('\n');
 
         // The message means the subject AND the body, which is what the setting is
         // named for. Keeping the subject when it is off left the option unable to do
@@ -1006,9 +1054,13 @@ public static partial class GitHistory
     /// still become is a git option, which is what <c>--end-of-options</c> and <c>--</c>
     /// are for at the call sites.
     /// </summary>
+    /// <param name="alsoOk">
+    /// An exit status, other than 0, that is an answer and not a failure. <c>git check-ignore</c> exits 1
+    /// when none of the paths is ignored.
+    /// </param>
     private static async Task<(bool Ok, string Stdout, string Stderr)> RunAsync(
         GitRepository repo, IReadOnlyList<string> args, CancellationToken ct, string? stdin = null,
-        long? maxBytes = null, TimeSpan? timeout = null)
+        long? maxBytes = null, TimeSpan? timeout = null, int? alsoOk = null)
     {
         var info = StartInfo(repo, args, redirectStdin: stdin is not null);
         var limit = timeout ?? Timeout;
@@ -1035,14 +1087,15 @@ public static partial class GitHistory
         var over = false;
         var read = 0L;
 
+        // Written while stdout is read. A command that answers each line as it reads it
+        // (`cat-file --batch-check`) fills the stdout pipe before the last line is written, and
+        // a write that waits for the read to start is then a deadlock: measured, 505 lines of
+        // input (about 20 KB) hung for ever. Commands that read all of their input first never
+        // showed it.
+        var feeding = stdin is null ? null : FeedAsync(process, stdin, deadline.Token);
+
         try
         {
-            if (stdin is not null)
-            {
-                await process.StandardInput.WriteAsync(stdin.AsMemory(), deadline.Token);
-                process.StandardInput.Close();
-            }
-
             // Read in chunks rather than to the end, so a ceiling can be enforced while
             // the output is arriving. Reading it all and measuring afterwards is not a
             // bound: by then it is allocated.
@@ -1080,6 +1133,7 @@ public static partial class GitHistory
                 throw new GitOutputTooLargeException(maxBytes!.Value);
             }
 
+            if (feeding is not null) await feeding;
             await process.WaitForExitAsync(deadline.Token);
         }
         catch (OperationCanceledException)
@@ -1101,7 +1155,22 @@ public static partial class GitHistory
                 : $"git did not finish within {limit.TotalSeconds:N0} seconds.");
         }
 
-        return (process.ExitCode == 0, stdout.ToString(), await stderrTask);
+        return (process.ExitCode == 0 || process.ExitCode == alsoOk, stdout.ToString(), await stderrTask);
+    }
+
+    /// <summary>
+    /// Writes <paramref name="stdin"/> to the process and closes its input. A process that exits before
+    /// it has read everything makes the write fail with an <see cref="IOException"/>, which is not
+    /// reported here: its exit status and stderr are the answer.
+    /// </summary>
+    private static async Task FeedAsync(Process process, string stdin, CancellationToken ct)
+    {
+        try
+        {
+            await process.StandardInput.WriteAsync(stdin.AsMemory(), ct);
+            process.StandardInput.Close();
+        }
+        catch (IOException) { /* git exited before reading it all */ }
     }
 
     /// <summary>

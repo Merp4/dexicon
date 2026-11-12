@@ -697,7 +697,8 @@ others.
 
 ### `git-history` — a repository's commits
 
-A source whose units are commits rather than files. The root is a folder in the workspace
+A source whose units are commits rather than files, and with `includeStashes` the repository's stashes and
+the untracked files they hold. The root is a folder in the workspace
 that holds a `.git`, and a repository whose files *and* history are both wanted takes two
 sources over the same root: a commit and a file are different units, and folding them into
 one source would mix 27,000 files with 5,000 commits under one set of counts.
@@ -722,6 +723,7 @@ What a document holds is per source:
 | `maxCommits` | — | Bound the walk to this many commits from the tip |
 | `keepIndexed` | false | With `maxCommits`: keep a commit once indexed, rather than letting each new commit push the oldest out (below) |
 | `since` | — | Bound the walk by date: commits committed at or after 00:00 UTC on this date |
+| `includeStashes` | false | Also index the repository's stashes, and the untracked files they hold (below) |
 
 The diff is off because of what it costs. Measured over 201 commits of this repository:
 with patches the history is 5.99 MB and the median commit 11,393 characters; with the
@@ -765,9 +767,10 @@ the read rather than after it, as a file's must. Measured on this repository: 77
 enumerate 201 commits, 1,069ms to read all of them with their patches.
 
 Changing any setting that alters what a document says re-indexes the history, because
-every document really is different. Changing `ref`, `maxCommits`, `keepIndexed`, `since`
-or `includeMerges` does not: those decide which commits are indexed, not what any one of
-them holds, and turning merges on adds documents without altering a single existing one.
+every document really is different. Changing `ref`, `maxCommits`, `keepIndexed`, `since`,
+`includeMerges` or `includeStashes` does not: those decide which documents are indexed, not
+what any one commit holds, and turning merges or stashes on adds documents without altering a
+single existing one.
 The include globs DO, because they are passed to git and decide which files the stat
 lists and which hunks the patch holds. The fingerprint holds the list as git is given it, sorted,
 so reordering the paths, or writing `docs` as `/docs`, is not a change and re-reads nothing.
@@ -782,6 +785,63 @@ the inventory lists the whole reachable history instead of stopping at the limit
 is a sha and a date per commit. `keepIndexed` without `maxCommits` is refused, because
 every commit is indexed already, and turning it off removes every held commit past the
 limit on the next refresh.
+
+**Stashes are indexed when the source sets `includeStashes`.** A source follows one ref, and a
+stash is on none: stashed work is not in the history the source reads, and the untracked files
+of `git stash -u` are in no commit of any branch. With the setting on, the source also reads the
+reflog of `refs/stash` ([D-48](decisions.md#d-48-a-history-source-can-also-index-the-repositorys-stashes)):
+
+- **One document per stash**, at `stashes/<yyyy-MM-dd>-<sha[..12]>`, laid out as a commit's:
+  `stash <sha>`, author, date, `Base:` (the commit the stash was made on) and the message, then
+  the stat and, with `includeDiff`, the patch of the tracked changes against that base, then the
+  untracked files it holds as names, sizes and the first seven characters of each blob. The
+  message, stat and diff settings and the paths apply as they do to a commit.
+- **One document per distinct version of an untracked file**, at
+  `stashes/untracked/<blob[..12]>/<path>`: a header naming the stash, its date and the blob, then
+  the text of the file. A file held unchanged by thirty stashes is one document, named for the
+  oldest of them, and a changed version is another. Each stash's own document lists every file it
+  holds, so a search that lands on a stash and one that lands on a file reach the same set.
+
+Three things about git decide this shape. `git show stash@{n}` prints the tracked changes and not
+the untracked files, which are in the stash's third parent. A stash is a merge, and `git log -p`
+prints no diff for a merge, so the reader asks for the diff against the first parent
+(`--diff-merges=first-parent`). And `git log refs/stash` reaches the newest stash and what it was
+made from, not an older one, so the stashes are listed from the reflog (`git log -g refs/stash`).
+All three measured on git 2.31.1 and 2.54.0.
+
+Which untracked files become documents:
+
+- A path git's ignore rules cover is not indexed, and leaves no row. `git stash --all` records
+  ignored files, `.env` among them, and the rules are asked with
+  `git check-ignore --no-index`, which reads the repository's `.gitignore` files,
+  `.git/info/exclude` and the global excludes as they are at the time of the pass. The stash's own
+  document still lists the names of the files it holds, ignored or not, with no content: its text
+  is then a function of the stash alone.
+- An empty file, a file over the size cap (`max_file_bytes`: the corpus default, else
+  `DEXICON__INDEXING__MAXFILEBYTES`; a history source has no value of its own) and a file git
+  treats as binary (a NUL byte in the first 8,000 bytes) are recorded as skipped rows with the
+  reason, as a file walk records them. A
+  NUL byte past what git looked at leaves a document that says the content is binary and holds
+  none of it, because the catalogue's text column ends a value at the first NUL.
+- Only regular files. A symbolic link or a submodule entry is not a file with content.
+- The first 500 paths of each stash, in git's order. The stash's document says how many it left
+  out. On the 31 stashes in 16 of 86 repositories surveyed on one machine, the largest held 71
+  untracked files and none held a binary file.
+
+The contents of untracked files are indexed whatever `includeDiff` says: the setting is for the
+tracked changes, and the files are what the option is for.
+
+`since` applies to a stash by its date. `ref`, `maxCommits`, `keepIndexed` and `includeMerges` do
+not: a stash is on no ref, and the others count and keep commits. The include globs are given to
+git as pathspecs for the tracked diff and for the list of untracked files. A stash leaves the index
+on the pass after it leaves the reflog (`git stash drop` or `pop`), and a file document moves to
+the next oldest stash that holds it, which re-reads that one document. Turning the setting off
+removes every stash document on the next pass.
+
+A commit's key is unchanged, so turning the setting on reads no commit again. A stash's key is its
+sha and the message, stat, diff and path settings. A file's is its blob, path, holding stash and
+whether messages are indexed, since the header quotes the stash's message, and so changing the diff
+or stat settings does not read the files again.
 
 **Each pass that lists the history records the newest commit**, its sha and author date,
 on the source, and the corpus page shows it with its age. `ref` names what to follow and

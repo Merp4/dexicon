@@ -9,6 +9,9 @@ import type { Corpus } from '../api';
  * so it says "documents" — the word docs/04 already uses for the unit a chunk comes
  * from.
  *
+ * A history source that also indexes stashes holds stashes and the untracked files they
+ * held beside its commits, so it says "documents" as well.
+ *
  * A corpus with no history source is unchanged, which is almost all of them.
  *
  * It lives here rather than in `App.tsx` because `ChunkSets.tsx` needs it too, and
@@ -16,8 +19,9 @@ import type { Corpus } from '../api';
  */
 export function unitFor(sources: Corpus['sources'] | undefined, n: number): string {
   const kinds = new Set((sources ?? []).map((s) => s.kind));
+  const stashes = (sources ?? []).some((s) => s.kind === 'githistory' && s.git?.includeStashes);
   const one = !kinds.has('githistory') ? 'file'
-    : kinds.size === 1 ? 'commit'
+    : kinds.size === 1 && !stashes ? 'commit'
     : 'document';
 
   return n === 1 ? one : `${one}s`;

@@ -229,7 +229,10 @@ public sealed class CorpusSweeper(
             // agrees today. A sweep that counted a commit the index collapses, or one past
             // the limit that it would not keep, would report an inventory the index can
             // never fill, which reads as a wrong count rather than as two passes differing.
-            return [.. GitHistory.OnePerPath(selected)
+            // And the stashes the source asks for, from the same call the index pass makes.
+            var stashes = await GitHistory.StashesAsync(repo, options, filters.IncludeGlobs, filters.MaxFileBytes, ct);
+
+            return [.. ((IEnumerable<GitUnit>)GitHistory.OnePerPath(selected)).Concat(stashes.Units)
                 .Select(c => new WorkspaceWalker.Candidate(root, c.RelativePath, 0))];
         }
         catch (GitHistoryException ex)

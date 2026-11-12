@@ -224,6 +224,19 @@ public class CorpusDiagnosisTests
     }
 
     [Fact]
+    public void AHistorySourceThatIndexesStashesSaysSo()
+    {
+        var history = new SourceSummary("h", "githistory", "", true, 262_144, [], [], 3,
+            Git: new Dexicon.Core.Indexing.GitHistoryOptions { IncludeStashes = true });
+
+        var text = DexiconTools.RenderSources([history], null);
+
+        text.ShouldContain("stashes included");
+        // The count includes stashes and the files they held, which are not commits.
+        text.ShouldContain("3 documents");
+    }
+
+    [Fact]
     public void AHistorySourceSaysWhatItFollowsHowCurrentItIsAndWhatEachCommitHolds()
     {
         var history = new SourceSummary("h", "githistory", "", true, 262_144, ["src/**"], [], 256,
@@ -239,6 +252,7 @@ public class CorpusDiagnosisTests
         text.ShouldContain("commit history of the workspace root: 256 commits, follows refs/heads/main (52 behind origin/main);");
         text.ShouldContain("holds message, stat, diff");
         text.ShouldContain("newest 500, kept once indexed");
+        text.ShouldNotContain("stashes included");
         text.ShouldContain("only paths src/**");
         text.ShouldContain("newest 24664ac, 2026-09-26");
         // The file settings mean nothing to a commit, and saying them would claim it obeys them.

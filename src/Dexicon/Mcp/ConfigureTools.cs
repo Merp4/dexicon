@@ -64,7 +64,7 @@ public sealed class ConfigureTools
 
     /// <summary>What <c>reset</c> takes for a history setting, each returning to its default.</summary>
     private static readonly string[] HistoryNames =
-        ["follow", "message", "stat", "diff", "maxDiffKb", "merges", "maxCommits", "keepIndexed", "since"];
+        ["follow", "message", "stat", "diff", "maxDiffKb", "merges", "maxCommits", "keepIndexed", "since", "stashes"];
 
     [McpServerTool(Name = "list_folders")]
     [Description("List the folders mounted for indexing, marking git repositories and the folders your corpora already index. Its paths are what configure_source takes as folder.")]
@@ -274,7 +274,7 @@ public sealed class ConfigureTools
         [Description("Glob patterns this source leaves out. Files only.")] IReadOnlyList<string>? exclude = null,
         [Description("Pass true to respect .gitignore files. It cannot be turned off over MCP. Files only.")] bool? gitignore = null,
         [Description("Largest code or text file indexed, in KB. Files only.")] int? maxFileKb = null,
-        [Description("History only: what each commit's document holds and which commits are read. Settings left out keep their value.")] HistorySettings? history = null,
+        [Description("History only: what each commit's document holds, which commits are read, and whether stashes are indexed. Settings left out keep their value.")] HistorySettings? history = null,
         [Description("Settings to return to their default, by the names used here: include, exclude, gitignore, maxFileKb, or a history setting such as since or maxCommits.")] IReadOnlyList<string>? reset = null,
         CancellationToken ct = default)
     {
@@ -311,7 +311,8 @@ public sealed class ConfigureTools
         if (history is not null)
             Clashes(resets, ("follow", history.Follow), ("message", history.Message), ("stat", history.Stat),
                 ("diff", history.Diff), ("maxDiffKb", history.MaxDiffKb), ("merges", history.Merges),
-                ("maxCommits", history.MaxCommits), ("keepIndexed", history.KeepIndexed), ("since", history.Since));
+                ("maxCommits", history.MaxCommits), ("keepIndexed", history.KeepIndexed), ("since", history.Since),
+                ("stashes", history.Stashes));
         var maxBytes = Kilobytes("maxFileKb", maxFileKb);
 
         var target = await WritableAsync(scopes, principal, corpus, "", ct);
@@ -649,6 +650,7 @@ public sealed class ConfigureTools
             MaxCommits = R("maxCommits") ? d.MaxCommits : sent?.MaxCommits ?? current.MaxCommits,
             KeepIndexed = R("keepIndexed") ? d.KeepIndexed : sent?.KeepIndexed ?? current.KeepIndexed,
             Since = R("since") ? d.Since : since,
+            IncludeStashes = R("stashes") ? d.IncludeStashes : sent?.Stashes ?? current.IncludeStashes,
         };
     }
 }
@@ -671,5 +673,7 @@ public sealed record HistorySettings(
     int? MaxCommits = null,
     [property: Description("With maxCommits, keep a commit once it is indexed, rather than keeping only the newest maxCommits.")]
     bool? KeepIndexed = null,
-    [property: Description("Only commits made on or after this date, written yyyy-MM-dd.")]
-    string? Since = null);
+    [property: Description("Only commits made on or after this date, written yyyy-MM-dd. Stashes are cut by the same date.")]
+    string? Since = null,
+    [property: Description("Also index the repository's stashes, including the untracked files a stash holds (git stash -u), under stashes/. Each stash is one document, and each distinct version of an untracked file is one document, however many stashes hold it. Needs the folder to be the repository's root.")]
+    bool? Stashes = null);

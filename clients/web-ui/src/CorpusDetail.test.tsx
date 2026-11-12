@@ -1366,10 +1366,31 @@ describe('editing a history source', () => {
     expect(body.git).toEqual({
       ref: 'refs/remotes/origin/main', includeMessage: true, includeStat: true, includeDiff: false,
       maxDiffBytes: 65536, includeMerges: false, maxCommits: null, keepIndexed: false, since: null,
+      includeStashes: false,
     });
     // Following the corpus, as the source did before: nothing new pinned against it.
     expect(body.clear).toEqual(['includeGlobs']);
     expect(body.includeGlobs).toBeUndefined();
+  });
+
+  /**
+   * Stashes add documents and alter none, as merges do, so ticking the box is not a re-read.
+   * A source stored before the setting existed has no value for it and shows it off.
+   */
+  it('sends the stashes setting, and does not call turning it on a re-read', async () => {
+    updateSource.mockResolvedValue({});
+    const { user, dialog } = await openEditor();
+
+    const stashes = within(dialog).getByRole('checkbox', { name: /^Stashes/ });
+    expect(stashes).not.toBeChecked();
+
+    await user.click(stashes);
+    expect(within(dialog).getByText(/documents already indexed\s+are kept/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Saving re-reads every commit/)).not.toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: /^Save changes$/ }));
+    await waitFor(() => expect(updateSource).toHaveBeenCalled());
+    expect(updateSource.mock.calls[0][2].git.includeStashes).toBe(true);
   });
 
   it('shows a refusal in the dialog, which stays open', async () => {

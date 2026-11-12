@@ -597,6 +597,44 @@ public sealed class ConfigureToolsTests : IAsyncLifetime
         merged.ShouldBe(current with { IncludeDiff = true, MaxDiffBytes = 16 * 1024, Since = null, IncludeStat = true });
     }
 
+    /// <summary>Stashes are off in a source that never set them, on when sent, kept when left out, and reset to off.</summary>
+    [Fact]
+    public void StashesAreSentKeptAndReset()
+    {
+        var off = new GitHistoryOptions();
+
+        var on = ConfigureTools.Merge(off, new HistorySettings(Stashes: true), []);
+        on.IncludeStashes.ShouldBeTrue();
+
+        ConfigureTools.Merge(on, new HistorySettings(Diff: true), []).IncludeStashes
+            .ShouldBeTrue("a setting left out keeps its value");
+        ConfigureTools.Merge(on, null, ["stashes"]).IncludeStashes.ShouldBeFalse();
+        ConfigureTools.Merge(on, new HistorySettings(Stashes: false), []).IncludeStashes.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task StashesCannotBeBothSetAndReset()
+    {
+        await using var db = _harness.NewContext();
+
+        var ex = await Should.ThrowAsync<McpException>(() => SourceAsync(
+            db, Configurer, "notes", kind: "history", create: true,
+            history: new HistorySettings(Stashes: true), reset: ["stashes"]));
+
+        ex.Message.ShouldContain("stashes is both set and reset");
+    }
+
+    [Fact]
+    public async Task StashesOnAFilesSourceAreRefusedLikeAnyHistorySetting()
+    {
+        await using var db = _harness.NewContext();
+
+        await Should.ThrowAsync<McpException>(() => SourceAsync(
+            db, Configurer, "notes", history: new HistorySettings(Stashes: true)));
+        await Should.ThrowAsync<McpException>(() => SourceAsync(
+            db, Configurer, "notes", reset: ["stashes"]));
+    }
+
     [Fact]
     public void ASinceThatIsNotADateIsRefused()
     {
