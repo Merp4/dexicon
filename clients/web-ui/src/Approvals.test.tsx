@@ -77,11 +77,11 @@ describe('what is waiting', () => {
     expect(document.querySelector('img')).toBeNull();
   });
 
-  it('counts commits for a history source', async () => {
+  it('counts documents for a history source, which may hold stashes beside its commits', async () => {
     listProposals.mockResolvedValue([proposal({ target: 'history:repos/app' })]);
     show();
 
-    expect(await screen.findByText(/214 commits and 1,912 chunks/)).toBeInTheDocument();
+    expect(await screen.findByText(/214 documents and 1,912 chunks/)).toBeInTheDocument();
   });
 
   it('says plainly that nothing is waiting, and where requests come from', async () => {
