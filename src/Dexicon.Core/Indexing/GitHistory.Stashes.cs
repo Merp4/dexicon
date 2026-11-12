@@ -172,6 +172,14 @@ public static partial class GitHistory
     {
         if (!options.IncludeStashes) return GitStashInventory.None;
 
+        // Before any git call: an exclude list that cannot be used is the source's to fix, and it costs nothing to say so first.
+        Func<string, bool> excluded;
+        try { excluded = WorkspaceWalker.ExclusionsFor(excludeGlobs); }
+        catch (IgnorePatternException ex)
+        {
+            throw new GitHistoryException($"The exclude list cannot be used for the untracked files of stashes: {ex.Message}", ex);
+        }
+
         // Exact name, because a pattern also matches refs beneath it.
         var (probed, names, probeError) = await BoundedAsync(
             repo, ["for-each-ref", "--format=%(refname)", "refs/stash"], ct);
@@ -196,13 +204,6 @@ public static partial class GitHistory
             var stash = new GitStash(s.Sha, s.Date, s.BaseSha, s.Subject, files, total);
 
             if (paths.Add(stash.RelativePath)) stashes.Add(stash);
-        }
-
-        Func<string, bool> excluded;
-        try { excluded = WorkspaceWalker.ExclusionsFor(excludeGlobs); }
-        catch (IgnorePatternException ex)
-        {
-            throw new GitHistoryException($"The exclude list cannot be used for the untracked files of stashes: {ex.Message}", ex);
         }
 
         var (units, skipped) = await FilesAsync(repo, stashes, maxFileBytes, excluded, limits.MaxFileDocuments, ct);
@@ -401,17 +402,21 @@ public static partial class GitHistory
     {
         var distinct = blobs.Distinct(StringComparer.Ordinal).ToList();
         var sizes = new Dictionary<string, long>(distinct.Count, StringComparer.Ordinal);
-        if (distinct.Count == 0) return sizes;
 
-        var (ok, stdout, stderr) = await BoundedAsync(repo,
-            ["cat-file", "--batch-check=%(objectname) %(objectsize)"], ct, string.Join('\n', distinct));
-        if (!ok) throw new GitHistoryException($"git cat-file failed: {Summarise(stderr)}");
-
-        foreach (var line in stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        foreach (var chunk in distinct.Chunk(ObjectsPerCall))
         {
-            var parts = line.Trim().Split(' ');
-            if (parts.Length == 2 && long.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var size))
-                sizes[parts[0]] = size;
+            ct.ThrowIfCancellationRequested();
+
+            var (ok, stdout, stderr) = await BoundedAsync(repo,
+                ["cat-file", "--batch-check=%(objectname) %(objectsize)"], ct, string.Join('\n', chunk));
+            if (!ok) throw new GitHistoryException($"git cat-file failed: {Summarise(stderr)}");
+
+            foreach (var line in stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var parts = line.Trim().Split(' ');
+                if (parts.Length == 2 && long.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var size))
+                    sizes[parts[0]] = size;
+            }
         }
 
         return sizes;
@@ -439,7 +444,7 @@ public static partial class GitHistory
         // stash holds it.
         var distinct = firstHolders.Values.Select(h => h.File.Path).Distinct(StringComparer.Ordinal).ToList();
         var (ignored, unjudged) = await IgnoredAsync(repo, [.. distinct.Where(p => !p.StartsWith(':'))], ct);
-        unjudged.UnionWith(distinct.Where(p => p.StartsWith(':')));
+        var magic = distinct.Where(p => p.StartsWith(':')).ToHashSet(StringComparer.Ordinal);
 
         var files = new List<GitStashFile>();
         var skipped = new List<WorkspaceWalker.Skipped>();
@@ -464,7 +469,8 @@ public static partial class GitHistory
             var unit = new GitStashFile(file.Path, file.BlobSha, file.SizeBytes, stash.Sha, stash.AuthorDate, stash.Subject);
             if (!paths.Add(unit.RelativePath)) continue;
 
-            string? reason = unjudged.Contains(file.Path) ? "ignore rules could not be checked (git check-ignore failed for this path)"
+            string? reason = magic.Contains(file.Path) ? "ignore rules were not checked: the name starts with a colon, which git check-ignore reads as pathspec magic"
+                : unjudged.Contains(file.Path) ? "ignore rules could not be checked (git check-ignore failed for this path)"
                 : file.SizeBytes < 0 ? "object missing from the repository"
                 : file.SizeBytes == 0 ? "empty file"
                 : file.SizeBytes > maxFileBytes
@@ -517,11 +523,20 @@ public static partial class GitHistory
         var ignored = new HashSet<string>(StringComparer.Ordinal);
         var unjudged = new HashSet<string>(StringComparer.Ordinal);
 
-        await CheckIgnoreAsync(repo, paths, ignored, unjudged, ct);
+        foreach (var chunk in paths.Chunk(ObjectsPerCall))
+            await CheckIgnoreAsync(repo, [.. chunk], ignored, unjudged, ct);
+
         return (ignored, unjudged);
     }
 
     private const int MaxUnjudged = 50;
+
+    /// <summary>
+    /// Object names, or paths, given to one <c>cat-file</c> or <c>check-ignore</c> call. The calls answer a
+    /// line for each, so this bounds their output (about 47 bytes a blob) well inside the ceiling, whatever
+    /// the number of stashes. The document cap is applied after the work it saves would have been done.
+    /// </summary>
+    private const int ObjectsPerCall = 10_000;
 
     private static async Task CheckIgnoreAsync(
         GitRepository repo, List<string> paths, HashSet<string> ignored, HashSet<string> unjudged, CancellationToken ct)

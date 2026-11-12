@@ -447,7 +447,7 @@ public sealed class GitStashTests : IDisposable
         inventory.Files.Select(f => f.Path).ShouldBe(["ok.md"]);
         var skipped = inventory.Skipped.ShouldHaveSingleItem();
         skipped.RelativePath.ShouldEndWith("/:(literal)note.md");
-        skipped.Reason.ShouldStartWith("ignore rules could not be checked");
+        skipped.Reason.ShouldStartWith("ignore rules were not checked");
     }
     /// <summary>
     /// Git fails the whole ignore check, with status 128, when one path lies beyond a symbolic link in
