@@ -454,11 +454,15 @@ section shows.
 | Line past the end, `get_context` | `'docs/auth.md' in corpus 'api-repo' has no line 900; it runs to line 120.` |
 | Argument of the wrong shape | `corpus takes a name or a list of names, not a number.` |
 
-Three conditions are results and not errors. A `hybrid` or `semantic` search whose embedding
+Four conditions are results and not errors. A `hybrid` or `semantic` search whose embedding
 service is down returns keyword results, a line `! DEGRADED: embedding service unavailable; keyword-only
 results` after the header, and `keyword` as the mode in that header. A search of a corpus
 that is still indexing returns its results with the line `! Corpus 'api-repo' is still
-indexing; results are incomplete.` after the header. `list_corpora` and `index_status`
+indexing; results are incomplete.` after the header. A search of a corpus whose last pass could not
+read its source returns the results of the index it had before, with the line `! Corpus 'api-repo'
+(last indexed 2026-10-12 09:30Z) could not read its source on its last pass; results are from the
+index it had before.`; one whose last pass had files fail to embed says those files are missing.
+`list_corpora` and `index_status`
 answer a key that reaches no corpora with text: `Key 'claude-code' can reach no corpora.
 Create one in the Dexicon UI, or map this key to one under Access.` from `list_corpora`, and
 `Key 'claude-code' can reach no corpora.` from `index_status`.

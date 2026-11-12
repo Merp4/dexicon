@@ -175,9 +175,13 @@ appear only when set).
 
 `page` is set for PDF, PPTX and EPUB hits, whose `location` is then
 `file#page=n` (`#slide=n` for a deck, `#chapter=n` for an EPUB). `degradedReason` is
-present when `degraded` is true. `note` carries two warnings: a corpus in scope is still
-indexing, and collapsing duplicates returned fewer hits than the `limit` asked for
-(`N of M asked for`). `scope[].name` is qualified (`corpus:set`) for a set other than the
+present when `degraded` is true. `note` carries up to four warnings: a corpus in scope is still
+indexing; a corpus's last pass could not read its source (`could not read its source on its last
+pass; results are from the index it had before`) or had files that failed to embed, each naming the
+corpus with the time of the last pass that completed (`last indexed 2026-10-12 09:30Z`, or `never`);
+and collapsing duplicates returned fewer hits than the `limit` asked for
+(`N of M asked for`). A set's state is its last pass's outcome, so the note appears for as long as
+the state does, and clears on the next pass that completes. `scope[].name` is qualified (`corpus:set`) for a set other than the
 default.
 
 Over MCP, `search_index` returns one text block for a model to read, not this JSON: a
