@@ -205,13 +205,13 @@ public sealed class GitStashIndexingTests
         var repo = harness.SourceDirectory;
         Init(repo);
         Commit(repo, "a.txt", "base\n", "base");
-        File.WriteAllBytes(Path.Combine(repo, "pic.bin"), [1, 2, 0, 3, 4]);
+        File.WriteAllBytes(Path.Combine(repo, "pic.dat"), [1, 2, 0, 3, 4]);
         Stash(repo, "park");
 
         await harness.SeedCorpusAsync(SourceKind.GitHistory, gitOptions: StashesOn);
         var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
 
-        var state = await harness.StateOfAsync(UntrackedPath(repo, "stash@{0}", "pic.bin"));
+        var state = await harness.StateOfAsync(UntrackedPath(repo, "stash@{0}", "pic.dat"));
         state.Status.ShouldBe(FileStatus.Skipped);
         state.StatusDetail.ShouldStartWith("binary content");
         job.FilesSkipped.ShouldBe(1);

@@ -526,6 +526,22 @@ public sealed class WorkspaceWalker
     private static IgnoreRuleSet.PatternSource ListSource(string name) =>
         new(name, IsList: true, Budget: RuleBudget.ForList(), Remedy: () => "shorten the list");
 
+    /// <summary>
+    /// The exclusions a file walk applies, as a test on a path relative to the root, for files that are not on
+    /// disk to be walked: the untracked files a stash holds. The always-excluded patterns, then the exclude
+    /// list, which outranks them as it does in a walk, and the version-control directories no pattern brings
+    /// back. A <c>.gitignore</c> and a <c>.dexiconignore</c> are not read: they are files in a tree.
+    /// </summary>
+    /// <exception cref="IgnorePatternException">An element of <paramref name="excludeGlobs"/> that cannot be used.</exception>
+    internal static Func<string, bool> ExclusionsFor(IReadOnlyList<string>? excludeGlobs)
+    {
+        var rules = new IgnoreRuleSet();
+        rules.AddPatterns(AlwaysExclude, "always-exclude");
+        if (excludeGlobs is { Count: > 0 }) rules.Add(excludeGlobs, ListSource(ExcludeListName));
+
+        return path => IsGitPlumbing(path) || rules.IsIgnored(path, isDirectory: false);
+    }
+
     /// <summary>How many files the walk goes through between two looks at its token.</summary>
     internal const int FilesBetweenPolls = 256;
 

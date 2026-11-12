@@ -37,8 +37,9 @@ public sealed class GitStashTests : IDisposable
         ?? throw new InvalidOperationException($"{_repo} does not exist");
 
     private Task<GitStashInventory> InventoryAsync(
-        GitHistoryOptions? options = null, IReadOnlyList<string>? paths = null, long maxFileBytes = 1024 * 1024) =>
-        GitHistory.StashesAsync(Repo(), options ?? On, paths, maxFileBytes, default);
+        GitHistoryOptions? options = null, IReadOnlyList<string>? paths = null, long maxFileBytes = 1024 * 1024,
+        IReadOnlyList<string>? excludes = null) =>
+        GitHistory.StashesAsync(Repo(), options ?? On, paths, maxFileBytes, excludes, default);
 
     private async Task<Dictionary<string, string>> ReadStashesAsync(
         GitHistoryOptions options, GitStashInventory inventory, IReadOnlyList<string>? paths = null)
@@ -159,10 +160,13 @@ public sealed class GitStashTests : IDisposable
     [Fact]
     public async Task FilesGitIgnoresAreNotIndexed()
     {
-        Commit(_repo, ".gitignore", "*.log\nbuild/\n.env\n", "ignore");
+        Commit(_repo, ".gitignore", "*.log\ngenerated/\n.env\n", "ignore");
         Write(_repo, "keep.md", "keep\n");
         Write(_repo, "debug.log", "noise\n");
-        Write(_repo, "build/out.txt", "output\n");
+        Write(_repo, "generated/out.txt", "output\n");
+        // Ignored files that would otherwise be skipped for their own reasons leave no row either.
+        File.WriteAllBytes(Path.Combine(_repo, "generated", "blob.dat"), [1, 0, 2]);
+        Write(_repo, "generated/empty.txt", "");
         Write(_repo, ".env", "SECRET=1\n");
         Stash(_repo, "everything", all: true);
 
@@ -181,7 +185,7 @@ public sealed class GitStashTests : IDisposable
     public async Task BinaryEmptyAndOversizedFilesAreSkippedWithTheirReason()
     {
         Commit(_repo, "a.txt", "base\n", "base");
-        File.WriteAllBytes(Path.Combine(_repo, "pic.bin"), [1, 2, 0, 3, 4]);
+        File.WriteAllBytes(Path.Combine(_repo, "pic.dat"), [1, 2, 0, 3, 4]);
         Write(_repo, "empty.txt", "");
         Write(_repo, "big.txt", new string('x', 2000));
         Write(_repo, "ok.txt", "fine\n");
@@ -192,8 +196,8 @@ public sealed class GitStashTests : IDisposable
         inventory.Files.Select(f => f.Path).ShouldBe(["ok.txt"]);
 
         var reasons = inventory.Skipped.ToDictionary(s => s.RelativePath.Split('/')[^1], s => s.Reason);
-        reasons.Keys.OrderBy(k => k, StringComparer.Ordinal).ShouldBe(["big.txt", "empty.txt", "pic.bin"]);
-        reasons["pic.bin"].ShouldStartWith("binary content");
+        reasons.Keys.OrderBy(k => k, StringComparer.Ordinal).ShouldBe(["big.txt", "empty.txt", "pic.dat"]);
+        reasons["pic.dat"].ShouldStartWith("binary content");
         reasons["empty.txt"].ShouldBe("empty file");
         reasons["big.txt"].ShouldBe("over the 1,000 byte size cap (2,000 bytes)");
         inventory.Skipped.Single(s => s.RelativePath.EndsWith("/big.txt", StringComparison.Ordinal)).SizeBytes.ShouldBe(2000);
@@ -322,7 +326,7 @@ public sealed class GitStashTests : IDisposable
         for (var i = 0; i < count; i++) Write(_repo, $"f{i:0000}.txt", $"file {i}\n");
         Stash(_repo, "many");
 
-        var inventory = await GitHistory.StashesAsync(Repo(), On, null, 1024 * 1024, TestContext.Current.CancellationToken);
+        var inventory = await GitHistory.StashesAsync(Repo(), On, null, 1024 * 1024, null, TestContext.Current.CancellationToken);
 
         var stash = inventory.Stashes.Single();
         stash.UntrackedTotal.ShouldBe(count);
@@ -332,6 +336,142 @@ public sealed class GitStashTests : IDisposable
         var text = (await ReadStashesAsync(On, inventory)).Values.Single();
         text.ShouldContain($"Untracked files in this stash ({count:N0}):");
         text.ShouldContain("[5 more not listed or indexed: the limit is 500 per stash]");
+    }
+
+    /// <summary>
+    /// The cap per stash is applied after git has listed the files, so a stash over a large tree
+    /// is bounded by the ceiling of the call that lists it. A stash over it is kept, says its files
+    /// are too many to list, and is not an outage: the other stash in the same call is still read.
+    /// </summary>
+    [Fact]
+    public async Task AStashWhoseListingIsTooLargeToReadIsKeptAndSaysSo()
+    {
+        Commit(_repo, "a.txt", "base\n", "base");
+        Write(_repo, "small.md", "small\n");
+        Stash(_repo, "small");
+        for (var i = 0; i < 80; i++) Write(_repo, $"f{i:000}.txt", $"file {i}\n");
+        Stash(_repo, "large");
+
+        var inventory = await GitHistory.StashesAsync(
+            Repo(), On, null, 1024 * 1024, null, new GitHistory.StashLimits(ListCeiling: 3_000),
+            TestContext.Current.CancellationToken);
+
+        inventory.Stashes.Count.ShouldBe(2);
+        var large = inventory.Stashes.Single(s => s.Subject == "On main: large");
+        large.UntrackedTotal.ShouldBeNull();
+        large.Untracked.ShouldBeEmpty();
+        inventory.Stashes.Single(s => s.Subject == "On main: small").UntrackedTotal.ShouldBe(1);
+        inventory.Files.Select(f => f.Path).ShouldBe(["small.md"]);
+
+        var read = await ReadStashesAsync(On, inventory);
+        read[large.Sha].ShouldContain("Untracked files in this stash: too many to list or index.");
+    }
+
+    /// <summary>
+    /// The files are files, so what a file walk always leaves out (build output, dependency folders) and the
+    /// source's exclude list apply to them. They leave no row, and git's ignore rules are not what decides it:
+    /// nothing here is ignored.
+    /// </summary>
+    [Fact]
+    public async Task TheExclusionsOfAFileWalkApplyToUntrackedFiles()
+    {
+        Commit(_repo, "a.txt", "base\n", "base");
+        Write(_repo, "build/out.txt", "output\n");
+        Write(_repo, "node_modules/lib/x.js", "dependency\n");
+        Write(_repo, "drafts/private.md", "not for the index\n");
+        Write(_repo, "notes.md", "decide X\n");
+        Stash(_repo, "park");
+
+        var withoutList = await InventoryAsync();
+        withoutList.Files.Select(f => f.Path).OrderBy(p => p, StringComparer.Ordinal).ShouldBe(["drafts/private.md", "notes.md"]);
+
+        var inventory = await InventoryAsync(excludes: ["drafts/"]);
+
+        inventory.Files.Select(f => f.Path).ShouldBe(["notes.md"]);
+        inventory.Skipped.ShouldBeEmpty();
+        inventory.Stashes.Single().UntrackedTotal.ShouldBe(4, "the stash's own document lists what it holds, whatever is excluded");
+    }
+
+    [Fact]
+    public async Task AnExcludeListThatCannotBeUsedIsAnErrorTheIndexerHandles()
+    {
+        Commit(_repo, "a.txt", "base\n", "base");
+        Write(_repo, "notes.md", "decide X\n");
+        Stash(_repo, "park");
+
+        await Should.ThrowAsync<GitHistoryException>(() => InventoryAsync(excludes: ["[z-a]"]));
+    }
+
+    /// <summary>
+    /// What a source indexes from stashes is bounded. The versions held by the oldest stashes are the
+    /// ones left out, each as a skipped row, and nothing is silently dropped.
+    /// </summary>
+    [Fact]
+    public async Task TheDocumentCapLeavesTheOldestOutWithAReason()
+    {
+        Commit(_repo, "a.txt", "base\n", "base");
+        Write(_repo, "one.md", "one\n");
+        Stash(_repo, "one");
+        Write(_repo, "two.md", "two\n");
+        Stash(_repo, "two");
+        Write(_repo, "three.md", "three\n");
+        Stash(_repo, "three");
+
+        var inventory = await GitHistory.StashesAsync(
+            Repo(), On, null, 1024 * 1024, null, new GitHistory.StashLimits(MaxFileDocuments: 2),
+            TestContext.Current.CancellationToken);
+
+        inventory.Files.Select(f => f.Path).OrderBy(p => p, StringComparer.Ordinal).ShouldBe(["three.md", "two.md"]);
+        var skipped = inventory.Skipped.ShouldHaveSingleItem();
+        skipped.RelativePath.ShouldEndWith("/one.md");
+        skipped.Reason.ShouldStartWith("over the 2 untracked file versions");
+    }
+
+    /// <summary>
+    /// <c>git check-ignore</c> reads each name as a pathspec and refuses magic, so a name that starts with a
+    /// colon is not asked about, and is skipped with a reason. Linux only: a colon cannot be in a file name
+    /// on Windows.
+    /// </summary>
+    [Fact]
+    public async Task AFileNamedLikePathspecMagicIsSkippedAndDoesNotFailTheInventory()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "A colon cannot be in a file name on Windows.");
+
+        Commit(_repo, "a.txt", "base\n", "base");
+        Write(_repo, ":(literal)note.md", "text\n");
+        Write(_repo, "ok.md", "fine\n");
+        Stash(_repo, "park");
+
+        var inventory = await InventoryAsync();
+
+        inventory.Files.Select(f => f.Path).ShouldBe(["ok.md"]);
+        var skipped = inventory.Skipped.ShouldHaveSingleItem();
+        skipped.RelativePath.ShouldEndWith("/:(literal)note.md");
+        skipped.Reason.ShouldStartWith("ignore rules could not be checked");
+    }
+    /// <summary>
+    /// Git fails the whole ignore check, with status 128, when one path lies beyond a symbolic link in
+    /// the working tree. That path is skipped with a reason and the other files are still judged.
+    /// Linux only: a link needs a privilege on Windows.
+    /// </summary>
+    [Fact]
+    public async Task APathBeyondASymbolicLinkIsSkippedAndDoesNotFailTheInventory()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Creating a symbolic link needs a privilege on Windows.");
+
+        Commit(_repo, "a.txt", "base\n", "base");
+        Write(_repo, "dir/x.txt", "held in the stash\n");
+        Write(_repo, "ok.md", "fine\n");
+        Stash(_repo, "park");
+        Directory.CreateDirectory(Path.Combine(_repo, "elsewhere"));
+        Directory.CreateSymbolicLink(Path.Combine(_repo, "dir"), Path.Combine(_repo, "elsewhere"));
+
+        var inventory = await InventoryAsync();
+
+        inventory.Files.Select(f => f.Path).ShouldBe(["ok.md"]);
+        var skipped = inventory.Skipped.ShouldHaveSingleItem();
+        skipped.RelativePath.ShouldEndWith("/dir/x.txt");
+        skipped.Reason.ShouldStartWith("ignore rules could not be checked");
     }
 
     /// <summary>

@@ -2675,8 +2675,10 @@ untracked-files commit by hand.
 - `git log -p` prints nothing for a stash, and `--diff-merges=first-parent` prints the tracked diff.
 - The same untracked file in two stashes has one blob name, so the version of a file is its path and blob.
 - `git check-ignore --no-index --stdin -z` exits 1 when no path is ignored, and prints the ignored paths otherwise.
-- On the machine this was built on, 31 stashes in 16 of 86 repositories held at most 71 untracked files each and no
-  binary file, which is where the 500-path limit per stash comes from.
+- On the machine this was built on (2026-11-12), 31 stashes in 16 of 86 repositories held at most 71 untracked files
+  each and no binary file. Counted with `git log -g --format=%P refs/stash` for the third parent of each stash, then
+  `git ls-tree -r --name-only` and `git log --no-walk --root --numstat` on it. The limit of 500 paths per stash leaves
+  room for that and bounds a stash made with `--all`; 71 does not determine it.
 
 **Rejected.**
 
@@ -2690,15 +2692,26 @@ untracked-files commit by hand.
 - *Indexing every untracked file whatever git's ignore rules say.* `git stash --all` records ignored files, `.env`
   among them. A source that indexes a repository's files already leaves out what `.gitignore` covers, and this follows
   the same rule, with the one difference that the rules are git's alone: a `.dexiconignore` is not read.
-- *Mapping the source's exclude globs onto untracked files.* The history source passes no exclude to git for the
-  commits, and a different glob language for the same source would be a second rule.
+- *Reading the ignore rules as they were when the stash was made.* The files are in a commit and the rules are files
+  in a tree, and git has no command that judges a path against another tree's ignore files. The check uses the rules
+  on disk at the time of the pass, and the limit is stated in [04](04-ingestion.md#git-history--a-repositorys-commits).
+- *Giving the source's exclude globs to git.* The history source passes no exclude to git for the commits, because
+  git's exclude pathspec syntax is its own. The untracked files are files, and the walk's own rule set, which is the
+  walk's pattern language with its precedence, is applied to them in this code and not by git.
 
 **Consequences.**
 
 - Stash documents come and go with the reflog. A `git stash pop` or `drop` removes the stash's documents on the next
   pass, and a file version held only by it. Dropped stashes are not kept: `keepIndexed` is about commits.
-- A stash's own document lists the names of every untracked file it holds, including ignored ones from `--all`, so
-  that its text does not depend on the ignore rules in force when it is read. Their contents are not indexed.
+- Files a walk leaves out (build output, dependency folders, binaries, lock files, the source's exclude list) leave
+  no row. Git's ignore rules are those on disk when the pass runs. A file recorded by `git stash --all` as ignored by
+  a rule that is no longer on disk is indexed, which `git stash -u` avoids.
+- At most 10,000 untracked file documents a source indexes from stashes, oldest holders first left out as skipped rows,
+  because nothing else bounds them. A stash whose listing is over 64 MiB of git output is kept, and its document says
+  its files are too many to list or index.
+- With `includeStat` on, a stash's own document lists the names of the untracked files it holds (the first 500 that
+  the include paths select), including ignored ones from `--all`, so that its text does not depend on the ignore rules
+  in force when it is read. The contents of ignored files are not indexed.
 - The contents of untracked files are indexed whatever `includeDiff` says. A source that wants stashes but not file
   contents has no setting for it; a path filter can leave directories out.
 - No migration. The setting is a key in the source's stored settings, and a source without it reads as off.

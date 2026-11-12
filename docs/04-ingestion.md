@@ -793,14 +793,16 @@ reflog of `refs/stash` ([D-48](decisions.md#d-48-a-history-source-can-also-index
 
 - **One document per stash**, at `stashes/<yyyy-MM-dd>-<sha[..12]>`, laid out as a commit's:
   `stash <sha>`, author, date, `Base:` (the commit the stash was made on) and the message, then
-  the stat and, with `includeDiff`, the patch of the tracked changes against that base, then the
-  untracked files it holds as names, sizes and the first seven characters of each blob. The
-  message, stat and diff settings and the paths apply as they do to a commit.
+  the stat and, with `includeDiff`, the patch of the tracked changes against that base, then, with
+  `includeStat`, the untracked files the include paths select as names, sizes and the first seven
+  characters of each blob (the first 500 paths, below). The message, stat and diff settings and the
+  paths apply as they do to a commit.
 - **One document per distinct version of an untracked file**, at
   `stashes/untracked/<blob[..12]>/<path>`: a header naming the stash, its date and the blob, then
   the text of the file. A file held unchanged by thirty stashes is one document, named for the
-  oldest of them, and a changed version is another. Each stash's own document lists every file it
-  holds, so a search that lands on a stash and one that lands on a file reach the same set.
+  oldest of them, and a changed version is another. With `includeStat` on, each stash's own
+  document lists the files it holds, so the stashes that hold a file are found from the stash
+  documents.
 
 Three things about git decide this shape. `git show stash@{n}` prints the tracked changes and not
 the untracked files, which are in the stash's third parent. A stash is a merge, and `git log -p`
@@ -811,23 +813,40 @@ All three measured on git 2.31.1 and 2.54.0.
 
 Which untracked files become documents:
 
-- A path git's ignore rules cover is not indexed, and leaves no row. `git stash --all` records
-  ignored files, `.env` among them, and the rules are asked with
+- A path the walk's own exclusions cover is not indexed, and leaves no row: the always-excluded
+  patterns (build output, dependency folders, binaries, lock files, see the walk's rules above) and
+  the source's resolved exclude list, in the walk's pattern language, with the same precedence. A
+  `.gitignore` and a `.dexiconignore` are files in a tree and are not read for these.
+- A path git's ignore rules cover is not indexed, and leaves no row, whatever else is true of the
+  file. `git stash --all` records ignored files, `.env` among them, and the rules are asked with
   `git check-ignore --no-index`, which reads the repository's `.gitignore` files,
-  `.git/info/exclude` and the global excludes as they are at the time of the pass. The stash's own
-  document still lists the names of the files it holds, ignored or not, with no content: its text
-  is then a function of the stash alone.
+  `.git/info/exclude` and any global excludes file the service's git is configured with. **These are
+  the rules on disk when the pass runs, not the rules in force when the stash was made.** A file that
+  `git stash --all` recorded as ignored by an ignore file that is no longer on disk (in a directory
+  the tree no longer has, or since edited) is indexed. Use `git stash -u`, which does not record
+  ignored files, where that matters. The stash's own document lists the names of the files it
+  holds, ignored or not, with no content, so that its text depends on the stash and the settings
+  and not on the ignore rules.
 - An empty file, a file over the size cap (`max_file_bytes`: the corpus default, else
-  `DEXICON__INDEXING__MAXFILEBYTES`; a history source has no value of its own) and a file git
-  treats as binary (a NUL byte in the first 8,000 bytes) are recorded as skipped rows with the
-  reason, as a file walk records them. A
-  NUL byte past what git looked at leaves a document that says the content is binary and holds
-  none of it, because the catalogue's text column ends a value at the first NUL.
+  `DEXICON__INDEXING__MAXFILEBYTES`; a history source has no value of its own), a file git treats
+  as binary (a NUL byte in the first 8,000 bytes), a path with a control character in it (the key
+  shows it as a replacement character), a path git will not judge for ignore rules (one that lies
+  beyond a symbolic link in the working tree now, which git refuses the check for, or whose name
+  starts with a colon, which the check reads as pathspec magic and refuses; the file is not
+  indexed, which is the safe answer for one that may be a secret) and an object git cannot find
+  are recorded as skipped rows with the reason, as a file walk records them. A NUL byte past what
+  git looked at leaves a document that says the content is binary and holds none of it, because
+  the catalogue's text column ends a value at the first NUL.
 - Only regular files. A symbolic link or a submodule entry is not a file with content.
-- The first 500 paths of each stash, in git's order. The stash's document says how many it left
-  out. On the 31 stashes in 16 of 86 repositories surveyed on one machine, the largest held 71
-  untracked files and none held a binary file.
-
+- The first 500 paths of each stash, in git's path order, among those the include paths select. The
+  limit is applied before the exclusions and the ignore rules, so in a stash made with `--all` the
+  ignored and excluded files can use the slots. The stash's document says how many it left out. A
+  survey of the stashes in 16 of 86 repositories on one machine (31 stashes, 2026-11-12) found at
+  most 71 untracked files in one stash and no binary file, so the limit leaves room for ordinary
+  stashes and bounds one made with `--all`. A stash whose listing alone is over 64 MiB of git
+  output is kept and its document says its files are too many to list or index.
+- At most 10,000 untracked file documents for a source. The versions held by the oldest stashes
+  are left out first, each as a skipped row.
 The contents of untracked files are indexed whatever `includeDiff` says: the setting is for the
 tracked changes, and the files are what the option is for.
 
@@ -1004,14 +1023,16 @@ body holding the record separator split a record in two and lost a commit — wh
 shared reconcile would then have seen as vanished and deleted the vectors of.
 
 A history source is swept like a workspace one: the inventory pass records a row per
-commit before anything is read, so a corpus says what it holds as soon as the source is
-added rather than when an index job reaches it.
+document (a commit, and with `includeStashes` a stash or an untracked file version) before
+anything is read, so a corpus says what it holds as soon as the source is added rather than
+when an index job reaches it.
 
 The settings come back on the source summary, and change with
 `PATCH /api/corpora/{name}/sources/{id}` carrying a `git` object, which replaces them
 whole. Settings that can be written and never read back are settings nobody can check or
 reproduce, and these decide what every document in the source holds. The UI shows the ref
-and whether the diff is on, and counts commits rather than files; the size cap and the
+and whether the diff is on, and counts commits (documents, when the source includes stashes)
+rather than files; the size cap and the
 `.gitignore` toggle are not shown at all, because a commit is not read from the working
 tree. The source's row opens an editor for them.
 

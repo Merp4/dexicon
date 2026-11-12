@@ -376,7 +376,7 @@ function HistoryFields({ git, onGitChange, paths, onPathsChange, fallback, repos
 
         <CheckField
           label="Stashes"
-          hint="Work kept off the branch, with the untracked files a stash holds (git stash -u), under stashes/. Each version of an untracked file is indexed once, however many stashes hold it. The ref and the commit limit do not apply; the date and paths do."
+          hint="Work kept off the branch, with the untracked files a stash holds (git stash -u), under stashes/. Each version of an untracked file is indexed once, however many stashes hold it. Files git ignores and files a file walk excludes are left out. The ref and the commit limit do not apply; the date and paths do."
           checked={git.includeStashes}
           onChange={(v) => set('includeStashes', v)}
         />
@@ -705,7 +705,8 @@ export function EditHistorySourceModal({ corpus, source, onClose, onSaved }: {
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <form onSubmit={submit}>
         <p className="mt-0 mb-3.5 text-sm text-muted-foreground">
-          The commit history of <span className="mono">{sourceName(source)}</span>, one document per commit.
+          The commit history of <span className="mono">{sourceName(source)}</span>, one document per commit
+          {git.includeStashes && ', and one per stash and per untracked file version'}.
         </p>
 
         <HistoryFields git={git} onGitChange={setGit} paths={paths} onPathsChange={setPaths}

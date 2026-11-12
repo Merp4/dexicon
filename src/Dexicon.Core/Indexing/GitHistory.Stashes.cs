@@ -36,10 +36,13 @@ public sealed record GitUntrackedFile(string Path, string BlobSha, long SizeByte
 /// <param name="BaseSha">The commit the stash was made on, or empty when the stash commit has no parent.</param>
 /// <param name="Subject">The stash's message, such as <c>On main: park notes</c>.</param>
 /// <param name="Untracked">The first <see cref="GitHistory.MaxUntrackedPerStash"/> untracked files, in git's order.</param>
-/// <param name="UntrackedTotal">How many untracked regular files the stash holds under the include filters.</param>
+/// <param name="UntrackedTotal">
+/// How many untracked regular files the stash holds under the include filters, or null when git's listing of
+/// them was over the ceiling for one call and none was read.
+/// </param>
 public sealed record GitStash(
     string Sha, DateTimeOffset AuthorDate, string BaseSha, string Subject,
-    IReadOnlyList<GitUntrackedFile> Untracked, int UntrackedTotal) : GitUnit
+    IReadOnlyList<GitUntrackedFile> Untracked, int? UntrackedTotal) : GitUnit
 {
     /// <summary>
     /// Raised when the layout of a stash's document changes, or <see cref="GitHistory.MaxUntrackedPerStash"/>
@@ -109,8 +112,27 @@ public static partial class GitHistory
     /// </summary>
     internal const int MaxUntrackedPerStash = 500;
 
-    /// <summary>Untracked-files commits listed per git call, so the output of one call is bounded by this and <see cref="MaxUntrackedPerStash"/>.</summary>
+    /// <summary>Untracked-files commits listed per git call. A call over <see cref="UntrackedListCeiling"/> is halved until it is one commit.</summary>
     private const int UntrackedListBatch = 50;
+
+    /// <summary>
+    /// The most one git call may print when it lists untracked files. The listing of a stash is not
+    /// bounded by <see cref="MaxUntrackedPerStash"/>, which is applied after it is read: a stash made
+    /// with <c>--all</c> over a large tree lists every file. A single stash over this is read as having
+    /// too many files to list, and is not an error.
+    /// </summary>
+    internal const long UntrackedListCeiling = AbsoluteCeiling;
+
+    /// <summary>
+    /// The most untracked file documents a source indexes from stashes. Each stash lists at most
+    /// <see cref="MaxUntrackedPerStash"/>, and nothing else bounds their number: a thousand stashes
+    /// made with <c>--all</c> would be half a million documents and as many <c>git cat-file</c> runs.
+    /// The versions held by the oldest stashes are the ones left out, each as a skipped row.
+    /// </summary>
+    internal const int MaxFileDocuments = 10_000;
+
+    /// <summary>The two limits above, so that a test can make them small.</summary>
+    internal sealed record StashLimits(long ListCeiling = UntrackedListCeiling, int MaxFileDocuments = GitHistory.MaxFileDocuments);
 
     /// <summary>The most a list of stashes, or of blob sizes, may print before the read is refused.</summary>
     private const long StashListCeiling = 16L * 1024 * 1024;
@@ -134,9 +156,19 @@ public static partial class GitHistory
     /// it is empty, over <paramref name="maxFileBytes"/>, or binary.
     /// </summary>
     /// <param name="pathspecs">The source's include globs. They select untracked files as they select a commit's files.</param>
-    public static async Task<GitStashInventory> StashesAsync(
+    /// <param name="excludeGlobs">
+    /// The source's resolved exclude globs. They are applied to the untracked files with the exclusions a file walk
+    /// always applies (build output, dependency folders, binaries, lock files), in the walk's own pattern language,
+    /// because these are files. They are not given to git for the tracked diff, as they are not for a commit.
+    /// </param>
+    public static Task<GitStashInventory> StashesAsync(
         GitRepository repo, GitHistoryOptions options, IReadOnlyList<string>? pathspecs, long maxFileBytes,
-        CancellationToken ct)
+        IReadOnlyList<string>? excludeGlobs, CancellationToken ct) =>
+        StashesAsync(repo, options, pathspecs, maxFileBytes, excludeGlobs, new StashLimits(), ct);
+
+    internal static async Task<GitStashInventory> StashesAsync(
+        GitRepository repo, GitHistoryOptions options, IReadOnlyList<string>? pathspecs, long maxFileBytes,
+        IReadOnlyList<string>? excludeGlobs, StashLimits limits, CancellationToken ct)
     {
         if (!options.IncludeStashes) return GitStashInventory.None;
 
@@ -150,7 +182,7 @@ public static partial class GitHistory
         var listed = await ListStashesAsync(repo, options, ct);
         if (listed.Count == 0) return GitStashInventory.None;
 
-        var untracked = await UntrackedAsync(repo, listed, pathspecs, ct);
+        var untracked = await UntrackedAsync(repo, listed, pathspecs, limits.ListCeiling, ct);
 
         // One stash per path, the newest of any that share a date and twelve characters of a sha,
         // for the reason commits are (OnePerPath): two units on one path delete each other's chunks.
@@ -158,16 +190,22 @@ public static partial class GitHistory
         var stashes = new List<GitStash>(listed.Count);
         foreach (var s in listed)
         {
-            var files = s.UntrackedSha is not null && untracked.TryGetValue(s.UntrackedSha, out var held)
+            var (total, files) = s.UntrackedSha is not null && untracked.TryGetValue(s.UntrackedSha, out var held)
                 ? held
-                : [];
-            var stash = new GitStash(
-                s.Sha, s.Date, s.BaseSha, s.Subject, [.. files.Take(MaxUntrackedPerStash)], files.Count);
+                : (0, new List<GitUntrackedFile>());
+            var stash = new GitStash(s.Sha, s.Date, s.BaseSha, s.Subject, files, total);
 
             if (paths.Add(stash.RelativePath)) stashes.Add(stash);
         }
 
-        var (units, skipped) = await FilesAsync(repo, stashes, maxFileBytes, ct);
+        Func<string, bool> excluded;
+        try { excluded = WorkspaceWalker.ExclusionsFor(excludeGlobs); }
+        catch (IgnorePatternException ex)
+        {
+            throw new GitHistoryException($"The exclude list cannot be used for the untracked files of stashes: {ex.Message}", ex);
+        }
+
+        var (units, skipped) = await FilesAsync(repo, stashes, maxFileBytes, excluded, limits.MaxFileDocuments, ct);
         return new GitStashInventory(stashes, units, skipped);
     }
 
@@ -207,13 +245,14 @@ public static partial class GitHistory
         {
             // The subject last, with the rest of the record, so a NUL in it stays in it.
             var fields = record.Split('\0', 4);
-            if (fields.Length < 4) continue;
+            var sha = fields.Length == 4 ? fields[0].Trim() : string.Empty;
 
-            var sha = fields[0].Trim();
-            if (!ObjectName.IsMatch(sha) || !seen.Add(sha)) continue;
+            // Said, not skipped: a stash dropped here would look the same as no stash.
+            if (!ObjectName.IsMatch(sha)
+                || !DateTimeOffset.TryParse(fields[1], CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
+                throw new GitHistoryException("git printed an entry of the stash reflog in a form that could not be read.");
 
-            if (!DateTimeOffset.TryParse(fields[1], CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
-                continue;
+            if (!seen.Add(sha)) continue;
 
             // Midnight UTC, as for commits, so a date means the same for both.
             if (options.Since is { } since && date.UtcDateTime < since.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc))
@@ -235,46 +274,79 @@ public static partial class GitHistory
     /// binary. Raw output for the object names and numstat for the verdict: numstat prints
     /// <c>-</c> for both counts of a file git treats as binary. Symbolic links and submodule
     /// entries are not files with content and are left out.
+    ///
+    /// The first <see cref="MaxUntrackedPerStash"/> of each commit are kept, with the count of all of
+    /// them, and only those are sized. A commit whose listing is over <paramref name="ceiling"/> on its
+    /// own has a null count and no files.
     /// </summary>
-    private static async Task<Dictionary<string, List<GitUntrackedFile>>> UntrackedAsync(
-        GitRepository repo, List<Listed> stashes, IReadOnlyList<string>? pathspecs, CancellationToken ct)
+    private static async Task<Dictionary<string, (int? Total, List<GitUntrackedFile> Files)>> UntrackedAsync(
+        GitRepository repo, List<Listed> stashes, IReadOnlyList<string>? pathspecs, long ceiling, CancellationToken ct)
     {
         var commits = stashes.Select(s => s.UntrackedSha).OfType<string>().Distinct(StringComparer.Ordinal).ToList();
-        var found = new Dictionary<string, List<(string Path, string Blob, bool Binary)>>(StringComparer.Ordinal);
+        var found = new Dictionary<string, List<(string Path, string Blob, bool Binary)>?>(StringComparer.Ordinal);
 
         for (var start = 0; start < commits.Count; start += UntrackedListBatch)
-        {
-            ct.ThrowIfCancellationRequested();
+            await ListUntrackedAsync(repo, commits.Skip(start).Take(UntrackedListBatch).ToList(), pathspecs, ceiling, found, ct);
 
-            var batch = commits.Skip(start).Take(UntrackedListBatch).ToList();
-            var marker = Marker();
-            var args = new List<string>
-            {
-                "log", "--no-walk", "--stdin", "--root", "--no-color", "--no-renames", "--no-textconv",
-                "--raw", "--abbrev=40", "--numstat", "-z", $"--format={marker}%H",
-            };
-
-            if (Pathspecs(pathspecs) is { Count: > 0 } specs)
-            {
-                args.Add("--");
-                args.AddRange(specs);
-            }
-
-            var (ok, stdout, stderr) = await BoundedAsync(repo, args, ct, string.Join('\n', batch), AbsoluteCeiling);
-            if (!ok) throw new GitHistoryException($"git log --stdin failed: {Summarise(stderr)}");
-
-            foreach (var (sha, files) in ParseUntrackedListing(stdout, marker, [.. batch]))
-                found[sha] = files;
-        }
-
-        var sizes = await SizesAsync(repo, found.Values.SelectMany(f => f.Select(e => e.Blob)), ct);
-
-        return found.ToDictionary(
+        var kept = found.ToDictionary(
             kv => kv.Key,
-            kv => kv.Value.Select(e => new GitUntrackedFile(e.Path, e.Blob, sizes.GetValueOrDefault(e.Blob, -1), e.Binary)).ToList(),
+            kv => (Total: kv.Value is null ? (int?)null : kv.Value.Count,
+                   Entries: kv.Value is null ? [] : kv.Value.Take(MaxUntrackedPerStash).ToList()),
+            StringComparer.Ordinal);
+
+        var sizes = await SizesAsync(repo, kept.Values.SelectMany(k => k.Entries.Select(e => e.Blob)), ct);
+
+        return kept.ToDictionary(
+            kv => kv.Key,
+            kv => (kv.Value.Total,
+                   kv.Value.Entries.Select(e => new GitUntrackedFile(e.Path, e.Blob, sizes.GetValueOrDefault(e.Blob, -1), e.Binary)).ToList()),
             StringComparer.Ordinal);
     }
 
+    /// <summary>
+    /// One call that lists the untracked files of these commits. Over the ceiling the call is halved,
+    /// as the stat read is, until it is one commit; that commit is recorded as null, too many to list.
+    /// </summary>
+    private static async Task ListUntrackedAsync(
+        GitRepository repo, List<string> batch, IReadOnlyList<string>? pathspecs, long ceiling,
+        Dictionary<string, List<(string Path, string Blob, bool Binary)>?> into, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var marker = Marker();
+        var args = new List<string>
+        {
+            "log", "--no-walk", "--stdin", "--root", "--no-color", "--no-renames", "--no-textconv",
+            "--raw", "--abbrev=40", "--numstat", "-z", $"--format={marker}%H",
+        };
+
+        if (Pathspecs(pathspecs) is { Count: > 0 } specs)
+        {
+            args.Add("--");
+            args.AddRange(specs);
+        }
+
+        try
+        {
+            var (ok, stdout, stderr) = await RunAsync(repo, args, ct, string.Join('\n', batch), ceiling);
+            if (!ok) throw new GitHistoryException($"git log --stdin failed: {Summarise(stderr)}");
+
+            foreach (var (sha, files) in ParseUntrackedListing(stdout, marker, [.. batch])) into[sha] = files;
+
+            // A commit the output does not mention has none of its files under the include paths.
+            foreach (var sha in batch) into.TryAdd(sha, []);
+        }
+        catch (GitOutputTooLargeException) when (batch.Count > 1)
+        {
+            var half = batch.Count / 2;
+            await ListUntrackedAsync(repo, batch.GetRange(0, half), pathspecs, ceiling, into, ct);
+            await ListUntrackedAsync(repo, batch.GetRange(half, batch.Count - half), pathspecs, ceiling, into, ct);
+        }
+        catch (GitOutputTooLargeException)
+        {
+            into[batch[0]] = null;
+        }
+    }
     /// <summary>
     /// Reads <c>git log --raw --numstat -z</c> for root commits. Per commit the sha opens the record,
     /// then every raw entry (<c>:old new oldsha newsha status</c>, a NUL, the path, a NUL), then every
@@ -351,7 +423,8 @@ public static partial class GitHistory
     /// act on. A path git's ignore rules cover is left out without a record, as a file walk leaves it.
     /// </summary>
     private static async Task<(List<GitStashFile> Files, List<WorkspaceWalker.Skipped> Skipped)> FilesAsync(
-        GitRepository repo, List<GitStash> stashes, long maxFileBytes, CancellationToken ct)
+        GitRepository repo, List<GitStash> stashes, long maxFileBytes, Func<string, bool> excluded,
+        int maxDocuments, CancellationToken ct)
     {
         // Oldest first, so the holder named in a document does not change when a newer stash is
         // made with the same file. The reflog lists the newest first, in the order the stashes were
@@ -359,14 +432,14 @@ public static partial class GitHistory
         var firstHolders = new Dictionary<(string Path, string Blob), (GitStash Stash, GitUntrackedFile File)>();
         foreach (var stash in Enumerable.Reverse(stashes))
             foreach (var file in stash.Untracked)
-                firstHolders.TryAdd((file.Path, file.BlobSha), (stash, file));
+                if (!excluded(file.Path)) firstHolders.TryAdd((file.Path, file.BlobSha), (stash, file));
 
-        // Asked about only the paths that could become documents: git's ignore rules for a path
-        // are the same whichever stash holds it.
-        var candidates = firstHolders.Values
-            .Where(h => !h.File.Binary && h.File.SizeBytes > 0 && h.File.SizeBytes <= maxFileBytes)
-            .Select(h => h.File.Path).Distinct(StringComparer.Ordinal).ToList();
-        var ignored = await IgnoredAsync(repo, candidates, ct);
+        // Every distinct path, binary and oversized ones included: an ignored file leaves no row
+        // whatever else is true of it, and git's ignore rules for a path are the same whichever
+        // stash holds it.
+        var distinct = firstHolders.Values.Select(h => h.File.Path).Distinct(StringComparer.Ordinal).ToList();
+        var (ignored, unjudged) = await IgnoredAsync(repo, [.. distinct.Where(p => !p.StartsWith(':'))], ct);
+        unjudged.UnionWith(distinct.Where(p => p.StartsWith(':')));
 
         var files = new List<GitStashFile>();
         var skipped = new List<WorkspaceWalker.Skipped>();
@@ -391,7 +464,8 @@ public static partial class GitHistory
             var unit = new GitStashFile(file.Path, file.BlobSha, file.SizeBytes, stash.Sha, stash.AuthorDate, stash.Subject);
             if (!paths.Add(unit.RelativePath)) continue;
 
-            string? reason = file.SizeBytes < 0 ? "object missing from the repository"
+            string? reason = unjudged.Contains(file.Path) ? "ignore rules could not be checked (git check-ignore failed for this path)"
+                : file.SizeBytes < 0 ? "object missing from the repository"
                 : file.SizeBytes == 0 ? "empty file"
                 : file.SizeBytes > maxFileBytes
                     ? string.Create(CultureInfo.InvariantCulture, $"over the {maxFileBytes:N0} byte size cap ({file.SizeBytes:N0} bytes)")
@@ -402,28 +476,81 @@ public static partial class GitHistory
             else skipped.Add(new WorkspaceWalker.Skipped(unit.RelativePath, reason, Math.Max(0, file.SizeBytes)));
         }
 
+        // The oldest holders are left out first, each as a skipped row with the reason.
+        if (files.Count > maxDocuments)
+        {
+            foreach (var over in files.Take(files.Count - maxDocuments))
+                skipped.Add(new WorkspaceWalker.Skipped(
+                    over.RelativePath,
+                    string.Create(CultureInfo.InvariantCulture, $"over the {maxDocuments:N0} untracked file versions indexed from stashes, and held by an older stash than those kept"),
+                    over.SizeBytes));
+
+            files = files.Skip(files.Count - maxDocuments).ToList();
+        }
+
         return (files, skipped);
     }
 
     /// <summary>
-    /// The paths git's ignore rules cover, judged as if they were not in the index. The files are in a
-    /// stash and not in the working tree, so what applies is the repository's <c>.gitignore</c> files,
-    /// <c>.git/info/exclude</c> and the user's global excludes. Exit status 1 is "none ignored".
+    /// The paths git's ignore rules cover, judged as if they were not in the index, and the paths git
+    /// would not judge. The files are in a stash and not in the working tree, so what applies is the
+    /// repository's <c>.gitignore</c> files, <c>.git/info/exclude</c> and any global excludes file the
+    /// service's git is configured with. Exit status 1 is "none ignored". Each line is read as a
+    /// pathspec, and <c>--literal-pathspecs</c> does not help: git then refuses every line, as the magic
+    /// <c>literal</c> is not supported by this command (measured on 2.31.1). A path that starts with a colon is
+    /// therefore not asked about, and is not judged.
+    ///
+    /// The rules are those on disk when the pass runs and not those in force when the stash was made. A
+    /// file that <c>git stash --all</c> recorded as ignored by a rule that is no longer on disk (an ignore
+    /// file in a directory the tree no longer has, or one since edited) is not seen as ignored.
+    ///
+    /// Git fails the whole call, with status 128, when one path lies beyond a symbolic link in the
+    /// working tree (<c>fatal: pathspec 'dir/f.txt' is beyond a symbolic link</c>): a directory a stash
+    /// held and the tree has since replaced with a link. The call is halved until the path is alone, and
+    /// that path is not judged. It is not indexed, which is the safe answer for a file that may be a
+    /// secret, and it is recorded as skipped. More than <see cref="MaxUnjudged"/> such paths is git
+    /// failing for another reason, and is reported as that.
     /// </summary>
-    private static async Task<HashSet<string>> IgnoredAsync(GitRepository repo, List<string> paths, CancellationToken ct)
+    private static async Task<(HashSet<string> Ignored, HashSet<string> Unjudged)> IgnoredAsync(
+        GitRepository repo, List<string> paths, CancellationToken ct)
     {
         var ignored = new HashSet<string>(StringComparer.Ordinal);
-        if (paths.Count == 0) return ignored;
+        var unjudged = new HashSet<string>(StringComparer.Ordinal);
+
+        await CheckIgnoreAsync(repo, paths, ignored, unjudged, ct);
+        return (ignored, unjudged);
+    }
+
+    private const int MaxUnjudged = 50;
+
+    private static async Task CheckIgnoreAsync(
+        GitRepository repo, List<string> paths, HashSet<string> ignored, HashSet<string> unjudged, CancellationToken ct)
+    {
+        if (paths.Count == 0) return;
 
         var (ok, stdout, stderr) = await BoundedAsync(repo,
             ["check-ignore", "--no-index", "--stdin", "-z"], ct,
             string.Concat(paths.Select(p => p + '\0')), alsoOk: 1);
-        if (!ok) throw new GitHistoryException($"git check-ignore failed: {Summarise(stderr)}");
 
-        foreach (var path in stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries)) ignored.Add(path);
-        return ignored;
+        if (ok)
+        {
+            foreach (var path in stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries)) ignored.Add(path);
+            return;
+        }
+
+        if (paths.Count == 1)
+        {
+            if (unjudged.Count >= MaxUnjudged)
+                throw new GitHistoryException($"git check-ignore failed for more than {MaxUnjudged} paths: {Summarise(stderr)}");
+
+            unjudged.Add(paths[0]);
+            return;
+        }
+
+        var half = paths.Count / 2;
+        await CheckIgnoreAsync(repo, paths.GetRange(0, half), ignored, unjudged, ct);
+        await CheckIgnoreAsync(repo, paths.GetRange(half, paths.Count - half), ignored, unjudged, ct);
     }
-
     /// <summary>
     /// The documents of these stashes. The same layout as a commit's, with <c>stash</c> for the
     /// first word, the commit the stash was made on, and the diff taken against it: a stash is a
@@ -509,6 +636,9 @@ public static partial class GitHistory
     {
         if (stash.UntrackedTotal == 0) return string.Empty;
 
+        if (stash.UntrackedTotal is null)
+            return "\nUntracked files in this stash: too many to list or index.\n";
+
         var sb = new StringBuilder("\n");
         sb.Append(CultureInfo.InvariantCulture, $"Untracked files in this stash ({stash.UntrackedTotal:N0}):\n");
 
@@ -519,7 +649,7 @@ public static partial class GitHistory
 
         if (stash.UntrackedTotal > stash.Untracked.Count)
             sb.Append(CultureInfo.InvariantCulture,
-                $"  [{stash.UntrackedTotal - stash.Untracked.Count:N0} more not listed or indexed: the limit is {MaxUntrackedPerStash:N0} per stash]\n");
+                $"  [{stash.UntrackedTotal.Value - stash.Untracked.Count:N0} more not listed or indexed: the limit is {MaxUntrackedPerStash:N0} per stash]\n");
 
         return sb.ToString();
     }

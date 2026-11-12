@@ -114,7 +114,7 @@ public sealed record GitHistoryOptions
     ///
     /// Out: <see cref="Ref"/>, <see cref="MaxCommits"/>, <see cref="KeepIndexed"/>,
     /// <see cref="Since"/>, <see cref="IncludeMerges"/> and <see cref="IncludeStashes"/>,
-    /// which decide WHICH commits are indexed and not what any one of them holds. Turning
+    /// which decide WHICH documents are indexed and not what any commit holds. Turning
     /// merges on adds documents; it does not alter a single existing one.
     ///
     /// <see cref="MaxDiffBytes"/> only when there is a diff for it to cap.
@@ -1170,7 +1170,9 @@ public static partial class GitHistory
             await process.StandardInput.WriteAsync(stdin.AsMemory(), ct);
             process.StandardInput.Close();
         }
-        catch (IOException) { /* git exited before reading it all */ }
+        // Git exited before reading it all, or the process was disposed under the write after the
+        // output went over its ceiling. Neither is reported here: the caller has the exit status.
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException) { }
     }
 
     /// <summary>

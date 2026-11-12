@@ -675,5 +675,5 @@ public sealed record HistorySettings(
     bool? KeepIndexed = null,
     [property: Description("Only commits made on or after this date, written yyyy-MM-dd. Stashes are cut by the same date.")]
     string? Since = null,
-    [property: Description("Also index the repository's stashes, including the untracked files a stash holds (git stash -u), under stashes/. Each stash is one document, and each distinct version of an untracked file is one document, however many stashes hold it. Needs the folder to be the repository's root.")]
+    [property: Description("Also index the repository's stashes, including the untracked files a stash holds (git stash -u), under stashes/. Each stash is one document, and each distinct version of an untracked file is one document, however many stashes hold it. Files git ignores (by the ignore rules on disk now) and files a file walk leaves out are not indexed. Needs the folder to be the repository's root.")]
     bool? Stashes = null);

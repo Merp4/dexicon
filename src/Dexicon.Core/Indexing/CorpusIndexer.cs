@@ -1274,7 +1274,8 @@ public sealed class CorpusIndexer(
     }
 
     /// <summary>
-    /// One pass over a repository's history, one document per commit.
+    /// One pass over a repository's history, one document per commit, and with
+    /// <see cref="GitHistoryOptions.IncludeStashes"/> one per stash and one per untracked file version.
     ///
     /// The enumeration is the inventory and is deliberately cheap: shas and dates, no
     /// messages and no patches. Which of them still need reading is then settled against the
@@ -1343,7 +1344,7 @@ public sealed class CorpusIndexer(
 
             // Beside the commits, and in the same catch: a stash is read by the same git. Empty
             // unless the source asks for stashes.
-            stashes = await GitHistory.StashesAsync(repo, options, filters.IncludeGlobs, filters.MaxFileBytes, ct);
+            stashes = await GitHistory.StashesAsync(repo, options, filters.IncludeGlobs, filters.MaxFileBytes, filters.ExcludeGlobs, ct);
         }
         catch (GitHistoryException ex)
         {
