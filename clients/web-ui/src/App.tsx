@@ -1416,6 +1416,7 @@ export function CorpusDetail({
                       {s.tracking && !s.tracking.branch && s.tracking.lastFetchUtc
                         && ` · fetched ${relativeTime(s.tracking.lastFetchUtc)}`}
                       {' · '}{historyContent(s.git)}
+                      {s.git?.includeStashes ? ' · with stashes' : ''}
                       {s.includeGlobs?.length ? ` · only ${s.includeGlobs.join(', ')}` : ''}
                       {/* Where the ref had got to when it was last read. The ref names what
                           to follow and says nothing about whether it moves: a source over a

@@ -284,6 +284,28 @@ describe('the sources a corpus reads', () => {
   });
 
   /**
+   * A source that also indexes stashes holds stashes and untracked files beside its commits. Found walking the
+   * running app: the row said what a commit holds and nothing of the stashes, so the setting was invisible once saved.
+   */
+  it('says when a history source also indexes stashes, and counts its documents as documents', async () => {
+    getCorpus.mockResolvedValue(
+      corpus({
+        sources: [
+          source({
+            id: 's2', kind: 'githistory', rootPath: 'api-repo', fileCount: 12,
+            git: { ref: 'main', includeMessage: true, includeStat: true, includeDiff: false, maxDiffBytes: 65536, includeMerges: false, includeStashes: true },
+          }),
+        ],
+      }),
+    );
+
+    render(<CorpusDetail {...props} />);
+
+    expect(await screen.findByText(/message and stat/)).toHaveTextContent(/^main · message and stat · with stashes/);
+    expect(screen.getByText(/12 documents/, { selector: 'span, div' })).toBeInTheDocument();
+  });
+
+  /**
    * Uploads are not walked. Their source stores int.MaxValue as its cap, and on the file
    * settings' line it read "upload · .gitignore ignored · code and text ≤ 2.0 GB", when the
    * server caps each upload as it arrives.
