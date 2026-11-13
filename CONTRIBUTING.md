@@ -18,8 +18,13 @@ headed `Dexicon admin password`. Copy it without the quotes and sign in at
 http://127.0.0.1:8477, then create an API key under Access. On PowerShell:
 `docker compose logs dexicon | Select-String "admin password" -Context 0,2`.
 
-Toolchain: .NET SDK 10 (CI uses `10.0.x`) and, for the web UI in `clients/web-ui`, Node 26
-(the version CI uses). For a UI change, run what CI runs from that directory:
+Toolchain: .NET SDK 10 (CI installs `10.0.x`) and, for the web UI in `clients/web-ui`, Node 26
+(the version CI uses). `global.json` makes `dotnet` use the newest 10.0 SDK installed. A
+newer SDK on the machine is not used, because the solution's warnings-as-errors build rejects
+the analyzers of a later release, and a machine with only a newer SDK fails with "A compatible
+.NET SDK was not found": install a 10.0 SDK.
+
+For a UI change, run what CI runs from `clients/web-ui`:
 
 ```bash
 npm ci && npm run generate && npm run typecheck && npm test && npm run build
