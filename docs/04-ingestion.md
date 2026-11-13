@@ -773,7 +773,7 @@ else.
 **A refresh over a tip that has not moved reads nothing.** `git log --format` gives shas
 and dates and is the inventory; everything else is asked for in a second call, for the
 commits the catalogue does not already have. A commit cannot change, so its fingerprint is
-its sha plus what these settings say a document contains, and that is knowable without
+its sha, the version of its document's sections and what these settings say a document contains, and that is knowable without
 asking git for the body — which is why the staleness check for this source runs *before*
 the read rather than after it, as a file's must. Measured on this repository: 77ms to
 enumerate 201 commits, 1,069ms to read all of them with their patches.
@@ -872,8 +872,8 @@ on the pass after it leaves the reflog (`git stash drop` or `pop`), and a file d
 the next oldest stash that holds it, which re-reads that one document. Turning the setting off
 removes every stash document on the next pass.
 
-A commit's key is unchanged, so turning the setting on reads no commit again. A stash's key is its
-sha and the message, stat, diff and path settings. A file's is its blob, path, holding stash and
+A commit's key does not hold the setting, so turning it on reads no commit again. A stash's key is its
+sha, the version of its sections and the message, stat, diff and path settings. A file's is its blob, path, holding stash and
 whether messages are indexed, since the header quotes the stash's message, and so changing the diff
 or stat settings does not read the files again.
 
@@ -1571,6 +1571,12 @@ the heading at the first line covers under half of the chunk.
 split rather than offering a place for one: under the usual rule a chapter shorter than the
 budget would be absorbed into the next. The cost falls to the caller: a document of very
 short pages yields short chunks.
+
+**Sections.** A git-history document names its message, stat and diff, and the chunker treats each section's first
+line as it does a unit's: a chunk ends there however little it holds, and no overlap is carried across. The set does
+not choose this, because a chunk that holds two sections cannot be searched as either
+([git-history sources](#git-history--a-repositorys-commits)). The cost is the same as for units: a short section is a
+short chunk, and a commit with a one-line message and a three-line stat is two small chunks.
 
 **Sentence-aware splitting.** When a split lands inside a line, cut at a sentence rather
 than a word. A terminator counts only when followed by a space, so `e.g.` and `3.14` do not

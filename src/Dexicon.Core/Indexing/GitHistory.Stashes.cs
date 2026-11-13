@@ -49,7 +49,7 @@ public sealed record GitStash(
     /// <see cref="GitHistory.MaxUntrackedPerStash"/> does, so that stashes already indexed are read again.
     /// A commit has a number of its own, <see cref="GitCommit.DocumentVersion"/>.
     /// </summary>
-    internal const int DocumentVersion = 1;
+    internal const int DocumentVersion = 2;
 
     public override string RelativePath =>
         $"stashes/{AuthorDate:yyyy-MM-dd}-{Sha[..Math.Min(12, Sha.Length)]}";

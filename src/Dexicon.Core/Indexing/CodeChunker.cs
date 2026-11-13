@@ -241,10 +241,10 @@ public static class CodeChunker
             ? UnitBoundaryLines(extracted, content).ToHashSet()
             : [];
 
-        // A named section is the other thing the extraction can force a split at, and unlike a unit it
-        // is not optional: a chunk that straddles the message and the diff of a commit cannot be
-        // filtered as either. It is not a set option. Each starts a chunk, with no overlap carried
-        // across it, exactly as a unit does, and its name is the chunk's section.
+        // A named section also forces a split, and unlike a unit it does not depend on the set's settings:
+        // a chunk that held the message and the diff of a commit could not be searched as either. Each
+        // section starts a chunk and no overlap is carried across it, as for a unit, and its name is the
+        // section of the chunks in it.
         var sections = extracted?.Sections is { Count: > 0 } named
             ? LabelLines(named, content, lines.Length, unitBoundaries)
             : null;
