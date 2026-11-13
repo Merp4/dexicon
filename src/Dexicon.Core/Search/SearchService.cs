@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Embedding;
@@ -207,6 +208,20 @@ public sealed class SearchService(
         var notes = new List<string>();
         if (indexing.Count > 0)
             notes.Add($"Corpus {string.Join(", ", indexing.Select(n => $"'{n}'"))} is still indexing; results are incomplete.");
+
+        // The last outcome of a set whose source was out of reach, or whose files failed to embed. Search keeps
+        // answering from what was indexed before, so without this an agent reads month-old results as current.
+        // The date is the last pass that completed, which a failed pass does not move.
+        var unavailable = scope.Targets.Where(t => activity.Of(t.Set) == CorpusState.Unavailable).ToList();
+        if (unavailable.Count > 0)
+            notes.Add($"Corpus {Described(unavailable)} could not read its source on its last pass; "
+                      + "results are from the index it had before.");
+
+        var failedToEmbed = scope.Targets.Where(t => activity.Of(t.Set) == CorpusState.Degraded).ToList();
+        if (failedToEmbed.Count > 0)
+            notes.Add($"Corpus {Described(failedToEmbed)} had files that failed to embed on its last pass; "
+                      + "they are missing from results until a later pass indexes them.");
+
         if (collapsed)
             notes.Add($"{ordered.Count} of {request.Limit} asked for: the rest were the same documents again. "
                       + "Pass distinctTitles=false to see every copy.");
@@ -226,6 +241,11 @@ public sealed class SearchService(
             Note = note,
         };
     }
+
+    /// <summary>The corpora of a note, each with when its set last finished a pass, or that it never has.</summary>
+    private static string Described(IEnumerable<ScopedCorpus> targets) =>
+        string.Join(", ", targets.Select(t => string.Create(CultureInfo.InvariantCulture,
+            $"'{t.QualifiedName}' (last indexed {(t.Set.LastIndexedUtc is { } at ? $"{at:yyyy-MM-dd HH:mm}Z" : "never")})")));
 
     /// <summary>
     /// The query vector for one MODEL, cached: agents repeat queries far more than people
