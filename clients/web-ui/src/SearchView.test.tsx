@@ -399,3 +399,89 @@ describe('when the request fails', () => {
     expect(await screen.findByText('04-ingestion.md:228-265')).toBeInTheDocument();
   });
 });
+
+describe('filtering a commit history by section', () => {
+  // A corpus of commits and one of files. The filter is for the first, so it appears with it.
+  const mixed = [
+    { id: 'c1', name: 'docs', sources: [{ kind: 'workspace' }] },
+    { id: 'c3', name: 'history', sources: [{ kind: 'githistory' }] },
+  ] as unknown as Corpus[];
+
+  async function open(list: Corpus[] = mixed) {
+    const user = userEvent.setup();
+    render(<SearchView corpora={list} onError={vi.fn()} />);
+    return user;
+  }
+
+  async function choose(user: ReturnType<typeof userEvent.setup>, control: string, option: string) {
+    await user.click(screen.getByRole('combobox', { name: control }));
+    await user.click(await screen.findByRole('option', { name: option }));
+  }
+
+  async function submit(user: ReturnType<typeof userEvent.setup>) {
+    await user.type(screen.getByPlaceholderText(/Ask a question/), 'why did this change');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    await waitFor(() => expect(search).toHaveBeenCalled());
+    return search.mock.calls[0][0];
+  }
+
+  it('is offered while a corpus in scope is a commit history', async () => {
+    await open();
+
+    expect(screen.getByRole('combobox', { name: 'Commit section' })).toBeInTheDocument();
+  });
+
+  it('is not offered when no corpus in scope is one', async () => {
+    // The two corpora of the other tests have no sources at all, which is a corpus that is not a history.
+    await open(corpora);
+
+    expect(screen.queryByRole('combobox', { name: 'Commit section' })).not.toBeInTheDocument();
+  });
+
+  it('follows the scope: it is gone when the one corpus named has no history', async () => {
+    const user = await open();
+
+    await choose(user, 'Corpus scope', 'docs');
+
+    expect(screen.queryByRole('combobox', { name: 'Commit section' })).not.toBeInTheDocument();
+  });
+
+  it('sends no section until one is chosen', async () => {
+    const user = await open();
+
+    const sent = await submit(user);
+
+    expect(sent.section).toBeUndefined();
+  });
+
+  it.each(['message', 'stat', 'diff'])('sends %s when it is chosen', async (name) => {
+    const user = await open();
+    await choose(user, 'Commit section', name);
+
+    const sent = await submit(user);
+
+    expect(sent.section).toBe(name);
+  });
+
+  it('sends none again after Any section is chosen', async () => {
+    const user = await open();
+    await choose(user, 'Commit section', 'diff');
+    await choose(user, 'Commit section', 'Any section');
+
+    const sent = await submit(user);
+
+    expect(sent.section).toBeUndefined();
+  });
+
+  it('does not carry a section chosen for a history to a corpus that has none', async () => {
+    // The control is gone with the scope, and a value the person can no longer see must not be sent.
+    const user = await open();
+    await choose(user, 'Commit section', 'diff');
+    await choose(user, 'Corpus scope', 'docs');
+
+    const sent = await submit(user);
+
+    expect(sent.corpus).toEqual(['docs']);
+    expect(sent.section).toBeUndefined();
+  });
+});

@@ -59,6 +59,15 @@ type View = RouteView;
  */
 const ALL_CORPORA = ':all';
 
+/** No section filter. A Select item cannot have an empty value, so "any" is a value that no section name is. */
+const ANY_SECTION = ':any';
+
+/**
+ * The sections of a git-history document, as the `section` filter of a search takes them: the message with the commit's
+ * sha, author and date, the files it touched, and the patch.
+ */
+const HISTORY_SECTIONS = ['message', 'stat', 'diff'] as const;
+
 /**
  * The UI exists to answer four questions and to do nothing else:
  *   1. What is indexed, and is it current?
@@ -655,11 +664,17 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
   const [mode, setMode] = useState<'hybrid' | 'semantic' | 'keyword'>('hybrid');
   const [scope, setScope] = useState<string[]>([]);
   const [limit, setLimit] = useState(10);
+  const [section, setSection] = useState(ANY_SECTION);
   const [result, setResult] = useState<SearchResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [explain, setExplain] = useState(false);
   const [viewing, setViewing] = useState<{ corpus: string; path: string; line?: number; through?: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // The section filter is offered where a corpus in scope has a commit history, which is the one kind of document with
+  // sections to choose between. With one corpus named it is that corpus, and otherwise every corpus listed.
+  const inScope = scope.length ? corpora.filter((c) => scope.includes(c.name)) : corpora;
+  const hasHistory = inScope.some((c) => c.sources?.some((s) => s.kind === 'githistory'));
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -677,7 +692,14 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
     if (!query.trim()) return;
     setBusy(true);
     try {
-      setResult(await api.search({ query, mode, limit, corpus: scope.length ? scope : undefined }));
+      // Sent only while the filter is on screen, so a section chosen for one corpus does not follow the search to another.
+      setResult(await api.search({
+        query,
+        mode,
+        limit,
+        corpus: scope.length ? scope : undefined,
+        section: hasHistory && section !== ANY_SECTION ? section : undefined,
+      }));
     } catch (err) {
       onError(err);
     } finally {
@@ -733,6 +755,20 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
               <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
             ))}
           </Select>
+
+          {hasHistory && (
+            <Select
+              className="w-auto"
+              value={section}
+              onValueChange={setSection}
+              aria-label="Commit section"
+            >
+              <SelectItem value={ANY_SECTION}>Any section</SelectItem>
+              {HISTORY_SECTIONS.map((name) => (
+                <SelectItem key={name} value={name}>{name}</SelectItem>
+              ))}
+            </Select>
+          )}
 
           <Select
             className="w-auto"

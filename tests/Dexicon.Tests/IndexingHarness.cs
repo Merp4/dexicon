@@ -722,8 +722,15 @@ internal sealed class IndexingHarness : IAsyncDisposable
         // change that starts calling one of these is visible instead of silently passing.
         public Task<int> PurgeUnsetChunksAsync(CancellationToken ct = default) =>
             throw new NotSupportedException();
+        /// <summary>
+        /// Answers a search. Unset, a search throws: an indexing run does not reach one, and a change that starts to
+        /// is visible. A test that searches sets it and reads the query the store was given.
+        /// </summary>
+        public Func<SearchQuery, SearchResponse>? OnSearch { get; set; }
+
         public Task<SearchResponse> SearchAsync(SearchQuery q, float[]? d, SparseVector s,
-            CancellationToken ct = default) => throw new NotSupportedException();
+            CancellationToken ct = default) =>
+            OnSearch is { } answer ? Task.FromResult(answer(q)) : throw new NotSupportedException();
         public Task<(long Points, int Dimensions)> GetStatsAsync(string c, CancellationToken ct = default) =>
             throw new NotSupportedException();
         public Task<bool> PingAsync(CancellationToken ct = default) => Task.FromResult(true);

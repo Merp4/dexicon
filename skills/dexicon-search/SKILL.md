@@ -1,5 +1,5 @@
 ---
-# dexicon-skill-version: 7
+# dexicon-skill-version: 8
 name: dexicon-search
 description: Search indexed code and documents by meaning using the Dexicon MCP server. Use when looking for where something is implemented, how a concept is handled, or what a document says about a topic — anything where you know the idea but not the term. Also covers reading an indexed file back, diagnosing an empty result, and changing what is indexed, including adding folders and corpora, and asking for a removal, when the key allows it.
 ---
@@ -52,7 +52,7 @@ is the only one.
 ## Searching
 
 ```
-search_index(query, corpus?, mode?, limit?, pathPrefix?, source?, language?, symbol?, maxCharsPerHit?, distinctTitles?)
+search_index(query, corpus?, mode?, limit?, pathPrefix?, source?, language?, symbol?, section?, maxCharsPerHit?, distinctTitles?)
 ```
 
 Write the query as a **question or a description**, not keywords. "how are refresh tokens
@@ -70,6 +70,13 @@ the path) when the results span several sources, and a source that matches nothi
 refused with an error that lists them, up to 1,500 characters and then how many more.
 A `source` that names a parent folder covers every source beneath it:
 `books/manuals` covers each topic folder under it.
+
+A corpus of git history holds one document per commit, cut in three sections that `section`
+selects: `message` (the commit's sha, author, date and message), `stat` (the files it touched)
+and `diff` (the patch). Ask `section: "message"` why something changed and `section: "diff"`
+for a code fragment in the changes, so that one kind of text does not crowd out the other. A
+corpus whose source leaves the diff out has no `diff` chunks. Each result of such a corpus
+names its section after the location.
 
 Omitting `corpus` searches everything visible to you, and with several corpora of different
 kinds that is noisy: asked of five corpora, a question about one project's design drew 6 of

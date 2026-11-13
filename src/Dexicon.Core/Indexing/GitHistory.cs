@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Dexicon.Core.Catalog;
+using Dexicon.Core.Extraction;
 using Microsoft.EntityFrameworkCore;
 
 namespace Dexicon.Core.Indexing;
@@ -107,7 +108,7 @@ public sealed record GitHistoryOptions
     /// What the synthesized text depends on, so that a commit already indexed can be
     /// skipped without being synthesized to find out.
     ///
-    /// A commit is immutable, so its sha plus this settles the content. Only settings
+    /// A commit is immutable, so its sha, <see cref="GitCommit.DocumentVersion"/> and this settle the content. Only settings
     /// that change what a document SAYS belong here, and the distinction is not
     /// cosmetic: anything added re-reads and re-embeds every commit in the repository
     /// the first time it changes.
@@ -200,8 +201,35 @@ public sealed record GitCommit(string Sha, DateTimeOffset AuthorDate) : GitUnit
     public override string RelativePath =>
         $"commits/{AuthorDate:yyyy-MM-dd}-{Sha[..Math.Min(12, Sha.Length)]}";
 
-    /// <summary>The sha and the settings, which is what a commit's document has always been keyed by.</summary>
-    public override string ContentKey(GitHistoryOptions options, string settings) => Sha + '|' + settings;
+    /// <summary>
+    /// Raised when the sections of a commit's document change, or the chunker cuts them differently, so that
+    /// commits already indexed are read and chunked again. A history document is cut at its sections
+    /// (D-49), and a commit indexed before that was not.
+    /// </summary>
+    internal const int DocumentVersion = 2;
+
+    /// <summary>The sha, the settings and the version of the document's sections.</summary>
+    public override string ContentKey(GitHistoryOptions options, string settings) =>
+        string.Create(CultureInfo.InvariantCulture, $"commit{DocumentVersion}|{Sha}|{settings}");
+}
+
+/// <summary>A commit's or a stash's document as it was read, with the sections no chunk of it may straddle.</summary>
+/// <param name="Sha">The object name the document was read for.</param>
+/// <param name="Text">The document.</param>
+/// <param name="Sections">
+/// The message, stat and diff of the document that the source's settings include, in order, each starting at
+/// a line: <see cref="GitHistory.MessageSection"/>, <see cref="GitHistory.StatSection"/> and
+/// <see cref="GitHistory.DiffSection"/>. The header lines (sha, author, date and base) are in the first of them.
+/// Empty when the document holds none of the three.
+/// </param>
+public sealed record GitDocument(string Sha, string Text, IReadOnlyList<ExtractedSection> Sections)
+{
+    /// <summary>The sha and the text, for a caller that has no use for the sections.</summary>
+    public void Deconstruct(out string sha, out string text)
+    {
+        sha = Sha;
+        text = Text;
+    }
 }
 
 /// <summary>
@@ -612,7 +640,7 @@ public static partial class GitHistory
     /// and embed a commit while the next batch is being read, and so a large history does
     /// not have to be held at once.
     /// </summary>
-    public static async IAsyncEnumerable<(string Sha, string Text)> ReadAsync(
+    public static async IAsyncEnumerable<GitDocument> ReadAsync(
         GitRepository repo, GitHistoryOptions options, IReadOnlyList<string> shas,
         IReadOnlyList<string>? pathspecs,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
@@ -651,7 +679,7 @@ public static partial class GitHistory
     /// against its first parent; its document says <c>stash</c>, names the commit it was made on, and
     /// ends with its untracked files (<see cref="UntrackedSection"/>).
     /// </param>
-    private static async Task<List<(string Sha, string Text)>> ReadBatchAsync(
+    private static async Task<List<GitDocument>> ReadBatchAsync(
         GitRepository repo, GitHistoryOptions options, List<string> shas,
         IReadOnlyList<string>? pathspecs, CancellationToken ct,
         Dictionary<string, GitStash>? stashes = null)
@@ -683,7 +711,7 @@ public static partial class GitHistory
                 $"A batch of {shas.Count} commits could not be read: {ex.Message}", ex);
         }
 
-        var read = new List<(string, string)>(shas.Count);
+        var read = new List<GitDocument>(shas.Count);
 
         foreach (var sha in shas)
         {
@@ -692,15 +720,16 @@ public static partial class GitHistory
             var tail = tails.GetValueOrDefault(sha, string.Empty);
             if (stashes is null)
             {
-                read.Add((sha, Document(options, message, tail)));
+                read.Add(Document(options, sha, message, tail));
                 continue;
             }
 
             var stash = stashes[sha];
-            var text = Document(options, message, tail, "stash", stash.BaseSha);
+            var document = Document(options, sha, message, tail, "stash", stash.BaseSha);
 
-            // The untracked files are part of the stat's answer, "which files", so they follow it.
-            read.Add((sha, options.IncludeStat ? text + UntrackedSection(stash) : text));
+            // The untracked files are part of the stat's answer, "which files", so they follow it
+            // and are labelled as it is.
+            read.Add(options.IncludeStat ? WithUntracked(document, UntrackedSection(stash)) : document);
         }
 
         return read;
@@ -948,23 +977,51 @@ public static partial class GitHistory
         return tails;
     }
 
+    /// <summary>The label of the commit message, with the header above it.</summary>
+    public const string MessageSection = "message";
+
+    /// <summary>The label of the list of files a commit touched, with its counts.</summary>
+    public const string StatSection = "stat";
+
+    /// <summary>The label of the patch, or of the line saying it was left out.</summary>
+    public const string DiffSection = "diff";
+
+    /// <summary>
+    /// Starts a section at <paramref name="at"/>. The first one starts at 0, so that the header (the
+    /// sha, author, date and base lines) is part of it and not a chunk of its own, and a section
+    /// that continues the one before it is not started again.
+    /// </summary>
+    private static void OpenSection(List<ExtractedSection> sections, string name, int at)
+    {
+        if (sections.Count == 0) at = 0;
+        else if (string.Equals(sections[^1].Name, name, StringComparison.Ordinal)) return;
+
+        sections.Add(new ExtractedSection(name, at));
+    }
+
     /// <summary>
     /// The commit as a document, laid out the way <c>git show</c> lays it out.
     ///
     /// Not an invented format. Every model that has read code has read thousands of these,
     /// and a layout of our own would have to be explained to each one; the cost of
     /// following git is a few lines of formatting.
+    ///
+    /// The sections are the parts that people ask different questions of: the message, the
+    /// stat and the patch. The chunker starts a new chunk at each, so every chunk is wholly
+    /// one of them and can be searched or left out as one.
     /// </summary>
     /// <param name="noun">The first word: <c>commit</c>, or <c>stash</c> for a stash.</param>
     /// <param name="baseSha">For a stash, the commit it was made on. A commit has no such line.</param>
-    private static string Document(
-        GitHistoryOptions options, string[] fields, string tail, string noun = "commit", string? baseSha = null)
+    private static GitDocument Document(
+        GitHistoryOptions options, string sha, string[] fields, string tail, string noun = "commit",
+        string? baseSha = null)
     {
-        var (sha, date, name, email, subject, body) =
-            (fields[0].Trim(), fields[1], fields[2], fields[3], fields[4], fields[5]);
+        var (date, name, email, subject, body) =
+            (fields[1], fields[2], fields[3], fields[4], fields[5]);
 
         var sb = new StringBuilder();
-        sb.Append(noun).Append(' ').Append(sha).Append('\n');
+        var sections = new List<ExtractedSection>();
+        sb.Append(noun).Append(' ').Append(fields[0].Trim()).Append('\n');
         sb.Append("Author: ").Append(name).Append(" <").Append(email).Append(">\n");
         sb.Append("Date:   ").Append(date).Append('\n');
         if (!string.IsNullOrEmpty(baseSha)) sb.Append("Base:   ").Append(baseSha).Append('\n');
@@ -978,11 +1035,12 @@ public static partial class GitHistory
         if (options.IncludeMessage)
         {
             sb.Append('\n');
+            OpenSection(sections, MessageSection, sb.Length);
             foreach (var line in (subject + "\n\n" + body).TrimEnd().Split('\n'))
                 sb.Append("    ").Append(line.TrimEnd()).Append('\n');
         }
 
-        if (tail.Length == 0) return sb.ToString();
+        if (tail.Length == 0) return new GitDocument(sha, sb.ToString(), sections);
 
         // The cap is over the PATCH, in the bytes the cap is named in.
         //
@@ -996,19 +1054,46 @@ public static partial class GitHistory
 
         if (options.IncludeDiff && patchBytes > options.MaxDiffBytes)
         {
-            if (stat.Length > 0) sb.Append('\n').Append(stat.TrimEnd()).Append('\n');
+            if (stat.Length > 0)
+            {
+                sb.Append('\n');
+                OpenSection(sections, StatSection, sb.Length);
+                sb.Append(stat.TrimEnd()).Append('\n');
+            }
 
             // Said, not cut. A patch truncated mid-hunk reads as a complete change that
             // did something different from what it did.
-            sb.Append('\n')
-              .Append(CultureInfo.InvariantCulture, $"[diff of {patchBytes:N0} bytes not included: over the {options.MaxDiffBytes:N0} byte limit for this source]")
+            sb.Append('\n');
+            OpenSection(sections, DiffSection, sb.Length);
+            sb.Append(CultureInfo.InvariantCulture, $"[diff of {patchBytes:N0} bytes not included: over the {options.MaxDiffBytes:N0} byte limit for this source]")
               .Append('\n');
 
-            return sb.ToString();
+            return new GitDocument(sha, sb.ToString(), sections);
         }
 
-        sb.Append('\n').Append(tail.TrimEnd()).Append('\n');
-        return sb.ToString();
+        sb.Append('\n');
+        var tailAt = sb.Length;
+
+        // The tail is appended as it is, so the patch starts as many characters into it as the stat is long, where
+        // SplitPatch cut it. A change that trims either part has to move this offset with it.
+        if (stat.Trim().Length > 0) OpenSection(sections, StatSection, tailAt);
+        if (patch.Length > 0) OpenSection(sections, DiffSection, tailAt + stat.Length);
+        sb.Append(tail.TrimEnd()).Append('\n');
+        return new GitDocument(sha, sb.ToString(), sections);
+    }
+
+    /// <summary>
+    /// A stash's document with the untracked-file list after it, which is the stat's answer to "which
+    /// files" and is labelled as the stat is. <paramref name="untracked"/> starts with the blank line that
+    /// separates it from what comes before, as <see cref="UntrackedSection"/> returns it.
+    /// </summary>
+    private static GitDocument WithUntracked(GitDocument document, string untracked)
+    {
+        if (untracked.Length == 0) return document;
+
+        var sections = new List<ExtractedSection>(document.Sections);
+        OpenSection(sections, StatSection, document.Text.Length + 1);
+        return document with { Text = document.Text + untracked, Sections = sections };
     }
 
     /// <summary>

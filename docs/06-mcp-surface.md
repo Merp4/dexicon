@@ -96,6 +96,7 @@ tool advertises.
 | `source` | string | none | Restrict to one source, by the root path a search result cites, e.g. books/manuals/Architecture. A parent matches everything beneath it, so books/manuals covers every topic folder under it. list_corpora does not list these; run a search first, or pass a wrong one and the error lists them, up to 1,500 characters and then how many more. |
 | `language` | string | none | Restrict to one language, e.g. csharp, python, typescript. |
 | `symbol` | string | none | Restrict to chunks declaring this symbol, e.g. TokenService. |
+| `section` | string | none | Restrict to one section of the documents, by its exact name. In a git history corpus: message (the commit's sha, author, date and message), stat (the files it touched) or diff (the patch). Use message to ask why something changed and diff to find a code fragment. A diff exists only where the source indexes diffs. In a Markdown file the section is the heading, e.g. Installation. |
 | `maxCharsPerHit` | integer | 1500 | Characters of each result to return, centred on the matching passage. The default is enough to read the match in context; raise it when a hit is clearly the right passage and you need more of it, or use get_context. 0 returns whole chunks, which on a book corpus is about 8,000 characters each. |
 | `distinctTitles` | boolean | `true` | Collapse results that are the same document in another format, e.g. a book held as both PDF and EPUB. On by default. Turn it off to compare how the two were extracted. |
 
@@ -106,8 +107,8 @@ in the tool body. `mode` is a plain string, and a value other than `hybrid`, `se
 on one line, cut to 40 characters followed by `...`, and any control character in it replaced. Each name in `corpus` may be
 `corpus` or `corpus:set` ([above](#naming-a-corpus-and-a-chunk-set)).
 
-`corpus` is the only array on the tools that read the index: `source`, `language`, `symbol`
-and `pathPrefix` are scalars, so `"corpus": "docs"` is the shape a client reaches for when
+`corpus` is the only array on the tools that read the index: `source`, `language`, `symbol`,
+`section` and `pathPrefix` are scalars, so `"corpus": "docs"` is the shape a client reaches for when
 it wants one. It is accepted, and read as a list of one. The advertised schema describes an
 array, which is the contract worth advertising; accepting a bare name is leniency in
 binding, not a second type. On the configuration tools, `include`, `exclude` and `reset`

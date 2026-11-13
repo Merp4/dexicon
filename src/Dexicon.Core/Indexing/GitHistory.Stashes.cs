@@ -45,11 +45,11 @@ public sealed record GitStash(
     IReadOnlyList<GitUntrackedFile> Untracked, int? UntrackedTotal) : GitUnit
 {
     /// <summary>
-    /// Raised when the layout of a stash's document changes, or <see cref="GitHistory.MaxUntrackedPerStash"/>
-    /// does, so that stashes already indexed are read again. Commits do not carry it: their
-    /// documents are unchanged.
+    /// Raised when the layout of a stash's document changes, when its sections do, or when
+    /// <see cref="GitHistory.MaxUntrackedPerStash"/> does, so that stashes already indexed are read again.
+    /// A commit has a number of its own, <see cref="GitCommit.DocumentVersion"/>.
     /// </summary>
-    internal const int DocumentVersion = 1;
+    internal const int DocumentVersion = 2;
 
     public override string RelativePath =>
         $"stashes/{AuthorDate:yyyy-MM-dd}-{Sha[..Math.Min(12, Sha.Length)]}";
@@ -591,7 +591,7 @@ public static partial class GitHistory
     /// merge, and git prints no diff for a merge unless asked for the first parent's. The untracked
     /// files follow, as names and sizes; their contents are documents of their own.
     /// </summary>
-    public static async IAsyncEnumerable<(string Sha, string Text)> ReadStashesAsync(
+    public static async IAsyncEnumerable<GitDocument> ReadStashesAsync(
         GitRepository repo, GitHistoryOptions options, IReadOnlyList<GitStash> stashes,
         IReadOnlyList<string>? pathspecs,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)

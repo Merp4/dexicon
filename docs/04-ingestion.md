@@ -730,6 +730,19 @@ with patches the history is 5.99 MB and the median commit 11,393 characters; wit
 message and the stat it is 449 KB and the median 1,939, which fits in one chunk. A
 repository where the diff is the point turns it on knowing that.
 
+**A document is cut in sections.** The header lines (`commit <sha>`, `Author:`, `Date:`, and for a stash
+`Base:`) and the message are the `message` section, the stat is `stat`, and the patch, or the line saying it was
+left out, is `diff`. A section exists when the source includes it, which are the settings `includeMessage`,
+`includeStat` and `includeDiff`, and the commit has text for it (an empty commit has no stat or diff). The header
+belongs to the first section the document has: with messages off it is part of the `stat`, and a document with no
+section has none. The chunker starts a new chunk at each
+section's first line and carries no overlap across it, so a chunk is wholly one section, a short message is a chunk
+of its own, and a long patch is several chunks that all say `diff`. Each chunk stores its section name, a search result
+shows it after the location, and the `section` filter of a search matches it exactly
+([05](05-search.md#shape-of-a-query)). Before sections, a chunk was cut at the size and at blank lines alone: on the
+three history corpora of one installation (6,313 chunks at 256 tokens), 7%, 12% and 26% of the chunks held lines of two
+sections ([D-49](decisions.md#d-49-a-history-document-is-cut-in-sections-and-search-can-filter-on-them)).
+
 An oversized patch is **reported, not cut**: a diff truncated mid-hunk reads as a complete
 change that did something other than what it did. The cap is measured over the patch
 alone, in UTF-8 bytes, and the stat is kept when the patch is dropped — it is the cheap
@@ -761,13 +774,15 @@ else.
 **A refresh over a tip that has not moved reads nothing.** `git log --format` gives shas
 and dates and is the inventory; everything else is asked for in a second call, for the
 commits the catalogue does not already have. A commit cannot change, so its fingerprint is
-its sha plus what these settings say a document contains, and that is knowable without
+its sha, the version of its document's sections and what these settings say a document contains, and that is knowable without
 asking git for the body — which is why the staleness check for this source runs *before*
 the read rather than after it, as a file's must. Measured on this repository: 77ms to
 enumerate 201 commits, 1,069ms to read all of them with their patches.
 
 Changing any setting that alters what a document says re-indexes the history, because
-every document really is different. Changing `ref`, `maxCommits`, `keepIndexed`, `since`,
+every document really is different. So does a change to the sections, which a document version in the commit's key
+(`GitCommit.DocumentVersion`) carries: the next pass after an upgrade that changes them reads and chunks each commit
+again. Changing `ref`, `maxCommits`, `keepIndexed`, `since`,
 `includeMerges` or `includeStashes` does not: those decide which documents are indexed, not
 what any one commit holds, and turning merges or stashes on adds documents without altering a
 single existing one.
@@ -796,13 +811,14 @@ reflog of `refs/stash` ([D-48](decisions.md#d-48-a-history-source-can-also-index
   the stat and, with `includeDiff`, the patch of the tracked changes against that base, then, with
   `includeStat`, the untracked files the include paths select as names, sizes and the first seven
   characters of each blob (the first 500 paths, below). The message, stat and diff settings and the
-  paths apply as they do to a commit.
+  paths apply as they do to a commit. The list of untracked files is the stat's answer to "which files" and is
+  labelled `stat`, which makes a stash's sections `message`, `stat`, `diff` and `stat` again after the patch.
 - **One document per distinct version of an untracked file**, at
   `stashes/untracked/<blob[..12]>/<path>`: a header naming the stash, its date and the blob, then
   the text of the file. A file held unchanged by thirty stashes is one document, named for the
   oldest of them, and a changed version is another. With `includeStat` on, each stash's own
   document lists the files it holds, so the stashes that hold a file are found from the stash
-  documents.
+  documents. The document of a file has no sections: it is the file's text.
 
 Three things about git decide this shape. `git show stash@{n}` prints the tracked changes and not
 the untracked files, which are in the stash's third parent. A stash is a merge, and `git log -p`
@@ -857,8 +873,8 @@ on the pass after it leaves the reflog (`git stash drop` or `pop`), and a file d
 the next oldest stash that holds it, which re-reads that one document. Turning the setting off
 removes every stash document on the next pass.
 
-A commit's key is unchanged, so turning the setting on reads no commit again. A stash's key is its
-sha and the message, stat, diff and path settings. A file's is its blob, path, holding stash and
+A commit's key does not hold the setting, so turning it on reads no commit again. A stash's key is its
+sha, the version of its sections and the message, stat, diff and path settings. A file's is its blob, path, holding stash and
 whether messages are indexed, since the header quotes the stash's message, and so changing the diff
 or stat settings does not read the files again.
 
@@ -1557,6 +1573,12 @@ split rather than offering a place for one: under the usual rule a chapter short
 budget would be absorbed into the next. The cost falls to the caller: a document of very
 short pages yields short chunks.
 
+**Sections.** A git-history document names its message, stat and diff, and the chunker treats each section's first
+line as it does a unit's: a chunk ends there however little it holds, and no overlap is carried across. The set does
+not choose this, because a chunk that holds two sections cannot be searched as either
+([git-history sources](#git-history--a-repositorys-commits)). The cost is the same as for units: a short section is a
+short chunk, and a commit with a one-line message and a three-line stat is two small chunks.
+
 **Sentence-aware splitting.** When a split lands inside a line, cut at a sentence rather
 than a word. A terminator counts only when followed by a space, so `e.g.` and `3.14` do not
 end a sentence. The backup window is half the budget, not the eighth a word search uses:
@@ -1755,7 +1777,7 @@ Every pass that touches a row clears the key, and the passes that settle it set 
 a code path that forgets to settle costs a read and nothing else. A change of size or
 modified time, of a chunking setting, of the extractor version or of the chunker version
 (for a Markdown file, of the Markdown chunker version) changes the key. A `Full` or `Rebuild` job ignores the key and reads everything. Uploads
-and git commits have no file to stat and are keyed as before.
+and git commits have no file to stat and are keyed by what settles their text.
 
 A key written for a file whose bytes change without changing size or modified time is not
 detected. Files copied with their timestamps preserved to the same size are the case; a full

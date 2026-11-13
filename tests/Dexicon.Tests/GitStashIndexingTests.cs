@@ -77,8 +77,8 @@ public sealed class GitStashIndexingTests
     }
 
     /// <summary>
-    /// A commit's key is its sha and the source's settings, as it was before stashes existed, so
-    /// turning the setting on indexes the stashes and reads no commit again.
+    /// A commit's key is its sha, its document version and the source's settings that decide its text, and the
+    /// stash setting is none of them, so turning it on indexes the stashes and reads no commit again.
     /// </summary>
     [Fact]
     public async Task TurningStashesOnReadsNoCommitAgain()

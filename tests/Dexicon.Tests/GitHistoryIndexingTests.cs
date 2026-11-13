@@ -160,7 +160,7 @@ public sealed class GitHistoryIndexingTests
 
         var expected = CorpusIndexer.ChunkingFingerprint(
             set,
-            CorpusIndexer.HashContent(full.Sha + '|' + options.ContentFingerprint(null)),
+            CorpusIndexer.HashContent(full.ContentKey(options, options.ContentFingerprint(null))),
             Dexicon.Core.Embedding.ModelTemplates.Raw,
             file.RelativePath);
 

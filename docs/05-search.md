@@ -13,11 +13,24 @@ search(query, scope, mode, limit, filters)
   [07](07-auth.md).
 - **`mode`** — `hybrid` (default) | `semantic` | `keyword`.
 - **`limit`** — 1–50, default 10.
-- **`filters`** — optional: `source`, `pathPrefix`, `language`, `symbol`.
+- **`filters`** — optional: `source`, `pathPrefix`, `language`, `symbol`, `section`.
 
   The REST request (`POST /api/search`) and the `search_index` tool take these as top-level
   arguments in camelCase: `corpus`, `mode`, `limit`, `source`, `pathPrefix`, `language`,
-  `symbol`, `maxCharsPerHit` and `distinctTitles`.
+  `symbol`, `section`, `maxCharsPerHit` and `distinctTitles`.
+
+  `section` restricts the search to chunks whose `section` is exactly the value given, in the case written. For a
+  commit or stash of a git-history corpus the values are `message` (the header, author, date and message),
+  `stat` (the files touched) and `diff` (the patch), and every chunk of such a document is one of them, except in a
+  document that has no section ([04](04-ingestion.md#git-history--a-repositorys-commits)). A question about why something changed is `message`,
+  and a code fragment to find in the changes is `diff`. A source that leaves the diff out has no `diff` chunks, so
+  that filter matches nothing there. For a Markdown file the section is the heading the chunk starts under, so
+  `Installation` matches the chunks under a heading of that text. A chunk of a PDF, a slide deck or an EPUB has the
+  label of the page, slide or chapter it starts in (`Page 3`, `Slide 3`, `Chapter 3`), which names one position in every
+  document of the scope and is of little use as a filter. A value that no chunk carries matches nothing. A search over several corpora
+  applies the value to all of them, so a search for a commit section names the history corpus beside it. `section`
+  selects the chunks that can match. The chunks either side of a hit that `neighbours` adds to `POST /api/context` are the adjacent chunks of
+  the document, whatever their section.
 
   `source` narrows to one source of a corpus, named by its root path as a search result
   cites it (`manuals/AI`); `index_status` lists the sources of a corpus named in the call.

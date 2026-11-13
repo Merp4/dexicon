@@ -540,7 +540,8 @@ public sealed record SearchApiRequest(
     string? Language = null,
     string? Symbol = null,
     int? MaxCharsPerHit = null,
-    bool? DistinctTitles = null);
+    bool? DistinctTitles = null,
+    string? Section = null);
 
 /// <summary>
 /// One assembled passage for a query, for a caller with no agent loop. The filters are
@@ -567,7 +568,8 @@ public sealed record ContextApiRequest(
     int? MaxChars = null,
     int? Neighbours = null,
     bool? LineNumbers = null,
-    bool? DistinctTitles = null);
+    bool? DistinctTitles = null,
+    string? Section = null);
 
 /// <param name="ExpiresInDays">
 /// Days until the key stops working, up to 36,500 (about 100 years). Omitted or zero means it does

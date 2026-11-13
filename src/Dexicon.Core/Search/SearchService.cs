@@ -20,6 +20,12 @@ public sealed record SearchRequest
     public string? Language { get; init; }
     public string? Symbol { get; init; }
 
+    /// <summary>
+    /// Restrict to chunks in the section of this exact name, such as `message` or `diff` for a git-history
+    /// commit, or null for any. See <see cref="SearchQuery.Section"/>.
+    /// </summary>
+    public string? Section { get; init; }
+
     /// <summary>A source root path to restrict to, e.g. `manuals/AI`. Null searches them all.</summary>
     public string? Source { get; init; }
 
@@ -160,6 +166,7 @@ public sealed class SearchService(
                 PathPrefix = request.PathPrefix,
                 Language = request.Language,
                 Symbol = request.Symbol,
+                Section = request.Section,
             }, dense, sparse, ct);
 
             if (response.Degraded)

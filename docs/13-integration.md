@@ -134,7 +134,7 @@ values in a response are PascalCase (`"mode": "Hybrid"`, `"state": "Ready"`); th
 | `maxChars` | 8000 | Characters for the whole passage, headers included, 1-200,000. |
 | `neighbours` | 0 | Chunks to include either side of each hit, 0-5. |
 | `lineNumbers` | false | Prefix each line with its number in the file. |
-| `pathPrefix`, `source`, `language`, `symbol` | — | The search filters, unchanged. |
+| `pathPrefix`, `source`, `language`, `symbol`, `section` | — | The search filters, unchanged. |
 | `distinctTitles` | true | Collapse one document held in two formats. |
 
 **Budgets are characters, not tokens.** No tokenizer ships with Dexicon, and the model

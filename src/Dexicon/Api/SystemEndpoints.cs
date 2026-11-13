@@ -57,6 +57,7 @@ public static class SystemEndpoints
                 Source = body.Source,
                 Language = body.Language,
                 Symbol = body.Symbol,
+                Section = body.Section,
                 MaxCharsPerHit = body.MaxCharsPerHit is { } n
                     ? Math.Clamp(n, 0, 100_000)
                     : SearchRequest.DefaultMaxCharsPerHit,
@@ -95,6 +96,7 @@ public static class SystemEndpoints
                 Source = body.Source,
                 Language = body.Language,
                 Symbol = body.Symbol,
+                Section = body.Section,
 
                 // No lower bound worth enforcing: a budget too small for one chunk returns
                 // an empty passage and a note saying what the smallest one costs, which is

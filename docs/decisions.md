@@ -2725,6 +2725,139 @@ name more than one ref, which the source does not have. Or when a stash holds en
 
 ---
 
+### D-49 A history document is cut in sections, and search can filter on them
+
+**Status.** Accepted and implemented, 2026-11-13.
+
+**Decision.** The reader names three sections in the document of a commit or a stash: `message` (the header lines and
+the message), `stat` and `diff` (the patch, or the line saying it was left out). The chunker starts a chunk at the first
+line of each section and carries no overlap across it, so every chunk is wholly one section, and a chunk's section name
+is stored in the `section` payload field that Markdown headings already use. A search takes a `section` filter that
+matches the field exactly: `POST /api/search`, `POST /api/context` and the `search_index` tool, and the search screen
+shows a picker for it while a corpus in scope has a commit history. `section` has a keyword payload index. The key of a
+commit carries `GitCommit.DocumentVersion`, and a stash's `GitStash.DocumentVersion` is raised, so the next pass after an
+upgrade reads and chunks each commit and stash again. The layout is in
+[04](04-ingestion.md#git-history--a-repositorys-commits), the filter in [05](05-search.md#shape-of-a-query).
+
+**Why.** A question about why something changed and a code fragment to find in the changes are asked of different
+parts of a commit, and the other part answers them badly: the words of a change appear in the message and in the patch
+that makes it. A source that indexes diffs holds both in one chunk set, and the patch is most of the chunks (3,298 of
+3,612 in one corpus). A filter on message or diff can be exact only if no chunk holds both.
+
+**Measured.** On the three history sources of one installation, at their chunk settings (256 tokens, overlap 32, 3.8
+characters per token, blank-line boundaries), reading every commit with the shipped reader and chunking each document
+with the chunker as it was and as it is now. The chunker as it was reproduces the installation's chunk counts (3,510 and
+1,290 against 3,509 and 1,290 stored; 1,513 against 1,513).
+
+| | commits | chunks before | chunks after | chunks that held two sections | chunks of a message, stat, diff |
+|---|---|---|---|---|---|
+| a source with the diff on | 139 | 3,510 | 3,612 (+2.9%) | 243 (6.9%) | 171, 143, 3,298 |
+| a second source with the diff on | 94 | 1,290 | 1,405 (+8.9%) | 148 (11.5%) | 102, 94, 1,209 |
+| this repository, diff off | 396 | 1,513 | 1,721 (+13.7%) | 391 (25.8%) | 1,246, 475, none |
+
+- Each new chunk lies in the section it names. An independent classification of the lines, which does not use the
+  sections the reader returns (header lines up to the first blank line, message lines indented four spaces, the patch from
+  its `diff --git` or `[diff of` line), agreed on all 6,738 chunks of 629 documents.
+- A stat is small: the median stat chunk is 195 to 304 characters, and 32% to 54% are under 200. A message with a
+  one-line subject is the same: the median message chunk of the second source is 171 characters, the header with the subject.
+- Whether the embedding step reuses a vector for text it has embedded before: it does not. `EmbedAndUpsertAsync` embeds
+  every chunk of a file that is chunked again, and the only caches in the embedding service are the dimensions of a model
+  and the vector of a query. 4,973 of the 6,738 new chunks (74%) have the text of an old chunk of the same commit, so a
+  store that kept vectors by text would embed 1,765.
+
+Embedding the same three sources from nothing, in a throwaway instance with its own catalogue and Qdrant and this
+installation's Ollama (embeddinggemma, 256 tokens, overlap 32; the instance had not measured the model, so it cut at 4
+characters per token and its counts differ from the installation's):
+
+| | chunks | wall time, three corpora at once |
+|---|---|---|
+| the build before | 6,005 | 156 s, and 542 s in a run that shared the host with a 54-minute test suite |
+| this build | 6,451 (+7.4%) | 161 s |
+
+Embedding this history again is a matter of minutes: 11 to 40 chunks per second on the installation's GPU, where D-44
+priced the same step on a CPU at 0.5 to 2 chunks per second.
+
+The 470 queries below quote text from the repositories' own commits and ask for the commit that holds it. 287 quote the
+first long line of a commit message, and 183 an added line of a patch that the message does not repeat. The answer to
+each is the commit's document, ranked among ten chunks, one result per chunk (`distinctTitles` off), hybrid mode.
+
+| | before | after, no filter | after, `section` set to the kind quoted |
+|---|---|---|---|
+| message queries (287) | 274 found, 204 first, MRR 0.800 | 277, 201, 0.802 | 286, 257, 0.938 |
+| diff queries (183) | 173 found, 104 first, MRR 0.704 | 172, 102, 0.696 | 171, 103, 0.699 |
+
+- Cutting at the sections changes an unfiltered search little: 447 of 470 commits were found before and 449 after, and
+  of the 470 the commit ranked higher for 36 and lower for 31.
+- Without the filter, 89% of the ten results to a message query were diff chunks in the two corpora that index diffs
+  (167 queries). With `section` set to `message` all were message chunks, the commit was found for 286 of 287 queries
+  (277 without), ranked higher for 55 and lower for 4, and its mean rank, counting a miss as 11, was 1.16 in one corpus and 1.06 in the
+  other against 2.24 and 2.19.
+- A diff query already returns 96% diff chunks, because the line quoted is not in the message. The filter changes it
+  little. The queries quote text, which a hybrid index finds in 95% of the cases without a filter; the gain from the filter
+  is in what else the ten results hold.
+
+The upgrade was rehearsed on the same three sources: indexed with the previous build, then the app replaced by this one on
+the same data volume and the same Qdrant. Before the first pass the collection had no index on `section`. The first
+refresh of each corpus read all 629 commits (396, 139 and 94, none skipped) and wrote 6,451 chunks, the count of an index
+from nothing, in 61, 117 and 48 s one after another. After it the collection held the keyword index on `section` for all
+6,451 points, and none lacked a section (message 1,458, stat 704, diff 4,289). A second refresh skipped all 629 commits in
+2 s each and wrote nothing.
+
+**Rejected.**
+
+- *Labelling the chunks without cutting at the sections.* A chunk holding two sections takes the label of its first line,
+  so 7% to 26% of the chunks a filter returned would hold the other kind of text, and a chunk holding the end of a message
+  and the start of a diff would be missing from a search for either. A filter that is right for most chunks reads as exact.
+- *A separate payload field for the part, beside `section`.* It would add a field to the point, the hit, the filter and the
+  index for a value that `section` already stores and the result already prints. The cost of sharing is that the filter
+  also matches a Markdown heading of the same text, in a search that spans more than one kind of corpus.
+- *Two sections, the stat with the message.* The stat answers which files, the question that D-34 kept the stat for when
+  the patch is off, and its words are paths. Folded into the message, a search for why something changed matches the list
+  of files that contains the same names, which is the crowding the filter is for. The three sections are the three settings
+  (`includeMessage`, `includeStat`, `includeDiff`). The cost is the small stat chunk above.
+- *The header as a section of its own.* A chunk of four lines per commit.
+- *Units for the sections.* An extraction unit has a number, which becomes the `#page=` anchor of a citation
+  ([D-34](#d-34-a-commit-is-a-document) rejected a unit per file for this), and it forces a split only where the set has
+  unit-aware boundaries on.
+- *A setting on the source or the set to cut in sections.* A history source that did not set it would have a filter that
+  matches nothing, and the labels would depend on a setting nobody knows to turn on.
+- *A version in `CodeChunker.VersionFor`, chosen by path.* A workspace file under a folder named `commits` or `stashes`
+  would take the history version. The content key of the unit is chosen by what the unit is, and it holds the version that
+  its own pre-read check compares.
+- *Bumping `CodeChunker.Version`.* It is in the key of every file of every corpus: 240,659 chunks on the installation
+  (2026-10-21, [D-44](#d-44-the-chunker-version-has-a-part-for-markdown)) against 6,313 history chunks.
+- *Keeping the vectors of the 74% of chunks whose text is unchanged.* The store has no call that reads a point back and
+  writes it again under a new index, and the saving is about 5,000 embeddings, the size of the saving that D-44 judged
+  too small for a store method, a test double and a repair pass.
+- *A section value that is checked.* A value that no chunk carries matches nothing, as `language` and `symbol` do, and the
+  Markdown headings, PDF and EPUB labels are values the server cannot list.
+
+**Consequences.**
+
+- The first pass after the upgrade reads and chunks each commit of every history source again, and embeds its chunks. A
+  commit's chunks are deleted before the new ones are embedded, so a commit is missing from search while it embeds. Until
+  the pass ends, the commits not yet redone have no section, and a search with `section` set returns only those that are.
+  Returning to an earlier build chunks every commit again without sections, and upgrading again repeats it.
+- The history corpora hold 3% to 14% more chunks.
+- A stat or a short message is a chunk of a few hundred characters. The ranking of a search that sets no section changes
+  with it, which the 470 queries above did not find to matter.
+- A history source with the diff off has no `diff` chunks, and `section=diff` on it matches nothing with no message saying
+  why. The tool description and [05](05-search.md#shape-of-a-query) say so.
+- `section` is a payload field that every format can set, so it is indexed in every collection when a pass next creates its
+  indexes. Markdown headings are many distinct values, and the labels of the other formats (`Page 3`, `Slide 3`,
+  `Chapter 3`) are few. The size of the index in the collection of the installation has not been measured.
+- The chunks that `neighbours` adds to `POST /api/context` are adjacent chunks whatever their section. A search for
+  `message` with neighbours reads on into the stat and the patch.
+- A stash's sections are `message`, `stat`, `diff` and `stat` again, because its list of untracked files follows its
+  patch and is the stat's answer to which files. The document of an untracked file has none.
+
+**Revisit when** a diff chunk, which holds no sha and no subject, ranks poorly in a search that sets no section: embedding
+a chunk of the stat or the diff under the commit's subject, as heading context embeds a Markdown chunk under its heading,
+would need the subject in each chunk's embedded text. Or when a search for everything but the diff is wanted, which a
+filter taking a list of sections would give.
+
+---
+
 ## Resolved questions
 
 | # | Question | Needed by | Current lean |
