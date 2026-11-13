@@ -25,8 +25,8 @@ public sealed class OpenApiSuccessStatusTests
     }
 
     private static JsonElement Document(string file) =>
-        JsonDocument.Parse(File.ReadAllText(
-            Path.Combine(RepoRoot(), "clients", "web-ui", file))).RootElement;
+        JsonElement.Parse(File.ReadAllText(
+            Path.Combine(RepoRoot(), "clients", "web-ui", file)));
 
     private static string[] DeclaredStatuses(JsonElement document, string path, string method) =>
         [.. document.GetProperty("paths").GetProperty(path).GetProperty(method)
