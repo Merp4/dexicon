@@ -52,6 +52,16 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      # global.json selects the newest 10.0 SDK on the machine. Without it `dotnet` uses the
+      # newest SDK of any version: on the runner image that added SDK 11 that was SDK 11,
+      # whose analyzers (CA2026, CA2027) fail this solution's warnings-as-errors build.
+      # This step prints the SDK so a log says which one built, and fails if it is not 10,
+      # which also catches global.json being removed or loosened.
+      - name: SDK is 10
+        run: |
+          dotnet --version
+          test "$(dotnet --version | cut -d. -f1)" = "10"
+
       - uses: actions/setup-node@v7
         with:
           node-version: '26'
