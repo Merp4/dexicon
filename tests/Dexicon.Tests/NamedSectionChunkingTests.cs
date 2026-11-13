@@ -121,6 +121,23 @@ public sealed class NamedSectionChunkingTests
     }
 
     [Fact]
+    public void EveryPieceOfAnOverlongLineCarriesTheSectionItIsIn()
+    {
+        // 80 words of 4 letters is a line of 399 characters against a budget of 100, so the chunker cuts the line
+        // itself. A patch with a minified file or a lockfile in it has such a line.
+        var overlong = string.Join(' ', Enumerable.Repeat("word", 80));
+        var (text, extracted, _) = Build("\n", ("message", "one"), ("diff", $"before\n{overlong}\nafter"));
+
+        var chunks = Chunk(text, extracted, Options());
+
+        var pieces = chunks.Where(c => c.Content.Contains("word", StringComparison.Ordinal)).ToList();
+        pieces.Count.ShouldBeGreaterThan(1, "the line is cut into several chunks");
+        pieces.ShouldAllBe(c => c.Section == "diff");
+        chunks.ShouldAllBe(c => c.Section != null);
+        chunks[0].Section.ShouldBe("message");
+    }
+
+    [Fact]
     public void TextWithNoSectionsHasNoSection()
     {
         var chunks = CodeChunker.Chunk("commits/x", Lines("plain", 12), Options(), new ExtractedText(Lines("plain", 12), []));

@@ -130,6 +130,18 @@ public sealed class GitHistorySectionsTests : IDisposable
     }
 
     [Fact]
+    public async Task APatchOverTheCapWithNoStatIsTheDiffSectionAlone()
+    {
+        Commit(_repo, "big.txt", string.Concat(Enumerable.Repeat("a line that is part of a large file\n", 200)), "large");
+
+        var document = await ReadHeadAsync(new GitHistoryOptions { IncludeDiff = true, IncludeStat = false, MaxDiffBytes = 2_000 });
+
+        Names(document).ShouldBe(["message", "diff"]);
+        Slices(document)[1].Text.ShouldStartWith("[diff of ");
+        ShouldTileTheText(document);
+    }
+
+    [Fact]
     public async Task WithoutAMessageTheHeaderIsPartOfTheStat()
     {
         Commit(_repo, "a.txt", "one\n", "never indexed");
@@ -280,6 +292,20 @@ public sealed class GitHistorySectionsTests : IDisposable
 
         Names(document).ShouldBe(["message", "stat"]);
         Slices(document)[1].Text.ShouldStartWith("Untracked files in this stash (1):");
+        ShouldTileTheText(document);
+    }
+
+    [Fact]
+    public async Task AStashWithNoUntrackedFilesHasNoListAndNoSectionPastTheText()
+    {
+        Commit(_repo, "a.txt", "base\n", "base");
+        Write(_repo, "a.txt", "base\nchanged\n");
+        Stash(_repo, "park");
+
+        var document = await ReadStashAsync(new GitHistoryOptions { IncludeStashes = true, IncludeDiff = true });
+
+        Names(document).ShouldBe(["message", "stat", "diff"]);
+        document.Text.ShouldNotContain("Untracked files");
         ShouldTileTheText(document);
     }
 

@@ -99,6 +99,52 @@ public sealed class GitHistorySectionIndexingTests
     }
 
     [Fact]
+    public async Task AStashIndexedBeforeSectionsWereNamedIsCutAgainOnceAndThenLeftAlone()
+    {
+        await using var harness = await IndexingHarness.StartAsync("repo");
+        var repo = harness.SourceDirectory;
+        Init(repo);
+        Commit(repo, "a.txt", "base\n", "base");
+        Write(repo, "a.txt", "base\nchanged\n");
+        var stashSha = Stash(repo, "park");
+        var options = new GitHistoryOptions { IncludeStashes = true };
+
+        await harness.SeedCorpusAsync(SourceKind.GitHistory, gitOptions: options.ToJson());
+        await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
+
+        string path;
+        await using (var db = harness.NewContext())
+        {
+            var set = await db.ChunkSets.SingleAsync(TestContext.Current.CancellationToken);
+            var state = await db.FileChunkStates.Include(s => s.File)
+                .SingleAsync(s => s.File!.RelativePath.StartsWith("stashes/"), TestContext.Current.CancellationToken);
+            path = state.File!.RelativePath;
+            var settings = options.ContentFingerprint(null);
+
+            // The key as this build builds it, rebuilt here, so the earlier key below is built the same way.
+            string Key(string unitKey) =>
+                CorpusIndexer.ChunkingFingerprint(set, CorpusIndexer.HashContent(unitKey), ModelTemplates.Raw, path);
+            state.ContentHash.ShouldBe(Key($"stash{GitStash.DocumentVersion}|{stashSha}|{settings}"));
+
+            // What an earlier build stored: the same stash under version 1.
+            var earlier = Key($"stash1|{stashSha}|{settings}");
+            state.ContentHash.ShouldNotBe(earlier, "the stash key moved from version 1 when its sections were named");
+            state.ContentHash = earlier;
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var again = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
+
+        again.FilesDone.ShouldBe(1, "the stash stored under the earlier key is read and chunked again; the commit is not");
+        (await ChunksOfAsync(harness, path)).ShouldAllBe(c => c.Section != null);
+
+        var third = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
+
+        third.FilesDone.ShouldBe(0);
+        third.FilesSkipped.ShouldBe(2, "the commit and the stash are both skipped under their current keys");
+    }
+
+    [Fact]
     public async Task AStashIsCutInSectionsAndTheDocumentOfAnUntrackedFileIsNot()
     {
         await using var harness = await IndexingHarness.StartAsync("repo");
