@@ -2835,16 +2835,17 @@ from nothing, in 61, 117 and 48 s one after another. After it the collection hel
 **Consequences.**
 
 - The first pass after the upgrade reads and chunks each commit of every history source again, and embeds its chunks. A
-  commit's chunks are deleted before the new ones are embedded, so a commit is missing from search while it embeds.
+  commit's chunks are deleted before the new ones are embedded, so a commit is missing from search while it embeds. Until
+  the pass ends, the commits not yet redone have no section, and a search with `section` set returns only those that are.
   Returning to an earlier build chunks every commit again without sections, and upgrading again repeats it.
-- The history corpora hold 4% to 14% more chunks.
+- The history corpora hold 3% to 14% more chunks.
 - A stat or a short message is a chunk of a few hundred characters. The ranking of a search that sets no section changes
   with it, which the 470 queries above did not find to matter.
 - A history source with the diff off has no `diff` chunks, and `section=diff` on it matches nothing with no message saying
   why. The tool description and [05](05-search.md#shape-of-a-query) say so.
 - `section` is a payload field that every format can set, so it is indexed in every collection when a pass next creates its
-  indexes. Markdown headings and EPUB chapter titles are many distinct values in the collection of the installation, which has
-  not been measured.
+  indexes. Markdown headings are many distinct values, and the labels of the other formats (`Page 3`, `Slide 3`,
+  `Chapter 3`) are few. The size of the index in the collection of the installation has not been measured.
 - The chunks that `neighbours` adds to `POST /api/context` are adjacent chunks whatever their section. A search for
   `message` with neighbours reads on into the stat and the patch.
 - A stash's sections are `message`, `stat`, `diff` and `stat` again, because its list of untracked files follows its

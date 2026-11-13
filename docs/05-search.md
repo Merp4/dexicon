@@ -21,8 +21,8 @@ search(query, scope, mode, limit, filters)
 
   `section` restricts the search to chunks whose `section` is exactly the value given, in the case written. For a
   commit or stash of a git-history corpus the values are `message` (the header, author, date and message),
-  `stat` (the files touched) and `diff` (the patch), and every chunk of such a document is one of them
-  ([04](04-ingestion.md#git-history--a-repositorys-commits)). A question about why something changed is `message`,
+  `stat` (the files touched) and `diff` (the patch), and every chunk of such a document is one of them, except in a
+  document that has no section ([04](04-ingestion.md#git-history--a-repositorys-commits)). A question about why something changed is `message`,
   and a code fragment to find in the changes is `diff`. A source that leaves the diff out has no `diff` chunks, so
   that filter matches nothing there. For a Markdown file the section is the heading the chunk starts under, so
   `Installation` matches the chunks under a heading of that text. A chunk of a PDF, a slide deck or an EPUB has the

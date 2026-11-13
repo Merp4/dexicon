@@ -108,7 +108,7 @@ public sealed record GitHistoryOptions
     /// What the synthesized text depends on, so that a commit already indexed can be
     /// skipped without being synthesized to find out.
     ///
-    /// A commit is immutable, so its sha plus this settles the content. Only settings
+    /// A commit is immutable, so its sha, <see cref="GitCommit.DocumentVersion"/> and this settle the content. Only settings
     /// that change what a document SAYS belong here, and the distinction is not
     /// cosmetic: anything added re-reads and re-embeds every commit in the repository
     /// the first time it changes.
@@ -1073,6 +1073,9 @@ public static partial class GitHistory
 
         sb.Append('\n');
         var tailAt = sb.Length;
+
+        // The tail is appended as it is, so the patch starts as many characters into it as the stat is long, where
+        // SplitPatch cut it. A change that trims either part has to move this offset with it.
         if (stat.Trim().Length > 0) OpenSection(sections, StatSection, tailAt);
         if (patch.Length > 0) OpenSection(sections, DiffSection, tailAt + stat.Length);
         sb.Append(tail.TrimEnd()).Append('\n');

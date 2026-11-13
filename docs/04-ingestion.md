@@ -733,8 +733,9 @@ repository where the diff is the point turns it on knowing that.
 **A document is cut in sections.** The header lines (`commit <sha>`, `Author:`, `Date:`, and for a stash
 `Base:`) and the message are the `message` section, the stat is `stat`, and the patch, or the line saying it was
 left out, is `diff`. A section exists when the source includes it, which are the settings `includeMessage`,
-`includeStat` and `includeDiff`, and the header belongs to the first section the document has: with messages off it
-is part of the `stat`, and a document with none of the three has no sections. The chunker starts a new chunk at each
+`includeStat` and `includeDiff`, and the commit has text for it (an empty commit has no stat or diff). The header
+belongs to the first section the document has: with messages off it is part of the `stat`, and a document with no
+section has none. The chunker starts a new chunk at each
 section's first line and carries no overlap across it, so a chunk is wholly one section, a short message is a chunk
 of its own, and a long patch is several chunks that all say `diff`. Each chunk stores its section name, a search result
 shows it after the location, and the `section` filter of a search matches it exactly
@@ -1776,7 +1777,7 @@ Every pass that touches a row clears the key, and the passes that settle it set 
 a code path that forgets to settle costs a read and nothing else. A change of size or
 modified time, of a chunking setting, of the extractor version or of the chunker version
 (for a Markdown file, of the Markdown chunker version) changes the key. A `Full` or `Rebuild` job ignores the key and reads everything. Uploads
-and git commits have no file to stat and are keyed as before.
+and git commits have no file to stat and are keyed by what settles their text.
 
 A key written for a file whose bytes change without changing size or modified time is not
 detected. Files copied with their timestamps preserved to the same size are the case; a full
