@@ -15,7 +15,7 @@ internal static class BoundedCalls
     {
         var running = Task.Run(work);
         // Not Task.Wait, which throws an AggregateException when the work fails, and the work failing is how most tests end.
-        if (Task.WhenAny(running, Task.Delay(limit)).GetAwaiter().GetResult() != running)
+        if (Task.WhenAny(running, Task.Delay(limit, TestContext.Current.CancellationToken)).GetAwaiter().GetResult() != running)
             throw new Xunit.Sdk.XunitException(
                 $"The call did not finish within {limit.TotalSeconds:N0} s, so the guard that bounds this input is missing.");
 

@@ -40,8 +40,8 @@ public sealed class IntegrationDocumentTests
     }
 
     private static JsonElement Document(string file) =>
-        JsonDocument.Parse(File.ReadAllText(
-            Path.Combine(RepoRoot(), "clients", "web-ui", file))).RootElement;
+        JsonElement.Parse(File.ReadAllText(
+            Path.Combine(RepoRoot(), "clients", "web-ui", file)));
 
     private static string[] Paths(string file) =>
         [.. Document(file).GetProperty("paths").EnumerateObject().Select(p => p.Name).Order(StringComparer.Ordinal)];

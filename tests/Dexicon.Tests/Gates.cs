@@ -16,7 +16,7 @@ internal static class Gates
     public static async Task ReachedAsync(Task gate, string what, TimeSpan? patience = null)
     {
         var limit = patience ?? Patience;
-        if (await Task.WhenAny(gate, Task.Delay(limit)) != gate)
+        if (await Task.WhenAny(gate, Task.Delay(limit, TestContext.Current.CancellationToken)) != gate)
             throw new TimeoutException($"{what} was not reached within {limit.TotalSeconds:N1} s.");
 
         await gate;
@@ -30,7 +30,7 @@ internal static class Gates
     public static async Task<T> FinishesAsync<T>(this Task<T> task, string what, TimeSpan? patience = null)
     {
         var limit = patience ?? Patience;
-        if (await Task.WhenAny(task, Task.Delay(limit)) != task)
+        if (await Task.WhenAny(task, Task.Delay(limit, TestContext.Current.CancellationToken)) != task)
         {
             _ = task.ContinueWith(
                 late => { if (late.IsCompletedSuccessfully && late.Result is IDisposable owner) owner.Dispose(); },
@@ -45,7 +45,7 @@ internal static class Gates
     public static async Task FinishesAsync(this Task task, string what, TimeSpan? patience = null)
     {
         var limit = patience ?? Patience;
-        if (await Task.WhenAny(task, Task.Delay(limit)) != task)
+        if (await Task.WhenAny(task, Task.Delay(limit, TestContext.Current.CancellationToken)) != task)
             throw new TimeoutException($"{what} did not finish within {limit.TotalSeconds:N1} s.");
 
         await task;

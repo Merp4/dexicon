@@ -236,7 +236,7 @@ public sealed class DocumentReleaseTests
         {
             await Gates.ReachedAsync(hold.Reached, "the release's check for a blob stored again");
             other = DocumentService.HoldAttachmentsAsync();
-            return await Task.WhenAny(other, Task.Delay(TimeSpan.FromSeconds(3))) == other;
+            return await Task.WhenAny(other, Task.Delay(TimeSpan.FromSeconds(3), TestContext.Current.CancellationToken)) == other;
         }
         finally
         {
