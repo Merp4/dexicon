@@ -38,14 +38,15 @@ export function headline(p: Proposal): string {
 }
 
 /**
- * What approving would take, from the figures the server worked out. A history source's units are
- * commits, which its label says (`history:`), so it is counted as such.
+ * What approving would take, from the figures the server worked out. A history source's label
+ * (`history:`) is all a request carries of it, and a source that indexes stashes holds stashes and
+ * their untracked files beside its commits, so its units are counted as documents.
  */
 export function takes(p: Proposal): string | null {
   const f = p.facts;
   if (!f) return null;
 
-  const unit = p.target.startsWith('history:') ? 'commit' : 'file';
+  const unit = p.target.startsWith('history:') ? 'document' : 'file';
   const chunks = count(f.chunks, 'chunk');
   const sets = count(f.chunkSets, 'chunk set');
 
