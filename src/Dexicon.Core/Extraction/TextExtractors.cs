@@ -19,12 +19,19 @@ namespace Dexicon.Core.Extraction;
 /// format's natural provenance unit (page for PDF, slide for PPTX, chapter for EPUB)
 /// so a citation can say "p. 34" instead of "chunk 87".
 /// </summary>
-public sealed record ExtractedText(string Text, IReadOnlyList<ExtractedUnit> Units, string? Title = null)
+/// <param name="Sections">
+/// Named stretches of the text that no chunk may straddle, such as the message, stat and diff
+/// of a git-history document, in order of offset. Null for a format that has none, which is
+/// every extractor's result: the history reader sets them.
+/// </param>
+public sealed record ExtractedText(
+    string Text, IReadOnlyList<ExtractedUnit> Units, string? Title = null,
+    IReadOnlyList<ExtractedSection>? Sections = null)
 {
     public static readonly ExtractedText Empty = new(string.Empty, []);
 
     /// <summary>
-    /// The text with every U+0000 removed and the units' offsets moved to match. SQLite ends a
+    /// The text with every U+0000 removed and the units' and sections' offsets moved to match. SQLite ends a
     /// text value at the first one, so a cached document that held one was cut there while its
     /// row recorded the length of the whole. Some PDFs hold them by the thousand (maths-heavy
     /// ones in particular), and a plain-text upload or any other format can. They carry
@@ -49,9 +56,18 @@ public sealed record ExtractedText(string Text, IReadOnlyList<ExtractedUnit> Uni
             moved[i] = unit with { StartOffset = Math.Max(0, unit.StartOffset - removed) };
         }
 
-        return this with { Text = Text.Replace("\0", string.Empty), Units = moved };
+        // A section moves back by the NULs before its offset, as a unit does.
+        var movedSections = Sections?
+            .Select(s => s with { StartOffset = s.StartOffset - Text.AsSpan(0, Math.Clamp(s.StartOffset, 0, Text.Length)).Count('\0') })
+            .ToList();
+
+        return this with { Text = Text.Replace("\0", string.Empty), Units = moved, Sections = movedSections };
     }
 }
+
+/// <param name="Name">The label the section's chunks carry in their <c>section</c> payload field.</param>
+/// <param name="StartOffset">Character offset into <see cref="ExtractedText.Text"/> of the section's first character, which is the start of a line.</param>
+public sealed record ExtractedSection(string Name, int StartOffset);
 
 /// <param name="Number">1-based page / slide / chapter number.</param>
 /// <param name="StartOffset">Character offset into <see cref="ExtractedText.Text"/>.</param>

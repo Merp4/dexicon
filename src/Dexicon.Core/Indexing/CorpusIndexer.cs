@@ -1451,12 +1451,16 @@ public sealed class CorpusIndexer(
 
         var fingerprint = options.ContentFingerprint(pathspecs);
 
-        ReadFile Read(WorkspaceWalker.Candidate candidate, GitUnit unit, string text) => new(
+        // Sections are the message, stat and diff of a commit or a stash, which the chunker starts a chunk
+        // at. An untracked file's document has none.
+        ReadFile Read(WorkspaceWalker.Candidate candidate, GitUnit unit, string text,
+            IReadOnlyList<ExtractedSection>? sections = null) => new(
             // UTF-8 bytes, because SizeBytes is a byte count everywhere else: it
             // sorts the file list and is rendered as a size, and a commit carrying
             // non-ASCII text would otherwise report smaller than it is.
             candidate with { SizeBytes = Encoding.UTF8.GetByteCount(text) },
-            new ReadText(HashContent(unit.ContentKey(options, fingerprint)), new ExtractedText(text, []), null),
+            new ReadText(HashContent(unit.ContentKey(options, fingerprint)),
+                new ExtractedText(text, [], Sections: sections), null),
             null);
 
         var commits = new Dictionary<string, WorkspaceWalker.Candidate>(toRead.Count, StringComparer.Ordinal);
@@ -1473,20 +1477,20 @@ public sealed class CorpusIndexer(
             }
 
         if (commits.Count > 0)
-            await foreach (var (sha, text) in
+            await foreach (var document in
                            GitHistory.ReadAsync(repo, options, [.. commits.Keys], pathspecs, ct))
             {
-                if (!commits.TryGetValue(sha, out var candidate)) continue;
-                yield return Read(candidate, byPath[candidate.RelativePath], text);
+                if (!commits.TryGetValue(document.Sha, out var candidate)) continue;
+                yield return Read(candidate, byPath[candidate.RelativePath], document.Text, document.Sections);
             }
 
         if (stashes.Count > 0)
-            await foreach (var (sha, text) in GitHistory.ReadStashesAsync(
+            await foreach (var document in GitHistory.ReadStashesAsync(
                                repo, options, [.. stashes.Keys.Select(k => (GitStash)byPath[stashes[k].RelativePath])],
                                pathspecs, ct))
             {
-                if (!stashes.TryGetValue(sha, out var candidate)) continue;
-                yield return Read(candidate, byPath[candidate.RelativePath], text);
+                if (!stashes.TryGetValue(document.Sha, out var candidate)) continue;
+                yield return Read(candidate, byPath[candidate.RelativePath], document.Text, document.Sections);
             }
 
         if (files.Count > 0)

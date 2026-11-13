@@ -42,6 +42,7 @@ public sealed class DexiconTools
         [Description("Restrict to one source, by the root path a search result cites, e.g. books/manuals/Architecture. A parent matches everything beneath it, so books/manuals covers every topic folder under it. list_corpora does not list these; run a search first, or pass a wrong one and the error lists them, up to 1,500 characters and then how many more.")] string? source = null,
         [Description("Restrict to one language, e.g. csharp, python, typescript.")] string? language = null,
         [Description("Restrict to chunks declaring this symbol, e.g. TokenService.")] string? symbol = null,
+        [Description("Restrict to one section of the documents, by its exact name. In a git history corpus: message (the commit's sha, author, date and message), stat (the files it touched) or diff (the patch). Use message to ask why something changed and diff to find a code fragment. A diff exists only where the source indexes diffs. In a Markdown file the section is the heading, e.g. Installation.")] string? section = null,
         [Description("Characters of each result to return, centred on the matching passage. The default is enough to read the match in context; raise it when a hit is clearly the right passage and you need more of it, or use get_context. 0 returns whole chunks, which on a book corpus is about 8,000 characters each.")]
         int maxCharsPerHit = SearchRequest.DefaultMaxCharsPerHit,
         [Description("Collapse results that are the same document in another format, e.g. a book held as both PDF and EPUB. On by default. Turn it off to compare how the two were extracted.")]
@@ -63,6 +64,7 @@ public sealed class DexiconTools
                 Source = source,
                 Language = language,
                 Symbol = symbol,
+                Section = section,
                 MaxCharsPerHit = Math.Clamp(maxCharsPerHit, 0, 100_000),
                 DistinctTitles = distinctTitles,
             }, ct);

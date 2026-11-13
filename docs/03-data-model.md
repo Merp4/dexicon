@@ -475,6 +475,7 @@ points from that corpus when filtered to a different one.
 { "field_name": "language",     "field_schema": "keyword" }
 { "field_name": "kind",         "field_schema": "keyword" }
 { "field_name": "symbols",      "field_schema": "keyword" }
+{ "field_name": "section",      "field_schema": "keyword" }
 ```
 
 `content` has no payload index. Keyword search runs on the `sparse` vector.
@@ -509,7 +510,7 @@ overwrite each other, without error, and only for the paths they share.
   "start_line":  120,                // text sources
   "end_line":    168,
   "page":        3,                  // page (PDF), slide (PPTX) or chapter (EPUB); omitted for line-addressed content
-  "section":     "Retry policy",     // Markdown heading at start_line, or the page, slide or chapter label
+  "section":     "Retry policy",     // Markdown heading at start_line, the page, slide or chapter label, or message, stat or diff
   "symbols":     ["TokenService", "Refresh"],
   "chunk_index": 7,
   "content":     "…the chunk text…",  // stored: results must be usable without a file read
@@ -524,6 +525,11 @@ For a Markdown file, `section` is the innermost ATX heading in effect on the chu
 `start_line`, outside code fences, whatever headings the chunk goes on to contain. It is
 absent above the first heading. A chunk that opens with overlap carried from the section
 before it takes that section's heading, as `page` takes the page of the chunk's first line.
+
+For a commit or a stash of a git-history source, `section` is `message`, `stat` or `diff`, and every line of the chunk
+is in that section: the chunker starts a new chunk where a section starts
+([04](04-ingestion.md#git-history--a-repositorys-commits)). The search filter `section` matches the value exactly
+([05](05-search.md#shape-of-a-query)).
 
 Point id is a deterministic UUID derived from a SHA-256 of
 `chunk_set_id | source_id | file_path | chunk_index`: the first 16 bytes of the hash with

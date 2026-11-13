@@ -520,6 +520,12 @@
               "null",
               "boolean"
             ]
+          },
+          "section": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -1049,6 +1055,12 @@
             "type": [
               "null",
               "boolean"
+            ]
+          },
+          "section": {
+            "type": [
+              "null",
+              "string"
             ]
           }
         }

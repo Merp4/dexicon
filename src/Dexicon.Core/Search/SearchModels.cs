@@ -140,6 +140,12 @@ public sealed record SearchQuery
     public string? PathPrefix { get; init; }
     public string? Language { get; init; }
     public string? Symbol { get; init; }
+
+    /// <summary>
+    /// Restrict to chunks whose section is exactly this, or null for any. A git-history chunk is wholly one
+    /// of <c>message</c>, <c>stat</c> and <c>diff</c>; a Markdown chunk's section is its heading.
+    /// </summary>
+    public string? Section { get; init; }
 }
 
 public sealed record SearchResponse

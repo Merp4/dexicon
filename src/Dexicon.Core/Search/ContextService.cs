@@ -19,6 +19,9 @@ public sealed record ContextRequest
     public string? Language { get; init; }
     public string? Symbol { get; init; }
 
+    /// <summary>Restrict the hits to this section. See <see cref="SearchRequest.Section"/>.</summary>
+    public string? Section { get; init; }
+
     /// <summary>
     /// The budget for the whole passage. Characters, not tokens: see docs/decisions.md D-29.
     /// </summary>
@@ -107,6 +110,7 @@ public sealed class ContextService(
             Source = request.Source,
             Language = request.Language,
             Symbol = request.Symbol,
+            Section = request.Section,
             DistinctTitles = request.DistinctTitles,
 
             // Whole chunks. A search window is centred on the matching terms and sized for

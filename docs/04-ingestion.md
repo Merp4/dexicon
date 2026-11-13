@@ -730,6 +730,18 @@ with patches the history is 5.99 MB and the median commit 11,393 characters; wit
 message and the stat it is 449 KB and the median 1,939, which fits in one chunk. A
 repository where the diff is the point turns it on knowing that.
 
+**A document is cut in sections.** The header lines (`commit <sha>`, `Author:`, `Date:`, and for a stash
+`Base:`) and the message are the `message` section, the stat is `stat`, and the patch, or the line saying it was
+left out, is `diff`. A section exists when the source includes it, which are the settings `includeMessage`,
+`includeStat` and `includeDiff`, and the header belongs to the first section the document has: with messages off it
+is part of the `stat`, and a document with none of the three has no sections. The chunker starts a new chunk at each
+section's first line and carries no overlap across it, so a chunk is wholly one section, a short message is a chunk
+of its own, and a long patch is several chunks that all say `diff`. Each chunk stores its section name, a search result
+shows it after the location, and the `section` filter of a search matches it exactly
+([05](05-search.md#shape-of-a-query)). Before sections, a chunk was cut at the size and at blank lines alone: on the
+three history corpora of one installation (6,312 chunks at 256 tokens), 7%, 12% and 26% of the chunks held lines of two
+sections ([D-49](decisions.md#d-49-a-history-document-is-cut-in-sections-and-search-can-filter-on-them)).
+
 An oversized patch is **reported, not cut**: a diff truncated mid-hunk reads as a complete
 change that did something other than what it did. The cap is measured over the patch
 alone, in UTF-8 bytes, and the stat is kept when the patch is dropped — it is the cheap
@@ -767,7 +779,9 @@ the read rather than after it, as a file's must. Measured on this repository: 77
 enumerate 201 commits, 1,069ms to read all of them with their patches.
 
 Changing any setting that alters what a document says re-indexes the history, because
-every document really is different. Changing `ref`, `maxCommits`, `keepIndexed`, `since`,
+every document really is different. So does a change to the sections, which a document version in the commit's key
+(`GitCommit.DocumentVersion`) carries: the next pass after an upgrade that changes them reads and chunks each commit
+again. Changing `ref`, `maxCommits`, `keepIndexed`, `since`,
 `includeMerges` or `includeStashes` does not: those decide which documents are indexed, not
 what any one commit holds, and turning merges or stashes on adds documents without altering a
 single existing one.
@@ -796,13 +810,14 @@ reflog of `refs/stash` ([D-48](decisions.md#d-48-a-history-source-can-also-index
   the stat and, with `includeDiff`, the patch of the tracked changes against that base, then, with
   `includeStat`, the untracked files the include paths select as names, sizes and the first seven
   characters of each blob (the first 500 paths, below). The message, stat and diff settings and the
-  paths apply as they do to a commit.
+  paths apply as they do to a commit. The list of untracked files is the stat's answer to "which files" and is
+  labelled `stat`, which makes a stash's sections `message`, `stat`, `diff` and `stat` again after the patch.
 - **One document per distinct version of an untracked file**, at
   `stashes/untracked/<blob[..12]>/<path>`: a header naming the stash, its date and the blob, then
   the text of the file. A file held unchanged by thirty stashes is one document, named for the
   oldest of them, and a changed version is another. With `includeStat` on, each stash's own
   document lists the files it holds, so the stashes that hold a file are found from the stash
-  documents.
+  documents. The document of a file has no sections: it is the file's text.
 
 Three things about git decide this shape. `git show stash@{n}` prints the tracked changes and not
 the untracked files, which are in the stash's third parent. A stash is a merge, and `git log -p`

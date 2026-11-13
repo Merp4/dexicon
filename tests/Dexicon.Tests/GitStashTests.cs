@@ -572,8 +572,11 @@ public sealed class GitStashTests : IDisposable
         var file = new GitStashFile("n.md", new string('b', 40), 3, stash.Sha, DateTimeOffset.UnixEpoch, "s");
         var commit = new GitCommit(new string('c', 40), DateTimeOffset.UnixEpoch);
 
-        // A commit's key is what it always was, so enabling stashes reads no commit again.
-        commit.ContentKey(On, "m|s|-|-").ShouldBe(commit.Sha + "|m|s|-|-");
+        // A commit's key does not depend on the stash setting, so enabling stashes reads no commit again, and it
+        // carries the version of the document's sections.
+        commit.ContentKey(On, "m|s|-|-").ShouldBe(commit.ContentKey(new GitHistoryOptions(), "m|s|-|-"));
+        commit.ContentKey(On, "m|s|-|-").ShouldBe($"commit{GitCommit.DocumentVersion}|{commit.Sha}|m|s|-|-");
+        commit.ContentKey(On, "m|s|-|-").ShouldNotBe(commit.Sha + "|m|s|-|-", "the key an earlier build stored");
 
         stash.ContentKey(On, "m|s|-|-").ShouldContain("m|s|-|-");
         stash.ContentKey(On, "m|s|d65536|-").ShouldNotBe(stash.ContentKey(On, "m|s|-|-"));

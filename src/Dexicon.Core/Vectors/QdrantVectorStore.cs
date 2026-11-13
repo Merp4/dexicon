@@ -198,6 +198,7 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
             await EnsureIndexAsync(collection, "file_path", PayloadSchemaType.Keyword, null, ct);
             await EnsureIndexAsync(collection, "language", PayloadSchemaType.Keyword, null, ct);
             await EnsureIndexAsync(collection, "symbols", PayloadSchemaType.Keyword, null, ct);
+            await EnsureIndexAsync(collection, "section", PayloadSchemaType.Keyword, null, ct);
             await EnsureIndexAsync(collection, "source_id", PayloadSchemaType.Keyword, null, ct);
             // Every per-file operation filters on this - delete, file lookup, and the
             // per-file counts below - and it was the one term in those filters without
@@ -595,6 +596,7 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
 
         if (!string.IsNullOrWhiteSpace(q.Language)) f.Must.Add(Keyword("language", q.Language));
         if (!string.IsNullOrWhiteSpace(q.Symbol)) f.Must.Add(Keyword("symbols", q.Symbol));
+        if (!string.IsNullOrWhiteSpace(q.Section)) f.Must.Add(Keyword("section", q.Section));
         if (!string.IsNullOrWhiteSpace(q.PathPrefix))
             f.Must.Add(new Condition
             {

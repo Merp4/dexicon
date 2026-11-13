@@ -24,10 +24,11 @@ public sealed record TextChunk
     public int EndLine { get; init; }
 
     /// <summary>
-    /// For Markdown, the innermost heading in effect at <see cref="StartLine"/>: null above the first heading,
-    /// and a chunk that opens with overlap carried from the section before it takes that section's heading.
-    /// Always null for other formats, whose section is the page, slide or chapter label that the indexer
-    /// looks up for the same line.
+    /// For a document whose extraction named sections, such as a git-history commit, the name of the section
+    /// that holds the chunk; no chunk straddles two. Otherwise, for Markdown, the innermost heading in effect at
+    /// <see cref="StartLine"/>: null above the first heading, and a chunk that opens with overlap carried from
+    /// the section before it takes that section's heading. Null for other formats, whose section is the
+    /// page, slide or chapter label that the indexer looks up for the same line.
     /// </summary>
     public string? Section { get; init; }
     public IReadOnlyList<string> Symbols { get; init; } = [];
@@ -240,6 +241,14 @@ public static class CodeChunker
             ? UnitBoundaryLines(extracted, content).ToHashSet()
             : [];
 
+        // A named section is the other thing the extraction can force a split at, and unlike a unit it
+        // is not optional: a chunk that straddles the message and the diff of a commit cannot be
+        // filtered as either. It is not a set option. Each starts a chunk, with no overlap carried
+        // across it, exactly as a unit does, and its name is the chunk's section.
+        var sections = extracted?.Sections is { Count: > 0 } named
+            ? LabelLines(named, content, lines.Length, unitBoundaries)
+            : null;
+
         foreach (var line in unitBoundaries) boundaries.Add(line);
 
         var symbolPattern = LanguageMap.SymbolPattern(language);
@@ -259,7 +268,7 @@ public static class CodeChunker
         var index = 0;
 
         foreach (var c in ChunkLines(lines, boundaries, unitBoundaries, maxChars, overlapChars, symbolPattern,
-                     options, headings))
+                     options, headings, sections))
             chunks.Add(c with { Index = index++ });
 
         return chunks;
@@ -317,6 +326,44 @@ public static class CodeChunker
     }
 
     /// <summary>
+    /// The name of the section each line is in, or null above the first section, and the line each
+    /// section starts at added to <paramref name="starts"/>.
+    ///
+    /// Offsets are characters of the text as extracted, and lines are as <see cref="SplitLines"/> breaks
+    /// them: a line feed, a carriage return and line feed as one break, and a lone carriage return. Counting
+    /// line feeds alone would put a section one line early for every lone carriage return before it. A
+    /// section whose offset is inside a line starts at that line, and one past the end of the text is left out.
+    /// </summary>
+    private static string?[] LabelLines(
+        IReadOnlyList<ExtractedSection> sections, string content, int lineCount, HashSet<int> starts)
+    {
+        var labels = new string?[lineCount];
+        var ordered = sections.Where(s => s.StartOffset >= 0 && s.StartOffset < content.Length)
+                              .OrderBy(s => s.StartOffset).ToList();
+        var next = 0;
+        var line = 0;
+        var current = (string?)null;
+
+        for (var i = 0; i < content.Length && line < lineCount; i++)
+        {
+            while (next < ordered.Count && ordered[next].StartOffset == i)
+            {
+                current = ordered[next++].Name;
+                starts.Add(line);
+            }
+
+            labels[line] = current;
+
+            // A break ends the line. A carriage return before a line feed is half of the break the line
+            // feed completes.
+            if (content[i] == '\n' || (content[i] == '\r' && (i + 1 >= content.Length || content[i + 1] != '\n')))
+                line++;
+        }
+
+        return labels;
+    }
+
+    /// <summary>
     /// The 0-based line index at which each extraction unit starts. Units carry character
     /// offsets; the chunker works in lines, so they are converted once here rather than
     /// per chunk.
@@ -361,9 +408,10 @@ public static class CodeChunker
     /// line when the buffer contains no boundary at all.
     /// </summary>
     /// <param name="headings">The heading and heading trail at each line, or null for a file that is not Markdown.</param>
+    /// <param name="sections">The name of the section each line is in, or null when the extraction named none.</param>
     private static IEnumerable<TextChunk> ChunkLines(string[] lines, HashSet<int> boundaries,
         HashSet<int> unitBoundaries, int maxChars, int overlapChars, string? symbolPattern,
-        ChunkOptions options, LineHeadings? headings)
+        ChunkOptions options, LineHeadings? headings, string?[]? sections)
     {
         var start = 0;
         var chars = 0;
@@ -386,7 +434,7 @@ public static class CodeChunker
             // A unit boundary ends the current chunk regardless of how little is in it.
             if (unitBoundaries.Contains(i) && i > start && chars > 0)
             {
-                yield return Build(Join(lines, start, i), start, i - 1, symbolPattern, headings);
+                yield return Build(Join(lines, start, i), start, i - 1, symbolPattern, headings, sections);
 
                 // No overlap across a unit: carrying the tail of chapter 3 into chapter 4
                 // is exactly the straddling this is meant to stop.
@@ -410,7 +458,7 @@ public static class CodeChunker
             if (chars == 0 && lineChars > maxChars)
             {
                 foreach (var piece in SplitOversizeLine(line, maxChars, overlapChars, options.SentenceAware))
-                    yield return Build(piece, i, i, symbolPattern, headings);
+                    yield return Build(piece, i, i, symbolPattern, headings, sections);
 
                 start = i + 1;
                 lastBoundary = -1;
@@ -444,7 +492,7 @@ public static class CodeChunker
                 var boundaryIsWorthIt = lastBoundary > start && charsAtBoundary >= minimumChunk;
                 var splitAt = boundaryIsWorthIt ? lastBoundary : i;
 
-                yield return Build(Join(lines, start, splitAt), start, splitAt - 1, symbolPattern, headings);
+                yield return Build(Join(lines, start, splitAt), start, splitAt - 1, symbolPattern, headings, sections);
 
                 // Overlap is carried by rewinding the start, not by copying text, so
                 // line numbers stay exact.
@@ -463,7 +511,7 @@ public static class CodeChunker
         {
             var tail = Join(lines, start, lines.Length);
             if (tail.Trim().Length > 0)
-                yield return Build(tail, start, lines.Length - 1, symbolPattern, headings);
+                yield return Build(tail, start, lines.Length - 1, symbolPattern, headings, sections);
         }
     }
 
@@ -599,9 +647,10 @@ public static class CodeChunker
 
     // startLine is 0-based, and the section and the heading trail are those in effect on it.
     private static TextChunk Build(string content, int startLine, int endLine, string? symbolPattern,
-        LineHeadings? headings)
+        LineHeadings? headings, string?[]? sections)
     {
         var headingTrail = headings?.TrailAt(startLine);
+        var named = sections is not null && startLine >= 0 && startLine < sections.Length ? sections[startLine] : null;
 
         return new()
         {
@@ -611,7 +660,7 @@ public static class CodeChunker
             EmbedText = headingTrail is { Length: > 0 } ? $"{headingTrail}\n\n{content}" : content,
             StartLine = startLine + 1,   // 1-based: what an editor shows
             EndLine = endLine + 1,
-            Section = headings?.HeadingAt(startLine),
+            Section = named ?? headings?.HeadingAt(startLine),
             Symbols = ExtractSymbols(content, symbolPattern),
         };
     }
