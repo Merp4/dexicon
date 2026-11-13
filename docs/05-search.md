@@ -28,8 +28,8 @@ search(query, scope, mode, limit, filters)
   `Installation` matches the chunks under a heading of that text. A chunk of a PDF, a slide deck or an EPUB has the
   label of the page, slide or chapter it starts in (`Page 3`, `Slide 3`, `Chapter 3`), which names one position in every
   document of the scope and is of little use as a filter. A value that no chunk carries matches nothing. A search over several corpora
-  matches the value in all of them, so a history corpus is usually named beside it. `section` selects the chunks that
-  can match. The chunks either side of a hit that `neighbours` adds to `POST /api/context` are the adjacent chunks of
+  applies the value to all of them, so a search for a commit section names the history corpus beside it. `section`
+  selects the chunks that can match. The chunks either side of a hit that `neighbours` adds to `POST /api/context` are the adjacent chunks of
   the document, whatever their section.
 
   `source` narrows to one source of a corpus, named by its root path as a search result

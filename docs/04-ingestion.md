@@ -739,7 +739,7 @@ section's first line and carries no overlap across it, so a chunk is wholly one 
 of its own, and a long patch is several chunks that all say `diff`. Each chunk stores its section name, a search result
 shows it after the location, and the `section` filter of a search matches it exactly
 ([05](05-search.md#shape-of-a-query)). Before sections, a chunk was cut at the size and at blank lines alone: on the
-three history corpora of one installation (6,312 chunks at 256 tokens), 7%, 12% and 26% of the chunks held lines of two
+three history corpora of one installation (6,313 chunks at 256 tokens), 7%, 12% and 26% of the chunks held lines of two
 sections ([D-49](decisions.md#d-49-a-history-document-is-cut-in-sections-and-search-can-filter-on-them)).
 
 An oversized patch is **reported, not cut**: a diff truncated mid-hunk reads as a complete
