@@ -1202,7 +1202,7 @@ public sealed class CorpusIndexer(
         {
             // Not destructive: the existing index stays searchable. A missing mount is
             // an operational condition, not a reason to delete someone's corpus.
-            Unreachable(corpus, job, $"Workspace path '{source.RootPath}' is not available under {_indexing.WorkspaceRoot}.");
+            Unreachable(corpus, job, $"Workspace path '{SourceLabel(source.RootPath)}' is not available under {_indexing.WorkspaceRoot}.");
             return;
         }
 
@@ -1217,7 +1217,7 @@ public sealed class CorpusIndexer(
             // source: nothing already indexed is removed, the other sources are still indexed, and the job's
             // error names the file and the line. What the walk had skipped before it failed is logged too.
             LogWalkWarnings(source, ex.Warnings, ex.WarningsOmitted);
-            Unreachable(corpus, job, $"Source '{source.RootPath}' was not indexed because {ex.Message}");
+            Unreachable(corpus, job, $"Source '{SourceLabel(source.RootPath)}' was not indexed because {ex.Message}");
             return;
         }
 
@@ -1303,7 +1303,7 @@ public sealed class CorpusIndexer(
 
         if (repo is null)
         {
-            Unreachable(corpus, job, $"Workspace path '{source.RootPath}' is not available under {_indexing.WorkspaceRoot}.");
+            Unreachable(corpus, job, $"Workspace path '{SourceLabel(source.RootPath)}' is not available under {_indexing.WorkspaceRoot}.");
             return;
         }
 
@@ -1336,7 +1336,7 @@ public sealed class CorpusIndexer(
                 // whose mount is present but whose .git is not is the same class of
                 // problem as a mount that is away, and the history indexed last time is
                 // still searchable.
-                Unreachable(corpus, job, $"Source '{source.RootPath}' is not a git repository, so it has no history to index.");
+                Unreachable(corpus, job, $"Source '{SourceLabel(source.RootPath)}' is not a git repository, so it has no history to index.");
                 return;
             }
 
@@ -1989,6 +1989,13 @@ public sealed class CorpusIndexer(
             job.FilesFailed - startedWith.FilesFailed,
             vanished.Count);
     }
+
+    /// <summary>
+    /// A source's path as a job message shows it. A source rooted at the workspace root has an
+    /// empty path, which reads as a missing value inside quotes.
+    /// </summary>
+    internal static string SourceLabel(string? rootPath) =>
+        string.IsNullOrEmpty(rootPath) ? "(workspace root)" : rootPath;
 
     /// <summary>
     /// Resolve a source path inside the workspace root and refuse anything that escapes
