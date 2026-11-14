@@ -478,7 +478,9 @@ points from that corpus when filtered to a different one.
 { "field_name": "section",      "field_schema": "keyword" }
 ```
 
-`content` has no payload index. Keyword search runs on the `sparse` vector.
+`content` has no payload index. Keyword search runs on the `sparse` vector. A search with a
+`phrase` adds a `match.phrase` condition on `content`, which Qdrant evaluates without an index by
+tokenising the text of each chunk the query reaches ([05](05-search.md#exact-phrases)).
 
 **`corpus_id` is the `is_tenant` field.** It is what every query filters on, so
 co-locating storage by corpus matches the access pattern exactly. Qdrant's name for the

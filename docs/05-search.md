@@ -13,11 +13,11 @@ search(query, scope, mode, limit, filters)
   [07](07-auth.md).
 - **`mode`** — `hybrid` (default) | `semantic` | `keyword`.
 - **`limit`** — 1–50, default 10.
-- **`filters`** — optional: `source`, `pathPrefix`, `language`, `symbol`, `section`.
+- **`filters`** — optional: `source`, `pathPrefix`, `language`, `symbol`, `section`, `phrase`.
 
   The REST request (`POST /api/search`) and the `search_index` tool take these as top-level
   arguments in camelCase: `corpus`, `mode`, `limit`, `source`, `pathPrefix`, `language`,
-  `symbol`, `section`, `maxCharsPerHit` and `distinctTitles`.
+  `symbol`, `section`, `phrase`, `maxCharsPerHit` and `distinctTitles`.
 
   `section` restricts the search to chunks whose `section` is exactly the value given, in the case written. For a
   commit or stash of a git-history corpus the values are `message` (the header, author, date and message),
@@ -31,6 +31,10 @@ search(query, scope, mode, limit, filters)
   applies the value to all of them, so a search for a commit section names the history corpus beside it. `section`
   selects the chunks that can match. The chunks either side of a hit that `neighbours` adds to `POST /api/context` are the adjacent chunks of
   the document, whatever their section.
+
+  `phrase` keeps the chunks whose text holds the given words in that order, which the
+  index cannot answer by itself. [Exact phrases](#exact-phrases) has what it matches and
+  what it costs.
 
   `source` narrows to one source of a corpus, named by its root path as a search result
   cites it (`manuals/AI`); `index_status` lists the sources of a corpus named in the call.
@@ -72,7 +76,8 @@ where `$scope` expands to
     { "key": "kind",      "match": { "value": "chunk" } },
     { "key": "corpus_id", "match": { "any": ["01JD...", "01JE..."] } }
     // plus the chunk_set_id of each corpus in scope, and any caller filters:
-    // source_id, file_path prefix, language, symbols
+    // source_id, file_path prefix, language, symbols, and for a phrase a
+    // match.phrase condition on content
 ] }
 ```
 
@@ -153,6 +158,118 @@ If the query vector's length differs from the chunk set's pinned dimensions, the
 **refused**, not degraded, with a message naming both numbers and the rebuild action.
 Returning plausible results from a mismatched space is worse than returning none.
 
+## Exact phrases
+
+`phrase` keeps the chunks whose text contains the given words in that order. The sparse
+vector is a bag of terms without positions, so the index cannot match a phrase. Qdrant
+checks the stored text of each chunk instead: the request adds a `match.phrase` condition on
+`content` to the filter of both prefetches and of the final query. Every chunk in scope that
+holds the phrase is then a candidate in `hybrid` and `semantic` mode, and a result shorter than
+`limit` is every match there is, after near-duplicate titles are collapsed. In `keyword` mode the
+candidates are the chunks that share a word with `query`, so a short result may leave matches
+out (see Limits).
+
+Nothing is added to the index. `content` has no payload index and `phrase` does not create
+one, so index size, memory and indexing time are as they were, and a search without `phrase`
+sends the query it always sent. The cost is paid at query time, by the searches that use it.
+
+`query` ranks and `phrase` filters. Given both, the hits are the best matches for `query`
+among the chunks that hold the phrase. Given only `phrase`, with `query` left empty, the
+phrase is the query: it is embedded and encoded as one, and the result echoes it as `query`.
+The returned window is centred on the phrase rather than on the query terms.
+
+### What matches
+
+Without a full-text index, Qdrant applies its `word` tokenizer and lowercases the text
+([filtering](https://qdrant.tech/documentation/search/filtering/), phrase match, available
+from Qdrant 1.15.0). A run of letters and digits is a word. Anything else separates words:
+spaces, line breaks, punctuation, underscores, hyphens, dots and slashes. The words of the
+phrase have to occur in the text next to each other and in the same order, in any case.
+Nothing else is folded: there is no stemming, and no mapping of accents, ligatures or Unicode
+normalisation forms.
+
+Measured on the docs corpus (297 chunks) against a reference tokeniser that takes a word to
+be a run of Unicode letters and digits, over 200 phrase variants (as typed, reversed, upper
+case, last word cut to four letters, second word dropped), Qdrant returned the chunks the
+reference selected for all 200.
+
+| Phrase | Finds | Chunks it matched |
+|---|---|---|
+| `chunk set id` | `chunk_set_id` | 8, the same as the underscore form |
+| `D 39` | `D-39` | 14, the same as the hyphen form |
+| `1 500 characters` | `1,500 characters` | 6, the same as the comma form |
+| `dexico` | not `Dexicon` | 0, where `Dexicon` matched 142 |
+| `distinct titles` | not `DistinctTitles` | 0, where `DistinctTitles` matched 4 |
+
+So `refresh` does not find `RefreshAsync`: the identifier is one word. A caller used to a
+substring search has to name the word, and an empty result over MCP says so.
+
+A phrase is refused with a 400 (an error over MCP) when it has no letter or digit, such as
+`=>`, because Qdrant matches it against nothing and an empty answer would read as "not in
+the index". It is also refused above 500 characters. The message does not repeat the phrase.
+
+### Cost
+
+A phrase search tokenises the text of the chunks the query reaches, which an index would
+have spared. Measured against a live Qdrant 1.20.0 (one collection of 12 corpora and 261,135
+chunks), with phrases of 3 to 6 words (at most 90 characters) taken from random chunks of
+at least 400 characters, 12 per corpus, `limit` 10 (a window of 160 candidates), median
+milliseconds for one query:
+
+| Scope | Chunks | `hybrid` without phrase | `hybrid` with phrase | `keyword` without | `keyword` with |
+|---|---|---|---|---|---|
+| a code corpus | 24,361 | 79 | 900 | 27 | 363 |
+| a library of books | 28,535 | 90 | 770 | 24 | 294 |
+| a library of papers | 191,703 | 158 | 2,525 | 16 | 642 |
+| every corpus, one phrase | 261,135 | 129 | 2,646 | 18 | 417 |
+
+The slowest query measured was a very common phrase (`in the case of`) across every corpus:
+4.7 seconds in `hybrid` and 0.4 seconds in `keyword`. An absent phrase in the papers took 1.8
+to 2.4 seconds in `hybrid`. These are single runs on a shared host, so read them as orders of
+magnitude. The cost grows with the chunks in scope, which makes naming the corpus the first
+thing to do, and `keyword` mode was 2.5 to 6.3 times faster than `hybrid` in every row.
+Nothing limits how many phrase searches run at once, as nothing limits searches in general,
+and each occupies Qdrant for about the times above.
+
+The chunk a phrase was taken from was returned for 35 of 36 phrases (12 from each of three
+corpora), and for 59 of 60 in a second run on the papers corpus. The miss in the second run
+was a phrase of three common words that more chunks contain than the window of 160 holds
+(160 came back), so the chunk ranked below the cut. The miss in the first run was not
+examined.
+
+### Limits
+
+- **Keyword mode needs a term to search on.** The keyword vector drops stop words and
+  one-character tokens, so a query, or a phrase with no query, made only of those has
+  nothing to retrieve with in `keyword` mode, and the result is empty although the phrase
+  is in the text (`it is to be` returned 73 chunks in `hybrid` and none in `keyword`). The
+  result's `note` says so.
+- **In `keyword` mode the candidates are the chunks that share a term with `query`.** The
+  phrase filters them, so a phrase beside a query it has no term in common with returns
+  nothing. Leave `query` empty to search for the phrase alone.
+- **The text is the extracted text.** Hyphenation across a PDF's line break, a ligature
+  such as `ﬁ`, or a table that the extractor reads in another order are matched as they
+  were extracted.
+
+### Why not a window over the ranking, or an index
+
+Two alternatives were weighed before this one. The first keeps the hits of the usual
+candidate window whose text holds the phrase. It adds little to the query (in the three larger corpora a
+window of 400 took a median 71 to 100 ms and carried 1.0 to 2.4 MB of text), but the window
+holds the chunk a phrase came from only some of the time. For 320 phrases taken from real
+chunks and searched for as the query, with a window of 400 in `hybrid` mode, the chunk was
+inside it for 100% of the docs corpus (297 chunks, so the window held everything), 75% of the
+books, 60% of the papers and 75% of the code. Across the three larger corpora it was inside
+for 93% of phrases whose rarest word is in under 0.2% of chunks, 69% for 0.2% to 2%, and 53%
+for 2% to 20% (word frequencies estimated from 1,500 random chunks per corpus; 4 phrases
+with a rarest word in over 20% of chunks are left out of those three, and none of them was
+inside). A window of 500 added 0 to 4 points by corpus. A short result could not be told from
+a complete one.
+
+The second is a full-text payload index on `content`, which makes the filter cheap and costs
+index size and memory in every collection, including for corpora that never use a phrase; the
+largest corpus here has 191,703 chunks.
+
 ## Result contract
 
 `POST /api/search` returns this JSON: camelCase property names, enums as their member
@@ -162,6 +279,7 @@ appear only when set).
 ```jsonc
 {
   "query": "how do we refresh auth tokens",
+  "phrase": "refresh token",                // only when the request had one; whitespace collapsed
   "mode": "Hybrid",
   "degraded": false,
   "scope": [{ "id": "01JD...", "name": "api-repo", "state": "Ready" }],
@@ -188,18 +306,21 @@ appear only when set).
 
 `page` is set for PDF, PPTX and EPUB hits, whose `location` is then
 `file#page=n` (`#slide=n` for a deck, `#chapter=n` for an EPUB). `degradedReason` is
-present when `degraded` is true. `note` carries up to four warnings: a corpus in scope is still
+present when `degraded` is true. `phrase` is present when the request had one, and `query`
+is then the phrase if the request's query was blank. `note` carries up to five warnings: a corpus in scope is still
 indexing; a corpus's last pass could not read its source (`could not read its source on its last
 pass; results are from the index it had before`) or had files that failed to embed, each naming the
 corpus with the time of the last pass that completed (`last indexed 2026-10-12 09:30Z`, or `never`);
-and collapsing duplicates returned fewer hits than the `limit` asked for
-(`N of M asked for`). A set's state is its last pass's outcome, so the note appears for as long as
+collapsing duplicates returned fewer hits than the `limit` asked for
+(`N of M asked for`); and a `keyword` search with a `phrase` has a query with no term the keyword
+index holds. A set's state is its last pass's outcome, so the note appears for as long as
 the state does, and clears on the next pass that completes. `scope[].name` is qualified (`corpus:set`) for a set other than the
 default.
 
 Over MCP, `search_index` returns one text block for a model to read, not this JSON: a
-header (`N results for "query" (mode, corpus: names)`), then any `! DEGRADED:` and `!` note
-lines, then each hit as a numbered location line followed by its content. The structured
+header (`N results for "query" (mode, corpus: names)`, or `N results containing "phrase" (...)`
+for a search by phrase alone, or `N results for "query" containing "phrase" (...)`), then any
+`! DEGRADED:` and `!` note lines, then each hit as a numbered location line followed by its content. The structured
 result is the response of `POST /api/search` ([13](13-integration.md)).
 
 Three design choices:
@@ -208,7 +329,8 @@ Three design choices:
    clickable in every editor and is what an agent will paste back to the user.
 2. **`content` is a window centred on the match**: 1,500 characters by default, and the
    whole chunk when `maxCharsPerHit` is 0 (next section). A result that forces a follow-up
-   read has cost two round trips to save bytes, so the window is cut around what matched.
+   read has cost two round trips to save bytes, so the window is cut around what matched,
+   or around the phrase when the search has one.
 3. **`score` is ordinal.** A fused score is normalised against the other candidates of one
    query and means nothing across queries, and the first thing anyone does with a float is
    threshold it.
@@ -279,6 +401,7 @@ file faster anyway; this path exists for uploads and for agents without filesyst
 | Sparse encoding (in-process) | < 1 ms |
 | Qdrant hybrid query, 400k points, corpus-indexed | 20–80 ms |
 | Total p95 | **< 400 ms** |
+| A search with a `phrase`, 24,000 to 261,000 chunks in scope | 0.3 to 2.6 s median, 4.7 s slowest measured ([Cost](#cost)) |
 
 A cold Ollama, with the model not resident, adds seconds. The authenticated `/healthz`
 reports whether the default embedding provider answers (it probes the model's dimensions
