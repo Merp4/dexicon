@@ -488,6 +488,22 @@ public sealed partial class PdfTextExtractor : ITextExtractor
     }
 
     /// <summary>
+    /// PdfPig 0.1.16 groups letters into words per text orientation (horizontal and the
+    /// three rotations) on a parallel loop and appends each orientation's words to one
+    /// list as the loop iterations finish. A page with horizontal and rotated text
+    /// therefore returned its words, and so its blocks, in a different order from one
+    /// extraction to the next. Measured on a generated 13-page PDF, 200 concurrent
+    /// extractions gave dozens of distinct texts of identical length. One degree of
+    /// parallelism makes the orientation order fixed. All other options keep the defaults
+    /// of <c>NearestNeighbourWordExtractor.Instance</c>.
+    /// </summary>
+    private static readonly NearestNeighbourWordExtractor WordExtractor = new(
+        new NearestNeighbourWordExtractor.NearestNeighbourWordExtractorOptions
+        {
+            MaxDegreeOfParallelism = 1,
+        });
+
+    /// <summary>
     /// One line per text block, in reading order.
     ///
     /// Docstrum groups words into blocks by the spacing between them, which is what
@@ -502,7 +518,7 @@ public sealed partial class PdfTextExtractor : ITextExtractor
         // an empty set. Yielding nothing is what surfaces as `status: empty`.
         if (page.Letters.Count == 0) yield break;
 
-        var words = NearestNeighbourWordExtractor.Instance.GetWords(page.Letters);
+        var words = WordExtractor.GetWords(page.Letters);
         var blocks = DocstrumBoundingBoxes.Instance.GetBlocks(words);
 
         foreach (var block in UnsupervisedReadingOrderDetector.Instance.Get(blocks))

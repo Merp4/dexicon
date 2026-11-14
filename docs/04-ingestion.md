@@ -1303,6 +1303,20 @@ its size or time changes, or on a full pass.
 | 5 | A page number alone in a PDF margin is furniture, and is dropped |
 | 6 | Whitespace inside an HTML or EPUB `<pre>` is kept |
 
+**PDF extraction is deterministic.** PdfPig 0.1.16 groups a page's letters into words per text orientation
+(horizontal and the three rotations) on a parallel loop and appends each orientation's words to one list as the
+iterations finish. A page with both horizontal and rotated text (a margin label, an axis title) came back with its
+blocks in a different order from one extraction to the next, with the same characters. On a generated 13-page PDF,
+200 concurrent extractions gave 39 to 90 distinct texts of one length. In release testing the effect on a corpus was a
+drift of a few chunks between fresh indexes (2,888 to 2,892 on 40 real files).
+`PdfTextExtractor` sets `MaxDegreeOfParallelism = 1` on the word extractor, so the same bytes give the same text
+on every run. `ExtractorVersions.Current` stays 6: the serial text differs from the most common parallel text, and a
+bump would re-extract and re-embed every PDF in every corpus. Cached text is kept, so a PDF first extracted before
+this change keeps the text it was cached with, and a corpus indexed before it is not made consistent until its PDFs
+are re-extracted, which a later `ExtractorVersions.Current` bump does.
+Serial grouping costs about 15% more time on a generated 300-page PDF (steady state 1.0 to 1.1 s before, 1.1 to
+1.3 s after).
+
 The chunker carries its own version for the same reason, one stage later: without it the
 fingerprint says "same bytes, same settings, nothing to do" and a corpus keeps chunks from
 an algorithm that no longer exists, indefinitely, because skipping unchanged files is what
