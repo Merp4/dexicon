@@ -146,6 +146,14 @@ public sealed record SearchQuery
     /// of <c>message</c>, <c>stat</c> and <c>diff</c>; a Markdown chunk's section is its heading.
     /// </summary>
     public string? Section { get; init; }
+
+    /// <summary>
+    /// Words the chunk's text must contain in this order, already validated and with its
+    /// whitespace collapsed (<see cref="SearchPhrase.Text"/>). <c>QdrantVectorStore.BuildFilter</c>
+    /// adds it to the filter that every prefetch and the final query use, so it narrows the
+    /// candidates before ranking rather than the hits after it.
+    /// </summary>
+    public string? Phrase { get; init; }
 }
 
 public sealed record SearchResponse
