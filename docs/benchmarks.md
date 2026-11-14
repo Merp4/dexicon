@@ -464,3 +464,80 @@ python scripts/bench/functionbench.py --ollama http://127.0.0.1:21434 --src /tmp
 ```
 
 `--src` has to be the tree the labels belong to (`f239ba4`), and the chunker under test is the one in the working tree.
+
+## Claude Code transcripts: the conversation against the raw file (2026-11-13)
+
+Does reading a transcript as a conversation ([04](04-ingestion.md#claude-code-session-transcripts),
+[D-51](decisions.md#d-51-a-claude-code-transcript-is-indexed-as-its-conversation)) find an answer that the raw
+`.jsonl` file, indexed as text with the size cap raised, does not?
+
+**Corpus.** 14 transcripts from one installation, taken from 8 subagent files of 0.3 to 1.2 MB and 6 session files, the
+session files cut to their first 1 MB at a line boundary: 11.4 MB in all. Every arm is chunked by the production
+`CodeChunker` at 256 tokens (overlap 32) and at 512 tokens (overlap 64), the raw file in `language-aware` mode, which is
+blank-line for this extension, and the extracted text in `blank-line`, as the indexer does for a document. Chunks are
+embedded with `embeddinggemma:latest` under its document framing and ranked by cosine against the question under its query
+framing, dense only.
+
+**Questions.** 39, each with an answer literal, in three kinds by where the literal is:
+
+- *conversation* (21): in a user or assistant message, such as a pull request number, a commit range or a figure;
+- *tool call* (14): only in the name or main argument of a tool call, such as a file read or a command run;
+- *tool result* (4): only in the first 200 characters of a tool result.
+
+A question is answered at rank k when the first chunk, in rank order, whose text holds the literal is the k-th (the
+literal or its JSON-escaped form, for the raw file). Score is the mean reciprocal rank of that chunk in the top ten
+(MRR10) and the count of questions answered at rank 1, within 3, 5 and 10.
+
+**Result at 256 tokens** (answered at rank 1 / within 3 / within 5 / within 10, for each kind):
+
+| arm | chunks | conversation (21) | tool call (14) | tool result (4) | MRR10, all 39 |
+|---|---:|---|---|---|---:|
+| conversation only | 107 | 12 / 18 / 18 / 21 | 0 / 0 / 0 / 0 | 0 / 0 / 0 / 0 | 0.383 |
+| **conversation and tool-call lines (the extractor)** | 175 | 13 / 16 / 18 / 21 | 6 / 12 / 12 / 13 | 0 / 0 / 0 / 0 | 0.621 |
+| and 200 characters of each tool result | 262 | 15 / 17 / 18 / 21 | 7 / 11 / 13 / 14 | 3 / 4 / 4 / 4 | 0.755 |
+| raw file, cap raised | 13,519 | 8 / 12 / 13 / 16 | 5 / 8 / 10 / 11 | 0 / 2 / 3 / 3 | 0.468 |
+
+**Result at 512 tokens**:
+
+| arm | chunks | conversation (21) | tool call (14) | tool result (4) | MRR10, all 39 |
+|---|---:|---|---|---|---:|
+| conversation only | 53 | 12 / 16 / 20 / 21 | 0 / 0 / 0 / 0 | 0 / 0 / 0 / 0 | 0.387 |
+| **conversation and tool-call lines (the extractor)** | 90 | 12 / 17 / 20 / 20 | 6 / 10 / 10 / 11 | 0 / 0 / 0 / 0 | 0.590 |
+| and 200 characters of each tool result | 134 | 13 / 18 / 18 / 20 | 10 / 12 / 12 / 12 | 3 / 4 / 4 / 4 | 0.765 |
+| raw file, cap raised | 7,170 | 9 / 12 / 12 / 14 | 7 / 9 / 10 / 11 | 0 / 1 / 2 / 3 | 0.511 |
+
+**Paired difference in reciprocal rank**, the extractor against the raw file, with a 95% bootstrap interval over the
+questions (10,000 resamples):
+
+| questions | 256 tokens | 512 tokens |
+|---|---|---|
+| all 39 | +0.154 [-0.015, +0.316] | +0.078 [-0.042, +0.200] |
+| conversation (21) | +0.236 [+0.001, +0.462] | +0.205 [+0.048, +0.365] |
+| tool call (14) | +0.149 [-0.128, +0.414] | -0.027 [-0.234, +0.192] |
+
+What the arms show:
+
+- **The conversation is found higher than in the raw file**, and the interval excludes zero at both sizes, barely at 256.
+  The raw file also answers most of them: 16 of 21 within ten at 256 tokens. It needs 77 times the chunks (13,519 against 175) for the
+  same 14 files, which at the 10.9 chunks per second of this run is 21 minutes of embedding against 16 seconds.
+- **Tool-call lines cost the conversation nothing measurable** (adding them: +0.023 [-0.041, +0.105] at 256 tokens,
+  -0.003 [-0.121, +0.137] at 512) and are the only arm without tool results that answers a question about a command run
+  or a file read: 13 of 14 within ten, against 0 of 14 without them. They add 64% to 70% to the chunks.
+- **Tool results are not indexed, and that has a cost.** Keeping 200 characters of each adds 50% to the chunks
+  (175 to 262; 90 to 134) and moves the conversation score by +0.051 [-0.025, +0.158] at 256 tokens and +0.030 [-0.071,
+  +0.144] at 512. The four tool-result questions were chosen from those 200 characters, so the result shows what leaving
+  them out costs (0 of 4 within ten) and not how often a person asks such a question. Over all 1,067 files the 200
+  characters would add about 51 MB to the 82.5 MB of conversation and tool-call lines (estimated from record sizes, not
+  extracted).
+
+**Limits.** One installation; 14 files, and the session files only to their first 1 MB. The questions are one reviewer's.
+The conversation and tool-call questions were written after reading the extracted text, which favours the extracted arms
+for those kinds; the tool-result questions were chosen from the arm that keeps them. Eleven of the tool-call questions were
+added after a first run of 28 had only three, and were written before their ranks were computed. Dense retrieval only:
+there is no sparse leg, no fusion and no framing profile. An answer counts when its literal is in a top-ten chunk, whatever
+else the chunk holds, which favours the raw file, whose chunks are large runs of JSON that often repeat a literal. With 39
+questions the intervals are wide, and the three-way split leaves 4 questions in the smallest kind.
+
+The corpus and the questions are not in the repository because they are a person's conversations. The harness is a
+console project over `Dexicon.Core` that extracts and chunks with the production code, and a script that embeds, ranks and
+scores; both are kept with the corpus.
