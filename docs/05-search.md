@@ -174,7 +174,7 @@ one, so index size, memory and indexing time are as they were, and a search with
 sends the query it always sent. The cost is paid at query time, by the searches that use it.
 
 `query` ranks and `phrase` filters. Given both, the hits are the best matches for `query`
-among the chunks that hold the phrase. Given only `phrase`, with `query` left empty, the
+among the chunks that hold the phrase. Given only `phrase`, with `query` sent as an empty string, the
 phrase is the query: it is embedded and encoded as one, and the result echoes it as `query`.
 The returned window is centred on the phrase rather than on the query terms.
 
@@ -246,7 +246,7 @@ examined.
   result's `note` says so.
 - **In `keyword` mode the candidates are the chunks that share a term with `query`.** The
   phrase filters them, so a phrase beside a query it has no term in common with returns
-  nothing. Leave `query` empty to search for the phrase alone.
+  nothing. Send `query` as an empty string to search for the phrase alone.
 - **The text is the extracted text.** Hyphenation across a PDF's line break, a ligature
   such as `ﬁ`, or a table that the extractor reads in another order are matched as they
   were extracted.

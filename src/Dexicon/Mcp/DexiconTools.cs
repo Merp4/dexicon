@@ -34,7 +34,7 @@ public sealed class DexiconTools
     public static async Task<string> SearchIndexAsync(
         RequestContext rc,
         SearchService search,
-        [Description("Natural language question or code fragment. May be empty when phrase is given.")] string query,
+        [Description("Natural language question or code fragment. Always required: send an empty string when searching by phrase alone.")] string query,
         [Description("Corpus names to search. With several corpora, name the one or two whose list_corpora descriptions fit the question: searching all of them lets hits from the others crowd out the answer. Omit to search everything visible to you.")] string[]? corpus = null,
         [Description("hybrid blends meaning with exact terms; semantic is meaning only; keyword is exact-match only and keeps working when embeddings are unavailable.")] string mode = "hybrid",
         [Description("Maximum results, 1-50.")] int limit = 10,
@@ -43,7 +43,7 @@ public sealed class DexiconTools
         [Description("Restrict to one language, e.g. csharp, python, typescript.")] string? language = null,
         [Description("Restrict to chunks declaring this symbol, e.g. TokenService.")] string? symbol = null,
         [Description("Restrict to one section of the documents, by its exact name. In a git history corpus: message (the commit's sha, author, date and message), stat (the files it touched) or diff (the patch). Use message to ask why something changed and diff to find a code fragment. A diff exists only where the source indexes diffs. In a Markdown file the section is the heading, e.g. Installation.")] string? section = null,
-        [Description("Keep only results that contain these words in this order, ignoring case and punctuation: \"chunk set id\" finds chunk_set_id, but \"refresh\" does not find RefreshAsync. In hybrid and semantic mode every chunk in scope containing it is a candidate, so a short result is a complete one. Slower on a large corpus: name the corpus. Keyword mode is cheapest, but only considers chunks that share a word with the query. With an empty query it searches for the phrase alone.")] string? phrase = null,
+        [Description("Keep only results that contain these words in this order, ignoring case and punctuation: \"chunk set id\" finds chunk_set_id, but \"refresh\" does not find RefreshAsync. In hybrid and semantic mode every chunk in scope containing it is a candidate, so a short result is a complete one. Slower on a large corpus: name the corpus. Keyword mode is cheapest, but only considers chunks that share a word with the query. Send query as an empty string to search for the phrase alone.")] string? phrase = null,
         [Description("Characters of each result to return, centred on the matching passage. The default is enough to read the match in context; raise it when a hit is clearly the right passage and you need more of it, or use get_context. 0 returns whole chunks, which on a book corpus is about 8,000 characters each.")]
         int maxCharsPerHit = SearchRequest.DefaultMaxCharsPerHit,
         [Description("Collapse results that are the same document in another format, e.g. a book held as both PDF and EPUB. On by default. Turn it off to compare how the two were extracted.")]

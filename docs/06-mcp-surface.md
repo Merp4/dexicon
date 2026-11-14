@@ -88,7 +88,7 @@ tool advertises.
 
 | Argument | Type | Default | Description |
 |---|---|---|---|
-| `query` | string | required | Natural language question or code fragment. May be empty when `phrase` is given. |
+| `query` | string | required | Natural language question or code fragment. Always required: send an empty string when searching by phrase alone. |
 | `corpus` | array of string | everything the key can reach | Corpus names to search. With several corpora, name the one or two whose list_corpora descriptions fit the question: searching all of them lets hits from the others crowd out the answer. Omit to search everything visible to you. |
 | `mode` | string | `hybrid` | hybrid blends meaning with exact terms; semantic is meaning only; keyword is exact-match only and keeps working when embeddings are unavailable. |
 | `limit` | integer | 10 | Maximum results, 1-50. |
@@ -97,9 +97,12 @@ tool advertises.
 | `language` | string | none | Restrict to one language, e.g. csharp, python, typescript. |
 | `symbol` | string | none | Restrict to chunks declaring this symbol, e.g. TokenService. |
 | `section` | string | none | Restrict to one section of the documents, by its exact name. In a git history corpus: message (the commit's sha, author, date and message), stat (the files it touched) or diff (the patch). Use message to ask why something changed and diff to find a code fragment. A diff exists only where the source indexes diffs. In a Markdown file the section is the heading, e.g. Installation. |
-| `phrase` | string | none | Keep only results that contain these words in this order, ignoring case and punctuation: "chunk set id" finds chunk_set_id, but "refresh" does not find RefreshAsync. In hybrid and semantic mode every chunk in scope containing it is a candidate, so a short result is a complete one. Slower on a large corpus: name the corpus. Keyword mode is cheapest, but only considers chunks that share a word with the query. With an empty query it searches for the phrase alone. |
+| `phrase` | string | none | Keep only results that contain these words in this order, ignoring case and punctuation: "chunk set id" finds chunk_set_id, but "refresh" does not find RefreshAsync. In hybrid and semantic mode every chunk in scope containing it is a candidate, so a short result is a complete one. Slower on a large corpus: name the corpus. Keyword mode is cheapest, but only considers chunks that share a word with the query. Send query as an empty string to search for the phrase alone. |
 | `maxCharsPerHit` | integer | 1500 | Characters of each result to return, centred on the matching passage. The default is enough to read the match in context; raise it when a hit is clearly the right passage and you need more of it, or use get_context. 0 returns whole chunks, which on a book corpus is about 8,000 characters each. |
 | `distinctTitles` | boolean | `true` | Collapse results that are the same document in another format, e.g. a book held as both PDF and EPUB. On by default. Turn it off to compare how the two were extracted. |
+
+The `query` key is required even with a `phrase`: a call that leaves it out is refused before the tool runs, with
+`An error occurred invoking 'search_index'.` and no reason, so a search by phrase alone sends `"query": ""`.
 
 The schema carries no bounds: `limit` is clamped to 1-50 and `maxCharsPerHit` to 0-100,000
 in the tool body. `phrase` is refused above 500 characters, and when it holds no letter or
@@ -142,7 +145,7 @@ Returns one text block, formatted for a model to read. The structured result des
 
 With a `phrase` the header names it, after the query when there is one:
 `2 results for "how tokens are renewed" containing "refresh token" (hybrid, corpus: api-repo)`,
-or `2 results containing "refresh token" (...)` when `query` was left empty. A search whose
+or `2 results containing "refresh token" (...)` when `query` was sent empty. A search whose
 phrase matched nothing says the phrase is matched word for word, so the empty result is not
 read as a corpus that lacks the text.
 

@@ -534,7 +534,8 @@ public sealed record JobSummary(
 /// Words every hit must contain, in this order, ignoring case and punctuation: "chunk set id"
 /// finds chunk_set_id. In hybrid and semantic mode every chunk in scope that contains it is a
 /// candidate, so a short result is a complete one; keyword mode only considers chunks that share a
-/// word with the query. A blank <paramref name="Query"/> then searches for the phrase itself.
+/// word with the query. With <paramref name="Query"/> empty, or left out, the request searches for the
+/// phrase itself.
 /// Costs query time on a large corpus; docs/05-search.md has the figures.
 /// </param>
 public sealed record SearchApiRequest(

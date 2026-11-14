@@ -129,7 +129,7 @@ values in a response are PascalCase (`"mode": "Hybrid"`, `"state": "Ready"`); th
 
 | Field | Default | Meaning |
 |---|---|---|
-| `query` | — | Natural language, or a code fragment. Required unless `phrase` is given, and then it may be blank. |
+| `query` | — | Natural language, or a code fragment. The schema requires it, so send an empty string for a search by phrase alone; a request that leaves it out is also accepted when it has a `phrase`. |
 | `corpus` | every visible corpus | Names, `corpus` or `corpus:set`. |
 | `mode` | `hybrid` | `hybrid`, `semantic` or `keyword`. |
 | `limit` | 10 | Hits to consider, 1-50. The budget decides how many reach the passage. |

@@ -69,9 +69,9 @@ run of letters and digits is one word. Every chunk in scope that holds the phras
 considered, so a short result is a complete one. That is read from the text of every chunk
 in scope, which takes seconds on a large corpus: name the corpus first. `mode: keyword` is
 cheaper but only considers chunks that share a word with `query`, so use it with the phrase
-alone or with a query that has the phrase's distinctive word in it. Leave `query` empty to
-search for the phrase alone, or give both to rank the chunks that hold the phrase by a
-question.
+alone or with a query that has the phrase's distinctive word in it. Send `query` as an empty
+string to search for the phrase alone (the argument is still required), or give both to rank
+the chunks that hold the phrase by a question.
 
 Narrow with `pathPrefix`, `source`, `language` or `symbol` before raising `limit`. Twenty
 results across the whole index is usually worse than eight from `src/Auth/`. `pathPrefix` is
