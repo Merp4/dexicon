@@ -75,7 +75,7 @@ services:
     cap_drop: [ALL]
 
   dexicon-qdrant:
-    image: qdrant/qdrant:${QDRANT_TAG:-v1.20.0}     # pinned, not :latest
+    image: qdrant/qdrant:${QDRANT_TAG:-v1.20.1}     # pinned, not :latest
     restart: unless-stopped
     volumes:
       - qdrant_data:/qdrant/storage
@@ -90,7 +90,7 @@ services:
     # no ports: — container-network only. Never publish; see "Exposure".
 
   dexicon-ollama:
-    image: ollama/ollama:${OLLAMA_TAG:-0.40.12}
+    image: ollama/ollama:${OLLAMA_TAG:-0.40.16}
     restart: unless-stopped
     volumes:
       - ollama_data:/root/.ollama
@@ -353,7 +353,7 @@ in `.env` has no effect. Every setting has a working default; `WORKSPACE_ROOT` d
 | `DEXICON_BOOTSTRAP_TOKEN` | `DEXICON__BOOTSTRAP__TOKEN` | *(empty)* | Blank mints nothing; keys are created under Access. Set, it must read `dex_<id>_<secret>` and is adopted as a key holding `search` and `ingest`. A malformed value fails the start (`A bootstrap token must start with 'dex_'.`) and the container restarts in a loop. |
 | `DEXICON_LOG_LEVEL` | `DEXICON__LOG__LEVEL` | `Information` | |
 | `DEXICON_TAG`, `DEXICON_OWNER` | | `latest`, `merp4` | Which Dexicon image: `ghcr.io/<owner>/dexicon:<tag>`. See "Image tags". |
-| `QDRANT_TAG`, `OLLAMA_TAG` | | `v1.20.0`, `0.40.12` | Which Qdrant and Ollama images. |
+| `QDRANT_TAG`, `OLLAMA_TAG` | | `v1.20.1`, `0.40.16` | Which Qdrant and Ollama images. |
 | `DEXICON_GPU_DEVICE_IDS` | | `0` | Which GPU the embedder uses, as `nvidia-smi -L` numbers them. Read only when `docker-compose.gpu.yml` is applied. |
 
 The table lists what `docker-compose.yml` and its overlays pass. Any other option binds the
