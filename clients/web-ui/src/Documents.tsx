@@ -9,6 +9,9 @@ import {
 import { cn } from 'cn';
 import { count } from './lib/units';
 
+/** How often the list is read again while an attachment is still pending. */
+const PENDING_REFRESH_MS = 3000;
+
 /**
  * The document library.
  *
@@ -62,6 +65,29 @@ export function DocumentsView({
   useEffect(() => {
     void load();
   }, [load]);
+
+  // An attachment reads "pending" from the moment it is attached until its corpus's pass has
+  // chunked it, which takes seconds. The list was read once on entry, so the row kept reading
+  // "pending" until the page was left and entered again. While any attachment is pending the
+  // list is read again every few seconds. A read that fails is tried again on the next tick and
+  // raises no error of its own: the first read reports an unreachable server.
+  const anyPending = docs.some((d) => d.attachments.some((a) => a.status === 'pending'));
+  useEffect(() => {
+    if (!anyPending) return;
+    let reading = false;
+    const timer = setInterval(async () => {
+      if (reading) return;
+      reading = true;
+      try {
+        setDocs(await api.listDocuments());
+      } catch {
+        // The next tick tries again.
+      } finally {
+        reading = false;
+      }
+    }, PENDING_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [anyPending]);
 
   useEffect(() => {
     if (!uploadTo && writable.length > 0) setUploadTo(writable[0].name);

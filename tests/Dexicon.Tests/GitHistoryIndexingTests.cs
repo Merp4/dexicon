@@ -570,6 +570,32 @@ public sealed class GitHistoryIndexingTests
     }
 
     /// <summary>
+    /// A source rooted at the workspace root has an empty path, and the message that quoted it
+    /// read "Source ''". It names the root instead.
+    /// </summary>
+    [Fact]
+    public async Task ASourceAtTheWorkspaceRootIsNamedForWhatItIsInTheNoRepositoryMessage()
+    {
+        await using var harness = await IndexingHarness.StartAsync("");
+        await harness.WriteFileAsync("a.txt", "not a repository");
+
+        await harness.SeedCorpusAsync(SourceKind.GitHistory);
+        var job = await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken);
+
+        job.Error.ShouldNotBeNull();
+        job.Error.ShouldContain("Source '(workspace root)' is not a git repository");
+        job.Error.ShouldNotContain("Source ''");
+    }
+
+    [Theory]
+    [InlineData("", "(workspace root)")]
+    [InlineData(null, "(workspace root)")]
+    [InlineData("notes", "notes")]
+    [InlineData("outer/inner", "outer/inner")]
+    public void ASourcePathIsShownAsItIsExceptAtTheWorkspaceRoot(string? rootPath, string expected) =>
+        CorpusIndexer.SourceLabel(rootPath).ShouldBe(expected);
+
+    /// <summary>
     /// A repository whose local main is <paramref name="behind"/> commits behind
     /// origin/main, as a fetch nobody followed with a pull leaves it. The remote-tracking
     /// ref is set directly, so no remote is contacted.

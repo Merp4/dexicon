@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DocumentsView } from './Documents';
 import { ApiError, type Corpus, type LibraryDocument } from './api';
 
@@ -446,5 +446,69 @@ describe('detaching a document', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Detach' }));
 
     expect(await within(dialog).findByRole('alert')).toHaveTextContent(/needs destroy/);
+  });
+});
+
+describe('an attachment that is still pending', () => {
+  const pendingDoc = {
+    ...doc,
+    attachments: [{ ...doc.attachments[0], status: 'pending', chunkCount: 0 }],
+  } as unknown as LibraryDocument;
+  const indexedDoc = {
+    ...doc,
+    attachments: [{ ...doc.attachments[0], status: 'indexed', chunkCount: 980 }],
+  } as unknown as LibraryDocument;
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('is read again until it is indexed, and then the list is left alone', async () => {
+    // The row read "pending 0 chunks" until the page was left and entered again, though the
+    // pass that chunked it finished within seconds.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    listDocuments.mockResolvedValueOnce([pendingDoc]).mockResolvedValue([indexedDoc]);
+    render(<DocumentsView corpora={[corpus('library')]} {...noop} />);
+
+    expect(await screen.findByText('pending')).toBeInTheDocument();
+    expect(listDocuments).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(3500);
+    expect(await screen.findByText('980 chunks')).toBeInTheDocument();
+    expect(screen.queryByText('pending')).not.toBeInTheDocument();
+    expect(listDocuments).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(listDocuments).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not read the list again when nothing is pending', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    listDocuments.mockResolvedValue([indexedDoc]);
+    render(<DocumentsView corpora={[corpus('library')]} {...noop} />);
+
+    expect(await screen.findByText('980 chunks')).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(listDocuments).toHaveBeenCalledTimes(1);
+  });
+
+  it('tries again after a failed read without raising an error of its own', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    listDocuments
+      .mockResolvedValueOnce([pendingDoc])
+      .mockRejectedValueOnce(new Error('connection closed'))
+      .mockResolvedValue([indexedDoc]);
+    render(<DocumentsView corpora={[corpus('library')]} {...noop} />);
+    await screen.findByText('pending');
+
+    await vi.advanceTimersByTimeAsync(3500);
+    expect(listDocuments).toHaveBeenCalledTimes(2);
+    expect(noop.onError).not.toHaveBeenCalled();
+    expect(screen.getByText('pending')).toBeInTheDocument();
+
+    await vi.advanceTimersByTimeAsync(3500);
+    expect(await screen.findByText('980 chunks')).toBeInTheDocument();
+    expect(noop.onError).not.toHaveBeenCalled();
   });
 });
