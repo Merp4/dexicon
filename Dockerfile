@@ -33,7 +33,7 @@ RUN npm run build
 # with no native host — the output is the same bytes for every architecture, and only the
 # runtime stage below is per-platform. Emulating an SDK to produce identical output would
 # cost minutes a build for nothing.
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-alpine@sha256:5562fd626eec39f6f53218f9b7d7856ab7195d51d846568304fbe85071a3b6e6 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-alpine@sha256:0294f285d062afacc8b5f6d7febb0cd4ee879320e5585fa15f2f4ebf1feb9ba7 AS build
 WORKDIR /build
 
 # Stamped into the assembly, and from there into the OpenAPI document and the version the
