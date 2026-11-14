@@ -128,7 +128,7 @@ public sealed class IndexingOptions
     public int MaxFileBytes { get; init; } = 262_144;
 
     /// <summary>
-    /// Size cap for formats that go through an extractor: PDF, EPUB, DOCX, PPTX. Separate
+    /// Size cap for formats that go through an extractor: PDF, EPUB, DOCX, PPTX, HTML and Claude Code transcripts. Separate
     /// from <see cref="MaxFileBytes"/> because a 300-page PDF is normal and a 300 KB source
     /// file is not, and one number cannot mean both.
     ///

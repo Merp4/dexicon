@@ -339,7 +339,13 @@ public sealed class WorkspaceWalker
     /// the key a pass uses to leave a file it has already finished with unopened, and 0
     /// means there is no such key, so the file is read.
     /// </param>
-    public sealed record Candidate(string FullPath, string RelativePath, long SizeBytes, long ModifiedTicks = 0);
+    /// <param name="Extractor">
+    /// The name of the extractor the walk chose from the file's first bytes, for an extension that several formats share
+    /// (<see cref="Extraction.IContentGatedExtractor"/>), and null for every other file. It is part of the key a settled
+    /// file is skipped by, because a size and a time cannot tell that a file which was text has become a transcript.
+    /// </param>
+    public sealed record Candidate(
+        string FullPath, string RelativePath, long SizeBytes, long ModifiedTicks = 0, string? Extractor = null);
 
     /// <param name="SizeBytes">
     /// What the walk measured, or 0 where it could not: the row a skip writes shows a
@@ -477,20 +483,27 @@ public sealed class WorkspaceWalker
                 continue;
             }
 
-            if (info.Length > maxFileBytes && !Extraction.ExtractorRegistry.IsDocumentFormat(relative))
+            // Before the extractor is chosen, which opens a `.jsonl` file: a named pipe or a device has no length, and
+            // is skipped here as for every other extension, where opening it would wait for a writer.
+            if (info.Length == 0) { skipped.Add(new Skipped(relative, "empty file", 0)); continue; }
+
+            // Decided once, and from the file where the extension is shared (a `.jsonl` that is a Claude Code
+            // transcript is a document; any other is text, under the cap below).
+            var extractor = Extraction.ExtractorRegistry.For(relative, full);
+            var isDocument = extractor is not null;
+
+            if (info.Length > maxFileBytes && !isDocument)
             {
                 skipped.Add(new Skipped(relative,
                     $"over the {maxFileBytes:N0} byte size cap ({info.Length:N0} bytes)", info.Length));
                 continue;
             }
 
-            if (info.Length == 0) { skipped.Add(new Skipped(relative, "empty file", 0)); continue; }
-
             // A PDF, DOCX, PPTX or EPUB is binary, but has text inside that an extractor
             // can reach. Sniffing it would drop every PDF in a
             // repository's docs/ folder. They also routinely exceed a code-sized cap, so
-            // they get their own, larger one.
-            var isDocument = Extraction.ExtractorRegistry.IsDocumentFormat(relative);
+            // they get their own, larger one. So does a Claude Code transcript, which is text
+            // with a median of 1.8 MB.
             if (isDocument)
             {
                 var documentCap = documentMaxBytes ?? DefaultDocumentMaxBytes;
@@ -508,7 +521,8 @@ public sealed class WorkspaceWalker
                 continue;
             }
 
-            files.Add(new Candidate(full, relative, info.Length, info.LastWriteTimeUtc.Ticks));
+            files.Add(new Candidate(full, relative, info.Length, info.LastWriteTimeUtc.Ticks,
+                extractor is Extraction.IContentGatedExtractor ? extractor.GetType().Name : null));
         }
 
         return new WalkResult(files, skipped, warnings.Kept, warnings.Omitted);

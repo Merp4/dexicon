@@ -1590,7 +1590,8 @@ public sealed class CorpusIndexer(
         string? SettledKeyOf(WorkspaceWalker.Candidate c) =>
             fingerprintOf is null && c.ModifiedTicks != 0
                 ? HashContent($"{c.SizeBytes}|{c.ModifiedTicks}|" +
-                              ChunkingFingerprint(set, string.Empty, templates, chunking, c.RelativePath))
+                              ChunkingFingerprint(set, string.Empty, templates, chunking, c.RelativePath) +
+                              (c.Extractor is null ? "" : $"|{c.Extractor}"))
                 : null;
 
         // Every path below that records a file as having no chunks has to drop the

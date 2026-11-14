@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.IO.Compression;
 using System.Reflection;
 using System.Text;
@@ -266,16 +267,71 @@ public static class ExtractorRegistry
         new PptxTextExtractor(),
         new EpubTextExtractor(),
         new HtmlTextExtractor(),
+        new ClaudeTranscriptTextExtractor(),
     ];
 
-    /// <summary>Null means "treat it as plain text", which is the right answer for code.</summary>
+    /// <summary>
+    /// The extractor for a path, decided by its extension alone. Null means "treat it as plain text",
+    /// which is the right answer for code. An extractor that has to look at the file
+    /// (<see cref="IContentGatedExtractor"/>) is never returned here: use
+    /// <see cref="For(string, string)"/> where the file can be opened.
+    /// </summary>
     public static ITextExtractor? For(string relativePath)
     {
         var ext = Path.GetExtension(relativePath).ToLowerInvariant();
-        return Array.Find(Extractors, e => e.CanHandle(ext));
+        return Array.Find(Extractors, e => e is not IContentGatedExtractor && e.CanHandle(ext));
     }
 
-    public static bool IsDocumentFormat(string relativePath) => For(relativePath) is not null;
+    /// <summary>
+    /// The extractor for a file on disk: <see cref="For(string)"/>, and for an extension that a
+    /// content-gated extractor shares with other formats, the extractor whose
+    /// <see cref="IContentGatedExtractor.Matches"/> accepts the start of the file. A file that cannot be
+    /// opened matches none, so it is read as plain text and fails there with the reason.
+    /// </summary>
+    public static ITextExtractor? For(string relativePath, string fullPath)
+    {
+        var ext = Path.GetExtension(relativePath).ToLowerInvariant();
+        foreach (var extractor in Extractors)
+        {
+            if (!extractor.CanHandle(ext)) continue;
+            if (extractor is not IContentGatedExtractor gated) return extractor;
+            if (StartMatches(gated, fullPath)) return gated;
+        }
+
+        return null;
+    }
+
+    public static bool IsDocumentFormat(string relativePath, string fullPath) => For(relativePath, fullPath) is not null;
+
+    /// <summary>
+    /// The names of the extractors that can have stored text for a path (the <c>extractor</c> column of
+    /// <c>file_texts</c>), for a reader that has no file to open. A path of a shared extension names the
+    /// content-gated extractor too; a file that extractor did not take has no row under its name.
+    /// </summary>
+    public static IReadOnlyList<string> NamesFor(string relativePath)
+    {
+        var ext = Path.GetExtension(relativePath).ToLowerInvariant();
+        return Extractors.Where(e => e.CanHandle(ext)).Select(e => e.GetType().Name).ToList();
+    }
+
+    private static bool StartMatches(IContentGatedExtractor extractor, string fullPath)
+    {
+        var head = ArrayPool<byte>.Shared.Rent(extractor.HeadBytes);
+        try
+        {
+            using var file = File.OpenRead(fullPath);
+            var read = file.ReadAtLeast(head.AsSpan(0, extractor.HeadBytes), extractor.HeadBytes, throwOnEndOfStream: false);
+            return extractor.Matches(head.AsSpan(0, read));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+        {
+            return false;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(head);
+        }
+    }
 }
 
 /// <summary>
