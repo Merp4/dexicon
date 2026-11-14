@@ -30,6 +30,24 @@ updates:
           - "Shouldly"
           - "coverlet*"
           - "Microsoft.NET.Test.Sdk"
+    ignore:
+      # These packages are versioned with the .NET runtime, so a new major is the next .NET's and
+      # moves with the target framework (net10.0 in Directory.Build.props), by hand. The 11.0.0
+      # bumps proposed on 2026-11-14 show why: Microsoft.Extensions.ApiDescription.Server 11.0.0
+      # starts the app on the 11.0 runtime to write the OpenAPI document, so the build fails on
+      # 10.0 (#334), and Microsoft.Extensions.AI 11.0.0 ships with .NET 11 (#335). Minor and patch
+      # updates still arrive.
+      - dependency-name: "Microsoft.Extensions.*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.EntityFrameworkCore*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.AspNetCore.*"
+        update-types: ["version-update:semver-major"]
+      # Microsoft.CodeAnalysis.CSharp 5.1 and later conflict with Microsoft.EntityFrameworkCore.Design,
+      # which pulls Microsoft.CodeAnalysis.CSharp.Workspaces 5.0.0 and requires exactly 5.0.0
+      # (NU1107, #338). Remove this when the EF Core Design release in use accepts a newer Roslyn.
+      - dependency-name: "Microsoft.CodeAnalysis.CSharp"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   - package-ecosystem: npm
     directory: /clients/web-ui
