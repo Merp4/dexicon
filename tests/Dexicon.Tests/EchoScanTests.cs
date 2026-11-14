@@ -96,6 +96,7 @@ public sealed class EchoScanTests
         ["DexiconResources.cs|FileAsync|document?.Text"] = "the indexed file's own text, which is what the resource returns",
         ["DexiconResources.cs|ResolveAsync|Principal.Scopes"] = "the scope names of a key, from the repository's list",
         ["DexiconTools.cs|SearchIndexAsync|UnknownSearchModeException.Message"] = "the message of UnknownSearchModeException, which the repository writes",
+        ["DexiconTools.cs|SearchIndexAsync|InvalidSearchPhraseException.Message"] = "the message of InvalidSearchPhraseException, which the repository writes and which does not repeat the phrase",
         ["DexiconTools.cs|SearchIndexAsync|EmbeddingDimensionMismatchException.Message"] = "the message of EmbeddingDimensionMismatchException, which the repository writes",
         ["DexiconTools.cs|Render|SearchHit.Content"] = "the indexed text of a hit, which is what search returns",
         ["DexiconTools.cs|RenderCorpus|CorpusSummary.State"] = "the name of a state, from the repository's list",
